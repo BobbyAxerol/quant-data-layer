@@ -38,13 +38,31 @@ pub enum L2ProviderProtocol {
 pub struct L2Binding {
     pub provider_protocol: L2ProviderProtocol,
     pub depth_per_side: usize,
+    // Provider bootstrap/renewal remains deliberately slower than the
+    // canonical verified-view materialization cadence.
     pub snapshot_refresh_seconds: u64,
+    #[serde(default)]
+    pub materialized_snapshot_interval_ms: Option<u64>,
 }
 
 impl L2Binding {
+    fn materialized_snapshot_interval_ms(&self) -> u64 {
+        self.materialized_snapshot_interval_ms
+            .unwrap_or_else(|| self.snapshot_refresh_seconds.saturating_mul(1_000))
+    }
+
+    fn raw_receipt_is_expired(&self, received_at_ns: i64, processing_at_ns: i64) -> bool {
+        let max_age_ns = self.snapshot_refresh_seconds.saturating_mul(1_000_000_000);
+        let max_age_ns = i64::try_from(max_age_ns).unwrap_or(i64::MAX);
+        processing_at_ns.saturating_sub(received_at_ns) > max_age_ns
+    }
+
     fn validate(&self, binding: &CoreBinding) -> Result<(), CoreError> {
+        let materialized_snapshot_interval_ms = self.materialized_snapshot_interval_ms();
         if !(1..=10_000).contains(&self.depth_per_side)
             || !(5..=300).contains(&self.snapshot_refresh_seconds)
+            || !(100..=self.snapshot_refresh_seconds.saturating_mul(1_000))
+                .contains(&materialized_snapshot_interval_ms)
             || binding.sequence_policy != SequencePolicy::Contiguous
         {
             return Err(CoreError::Configuration(
@@ -378,7 +396,7 @@ impl RealtimeCore {
                 &binding,
                 raw,
                 payload,
-                materialized_at_ns,
+                processing_at_ns,
                 transport_offset,
             ));
         }
@@ -571,12 +589,24 @@ impl RealtimeCore {
         binding: &CoreBinding,
         raw: RawProviderEnvelope,
         payload: Value,
-        materialized_at_ns: i64,
+        processing_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
+        let materialized_at_ns = raw.received_at_ns;
         let Some(l2) = binding.l2.as_ref() else {
             unreachable!("process_l2 only accepts an L2 binding")
         };
+        if l2.raw_receipt_is_expired(raw.received_at_ns, processing_at_ns) {
+            if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
+                adapter.request_resync(raw.connection_generation);
+            }
+            return self.quarantine(
+                &raw,
+                QuarantineReason::SemanticInvalid,
+                "L2 raw receipt exceeded provider renewal bound; resync required",
+                processing_at_ns,
+            );
+        }
         let transport = match TransportProtocol::try_from(raw.transport_protocol) {
             Ok(value) => value,
             Err(_) => {
@@ -769,9 +799,7 @@ impl RealtimeCore {
             return None;
         }
         let observed_at_ms = l2_observed_at_ms(transition, raw)?;
-        let refresh_ms = i64::try_from(l2.snapshot_refresh_seconds)
-            .ok()?
-            .saturating_mul(1_000);
+        let refresh_ms = i64::try_from(l2.materialized_snapshot_interval_ms()).ok()?;
         let due = self
             .l2_snapshot_observed_at_ms
             .get(binding_key)
@@ -1103,6 +1131,7 @@ mod tests {
             provider_protocol: L2ProviderProtocol::BinanceDiffDepth,
             depth_per_side: 100,
             snapshot_refresh_seconds: 30,
+            materialized_snapshot_interval_ms: None,
         });
         result
     }
@@ -1124,6 +1153,7 @@ mod tests {
             provider_protocol: L2ProviderProtocol::OkxPublicBooks,
             depth_per_side: 100,
             snapshot_refresh_seconds: 30,
+            materialized_snapshot_interval_ms: None,
         });
         result
     }
@@ -1272,6 +1302,71 @@ mod tests {
     }
 
     #[test]
+    fn binance_l2_hot_materialization_is_independent_of_provider_refresh() {
+        let mut binding = binance_book_binding();
+        let l2 = binding.l2.as_mut().expect("L2 binding");
+        l2.materialized_snapshot_interval_ms = Some(1_000);
+        assert_eq!(l2.snapshot_refresh_seconds, 30);
+        let mut core = core(binding.clone(), true);
+
+        let buffered = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":101,"u":101,"E":1000,"b":[["60000","1"]],"a":[]}"#,
+                    1,
+                ),
+                11,
+            )
+            .unwrap();
+        assert!(buffered.canonical.is_empty());
+
+        let initial = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                12,
+            )
+            .unwrap();
+        assert_eq!(initial.canonical.len(), 1);
+
+        let early = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":102,"u":102,"pu":101,"E":1999,"b":[["60000","2"]],"a":[]}"#,
+                    1,
+                ),
+                13,
+            )
+            .unwrap();
+        assert_eq!(early.canonical.len(), 1);
+
+        let due = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":103,"u":103,"pu":102,"E":2000,"b":[["60000","3"]],"a":[]}"#,
+                    1,
+                ),
+                14,
+            )
+            .unwrap();
+        assert_eq!(due.canonical.len(), 2);
+        let snapshot = EventEnvelope::decode(due.canonical[1].payload.as_slice()).unwrap();
+        assert!(matches!(
+            snapshot.payload,
+            Some(event_envelope::Payload::BookSnapshot(_))
+        ));
+    }
+
+    #[test]
     fn binance_l2_due_keepalive_materializes_current_verified_view() {
         let binding = binance_book_binding();
         let mut core = core(binding.clone(), true);
@@ -1367,6 +1462,50 @@ mod tests {
         assert_eq!(gap.quarantines.len(), 1);
         let evidence = QuarantineRecord::decode(gap.quarantines[0].payload.as_slice()).unwrap();
         assert_eq!(evidence.reason, QuarantineReason::SequenceGap as i32);
+    }
+
+    #[test]
+    fn stale_l2_raw_is_quarantined_without_redating_and_fresh_snapshot_recovers() {
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let stale = with_transport(
+            raw(
+                &binding,
+                br#"{"lastUpdateId":100,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                1,
+            ),
+            TransportProtocol::Http,
+        );
+        let processing_at_ns = stale.received_at_ns + 30_000_000_001;
+        let rejected = core.process(stale, processing_at_ns).unwrap();
+        assert!(rejected.canonical.is_empty());
+        assert_eq!(rejected.quarantines.len(), 1);
+        let evidence =
+            QuarantineRecord::decode(rejected.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(evidence.reason, QuarantineReason::SemanticInvalid as i32);
+        assert_eq!(evidence.quarantined_at_ns, processing_at_ns);
+        assert!(evidence.safe_summary.contains("renewal bound"));
+
+        let mut fresh_delta = raw(
+            &binding,
+            br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+            2,
+        );
+        fresh_delta.received_at_ns = processing_at_ns;
+        let buffered = core.process(fresh_delta, processing_at_ns).unwrap();
+        assert!(buffered.canonical.is_empty());
+
+        let mut fresh_snapshot = with_transport(
+            raw(
+                &binding,
+                br#"{"lastUpdateId":100,"bids":[["60000","2"]],"asks":[["60001","1"]]}"#,
+                2,
+            ),
+            TransportProtocol::Http,
+        );
+        fresh_snapshot.received_at_ns = processing_at_ns;
+        let recovered = core.process(fresh_snapshot, processing_at_ns).unwrap();
+        assert_eq!(recovered.canonical.len(), 1);
     }
 
     #[test]

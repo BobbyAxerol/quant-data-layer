@@ -41,6 +41,7 @@ from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
 from qdl.reference.batch import ReferenceBatch
 from qdl.reference.contracts import (
     ReferenceBatchResult,
+    ReferenceProduct,
     ReferenceRequest,
     ReferenceStatus,
 )
@@ -338,6 +339,9 @@ class V2QueryService:
                 raise
 
         def provider(requirement: DataRequirement) -> str:
+            local = getattr(self.backend, "warmup_is_local", None)
+            if callable(local) and local(requirement):
+                return "LOCAL_CANONICAL_CACHE"
             try:
                 return self.instruments.get(requirement.instrument_uid).identity.venue
             except KeyError:
@@ -518,10 +522,12 @@ class V2QueryService:
             admitted.append((index, requirement, request))
 
         async def work(
-            candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest]
+            candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest],
+            *,
+            bypass_cache: bool = False,
         ) -> ReferenceBatchResult:
             _index, _requirement, request = candidate
-            result = await self.reference_batch.fetch_one(request)
+            result = await self.reference_batch.fetch_one(request, bypass_cache=bypass_cache)
             # Rust provider admission deliberately communicates bounded
             # pressure through a typed retry delay.  Keep Rust as the only
             # admission authority and let the shared executor honor that
@@ -543,7 +549,49 @@ class V2QueryService:
             provider=lambda candidate: candidate[2].instrument.identity.venue,
             deadline_ms=lambda candidate: candidate[1].deadline_ms,
         )
+
+        # Revalidate after every bounded initial task has returned. A current
+        # mark/index snapshot can become stale while another item in the same
+        # batch finishes. Refresh those exact current-at-receipt snapshots
+        # once here, immediately before response assembly. A transient stale
+        # provider MARK/INDEX row gets the same one bounded, cache-bypassing
+        # re-read; any still-stale result remains fail-closed.
+        refresh_candidates = []
         for execution in executions:
+            if execution.error is not None or execution.value is None:
+                continue
+            _index, requirement, request = execution.item
+            problem = self._reference_problem(requirement, request, execution.value)
+            if (
+                problem is not None
+                and problem.code is CanonicalErrorCode.DATA_STALE
+                and self._reference_snapshot_requires_refresh(
+                    requirement,
+                    request,
+                    execution.value,
+                )
+            ):
+                refresh_candidates.append(execution.item)
+        refresh_by_index = {candidate[0]: candidate for candidate in refresh_candidates}
+
+        for initial_execution in executions:
+            execution = initial_execution
+            refresh_candidate = refresh_by_index.get(initial_execution.item[0])
+            if refresh_candidate is not None:
+                # A bounded batch refresh can itself make an early MARK/INDEX
+                # result stale before response assembly. Re-read and validate
+                # this exact already-admitted item at its assembly turn instead.
+                # It is still one cache-bypass recovery through the same
+                # provider lane; a second stale result remains fail-closed.
+                execution = (
+                    await self.warmup_executor.execute(
+                        (refresh_candidate,),
+                        work=lambda candidate: work(candidate, bypass_cache=True),
+                        identity=lambda candidate: candidate[2].cache_key,
+                        provider=lambda candidate: candidate[2].instrument.identity.venue,
+                        deadline_ms=lambda candidate: candidate[1].deadline_ms,
+                    )
+                )[0]
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)
@@ -589,6 +637,64 @@ class V2QueryService:
             },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
+
+    def _reference_snapshot_requires_refresh(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> bool:
+        """Allow one recovery read for a freshness-governed mark/index snapshot.
+
+        A batch can age an otherwise current cache entry while unrelated work
+        completes. Separately, exchanges can expose a briefly delayed mark or
+        index timestamp even though the same declared provider lane is current
+        on the immediate next read. Both cases get one cache-bypassing re-read
+        through the same bounded admission path. This deliberately excludes
+        history and every other reference product: no freshness bound is
+        relaxed and a second stale observation remains terminal.
+        """
+
+        if self._reference_snapshot_was_current_at_receipt(
+            requirement,
+            request,
+            result,
+        ):
+            return True
+        return (
+            requirement.max_freshness_ms is not None
+            and not request.is_history
+            and request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and result.status is ReferenceStatus.OK
+        )
+
+    def _reference_snapshot_was_current_at_receipt(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> bool:
+        """Identify an internally aged current snapshot without masking source staleness."""
+
+        freshness_ms = requirement.max_freshness_ms
+        if (
+            freshness_ms is None
+            or request.is_history
+            or result.status is not ReferenceStatus.OK
+            or result.received_at_ns <= 0
+        ):
+            return False
+        newest_observed_ns = max(
+            (item.observed_at_ns for item in result.observations),
+            default=0,
+        )
+        if newest_observed_ns <= 0:
+            return False
+        source_age_at_receipt_ms = max(
+            0,
+            (result.received_at_ns - newest_observed_ns) // 1_000_000,
+        )
+        return source_age_at_receipt_ms <= freshness_ms
 
     def _reference_problem(
         self,

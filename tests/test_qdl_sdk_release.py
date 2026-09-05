@@ -28,11 +28,12 @@ class QdlSdkReleaseTests(unittest.TestCase):
                 self.assertIn("qdl/query/v2/query_pb2.py", names)
                 self.assertIn("qdl/marketdata/v2/market_data_pb2.py", names)
                 self.assertFalse(any(name.startswith("qdl/api_v2/") for name in names))
-                record_name = "qdl_sdk-2.0.0.dist-info/RECORD"
+                record_name = f"qdl_sdk-{first_result['version']}.dist-info/RECORD"
                 rows = list(csv.reader(io.StringIO(archive.read(record_name).decode())))
                 self.assertEqual({row[0] for row in rows}, names)
             release = json.loads(Path(first_result["manifest"]).read_text())
             self.assertFalse(release["contains_service_internals"])
+            self.assertEqual(release["version"], "2.0.1")
             self.assertEqual(len(release["generated_contract_digest"]), 64)
             sbom = json.loads(Path(first_result["sbom"]).read_text())
             self.assertEqual(sbom["bomFormat"], "CycloneDX")

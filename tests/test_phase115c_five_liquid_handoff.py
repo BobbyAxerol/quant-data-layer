@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ from qdl.demand import (
 )
 from qdl.runtime.production_catalog import ProductionDemandManifest
 from qdl_sdk import DataRequirement, Feed, FeedStatusResponse, Grade, StalePolicy
-from scripts.phase103_consumer_receipt_acceptance import _quiet_trade_status_is_observable
+from scripts.phase103_consumer_receipt_acceptance import _quiet_continuity_status_is_observable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -249,7 +250,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
     def _product(requirement: DataRequirement) -> SimpleNamespace:
         return SimpleNamespace(
             delivery=DeliveryClass.DURABLE,
-            feed=Feed.TRADE,
+            feed=requirement.feed,
             requirement=requirement,
         )
 
@@ -264,7 +265,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
         return FeedStatusResponse.model_validate({
             "schema": "qdl.feed-status.v2",
             "instrument_uid": instrument_uid or requirement.instrument_uid,
-            "feed": "TRADE",
+            "feed": requirement.feed.value,
             "quality": {
                 "state": "LIVE",
                 "freshness_ms": 15_001,
@@ -286,7 +287,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
                 requirement = self._trade_requirement(instrument_uid)
                 product = self._product(requirement)
                 self.assertTrue(
-                    _quiet_trade_status_is_observable(
+                    _quiet_continuity_status_is_observable(
                         product, requirement, self._status(requirement)
                     )
                 )
@@ -294,7 +295,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
                     value for value in OKX_TRADE_UIDS.values() if value != instrument_uid
                 )
                 self.assertFalse(
-                    _quiet_trade_status_is_observable(
+                    _quiet_continuity_status_is_observable(
                         product,
                         requirement,
                         self._status(requirement, instrument_uid=other_uid),
@@ -306,7 +307,7 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             with self.subTest(symbol=symbol, failure="disconnected"):
                 requirement = self._trade_requirement(instrument_uid)
                 self.assertFalse(
-                    _quiet_trade_status_is_observable(
+                    _quiet_continuity_status_is_observable(
                         self._product(requirement),
                         requirement,
                         self._status(
@@ -317,12 +318,58 @@ class Phase115CFiveLiquidHandoffTests(unittest.TestCase):
             with self.subTest(symbol=symbol, failure="gap"):
                 requirement = self._trade_requirement(instrument_uid)
                 self.assertFalse(
-                    _quiet_trade_status_is_observable(
+                    _quiet_continuity_status_is_observable(
                         self._product(requirement),
                         requirement,
                         self._status(requirement, gap_open=True),
                     )
                 )
+
+    def test_five_okx_book_delta_statuses_are_quiet_safe_and_fail_closed(self) -> None:
+        for symbol, instrument_uid in OKX_TRADE_UIDS.items():
+            with self.subTest(symbol=symbol, result="quiet-live"):
+                requirement = replace(
+                    self._trade_requirement(instrument_uid),
+                    feed=Feed.BOOK_DELTA,
+                    max_freshness_ms=2_000,
+                )
+                product = self._product(requirement)
+                self.assertTrue(
+                    _quiet_continuity_status_is_observable(
+                        product, requirement, self._status(requirement)
+                    )
+                )
+                blocked = replace(requirement, event_recency_policy=None)
+                self.assertFalse(
+                    _quiet_continuity_status_is_observable(
+                        self._product(blocked), blocked, self._status(blocked)
+                    )
+                )
+            for provider_session_state, gap_open in (
+                ("DISCONNECTED", False),
+                ("LIVE", True),
+            ):
+                with self.subTest(
+                    symbol=symbol,
+                    provider_session_state=provider_session_state,
+                    gap_open=gap_open,
+                ):
+                    requirement = replace(
+                        self._trade_requirement(instrument_uid),
+                        feed=Feed.BOOK_DELTA,
+                        max_freshness_ms=2_000,
+                    )
+                    self.assertFalse(
+                        _quiet_continuity_status_is_observable(
+                            self._product(requirement),
+                            requirement,
+                            self._status(
+                                requirement,
+                                provider_session_state=provider_session_state,
+                                gap_open=gap_open,
+                            ),
+                        )
+                    )
 
     def test_five_okx_trade_reconnect_rejects_duplicate_or_stale_cursor(self) -> None:
         """Each symbol keeps a strictly advancing durable resume cursor."""

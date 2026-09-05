@@ -723,9 +723,11 @@ class BinanceUsdmReferenceAdapter:
         while pages < request.max_pages and len(selected) < request.limit:
             logical_start = cursor_start if direction == "FORWARD" else request.start_ms
             logical_end = request.end_ms if direction == "FORWARD" else cursor_end
+            provider_start = logical_start
+            provider_end = logical_end + boundary_tolerance_ms
             response = await page(
-                logical_start + provider_time_offset_ms,
-                logical_end + provider_time_offset_ms,
+                provider_start + provider_time_offset_ms,
+                provider_end + provider_time_offset_ms,
                 min(per_page, request.limit - len(selected)),
             )
             data = self._response_data(response, endpoint)
@@ -740,15 +742,21 @@ class BinanceUsdmReferenceAdapter:
                 if not isinstance(row, Mapping):
                     raise ReferenceProviderError(f"Binance {endpoint} history row has invalid shape")
                 page_observations.append(parser(row))
-            page_times = [item.observed_at_ns // 1_000_000 for item in page_observations]
+            # Some Binance history products identify a completed sampling period
+            # by its provider-side open timestamp but expose the canonical
+            # observation at period close for freshness. Pagination and
+            # coverage must remain in the provider's logical open-time domain.
+            page_times = [self._pagination_time_ms(item) for item in page_observations]
             oldest = min(page_times)
             newest = max(page_times)
             if direction == "FORWARD" and newest < cursor_start:
                 raise ReferenceProviderError(f"Binance {endpoint} forward pagination made no progress")
             if direction == "BACKWARD" and oldest > cursor_end:
                 raise ReferenceProviderError(f"Binance {endpoint} backward pagination made no progress")
+            lower_selection_bound = request.start_ms
+            upper_selection_bound = request.end_ms + boundary_tolerance_ms
             for item, timestamp_ms in zip(page_observations, page_times):
-                if request.start_ms <= timestamp_ms <= request.end_ms:
+                if lower_selection_bound <= timestamp_ms <= upper_selection_bound:
                     prior = selected.get(timestamp_ms)
                     if prior is not None and prior != item:
                         raise ReferenceProviderError(
@@ -935,7 +943,18 @@ class BinanceUsdmReferenceAdapter:
         )
         if not fields:
             raise ReferenceProviderError("Binance taker-flow row has no numeric fields")
-        return self._observation(request, self._timestamp_ns(row, "timestamp"), fields)
+        period_open_ms = self._timestamp_ns(row, "timestamp") // 1_000_000
+        period_close_ms = period_open_ms + canonical_interval_ms(request.interval or "") - 1
+        return self._observation(
+            request,
+            period_close_ms * 1_000_000,
+            fields,
+            labels=(
+                ("period_open_time_ms", str(period_open_ms)),
+                ("period_close_time_ms", str(period_close_ms)),
+                ("timestamp_origin", "PROVIDER_PERIOD_START"),
+            ),
+        )
 
     def _mark_index_observation(
         self, request: ReferenceRequest, row: Mapping[str, Any], received_at_ns: int
@@ -1008,14 +1027,19 @@ class BinanceUsdmReferenceAdapter:
         )
         if not fields:
             raise ReferenceProviderError("Binance basis row has no numeric fields")
+        period_open_ms = self._timestamp_ns(row, "timestamp") // 1_000_000
+        period_close_ms = period_open_ms + canonical_interval_ms(request.interval or "") - 1
         return self._observation(
             request,
-            self._timestamp_ns(row, "timestamp"),
+            period_close_ms * 1_000_000,
             fields,
             labels=(
                 ("basis_series", request.basis_series.value),
                 ("contract_selector", expected_contract),
                 ("pair", pair),
+                ("period_open_time_ms", str(period_open_ms)),
+                ("period_close_time_ms", str(period_close_ms)),
+                ("timestamp_origin", "PROVIDER_PERIOD_START"),
             ),
         )
 
@@ -1103,6 +1127,27 @@ class BinanceUsdmReferenceAdapter:
         if timestamp_ms <= 0:
             raise ReferenceProviderError(f"Binance reference timestamp {key} must be positive")
         return timestamp_ms * 1_000_000
+
+    @staticmethod
+    def _pagination_time_ms(observation: ReferenceObservation) -> int:
+        """Return the provider's logical history coordinate for pagination.
+
+        Period-start products keep their raw coordinate in lineage labels while
+        ``observed_at_ns`` represents the completed period close used by V2
+        freshness checks. Other products continue to paginate by observation
+        timestamp.
+        """
+
+        period_open = dict(observation.labels).get("period_open_time_ms")
+        if period_open is None:
+            return observation.observed_at_ns // 1_000_000
+        try:
+            period_open_ms = int(period_open)
+        except ValueError as error:
+            raise ReferenceProviderError("Binance reference period-open label is invalid") from error
+        if period_open_ms <= 0:
+            raise ReferenceProviderError("Binance reference period-open label must be positive")
+        return period_open_ms
 
     @staticmethod
     def _filter_value(row: Mapping[str, Any], filter_type: str, key: str) -> object | None:

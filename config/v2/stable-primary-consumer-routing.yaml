@@ -1,5 +1,5 @@
 schema: qdl.v2.shared-primary-consumer-route.v1
-revision: 3
+revision: 4
 contract_version: 2.0.0
 target_route: V2_PRIMARY
 rollback_route: V1

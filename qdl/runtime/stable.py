@@ -31,6 +31,7 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
 from qdl.runtime.stable_deployment import validate_shared_authority_record
 from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
@@ -60,6 +61,40 @@ from qdl.transport.kafka_projector import (
 
 
 logger = logging.getLogger(__name__)
+
+
+_STABLE_SPOOL_RECORD_FLOOR = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class StableSpoolCapacity:
+    """Catalog-derived hard bounds for the shared canonical replay cache."""
+
+    physical_partitions: int
+    max_partition_records: int
+    max_records: int
+
+
+def stable_spool_capacity(catalog: StableSourceCatalog) -> StableSpoolCapacity:
+    """Keep global capacity compatible with the catalog's physical windows.
+
+    Snapshot and delta bindings for a single book deliberately share one
+    partition. The record bound must therefore count physical keys rather than
+    logical product requirements, otherwise a larger manifest can deadlock the
+    shared cache before any declared partition window is reached.
+    """
+
+    physical_partitions = len({binding.partition_key for binding in catalog.bindings})
+    if physical_partitions <= 0:
+        raise ValueError("stable spool requires at least one physical partition")
+    return StableSpoolCapacity(
+        physical_partitions=physical_partitions,
+        max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+        max_records=max(
+            _STABLE_SPOOL_RECORD_FLOOR,
+            physical_partitions * STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+        ),
+    )
 
 
 def _env_flag(
@@ -156,6 +191,8 @@ class StableRuntimeConfig:
     stream_ingest_urls: tuple[str, ...] = ()
     max_pending_records: int = 10_000
     max_pending_bytes: int = 256 * 1024 * 1024
+    projector_max_batch_records: int = 128
+    projector_max_batch_bytes: int = 8 * 1024 * 1024
     # Off unless a deployment turns it on. Declaring catalog metadata for an
     # instrument must never open the pass-through product by itself.
     pass_through_enabled: bool = False
@@ -222,6 +259,13 @@ class StableRuntimeConfig:
             raise ValueError("stable runtime ports/bounds must be positive")
         if self.max_buffer_events > 10_000 or self.max_replay_events > 10_000:
             raise ValueError("stable stream/replay bounds exceed contract maximum")
+        if self.role == "projector_v2":
+            if not 1 <= self.projector_max_batch_records <= 512:
+                raise ValueError("stable projector batch bound must be 1..512")
+            if self.max_pending_records < self.projector_max_batch_records:
+                raise ValueError("stable projector pending records must cover one batch")
+            if not 1 <= self.projector_max_batch_bytes <= self.max_pending_bytes:
+                raise ValueError("stable projector batch byte bound is invalid")
         if not 5 <= self.lease_ttl_seconds <= 300 or not (
             0 < self.lease_renew_seconds < self.lease_ttl_seconds
         ):
@@ -318,6 +362,12 @@ class StableRuntimeConfig:
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
+            projector_max_batch_records=int(
+                env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS", "128")
+            ),
+            projector_max_batch_bytes=int(
+                env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES", "8388608")
+            ),
             pass_through_enabled=_env_flag(
                 env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
             ),
@@ -383,6 +433,15 @@ def stable_uvicorn_tls(config: StableRuntimeConfig) -> dict[str, object]:
     }
 
 
+def stable_request_bounds(config: StableRuntimeConfig) -> RequestBounds:
+    """Keep query and internal stream ingress on one configured deadline."""
+    return RequestBounds(
+        max_request_bytes=config.max_request_bytes,
+        request_deadline_seconds=config.request_deadline_seconds,
+        max_concurrent_requests=config.max_concurrent_requests,
+    )
+
+
 def stable_grpc_server_credentials(
     config: StableRuntimeConfig,
 ) -> grpc.ServerCredentials:
@@ -412,11 +471,14 @@ def build_stable_identity(
     return DataPlaneIdentityService(security, manifests, quota=quota)
 
 
-def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
+def build_stable_spool(
+    config: StableRuntimeConfig, catalog: StableSourceCatalog
+) -> SQLiteDurableSpool:
     config.durable_state_dir.mkdir(parents=True, exist_ok=True)
+    capacity = stable_spool_capacity(catalog)
     return SQLiteDurableSpool(SpoolConfig(
         path=config.durable_state_dir / "canonical-cache.sqlite3",
-        max_records=1_000_000,
+        max_records=capacity.max_records,
         max_payload_bytes=2 * 1024 * 1024 * 1024,
         max_storage_bytes=3 * 1024 * 1024 * 1024,
         max_partitions=100_000,
@@ -424,7 +486,9 @@ def build_stable_spool(config: StableRuntimeConfig) -> SQLiteDurableSpool:
         min_free_disk_bytes=512 * 1024 * 1024,
         consumer_ttl_seconds=config.cursor_ttl_seconds,
         replay_retention_seconds=24 * 3600,
-        max_partition_records=10_000,
+        max_partition_records=capacity.max_partition_records,
+        retain_partition_windows=True,
+        verify_integrity_on_open=False,
     ))
 
 
@@ -451,10 +515,13 @@ def stable_readiness(
     extra_probes=(),
 ) -> MeasuredRuntimeReadiness:
     async def cache():
-        stats = await asyncio.to_thread(spool.stats)
+        summary = await asyncio.to_thread(spool.readiness_summary)
         return _ready(
             "query_cache",
-            detail=f"bounded rebuildable cache records={stats.records} utilization={stats.utilization:.6f}",
+            detail=(
+                "bounded rebuildable cache readable "
+                f"records={summary.records} payload_bytes={summary.payload_bytes}"
+            ),
         )
 
     async def redis_probe():
@@ -517,8 +584,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
-    spool = build_stable_spool(config)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
     handoff = build_stable_handoff(config, spool)
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
@@ -539,11 +606,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     app = create_v2_app(
         service, identity_service=identity, readiness_service=readiness,
         cursor_issuer=issuer,
-        request_bounds=RequestBounds(
-            max_request_bytes=config.max_request_bytes,
-            request_deadline_seconds=config.request_deadline_seconds,
-            max_concurrent_requests=config.max_concurrent_requests,
-        ),
+        request_bounds=stable_request_bounds(config),
         contract_version="2.0.0", authority="INTERNAL_STABLE",
     )
     app.state.runtime_manifest = config.public_manifest()
@@ -596,9 +659,9 @@ def create_stable_stream_runtime(
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
-    spool = build_stable_spool(config)
-    handoff = build_stable_handoff(config, spool)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
+    handoff = build_stable_handoff(config, spool)
     async_redis = AsyncRedis.from_url(config.redis_url, decode_responses=True)
     lease = ActivePassiveGatewayLease(
         RedisGatewayLeaseStore(async_redis, prefix=config.redis_prefix),
@@ -644,10 +707,7 @@ def create_stable_stream_runtime(
     )
     app.add_middleware(
         BoundedRequestMiddleware,
-        bounds=RequestBounds(
-            max_request_bytes=config.max_request_bytes,
-            max_concurrent_requests=config.max_concurrent_requests,
-        ),
+        bounds=stable_request_bounds(config),
     )
     install_stable_health(app, readiness, config.public_manifest())
     install_stable_canonical_ingest(
@@ -688,8 +748,8 @@ async def serve_stable_projector() -> None:
     config = StableRuntimeConfig.from_environment("projector_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
-    spool = build_stable_spool(config)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    spool = build_stable_spool(config, catalog)
     assert config.kafka_cert_root is not None
     assert config.kafka_bootstrap_servers is not None
     assert config.kafka_client_id is not None
@@ -723,11 +783,11 @@ async def serve_stable_projector() -> None:
         namespace=config.redis_prefix.rstrip(":"),
         dedicated_database=True,
     )
-    spool_stats = await asyncio.to_thread(spool.stats)
+    spool_usage = await asyncio.to_thread(spool.readiness_summary)
     await asyncio.to_thread(
         target.bind_cache,
         spool.cache_id,
-        initialize_if_missing=spool_stats.records == 0,
+        initialize_if_missing=spool_usage.records == 0,
     )
     active_broker: list[ConfluentProjectorBroker | None] = [None]
 
@@ -744,7 +804,8 @@ async def serve_stable_projector() -> None:
             target=target,
             max_pending_records=config.max_pending_records,
             max_pending_bytes=config.max_pending_bytes,
-            max_batch_records=512,
+            max_batch_records=config.projector_max_batch_records,
+            max_batch_bytes=config.projector_max_batch_bytes,
             batch_wait_seconds=0.01,
         )
 

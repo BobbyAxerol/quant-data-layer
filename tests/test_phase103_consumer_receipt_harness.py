@@ -7,17 +7,22 @@ from types import SimpleNamespace
 import tempfile
 import time
 import unittest
-from unittest.mock import ANY, call, patch
+from unittest.mock import ANY, AsyncMock, call, patch
 
 from scripts.phase103_consumer_receipt_acceptance import (
+    C2StatusEvidenceError,
+    _c2_requirement,
+    _certify_product,
     _cursor_directory,
     _historical_bar_replay_requirement,
+    _replay_precedes_handoff,
     _strict_snapshot_for_c2,
     _strict_warmup_then_stream_for_c2,
     _stream_handoff_mode,
     _stream_resume,
     _uses_historical_bar_replay,
     _validated_packet,
+    compact_feed_status,
     parser,
 )
 from scripts.phase103_prepare_shared_primary_packet import (
@@ -46,13 +51,61 @@ from qdl_sdk import (
     StalePolicy,
     StreamEvent,
 )
+from qdl_sdk.models import SnapshotResponse
 from qdl_sdk.errors import ContinuityError, DataLayerError
+from qdl.adapters.intervals import canonical_interval_ms, provider_bar_calendar_anchor_ms
+from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
+    def test_reconnect_replay_before_new_handoff_is_state_only(self):
+        self.assertTrue(_replay_precedes_handoff(logical_offset=40, watermark_offset=40))
+        self.assertTrue(_replay_precedes_handoff(logical_offset=39, watermark_offset=40))
+        self.assertFalse(_replay_precedes_handoff(logical_offset=41, watermark_offset=40))
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            _replay_precedes_handoff(logical_offset=-1, watermark_offset=40)
+
+    def test_c2_bounds_bar_history_without_reducing_the_public_request(self):
+        requirement = DataRequirement(
+            instrument_uid="bar-uid",
+            feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="12h",
+            warmup_limit=10_000,
+            max_freshness_ms=86_400_000,
+        )
+        bounded = _c2_requirement(requirement)
+        self.assertEqual(requirement.warmup_limit, 10_000)
+        self.assertEqual(bounded.warmup_limit, 700)
+
+    def test_c2_uses_the_shared_durable_capacity_for_calendar_bars(self):
+        requirement = DataRequirement(
+            instrument_uid="bar-uid",
+            feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1w",
+            warmup_limit=10_000,
+            max_freshness_ms=604_800_000,
+        )
+        bounded = _c2_requirement(requirement)
+        self.assertEqual(durable_bar_history_capacity_rows("1w"), 156)
+        self.assertEqual(bounded.warmup_limit, 156)
+
+    def test_c2_keeps_non_bar_requirement_exact(self):
+        requirement = DataRequirement(
+            instrument_uid="trade-uid",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=3_000,
+        )
+        self.assertIs(_c2_requirement(requirement), requirement)
+
     def test_parser_requires_the_sealed_handoff_coordinates(self):
         parsed = parser().parse_args(
             [
@@ -154,6 +207,56 @@ class Phase103ConsumerReceiptHarnessTests(unittest.TestCase):
         self.assertIn("docker run --rm --entrypoint sha256sum", runbook)
 
 
+class Phase103C2StreamOpeningTests(unittest.IsolatedAsyncioTestCase):
+    async def test_certify_product_forwards_the_bounded_stream_open_window(self):
+        product = SimpleNamespace()
+        primary = SimpleNamespace(close=AsyncMock())
+        secondary = SimpleNamespace(close=AsyncMock())
+        stream_resume = AsyncMock(return_value=(None, None, (), ()))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stream-open-window-") as raw:
+            with (
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._receipt_client",
+                    side_effect=(primary, secondary),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._query_product_with_quality",
+                    new=AsyncMock(return_value=("a", "b", 1.0, 2.0, {}, None)),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._stream_resume",
+                    new=stream_resume,
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.compact_receipt_evidence",
+                    return_value={},
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._stream_handoff_mode",
+                    return_value="NOT_APPLICABLE",
+                ),
+            ):
+                await _certify_product(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                    stream_open_timeout_seconds=5.0,
+                )
+
+        stream_resume.assert_awaited_once()
+        self.assertEqual(
+            stream_resume.await_args.kwargs["stream_open_timeout_seconds"],
+            5.0,
+        )
+        primary.close.assert_awaited_once()
+        secondary.close.assert_awaited_once()
+
+
 class Phase103HistoricalBarReplayTests(unittest.TestCase):
     INTERVAL_NS = 15 * 60 * 1_000_000_000
 
@@ -238,6 +341,27 @@ class Phase103HistoricalBarReplayTests(unittest.TestCase):
                 latest_open_time_ns=20 * self.INTERVAL_NS,
             )
 
+    def test_historical_seed_uses_shared_provider_calendar_anchors(self):
+        for interval, venue in (
+            ("1w", "BINANCE"),
+            ("1w", "OKX"),
+            ("3d", "BINANCE"),
+            ("3d", "OKX"),
+        ):
+            interval_ns = canonical_interval_ms(interval) * 1_000_000
+            anchor_ns = provider_bar_calendar_anchor_ms(
+                interval,
+                provider=venue,
+            ) * 1_000_000
+            latest_open_ns = anchor_ns + 20 * interval_ns
+            seed = _historical_bar_replay_requirement(
+                self._requirement(interval=interval),
+                latest_open_time_ns=latest_open_ns,
+                calendar_provider=venue,
+            )
+
+            self.assertEqual(seed.warmup.time_range.start_time_ns, latest_open_ns - 2 * interval_ns)
+            self.assertEqual(seed.warmup.time_range.end_time_ns, latest_open_ns - interval_ns)
     def test_historical_replay_applies_only_to_non_execution_durable_bars(self):
         self.assertTrue(_uses_historical_bar_replay(self._product()))
         self.assertFalse(
@@ -251,16 +375,32 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
     INTERVAL_NS = 15 * 60 * 1_000_000_000
 
     class _Session:
-        def __init__(self, *, warmup, items):
+        def __init__(
+            self,
+            *,
+            warmup,
+            items,
+            quiet: bool = False,
+            first_item_delay_seconds: float = 0.0,
+        ):
             self.warmup = warmup
             self._items = iter(items)
+            self._quiet = quiet
+            self._first_item_delay_seconds = first_item_delay_seconds
+            self._first_item_pending = True
             self.acknowledged = []
 
         async def __anext__(self):
+            if self._first_item_pending:
+                self._first_item_pending = False
+                if self._first_item_delay_seconds:
+                    await asyncio.sleep(self._first_item_delay_seconds)
             await asyncio.sleep(0)
             try:
                 return next(self._items)
             except StopIteration as error:
+                if self._quiet:
+                    await asyncio.Event().wait()
                 raise StopAsyncIteration from error
 
         def acknowledge(self, event):
@@ -277,11 +417,13 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             return False
 
     class _Client:
-        def __init__(self, *, strict_warmup, session):
+        def __init__(self, *, strict_warmup, session, snapshots=()):
             self.strict_warmup = strict_warmup
             self.session = session
+            self._snapshots = iter(snapshots)
             self.warmup_calls = []
             self.stream_calls = []
+            self.snapshot_calls = []
             self.closed = False
 
         async def warmup(self, requirement):
@@ -291,6 +433,13 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         def warmup_then_stream(self, requirement, *, resume_restored_state=False):
             self.stream_calls.append((requirement, resume_restored_state))
             return Phase103HistoricalBarReplayResumeTests._SessionContext(self.session)
+
+        async def snapshot(self, requirement):
+            self.snapshot_calls.append(requirement)
+            try:
+                return next(self._snapshots)
+            except StopIteration as error:
+                raise AssertionError("unexpected strict historical BAR snapshot") from error
 
         async def close(self):
             self.closed = True
@@ -321,7 +470,7 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
             stale_policy=StalePolicy.BLOCK,
         )
 
-    async def test_non_execution_bar_replays_retained_offsets_across_replicas(self):
+    async def test_non_execution_bar_uses_current_handoff_boundary_across_replicas(self):
         product = self._product()
         requirement = self._requirement()
         strict_view = SimpleNamespace(
@@ -340,9 +489,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
         resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
         projected = []
+        current = SimpleNamespace(data=SimpleNamespace())
 
-        def project(event, *, template, requirement):
-            projected.append((event.logical_offset, template, requirement))
+        def project(event, *, template, requirement, **kwargs):
+            projected.append((event.logical_offset, template, requirement, kwargs))
             return SimpleNamespace(logical_offset=event.logical_offset)
 
         with tempfile.TemporaryDirectory(prefix="qdl-c2-historical-bar-") as raw:
@@ -351,6 +501,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
                 patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", side_effect=project),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=current,
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -363,44 +517,50 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(result, (39, 40, ("REPLAYING",), ()))
-        self.assertEqual(first_client.warmup_calls, [requirement])
+        self.assertEqual(first_client.warmup_calls, [])
         self.assertTrue(first_client.closed)
         self.assertTrue(resumed_client.closed)
         self.assertEqual(first_session.acknowledged, [first])
         self.assertEqual(resumed_session.acknowledged, [resumed])
-        seed_requirement, first_resume = first_client.stream_calls[0]
+        stream_requirement, first_resume = first_client.stream_calls[0]
         resumed_requirement, resumed_flag = resumed_client.stream_calls[0]
         self.assertFalse(first_resume)
         self.assertTrue(resumed_flag)
-        self.assertIs(seed_requirement, resumed_requirement)
-        self.assertEqual(seed_requirement.warmup.time_range.start_time_ns, 18 * self.INTERVAL_NS)
-        self.assertEqual(seed_requirement.warmup.time_range.end_time_ns, 19 * self.INTERVAL_NS)
-        self.assertEqual([offset for offset, _template, _requirement in projected], [39, 40])
-        self.assertTrue(all(item[2] is seed_requirement for item in projected))
-        self.assertEqual(validate.call_args_list[0], call(product, strict_view))
+        self.assertEqual(stream_requirement, requirement)
+        self.assertEqual(resumed_requirement, requirement)
+        self.assertEqual([item[0] for item in projected], [39, 40])
+        self.assertTrue(all(item[2] == requirement for item in projected))
+        self.assertEqual(projected[0][3], {})
+        self.assertEqual(projected[1][3], {"replay_only": True})
+        readback.assert_awaited_once()
         self.assertEqual(
-            validate.call_args_list[1:],
+            validate.call_args_list,
             [
-                call(product, ANY, require_current_quality=False),
-                call(product, ANY, require_current_quality=False),
+                call(product, ANY, require_current_quality=True),
+                call(product, ANY, require_current_quality=False, state_replay=True),
+                call(product, current.data),
             ],
         )
 
-    async def test_non_execution_bar_drains_bounded_replay_to_strict_watermark(self):
+    async def test_non_execution_bar_replay_revalidates_current_snapshot_after_large_backfill_tail(self):
         product = self._product()
         requirement = self._requirement()
         strict_view = SimpleNamespace(
             payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
         )
         seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
-        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=42)
-        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
-        first = StreamEvent(39, "resume-39", object())
-        resumed = tuple(StreamEvent(offset, f"resume-{offset}", object()) for offset in (40, 41, 42))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=11_024)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=10_004)
+        first = StreamEvent(10_005, "resume-10005", object())
+        resumed = tuple(
+            StreamEvent(offset, f"resume-{offset}", object())
+            for offset in (10_006, 10_007, 10_008)
+        )
         first_session = self._Session(warmup=seed_warmup, items=(first,))
         resumed_session = self._Session(warmup=seed_warmup, items=resumed)
         first_client = self._Client(strict_warmup=strict_warmup, session=first_session)
         resumed_client = self._Client(strict_warmup=strict_warmup, session=resumed_session)
+        current = SimpleNamespace(data=SimpleNamespace())
 
         with tempfile.TemporaryDirectory(prefix="qdl-c2-historical-drain-") as raw:
             with (
@@ -408,6 +568,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
                 patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=current,
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -419,14 +583,399 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                     timeout_seconds=1.0,
                 )
 
-        self.assertEqual(result, (39, 42, (), ()))
+        self.assertEqual(result, (10_005, 10_006, (), ()))
         self.assertEqual(first_session.acknowledged, [first])
-        self.assertEqual(resumed_session.acknowledged, list(resumed))
+        self.assertEqual(resumed_session.acknowledged, [resumed[0]])
+        readback.assert_awaited_once()
+
+    async def test_non_execution_bar_can_be_quiet_only_with_current_signed_controls_and_final_reads(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        resumed_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        resumed_current = SimpleNamespace(data=SimpleNamespace())
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(first_current,),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+            snapshots=(resumed_current,),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"),
+            ),
+        )
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+                no_event_sessions=result[3],
+            ),
+            "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR",
+        )
+        self.assertEqual(first_client.snapshot_calls, [requirement])
+        self.assertEqual(resumed_client.snapshot_calls, [requirement])
+        self.assertEqual(first_client.warmup_calls, [])
+        self.assertEqual(resumed_client.warmup_calls, [])
+        self.assertEqual(first_session.acknowledged, [])
+        self.assertEqual(resumed_session.acknowledged, [])
+        self.assertEqual(first_client.stream_calls, [(requirement, False)])
+        self.assertEqual(resumed_client.stream_calls, [(requirement, False)])
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, first_current.data),
+                call(product, resumed_current.data),
+            ],
+        )
+
+    async def test_quiet_final_bar_then_reopened_event_is_a_valid_no_cursor_handoff(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        seed_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(data=[seed_view], watermark_offset=38)
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(warmup=seed_warmup, items=controls, quiet=True)
+        reopened = StreamEvent(41, "final-bar-after-reopen", object())
+        resumed_session = self._Session(
+            warmup=seed_warmup,
+            items=controls + (reopened,),
+        )
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(first_current,),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-bar-reopen-") as raw:
+            with (
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.sdk_requirement",
+                    return_value=requirement,
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._client",
+                    side_effect=(first_client, resumed_client),
+                ),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    return_value=SimpleNamespace(),
+                ),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "EVENT_AFTER_REOPEN"),
+            ),
+        )
+        self.assertEqual(
+            _stream_handoff_mode(
+                product,
+                acknowledged_offset=result[0],
+                resumed_offset=result[1],
+                no_event_sessions=result[3],
+            ),
+            "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR",
+        )
+        self.assertEqual(resumed_session.acknowledged, [reopened])
+        self.assertEqual(first_client.snapshot_calls, [requirement])
+        self.assertEqual(resumed_client.snapshot_calls, [])
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, first_current.data),
+                call(product, ANY),
+            ],
+        )
+
+    async def test_non_execution_quiet_bar_requires_signed_controls_before_current_read(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(warmup=seed_warmup, items=(), quiet=True),
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-controls-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                self.assertRaisesRegex(ContinuityError, "signed cursor stream"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+        self.assertEqual(client.snapshot_calls, [])
+
+    async def test_non_execution_quiet_bar_allows_paced_open_before_post_open_window(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        first_session = self._Session(
+            warmup=seed_warmup,
+            items=controls,
+            quiet=True,
+            first_item_delay_seconds=0.02,
+        )
+        resumed_session = self._Session(
+            warmup=seed_warmup,
+            items=controls,
+            quiet=True,
+            first_item_delay_seconds=0.02,
+        )
+        first_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=first_session,
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+        resumed_client = self._Client(
+            strict_warmup=strict_warmup,
+            session=resumed_session,
+            snapshots=(SimpleNamespace(data=SimpleNamespace()),),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-paced-quiet-bar-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                    stream_open_timeout_seconds=0.05,
+                )
+
+        self.assertEqual(
+            result,
+            (
+                None,
+                None,
+                ("REPLAYING", "LIVE", "REPLAYING", "LIVE"),
+                ("CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"),
+            ),
+        )
+
+    async def test_non_execution_quiet_bar_keeps_post_open_control_bound(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(
+                warmup=seed_warmup,
+                items=(ControlEvent("REPLAYING", "accepted"),),
+                quiet=True,
+                first_item_delay_seconds=0.02,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-paced-incomplete-controls-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                self.assertRaisesRegex(ContinuityError, "signed cursor stream"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                    stream_open_timeout_seconds=0.05,
+                )
+
+        self.assertEqual(client.snapshot_calls, [])
+
+    async def test_non_execution_quiet_bar_rejects_failed_current_read(self):
+        product = self._product()
+        requirement = self._requirement()
+        strict_view = SimpleNamespace(
+            payload=SimpleNamespace(open_time_ns=20 * self.INTERVAL_NS)
+        )
+        strict_warmup = SimpleNamespace(data=[strict_view], watermark_offset=40)
+        seed_warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=18 * self.INTERVAL_NS))],
+            watermark_offset=38,
+        )
+        controls = (
+            ControlEvent("REPLAYING", "retained BAR replay accepted"),
+            ControlEvent("LIVE", "stream live"),
+        )
+        client = self._Client(
+            strict_warmup=strict_warmup,
+            session=self._Session(warmup=seed_warmup, items=controls, quiet=True),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-quiet-historical-bar-current-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=client),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=ContinuityError("DATA_STALE", "current historical BAR stale"),
+                ),
+                self.assertRaisesRegex(ContinuityError, "current historical BAR stale"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=0.01,
+                )
+
+    async def test_final_bar_event_then_quiet_resume_does_not_wait_for_next_interval(self):
+        product = self._product()
+        requirement = self._requirement()
+        warmup = SimpleNamespace(data=[SimpleNamespace()], watermark_offset=10)
+        first = StreamEvent(11, "signed-11", object())
+        controls = (ControlEvent("REPLAYING", "accepted"), ControlEvent("LIVE", "live"))
+        first_session = self._Session(warmup=warmup, items=(first,))
+        resumed_session = self._Session(warmup=warmup, items=controls, quiet=True)
+        first_client = self._Client(strict_warmup=warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=warmup, session=resumed_session)
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+            patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+            patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
+            patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            patch("scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                  return_value=SimpleNamespace(data=SimpleNamespace())) as current,
+        ):
+            result = await _stream_resume(
+                product, identity=SimpleNamespace(), primary_url="https://primary",
+                secondary_url="https://secondary", grpc_target="stream:8210",
+                state_dir=Path(raw), timeout_seconds=0.01, stream_open_timeout_seconds=0.1,
+            )
+        self.assertEqual(result[:2], (None, None))
+        self.assertEqual(result[3], ("CURSOR_ACKNOWLEDGED", "CURRENT_FINAL_BAR_AFTER_CURSOR"))
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
+        current.assert_awaited_once()
+        self.assertEqual(_stream_handoff_mode(product, acknowledged_offset=None,
+                         resumed_offset=None, no_event_sessions=result[3]),
+                         "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT")
 
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)
         requirement = self._requirement(grade=Grade.EXECUTION)
-        warmup = SimpleNamespace(data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=self.INTERVAL_NS))])
+        warmup = SimpleNamespace(
+            data=[SimpleNamespace(payload=SimpleNamespace(open_time_ns=self.INTERVAL_NS))],
+            watermark_offset=10,
+        )
         first = StreamEvent(10, "resume-10", object())
         resumed = StreamEvent(11, "resume-11", object())
         first_session = self._Session(warmup=warmup, items=(first,))
@@ -440,6 +989,10 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                 patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
                 patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=SimpleNamespace(data=SimpleNamespace()),
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -455,12 +1008,248 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_client.warmup_calls, [])
         self.assertEqual(first_client.stream_calls, [(requirement, False)])
         self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
+        readback.assert_awaited_once()
+
+    async def test_execution_quote_stale_first_frame_requires_current_snapshot_before_resume(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            warmup_limit=0,
+            max_freshness_ms=3_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=3_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        warmup = SimpleNamespace(data=[object()], watermark_offset=9)
+        first = StreamEvent(10, "resume-10", object())
+        resumed = StreamEvent(11, "resume-11", object())
+        first_session = self._Session(warmup=warmup, items=(first,))
+        resumed_session = self._Session(warmup=warmup, items=(resumed,))
+        first_client = self._Client(strict_warmup=warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=warmup, session=resumed_session)
+        first_current = SimpleNamespace(data=SimpleNamespace())
+        resumed_current = SimpleNamespace(data=SimpleNamespace())
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stale-quote-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    side_effect=(
+                        ContinuityError("DATA_STALE", "delayed quote"),
+                        SimpleNamespace(),
+                        SimpleNamespace(),
+                    ),
+                ) as project,
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=(first_current, resumed_current),
+                ) as readback,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (10, 11, (), ()))
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, [resumed])
+        self.assertEqual(readback.await_count, 2)
+        self.assertNotIn("replay_only", project.call_args_list[0].kwargs)
+        self.assertTrue(project.call_args_list[1].kwargs["replay_only"])
+        self.assertTrue(project.call_args_list[2].kwargs["replay_only"])
+        self.assertIn(
+            call(product, first_current.data),
+            validate.call_args_list,
+        )
+        self.assertIn(
+            call(product, resumed_current.data),
+            validate.call_args_list,
+        )
+
+    async def test_execution_quote_stale_first_frame_fails_closed_when_current_snapshot_is_stale(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            warmup_limit=0,
+            max_freshness_ms=3_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=3_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        warmup = SimpleNamespace(data=[object()], watermark_offset=9)
+        first = StreamEvent(10, "resume-10", object())
+        first_client = self._Client(
+            strict_warmup=warmup,
+            session=self._Session(warmup=warmup, items=(first,)),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-stale-quote-block-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", return_value=first_client),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream",
+                    side_effect=(
+                        ContinuityError("DATA_STALE", "delayed quote"),
+                        SimpleNamespace(),
+                    ),
+                ),
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    side_effect=ContinuityError("DATA_STALE", "current quote stale"),
+                ),
+                self.assertRaisesRegex(ContinuityError, "current quote stale"),
+            ):
+                await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+
+class Phase103ReplayReadbackTests(unittest.IsolatedAsyncioTestCase):
+    class _Session:
+        def __init__(self, *, watermark_offset: int, items):
+            self.warmup = SimpleNamespace(data=[object()], watermark_offset=watermark_offset)
+            self._items = iter(items)
+            self.acknowledged = []
+
+        async def __anext__(self):
+            try:
+                return next(self._items)
+            except StopIteration as error:
+                raise StopAsyncIteration from error
+
+        def acknowledge(self, event):
+            self.acknowledged.append(event)
+
+    class _Context:
+        def __init__(self, session):
+            self.session = session
+
+        async def __aenter__(self):
+            return self.session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _Client:
+        def __init__(self, session):
+            self.session = session
+            self.stream_calls = []
+            self.closed = False
+
+        def warmup_then_stream(self, requirement, *, resume_restored_state=False):
+            self.stream_calls.append((requirement, resume_restored_state))
+            return Phase103ReplayReadbackTests._Context(self.session)
+
+        async def close(self):
+            self.closed = True
+
+    async def test_resumed_cursor_frame_requires_a_fresh_readback_before_receipt(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.QUOTE,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(
+            delivery=DeliveryClass.DURABLE,
+            feed=Feed.QUOTE,
+            interval=None,
+            requirement=SimpleNamespace(
+                consumer_grade=Grade.EXECUTION,
+                max_freshness_ms=2_000,
+            ),
+            identity=("trading-system.paper.stable", "instrument", "QUOTE", "", "policy"),
+        )
+        first = StreamEvent(10, "token-10", object())
+        replayed = StreamEvent(11, "token-11", object())
+        first_session = self._Session(watermark_offset=9, items=(first,))
+        # Even an offset after the fresh snapshot watermark is state recovery
+        # in the bounded restored-cursor probe, never a live execution price.
+        resumed_session = self._Session(watermark_offset=10, items=(replayed,))
+        first_client = self._Client(first_session)
+        resumed_client = self._Client(resumed_session)
+        current = SimpleNamespace(data=SimpleNamespace())
+        projected = []
+
+        def project(event, *, template, requirement, **kwargs):
+            projected.append((event.logical_offset, kwargs))
+            return SimpleNamespace()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-c2-replay-readback-") as raw:
+            with (
+                patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+                patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+                patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", side_effect=project),
+                patch("scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2", return_value=current) as readback,
+                patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view") as validate,
+            ):
+                result = await _stream_resume(
+                    product,
+                    identity=SimpleNamespace(),
+                    primary_url="https://query-primary",
+                    secondary_url="https://query-secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path(raw),
+                    timeout_seconds=1.0,
+                )
+
+        self.assertEqual(result, (10, 11, (), ()))
+        self.assertEqual(projected, [(10, {}), (11, {"replay_only": True})])
+        readback.assert_awaited_once()
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_session.acknowledged, [replayed])
+        self.assertEqual(
+            validate.call_args_list,
+            [
+                call(product, ANY, require_current_quality=True),
+                call(product, ANY, require_current_quality=False, state_replay=True),
+                call(product, current.data),
+            ],
+        )
 
 
 class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
     class _Session:
         def __init__(self, *, items=(), quiet: bool = False):
-            self.warmup = SimpleNamespace(data=[object()])
+            self.warmup = SimpleNamespace(data=[object()], watermark_offset=0)
             self._items = iter(items)
             self._quiet = quiet
             self.acknowledged = []
@@ -827,7 +1616,7 @@ class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
             "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT",
         )
 
-    async def test_delivered_observed_trade_keeps_strict_cursor_replay(self):
+    async def test_delivered_observed_trade_uses_state_replay_then_strict_readback(self):
         requirement = self._requirement()
         product = self._product(requirement)
         first = StreamEvent(10, "resume-10", object())
@@ -852,6 +1641,10 @@ class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
                     return_value=SimpleNamespace(),
                 ),
                 patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+                patch(
+                    "scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                    return_value=SimpleNamespace(data=SimpleNamespace()),
+                ) as readback,
             ):
                 result = await _stream_resume(
                     product,
@@ -876,6 +1669,7 @@ class Phase103QuietTradeStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_session.acknowledged, [first])
         self.assertEqual(second_session.acknowledged, [resumed])
         self.assertEqual(second_client.stream_calls, [(requirement, True)])
+        readback.assert_awaited_once()
 
     async def test_quiet_trade_rejects_disconnected_stale_session_gap_and_wrong_policy(self):
         requirement = self._requirement()
@@ -992,7 +1786,8 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
     class _Client:
         def __init__(self, snapshots, status):
             self._snapshots = iter(snapshots)
-            self._status = status
+            self._statuses = iter(status) if isinstance(status, tuple) else None
+            self._status = status[-1] if isinstance(status, tuple) else status
             self.snapshot_calls = 0
             self.status_calls = 0
 
@@ -1005,6 +1800,11 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
 
         async def feed_status(self, _requirement):
             self.status_calls += 1
+            if self._statuses is not None:
+                try:
+                    return next(self._statuses)
+                except StopIteration:
+                    pass
             return self._status
 
     class _StreamContext:
@@ -1073,23 +1873,207 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
 
-    async def test_disconnected_quote_never_retries_or_accepts_stale_data(self):
+    async def test_fresh_trade_without_session_sla_retries_only_after_typed_current_status(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.RESEARCH,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=15_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "late projected trade"), "fresh-trade"),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                execution_eligible=True,
+            ),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=product,
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertEqual(result, "fresh-trade")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_trade_without_session_sla_rejects_quiet_or_disconnected_status(self):
+        requirement = DataRequirement(
+            instrument_uid="a953e16e-7138-5562-b5e8-c337a44d0b65",
+            feed=Feed.TRADE,
+            consumer_grade=Grade.RESEARCH,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=15_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.TRADE)
+        for status in (
+            self._status(
+                requirement,
+                state="STALE",
+                event_recency_state="STALE",
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                execution_eligible=False,
+            ),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                provider_session_state="DISCONNECTED",
+                provider_session_liveness_ms=None,
+                execution_eligible=True,
+            ),
+        ):
+            client = self._Client((DataLayerError("DATA_STALE", "late trade"),), status)
+            with self.subTest(status=status.quality.provider_session_state), self.assertRaisesRegex(
+                ContinuityError, "fresh executable status"
+            ):
+                await _strict_snapshot_for_c2(
+                    client,
+                    product=product,
+                    requirement=requirement,
+                    timeout_seconds=0.25,
+                )
+            self.assertEqual(client.snapshot_calls, 1)
+            self.assertEqual(client.status_calls, 1)
+
+    async def test_strict_snapshot_preserves_the_typed_sdk_envelope(self):
+        requirement = self._requirement()
+        expected = SimpleNamespace(kind="market-data-view")
+        client = self._Client(
+            (SnapshotResponse.model_construct(request_id="test", data=expected),),
+            self._status(
+                requirement,
+                state="LIVE",
+                event_recency_state="LIVE",
+                freshness_ms=1,
+                execution_eligible=True,
+            ),
+        )
+
+        result = await _strict_snapshot_for_c2(
+            client,
+            product=self._product(),
+            requirement=requirement,
+            timeout_seconds=0.25,
+        )
+
+        self.assertIs(result.data, expected)
+        self.assertEqual(client.snapshot_calls, 1)
+
+    async def test_persistently_disconnected_quote_times_out_without_accepting_stale_data(self):
         requirement = self._requirement()
         client = self._Client(
-            (DataLayerError("DATA_STALE", "stale BBO"),),
+            tuple(DataLayerError("DATA_STALE", "stale BBO") for _ in range(32)),
             self._status(requirement, provider_session_state="DISCONNECTED"),
         )
 
-        with self.assertRaisesRegex(ContinuityError, "live provider session"):
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ), self.assertRaisesRegex(ContinuityError, "before its deadline"):
             await _strict_snapshot_for_c2(
+                client,
+                product=self._product(),
+                requirement=requirement,
+                timeout_seconds=0.01,
+            )
+
+        self.assertGreater(client.snapshot_calls, 1)
+        self.assertGreater(client.status_calls, 1)
+
+    async def test_transitional_quote_session_retries_then_requires_a_fresh_snapshot(self):
+        requirement = self._requirement()
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "session reconnecting"), "fresh-snapshot"),
+            self._status(requirement, provider_session_state="DISCONNECTED"),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
                 client,
                 product=self._product(),
                 requirement=requirement,
                 timeout_seconds=0.25,
             )
 
-        self.assertEqual(client.snapshot_calls, 1)
+        self.assertEqual(result, "fresh-snapshot")
+        self.assertEqual(client.snapshot_calls, 2)
         self.assertEqual(client.status_calls, 1)
+
+    async def test_transitional_book_delta_session_retries_without_accepting_a_stale_delta(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_DELTA,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=45_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_DELTA, delivery=DeliveryClass.DURABLE)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "book session reconnecting"), "fresh-book-delta"),
+            self._status(requirement, provider_session_state="UNKNOWN"),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._TRANSIENT_SESSION_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        self.assertEqual(result, "fresh-book-delta")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_transitional_session_rejects_gap_and_cross_symbol_status(self):
+        requirement = self._requirement()
+        for name, status in {
+            "gap": self._status(
+                requirement,
+                provider_session_state="DISCONNECTED",
+                gap_open=True,
+            ),
+            "cross_symbol": self._status(
+                requirement,
+                provider_session_state="DISCONNECTED",
+            ).model_copy(update={"instrument_uid": "other-instrument"}),
+        }.items():
+            with self.subTest(status=name):
+                client = self._Client(
+                    (DataLayerError("DATA_STALE", "stale BBO"),),
+                    status,
+                )
+                with self.assertRaisesRegex(ContinuityError, "live provider session"):
+                    await _strict_snapshot_for_c2(
+                        client,
+                        product=self._product(),
+                        requirement=requirement,
+                        timeout_seconds=0.25,
+                    )
+                self.assertEqual(client.snapshot_calls, 1)
+                self.assertEqual(client.status_calls, 1)
 
     async def test_quiet_quote_deadline_fails_closed_without_a_fresh_snapshot(self):
         requirement = self._requirement()
@@ -1108,6 +2092,183 @@ class Phase103QuietQuoteRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.snapshot_calls, 1)
         self.assertEqual(client.status_calls, 1)
+
+    async def test_verified_book_snapshot_retries_only_until_a_fresh_renewal_arrives(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        client = self._Client(
+            (DataLayerError("DATA_STALE", "book snapshot renewal pending"), "fresh-book"),
+            self._status(
+                requirement,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+            ),
+        )
+
+        with patch(
+            "scripts.phase103_consumer_receipt_acceptance._BOOK_SNAPSHOT_RETRY_SECONDS",
+            0.001,
+        ):
+            result = await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        self.assertEqual(result, "fresh-book")
+        self.assertEqual(client.snapshot_calls, 2)
+        self.assertEqual(client.status_calls, 1)
+
+    async def test_book_snapshot_gap_or_session_mismatch_never_retries(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        for status in (
+            self._status(
+                requirement,
+                provider_session_state="NOT_APPLICABLE",
+                provider_session_liveness_ms=None,
+                gap_open=True,
+            ),
+            self._status(requirement, provider_session_state="DISCONNECTED"),
+        ):
+            client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+            with self.assertRaisesRegex(ContinuityError, "complete, gap-free snapshot state"):
+                await _strict_snapshot_for_c2(
+                    client,
+                    product=product,
+                    requirement=requirement,
+                    timeout_seconds=0.25,
+                )
+            self.assertEqual(client.snapshot_calls, 1)
+            self.assertEqual(client.status_calls, 1)
+
+    async def test_session_backed_book_renewal_matrix(self):
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        for venue in ("BINANCE", "OKX"):
+            for symbol in ("BTC", "ETH", "SOL", "DOGE", "BNB"):
+                for session_limit in (None, 3_000):
+                    requirement = DataRequirement(
+                        instrument_uid=f"{venue}-{symbol}", feed=Feed.BOOK_SNAPSHOT,
+                        consumer_grade=Grade.EXECUTION, source_policy_id="crypto_primary_v2",
+                        max_freshness_ms=3_000, max_session_liveness_ms=session_limit,
+                        stale_policy=StalePolicy.BLOCK,
+                    )
+                    for event_state in ("LIVE", "STALE"):
+                        with self.subTest(venue=venue, symbol=symbol, limit=session_limit,
+                                          event_state=event_state):
+                            client = self._Client(
+                                (DataLayerError("DATA_STALE", "pending"), "fresh-book"),
+                                self._status(requirement, state=event_state,
+                                             event_recency_state=event_state,
+                                             provider_session_liveness_ms=806),
+                            )
+                            with patch("scripts.phase103_consumer_receipt_acceptance."
+                                       "_BOOK_SNAPSHOT_RETRY_SECONDS", 0.001):
+                                result = await _strict_snapshot_for_c2(
+                                    client, product=product, requirement=requirement,
+                                    timeout_seconds=0.25,
+                                )
+                            self.assertEqual(result, "fresh-book")
+                            self.assertEqual(client.snapshot_calls, 2)
+                            self.assertEqual(client.status_calls, 1)
+
+    async def test_book_renewal_rejects_invalid_sessions_identity_and_quality(self):
+        requirement = replace(self._requirement(), feed=Feed.BOOK_SNAPSHOT)
+        base = self._status(requirement)
+        statuses = {
+            "disconnected": self._status(requirement, provider_session_state="DISCONNECTED"),
+            "unknown": self._status(requirement, provider_session_state="UNKNOWN"),
+            "stale": self._status(requirement, provider_session_state="STALE"),
+            "missing_age": self._status(requirement, provider_session_liveness_ms=None),
+            "expired_age": self._status(requirement, provider_session_liveness_ms=45_001),
+            "required_session_absent": self._status(requirement,
+                provider_session_state="NOT_APPLICABLE", provider_session_liveness_ms=None),
+            "gap": self._status(requirement, gap_open=True),
+            "partial": self._status(requirement, complete=False),
+            "offline": self._status(requirement, state="OFFLINE"),
+            "other_symbol": base.model_copy(update={"instrument_uid": "other"}),
+            "other_feed": base.model_copy(update={"feed": Feed.BOOK_DELTA}),
+            "other_policy": base.model_copy(update={
+                "quality": base.quality.model_copy(update={"policy_id": "other"})}),
+        }
+        for name, status in statuses.items():
+            with self.subTest(case=name):
+                client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+                with self.assertRaises(C2StatusEvidenceError):
+                    await _strict_snapshot_for_c2(
+                        client, product=SimpleNamespace(feed=Feed.BOOK_SNAPSHOT),
+                        requirement=requirement, timeout_seconds=0.25,
+                    )
+                self.assertEqual(client.snapshot_calls, 1)
+
+    async def test_book_renewal_never_accepts_status_instead_of_strict_snapshot(self):
+        requirement = replace(self._requirement(), feed=Feed.BOOK_SNAPSHOT)
+        client = self._Client((DataLayerError("DATA_STALE", "pending"),),
+                              self._status(requirement))
+        with self.assertRaisesRegex(ContinuityError, "before its deadline"):
+            await _strict_snapshot_for_c2(
+                client, product=SimpleNamespace(feed=Feed.BOOK_SNAPSHOT),
+                requirement=requirement, timeout_seconds=0.001,
+            )
+        self.assertEqual(client.snapshot_calls, 1)
+
+    async def test_book_snapshot_failure_retains_compact_typed_status_only(self):
+        requirement = DataRequirement(
+            instrument_uid="6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+            feed=Feed.BOOK_SNAPSHOT,
+            consumer_grade=Grade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=60_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+        product = SimpleNamespace(feed=Feed.BOOK_SNAPSHOT)
+        status = self._status(
+            requirement,
+            state="STALE",
+            event_recency_state="STALE",
+            provider_session_state="NOT_APPLICABLE",
+            provider_session_liveness_ms=None,
+            gap_open=True,
+            complete=False,
+            execution_eligible=False,
+        )
+        client = self._Client((DataLayerError("DATA_STALE", "bad book"),), status)
+
+        with self.assertRaises(C2StatusEvidenceError) as raised:
+            await _strict_snapshot_for_c2(
+                client,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=0.25,
+            )
+
+        evidence = raised.exception.status_evidence
+        self.assertEqual(evidence["instrument_uid"], requirement.instrument_uid)
+        self.assertEqual(evidence["feed"], "BOOK_SNAPSHOT")
+        self.assertEqual(evidence["quality"]["state"], "STALE")
+        self.assertTrue(evidence["quality"]["gap_open"])
+        self.assertFalse(evidence["quality"]["complete"])
+        self.assertFalse(evidence["payload_recorded"])
+        self.assertNotIn("levels", repr(evidence))
+
+    def test_compact_feed_status_rejects_untyped_status(self):
+        with self.assertRaisesRegex(ValueError, "instrument identity"):
+            compact_feed_status(SimpleNamespace())
 
     async def test_quiet_connected_trade_retries_but_still_requires_a_fresh_snapshot(self):
         requirement = DataRequirement(

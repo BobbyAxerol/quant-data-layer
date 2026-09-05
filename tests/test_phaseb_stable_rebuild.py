@@ -8,11 +8,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.rebuild_v2_stable_projection_cache import (
+    BAR_EDGE_SERVICES,
     CACHE_FILES,
     CANONICAL_TOPIC,
     CONFIRM_TOKEN,
     EXPECTED_CANONICAL_PARTITIONS,
     MAX_ACCEPTED_LAG,
+    MAX_ACCEPTED_PARTITION_LAG,
     PROJECT_NAME,
     PROJECTOR_GROUP,
     PROJECTOR_SERVICES,
@@ -61,8 +63,17 @@ class StableProjectionCacheRebuildTests(unittest.TestCase):
             MAX_ACCEPTED_LAG,
         )
         self.assertEqual(
+            plan["lag_gate"]["max_per_partition_records"],
+            MAX_ACCEPTED_PARTITION_LAG,
+        )
+        self.assertEqual(
             plan["start_order"],
-            [list(STREAM_SERVICES), list(PROJECTOR_SERVICES), list(QUERY_SERVICES)],
+            [
+                list(STREAM_SERVICES),
+                list(PROJECTOR_SERVICES),
+                list(BAR_EDGE_SERVICES),
+                list(QUERY_SERVICES),
+            ],
         )
         self.assertFalse(plan["touches_v1"])
         self.assertFalse(plan["apply"])
@@ -272,24 +283,42 @@ stable-projector-v1 md.canonical.v2 0 10 12 2 - - -
 stable-projector-v1 md.canonical.v2 1 20 20 0 - - -
 stable-projector-v1 another.topic 2 0 99 99 - - -
 """
-        self.assertEqual(parse_canonical_lag(output), (2, 2))
+        self.assertEqual(parse_canonical_lag(output), (2, 2, 2))
         with self.assertRaisesRegex(RuntimeError, "no partitions"):
             parse_canonical_lag("GROUP TOPIC PARTITION")
+        with self.assertRaisesRegex(RuntimeError, "repeats a partition"):
+            parse_canonical_lag(
+                "stable-projector-v1 md.canonical.v2 0 10 12 2 - - -\n"
+                "stable-projector-v1 md.canonical.v2 0 12 14 2 - - -\n"
+            )
 
-    def test_lag_gate_requires_all_partitions_and_fixed_bound(self):
+    def test_lag_gate_requires_all_partitions_and_two_dimensional_bound(self):
         self.assertTrue(
             lag_sample_acceptable(
-                MAX_ACCEPTED_LAG, EXPECTED_CANONICAL_PARTITIONS
+                MAX_ACCEPTED_LAG,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG,
             )
         )
         self.assertFalse(
             lag_sample_acceptable(
-                MAX_ACCEPTED_LAG + 1, EXPECTED_CANONICAL_PARTITIONS
+                MAX_ACCEPTED_LAG + 1,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG,
             )
         )
         self.assertFalse(
             lag_sample_acceptable(
-                0, EXPECTED_CANONICAL_PARTITIONS - 1
+                0,
+                EXPECTED_CANONICAL_PARTITIONS - 1,
+                0,
+            )
+        )
+        self.assertFalse(
+            lag_sample_acceptable(
+                MAX_ACCEPTED_LAG,
+                EXPECTED_CANONICAL_PARTITIONS,
+                MAX_ACCEPTED_PARTITION_LAG + 1,
             )
         )
 
@@ -350,6 +379,7 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         env = Path("/tmp/stable.env")
         cache_sizes = iter(("0\n", "2\n"))
         observed = {}
+        starts = []
 
         def fake_compose(_env, *arguments, **_kwargs):
             if arguments[:4] == ("ps", "--services", "--status", "running"):
@@ -368,6 +398,9 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         def capture_projector(_env, deadline):
             observed["projector"] = deadline
 
+        def capture_start(_env, *services):
+            starts.append(services)
+
         with (
             patch("scripts.rebuild_v2_stable_projection_cache._validate_project"),
             patch(
@@ -383,7 +416,7 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
                 "scripts.rebuild_v2_stable_projection_cache._stable_client_ssl_context",
                 return_value=None,
             ),
-            patch("scripts.rebuild_v2_stable_projection_cache._start_services"),
+            patch("scripts.rebuild_v2_stable_projection_cache._start_services", capture_start),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_http", capture_http),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_bounded_lag", capture_lag),
             patch("scripts.rebuild_v2_stable_projection_cache._wait_projector_ready", capture_projector),
@@ -396,6 +429,10 @@ stable-projector-v1 another.topic 2 0 99 99 - - -
         self.assertEqual(observed["lag"], 170.0)
         self.assertEqual(observed["projector"], 170.0)
         self.assertEqual(observed["http"][2:], [170.0, 170.0])
+        self.assertEqual(
+            starts,
+            [STREAM_SERVICES, PROJECTOR_SERVICES, BAR_EDGE_SERVICES, QUERY_SERVICES],
+        )
 
 
 if __name__ == "__main__":

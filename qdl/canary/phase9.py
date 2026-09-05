@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
+from qdl._compat import StrEnum
 from typing import Any, Mapping
 
 from qdl.certification.prerequisites import CandidateSlice

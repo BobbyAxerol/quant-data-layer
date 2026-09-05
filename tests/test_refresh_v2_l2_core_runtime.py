@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -11,9 +12,9 @@ from qdl.runtime.stable_deployment import (
     stable_authority_record,
     write_stable_runtime_bundle,
 )
+from qdl.runtime.execution_l2 import execution_l2_materialization_plan
 from scripts.refresh_v2_l2_core_runtime import (
     CORE_FILES,
-    DECLARED_ADDITIVE_BOOK_SOURCE_IDS,
     refresh,
 )
 
@@ -22,6 +23,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 RUST_IMAGE = "sha256:" + "a" * 64
+
+
+@lru_cache(maxsize=1)
+def _execution_l2_source_ids() -> frozenset[str]:
+    catalog = StableSourceCatalog.load(CATALOG)
+    acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+    return frozenset(execution_l2_materialization_plan(
+        demand_path=ROOT / "config/v2/stable-crypto-demand.yaml",
+        catalog=catalog,
+        acquisition=acquisition,
+    ).source_ids)
 
 
 class L2CoreRuntimeRefreshTests(unittest.TestCase):
@@ -54,7 +66,7 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
             payload["core"]["bindings"] = [
                 item
                 for item in payload["core"]["bindings"]
-                if item["source_id"] not in DECLARED_ADDITIVE_BOOK_SOURCE_IDS
+                if item["source_id"] not in _execution_l2_source_ids()
             ]
             for item in payload["core"]["bindings"]:
                 item["instrument_catalog_revision"] = 7
@@ -78,12 +90,17 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
             self.assertTrue(result["authority_bytes_preserved"])
             for file_name in CORE_FILES:
                 item = result["files"][file_name]
-                self.assertEqual(item["before_binding_count"], 176)
-                self.assertEqual(item["after_binding_count"], 182)
-                self.assertEqual(item["catalog_revision_updated_binding_count"], 176)
+                self.assertEqual(
+                    item["after_binding_count"] - item["before_binding_count"],
+                    len(_execution_l2_source_ids()),
+                )
+                self.assertEqual(
+                    item["catalog_revision_updated_binding_count"],
+                    item["before_binding_count"],
+                )
                 self.assertEqual(item["before_catalog_revisions"], [7])
                 self.assertEqual(item["after_catalog_revisions"], [8])
-                self.assertEqual(set(item["added_book_source_ids"]), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
+                self.assertEqual(set(item["added_book_source_ids"]), _execution_l2_source_ids())
             self.assertEqual({name: (runtime / name).read_bytes() for name in CORE_FILES}, before)
 
     def test_apply_preserves_existing_bindings_authority_and_modes(self):
@@ -128,7 +145,10 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                     updated_by_id[key]["instrument_catalog_revision"] == 8
                     for key in active_by_id
                 ))
-                self.assertEqual(set(updated_by_id) - set(active_by_id), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
+                self.assertEqual(
+                    set(updated_by_id) - set(active_by_id),
+                    _execution_l2_source_ids(),
+                )
 
     def test_dry_run_converges_stale_metadata_after_l2_was_already_added(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -150,7 +170,7 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                 existing_ids = {item["source_id"] for item in active["core"]["bindings"]}
                 active["core"]["bindings"].extend(
                     item for item in expected["core"]["bindings"]
-                    if item["source_id"] in DECLARED_ADDITIVE_BOOK_SOURCE_IDS
+                    if item["source_id"] in _execution_l2_source_ids()
                     and item["source_id"] not in existing_ids
                 )
                 path.write_text(json.dumps(active, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -162,11 +182,13 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
             )
             for file_name in CORE_FILES:
                 item = result["files"][file_name]
-                self.assertEqual(item["before_binding_count"], 182)
-                self.assertEqual(item["after_binding_count"], 182)
-                self.assertEqual(item["catalog_revision_updated_binding_count"], 176)
+                self.assertEqual(item["before_binding_count"], item["after_binding_count"])
+                self.assertEqual(
+                    item["catalog_revision_updated_binding_count"],
+                    item["before_binding_count"] - len(_execution_l2_source_ids()),
+                )
                 self.assertEqual(item["added_book_source_ids"], [])
-                self.assertEqual(set(item["declared_book_source_ids"]), DECLARED_ADDITIVE_BOOK_SOURCE_IDS)
+                self.assertEqual(set(item["declared_book_source_ids"]), _execution_l2_source_ids())
 
     def test_rejects_existing_semantic_drift(self):
         with tempfile.TemporaryDirectory() as raw:

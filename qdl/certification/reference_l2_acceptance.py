@@ -48,6 +48,7 @@ _FUNDING_NS = 8 * 3_600_000_000_000
 _MILLISECOND_NS = 1_000_000
 _FUNDING_SETTLEMENT_JITTER_NS = 60_000 * _MILLISECOND_NS
 _REFERENCE_ACCEPTANCE_BATCH_SIZE = 12
+_STRICT_MARK_FRESHNESS_MS = 2_000
 _ACCEPTANCE_TRANSPORT_MARGIN_SECONDS = 15.0
 _ACCEPTANCE_TRANSPORT_MAX_SECONDS = 90.0
 
@@ -157,23 +158,49 @@ def reference_acceptance_batches(
     """Split the real receipt without changing its complete product scope.
 
     Native Binance basis uses one Rust-admitted provider lane, so each request
-    is intentionally isolated. Every other reference requirement stays in a
-    bounded batch; no product is dropped or retried through another provider.
+    is intentionally isolated. A strict mark/index snapshot cannot spend its
+    entire freshness budget waiting behind other provider reads, so each
+    product with a declared two-second-or-tighter bound is also isolated.
+    Every other reference requirement stays in a bounded batch; no product is
+    dropped or retried through another provider.
     """
 
-    native_basis = tuple(
-        product
-        for product in products
-        if product.venue == "BINANCE"
-        and product.requirement.feed is FeedType.BASIS
-        and product.sdk_requirement.basis_series is BasisSeries.NATIVE
+    native_basis = tuple(product for product in products if is_rust_admitted_native_basis(product))
+    strict_marks = tuple(product for product in products if is_strict_mark_snapshot(product))
+    ordinary = tuple(
+        product for product in products
+        if not is_rust_admitted_native_basis(product) and not is_strict_mark_snapshot(product)
     )
-    ordinary = tuple(product for product in products if product not in native_basis)
     chunks = tuple(
         ordinary[offset:offset + _REFERENCE_ACCEPTANCE_BATCH_SIZE]
         for offset in range(0, len(ordinary), _REFERENCE_ACCEPTANCE_BATCH_SIZE)
     )
-    return tuple((product,) for product in native_basis) + chunks
+    return (
+        tuple((product,) for product in native_basis)
+        + tuple((product,) for product in strict_marks)
+        + chunks
+    )
+
+
+def is_rust_admitted_native_basis(product: ReferenceAcceptanceProduct) -> bool:
+    """Identify the one shared Rust-admitted provider lane exactly once."""
+
+    return (
+        product.venue == "BINANCE"
+        and product.requirement.feed is FeedType.BASIS
+        and product.sdk_requirement.basis_series is BasisSeries.NATIVE
+    )
+
+
+def is_strict_mark_snapshot(product: ReferenceAcceptanceProduct) -> bool:
+    """Keep a latency-critical mark/index certificate within its own SLA."""
+
+    freshness_ms = product.requirement.max_freshness_ms
+    return (
+        product.requirement.feed is FeedType.MARK_INDEX_PRICE
+        and freshness_ms is not None
+        and freshness_ms <= _STRICT_MARK_FRESHNESS_MS
+    )
 
 
 def acceptance_transport_timeout_seconds(provider_deadline_seconds: float) -> float:
@@ -374,7 +401,16 @@ def reference_evidence(
         or item.problem is not None
         or item.data is None
     ):
-        raise ValueError("reference response identity or availability differs from demand")
+        actual_product = getattr(getattr(item, "product", None), "value", None)
+        problem_code = getattr(getattr(item, "problem", None), "code", None)
+        problem_detail = getattr(getattr(item, "problem", None), "detail", None)
+        raise ValueError(
+            "reference response identity or availability differs from demand "
+            f"expected_uid={product.instrument_uid} expected_product={request.product.value} "
+            f"actual_uid={getattr(item, 'instrument_uid', None)} "
+            f"actual_product={actual_product} status={getattr(item, 'status', None)} "
+            f"problem_code={problem_code} problem_detail={problem_detail}"
+        )
     data = item.data
     if data.instrument_uid != product.instrument_uid or data.product.value != request.product.value:
         raise ValueError("reference payload identity differs from demand")

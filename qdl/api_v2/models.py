@@ -48,6 +48,12 @@ from qdl_sdk.models import (
 from qdl_sdk.reference import ReferenceBatchRequest, ReferenceBatchResponse
 
 
+# The sealed V2 final-BAR catalog currently reaches a one-week interval with
+# a 21-day freshness allowance. Keep the public boundary aligned with that
+# governed policy while individual consumer manifests remain authoritative.
+MAX_REQUIREMENT_FRESHNESS_MS = 21 * 86_400_000
+
+
 class RequirementModel(ClosedModel):
     instrument_uid: str = Field(min_length=1, max_length=200)
     feed: FeedType
@@ -55,7 +61,11 @@ class RequirementModel(ClosedModel):
     source_policy_id: str = Field(min_length=1, max_length=200)
     interval: str | None = Field(default=None, max_length=20)
     warmup_limit: int = Field(default=0, ge=0, le=10_000)
-    max_freshness_ms: int | None = Field(default=None, gt=0, le=86_400_000)
+    max_freshness_ms: int | None = Field(
+        default=None,
+        gt=0,
+        le=MAX_REQUIREMENT_FRESHNESS_MS,
+    )
     event_recency_policy: StalePolicy | None = None
     max_session_liveness_ms: int | None = Field(default=None, gt=0, le=86_400_000)
     require_full_coverage: bool = True

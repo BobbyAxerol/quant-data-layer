@@ -37,7 +37,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             "2b0dcf74454c9f87c352d3c47389955aeb955804",
         )
         self.assertEqual(len(plan.consumers), 5)
-        self.assertEqual(len(plan.products()), 153)
+        self.assertEqual(len(plan.products()), 303)
         self.assertEqual(
             {
                 consumer.consumer_id: len(consumer.products)
@@ -46,8 +46,8 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             {
                 "monitoring.multivenue.stable": 5,
                 "trading-system.paper.stable": 61,
-                "alpha.binance.paper.stable": 50,
-                "alpha.okx.paper.stable": 35,
+                "alpha.binance.paper.stable": 125,
+                "alpha.okx.paper.stable": 110,
                 "alpha.vn.paper.stable": 2,
             },
         )
@@ -110,7 +110,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             for consumer in incompatible_v1["consumers"]
             if consumer["consumer_id"] == "alpha.binance.paper.stable"
             for item in consumer["products"]
-            if ":BAR:1m:" in item["requirement_key"]
+            if ":QUOTE::" in item["requirement_key"]
         )
         product["fallback"] = "V1"
         product["reason"] = None

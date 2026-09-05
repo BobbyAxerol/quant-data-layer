@@ -20,15 +20,10 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import AsyncIterator, Iterator
+from typing import AsyncIterator, Callable, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# A historical alpha BAR seed normally replays one retained event. A bounded
-# repair can append a few older canonical records after that seed, so C2 must
-# consume through the strict snapshot watermark rather than assume one event
-# is enough. This is acceptance-only, never an unbounded consumer catch-up.
-_MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS = 16
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -45,7 +40,8 @@ from qdl.certification.phase103_consumer_acceptance import (
     validate_resume_offsets,
     warmup_content_fingerprint,
 )
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import canonical_interval_ms, is_valid_bar_open_ms
+from qdl.runtime.stable_bar_edge import durable_bar_history_capacity_rows
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl.certification.phase105_release_observations import compact_view_quality
@@ -74,7 +70,18 @@ DEFAULT_ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 DEFAULT_TRADING_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 DEFAULT_ALPHA_MANIFEST = ROOT / "consumers/stable/alpha-binance-paper.yaml"
 _QUIET_QUOTE_RETRY_SECONDS = 0.2
-_QUIET_TRADE_STREAM_OBSERVATION_SECONDS = 2.0
+_BOOK_SNAPSHOT_RETRY_SECONDS = 1.0
+_TRANSIENT_SESSION_RETRY_SECONDS = 0.5
+_QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS = 2.0
+_QUIET_CONTINUITY_FEEDS = frozenset({"TRADE", "BOOK_DELTA"})
+_TRANSIENT_PROVIDER_SESSION_STATES = frozenset({"UNKNOWN", "STALE", "DISCONNECTED"})
+_TRANSIENT_SESSION_QUALITY_STATES = frozenset(
+    {"STARTING", "CONNECTING", "SUBSCRIBING", "SYNCING", "RESYNCING", "STALE", "DEGRADED"}
+)
+# C2 proves a representative retained BAR window, not an impossible request
+# for the full per-consumer quota on every calendar interval. Production
+# callers still declare their own bounded maxlen through the public SDK.
+_C2_BAR_WARMUP_ROWS = 700
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +91,65 @@ class WorkloadIdentity:
     manifest_revision: int
     tls: WorkloadTlsConfig
     credential: RotatingJwtCredentialProvider
+
+
+def compact_feed_status(status: object) -> dict[str, object]:
+    """Return bounded typed diagnostic evidence without a market payload."""
+
+    quality = getattr(status, "quality", None)
+    instrument_uid = getattr(status, "instrument_uid", None)
+    feed = getattr(status, "feed", None)
+    if not isinstance(instrument_uid, str) or not instrument_uid:
+        raise ValueError("C2 feed-status evidence lacks an instrument identity")
+    feed_value = getattr(feed, "value", feed)
+    if not isinstance(feed_value, str) or not feed_value:
+        raise ValueError("C2 feed-status evidence lacks a feed")
+    fields = {
+        "state": getattr(quality, "state", None),
+        "event_recency_state": getattr(quality, "event_recency_state", None),
+        "event_age_ms": getattr(quality, "freshness_ms", None),
+        "provider_session_state": getattr(quality, "provider_session_state", None),
+        "provider_session_liveness_ms": getattr(quality, "provider_session_liveness_ms", None),
+        "gap_open": getattr(quality, "gap_open", None),
+        "complete": getattr(quality, "complete", None),
+        "execution_eligible": getattr(quality, "execution_eligible", None),
+        "policy_id": getattr(quality, "policy_id", None),
+    }
+    liveness = fields["provider_session_liveness_ms"]
+    if (
+        not isinstance(fields["state"], str)
+        or not isinstance(fields["event_recency_state"], str)
+        or not isinstance(fields["event_age_ms"], int)
+        or fields["event_age_ms"] < 0
+        or not isinstance(fields["provider_session_state"], str)
+        or liveness is not None and (not isinstance(liveness, int) or liveness < 0)
+        or not isinstance(fields["gap_open"], bool)
+        or not isinstance(fields["complete"], bool)
+        or not isinstance(fields["execution_eligible"], bool)
+        or not isinstance(fields["policy_id"], str)
+        or not fields["policy_id"]
+    ):
+        raise ValueError("C2 feed-status evidence has invalid quality fields")
+    flags = getattr(quality, "flags", None)
+    if not isinstance(flags, list) or any(not isinstance(item, str) for item in flags):
+        raise ValueError("C2 feed-status evidence has invalid flags")
+    return {
+        "schema": "qdl.c2.feed-status-evidence.v1",
+        "instrument_uid": instrument_uid,
+        "feed": feed_value,
+        "quality": fields,
+        "flags": sorted(set(flags))[:16],
+        "payload_recorded": False,
+    }
+
+
+class C2StatusEvidenceError(ContinuityError):
+    """Strict-read failure with payload-free typed status evidence."""
+
+    def __init__(self, code: str, detail: str, *, status: object) -> None:
+        super().__init__(code, detail)
+        self.status_evidence = compact_feed_status(status)
+        self.replica: str | None = None
 
 
 def _identity(
@@ -150,6 +216,32 @@ def _client(
     )
 
 
+def _receipt_client(
+    identity: WorkloadIdentity,
+    *,
+    base_url: str,
+    grpc_target: str,
+    cursor_path: Path,
+    timeout_seconds: float,
+    client_factory: Callable[..., AsyncDataLayerClient] | None,
+) -> AsyncDataLayerClient:
+    """Create a receipt client, optionally through an acceptance-only wrapper.
+
+    Production SDK construction remains `_client`.  C2 may supply a local
+    wrapper for its own bounded request budget; the wrapper never changes the
+    public client contract, identity, cursor or stream transport.
+    """
+
+    factory = _client if client_factory is None else client_factory
+    return factory(
+        identity,
+        base_url=base_url,
+        grpc_target=grpc_target,
+        cursor_path=cursor_path,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def _cursor_path(state_dir: Path, product: AcceptanceProduct) -> Path:
     identity = "|".join(product.identity).encode()
     return state_dir / f"{hashlib.sha256(identity).hexdigest()}.json"
@@ -194,7 +286,40 @@ def _uses_historical_bar_replay(product: AcceptanceProduct) -> bool:
     )
 
 
-def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int):
+def _c2_requirement(requirement):
+    """Keep the C2 BAR history proof bounded without reducing public quota.
+
+    The registered manifest quota remains the caller's `1..10,000` ceiling.
+    A fixed C2 proof must instead fit the real retained final-BAR window across
+    all native intervals; otherwise a 12-hour or weekly route would be asked
+    for decades of history merely because its client is allowed to request it.
+    """
+
+    if requirement.feed.value != "BAR":
+        return requirement
+    specification = requirement.warmup_specification
+    if specification is None or specification.rows is None:
+        raise ValueError("C2 BAR product requires a row-bounded warmup policy")
+    if not requirement.interval:
+        raise ValueError("C2 BAR product requires an interval")
+    rows = min(
+        _C2_BAR_WARMUP_ROWS,
+        specification.rows,
+        durable_bar_history_capacity_rows(requirement.interval),
+    )
+    return replace(
+        requirement,
+        warmup_limit=rows,
+        warmup=(SdkWarmupSpecification(rows=rows) if requirement.warmup is not None else None),
+    )
+
+
+def _historical_bar_replay_requirement(
+    requirement,
+    *,
+    latest_open_time_ns: int,
+    calendar_provider: str | None = None,
+):
     """Build one aligned, bounded cursor seed before two retained BAR records.
 
     The caller has already checked the current strict requirement.  This
@@ -208,9 +333,15 @@ def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int)
     if requirement.consumer_grade.value == "EXECUTION":
         raise ValueError("execution BAR receipts must use the strict live path")
     interval_ns = canonical_interval_ms(requirement.interval) * 1_000_000
+    latest_open_ms, sub_millisecond_ns = divmod(latest_open_time_ns, 1_000_000)
     if (
         latest_open_time_ns <= 2 * interval_ns
-        or latest_open_time_ns % interval_ns
+        or sub_millisecond_ns
+        or not is_valid_bar_open_ms(
+            requirement.interval,
+            latest_open_ms,
+            provider=calendar_provider,
+        )
     ):
         raise ValueError("latest BAR open time cannot form a retained replay seed")
     original_warmup = requirement.warmup_specification
@@ -235,12 +366,56 @@ def _historical_bar_replay_requirement(requirement, *, latest_open_time_ns: int)
     )
 
 
-async def _next_data(session, *, timeout_seconds: float) -> tuple[StreamEvent, list[str]]:
+async def _next_data(
+    session,
+    *,
+    timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
+) -> tuple[StreamEvent, list[str]]:
+    """Read one data frame after a bounded stream-open and event window.
+
+    C2's quota pacer may wait before a lazy SDK stream opens. That local wait
+    is not market-data latency, so it uses the separately bounded opening
+    window. Once the server begins its control handshake, the original data
+    event timeout resumes unchanged.
+    """
+
+    if stream_open_timeout_seconds is None:
+        controls: list[str] = []
+        for _ in range(8):
+            item = await asyncio.wait_for(session.__anext__(), timeout=timeout_seconds)
+            if isinstance(item, ControlEvent):
+                controls.append(item.code)
+                continue
+            if isinstance(item, StreamEvent):
+                return item, controls
+            raise AssertionError("V2 SDK stream emitted an unknown event type")
+        raise AssertionError("V2 SDK stream emitted controls without market data")
+    if stream_open_timeout_seconds <= 0:
+        raise ValueError("stream-open timeout must be positive when declared")
     controls: list[str] = []
+    open_deadline = time.monotonic() + max(
+        timeout_seconds,
+        stream_open_timeout_seconds or timeout_seconds,
+    )
+    event_deadline: float | None = None
     for _ in range(8):
-        item = await asyncio.wait_for(session.__anext__(), timeout=timeout_seconds)
+        deadline = event_deadline if event_deadline is not None else open_deadline
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        item = await asyncio.wait_for(session.__anext__(), timeout=remaining)
         if isinstance(item, ControlEvent):
             controls.append(item.code)
+            if item.code in {"RECONNECTED", "SNAPSHOT_REPLACED"}:
+                # The SDK will lazily open a fresh stream on its next read.
+                event_deadline = None
+                open_deadline = time.monotonic() + max(
+                    timeout_seconds,
+                    stream_open_timeout_seconds or timeout_seconds,
+                )
+            else:
+                event_deadline = time.monotonic() + timeout_seconds
             continue
         if isinstance(item, StreamEvent):
             return item, controls
@@ -252,11 +427,44 @@ async def _next_data_or_timeout(
     session,
     *,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
 ) -> tuple[StreamEvent | None, list[str]]:
-    """Observe one stream without manufacturing data when a trade channel is quiet."""
+    """Observe one stream without manufacturing data when a continuity feed is quiet.
+
+    The optional opening bound covers only a local C2 quota reservation before
+    the server emits its first handshake control. The original quiet-data
+    timeout begins immediately after that control; a silent or incomplete
+    server handshake therefore remains fail-closed.
+    """
+
+    if stream_open_timeout_seconds is None:
+        controls: list[str] = []
+        deadline = time.monotonic() + timeout_seconds
+        for _ in range(8):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, controls
+            try:
+                item = await asyncio.wait_for(session.__anext__(), timeout=remaining)
+            except TimeoutError:
+                return None, controls
+            if isinstance(item, ControlEvent):
+                controls.append(item.code)
+                continue
+            if isinstance(item, StreamEvent):
+                return item, controls
+            raise AssertionError("V2 SDK stream emitted an unknown event type")
+        return None, controls
+    if stream_open_timeout_seconds <= 0:
+        raise ValueError("stream-open timeout must be positive when declared")
     controls: list[str] = []
-    deadline = time.monotonic() + timeout_seconds
+    open_deadline = time.monotonic() + max(
+        timeout_seconds,
+        stream_open_timeout_seconds or timeout_seconds,
+    )
+    event_deadline: float | None = None
     for _ in range(8):
+        deadline = event_deadline if event_deadline is not None else open_deadline
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, controls
@@ -266,6 +474,16 @@ async def _next_data_or_timeout(
             return None, controls
         if isinstance(item, ControlEvent):
             controls.append(item.code)
+            if item.code in {"RECONNECTED", "SNAPSHOT_REPLACED"}:
+                # This is an SDK-local control. Its next read opens a new
+                # paced stream, so restart only the bounded open window.
+                event_deadline = None
+                open_deadline = time.monotonic() + max(
+                    timeout_seconds,
+                    stream_open_timeout_seconds or timeout_seconds,
+                )
+            else:
+                event_deadline = time.monotonic() + timeout_seconds
             continue
         if isinstance(item, StreamEvent):
             return item, controls
@@ -273,21 +491,43 @@ async def _next_data_or_timeout(
     return None, controls
 
 
-def _allows_quiet_trade_observation(product: AcceptanceProduct, requirement) -> bool:
-    """Whether this no-order C2 probe may observe a quiet live trade channel."""
+def _allows_quiet_continuity_observation(product: AcceptanceProduct, requirement) -> bool:
+    """Whether C2 may observe a quiet, live continuity channel.
+
+    BOOK_DELTA is not price data. It can be quiet while its verified book and
+    transport session stay healthy, so C2 records it as non-executable
+    continuity evidence rather than manufacturing a new update.
+    """
     return (
         product.delivery is DeliveryClass.DURABLE
-        and product.feed.value == "TRADE"
+        and product.feed.value in _QUIET_CONTINUITY_FEEDS
         and requirement.effective_event_recency_policy is SdkStalePolicy.OBSERVE
         and requirement.max_session_liveness_ms is not None
     )
 
 
-def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
-    """Keep a quiet session distinct from fresh/executable market data."""
+def _allows_quiet_final_bar_handoff(product: AcceptanceProduct) -> bool:
+    """Allow a bounded no-event observation for retained non-execution BARs.
+
+    A current alpha BAR channel can be quiet until the next interval closes.
+    C2 still proves signed stream controls and a fresh final BAR from each
+    replica; it never turns that quiet period into an execution price or a
+    durable replay checkpoint. Execution BARs keep the ordinary live-event
+    path.
+    """
+
+    return (
+        product.delivery is DeliveryClass.DURABLE
+        and product.feed.value == "BAR"
+        and product.requirement.consumer_grade.value != "EXECUTION"
+    )
+
+
+def _quiet_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Keep a quiet connected continuity channel distinct from price data."""
     quality = status.quality
     return (
-        _allows_quiet_trade_observation(product, requirement)
+        _allows_quiet_continuity_observation(product, requirement)
         and status.instrument_uid == requirement.instrument_uid
         and status.feed is requirement.feed
         and quality.policy_id == requirement.source_policy_id
@@ -302,11 +542,11 @@ def _quiet_trade_status_is_observable(product: AcceptanceProduct, requirement, s
     )
 
 
-def _fresh_trade_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
-    """Accept a live trade session that simply has no new print in this probe."""
+def _fresh_continuity_status_is_observable(product: AcceptanceProduct, requirement, status) -> bool:
+    """Accept a fresh verified continuity event during a bounded C2 probe."""
     quality = status.quality
     return (
-        _allows_quiet_trade_observation(product, requirement)
+        _allows_quiet_continuity_observation(product, requirement)
         and status.instrument_uid == requirement.instrument_uid
         and status.feed is requirement.feed
         and quality.policy_id == requirement.source_policy_id
@@ -327,11 +567,11 @@ def _require_signed_cursor_controls(controls: list[str]) -> None:
     if missing:
         raise ContinuityError(
             "CURSOR_INVALID",
-            "C2 no-event TRADE observation did not confirm the signed cursor stream",
+            "C2 no-event continuity observation did not confirm the signed cursor stream",
         )
 
 
-async def _classify_no_event_trade_session(
+async def _classify_no_event_continuity_session(
     client: AsyncDataLayerClient,
     *,
     product: AcceptanceProduct,
@@ -345,16 +585,37 @@ async def _classify_no_event_trade_session(
         )
     except TimeoutError as timeout:
         raise ContinuityError(
-            "DATA_STALE", "C2 quiet TRADE status did not return before its deadline"
+            "DATA_STALE", "C2 quiet continuity status did not return before its deadline"
         ) from timeout
-    if _fresh_trade_status_is_observable(product, requirement, status):
+    if _fresh_continuity_status_is_observable(product, requirement, status):
         return "FRESH_EXECUTABLE"
-    if _quiet_trade_status_is_observable(product, requirement, status):
+    if _quiet_continuity_status_is_observable(product, requirement, status):
         return "QUIET_NON_EXECUTABLE"
     raise ContinuityError(
         "DATA_STALE",
-        "C2 no-event TRADE observation requires a live fresh/executable or quiet/non-executable session",
+        "C2 no-event continuity observation requires a live fresh/executable or quiet/non-executable session",
     )
+
+
+async def _verify_quiet_final_bar_current(
+    client: AsyncDataLayerClient,
+    *,
+    product: AcceptanceProduct,
+    requirement,
+    timeout_seconds: float,
+) -> str:
+    """Prove a quiet retained BAR remains final and current on this replica."""
+
+    if not _allows_quiet_final_bar_handoff(product):
+        raise ValueError("quiet final BAR verification requires a non-execution durable BAR")
+    current = await _strict_snapshot_for_c2(
+        client,
+        product=product,
+        requirement=requirement,
+        timeout_seconds=timeout_seconds,
+    )
+    validate_product_view(product, current.data)
+    return "CURRENT_FINAL_BAR"
 
 
 def _stream_handoff_mode(
@@ -369,19 +630,28 @@ def _stream_handoff_mode(
     if product.delivery is not DeliveryClass.DURABLE:
         return "NOT_APPLICABLE"
     if acknowledged_offset is None:
+        if len(no_event_sessions) == 2 and all(
+            item == "CURRENT_FINAL_BAR" for item in no_event_sessions
+        ):
+            return "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR"
         if (
             len(no_event_sessions) == 2
             and no_event_sessions[0] == "CURSOR_ACKNOWLEDGED"
             and no_event_sessions[1] in {
                 "FRESH_EXECUTABLE_AFTER_CURSOR",
                 "QUIET_NON_EXECUTABLE_AFTER_CURSOR",
+                "CURRENT_FINAL_BAR_AFTER_CURSOR",
             }
         ):
             return "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT"
         if len(no_event_sessions) != 2:
             raise ValueError("C2 no-event stream evidence requires both sessions")
         if no_event_sessions[-1] == "EVENT_AFTER_REOPEN":
-            if no_event_sessions[0] not in {"FRESH_EXECUTABLE", "QUIET_NON_EXECUTABLE"}:
+            if no_event_sessions[0] not in {
+                "FRESH_EXECUTABLE",
+                "QUIET_NON_EXECUTABLE",
+                "CURRENT_FINAL_BAR",
+            }:
                 raise ValueError("C2 no-event stream evidence has an invalid initial session")
             return "LIVE_EVENT_AFTER_REOPEN_NO_CURSOR"
         if all(item == "FRESH_EXECUTABLE" for item in no_event_sessions):
@@ -392,6 +662,21 @@ def _stream_handoff_mode(
     if no_event_sessions:
         raise ValueError("C2 cursor replay cannot include no-event session evidence")
     return "DURABLE_CURSOR_REPLAYED"
+
+
+def _replay_precedes_handoff(*, logical_offset: int, watermark_offset: int) -> bool:
+    """Whether a resumed frame restores state rather than supplies a live price.
+
+    A reconnect checks a fresh query handoff, yet a durable cursor may correctly
+    point before that handoff. Those records are required for deterministic
+    state recovery. They retain identity, source, offset and gap validation,
+    but cannot be claimed as an executable current price; a strict read-back
+    is mandatory after the replay acknowledgement.
+    """
+
+    if logical_offset < 0 or watermark_offset < 0:
+        raise ValueError("durable replay offsets must be non-negative")
+    return logical_offset <= watermark_offset
 
 
 async def _query_product(
@@ -427,8 +712,13 @@ async def _query_product_with_quality(
     dict[str, object] | None,
 ]:
     """Query both replicas and retain only compact quality evidence for B3."""
-    requirement = sdk_requirement(product)
+    requirement = _c2_requirement(sdk_requirement(product))
     bar_alignment: dict[str, object] | None = None
+    snapshot_timeout_seconds = (
+        _stream_event_timeout_seconds(product, timeout_seconds)
+        if product.feed.value == "BOOK_SNAPSHOT"
+        else timeout_seconds
+    )
     primary_started = time.perf_counter()
     if product.feed.value == "BAR":
         primary_response = await primary.warmup(requirement)
@@ -439,12 +729,16 @@ async def _query_product_with_quality(
         validate_product_view(product, primary_view)
         primary_hash = warmup_content_fingerprint(primary_response.data)
     else:
-        primary_response = await _strict_snapshot_for_c2(
-            primary,
-            product=product,
-            requirement=requirement,
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            primary_response = await _strict_snapshot_for_c2(
+                primary,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+        except C2StatusEvidenceError as error:
+            error.replica = "primary"
+            raise
         primary_latency_ms = (time.perf_counter() - primary_started) * 1000
         primary_view = primary_response.data
         validate_product_view(product, primary_view)
@@ -469,12 +763,16 @@ async def _query_product_with_quality(
         else:
             validate_replica_views(product, primary_view, secondary_view)
     else:
-        secondary_response = await _strict_snapshot_for_c2(
-            secondary,
-            product=product,
-            requirement=requirement,
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            secondary_response = await _strict_snapshot_for_c2(
+                secondary,
+                product=product,
+                requirement=requirement,
+                timeout_seconds=snapshot_timeout_seconds,
+            )
+        except C2StatusEvidenceError as error:
+            error.replica = "secondary"
+            raise
         secondary_latency_ms = (time.perf_counter() - secondary_started) * 1000
         secondary_view = secondary_response.data
         primary_hash, secondary_hash = validate_replica_views(
@@ -545,6 +843,104 @@ def _fresh_quote_status_is_retryable(
     )
 
 
+def _fresh_trade_without_session_sla_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Retry only a proven fresh TRADE race when no session SLA was declared.
+
+    A manifest without max_session_liveness_ms intentionally reports
+    NOT_APPLICABLE rather than inventing transport liveness. This path does
+    not admit a stale trade: it merely lets the existing strict snapshot retry
+    after a typed status proves the same identity became current and executable.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value == "TRADE"
+        and requirement.max_session_liveness_ms is None
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state == "LIVE"
+        and quality.event_recency_state == "LIVE"
+        and quality.provider_session_state == "NOT_APPLICABLE"
+        and quality.provider_session_liveness_ms is None
+        and quality.complete
+        and not quality.gap_open
+        and quality.execution_eligible
+    )
+
+
+def _transitional_session_status_is_retryable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Allow one bounded C2 re-poll while an identity-matched session reconnects.
+
+    This does not admit a stale price or book delta.  It only keeps the strict
+    snapshot loop alive until its existing deadline, after which the SDK must
+    still independently return a fresh, live, complete and gap-free view.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value in {"QUOTE", "BOOK_DELTA"}
+        and requirement.max_session_liveness_ms is not None
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state in _TRANSIENT_SESSION_QUALITY_STATES
+        and quality.provider_session_state in _TRANSIENT_PROVIDER_SESSION_STATES
+        and quality.complete
+        and not quality.gap_open
+        and not quality.execution_eligible
+    )
+
+
+def _book_snapshot_status_is_refreshable(
+    product: AcceptanceProduct,
+    requirement,
+    status,
+) -> bool:
+    """Permit a bounded retry while a verified book snapshot renews.
+
+    The stale response remains rejected; only a subsequent strict read can pass.
+    Native session-backed and sessionless snapshot providers both retain their
+    declared liveness policy, identity, completeness and gap checks.
+    """
+
+    quality = status.quality
+    return (
+        product.feed.value == "BOOK_SNAPSHOT"
+        and status.instrument_uid == requirement.instrument_uid
+        and status.feed is requirement.feed
+        and quality.policy_id == requirement.source_policy_id
+        and quality.state in {"LIVE", "STALE"}
+        and quality.event_recency_state in {"LIVE", "STALE"}
+        and (
+            (
+                quality.provider_session_state == "NOT_APPLICABLE"
+                and quality.provider_session_liveness_ms is None
+                and requirement.max_session_liveness_ms is None
+            )
+            or (
+                quality.provider_session_state == "LIVE"
+                and quality.provider_session_liveness_ms is not None
+                and (
+                    requirement.max_session_liveness_ms is None
+                    or quality.provider_session_liveness_ms
+                    <= requirement.max_session_liveness_ms
+                )
+            )
+        )
+        and quality.complete
+        and not quality.gap_open
+    )
+
+
 async def _wait_for_live_snapshot_retry(
     client: AsyncDataLayerClient,
     *,
@@ -556,7 +952,7 @@ async def _wait_for_live_snapshot_retry(
 ) -> None:
     if error.code != "DATA_STALE":
         raise error
-    if product.feed.value not in {"QUOTE", "TRADE"}:
+    if product.feed.value not in {"QUOTE", "BOOK_SNAPSHOT", *_QUIET_CONTINUITY_FEEDS}:
         raise error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -574,15 +970,45 @@ async def _wait_for_live_snapshot_retry(
         retryable = _quiet_quote_is_retryable(
             product, requirement, status
         ) or _fresh_quote_status_is_retryable(product, requirement, status)
+        retry_delay_seconds = _QUIET_QUOTE_RETRY_SECONDS
+        if not retryable:
+            retryable = _transitional_session_status_is_retryable(
+                product, requirement, status
+            )
+            retry_delay_seconds = _TRANSIENT_SESSION_RETRY_SECONDS
+    elif product.feed.value == "BOOK_SNAPSHOT":
+        retryable = _book_snapshot_status_is_refreshable(product, requirement, status)
+        retry_delay_seconds = _BOOK_SNAPSHOT_RETRY_SECONDS
+    elif product.feed.value == "TRADE" and requirement.max_session_liveness_ms is None:
+        retryable = _fresh_trade_without_session_sla_is_retryable(
+            product, requirement, status
+        )
+        retry_delay_seconds = _QUIET_QUOTE_RETRY_SECONDS
     else:
         retryable = (
-            _quiet_trade_status_is_observable(product, requirement, status)
-            or _fresh_trade_status_is_observable(product, requirement, status)
+            _quiet_continuity_status_is_observable(product, requirement, status)
+            or _fresh_continuity_status_is_observable(product, requirement, status)
         )
+        if not retryable:
+            retryable = _transitional_session_status_is_retryable(
+                product, requirement, status
+            )
+            retry_delay_seconds = _TRANSIENT_SESSION_RETRY_SECONDS
     if not retryable:
-        raise ContinuityError(
+        required_state = (
+            "a verified complete, gap-free snapshot state"
+            if product.feed.value == "BOOK_SNAPSHOT"
+            else (
+                "a fresh executable status"
+                if product.feed.value == "TRADE"
+                and requirement.max_session_liveness_ms is None
+                else "a live provider session"
+            )
+        )
+        raise C2StatusEvidenceError(
             "DATA_STALE",
-            f"C2 strict {product.feed.value} retry requires a live provider session",
+            f"C2 strict {product.feed.value} retry requires {required_state}",
+            status=status,
         ) from error
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -683,92 +1109,120 @@ async def _stream_resume(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
+    client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> tuple[int | None, int | None, tuple[str, ...], tuple[str, ...]]:
     if product.delivery is not DeliveryClass.DURABLE:
         return None, None, (), ()
     cursor_path = _cursor_path(state_dir, product)
-    requirement = sdk_requirement(product)
-    historical_replay = _uses_historical_bar_replay(product)
+    requirement = _c2_requirement(sdk_requirement(product))
     stream_requirement = requirement
-    strict_watermark: int | None = None
     event_timeout_seconds = _stream_event_timeout_seconds(product, timeout_seconds)
-    quiet_trade_observation = _allows_quiet_trade_observation(product, requirement)
+    quiet_continuity_observation = _allows_quiet_continuity_observation(product, requirement)
+    quiet_final_bar_handoff = _allows_quiet_final_bar_handoff(product)
     quiet_primary = False
     no_event_sessions: list[str] = []
     first_controls: list[str] = []
     first_offset: int | None = None
-    first_client = _client(
+    first_client = _receipt_client(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=cursor_path,
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
-        if historical_replay:
-            # This remains the product's actual contract check.  The replay
-            # cursor below is deliberately older only to make the bounded C2
-            # reconnect proof independent of the next 15m/1h close.
-            strict_warmup = await first_client.warmup(requirement)
-            strict_current = strict_warmup.data[-1]
-            validate_product_view(product, strict_current)
-            strict_watermark = strict_warmup.watermark_offset
-            stream_requirement = _historical_bar_replay_requirement(
-                requirement,
-                latest_open_time_ns=int(strict_current.payload.open_time_ns),
-            )
-            event_timeout_seconds = timeout_seconds
         async with _strict_warmup_then_stream_for_c2(
             first_client,
             product=product,
             requirement=stream_requirement,
             timeout_seconds=timeout_seconds,
         ) as session:
-            if quiet_trade_observation:
+            if quiet_continuity_observation or quiet_final_bar_handoff:
                 first, first_controls = await _next_data_or_timeout(
                     session,
                     timeout_seconds=min(
                         event_timeout_seconds,
-                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                        _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
                 if first is None:
                     _require_signed_cursor_controls(first_controls)
-                    no_event_sessions.append(await _classify_no_event_trade_session(
-                        first_client,
-                        product=product,
-                        requirement=requirement,
-                        timeout_seconds=timeout_seconds,
-                    ))
+                    if quiet_final_bar_handoff:
+                        no_event_sessions.append(
+                            await _verify_quiet_final_bar_current(
+                                first_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        )
+                    else:
+                        no_event_sessions.append(await _classify_no_event_continuity_session(
+                            first_client,
+                            product=product,
+                            requirement=requirement,
+                            timeout_seconds=timeout_seconds,
+                        ))
                     quiet_primary = True
             else:
                 first, first_controls = await _next_data(
                     session,
                     timeout_seconds=event_timeout_seconds,
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
             if not quiet_primary:
                 assert first is not None
-                first_view = market_data_view_from_stream(
-                    first,
-                    template=session.warmup.data[-1],
-                    requirement=stream_requirement,
-                )
+                first_replay_only = False
+                try:
+                    first_view = market_data_view_from_stream(
+                        first,
+                        template=session.warmup.data[-1],
+                        requirement=stream_requirement,
+                    )
+                except ContinuityError as error:
+                    # A snapshot cursor can race a delayed provider frame. The
+                    # frame is never execution input: accept it only as signed
+                    # replay state and immediately re-read strict current V2
+                    # quality below. Gaps, identity violations and every other
+                    # continuity error remain fail-closed.
+                    if error.code != "DATA_STALE":
+                        raise
+                    first_view = market_data_view_from_stream(
+                        first,
+                        template=session.warmup.data[-1],
+                        requirement=stream_requirement,
+                        replay_only=True,
+                    )
+                    first_replay_only = True
                 validate_product_view(
                     product,
                     first_view,
-                    require_current_quality=not historical_replay,
+                    require_current_quality=not first_replay_only,
+                    **({"state_replay": True} if first_replay_only else {}),
                 )
                 session.acknowledge(first)
                 first_offset = first.logical_offset
+                if first_replay_only:
+                    current = await _strict_snapshot_for_c2(
+                        first_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    validate_product_view(product, current.data)
     finally:
         await first_client.close()
 
-    resumed_client = _client(
+    resumed_client = _receipt_client(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
         cursor_path=cursor_path,
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
         if quiet_primary:
@@ -786,17 +1240,28 @@ async def _stream_resume(
                     session,
                     timeout_seconds=min(
                         event_timeout_seconds,
-                        _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                        _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                     ),
+                    stream_open_timeout_seconds=stream_open_timeout_seconds,
                 )
                 if observed is None:
                     _require_signed_cursor_controls(observed_controls)
-                    no_event_sessions.append(await _classify_no_event_trade_session(
-                        resumed_client,
-                        product=product,
-                        requirement=requirement,
-                        timeout_seconds=timeout_seconds,
-                    ))
+                    if quiet_final_bar_handoff:
+                        no_event_sessions.append(
+                            await _verify_quiet_final_bar_current(
+                                resumed_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        )
+                    else:
+                        no_event_sessions.append(await _classify_no_event_continuity_session(
+                            resumed_client,
+                            product=product,
+                            requirement=requirement,
+                            timeout_seconds=timeout_seconds,
+                        ))
                 else:
                     observed_view = market_data_view_from_stream(
                         observed,
@@ -823,28 +1288,37 @@ async def _stream_resume(
         ) as session:
             acknowledged_offset = first_offset
             resumed_controls: list[str] = []
-            maximum = (
-                _MAX_HISTORICAL_REPLAY_CATCHUP_EVENTS
-                if historical_replay
-                else 1
-            )
-            for _ in range(maximum):
-                if quiet_trade_observation:
+            # A historical seed intentionally starts before the current
+            # snapshot so C2 can prove signed replay without waiting for the
+            # next bar close. It must not be treated as a production consumer
+            # catch-up cursor: authentic late backfills can make its append
+            # offset far older than the current strict watermark. One
+            # monotonic replay across replicas proves cursor continuity; the
+            # strict snapshot below proves current executable quality.
+            for _ in range(1):
+                if quiet_continuity_observation or quiet_final_bar_handoff:
                     resumed, controls = await _next_data_or_timeout(
                         session,
                         timeout_seconds=min(
                             event_timeout_seconds,
-                            _QUIET_TRADE_STREAM_OBSERVATION_SECONDS,
+                            _QUIET_CONTINUITY_STREAM_OBSERVATION_SECONDS,
                         ),
+                        stream_open_timeout_seconds=stream_open_timeout_seconds,
                     )
                     if resumed is None:
                         _require_signed_cursor_controls(controls)
-                        no_event_session = await _classify_no_event_trade_session(
-                            resumed_client,
-                            product=product,
-                            requirement=requirement,
-                            timeout_seconds=timeout_seconds,
-                        )
+                        if quiet_final_bar_handoff:
+                            no_event_session = await _verify_quiet_final_bar_current(
+                                resumed_client, product=product, requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        else:
+                            no_event_session = await _classify_no_event_continuity_session(
+                                resumed_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
                         return (
                             None,
                             None,
@@ -855,17 +1329,26 @@ async def _stream_resume(
                     resumed, controls = await _next_data(
                         session,
                         timeout_seconds=event_timeout_seconds,
+                        stream_open_timeout_seconds=stream_open_timeout_seconds,
                     )
                 resumed_controls.extend(controls)
+                # This context was opened with `resume_restored_state=True`.
+                # Its bounded frame proves cursor recovery only, even when the
+                # durable offset is newer than the reconnect snapshot watermark.
+                # A strict V2 snapshot below is the sole current/executable
+                # attestation after reconnect.
+                replay_only = True
                 resumed_view = market_data_view_from_stream(
                     resumed,
                     template=session.warmup.data[-1],
                     requirement=stream_requirement,
+                    **({"replay_only": True} if replay_only else {}),
                 )
                 validate_product_view(
                     product,
                     resumed_view,
-                    require_current_quality=not historical_replay,
+                    require_current_quality=not replay_only,
+                    **({"state_replay": True} if replay_only else {}),
                 )
                 validate_resume_offsets(
                     acknowledged_offset=acknowledged_offset,
@@ -873,19 +1356,24 @@ async def _stream_resume(
                 )
                 session.acknowledge(resumed)
                 acknowledged_offset = resumed.logical_offset
-                if (
-                    strict_watermark is None
-                    or acknowledged_offset >= strict_watermark
-                ):
-                    return (
-                        first_offset,
-                        acknowledged_offset,
-                        tuple(first_controls + resumed_controls),
-                        (),
+                if replay_only:
+                    # The replay frame is state recovery only. A fresh strict
+                    # V2 read is required before C2 can attest current quality,
+                    # including after a stale first stream frame.
+                    current = await _strict_snapshot_for_c2(
+                        resumed_client,
+                        product=product,
+                        requirement=requirement,
+                        timeout_seconds=timeout_seconds,
                     )
-            raise AssertionError(
-                "historical BAR replay did not converge through the strict current watermark"
-            )
+                    validate_product_view(product, current.data)
+                return (
+                    first_offset,
+                    acknowledged_offset,
+                    tuple(first_controls + resumed_controls),
+                    (),
+                )
+            raise AssertionError("signed cursor replay did not emit a data event")
     finally:
         await resumed_client.close()
 
@@ -899,20 +1387,24 @@ async def _certify_product(
     grpc_target: str,
     state_dir: Path,
     timeout_seconds: float,
+    stream_open_timeout_seconds: float | None = None,
+    client_factory: Callable[..., AsyncDataLayerClient] | None = None,
 ) -> dict[str, object]:
-    primary = _client(
+    primary = _receipt_client(
         identity,
         base_url=primary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "query-primary.json",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
-    secondary = _client(
+    secondary = _receipt_client(
         identity,
         base_url=secondary_url,
         grpc_target=grpc_target,
         cursor_path=state_dir / "query-secondary.json",
         timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
     )
     try:
         (
@@ -939,6 +1431,8 @@ async def _certify_product(
         grpc_target=grpc_target,
         state_dir=state_dir,
         timeout_seconds=timeout_seconds,
+        stream_open_timeout_seconds=stream_open_timeout_seconds,
+        client_factory=client_factory,
     )
     result = compact_receipt_evidence(
         product,

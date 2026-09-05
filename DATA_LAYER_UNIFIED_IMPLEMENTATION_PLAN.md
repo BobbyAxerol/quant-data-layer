@@ -28373,3 +28373,7973 @@ Remote feature branches remain intact for PR history; local
 still ahead of its remote by two commits. No Docker, runtime, provider,
 Kafka, Redis, SQLite, V1/V2 consumer, Trading System, alpha, broker or order
 resource was changed.
+
+## 24.3.18 Phase 53.3 V2 Query Readiness Prerequisite
+
+**Status:** `IN PROGRESS / SOURCE REPAIR BEFORE ALPHA NO-ORDER PACKET`
+(2026-09-01).
+
+**Linkage and goal.** This is the Data Layer prerequisite for Trading System
+Unified Plan Section 53.3, *Representative Alpha No-Order Proof, Paper
+Rollout And Broad Config Readiness*. The owner approved that phase. Before a
+real-provider alpha may consume V2, both V2 query replicas must report their
+actual cache state correctly; a false `NOT_READY` cannot be bypassed through
+V1 or a relaxed SLA.
+
+**Observed bounded diagnosis.** Both query replicas remain live with zero
+restart/OOM evidence, but their required `query_cache` readiness probe invokes
+`SQLiteDurableSpool.stats()`. That diagnostic performs a full `events` table
+aggregate. Against the current shared canonical spool (roughly 398k records;
+about 0.95 GiB database plus 2.27 GiB WAL), the aggregate exceeded the
+one-second probe deadline and turned a readable cache into `NOT_READY`.
+`spool_state.event_records` and `spool_state.payload_bytes` already maintain
+the same capacity counters atomically on append and trim; the readiness path
+does not require diagnostic oldest/newest/storage aggregation.
+
+**Approved source scope.** Add one provider-neutral, read-only spool readiness
+summary backed by the existing singleton `spool_state` row, and make only the
+stable `query_cache` health probe use it. Preserve `stats()` unchanged for
+diagnostics, preserve capacity/maintenance semantics, and fail closed when
+the singleton row is absent or SQLite rejects the bounded read. No provider,
+contract, manifest, authority, Rust core, ingestion, projector, stream,
+Redis, Kafka, SQLite data, V1 endpoint, Trading System, alpha, broker or
+order-path change is part of this source slice.
+
+**Source gates and rollback.** Deterministic tests must prove the summary
+tracks append/trim usage, does not call the full diagnostic aggregate, and
+still makes readiness `NOT_READY` on a database failure. Run focused Python
+unit tests, compile and `git diff --check` in the existing non-root,
+network-disabled test image. Rollback is a source revert. Only after source
+exit may a separately recorded, serial two-query-reader runtime packet build
+one immutable Python image and recreate `query_v2_1` then `query_v2_2`; its
+exact current image remains rollback. Alpha containers, Trading System and
+all order paths stay untouched until the query readiness evidence passes.
+
+**Source implementation and exit (`PASS / RUNTIME PACKET NEXT`, 2026-09-01).**
+`SQLiteDurableSpool.readiness_summary()` now reads exactly the existing
+singleton `spool_state` usage counters under the spool lock and rejects a
+missing/negative state with `PayloadCorruption`. `SpoolStats` and its full
+aggregate remain unchanged. Stable query readiness now calls only that bounded
+summary and reports readable record/payload counters; a raised SQLite error is
+still converted by the shared readiness framework into required `NOT_READY`.
+
+**Evidence actually run:**
+
+- Network-disabled/read-only `qdl-v2-python:2.0.0-7c29542` tests:
+  `tests.test_phase533_query_readiness` plus
+  `tests.test_phaseb_stable_release`: **10/10 passed**.
+- The same isolated runner executed `tests.test_phaseb_stable_edge` plus
+  `tests.test_phase115c_five_liquid_handoff`: **56 passed, 1 intentionally
+  skipped** (`isolated Redis is not configured`). This covers stable catalog
+  identity/lineage, final-bar/query contracts, cursor replay, quiet/disconnect
+  session semantics, projector recovery, L2 contract and five-symbol OKX
+  status isolation.
+- Host `python3 -B -m compileall` over each changed module and test, and
+  `git diff --check`, passed. The retained `tradingsystem-test:latest` image
+  has an obsolete Ruff parser which rejects this repository's already-existing
+  Poetry caret specifier before inspecting source; no dependency was installed
+  and no lint result is claimed from that incompatible tool.
+
+**Runtime / cleanup boundary.** Every test container used `--rm`, network
+`none`, read-only source and tmpfs `/tmp`; no image, cache, service, Kafka,
+Redis, SQLite, provider, V1/V2 route, Trading System, alpha or order state was
+created or changed. The next permitted operation is one immutable Python
+reader image followed by serial recreate of only `query_v2_1` and
+`query_v2_2`, retaining their exact current image as rollback; it must then
+prove mTLS readiness before the alpha no-order packet begins.
+
+**Bounded reader runtime packet (`APPROVED / EXECUTING`, 2026-09-01).** Build
+exactly one immutable Python image from source commit `9d42d69` as
+`qdl-v2-python:2.0.0-phase533-readiness-9d42d69`, with the commit and release
+OCI build arguments. Validate the existing stable Compose topology using the
+same non-secret runtime bundle already mounted by the readers:
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/phase12-paper-20260830/phase12.runtime.env`, plus only the four currently
+active sealed Compose overlays recorded in the running container labels. The
+active final overlay intentionally pins the old reader image, so a final
+payload-free override applies the new immutable image only to `query_v2_1`
+and `query_v2_2`; it follows rather than alters the sealed overlays. Compose
+then targets `docker compose up -d --no-deps query_v2_1`, followed by the same
+command for `query_v2_2`.
+
+**Exact blast radius and rollback.** Both roles retain their existing command,
+memory `512 MiB`, CPU `0.75`, read-only filesystem, `stable_state`,
+`stable_tls` and `/runtime` mounts. The direct rollback coordinate for each is
+its current image
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`
+with the same bundle/overlays and only that target role recreated. This packet
+does not reset Kafka offsets/topology, flush Redis, delete/checkpoint SQLite,
+or recreate V1, Rust core, ingestors, bar edge, projectors, streams, Trading
+System, alpha or the order path. It performs normal process startup reads
+only; no acceptance client, provider request or consumer route is started.
+
+**Runtime exit.** After each serial recreate, require mTLS `/health/ready`
+`200`, all required dependencies `READY`, restart count `0`, `OOMKilled=false`
+and a bounded error scan. A repeated three-sample readiness check must pass
+for both replicas before any alpha no-order packet is eligible. Retain exactly
+the new active reader image and the named prior rollback image; no image/cache
+prune occurs in this packet.
+
+**In-packet startup diagnosis and corrected source scope (2026-09-01).** The
+first serial `query_v2_1` recreate used the new bounded health probe but did
+not bind its port: process state was uninterruptible SQLite I/O with the
+canonical database/WAL open, no crash and no OOM. Read-only code inspection
+identified the second full scan: `_migrate()` executes `INSERT OR IGNORE INTO
+spool_state SELECT COUNT(*), SUM(LENGTH(payload)) FROM events` on every open,
+even when the singleton state row already exists. The role was immediately
+recreated back on its sealed rollback image; `query_v2_2` and every excluded
+role remained untouched.
+
+The same provider-neutral repair now also makes initialization check the
+existing singleton first. Only a genuinely legacy/missing state row enters a
+short SQLite `BEGIN IMMEDIATE` initialization transaction and performs the
+one necessary aggregate to reconstruct exact capacity. Existing state opens
+must make no `events` aggregate; concurrent initializers serialize and retain
+the same correct result. Regression must cover existing-state no-aggregate,
+missing-state reconstruction, append/trim counters and fail-closed readiness.
+No retention, event ID, cursor, provider, manifest, Rust, Kafka, Redis, V1,
+or external consumer behavior changes. The superseded image is not retained
+as a rollout candidate; rebuild one replacement only after this source exit.
+
+**Startup repair source exit (`PASS / REPLACEMENT READER NEXT`, 2026-09-01).**
+The migration now creates schema objects first, checks `spool_state` by its
+singleton key, and returns immediately for a live cache. A missing state is
+reconstructed inside `BEGIN IMMEDIATE`, re-checking after the lock so only one
+initializer can aggregate legacy events; rollback on failure preserves the
+previous durable state. The former source commit's bounded health summary is
+retained and now has a startup path with the same bounded behavior.
+
+**Evidence actually run:** host `compileall` and `git diff --check` passed;
+the existing non-root, network-disabled/read-only Python runner executed the
+focused stable suite **68 passed, 1 intentionally skipped** (the only skipped
+case needs an explicitly isolated Redis). The five new/updated checks cover
+existing-state reopen without aggregate, missing-state exact reconstruction,
+append/trim counter agreement, no `stats()` call in health, and fail-closed
+SQLite error. Existing catalog, query, replay, projector recovery, session,
+L2 and five-symbol OKX identity tests remain green.
+
+**First image/role cleanup evidence.** The first candidate image reached only
+the source-open path on `query_v2_1`, exposed no listener and made no provider
+or consumer request. Its pre-bind scan was diagnosed, then exactly that role
+was recreated back to its prior sealed image. `query_v2_2` and all excluded
+roles were never recreated. The first candidate image is now an unreferenced
+test artifact and will be removed only after the replacement image passes
+runtime readiness; no cache, volume, Kafka, Redis or data-plane cleanup is
+authorized.
+
+**Replacement reader packet (`APPROVED / EXECUTING`, 2026-09-01).** The exact
+replacement source is commit `de4aca8`; build it once as
+`qdl-v2-python:2.0.0-phase533-readiness-de4aca8`. The final temporary two-role
+override is updated to that tag and follows all same sealed overlays/bundle.
+It serially recreates only `query_v2_1` and `query_v2_2`, preserving the
+previous `sha256:7b5c…f3f18e` image as the direct rollback coordinate. The
+failed first candidate `qdl-v2-python:2.0.0-phase533-readiness-9d42d69` must
+not be used again and is removed only after this replacement passes.
+
+**Second startup scan diagnosis and final source scope (2026-09-01).** While
+the replacement `query_v2_1` bound and returned all-ready mTLS health,
+`query_v2_2` exposed a second independent open-path scan: default
+`SQLiteDurableSpool.__init__()` runs `PRAGMA quick_check(1)` after every
+schema open. It creates SQLite temporary I/O and scans the shared cache/WAL
+before a reader can bind. This is valuable as an explicit integrity audit but
+is not a safe per-process liveness prerequisite for the rebuildable stable
+cache.
+
+The final same-scope correction adds a `SpoolConfig` open-integrity flag that
+remains **true by default** for all other spool uses. Only
+`build_stable_spool()` selects `false`, leaving the existing explicit
+`integrity_check()` API/runbook intact. Stable startup instead proves readable
+durable state through the bounded `spool_state` query; any SQLite error still
+fails required readiness closed. Regression must prove default integrity
+behavior remains, stable configuration skips only the open-time full scan,
+and all prior startup/health cases remain correct. No cache data, provider,
+event/cursor semantics, Kafka, Redis, V1, Rust or consumer policy changes.
+
+**Final startup source exit (`PASS / FINAL READER ROLL NEXT`, 2026-09-01).**
+`SpoolConfig.verify_integrity_on_open` now defaults to `true`; ordinary durable
+spools therefore retain the prior corruption check. Only the rebuildable
+stable canonical cache opts out at process-open time. Its explicit
+`integrity_check()` remains available for a deliberate maintenance audit, and
+the normal V2 reader liveness path remains fail-closed through the bounded
+state-row read. This removes the last known whole-cache scan from query-reader
+startup without weakening default spool integrity semantics.
+
+**Evidence actually run:** host `compileall` and `git diff --check` passed.
+The existing non-root, network-disabled, read-only Python image ran
+`tests.test_phase533_query_readiness`, `tests.test_phaseb_stable_release`,
+`tests.test_phaseb_stable_edge`, and
+`tests.test_phase115c_five_liquid_handoff`: **70 passed, 1 intentionally
+skipped** (the isolated-Redis case). New regression checks prove ordinary
+spools still execute their open integrity check, stable cache construction
+does not, and a manual stable-cache integrity audit remains available. Earlier
+tests retain exact legacy-state reconstruction, append/trim accounting and
+fail-closed bounded readiness coverage.
+
+**Next bounded runtime step.** Build exactly one replacement immutable reader
+image from this final source commit, update the existing two-role temporary
+override, and serially recreate only `query_v2_1` then `query_v2_2`. Require
+three all-ready mTLS samples, no restart/OOM and no bounded errors on each role
+before removing only the two unreferenced failed candidate images. No alpha
+or Trading System proof begins until this exit passes.
+
+**Last startup-path correction (`PASS / FINAL IMAGE REBUILD`, 2026-09-01).**
+Live `query_v2_1` inspection showed its process still blocked in SQLite I/O
+after the two bounded-state repairs. The remaining cause was the original
+schema script's unconditional `DROP INDEX` followed by recreate of the
+retention index on every spool open. It is neither a migration nor a
+correctness requirement when the named index already exists, and it forces a
+whole-`events` reindex against the shared cache. The schema now keeps only
+`CREATE INDEX IF NOT EXISTS`; a normal open preserves the existing index.
+There is no event, cursor, retention, provider, Kafka, Redis, V1 or contract
+semantic change.
+
+**Evidence actually run:** `compileall` and `git diff --check` passed. The
+same isolated non-root/read-only/no-network suite now reports **71 passed, 1
+intentionally skipped**. Its new trace-level regression proves reopening a
+spool requests the retention index declaratively but does not issue `DROP
+INDEX`; previous tests continue to cover normal integrity checking, stable
+cache open behavior, legacy state reconstruction and fail-closed readiness.
+The final image must be rebuilt from this commit; the two previous candidate
+images remain non-authoritative and are removed only after final runtime exit.
+
+**Shared-runtime impact and bounded completion packet (`APPROVED / EXECUTING`,
+2026-09-01).** Runtime inspection after the reader repair found that
+`stream_v2_active` and `stream_v2_passive` still ran the old image. Both build
+the same stable spool and consequently reported `query_cache=NOT_READY` from
+the same obsolete full-scan readiness path. The three stopped projectors then
+correctly received stream ingest rejection, retried against the bounded
+pending queue and were eventually cgroup-OOM-killed. This is one shared
+startup defect, not a new provider/data or topology issue.
+
+The approved completion packet therefore uses the already-built immutable
+`qdl-v2-python:2.0.0-phase533-readiness-36914d2`
+(`sha256:b75a414226d1990eea6b07022fdbd3d8cb9cad332294384f4ddb9010454e910e`)
+for the existing V2 cache-user roles only: serially roll the already-passed
+`query_v2_1`/`query_v2_2` if needed, then `stream_v2_active`,
+`stream_v2_passive`, `projector_v2`, `projector_v2_2` and `projector_v2_3`.
+No new role, worker, symbol process, topic, partition, identity or resource
+limit is created. Each retains its command, 512 MiB cgroup, existing
+`stable_state`, TLS and runtime mounts, consumer group and offsets. Normal
+real canonical projection writes resume only after the active stream is
+`READY`; there is no Kafka reset, Redis flush, SQLite deletion, V1, Rust,
+ingestor, bar-edge, Trading System, alpha, broker or order-path change.
+
+**Runtime exit and rollback.** First require three mTLS `READY` samples from
+each query reader; then roll stream active/passive one at a time and require
+their cache, authority and lease components to be ready. Start each existing
+projector sequentially with the same final image, requiring `running`,
+restart `0`, `OOMKilled=false`, bounded Kafka/stream catch-up and a final
+five-minute error scan without cache/gateway/OOM/fatal errors. Direct rollback
+for any one role is its pre-packet image with unchanged mounts: reader
+`sha256:7b5c848d2add9e0e36d88bfb837c93448140b7ade3a87d9e94e4902b2bf3f18e`,
+stream `sha256:6859cfb0359e94816986e4e9b7a4a9f6486dd9fce6ac607b04e275086efbd42b`,
+projector `sha256:36ed90b9a18e1c3bbd8cfc6169543f3a3ce1ce79f76f798e7777125cba9c63ed`.
+Failure stops/recreates only the failed role and leaves all durable state
+intact. Alpha no-order proof remains blocked until the seven-role V2 read and
+projection plane passes.
+
+**Projector bootstrap correction (`PASS / PROJECTOR IMAGE NEXT`, 2026-09-01).**
+One final read-only source inspection found the projector itself used
+`spool.stats()` only to decide whether `RedisStableProjectionTarget.bind_cache`
+should initialize an empty cache. It needs only the usage counter, not oldest,
+newest or a full payload aggregate. It now uses the same bounded
+`readiness_summary().records` as the reader health path. Query and stream roles
+already running `sha256:b75a…e910e` do not need another recreate because their
+runtime behavior is unchanged; only the three stopped projectors require the
+successor immutable image from this source commit.
+
+**Evidence actually run:** host compile/diff checks passed; the isolated
+non-root/read-only/no-network stable matrix reports **72 passed, 1
+intentionally skipped**. The added regression asserts that
+`serve_stable_projector` uses the bounded usage summary and cannot regress to
+`spool.stats()` at startup. Existing projector recovery, Kafka, stream
+ingestion, catalog, cursor, L2, final-bar and five-symbol identity cases
+remain in the matrix.
+
+**Revised final projector packet.** Build one immutable Python image from this
+commit and update only `projector_v2`, `projector_v2_2`, and `projector_v2_3`
+in the existing temporary override. Sequentially recreate those three stopped
+roles. The active query/stream image remains the already-tested
+`sha256:b75a…e910e`; its replacement is unnecessary and therefore excluded.
+The prior projector image `sha256:36ed…c63ed` with the same mounts remains the
+per-role rollback. No other component may be recreated.
+
+**Public SDK artifact correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+The first Python 3.10 alpha-runtime regression after the Phase 53.3 no-order
+adapter exposed an artifact mismatch, not a data-plane defect: its vendored
+`qdl-sdk==2.0.0` wheel has source digest
+`1535f7f5cfb50050dc300a3b65471508ca9e10d4f3bcff0d9a9a9108cc23737e` and
+predates the sealed V2 public fields `event_recency_policy`,
+`max_session_liveness_ms`, and provider-session quality. The current public
+SDK source has a different digest and the matching generated protobuf fields.
+The existing 2.0.0 artifact must remain immutable; replacing bytes under the
+same package version would break provenance and reproducibility.
+
+The approved narrow source scope is therefore one reproducible **`qdl-sdk
+2.0.1`** patch artifact: update only the SDK version constants, SDK release
+builder/CI assertions and version-specific SDK tests; build the wheel from
+the already-sealed contracts; then let the alpha runtime pin the resulting
+wheel by exact name/hash. Data Layer service version, Rust core, provider
+adapters, V1/V2 API routes, manifests, runtime roles, Kafka, Redis, SQLite,
+identities and consumer routing are excluded. The gates are a clean SDK
+release build, exact Python 3.10 standalone import, current typed
+`DataRequirement`/`QualityView` field validation, generated-contract presence
+and the existing SDK release tests. The source rollback is to retain the
+immutable 2.0.0 artifact and restore the alpha pin; no runtime rollback is
+needed because this packet starts no Data Layer role.
+
+**SDK 2.0.1 source exit (`PASS / CONSUMER PIN NEXT`, 2026-09-01).** The
+public SDK version and deterministic builder now produce
+`qdl_sdk-2.0.1-py3-none-any.whl`; Data Layer service/OpenAPI remains `2.0.0`.
+The builder produced SHA-256
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`, source
+digest `2aac992269797848acc2177268f01f606dd69cba2239da1cb4c9110dd5c5b6c8`
+and generated-contract digest
+`2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624`.
+The artifact includes the current typed `DataRequirement` and `QualityView`
+fields plus generated query protobuf, but no service internals.
+
+The isolated non-root/no-network/read-only Data Layer runner passed **20/20**
+SDK release, feed-status, consumer-manifest and stable release tests. A
+separate Python 3.10 alpha-runtime verifier imported the artifact and
+constructed observed-event/session-liveness models as `2.0.1 OBSERVE LIVE`.
+No Data Layer role, provider, Kafka, Redis, SQLite, manifest/authority or
+endpoint was changed. The sole consumer action is the matching alpha-runtime
+vendor pin; the prior immutable 2.0.0 wheel remains intact and rollbackable.
+
+**Phase 53.3 V2 read-plane runtime prerequisite (`PASS`, 2026-09-01).** The
+bounded seven-role completion packet is now stable on the existing topology:
+`query_v2_1` and `query_v2_2`, `stream_v2_active` and `stream_v2_passive` use
+reader image `sha256:b75a414226d1990eea6b07022fdbd3d8cb9cad332294384f4ddb9010454e910e`;
+`projector_v2`, `_2` and `_3` use
+`sha256:288e617c7ec137dfcac5e94a5977772f2e0f39eac3ff48585980c0b26b0071bb`.
+All seven were `running`, restart count `0`, `OOMKilled=false`; the primary
+query healthcheck was `healthy`. A bounded ten-minute error scan found `0`
+matches for `fatal|panic|oom|not_ready|unavailable|error` on every role.
+Observed resident memory was bounded at roughly `110-126 MiB` for
+query/stream and `326-347 MiB` for the three live projectors within their
+existing `512 MiB` cgroups.
+
+This completion used no new topology, topic, offset reset, Redis flush,
+SQLite deletion, V1/Rust/ingestor/bar-edge change, Trading System, alpha,
+broker or order-path mutation. It establishes only the V2 query/stream/cache
+prerequisite for the next isolated alpha no-order proof; it is not itself
+consumer acceptance or authority promotion.
+
+### Phase 53.3 - Alpha Entitlement And Advisory-Context Convergence
+
+**Status:** `IN PROGRESS / SOURCE-ONLY` (2026-09-01).
+
+**Goal and approved scope.** Complete the source prerequisite for the
+representative alpha no-order proof without widening execution authority. The
+two stable alpha consumer manifests must derive their Binance USD-M/OKX Swap
+five-liquid requirements from the existing canonical demand/catalog, including
+native final BAR intervals, TRADE, QUOTE, depth-100 L2 snapshot/delta and
+provider-supported reference data. Alpha remains `ALPHA` grade with
+`execution_dependency=FORBIDDEN`; only the Trading System Risk consumer owns
+execution-grade cache admission. A manifest requirement is an entitlement,
+not a subscription: shared Rust ingestors/core/bar-edge remain the sole data
+plane and no symbol-specific worker, image, topic, identity or container may
+be introduced.
+
+**Invariants and decision boundary.** The compiler must be deterministic and
+idempotent, derive native identity/policy/freshness from reviewed source
+artifacts, retain exact V1 fallback only where the release route already
+proves it, and make quote/mark/L2/reference routes `BLOCKED` rather than
+silently falling back. Existing `1..100` manifest capacity is too small for a
+least-privilege five-liquid alpha (Binance needs 125 routes and OKX 110), while
+the existing shared Trading-System source demand already declares 186 routes.
+The loader boundary may therefore become `1..256`; it is a declaration limit,
+not a request, stream or warmup concurrency increase. Per-request quotas stay
+bounded (`max_batch_items <= 100`, `max_warmup_rows <= 10,000`). DNSE/VN stays
+unchanged and V1-primary. No runtime bundle, image, role, provider request,
+Kafka/Redis/SQLite data, Trading System/alpha process, order or broker action
+is allowed in this source slice.
+
+**Required source gates.** Compile and contract tests must prove both rendered
+manifests load; exactly five native instruments per venue; 70 native BAR,
+5 TRADE, 5 QUOTE, 5 BOOK_SNAPSHOT and 5 BOOK_DELTA routes per venue; reference
+coverage only where the canonical reference manifest supports that venue;
+`ALPHA` grade/no execution privilege; venue/symbol isolation; exact policy and
+fallback decisions; quota bounds; deterministic re-render; and release/primary
+route integrity. The later real packet renders a sealed binding SHA from these
+artifacts and runs the named `--rm` no-order alpha proof. Source revert is
+rollback.
+
+**Source/config exit (`PASS / SEALED RUNTIME PACKET NEXT`, 2026-09-01).** A
+deterministic compiler now materializes the two alpha manifests from the
+approved stable crypto demand, source catalog and reference/L2 manifest; it
+does not enumerate symbols, provider calls or subscriptions itself. The
+rendered `alpha.binance.paper.stable` revision `9` has `125` requirements and
+`alpha.okx.paper.stable` revision `8` has `110`: each venue has exactly five
+native perpetual instruments, `70` final BAR routes, and five each of TRADE,
+QUOTE, BOOK_SNAPSHOT and BOOK_DELTA, plus only reference products supported by
+the existing canonical reference entitlement. The shared manifest declaration
+limit is now `1..256`, while request/batch/warmup/stream quotas stay bounded;
+this accommodates the `125`/`110` declared entitlements and the pre-existing
+`186`-requirement Trading System manifest without increasing runtime
+concurrency.
+
+The release route was deterministically regenerated to revision `15` and the
+primary-consumer route to revision `4`. It now contains `303` products:
+`5` monitoring, `61` Trading System, `125` Binance alpha, `110` OKX alpha and
+`2` unchanged VN products. V1 fallback is retained only for admitted Binance
+TRADE routes; final BAR, quote, L2 and reference products fail closed rather
+than silently changing source. The V2 paper acceptance projection has `299`
+V2-primary products (`234` durable, `65` on-demand); its five-liquid
+Trading-System/Binance-alpha/OKX-alpha subset has `295` (`230` durable, `65`
+on-demand). Alpha quote context is deliberately `ALPHA` grade with `5s`
+freshness, while the Trading System/Risk execution-grade quote remains `2s`;
+Risk independently re-reads the latter before normal or preview admission.
+
+Evidence: the isolated non-root, read-only, no-network Data Layer runner
+passed **32/32** entitlement/release/fallback/consumer tests, **9/9** native
+final-BAR materialization tests and **54/54** reference/L2/contract/SDK
+consumer tests. The compiler dry run returned no changed files after apply;
+`compileall` and `git diff --check` passed. These are source/config gates
+only: no runtime bundle/image/role, provider request, Kafka/Redis/SQLite
+state, Trading System, alpha process, execution session, paper order or broker
+action was created. The next and only remaining Phase 53.3 runtime decision is
+the separately scoped sealed-binding, temporary `--rm` alpha/Gateway no-order
+packet with pre/post mutation evidence. Source rollback is this commit's
+revert; V1/VN remain unchanged.
+
+## Cross-Repository V2 Alpha Consumer Production Rollout
+
+**Status:** `APPROVED / PHASE A IN PROGRESS` (2026-09-01). The detailed
+cross-repository contract is recorded in Trading System plan Section 54. This
+Data Layer entry owns the binding compiler, immutable reader release and
+real-provider acceptance evidence.
+
+### Data Layer Responsibilities
+
+1. **Phase A.** Merge the current V2 source branch to `dev` only after source
+   gates pass there. Record the Data Layer SHA and public `qdl_sdk` version in
+   the release tuple; keep `main` unchanged until stable certification.
+2. **Phase B.** Replace the five-liquid-only declaration with a deterministic
+   config-derived binding compiler. It must consume alpha requirements for
+   native Binance USD-M/OKX Swap identity, final BAR/history, `maxlen` and
+   `min_bars`, TRADE/QUOTE/MARK/BOOK, reference products and exact fallback/
+   freshness policy. It emits a sealed, versioned, secret-free binding per
+   alpha deployment or a typed `BLOCKED` reason. It does not create a
+   subscription, symbol worker, image, topic or identity per symbol.
+3. **Phase C.** Build one canonical immutable Python reader/query/stream image
+   from the merged `dev` SHA and seal its runtime bundle. Replace only reader
+   roles with per-role rollback digest. V1, Kafka, Redis, SQLite, Rust core,
+   ingestors, bar-edge and projectors stay intact unless a source change makes
+   their replacement necessary.
+4. **Phase D.** Supply real provider V2 data for paired Binance/OKX no-order
+   alpha proof. A successful route requires native identity, finality,
+   authoritative/complete/no-gap quality, cursor replay/reconnect and bounded
+   resource evidence. A product that needs unavailable data must be `BLOCKED`,
+   never represented as zero/synthetic/fallback data.
+5. **Phase E.** Publish only a release-tagged image/config after paper-canary
+   evidence. Retain V1 as named rollback. After release, remove only confirmed
+   unreferenced test images/cache and merged worktrees, recording disk
+   before/after and retention coordinates.
+
+### Data Layer Acceptance Rules
+
+- Binance and OKX are paired test venues for each eligible alpha class; source
+  and provider data remain native to their venue.
+- Support declared warmup windows through `10,000` rows while preserving
+  bounded request/batch/stream quotas and final-BAR-only execution inputs.
+- Reference data and L2 become execution inputs only when an exact consumer
+  requirement/policy permits them. Alpha remains `ALPHA` grade; Trading System
+  Risk retains the independent execution-grade reread.
+- DNSE/VN remains V1-primary and outside this crypto rollout.
+
+**Phase A source-gate journal (`PASS / DEV INTEGRATION NEXT`, 2026-09-01).**
+The V2 binding/compiler branch was revalidated in an isolated, network-disabled
+and read-only container before `dev` integration. `139` relevant source tests
+passed with `1` documented skip across alpha entitlement compilation,
+query-readiness, five-liquid/native final-BAR materialization, stable reader
+recovery, reference/L2 materialization and SDK stream/feed contracts. The
+SDK release build also reproduced `qdl-sdk==2.0.1` with wheel SHA-256
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`.
+`compileall` and `git diff --check` passed. Recovery/overlap log records came
+from deterministic negative test cases and no provider was contacted.
+
+No V2 role, bundle, image, Kafka/Redis/SQLite state, V1 service, Trading
+System, alpha process or order path changed. The next valid Phase A operation
+is merge to `dev`; runtime image/build and reader rolling remain Phase C only.
+
+**Phase A integration closure (`COMPLETE / DEV INTEGRATED`, 2026-09-01).**
+The tested source payload is now contained by remote `dev` at
+`dc4ca8ed534de516328f63b2904d0d7d248f3969`; `main` is unchanged. The
+cross-repository source tuple for the V2 rollout is:
+
+```text
+data_layer payload SHA:       dc4ca8e
+trading_system payload SHA:   dcd6cd1
+execution_alpha payload SHA:  76b110b
+qdl_sdk wheel:                2.0.1
+```
+
+This records source convergence only. It does not certify any existing reader
+runtime as the new binding compiler, nor authorize a service roll. Phase B
+starts from this `dev` baseline; Phase C is still the first runtime mutation.
+
+### Phase B Config-Derived Binding Compiler (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01)
+
+**Approved scope.** Replace the five-liquid-only compiler input with a portable
+deployment-requirement inventory exported from `execution_alpha` configuration
+and reconciled against the corresponding Compose service environment. Each
+eligible Binance USD-M or OKX Swap deployment must declare its native identity,
+final BAR interval, warmup/maxlen/min-bars, typed realtime/reference/L2 feeds,
+freshness/finality/gap policy and fallback. The Data Layer compiler resolves
+only catalog/capability-backed slices and emits a secret-free, deterministic
+sealed binding or an explicit `BLOCKED` result. It creates no subscription,
+provider call, symbol worker, topic, identity, image, bundle or runtime state.
+
+**Invariants.** The compiler is provider-neutral after native identity
+resolution; Binance and OKX requirements stay venue-native and are both
+rendered for every representative alpha class. Existing V1 routes and the
+five-liquid manifests remain compatibility inputs until the later Phase C
+bundle replacement. DNSE/VN remains V1-primary. `maxlen` may be 1..10,000;
+missing/optional metrics never become zero. A config/Compose mismatch, unknown
+catalog identity, unsupported feed or missing required capability fails closed
+with a typed result rather than a partial binding.
+
+**Required source gates.** Tests must cover deterministic re-render; all active
+Binance/OKX Compose deployments being represented as an admitted binding or
+typed block; 2,500/5,000/10,000 history bounds; multi-symbol, bracket, grid/L2
+and basis/reference profiles; Binance/OKX identity isolation; capability
+failure; and portable Trading System binding parsing. Source-only test runs use
+network-disabled/read-only containers where dependencies require Docker. No
+runtime service, provider, Kafka, Redis, SQLite, V1, Trading System, alpha,
+execution session, order, broker state or deployment configuration may change.
+
+**Rollback and decision boundary.** This phase is reverted solely by reverting
+its source commits on `dev`. A new immutable reader image and any rolling change
+remain Phase C decisions and are explicitly excluded here.
+
+**Compiler and portable-SDK slice (`PASS / SOURCE-ONLY`, 2026-09-01).** Added
+`scripts/compile_alpha_deployment_bindings.py`, a deterministic compiler which
+consumes the portable Execution Alpha inventory and emits only the existing
+`qdl.v2.consumer-route-binding.v1` contract. It resolves each required route
+through the stable source catalog and reference/L2 entitlement, preserves
+native Binance USD-M and OKX Swap identity, retains no alpha execution-grade
+privilege, and emits one typed `BLOCKED` result rather than a partial binding
+when any required route is unavailable. The output writer is explicit and
+caller-owned; Phase B created no mounted binding or release artifact.
+
+The real Compose inventory was exported in a disposable, network-disabled,
+read-only alpha container: `93` records with SHA-256
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+The compiler admitted `17` exact bindings containing `106` V2 products and
+blocked `76` records. The blocked set is fully explained: `35` non-paper
+deployments, `32` unreviewed profiles, `8` DNSE/VN V1-primary deployments, and
+one native OKX basis probe whose `*-USDT-SWAP` route has no declared
+same-family basis capability. No unavailable metric was converted to zero or
+silently sourced from another venue. A Trading System SDK-only container parsed
+all `17` bindings and selected all `106` exact routes; all were advisory
+(`execution_grade=false`), and every OKX no-order probe had zero V1 fallback.
+
+The isolated no-network/read-only Data Layer regression command ran `22/22`
+tests across the new compiler plus current entitlement/reference/universal
+release contracts. It also exposed and corrected a real shared-contract gap:
+metric series (`OPEN_INTEREST`, `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS`) may
+carry their explicit sampling interval, while point-in-time products remain
+interval-free and fail closed. No Data Layer service/image/provider/Kafka/Redis
+SQLite/V1/Trading System/alpha/order state changed. Source rollback remains a
+revert; Phase B is still open only for cross-repository commit/`dev` integration.
+
+**Optional-metric and cross-repository source exit (`PASS / DEV INTEGRATION NEXT`,
+2026-09-01).** The compiler now distinguishes an unavailable optional metric
+from a required route failure. A capability-backed optional route is excluded
+from the sealed binding and recorded in `optional_unavailable` with exact
+venue/native identity/feed/interval/policy/reason; it is never represented as
+zero, silently re-routed, or permitted to be the only admitted route. Unknown
+identity, malformed booleans and unavailable required routes still fail
+closed. The isolated Data Layer regression command now passed `23/23` tests,
+including optional-unavailable, no-admitted-required-route, checksum,
+determinism, reference/L2 and universal-release cases; isolated Ruff passed.
+
+A fresh real-Compose source proof exported `93` records with inventory SHA
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+Two identical compiler writes produced the same compilation SHA
+`940b2fe002b0c14d5da0181352c20fe1d6ae163fc6d10bde55c90c48b33a0ba4`;
+the second changed no files. It admitted `17` bindings/`106` routes and
+typed-blocked `76` records (`35` out-of-paper, `32` profile review,
+`8` DNSE/V1-primary, `1` unavailable native OKX basis). A separately
+isolated Trading System parser proof accepted every binding, preserved four
+`1d` metric-series routes, found zero execution-grade alpha routes and zero
+OKX V1 fallbacks. These are source-only artifacts in a scoped temporary
+directory: no provider, image, runtime role, Kafka, Redis, SQLite, V1,
+Trading System, alpha, execution or broker state changed. Phase B is ready
+only for its three coherent commits and fast-forward integration into `dev`;
+Phase C remains the first permitted runtime handoff.
+
+**Phase B integration closure (`COMPLETE / DEV INTEGRATED`, 2026-09-01).**
+The tested compiler source is now in remote `data_layer:dev` at
+`ee002b137d6cc0c7918a30dc52f30cbb28d74b78`; `main` and all runtime roles
+remain unchanged. The next permitted action is Phase C's separately recorded
+canonical reader-image/bundle packet. It must seal this inventory/binding
+generation before any reader roll and retain V1 plus per-role rollback digests.
+
+**Phase B scoped cleanup (PASS, 2026-09-01).** Deleted only the two temporary
+cross-repository proof directories under /tmp (qdl-phaseb-bindings.*, 852 KiB
+total) and two unreferenced test-only images:
+execution-alpha-runtime-numba:0.1.1 (sha256:7f1df0...dc5e9, 369 MB) and
+tradingsystem-test:latest (sha256:f10829...de08, 192 MB). No test container
+remained because every test used --rm. Disk changed from 203/290 GiB used
+(88 GiB free) to 201/290 GiB used (90 GiB free). The active reader image
+qdl-v2-python:2.0.0-phase533-readiness-36914d2 (sha256:b75a41...10e) and both
+query/stream replicas remained running; no runtime restart occurred. No broad
+BuildKit prune was performed because its shared-cache retention set was not
+proven.
+
+### Phase C - Canonical Reader Release And Sealed Alpha Binding Bundle
+
+**Status:** `COMPLETE / DEV INTEGRATED` (2026-09-01).
+
+**Detailed procedure:** `docs/runbooks/phase54-config-derived-reader-release.md`.
+
+**Goal.** Replace the phase-named reader artifact only with one canonical,
+immutable Data Layer image built from the merged `dev` source, while preparing
+the exact config-derived alpha binding bundle that later no-order alpha pairs
+will mount read-only. This phase does not create an alpha-specific service,
+symbol worker, topic, identity or image.
+
+**Source and artifact coordinates.** The source baseline is `data_layer:dev`
+`6967573552733cdaf8576cd8ef95ef95960f793f`. The final candidate tag must be
+`qdl-v2-python:2.0.0-dev-<exact-feature-sha>` and its OCI revision must equal
+that exact source SHA; a mutable tag is never the runtime pin. The first
+preparer gate built `qdl-v2-python:2.0.0-dev-8db07ea` from
+`8db07ea9f7d3ae27c31575c9a14fb7e6b54376be`, inspected image
+`sha256:376d474759c96bab1b3ac75a0c9311097fe3c93ba310b427f97afa963f58f77a`,
+and passed its isolated selected matrix (`23` tests). It is a build-gate
+artifact only: the final image is rebuilt after the source-managed bundle
+preparer lands and receives its own exact SHA/tag. The secret-free release
+bundle lives outside every checkout under a newly named
+`/home/bobby/.local/state/qdl-v2/releases/` directory and contains only the
+verified inventory, its `17` sealed bindings, compilation report, source/image
+digests and candidate/rollback four-role image overrides. It does not contain credentials,
+private keys, provider payloads, cursors, SQLite, Redis/Kafka data or logs.
+
+**Approved runtime scope.** After candidate source/image gates pass, serially
+recreate only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive` in Compose project `qdl_v2_stable_candidate`. The active
+reader image is `qdl-v2-python:2.0.0-phase533-readiness-36914d2`
+(`sha256:b75a414226d1990eea6b07022fdbd3d8cb9cad332294384f4ddb9010454e910e`)
+and is the exact four-role rollback image. V1, Kafka topology/offsets, Redis,
+SQLite, Rust core, both ingestors, bar edge, projectors, Trading System, alpha
+containers, broker credentials and order path are excluded. Normal reader
+startup reads are allowed; no new provider subscription or durable-store reset
+is part of this packet.
+
+**Runtime hygiene invariant.** Docker labels showed the serving readers were
+originally launched from a removed phase worktree and a stack of historical
+overrides. The successor invocation must use the canonical checkout
+`/home/bobby/data_layer` and one new release-owned override as the final image
+layer; it may retain only the existing required base/C2 selectors that are
+proven in rendered config. It must not rely on a `/tmp` override, a feature
+worktree or recreate an unrelated role merely to normalize labels. The
+canonical root's base/C2 Compose files are byte-identical to this Phase C
+worktree (`60624...c144`, `8013...fca3`), so a same-image serial label
+normalization of the four approved roles is permitted after their first image
+handoff; it does not alter the rendered service specification or data plane.
+
+**Build/test gates.** Build exactly one image. Inspect its OCI revision,
+non-root user and digest; run the selected binding/release/reference/L2/query/
+stream unit matrix inside that immutable image with network disabled, read-only
+filesystem and tmpfs-only test state; run `docker compose config --quiet` with
+the sealed public selector files; compile/re-render the binding bundle twice
+and verify all hashes. Before every serial reader recreate record image,
+restart count, health, manifest checksum, lag and RSS; after each, verify the
+same and stop/rollback the just-changed reader if it is not healthy. The later
+Phase D no-order alpha proof, not this phase, is the first permitted alpha or
+Gateway/Risk mutation.
+
+**Stream readiness semantics.** `stream_v2_active` and
+`stream_v2_passive` are cooperative lease replicas, not two independently
+ready writers. Their names do not assert ownership. At any sampled point the
+acceptance condition is exactly one replica with `/health/ready` `200` and a
+`READY` `gateway_lease`, while the other returns `/health/dependencies` `200`
+with every non-lease component `READY` and `gateway_lease=STANDBY` (its
+`/health/ready` is intentionally `503`). Both must remain live, restart-free
+and on the candidate image. Zero leaders, two leaders, an unexpected component
+state or a lease-error is a rollout failure. Pre-roll inspection observed the
+expected shape: query replicas and named active stream ready; named passive
+stream standby with consumer manifests/cache/Redis/authority all ready.
+For every serial stream handoff, recreate the currently observed `STANDBY`
+replica first and the current `READY` lease holder second; a fixed container
+name order would be wrong after a prior healthy handoff reverses ownership.
+
+**Increment 1 - sealed bundle preparer (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The bundle is a durable release coordinate rather than an
+ad-hoc shell copy. Add one small source-managed preparer and deterministic
+unit test. It may only validate the already sealed inventory/compilation,
+write a new caller-owned output directory atomically, render the four fixed
+reader image service overrides and record hashes/provenance. It must reject an
+existing output directory, unknown/duplicated reader roles, malformed image
+digests, a report/inventory digest mismatch, or any attempt to write outside
+the caller-owned output. It must not parse, copy or emit a runtime env file,
+certificate, identity, cursor, provider payload, Kafka/Redis/SQLite state or
+secret. The inventory export itself is read from an ephemeral `origin/dev`
+archive of Execution Alpha, never from the detached user checkout or a
+long-lived duplicate worktree. The archive is removed once the sealed bundle
+hash has been verified twice.
+
+**Increment 1 implementation (`PASS / SOURCE-ONLY`, 2026-09-01).** Added
+`scripts/prepare_alpha_reader_release.py` and
+`tests/test_alpha_reader_release.py`. The preparer accepts only an inventory,
+the compiler's named binding directory/report and explicit immutable release
+coordinates. It verifies inventory/report/binding checksums and canonical SDK
+bindings, creates an output directory once through a private staging rename,
+and writes only `inventory.json`, `bindings/`, `compilation-report.json`,
+`reader-image.override.yml` and `release-manifest.json`. It rejects malformed
+coordinates, a candidate equal to rollback, non-canonical/tampered bindings,
+input/report mismatch and an existing/unsafe output path. The override has the
+fixed four reader services only. No env, TLS, identity, runtime state, provider
+payload or secret is accepted or emitted. Isolated source-mounted, no-network
+tests passed: `python -m unittest -q tests.test_alpha_reader_release
+tests.test_alpha_deployment_bindings` (`10` tests), followed by
+`python -m compileall -q scripts/prepare_alpha_reader_release.py
+tests/test_alpha_reader_release.py` with bytecode redirected to tmpfs. Both
+commands used the non-root candidate image with read-only source; runtime
+mutations and order actions remained `0`. The final candidate image must be
+rebuilt from the commit containing this preparer before the private release
+bundle is materialized.
+
+**Increment 1 rollback-selector correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The initial preparer records the rollback image ID but not its
+companion Compose selector. Before any service roll it must accept and validate
+the explicit rollback image reference, write a fixed four-role
+`reader-rollback.override.yml`, and bind both reference/ID pairs into the
+manifest. This is an in-scope correctness correction, not a new runtime
+feature: rollback must never depend on reconstructing a command manually or on
+a mutable historical tag.
+
+**Rollback and close boundary.** Source rollback is a revert. Runtime rollback
+is a serial four-role recreate using the exact retained `b75a...e910e` image
+and pre-roll compose selector set. This phase closes only after the image is
+immutable, the secret-free bundle is sealed, four-reader rollout health passes
+and the obsolete phase-named active worktree/temporary override is no longer a
+runtime dependency. It does not certify an alpha consumer or paper order.
+
+**Phase C close (`PASS / RUNTIME HANDOFF COMPLETE`, 2026-09-01).** Source
+commits `95f84cd` and `d619be6` added the sealed bundle preparer and explicit
+rollback selector. The final immutable reader image is
+`qdl-v2-python:2.0.0-dev-d619be6`
+(`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`),
+with OCI revision `d619be6f64f0ec00144d39773db70e9c1f2ba6c0`, non-root
+`qdl:qdl`, and `27/27` scoped unit/contract tests passed inside that image
+with no network, read-only filesystem and tmpfs bytecode state. The real
+`execution_alpha:origin/dev` archive was exported twice in isolated no-network
+containers: both inventories were `93` deployments with SHA
+`e77a93363b59561a95053faa02afb2634d2d6e0b82e0e0366bcfdc943dbbcda4`.
+Both compilations produced `17` admitted and `76` typed-blocked deployments,
+`106` products and compilation SHA
+`940b2fe002b0c14d5da0181352c20fe1d6ae163fc6d10bde55c90c48b33a0ba4`.
+The two sealed bundles were byte-identical; final release bundle
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-d619be6` has manifest SHA
+`dba055812ab87eb836895fd71c3dfd5573b2c9ba7f4c589be2c956881e1756c5` and
+contains candidate and exact rollback selector for only the four reader roles.
+
+**Bounded runtime handoff (`PASS`).** The first serial candidate handoff
+verified the four services, then the final canonical-root normalization
+recreated exactly `query_v2_2`, `query_v2_1`, the observed stream standby and
+the observed stream leader using only
+`/home/bobby/data_layer/docker-compose.v2-stable.yml`, its byte-identical C2
+override (`8013...fca3`) and the sealed candidate override. V1, Kafka,
+Redis, SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha,
+database and order/broker paths were not recreated or reset. Every final role
+uses `e5cea...7963`, is running with restart count `0` and `OOMKilled=false`;
+both query mTLS readiness probes returned `200`; stream active reported exactly
+one `READY` lease and stream passive exactly one clean `STANDBY`, with all
+other dependency components ready. Runtime labels now point to canonical
+`/home/bobby/data_layer` and the sealed bundle, not `/tmp` or any feature
+worktree. Reader/stream lag has no active alpha consumer in this phase and is
+therefore intentionally not asserted; Phase D owns real cursor/reconnect/lag
+evidence with paired Binance/OKX no-order consumers.
+
+**Scoped cleanup (`PASS`).** Removed exactly the two unreferenced preparer
+images `376d...77a` and `70c8...d49`, the superseded
+`2.0.0-dev-95f84cd` bundle and `/tmp/qdl-phasec-execution-alpha.0P7bHe`.
+Retained only the active reader image `e5cea...7963` and named reader rollback
+image `b75a...e910e` for this packet. No broad BuildKit prune, volume/network,
+source or runtime-state deletion occurred. Disk moved from `204/290 GiB` used
+(`86 GiB` free) to `203/290 GiB` used (`87 GiB` free), and post-cleanup mTLS
+readiness/lease checks still passed. The next permitted action is Phase D's
+four representative paired Binance/OKX no-order proof; no alpha or order was
+started by Phase C.
+
+### Phase 54 Execution Ledger - Approved Five-Phase Consumer Rollout
+
+**Status:** `APPROVED / PHASE A ACTIVE` (2026-09-01).
+
+This ledger makes the cross-repository rollout executable without changing its
+established contracts. It is governed by this section, Trading System Unified
+Plan Section 54, and the Alpha Runtime Migration Architecture rollout entry.
+Every source slice integrates through `dev`; `main` remains release-only until
+Phase E certification.
+
+**Shared invariants.** Each eligible crypto acceptance is a paired native
+Binance USD-M and OKX Swap observation. V1/V2 parity is compared only within
+the same venue/candle corpus; no test asserts Binance-to-OKX strategy parity.
+DNSE/VN remains V1-primary. Provider data is real or durable provider-byte
+replay. No alpha, symbol or interval creates a dedicated Data Layer worker,
+image, topic or identity.
+
+| Phase | Scope | Required exit evidence | Runtime boundary |
+| --- | --- | --- | --- |
+| A | Converge tested V2 source in all three `dev` branches and record one release tuple. | ancestry/range-diff, source suites on `dev`, SHA tuple and `qdl_sdk` version. | source only |
+| B | Compile sealed binding from each real alpha Compose/config declaration. | every eligible crypto deployment admitted or typed `BLOCKED`; 2,500/5,000/10,000 history bounds; native identity. | source only |
+| C | Build canonical reader image/bundle and roll shared V2 readers. | SHA -> digest -> bundle -> role/rollback map; healthy query/lease pair. | four reader roles only |
+| D | Prove four representative alpha classes in concurrent Binance/OKX no-order pairs. | real V2 warmup/cursor/reconnect/final BAR, declared L2/reference, Risk reread and exact zero mutation. | disposable consumers only |
+| E | Run admitted paper canaries and close release. | same-venue input parity, observable V1 fallback, paper lifecycle/capacity, cleanup inventory. | declared paper scopes only |
+
+**Phase closure discipline.** Each coherent slice is tested, journaled and
+committed with the configured user identity, then merged to `dev`. Only after
+ancestry/reference verification may its feature worktree/branch and exact
+test-only artifacts be removed. A reviewed release PR is the only route from
+`dev` to `main`.
+
+#### Phase B Full Config Inventory Completion (`IN PROGRESS / SOURCE-ONLY`)
+
+**Goal.** Complete the already-landed compiler so every real eligible crypto
+deployment from Execution Alpha is represented by a declarative requirement
+record and becomes either an exact sealed V2 binding or a typed actionable
+`BLOCKED` result. The historical five-liquid manifest remains compatibility
+input only; it is never the default source of alpha truth.
+
+**Approved scope.** Requirement records carry native `venue`, `product` and
+instrument identity; final signal BAR interval; warmup `maxlen`/`min_bars`;
+TRADE/QUOTE/MARK_INDEX/BOOK needs; reference series; freshness/finality/gap
+policy; required/optional status; and allowed fallback policy. Values must be
+derived from the deployment Compose/config boundary, not strategy code. Each
+crypto family gets a concurrent native Binance USD-M and OKX Swap test route;
+a Binance-only economic model receives an explicit native OKX data probe, not
+a fabricated equivalent strategy. DNSE/VN remains V1-primary.
+
+**Invariants.** `maxlen` accepts only `1..10,000`; non-final history cannot
+become execution state; identity is exact and venue-native; optional absence is
+recorded rather than zero-filled; required absence is fail-closed. The compiler
+does not create provider demand, a worker, topic, image, identity, runtime
+bundle or persistent state.
+
+**Required tests and exit.** Cover every rendered Compose service, all declared
+Binance/OKX pairs, 2,500/5,000/10,000 warmup bounds, single/multi-symbol,
+portfolio, bracket, grid/L2 and basis/reference classes, malformed config,
+unknown instrument, missing required capability, optional omission, duplicate
+identity and deterministic double render. Data Layer parser plus Trading System
+portable parser must select the same route set. Phase exits only when the full
+inventory has a hash, each record is `ADMITTED` or typed `BLOCKED`, and no
+secret/runtime mutation occurred. Revert only the Phase B source commits on
+`dev` if required.
+
+**Phase A revalidation (`PASS / DEV FAST-FORWARD NEXT`, 2026-09-01).** The
+requested V2 source refs are already ancestors of `origin/dev`: Data Layer
+`origin/fix/phase533-v2-query-readiness` at `5cf8e21`, Trading System
+`origin/feat/alpha-sdk-v2-convergence` at `ce8daa9`, and Execution Alpha
+`origin/feat/alpha-sdk-v2-convergence` at `f78c40d`. In all three repositories
+`origin/main` is also an ancestor of `origin/dev`; no history rewrite or
+blind merge is needed. The Data Layer feature branch, based on `dev`, passed
+the isolated read-only/no-network binding/release/entitlement/reference/L2
+suite: **27/27**. No provider, runtime role, Kafka/Redis/SQLite, Trading
+System, alpha, order or broker state was touched. Phase A next records the
+three committed integration SHAs and fast-forwards `dev` only.
+
+**Phase A integration closure (`PASS / DEV PUSH PENDING`, 2026-09-01).** The
+three source lines now converge without a history rewrite: Data Layer
+`963939d` (`dev` base), Trading System `613ef15`, and Execution Alpha
+`a8cb775`. Both consumer commits were fast-forwarded from their respective
+official local `dev` branches after their source-only gates passed. The shared
+SDK coordinate is the reproducible Data Layer `qdl-sdk==2.0.1` artifact
+`2e6fbfa074876a14c9f43320d739067a3b980e4c4a86e309bdaefea7d3162529`; its
+wheel, SBOM and manifest were compared byte-for-byte before acceptance.
+
+No reader, stream, alpha, provider, Kafka/Redis/SQLite, PostgreSQL, command,
+order, session, position or broker state was changed. The remaining action in
+this source slice is to commit this ledger update, push the three `dev`
+branches, verify ancestry, and then begin Phase B's real-config compiler proof.
+
+**Phase A cross-repository closure and cleanup (`COMPLETE`, 2026-09-01).**
+The source-convergence commits pushed to `origin/dev` are Data Layer
+`e235f84`, Trading System `613ef15` and Execution Alpha `a8cb775`; this
+follow-up journal records their verified cleanup. All required source ancestry
+checks passed; `main` remains unchanged. No Data
+Layer image or runtime role was created by this source phase. The two
+unreferenced cross-repository test images were removed only after a
+zero-container-reference check; the image set fell from `67.87 GiB` to
+`66.15 GiB` and host disk from `203/290 GiB` to `202/290 GiB`. Existing
+BuildKit cache, V1/V2 runtime images, volumes, topics, databases and running
+services were retained. Phase B is the sole active work item.
+
+**Worktree closure (`COMPLETE`, 2026-09-01).** The clean
+`feat/v2-alpha-binding-completion` worktree and merged local branch were
+removed after remote-`dev` ancestry verification. The canonical `main`
+checkout and the separately retained `fix/phase533-python310-sdk` worktree
+were not changed. No source or runtime artifact was deleted outside this
+closed source phase.
+
+**Phase B current inventory/compiler proof (`PASS / SOURCE-ONLY`, 2026-09-01).**
+The current Execution Alpha Compose/config export (inventory SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`) was
+compiled twice inside the existing `qdl-v2-python:2.0.0-dev-d619be6` image
+with network disabled, source read-only and caller-owned `/tmp` outputs. Both
+renders were byte-identical: compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`,
+`ADMITTED=17`, `BLOCKED=76`, and `106` exact V2 products. Each output is a
+derived disposable artifact only; it created no provider demand, image,
+identity, runtime bundle, Kafka/Redis/SQLite state, alpha, session, order or
+broker action.
+
+The one blocked paired probe is intentional and explicit:
+`basis_arb_binance:...:okx-probe` needs native OKX `BASIS` under
+`crypto_liquid_v2`, which the current capability catalog has not certified.
+It is therefore `CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`, rather than
+being supplied by Binance or a fabricated equivalent. All other required
+routes are sealed native mappings. The downstream Trading System parser
+interoperability correction is recorded in its Phase B journal; Phase B does
+not close until that source commit is integrated to `dev`.
+
+**Phase B integration candidate (`IMPLEMENTED / CI PENDING`, 2026-09-01).**
+The compiler evidence journal is now on remote `data_layer:dev` at `4b49efe`.
+The three caller-owned inventory/compiler directories (724 KiB total) were
+deleted after byte-identity and parser proof; no image was built and no Docker
+cache was created by this phase. Docker image storage remains `66.15 GiB`;
+the active/referenced image set and all V1/V2 runtime state were intentionally
+retained. `main` remains unchanged. The only Phase B source correction lies in
+Trading System route parsing and is awaiting its own CI result; then the
+canonical shared-reader release packet of Phase C is the next allowed action.
+
+**Phase B CI regression correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+The baseline `unit-tests` failure was reproduced in a read-only/no-network
+container at `test_catalog_demand_consistency`. Its negative pass-through
+fixture selected the first `FRESH_SNAPSHOT` requirement without constraining
+the feed; the expanded reference manifest now orders a `BASIS` requirement
+first. `BASIS` correctly remains ineligible for provider BAR pass-through, so
+the test fixture rather than the policy is stale. The registered alpha BAR
+requirements correctly require `SNAPSHOT_AND_REPLAY`; the fixture must derive
+one `FRESH_SNAPSHOT` variant from a declared BAR before testing pass-through.
+The same targeted run exposed a second stale assertion: it assumed five
+Binance `15m` and five OKX `1h` BAR requirements, while the expanded paired
+manifest declares both `15m` and `1h` for each of five native instruments.
+The repair must compare the full paired 20-route set independently of YAML
+ordering. It must retain the replay and unknown-instrument negative
+assertions, and must not change provider admission, fallback, catalog, demand,
+image, runtime or any data plane.
+
+**Phase B full-suite fixture reconciliation (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** The complete CI-equivalent suite ran `1,272` tests in a
+network-disabled, read-only container with an ephemeral `/app/logs` mount and
+found `3` stale count assertions plus `3` selectors that assumed the prior
+five-liquid/pass-through manifest. The source-of-truth manifests now declare
+`110` Phase-10.3 products, all durable; `76` exclusions; `303` release routes
+(`299` V2 and `4` V1); and a legal alpha warmup maximum of `10,000` rows. The
+pass-through semantic checks remain necessary but are now unit-derived from a
+declared `15m` BAR with only its recovery policy changed to `FRESH_SNAPSHOT`.
+The narrow repair updates test expectations and that synthetic test fixture
+only. It does not alter the manifest, catalog, provider admission, fallback,
+durability, maxlen policy, image, runtime or data plane.
+
+**Phase B durable-history bound repair (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** Re-running the affected suite proved one real configuration
+defect instead of another stale assertion: the consumer contract permits
+`10,000` final BAR warmup rows, but the stable BAR edge Compose value and its
+constructor capped warmup/catch-up at `1,000`; the Binance REST edge also made
+only one `<=1,000`-row request. The repair is deliberately shared and
+provider-neutral at the core boundary: the Python Binance vendor adapter gains
+bounded backward pagination with per-page retry, end-boundary, duplicate,
+continuity and no-progress checks; the stable edge retains one global bound but
+permits `1..10,000` for both bootstrap and gap repair; the existing OKX
+adapter's bounded 10,000-page implementation remains unchanged. Compose will
+declare both bounds as `10,000`, matching the approved public V2 maximum. New
+tests must cover a real-shaped multi-page Binance response, ignored/repeated
+page rejection, exact `10,000` acceptance and `10,001` refusal. This is source
+only: no provider request, image build, reader/bar-edge restart, Kafka, Redis,
+SQLite, V1, Trading System, alpha, order or broker mutation is allowed.
+
+**Phase B durable-history correction and full CI exit (`COMPLETE / DEV
+INTEGRATED`, 2026-09-01).** The shared Binance vendor edge now walks backward in
+bounded pages of at most `1,000` rows until the declared `1..10,000` final-BAR
+window is complete. Every page is retried through the existing bounded fetcher
+and rejected when it is incomplete, crosses the requested close boundary,
+conflicts on an open time, makes no backward progress, or creates an interval
+gap. The stable edge and its deployed Compose configuration now expose the
+same `10,000` bound for both bootstrap and catch-up; existing OKX bounded
+pagination was left unchanged. This is a shared adapter correction, not an
+alpha-specific workaround and does not add a symbol worker, topic, service or
+image.
+
+The isolated source matrix passed `32/32` BAR-history/bootstrap tests,
+including ten-page Binance history, ignored-cursor rejection, exact `10,000`
+acceptance, `10,001` refusal, continuity and checkpoint recovery. The complete
+CI-equivalent suite then passed `1,275` tests with `6` documented skips in
+`274.128s`, inside `qdl-phaseb-full-suite`: network disabled, source mounted
+read-only, non-root UID, and tmpfs-only cache/log paths. No provider was
+contacted and no Data Layer role, V1, Kafka, Redis, SQLite, Trading System,
+alpha, execution session, order, broker or persistent state changed. The
+scoped test container is the only disposable runtime artifact and is removed
+immediately after this journal entry; no image was built and no broad cache
+cleanup is authorized in this slice.
+
+This closes the source correctness defect that prevented config-derived alpha
+bindings with `maxlen` above `1,000`. Tested source commit `42f966c`
+(`fix(v2): align durable bar history with alpha warmup`) was fast-forwarded to
+remote `data_layer:dev`; `main` and every runtime role remain unchanged. The
+next allowed operation is the release/bundle work defined by Phase C.
+
+**Scoped test cleanup (`PASS`, 2026-09-01).** Removed only the stopped
+`qdl-phaseb-full-suite` container after its exit code and logs were recorded.
+Docker inventory changed from `63` to `62` containers; images stayed
+`66.15 GB`, BuildKit cache stayed `14.39 GB`, and no volume/network/runtime
+resource was removed. The retained active and rollback image set was not
+altered; no broad prune was performed.
+
+### Five-Phase Alpha Rollout - Phase C Candidate 3c5099c
+
+**Status:** `IN PROGRESS / BUILD-BUNDLE-TEST ONLY` (2026-09-01).
+
+**Objective.** Promote the source-integrated Data Layer `dev` revision
+`3c5099cd6a4c8b6b5eb8926842bcfd098f101127` into exactly one canonical reader
+candidate image, `qdl-v2-python:2.0.0-dev-3c5099c`, and a secret-free binding
+bundle under `/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-3c5099c/`.
+The bundle is compiled from the actual `execution_alpha:dev` Compose/config
+inventory at `10bb7eb`, not a generic five-symbol fixture. It must be
+deterministic across two compiles and include only admitted secret-free route
+bindings plus typed `BLOCKED` deployment records in its report.
+
+**Known rollback and exact later runtime scope.** The currently serving four
+reader roles use `qdl-v2-python:2.0.0-dev-d619be6`, image
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`:
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive` in Compose
+project `qdl_v2_stable_candidate`. If and only if the candidate source/image/
+bundle gates pass, a later serial rolling packet may recreate those four roles
+only. It retains V1, Kafka topology and offsets, Redis, SQLite, Rust core,
+ingestors, bar edge, projectors, Trading System, alpha, broker credentials and
+the order path. Rollback is the generated four-role override pointing at the
+recorded `d619be6` image ID; no generic "prior image" instruction is allowed.
+
+**Current slice gates and exclusions.** Build one image with OCI revision
+`3c5099c...`; verify label, non-root UID/GID and digest; run selected
+binding/release/reference/L2/query/stream source tests inside that image with
+no source mount, no network and tmpfs-only write paths. Export actual alpha
+requirements, compile twice against the candidate, verify inventory,
+compilation and per-binding digests, and seal the release directory with
+`0700` ownership. No reader role, bundle-mounted runtime, provider, alpha,
+Gateway/Risk, database, Redis, Kafka, cursor, execution session, order or
+broker path may change in this build-bundle-test slice. Docker cleanup retains
+the active rollback image and this named candidate; all other test artifacts
+are scoped and measured.
+
+**Reader-health completeness correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-01).** Candidate preflight proved that both query replicas answer the
+typed mTLS readiness endpoint and both stream replicas answer typed dependency
+health. It also exposed a Compose correctness gap: only `query_v2_1` declared
+a Docker healthcheck, so `query_v2_2` and both stream replicas could appear
+merely process-up during a later serial roll. Before any runtime mutation, add
+the same mTLS `/health/ready` healthcheck to `query_v2_2` and mTLS
+`/health/dependencies` healthchecks to the active/passive streams; the latter
+is intentional because a cooperative stream standby is healthy while not
+lease-ready. Add a source regression asserting all four reader roles use the
+right endpoint, certificate root and `5s/3s/20` bounded cadence. This changes
+no provider, binding semantics, manifest capability, V1 route, Kafka, Redis,
+SQLite, Rust, alpha, Gateway/Risk or order path. The non-active `3c5099c`
+image/bundle becomes disposable only after one replacement candidate passes
+the same build, provenance, deterministic-compile and rendered-Compose gates;
+the currently serving `d619be6` image remains the sole rollback artifact.
+
+**Reader-health source gate (`PASS`, 2026-09-01).** Added the missing Docker
+healthchecks without changing reader topology: `query_v2_2` now probes its
+local mTLS `/health/ready`; `stream_v2_active` and `stream_v2_passive` probe
+their local mTLS `/health/dependencies`. The stream endpoint deliberately
+accepts a healthy standby rather than incorrectly requiring lease ownership.
+`tests.test_phaseb_stable_deployment` passed `26/26` in
+`qdl-v2-python:2.0.0-dev-3c5099c`, network disabled, root filesystem
+read-only, UID/GID `10001`, with only an ephemeral `/tmp`; the first attempt
+used an invalid nested tmpfs below a read-only source mount and exited before
+tests, then the corrected invocation passed. No service, data-plane resource,
+provider, alpha or order path changed. The next in-scope operation is one
+replacement candidate build from this tested source, followed by the existing
+deterministic inventory/compiler and sealed-bundle gates.
+
+**Phase C replacement candidate and rolling packet (`READY / APPROVED`,
+2026-09-01).** The tested source commit is
+`be59ac830c30311aa5799cc0a83db596fc6079cc`, now fast-forwarded to
+`origin/dev`. Its one immutable reader image is
+`qdl-v2-python:2.0.0-dev-be59ac8`, image ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`,
+OCI revision `be59ac8...`, release label `2.0.0-dev-be59ac8`, user
+`qdl:qdl`. The selected in-image, network-disabled/read-only/non-root matrix
+passed `111` tests; the build had no source mount. The real Execution Alpha
+inventory export is secret-free and deterministic: semantic inventory digest
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`,
+`93` deployments, with two candidate compiler passes byte-identical
+(`17 ADMITTED`, `76 BLOCKED`, compilation digest
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`).
+The sealed secret-free bundle is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-be59ac8/`, manifest
+digest `17196a73dbdfc599ba492370e5c42b68568b3d518ae907758c7833d79650a73b`,
+with `17` binding files and only the four reader-role image fields. Its
+candidate Compose renders cleanly with the active runtime env and existing
+C2 override.
+
+The approved serial runtime action is constrained to Compose project
+`qdl_v2_stable_candidate` and only `query_v2_2`, `query_v2_1`, then the
+currently observed stream `STANDBY`, then the currently observed stream
+`READY`, using the sealed image override above. Before and after every role,
+record bounded image ID, health/dependency state, restart count and RSS. Query
+roles require mTLS `/health/ready=200`; streams require both dependencies
+healthy and exactly one `gateway_lease=READY` plus one `STANDBY`. Stop on the
+first failure. The exact rollback is the sealed four-role override to
+`qdl-v2-python:2.0.0-dev-d619be6`, image ID
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`,
+recreating only the failed role. Excluded: V1, Kafka topology/offsets, Redis,
+SQLite, Rust core, ingestors, bar edge, projectors, Trading System, alpha,
+broker credentials and every order path. This normal reader rollout neither
+creates provider demand nor changes authority; the later Phase D no-order
+pair tests are the first alpha consumer use of the new bindings.
+
+**Canonical deployment-source selection (`APPROVED / PRE-ROLL`, 2026-09-01).**
+The four-role candidate must not be launched from this feature worktree. Its
+new healthchecks live in the `dev` Compose source, while the sealed bundle
+deliberately changes only image fields. Before the reader roll, the one
+canonical Data Layer checkout `/home/bobby/data_layer` is fast-forwarded from
+clean `main` to clean `origin/dev` at `be59ac8`; `main` remains the stable
+release ref and is neither merged nor mutated. This is a source selector only,
+not a service action. It gives the eventual containers the canonical working
+directory and the exact source/image/bundle tuple, rather than a feature
+worktree label or an untracked hand-written override. Returning the canonical
+checkout to a released `main` revision remains part of Phase E closeout after
+an approved release merge.
+
+**Phase C reader runtime handoff (`PASS / DEV PRE-RELEASE`, 2026-09-01).**
+Using only `/home/bobby/data_layer` at `dev@be59ac8`, the sealed image override
+serially recreated `query_v2_2`, `query_v2_1`, the observed standby
+`stream_v2_passive`, then the observed leader `stream_v2_active`. Each query
+returned typed mTLS `READY`; final Docker health is `healthy` for all four and
+every role has restart count `0`. The cooperative post-roll state is exactly
+one lease holder (`stream_v2_passive`, `READY`, epoch `10`) and one standby
+(`stream_v2_active`, `STANDBY`); all four use image ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`.
+Measured post-roll RSS is bounded at query-1 `124.9 MiB`, query-2 `114.5 MiB`,
+stream-active `109.1 MiB`, stream-passive `111.4 MiB` of `512 MiB` each. The
+container labels resolve only canonical source files plus the sealed release
+override, never a feature worktree. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha and every
+order path remained untouched. This is a DEV pre-release reader rollout, not
+a stable-main release and not an alpha acceptance.
+
+**Phase C scoped cleanup (`READY`, 2026-09-01).** Before cleanup Docker held
+the active candidate `be59ac8`, active rollback `d619be6`, and the superseded
+non-active build-only candidate `3c5099c` with its matching secret-free
+release bundle. Before removal, require a zero-container-reference check for
+the old image. Remove only that old image, old release directory, and the
+caller-owned `/tmp/qdl-phasec-reader-be59ac8.*` compiler inputs/outputs after
+their hashes are recorded above. Do not prune BuildKit broadly: it contains
+shared layers whose exact ownership cannot be proven from this phase. Record
+post-cleanup image/cache/disk values and retain the active plus one rollback
+image.
+
+**Phase C durable-projection recovery (`IN PROGRESS / MINIMAL RUNTIME REPAIR`,
+2026-09-01).** Post-roll inventory found all three existing projectors stopped
+with `OOMKilled=true`: replicas 2/3 had exited about three hours before the
+reader roll; replica 1 exited while the reader handoff was in progress. Their
+last bounded logs show the known failure chain `no active stable stream gateway
+accepted canonical data`; the old stream startup path was unavailable, then
+the projector retry loop exhausted its `512 MiB` cgroup. This is a prerequisite
+for real V2 alpha evidence, not an alpha strategy issue. The new stream pair
+is now healthy and has a single clean lease, so recover with the narrowest
+possible action: serially `start` the existing stopped containers
+`projector_v2`, `_2`, `_3` in place on their current certified bounded image
+`qdl-v2-python:2.0.0-phase533-projector-631d694`
+(`sha256:288e617c7ec137dfcac5e94a5977772f2e0f39eac3ff48585980c0b26b0071bb`),
+with unchanged `512 MiB` cgroup, `stable-projector-v1` group, offsets, TLS,
+runtime/state mounts and `2048` records / `32 MiB` pending bounds. Observe
+each before starting the next: running, `OOMKilled=false`, restart `0`,
+healthy stream ingestion and bounded RSS/error scan. On failure stop only
+that recovered role; do not recreate, reset Kafka, flush Redis, delete
+SQLite, change image, V1, Rust, ingestor, bar edge, Trading System, alpha or
+order path. Normal canonical/cache writes after a healthy start are expected
+durable projection recovery, not a test-order or authority mutation.
+
+**Phase C durable-projection recovery (`PASS`, 2026-09-01).** The existing
+projectors were started serially in place, never recreated: `_1` first, then
+`_2`, then `_3`. After a bounded catch-up window all three are `running`,
+`OOMKilled=false`, restart `0`, and their actual local HTTP readiness endpoint
+returns typed `READY` with authority `RUST_PRIMARY` and config revision
+`phasec36-reference-l2-r14`. The initially attempted HTTPS probe correctly
+failed with `WRONG_VERSION_NUMBER`; projector health is deliberately an
+internal HTTP listener, whereas query/stream public reader probes remain
+mTLS. Post-recovery RSS is bounded at `_1` `116.3 MiB`, `_2` `297.5 MiB` and
+`_3` `327.1 MiB` of their unchanged `512 MiB` limits. The bounded 90-second
+error scan found no `error|exception|oom|killed|fatal|gateway|cache|traceback`
+match after recovery. This restored normal durable projection from the
+already-running stream without offset reset, Redis flush, SQLite deletion,
+image change, V1/Rust/ingestor/bar-edge, Trading System, alpha or order-path
+mutation.
+
+**Phase C cleanup and close (`COMPLETE / DEV PRE-RELEASE`, 2026-09-01).**
+The current reader runtime is the canonical tuple: source
+`/home/bobby/data_layer` `dev@be59ac8`; sealed bundle manifest
+`17196a73dbdfc599ba492370e5c42b68568b3d518ae907758c7833d79650a73b`;
+four reader roles on image
+`qdl-v2-python:2.0.0-dev-be59ac8` / ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`;
+and named rollback `qdl-v2-python:2.0.0-dev-d619be6` / ID
+`sha256:e5cea2afa405188293e28fa8b1fd1a6ac22b2b62db8aa2e95efc44913b407963`.
+After a zero-container-reference check, removed only the superseded
+`qdl-v2-python:2.0.0-dev-3c5099c` image, its `440 KiB` release directory and
+the `724 KiB` caller-owned compiler directory. Docker images moved from
+`67.47 GiB` to `66.81 GiB`; BuildKit is `15.74 GiB` with `6.876 GiB`
+reclaimable and was deliberately not broadly pruned because ownership is
+shared. Host disk is `204/290 GiB`, with `86 GiB` available. No active image,
+volume, network, source, runtime state, V1 role or rollback image was removed.
+
+Phase C is therefore complete as a **DEV pre-release reader/bundle rollout**.
+It does not certify any alpha strategy or paper execution. The next permitted
+step is Phase D: temporary paired Binance USD-M/OKX Swap no-order proof using
+real V2 data and the sealed bindings, with exact pre/post zero-mutation
+evidence for each alpha class.
+
+### Phase 54 - Approved Full Five-Phase Alpha Consumer Execution
+
+**Status:** IN PROGRESS / OWNER-APPROVED, 2026-09-01.
+
+The owner approved execution of the complete five-phase rollout recorded in
+this ledger and the cross-repository Trading System/Alpha journals. The
+rollout starts with source convergence and ends only after paired real-data
+no-order evidence, bounded paper canaries, release reconciliation and scoped
+cleanup. No phase may silently reduce the declared target to a generic
+five-liquid manifest.
+
+**Cross-venue invariant.** Every representative alpha acceptance runs native
+Binance USD-M and OKX Swap readers concurrently, with distinct identities,
+cursor/state/log namespaces and native instrument mappings. V1/V2 output
+parity is compared only inside one venue and one identical candle corpus;
+Binance and OKX signals are never asserted equal. A reviewed Binance alpha
+without a production OKX deployment receives only a declared temporary
+OKX no-order probe, never an invented paper/live strategy deployment.
+
+**Runtime and release invariant.** Data Layer rolls only the shared
+query/stream reader roles in its release step. V1, Kafka topology/offsets,
+Redis, SQLite, Rust ingest/projector, broker/order paths and DNSE/VN
+V1-primary routing remain untouched unless a later named packet explicitly
+records otherwise. One canonical shared image serves all bindings; phase,
+symbol, interval and alpha names are not production image identities.
+
+**Completion and cleanup invariant.** Every source-changing slice is tested,
+committed with the owner identity and integrated into dev before its phase
+closes. Main changes only through the final approved stable-release PR.
+Temporary containers use --rm; test images/worktrees are removed only after
+remote-dev ancestry and zero-container-reference checks. The retained set
+is the active release image plus one named rollback image, with pre/post disk
+evidence recorded here.
+
+**Phase 1 source-convergence gate (PASS / dev integration next).** A fresh
+remote-ref audit proves the declared V2 branches
+origin/fix/phase533-v2-query-readiness,
+origin/feat/v2-alpha-config-bindings and
+origin/feat/v2-stable-rust-binance-okx are already ancestors of origin/dev.
+They are recorded rather than merged a second time. The dev-equivalent source
+gate ran in qdl-v2-python:2.0.0-dev-be59ac8 with network disabled, read-only
+source, non-root UID and tmpfs-only writes: 85 tests passed, 0 failures, 0
+errors and 1 declared skip across alpha deployment binding, sealed reader
+release, stable deployment and stable edge contracts. Expected fixture logs
+exercise invalid CLI input, stale BAR recovery and projector recovery; they
+are asserted outcomes, not provider/runtime calls. No reader role, provider,
+Kafka/Redis/SQLite, alpha, Trading System, order or broker state changed.
+The next source action is to fast-forward this tested journal commit to dev.
+
+**Phase 1 integration closure (COMPLETE / DEV INTEGRATED).** The tested
+authorization and source-gate journal is remote Data Layer dev commit
+32a48e121ba31f1e4a74c3522d9bfa871c40902b. It is a non-force fast-forward
+from 96219ab; main remains 9d6dfb9. The official Phase 1 source tuple is
+Data Layer 32a48e1, Trading System 223db53, Execution Alpha 9cfc039 and
+qdl-sdk 2.0.1. No code branch had to be replayed because the required V2 refs
+were already ancestors of their respective dev lines. The sole disposable
+artifact is the unreferenced Trading System test image; scoped cleanup and
+canonical Data Layer dev fast-forward occur after this closeout record reaches
+remote dev.
+
+### Phase 54 - Phase 2 Config-Derived Binding Expansion
+
+**Status:** IN PROGRESS / SOURCE-ONLY, 2026-09-01.
+
+**Scope.** Compile every actual Execution Alpha Compose deployment into either
+one exact secret-free V2 binding or one typed blocked record. Inputs are the
+real deployment configuration and its declarative data-requirements profile:
+native venue/market/product/symbol universe, final BAR interval, maxlen and
+min-bars, realtime execution context, L2/reference needs, freshness/gap and
+fallback policy. Strategy code and backtest parameters are not inferred or
+rewritten.
+
+**Current baseline.** The fresh offline inventory has 93 deployments:
+DECLARED=9, DECLARED_NO_ORDER_PROBE=9 and BLOCKED=75
+(DNSE_V1_PRIMARY=8, MODE_OUTSIDE_PAPER_V2_ROLLOUT=35,
+PROFILE_REVIEW_REQUIRED=32). The paired probes are native OKX Swap data-plane
+proofs, not fabricated strategy or broker-paper deployments.
+
+**Exit, tests and rollback.** Compile the actual inventory twice byte-for-byte;
+validate every generated binding with both Data Layer and Trading System
+parsers; cover 2500/5000/10000 maxlen, single/multi-symbol, bracket,
+grid/L2 and basis/reference profiles, malformed/cross-venue/duplicate records
+and required-capability failure. Tests are no-network/read-only and write only
+caller-owned tmpfs artifacts. A failure blocks the affected deployment rather
+than widening a route. Rollback is a source revert of the Phase 2 commits;
+no runtime bundle, provider demand, reader, Kafka/Redis/SQLite, alpha,
+Trading System or order path may change in this phase.
+
+**Closure (`PASS / SOURCE-ONLY`, 2026-09-01).** The exact Compose/config
+inventory was exported twice in isolated containers with the network disabled,
+read-only source and tmpfs-only scratch state. Both renders are byte-identical:
+`93` deployments, inventory SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`;
+`9` DECLARED, `9` DECLARED_NO_ORDER_PROBE and `75` typed BLOCKED. The Data
+Layer compiler rendered `17` admitted bindings containing `106` exact V2
+products and `76` explicit blocks, twice with compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`.
+The additional compiler block is the correct native outcome for the
+Binance-specific basis profile: `CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`
+on its OKX Swap no-order probe. It was neither cross-routed nor represented as
+zero data.
+
+The portable Trading System binding parser accepted all `17` compiler outputs
+and all `106` product identities with the same compiler digest. Focused
+regression coverage also exercised `2500`, `5000` and `10000` history rows as
+admitted values and `10001` as an explicit block. The registry/profile suite
+covers single-symbol directional, multi-symbol, bracket/mark, grid L2 and
+basis/reference requirements, malformed/duplicate/cross-venue rejection and
+missing required capability. A targeted representative-runtime source scan
+found no direct Binance/OKX, Redis or WebSocket client bypass in
+`adaptive_hma_cpp`, `scalping_purely`, `fib_sl_tp_strength` or `dynamic_grid`.
+
+No runtime bundle/image/role, provider request, Kafka, Redis, SQLite, V1,
+Trading System, alpha container, cursor/state/log, database row, session,
+reservation, order or broker request was created. Phase 2 is complete after
+this journal commit reaches `dev`; Phase 3 alone may build the canonical
+reader/stream release tuple and roll its four shared roles.
+
+### Phase 54 - Phase 3 Canonical Reader/Stream Release
+
+**Status:** IN PROGRESS / OWNER-APPROVED RUNTIME PACKET, 2026-09-01.
+
+**Goal and scope.** Build one immutable, shared Data Layer reader image from
+the Phase 2 `dev` revision and seal the actual config-derived binding bundle.
+Use canonical product naming `qdl-v2-python:2.0.0-dev-<commit>`; no phase,
+alpha, symbol or interval identity is allowed in the image name. After
+source/image/bundle gates pass, serially recreate only `query_v2_2`,
+`query_v2_1`, `stream_v2_passive` and `stream_v2_active` in the existing
+`qdl_v2_stable_candidate` project. The new image serves all declared bindings.
+
+**Frozen blast radius.** Retain V1 `data_layer_service`, Kafka brokers/topics/
+offsets, stable Redis, SQLite/spool, Rust cores, ingestors, bar edge,
+projectors, TLS/identities, Trading System, alpha processes and all order
+paths unchanged. Normal reader cache reads are expected; this phase creates no
+provider demand, no alpha cursor/state/log and no consumer or order record.
+
+**Tests and exit.** The candidate must be built without a source bind, carry
+its exact OCI revision/release labels, and pass the config compiler/release
+tests under `--network none`, read-only root filesystem, non-root UID and
+tmpfs-only scratch. Seal inventory/report/bindings atomically with input/image/
+rollback SHA-256s; render Compose against the canonical checkout. For every
+serial role, record before/after image ID, health/dependency state, restart
+count and RSS. Queries require mTLS `READY`; streams require exactly one
+`READY` lease and one `STANDBY`. Stop on first failure.
+
+**Rollback and cleanup.** The currently active reader image
+`qdl-v2-python:2.0.0-dev-be59ac8` / ID
+`sha256:d06dd8c84fda7eda89f07ac8f9c55c1a975b68581e82adf840e3155509d99766`
+is the named per-role rollback with unchanged runtime/TLS mounts. Roll back
+only the failed reader role. On success retain the new active image plus this
+rollback image; remove only zero-reference temporary test images, temporary
+compiler artifacts and this phase worktree after `dev` ancestry is proven.
+No broad prune, volume/network/state deletion or source reset is permitted.
+
+**Build, seal and source gates (`PASS`, 2026-09-01).** The canonical checkout
+`/home/bobby/data_layer@b1729675632822acd2496536bd58cff4160d6323` built one
+non-root immutable image, `qdl-v2-python:2.0.0-dev-b172967` / ID
+`sha256:8bb504458b0608f5e43f355c06b71a61e8f3018a854d3a81ac0f9084e9269160`.
+Its OCI revision/version labels exactly match the source/release coordinate.
+The image-contained no-network, read-only, non-root regression matrix passed
+`43/43` (`test_alpha_deployment_bindings`, `test_phaseb_stable_deployment`,
+`test_phase115_universal_release`). Expected negative-fixture output covered
+invalid CLI input, stale final-BAR recovery and bounded DNSE queue fencing;
+no provider was contacted.
+
+An isolated clean Execution Alpha `dev@8c4a27f` source export yielded the
+actual `93` deployment inventory at SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`.
+The candidate compiler admitted `17` bindings / `106` native products and
+blocked `76`, compilation SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`.
+The portable Trading System parser independently accepted all 17/106. The
+sealed secret-free release is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-dev-b172967`, manifest
+`998850767a0a732873b8cce22448dea7a41b035072d3a9c6155210d08b61aba8`;
+it records no secret, runtime mutation or order action and has a rendered
+four-role candidate plus exact per-role rollback override. Canonical Compose
+rendered successfully before any role change.
+
+**Bounded reader handoff (`PASS / DEV PRE-RELEASE`, 2026-09-01).** With the
+existing project/runtime/TLS mounts, serially recreated only `query_v2_2`,
+`query_v2_1`, the observed standby `stream_v2_active`, then the observed owner
+`stream_v2_passive`. All four now use `8bb504...69160`, are Docker `healthy`,
+restart `0`, OOM false. Both query replicas return typed mTLS `READY`; the
+stream pair converged to exactly one `READY` lease (`active`) and one
+`STANDBY` (`passive`). A bounded ten-minute error scan found zero
+`fatal|panic|oom|traceback|exception|not_ready|unavailable` matches. Post-roll
+RSS was query `112.0/115.3 MiB` and stream `114.6/109.3 MiB`, each below the
+unchanged `512 MiB` cgroup. V1, Kafka topology/offsets, Redis, SQLite,
+Rust/ingestors/bar edge/projectors, Trading System, alpha and every order path
+were not recreated or reset.
+
+**Cleanup and decision.** Before build the Docker image store was `66.81 GiB`
+and host disk `204/290 GiB`; after build/roll it is `67.48 GiB` and
+`207/290 GiB`. Retain only the active candidate and the named rollback
+`qdl-v2-python:2.0.0-dev-be59ac8` / `sha256:d06dd8...99766`; no unreferenced
+candidate image was created. Remove only caller-owned temporary compiler
+inputs and the detached source worktree after this journal commit is integrated
+into `dev`; no broad BuildKit prune is safe because its remaining cache has
+shared ownership. Phase 3 is complete as a dev-pre-release reader rollout.
+Phase 4 is the first permitted alpha/Gateway/Risk runtime proof.
+
+### Phase 54 - Phase 4 Paired Native Alpha No-Order Acceptance
+
+**Status:** IN PROGRESS / OWNER-APPROVED BOUNDED RUNTIME PROOF, 2026-09-01.
+
+**Goal.** Prove that the sealed V2 reader release is consumed as real
+provider-derived data by the shared alpha runtime and Trading System admission
+path, without creating any execution effect. Four representative runtime
+classes run as paired native workloads: Binance USD-M and OKX Swap start
+concurrently for one class at a time. A pair is two temporary consumers, not
+two new strategy variants, images, providers, workers or symbol-specific
+services.
+
+**Scope and invariants.** The input is release manifest
+`998850767a0a732873b8cce22448dea7a41b035072d3a9c6155210d08b61aba8` and
+the actual config-derived binding inventory. Each workload uses its exact
+sealed consumer binding, V2 query/stream identity, real provider-derived
+cache, read-only alpha source, tmpfs-only cursor/state/log paths,
+`TRADING_NO_ORDER=true`, no broker credential and no direct venue client.
+The temporary Gateway is a single no-order-only reader of existing
+PostgreSQL/Redis/V2 cache state; it starts no background writer and is removed
+after the matrix. V1, Kafka topology/offsets, Redis/SQLite durable state,
+ingestors, Rust core, bar edge, projectors, running alpha services, Trading
+System services and every order path are excluded.
+
+**Required paired matrix.**
+
+| Class | Binance USD-M and native OKX Swap proof |
+| --- | --- |
+| closed-bar directional | final BAR warmup, FIFO append, signed-cursor replay and reconnect |
+| multi-symbol signal | execution symbol plus regime symbol retain native identity and one candle boundary |
+| bracket/conditional | final BAR, quote and mark reach typed BRACKET/CONDITIONAL/OCO preflight |
+| grid/L2 limit | L2 snapshot, delta, reset/resnapshot and tick-normalised L2 LIMIT/OCO preflight |
+
+For each native venue, V1/V2 semantic comparison only uses that same venue's
+captured corpus. A missing active risk profile may return a typed
+`PREVIEW_REJECTED` after the required V2 cache reread; it is never
+auto-created, bypassed or replaced by a cross-venue profile.
+
+**Exit gates.** Record route/binding hashes, finality/freshness/watermark/gap,
+cursor replay/reconnect, typed intent and independent Risk cache reread,
+allowed fallback-return or BLOCKED result, CPU/RAM/open connections and
+container exit. Exact no-order scope checks must show no execution session,
+command/journal/outbox, reservation/pending exposure, order/bracket/group,
+broker attempt or persistent alpha state mutation. All temporary containers
+must be absent after `--rm`; remove only the caller-owned tmpfs/log/cursor
+namespace and ephemeral secret environment file. No image prune, volume
+deletion, Redis flush, SQLite reset or shared-state cleanup is allowed.
+
+**Rollback/decision boundary.** Stop the temporary no-order Gateway and pair,
+remove their scoped namespace, and retain the existing V1 route plus named V2
+reader rollback image. Stop on any V2 freshness, identity, sequence, cache
+reread or zero-mutation failure. Phase 5 paper canaries are forbidden until
+this complete paired matrix passes.
+
+**Cursor-handoff preflight repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-01).**
+Source review found that the initial alpha probe checked the final BAR yielded
+from `warmup_then_stream`, but did not independently prove that the server
+accepts the resulting signed handoff cursor on a reconnect. This is a probe
+evidence gap, not a reader, provider or route failure. The narrow shared-alpha
+repair adds an exact-binding V2 bar-handoff read that obtains the sealed
+warmup cursor and observes `REPLAYING -> LIVE` twice from that same signed
+cursor. It does not wait for the next 5m/15m/1h close, change bar finality, add
+a provider request, or expose a new Data Layer endpoint. The normal alpha
+stream remains unchanged and still receives its current final warmup BAR.
+
+The source gate must cover valid handoff/reconnect, wrong or missing control,
+timeout, exact native identity and no cross-venue route selection. It is
+strictly source-only: V1, query/stream roles, Kafka, Redis, SQLite, state,
+identities, Trading System, alpha processes and order paths remain untouched.
+After this repair passes, the existing temporary paired packet is still the
+only permitted real-provider runtime action.
+
+**Preflight correction (2026-09-01, no runtime mutation).** The first
+read-only binding/identity inspection found a real interoperability defect:
+the generated per-alpha sealed binding uses a local consumer identifier such
+as `alpha.<alpha_id>.binance.paper`, while V2 workload access is granted to
+the platform identities `alpha.binance.paper.stable` and
+`alpha.okx.paper.stable`. The existing alpha runtime incorrectly used one
+identifier for both binding verification and V2 transport authentication. The
+required narrow cross-repository correction is to retain the local binding
+identifier for checksum/route selection and add a separate access-consumer
+identifier solely to the V2 SDK/JWT transport. It does not change Data Layer
+provider admission, manifest auth, route capability or server-side policy.
+No alpha, query, stream, gateway, database, Redis, cursor or order process was
+started in this preflight.
+
+**Shared bracket-context source gate (`PASS / NO RUNTIME MUTATION`,
+2026-09-01).** The paired proof found and closed the one missing execution
+transport path before real-provider use: a V2 alpha bracket now carries the
+same normalized `risk_context` and typed `execution_intent` through the shared
+SDK, Gateway bracket schema, persisted bracket metadata and generated entry or
+child leg payload. This makes `data_layer_contract=V2_PRIMARY` observable by
+the existing independent Risk V2 cache reread. It is additive and legacy
+bracket callers still emit no context. The isolated Trading System source
+matrix passed `62/62` across typed intent, bracket, alpha SDK order-state and
+no-order admission tests; Alpha Runtime passed `26/26` contract tests plus
+`5/5` typed-intent tests. All runs were no-network, read-only and disposable;
+no Data Layer role, provider, Kafka, Redis, SQLite, PostgreSQL, alpha state,
+session, command, order, bracket, reservation or broker action changed. The
+next action is the reusable source-only no-order probe; Phase 4 runtime pairs
+remain pending.
+
+**Signed-cursor proof source exit (`PASS / NO DATA LAYER MUTATION`,
+2026-09-01).** The shared alpha adapter now validates the sealed V2 BAR
+warmup cursor by subscribing twice with the same server-issued token and
+requiring the control boundary `REPLAYING -> LIVE` both times. This uses the
+existing V2 query/stream contracts; it neither adds an endpoint nor changes
+provider, Rust, Python reader, Kafka, Redis, SQLite, runtime bundle or
+identity. The retained alpha image passed `7/7` exact handoff/fail-closed
+facade tests, `5/5` probe tests and `45/45` V2 runtime regressions in
+disposable read-only/no-network containers. No real provider request or Data
+Layer runtime mutation occurred. The next allowed Data Layer action remains
+the already-approved paired real-provider no-order proof.
+
+**Risk reread ordering dependency (`IN PROGRESS / NO DATA LAYER CHANGE`,
+2026-09-01).** The paired native proof needs a Trading System no-order V2
+cache reread even if an OKX strategy profile later rejects the preview. The
+pending narrow Gateway/Risk source correction changes only that read ordering
+for explicitly V2-marked no-order payloads; no Data Layer endpoint, identity,
+reader, provider, Kafka/Redis/SQLite state or runtime role changes. The
+real-provider paired proof remains blocked until that source gate passes.
+
+**Risk reread ordering exit (`PASS / NO DATA LAYER MUTATION`, 2026-09-01).**
+Trading System now performs its existing V2 cache read before a V2-marked
+no-order mode rejection; its focused source matrix passed `63/63` with a
+specific zero-write ordering test. This does not modify any Data Layer
+contract, reader, provider, identity, durable state or runtime role. The
+paired Binance/OKX no-order proof is now permitted against the sealed reader.
+
+**Phase 4 paired-reader packet (`IN PROGRESS / OWNER-APPROVED`, 2026-09-01).**
+The active sealed V2 query/stream reader is read by exactly eight temporary
+native alpha probes: one Binance USD-M and one OKX Swap counterpart for each
+directional, multi-symbol, bracket and grid/L2 class. Every probe uses its
+existing sealed binding and separate mTLS/JWT access identity; it must prove
+final BAR warmup, signed cursor reconnect and any declared quote/mark/L2 path
+without a direct provider connection. Data Layer roles, Kafka, Redis, SQLite,
+reader image/release bundle and V1 stay untouched. Results remain insufficient
+for paper promotion unless all scoped pairs finish and produce zero alpha/order
+state mutation evidence.
+
+**First paired-reader receipt (FAILED CLOSED / ZERO MUTATION, 2026-09-01).**
+The packet ran the four representative native pairs, eight read-only alpha
+probes, against real V2 query/stream. Every probe rejected the first exact
+latest-final-BAR with required-data-not-available; no route selected V1
+fallback. The temporary no-order Gateway exited 0 and was removed.
+Before/after PostgreSQL checks across all scoped accounts were identical and
+all-zero; control and market Redis scoped keys were empty and unchanged; every
+temporary container and private tmpfs namespace was removed. Thus no order,
+state, cache, cursor, provider or execution mutation occurred.
+
+**Root cause and bounded repair (IN PROGRESS / SOURCE-ONLY, 2026-09-01).**
+The current V2 BAR edge mounts the narrow Phase-12 projection containing only
+ten five-liquid 1m routes. The sealed real alpha inventory declares 36
+deployment BAR routes, 26 unique native physical Binance USD-M/OKX Swap
+routes, including 5m, 15m, 30m, 1h and 1d. Existing catalog and the shared
+Rust core already carry the capability metadata; the missing link is a
+reusable compiler that turns the union of admitted sealed alpha bindings into
+one bounded shared BAR-edge projection. It must deduplicate exact canonical
+identity, require V2_PRIMARY plus realtime plus final BAR, retain the exact
+venue/source-policy/interval mapping, and reject unbound/non-final/mismatched
+routes. require_live=false for a final-BAR alpha route must not suppress
+materialization: it controls consumer liveness policy, not whether the shared
+edge owns a provider-confirmed close. The repair is source-only until an
+explicit later packet authorizes a single bar-edge rolling recreate with a new
+namespaced checkpoint. It creates no symbol worker, image, topic, Redis prefix,
+consumer group or alpha-specific service.
+
+## Phase 54.1 - Cross-Repository Alpha V2 Production Execution Ledger
+
+**Status:** `OWNER-APPROVED / ACTIVE`, 2026-09-01.
+
+**Outcome.** Make V2 the normal, versioned data-read plane for admitted alpha
+and Trading System consumers. V1 remains an explicit, observable rollback only
+where the sealed route permits it. `dev` is the sole production-capable
+integration line; `main` is stable release-only. Every eligible crypto alpha
+is proved against both native Binance USD-M and OKX Swap data. This paired
+proof verifies each venue independently; it does not assert cross-venue price
+or signal equality.
+
+**Global invariants.** One shared provider/ingest/core/bar-edge/read plane
+serves all admitted symbols and intervals. No alpha, symbol, interval, feed or
+venue may create a dedicated image, topic, worker, identity or long-lived
+container. Requirements are declarative at the deployment/config boundary:
+native venue/product/instrument, final BAR/history `maxlen`/`min_bars`,
+TRADE/QUOTE/MARK/BOOK/reference feeds, freshness/finality/gap/fallback policy,
+and required versus optional semantics. Provider values are real or durably
+captured provider bytes; absence is typed `BLOCKED` or optional-unavailable,
+never zero-filled or cross-venue substituted. DNSE/VN stays V1-primary.
+
+| Phase | Data Layer deliverable and hard exit | Runtime / rollback boundary |
+| --- | --- | --- |
+| A | Converge tested Phase-4 source with Trading System and Execution Alpha into each remote `dev`; record the three SHA tuple and `qdl_sdk` provenance. | Source-only; revert coherent `dev` commits. Do not alter dirty canonical checkouts. |
+| B | Compile every actual eligible alpha configuration to a sealed native binding or typed `BLOCKED`; compile one shared BAR-edge projection from the union of admitted alpha demand **and active baseline demand**. | Source-only; no provider/runtime state. A later BAR-edge handoff must retain existing routes. |
+| C | Build one canonical semver-plus-SHA reader image and sealed bundle; separately apply the bounded BAR-edge projection required for authentic final BAR. | Reader roll is only query/stream. BAR edge, if required, is one named role with its own checkpoint/config rollback; V1/Kafka/Redis/SQLite/core/ingestors/projectors stay intact. |
+| D | Run bounded native Binance/OKX no-order proof for representative closed-bar, multi-symbol, bracket/conditional and grid/L2 classes; cover all admitted binding classes with data-only contract probes. | Temporary `--rm` consumers and no-order Gateway only; exact DB/Redis/state scope must remain zero-mutated. |
+| E | Promote passing paper canaries per admitted class, publish stable release only after evidence, then clean merged worktrees and unreferenced test images by exact inventory. | Paper scopes are namespaced; V1 is retained rollback. `dev -> main` only through release PR/tag. |
+
+**Mandatory test matrix.** Source gates cover deterministic double render,
+native identity isolation, malformed/duplicate rejection, required/optional
+capability semantics, `maxlen` 2,500/5,000/10,000, single/multi-symbol,
+bracket, grid/L2 and basis/reference declarations. Runtime gates cover final
+BAR, warmup/FIFO append, signed cursor replay/reconnect, quote/mark/L2
+sequence/reset/resync, freshness/watermark/gap, bounded resource use, and
+V1-fallback-return only where policy permits it. Alpha/V1-V2 parity is within
+the same venue and candle corpus. No-order evidence additionally proves zero
+execution sessions, commands, reservations, orders, groups, brackets, fills,
+broker attempts, persistent alpha state and scoped Redis mutation.
+
+**Lifecycle and cleanup.** Each coherent tested source slice is committed with
+the owner identity, pushed/merged to `dev`, then verified with
+`git merge-base --is-ancestor` before its worktree or local branch is removed.
+Never reset or delete a dirty canonical checkout. At phase close retain only
+the active runtime digest and named rollback digest; record exact container
+references plus disk before/after before removing unreferenced test images or
+BuildKit cache. Runtime state, volumes, networks, source, secrets and active
+containers are excluded from cleanup.
+
+**Phase B shared BAR-demand compiler exit (`PASS / SOURCE-ONLY`, 2026-09-01).**
+The compiler now accepts a repeatable set of sealed alpha bindings and an
+optional active `MATERIALIZED` baseline projection. The retained projection is
+not trusted as a broad catalog: its schema/status/digests/binding IDs are
+validated, then every retained route is resolved again through the current
+strict catalog and must still be a final BAR. This prevents a new alpha union
+from deleting the active Trading System 1m baseline while still rejecting an
+unknown or non-final retained route. It produces one shared catalog/acquisition
+projection, deduplicated by canonical identity, without creating any
+symbol-specific topology.
+
+An isolated non-root, network-disabled, read-only test container passed `7/7`
+projection tests, including alpha `require_live=false`, duplicate alpha route,
+active-baseline retention and missing-baseline rejection; the existing binding
+compiler/release suite passed `10/10`. A separate offline tmpfs-only real
+artifact compile read all `17` sealed alpha bindings: their demand selected
+`25` native final-BAR routes. Unioning the active ten-route
+`trading-system.paper.stable` projection produced exactly `35` routes, with
+no baseline removal. A second offline verifier mapped all 35 binding IDs to
+current catalog source IDs and confirmed each exists in the active Rust core's
+182-source configuration. These commands made zero provider requests, runtime
+changes, order actions or persistent writes; all output was tmpfs-only.
+
+The source repair is ready for its coherent Data Layer commit and `dev`
+integration. A later bounded runtime packet may materialize a namespaced
+35-route projection and recreate only `binance_bar_edge`; it must retain the
+current source image, V1, Kafka/Redis/SQLite, Rust core, ingestors, projectors,
+Trading System, alpha and order path, with exact old projection/checkpoint
+rollback coordinates recorded at execution time.
+
+**Phase A `dev` revalidation (`PASS / REMOTE INTEGRATION NEXT`, 2026-09-01).**
+The locally fast-forwarded `dev` source, rather than a feature-only checkout,
+passed the isolated read-only/no-network binding/projection/release matrix
+`17/17`. Its Data Layer source coordinate is `29639f8`; Trading System and
+Execution Alpha local `dev` counterparts passed their paired source gates at
+`50da7e4` (`58/58`) and `80519d3` (`84/84`) respectively. No runtime service,
+provider, Kafka/Redis/SQLite state, database, alpha, Gateway/Risk or order
+path changed. The next action is one non-force push of all three `dev` refs,
+followed by ancestry verification before any worktree cleanup.
+
+**Phase A integration and cleanup closure (`COMPLETE`, 2026-09-01).** Remote
+`dev` now contains the tested source tuple at Data Layer `61d33a4`, Trading
+System `d171e1d` and Execution Alpha `5ed4a5b`; in all three repositories
+`origin/main` remains an ancestor of `origin/dev` and no main ref changed. The
+three Phase-A feature branches are verified ancestors of their corresponding
+remote `dev` ref. The one disposable image
+`trading-system-test:alpha-v2-a475c59` had zero container references and was
+removed. Docker image storage moved from `69.34 GiB` to `68.78 GiB`; host free
+space rounded from `79 GiB` to `80 GiB`. Reclaimable BuildKit cache is left
+intact (`8.537 GiB`) because its layers have shared ownership and no broad
+prune was authorized. No volume, network, runtime state, active image,
+rollback image, source, secret, service or alpha state was removed. The next
+phase is Phase B source work from fresh `dev` feature branches.
+
+**Phase B real-config revalidation and closure (`COMPLETE / DEV INTEGRATED`,
+2026-09-01).** Fresh feature worktrees started from the current three-repository
+`dev` tuple: Data Layer `37eda44`, Trading System `2c92fee` and Execution Alpha
+`9069fcb`. The Execution Alpha exporter rendered the real Compose/config
+inventory twice with byte-identical SHA-256
+`738363ab1c8a56f75a6e1b728d96dab59b7632c09023d6a28a7e3b72068e0d60`:
+`93` deployments (`9` declared Binance paper, `9` native OKX no-order probes,
+and `75` explicitly blocked). The actual declarations cover directional,
+multi-symbol, bracket/mark, grid/L2 and basis/reference profiles; their
+required native venue/symbol universe, interval, history, feed and policy
+fields come only from Compose/config selectors.
+
+The active reader image was used only as an isolated dependency container:
+network disabled, read-only source/root filesystem, non-root host UID and
+tmpfs-only scratch. It compiled the two inventory renders byte-for-byte into
+the same report SHA-256
+`1a859f933086715fca40e5efc1bd8293a9cc25a86b03a1bab3b6f224557cf2c6`:
+`17` admitted sealed bindings, `106` exact native V2 products and `76` typed
+compiler blocks. Execution Alpha deployment-requirement regressions passed
+`7/7`; Data Layer compiler regressions passed `6/6`; Trading System binding
+contract regressions passed `12/12` and its independent parser loaded all
+`17/106` generated identities. Tests covered the declared single/multi-symbol,
+bracket, grid/L2 and basis/reference classes plus maxlen bounds,
+malformed/duplicate and capability-failure cases. A test-only host Pytest cache
+write was rejected by the read-only source mount and is explicitly harmless;
+the test itself passed.
+
+The only paired native capability block remains the Binance-specific
+`basis_arb_binance` OKX data probe for `BASIS` under
+`crypto_liquid_v2`; it is recorded as
+`CAPABILITY_UNAVAILABLE:BASIS:crypto_liquid_v2`, never substituted from
+Binance or turned into zero. DNSE/VN stays V1-primary; sandbox/non-paper and
+unreviewed profiles remain explicit policy blocks. No provider request,
+runtime role/image build, Kafka/Redis/SQLite/PostgreSQL mutation, alpha
+container/state, Gateway/Risk call, session, command, order or broker action
+occurred. All `/tmp/qdl-phaseb-*` inventory/compiler artifacts and disposable
+containers were removed. Phase C is now the next permitted action: seal one
+canonical reader image/bundle from this `dev` state, then use its separately
+recorded BAR-edge projection handoff to materialize authentic final BARs.
+
+**Phase 54.1 Phase D start and reference-plane boundary (`IN PROGRESS / OWNER-APPROVED`, 2026-09-01).**
+The active source tuple for the bounded proof is Data Layer `dev@5edbc8c`,
+Trading System `dev@77bfa7f`, Execution Alpha `dev@79b91e3`, and
+`qdl-sdk==2.0.1`. The active shared projection has now caught up without a
+synthetic write: the exact union is `35/35` final-BAR routes, all contiguous,
+with `1,000..1,440` retained rows and no missing route. This opens Phase D's
+real-provider read-only proof; it does not promote a reader, alpha, Gateway,
+Risk or paper order path.
+
+The four native Binance USD-M/OKX Swap pairs remain directional, multi-symbol,
+bracket/conditional and grid/L2. The separately declared basis/reference
+profile is a data-only contract probe, because reference observations are
+bounded provider reads and do not carry a stream cursor or execution authority.
+Source review found the Data Layer public V2 SDK already exposes the governed
+`/v2/market-data/reference:batch` contract, while the shared alpha facade does
+not yet expose a binding-validated reference method. The narrow in-scope repair
+is limited to the shared Execution Alpha facade/probe: map only sealed
+`FUNDING_RATE`, `OPEN_INTEREST`, `LONG_SHORT_RATIO`, `TAKER_FLOW`, `BASIS` or
+`CONTRACT_METADATA` routes to typed V2 `ReferenceRequirement` values, retain
+provider/interval/coverage/lineage, and fail closed for absent native basis.
+It creates no Data Layer service, topic, image, identity, worker, cache or
+provider-specific fallback. The existing query/stream roles, V1, Kafka,
+Redis, SQLite, Rust core, ingestors, projectors, Trading System and alpha
+containers remain excluded until the later temporary no-order packet.
+
+**Phase D test and rollback gate.** Source tests must prove exact
+route-to-reference mapping, interval/decimal/lineage preservation, required
+typed `UNAVAILABLE`/`MISSING`, no cross-venue substitution and no attempt to
+treat reference data as execution-grade. The runtime packet then uses only
+existing query/stream readers and temporary `--rm` consumers; it records native
+identity, response digest, provider lineage, coverage, freshness and bounded
+resources. Its rollback is removal of temporary consumers and a source revert;
+no durable data-plane or execution state is eligible for cleanup or mutation.
+
+## 54.2 Cross-Repository Alpha V2 Production Rollout Completion Charter
+
+**Status:** `OWNER-APPROVED / ACTIVE`, 2026-09-02. This is the authoritative
+Data Layer half of the five-phase alpha-consumer rollout. It is jointly tracked
+with Trading System section `54.13` and Execution Alpha's V2 migration ledger.
+The target is V2-primary data consumption for reviewed paper alpha classes,
+with V1 retained only through a sealed per-product fallback policy. It does
+not change strategy/backtest logic, portfolio/risk configuration, broker
+credentials, broker execution or a venue's native capability.
+
+**Execution authorization (2026-09-02).** The owner authorized the complete
+five-phase rollout without per-slice approval prompts. Source work must merge
+to `dev` at the end of each coherent tested slice; `main` remains stable
+release-only. Every eligible crypto alpha proof and canary has a concurrent
+native Binance USD-M and OKX Swap observation. This authorization does not
+permit deletion of source/runtime state, a broad prune, V1 removal, or a
+cross-venue data substitution; the rollback and cleanup boundaries below stay
+mandatory.
+
+**Non-negotiable invariants.** Every crypto alpha proof runs a native Binance
+USD-M and OKX Swap pair concurrently. Provider bytes must be real V2 data;
+synthetic records are limited to deterministic unit/contract tests. A route
+without a native provider-equivalent product is emitted as typed `BLOCKED`,
+never substituted from the other venue, approximated with zero, or silently
+sent through V1. DNSE/VN stays `V1_PRIMARY` in this rollout. One shared reader
+and stream image serves every declared route: no image, worker or container is
+created per alpha, symbol or interval.
+
+### Phase A — Source convergence and `dev` lifecycle
+
+- Reconcile the three V2 source branches against their respective `origin/dev`
+  heads, rerun their focused source tests on a clean integration checkout, and
+  record the immutable tuple `data_layer_sha`, `trading_system_sha`,
+  `execution_alpha_sha`, SDK version and generated-binding schema revision.
+- `execution_alpha/dev` already exists; formalize it as the only
+  production-capable integration branch rather than creating a duplicate.
+  Feature branches begin from and merge into `dev`; `main` is release-only.
+- Exit: each intended feature commit is an ancestor of `origin/dev`, no state,
+  log, secret or cache is staged, and no runtime role changes. A branch/worktree
+  is removable only after `git merge-base --is-ancestor <commit> origin/dev`.
+- Rollback: leave the merged source in `dev`, revert with a normal reviewed
+  commit if necessary; never reset a dirty canonical checkout or rewrite main.
+
+### Phase B — Actual-config binding compiler
+
+- Compile from each paper-capable alpha deployment's real Compose/config:
+  `venue`, market/product, native symbol universe, interval, feed set, finality,
+  `maxlen`, `min_bars`, freshness, gap, required/optional and fallback policy.
+  Data requirements remain declarative infrastructure metadata, not strategy
+  name heuristics.
+- Validate native instrument identity and compile one sealed binding per
+  consumer/deployment. Cover single-symbol, multi-symbol, bracket/conditional,
+  grid/L2 and reference/basis classes, including `maxlen` 2,500, 5,000 and
+  10,000. Existing unreviewed/de-listed/unsupported deployments fail closed
+  with a machine-readable reason.
+- Exit: every eligible crypto deployment has a hash/version/provenance binding
+  or an explicit typed block; generated secrets and runtime material remain out
+  of Git. The portable Trading System parser accepts every admitted binding.
+- Rollback: discard only the temporary sealed bundle; no catalog, Kafka, Redis,
+  SQLite, provider or execution mutation occurs.
+
+**Phase A current-source gate (`PASS / DEV MERGE NEXT`, 2026-09-02).** The
+current Data Layer Phase-D branch was tested before integration in an existing
+immutable runtime image with the source mounted read-only, `--network none`,
+non-root UID `10001`, read-only root filesystem and tmpfs-only scratch.
+`python -m unittest` ran alpha-reader release, alpha workload identity,
+reference batch, V2 reference and reference/L2 consumer tests: **55 passed,
+1 expected ownership skip** in `6.883s`. The source diff adds only the sealed
+binding readability/identity tooling and completed-period reference semantics;
+no provider, runtime role, Kafka/Redis/SQLite, Trading System, alpha, database
+or order-path state was changed. The coherent branch head is `d59c2cd`; merge
+to `dev` is the next permitted Phase-A action.
+
+**Phase A integration closure (`COMPLETE / DEV`, 2026-09-02).** The fast-forward
+source SHA `e7bd1db` equals `origin/dev` and was revalidated after integration:
+the same isolated test matrix completed **55 passed, 1 expected skip** in
+`6.290s`. `origin/main` remains an ancestor of `origin/dev`. No runtime role,
+provider request, data store, alpha, Trading System, broker or order path was
+mutated. The feature worktree remains retained because Phase D still uses its
+active source; it is not an archival copy and is eligible for removal only in
+the final exact cleanup inventory.
+
+### Phase C — Canonical reader/stream release artifact
+
+- Build and attest one canonical `qdl-v2-python:<semver>-<gitsha>` reader/stream
+  image from `dev`, with source SHA, image digest and bundle revision recorded.
+  Replace phase-named test identity only for `query_v2_*` and `stream_v2_*`.
+  Rust is rebuilt only if Rust source changes.
+- Render and validate V2-primary plus V1 fallback routing. Rolling affects only
+  those named reader roles; V1, Kafka topology/offsets, Redis, SQLite,
+  ingestors, Rust core, projectors, Trading System, alpha and order path remain
+  unchanged. Retain the exact old reader image and bundle for rollback.
+- Exit: real V2 final BAR, quote/trade, mark/index, L2 and reference routes are
+  reachable only through their sealed policy. No role has a phase-worktree name
+  as its production identity.
+
+### Phase D — Paired real V2 no-order proof
+
+- Run one Binance/OKX pair at a time, concurrently within the pair, for four
+  representative alpha classes: `adaptive_hma_cpp` closed-bar,
+  `scalping_purely` multi-symbol BTC-regime/ETH-execution,
+  `fib_sl_tp_strength` bracket/conditional, and `dynamic_grid` grid/L2. Run
+  `basis_arb_binance` as a separate data-only reference capability probe.
+- Each temporary consumer uses real V2 data, a sealed native binding,
+  `V2_PRIMARY`, no broker credentials, tmpfs cursor/state/log directories and
+  `--rm`. Prove warmup/FIFO append, final BAR, signed cursor replay/reconnect,
+  native identity isolation, quote/mark/L2 sequence or reset/resync as required,
+  and bounded CPU/RAM/feed age/watermark/gap/fallback counters.
+- Alpha intent must reach the temporary no-order Gateway/Risk preview unchanged;
+  Risk independently rereads V2 execution context. Before/after exact scoped
+  PostgreSQL and Redis checks must show zero sessions, commands, reservations,
+  orders, fills, groups, brackets, broker attempts and persistent alpha state.
+  V1/V2 signal/`pos_weight`/sizing/intent parity is compared only within the
+  same venue/candle corpus, never between native venues.
+- Exit: all admitted pair products pass. Any unavailable OKX reference product
+  is a tested typed block; it cannot be hidden by a fallback or an invented
+  cross-venue value. Rollback is removal of only the temporary consumers and
+  their namespaced tmpfs/evidence artifacts.
+
+### Phase E — Paper canary, release closure and hygiene
+
+- Promote one passing class at a time to a namespaced natural closed-candle
+  paper canary. Binance runs end-to-end when its paper broker adapter is
+  available. OKX runs a matching paper canary only when its paper broker
+  capability is enabled; otherwise it remains explicitly V2 no-order certified,
+  never mislabeled as execution-ready.
+- Validate V2-primary read, policy-allowed forced V1 fallback-return, strategy
+  input/signal/`pos_weight`/sizing parity before submit, and a bounded full
+  paper lifecycle with no unexpected stale or fallback. Render-validate every
+  reviewed alpha deployment against its sealed binding.
+- Exit: source commits are merged to `dev`, evidence is journaled in all three
+  plans, and a release PR is the sole route to `main`. Retain active plus one
+  named rollback image. After container-reference and disk checks, remove only
+  merged feature worktrees, stopped disposable smoke containers, exact
+  unreferenced test images and their unused build cache; never prune volumes,
+  networks, runtime state, active containers, secrets or user source.
+
+**Phase B actual-config revalidation (`PASS / SOURCE-ONLY`, 2026-09-02).** A
+disposable, network-disabled Execution Alpha runtime exported the current real
+Compose/config inventory to a namespaced temporary artifact. It produced `93`
+deployments with inventory SHA-256
+`7e27bebc8cd82113d78cda0cfaed9759f32c54fbb10bfe83b795ecc08d1b2c5c`.
+The Data Layer's actual `compile_alpha_deployment_bindings.py` algorithm then
+resolved it against the current source catalog, reference/L2 entitlement,
+release routing and policy. It wrote `18` admitted sealed bindings and `75`
+typed blocks, compilation SHA-256
+`aef316653ecfb1423c89fcdeec145faf3fd249243a37c849e65681267d8d04e4`.
+The additional admitted binding is the native OKX basis companion limited to
+funding and contract metadata; unavailable native basis/ratio/OI/taker feeds
+remain optional typed blocks. No broad BTC/ETH-only manifest, cross-venue
+substitution, provider request, runtime bundle, service, Kafka/Redis/SQLite or
+execution mutation was used.
+
+The portable Trading System parser loaded every one of the `18` generated
+bindings with exact consumer and release-manifest identity. Data Layer compiler
+and reader-release unit suites passed `10/10` in a read-only, non-root,
+network-disabled container. The temporary artifact namespace is retained only
+through Phase C/D because it is the exact input to the candidate sealed reader
+release; it will be removed after its digest has been recorded and the release
+bundle is independently verified. Phase B is therefore complete as source
+evidence; Phase C may build one canonical reader artifact from this immutable
+input.
+
+**Phase B Python 3.10 compatibility repair (`COMPLETE / SOURCE-ONLY`,
+2026-09-02).** The published Python `3.10+` support is now internally
+consistent: one `qdl._compat.StrEnum` preserves the string wire behavior used
+by canonical enums, all affected core modules import that shared primitive, and
+the release/SBOM reader uses standard-library `tomllib` on 3.11+ with the
+conditional locked `tomli` dependency on 3.10. No enum value, V2 schema,
+provider adapter, Docker role, bundle, runtime routing or data-plane state was
+changed.
+
+**Compatibility evidence and cleanup.** A disposable Python 3.10 container
+installed only declared import dependencies into a caller-owned temporary
+directory; its actual proof then ran `--network none`, read-only, non-root and
+with tmpfs-only output. `tests.test_python310_compat` passed `3/3`; two real
+Compose/config exports were byte-identical and two Data Layer compiles were
+byte-identical. The independent Trading System parser accepted all `18`
+bindings. The verified output was `93` deployments, `18` admitted bindings,
+`75` explicit typed blocks, inventory SHA-256
+`7e27bebc8cd82113d78cda0cfaed9759f32c54fbb10bfe83b795ecc08d1b2c5c` and
+compilation SHA-256
+`aef316653ecfb1423c89fcdeec145faf3fd249243a37c849e65681267d8d04e4`.
+Python 3.12 regression passed `55/55` with one expected ownership skip, and
+the compiler/release suite passed `36/36` (negative-case stderr was expected
+by those tests). All temporary dependency/inventory/binding directories and
+containers were removed. The sole pulled test image `python:3.10-slim` had no
+container references and was removed; host root usage changed from
+`248523239424/310911414272` to `248521027584/310911414272` bytes. Rollback is
+a normal source revert; no runtime change is allowed in this slice.
+
+**Phase C exact-rollback correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** Read-only runtime provenance found the four approved reader
+roles are intentionally not on one image: `query_v2_1` and `query_v2_2` are
+on `qdl-v2-python:2.0.0-a3f423d`
+(`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`),
+while `stream_v2_active` and `stream_v2_passive` are on
+`qdl-v2-python:2.0.0-5edbc8c`
+(`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`).
+The old reader-release generator can encode only one rollback image for all
+four roles, so it cannot make an exact recovery promise for this real state.
+Before any new reader build, change only the secret-free release generator,
+its unit tests and this runbook to require a complete per-role
+`service -> {image_reference, image_id}` rollback mapping, validate every
+service and immutable ID, and render the exact per-role rollback override.
+The new versioned bundle manifest must record that mapping and reject an
+incomplete/mutable/candidate-equal map. This is control-plane provenance only:
+no V1 endpoint, provider adapter, Kafka/Redis/SQLite state, Rust core,
+ingestor, projector, query/stream role, Trading System, alpha or order path
+changes in this correction. Source exit is deterministic bundle tests plus
+rendered mixed-image override proof; rollback is a normal source revert.
+
+**Phase C canonical reader packet (`APPROVED / FOLLOWS SOURCE EXIT`,
+2026-09-02).** After that correction is committed to `dev`, fast-forward the
+canonical checkout and build exactly one shared image from the resulting full
+source SHA as `qdl-v2-python:2.0.0-<sha>`. Seal one versioned release bundle
+from the existing actual inventory/compiler digests
+`7e27bebc...d1b2c5c` / `aef31665...d8d04e4`; render it only as the final
+image override together with the exact mixed rollback override. The sole
+eligible rollout roles are `query_v2_2`, `query_v2_1`, then the observed
+stream standby and lease holder. V1, Kafka topology/offsets, Redis, SQLite,
+Rust, ingestors, bar edge, projectors, Trading System, alpha and all order
+paths remain excluded. Per-role health/provenance/lease checks gate the next
+step; rollback recreates only the failed role with its recorded pre-roll image
+and unchanged runtime mount.
+
+**Phase C exact-rollback source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`prepare_alpha_reader_release.py` now emits the versioned
+`qdl.v2.alpha-reader-release.v2` control-plane manifest. Its candidate and
+rollback overrides use digest-pinned `tag@sha256` selectors, and every bundle
+requires exactly `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive` with their own canonical tag/immutable ID pair. Missing,
+duplicated, malformed or candidate-equal entries fail closed. The unit suite
+passed `10/10` for compiler/release behavior, including a deterministic
+mixed-query/stream rollback override and all reject paths. A separate actual
+inventory CLI dry run as the operator UID, network-disabled and read-only,
+accepted the current mixed map with `18` bindings and manifest SHA-256
+`5bdcfb7c917ccc380773a4e2d5ca5e194308288188291ed88ffca5173b43e7ae`;
+the temporary output was tmpfs-only and no release bundle was written. The
+initial UID-10001 attempt correctly could not traverse the operator-only input
+directory, confirming that bundle generation remains an operator action rather
+than a reader privilege. No source provider, container, Kafka/Redis/SQLite,
+V1, Trading System, alpha or order-path state changed. This source slice is
+ready to commit to `dev`; only the subsequent packet may build or recreate the
+four reader roles.
+
+**Phase C canonical runtime packet (`APPROVED / PRE-BUILD`, 2026-09-02).**
+The canonical checkout is now Data Layer `dev@3e3b79285426772c5da774224a28006b47642b4c`.
+Build exactly one shared Python reader/stream image from that checkout as
+`qdl-v2-python:2.0.0-3e3b792`; verify OCI revision/user/ID, then run the
+reader-release and reference/L2 contract subset from the immutable image with
+no source mount, `--network none`, read-only root and tmpfs-only test state.
+Regenerate the real Execution Alpha Compose/config inventory and compilation
+twice in disposable containers, then seal one atomic operator-owned release
+under `/home/bobby/.local/state/qdl-v2/releases/2.0.0-3e3b792` from those exact
+digests. Its candidate selector is digest-pinned. Its exact rollback mapping
+is query 1/2 to `2.0.0-a3f423d` /
+`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`
+and stream active/passive to `2.0.0-5edbc8c` /
+`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`.
+Only after source/image/bundle preflight passes may Compose serially recreate
+`query_v2_2`, `query_v2_1`, then the observed stream standby and leader. Every
+role must show its pinned candidate selector, expected provenance, zero
+restart/OOM and correct ready/lease state before continuing. A failure rolls
+back only that role with its own recorded selector and unchanged runtime mount.
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, bar edge,
+projectors, Trading System, alpha and all order paths are excluded; normal
+market-data writes are not introduced by this reader-only packet.
+
+**Phase C bounded reader packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+The candidate is one shared image tag `qdl-v2-python:2.0.0-5edbc8c`, built
+from Data Layer `dev@5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a`; the exact
+candidate digest will be sealed before any recreation. The only roles eligible
+for rolling recreation are `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`, currently all on immutable
+`sha256:d6f15b186ebd5916b19847685487a63ddbfd1eef844cecfcedd11858186448b5`
+(`qdl-v2-python:2.0.0-dev-5edbc8c`). The bundle is generated from the exact
+inventory/compiler artifacts in `/tmp/qdl-phase54-alpha-bindings.UYpveN` and
+is written atomically under the versioned QDL release state root.
+
+No other named role is in blast radius: V1, Kafka topology/offsets, stable
+Redis, SQLite, Rust core, ingestors, bar edge, projectors, runtime/TLS mounts,
+Trading System, alpha containers and every order path are excluded. Rollback is
+the existing four-role image digest and current reader override only; it does
+not reset, flush, delete or rebuild durable state. Post-roll only verifies
+health, sealed binding identity and real provider reads; no execution request
+is allowed.
+
+**Phase C artifact and reader handoff (PASS / DEV PRE-RELEASE, 2026-09-02).**
+One canonical reader/stream image was built from Data Layer dev source
+5edbc8c7707be3a0f57117d7b78bc6d7f0f8e89a as qdl-v2-python:2.0.0-5edbc8c,
+image sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c.
+The sealed release root is
+/home/bobby/.local/state/qdl-v2/releases/2.0.0-5edbc8c; its secret-free
+binding manifest SHA-256 is
+33488998c7c890e70ec30833d3455cd7f51e018681618ce470f3b6d829d84fa8.
+The four approved reader roles were recreated serially and are healthy:
+query_v2_1, query_v2_2, stream_v2_active, and stream_v2_passive. Their exact
+retained rollback is qdl-v2-python:2.0.0-dev-5edbc8c
+(sha256:d6f15b186ebd5916b19847685487a63ddbfd1eef844cecfcedd11858186448b5).
+V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge,
+projectors, Trading System, alpha and every order path were not changed.
+Image label/import smoke passed. This is a reader artifact handoff only; it
+does not yet certify a real alpha consumer. Phase D is the next active gate.
+
+**Phase D reference-period semantics correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first authenticated, disposable alpha reference probe
+proved V2 identity, mTLS/JWT and sealed-route admission, then exposed a
+semantic freshness defect in the Binance USD-M adapter: the official provider
+defines `takerBuySellVol.timestamp` as the *start* of its requested period.
+The adapter already used that fact for pagination coverage, but emitted the
+same start timestamp as `ReferenceObservation.observed_at_ns`; the V2 query
+freshness policy therefore treated a completed daily row as almost one whole
+period older than it is. Native Binance basis uses the same period-start
+semantic and must follow the same contract. This is not an SLA change, a
+fallback, a provider retry, or a synthetic-data exception.
+
+The source correction is deliberately shared and bounded: preserve raw
+provider period start/end in observation labels; expose `observed_at_ns` as the
+verified period close for freshness/finality; and make pagination selection,
+cadence and coverage operate on the raw period-open coordinate. Contract tests
+must prove raw lineage preservation, exact close-time freshness, duplicate and
+gap detection, and unchanged period-start coverage for both TAKER_FLOW and
+native BASIS. The only subsequent runtime packet eligible to exercise the
+fix is a serial recreation of the existing `query_v2_1` and `query_v2_2`
+reader roles with one immutable Python image built from this source revision;
+the currently active reader digest remains the exact rollback. V1, Kafka
+topology/offsets, Redis, SQLite, Rust core, ingestors, bar edge, projectors,
+Trading System, alpha services and every order path remain excluded.
+
+**Phase D reference-period source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`BinanceUsdmReferenceAdapter` now keeps `period_open_time_ms`,
+`period_close_time_ms` and `timestamp_origin=PROVIDER_PERIOD_START` on native
+TAKER_FLOW and BASIS observations. Their canonical observation time is the
+verified close; the shared paginator separately uses the preserved open-time
+coordinate for provider windows, cadence, duplicate detection and coverage.
+Thus no raw provider fact is rewritten and a one-period freshness correction
+cannot hide a history gap. An immutable, non-root, read-only, network-disabled
+container ran `tests.test_phase104_reference_batch`,
+`tests.test_phase113_reference_v2` and
+`tests.test_reference_l2_consumer_acceptance`: `48/48 PASS` in 6.589s.
+`git diff --check` and changed-file `py_compile` passed. No provider call,
+container service, Kafka/Redis/SQLite write, V1/Trading System/alpha action or
+order-path mutation occurred. The source is ready for a coherent commit and
+then the separately bounded two-reader image/runtime packet.
+
+**Phase D reader-only candidate packet (`APPROVED / PRE-BUILD`, 2026-09-02).**
+Build one shared reader image from source commit `021b372` as
+`qdl-v2-python:2.0.0-021b372`. Verify its OCI source/release labels and run
+the same immutable source-contract subset before runtime use. If and only if
+that gate passes, atomically render a temporary reader override and serially
+recreate only `query_v2_1` then `query_v2_2`; their current exact image
+`qdl-v2-python:2.0.0-5edbc8c` / digest
+`sha256:b2a2848011c84a6f6eaafd74b5a1a5b4908e0c1f9cfdbeb78325c3c0c3a0985c`
+with the unchanged runtime mount is rollback. The candidate must become
+healthy and retain the sealed identity before one real read-only
+Binance/OKX reference pair. No stream role, V1, Kafka topology/offsets,
+Redis/SQLite data, Rust, ingestion, projector, Trading System, alpha service,
+database, broker credential or order path belongs to this packet.
+
+**Phase D reader-only candidate build (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** Source commit `021b372` built the one shared candidate
+`qdl-v2-python:2.0.0-021b372`, image digest
+`sha256:82e0c6cc57b8b4630cfa1cfaa7f017128f332601f2ea6613595be4abfd8035e2`.
+OCI labels pin revision `021b372` and version `2.0.0-021b372`. Directly from
+that immutable image, a non-root/read-only/no-network/tmpfs-only contract run
+again passed `48/48` reference/L2 tests in 6.859s. No service was recreated;
+the active reader remains `2.0.0-5edbc8c` and its digest is retained as the
+only rollback for this two-role packet. The next operation is a rendered
+two-query override preflight, followed by serial recreation exactly as recorded
+above; no other role is eligible.
+
+**Phase D two-query preflight (`PASS / RUNTIME UNCHANGED`, 2026-09-02).** The
+scoped override
+`/home/bobby/.local/state/qdl-v2/phase54-reference-finality-021b372/query-image.override.yml`
+(SHA-256 `e9aa1ded94595800f4f60981eecaece446ff1d13539430ef5da838e1b38df6c7`)
+renders only `query_v2_1` and `query_v2_2` to `qdl-v2-python:2.0.0-021b372`.
+The paired rollback override SHA-256 is
+`315927b39c76452746dc6ceded02a4bdc0f473706c004a201292c91b327d1b9e` and
+restores only those two roles to `qdl-v2-python:2.0.0-5edbc8c`. Compose
+preflight proves stream roles remain `2.0.0-5edbc8c`; Rust, both ingestors and
+the projector remain on their prior image selectors. The next approved action
+is serial `--no-deps --force-recreate` of query replica 1, health/provenance
+verification, then replica 2. Any readiness/provenance failure triggers only
+the two-role rollback override; no data-store reset/flush or topology mutation
+is permitted.
+
+**Phase D sealed-binding workload-readability defect (`FAIL-CLOSED / SOURCE
+CORRECTION APPROVED`, 2026-09-02).** Both serially recreated query replicas
+are healthy on `qdl-v2-python:2.0.0-021b372`; no other role changed. The first
+paired disposable Binance/OKX reference readers stopped before a V2 request,
+provider call, Gateway/Risk call or order action because their sealed binding
+files are generated mode `0640` and owned by host UID/GID `1001`, while the
+immutable alpha image deliberately runs as non-root `alpha` UID/GID `1000`.
+The binding contains only route identity/policy/hash data, never a secret;
+keeping it unreadable to its intended workload makes the release artifact
+non-deployable. Correct the shared release generator, not the old artifact or
+the alpha image: published `bindings/*.binding.json` must be immutable
+world-readable `0444` (or an equivalently readable bind mount), while release
+env, JWT/private keys and TLS private keys remain private. Add a regression
+that asserts the split. Regenerate a new atomic release bundle from the
+candidate source, validate its hashes/modes with the actual alpha UID, then
+rerun exactly the same pair. No chmod-in-place, service restart, provider
+simulation, V1/Kafka/Redis/SQLite mutation, Trading System/alpha service
+change or order action is authorized by this correction.
+
+**Phase D sealed-binding source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+`prepare_alpha_reader_release.py` now classifies artifacts by their actual
+security boundary: route bindings are immutable `0444` workload-mount inputs;
+release manifests, compilation reports and compose overrides remain `0640`;
+private runtime env/JWT/TLS material remains outside this release bundle and is
+not widened. The regression creates two atomic bundles and proves deterministic
+content, `0444` for every published binding and `0640` for the release
+manifest. In immutable `qdl-v2-python:2.0.0-021b372`, network-disabled,
+read-only, non-root mode, `tests.test_alpha_reader_release` passed `4/4` in
+1.768s. `git diff --check` and `py_compile` passed. No runtime service,
+provider call, source authority, V1/Kafka/Redis/SQLite state, Trading System,
+alpha service or order path changed. The next permitted operation is a new
+atomic release bundle with this generator, followed by a UID-1000 readability
+check and the same two disposable V2 reference probes.
+
+**Phase D binding-readable artifact packet (`APPROVED / PRE-BUILD`,
+2026-09-02).** Build one immutable shared reader image from source commit
+`136c52e` as `qdl-v2-python:2.0.0-136c52e`, run the same network-disabled
+release-generator test in that image, and seal one new versioned bundle from
+the existing verified inventory/compiler report. The bundle may point only to
+this candidate reader image and the retained `2.0.0-5edbc8c` rollback reader.
+Before any reader role is recreated, verify the exact sealed bindings have mode
+`0444` and can be parsed by UID/GID `1000:1000`; otherwise stop before runtime
+mutation. The only later role change remains serial `query_v2_1` then
+`query_v2_2`, with per-role health/provenance checks and exact rollback. No
+V1, Kafka topology/offsets, Redis/SQLite, Rust, ingestion, bar edge,
+projector, Trading System, alpha service, broker credential or order path is
+in scope.
+
+**Phase D binding-readable reader handoff (`APPROVED / PRE-ROLL`,
+2026-09-02).** The new bundle is
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-136c52e`, source
+`136c52e6bade5bbfa9c5baf374286ee98e78826e`, candidate image
+`qdl-v2-python:2.0.0-136c52e` / image ID
+`sha256:2a2b533ad073d18953fab526fbfca22dc2c76d7b8d656b7cae059e8d43b48a50`,
+and release manifest SHA-256
+`60670346a9ac2a9edb723d1a709f37d842b11d5dc5fe75c515d92d55c54379ad`.
+All 18 binding files are mode `0444`; the alpha UID `1000` parsed an actual
+sealed binding, while the release manifest and compose overrides remain mode
+`0640`. The next bounded packet writes two temporary image-only Compose
+overrides and serially recreates exactly `query_v2_1` and `query_v2_2`. Its
+exact rollback is their current `qdl-v2-python:2.0.0-021b372` image ID
+`sha256:82e0c6cc57b8b4630cfa1cfaa7f017128f332601f2ea6613595be4abfd8035e2`
+with the unchanged runtime mount. The older `2.0.0-5edbc8c` remains retained as
+the pre-Phase-D reader rollback; neither is removed during this handoff. No
+other role or durable state may change.
+
+**Phase D workload-identity readability defect (`FAIL-CLOSED / SOURCE
+CORRECTION REQUIRED`, 2026-09-02).** Both query replicas rolled serially to
+`2.0.0-136c52e`, are Docker-healthy with restart count zero, and no other V2
+role changed. A non-network UID-1000 alpha-container check confirms the
+Binance TLS identity is readable, but confirms the staged OKX client private
+key is not readable (`EACCES`): it is host-owned `1001:1001` mode `0440` while
+the immutable alpha runtime intentionally runs UID/GID `1000:1000`. This
+stopped before any provider or V2 API request. Do not work around it by running
+the alpha as the host user or making the original private key world-readable.
+The required shared fix is a per-workload identity materialization path that
+creates an alpha-UID-owned, private `0400` client-key mount (and read-only
+certificate/CA) from the existing protected staging source, with a regression
+for both Binance and OKX. It must leave the source identity private, emit no
+secret value, and be reusable by every alpha/venue. Only after an actual
+UID-1000 mTLS read check passes may the paired real reference probes retry.
+V1, Kafka/Redis/SQLite, Rust/ingestors/bar edge/projectors, Trading System,
+alpha service definitions and all order paths remain excluded.
+
+**Phase D workload-identity materialization slice (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** Add one filesystem-only Data Layer control-plane helper, not a
+service and not a per-symbol artifact. It accepts exactly a protected TLS
+directory (`ca.crt`, `client.crt`, `client.key`) and JWT directory
+(`private.key`), validates regular-file/no-symlink inputs, and atomically
+creates one per-workload output under the governed QDL state root. The mounted
+TLS/JWT leaf directories are owned by the declared non-root workload UID/GID;
+their private keys are `0400`, certificates/CA are `0444`, and the source keys
+remain unchanged. The release/binding manifest records only hash/path/mode
+metadata, never secret bytes. Unit coverage must prove deterministic dry run,
+atomic materialization, source-symlink/unexpected-file rejection, private-mode
+split and a real UID-1000 read. The helper must require effective root only for
+apply/chown and be invoked through a bounded disposable Docker-root helper; it
+must not alter any existing identity in place. On exit, materialize only the
+two disposable Binance/OKX probe identities and retry the exact paired
+reference read. No runtime role, provider source, durable store, Trading
+System/alpha service or order path may change.
+
+**Phase D workload-identity source gate (`PASS / SOURCE-ONLY`, 2026-09-02).**
+Added `scripts/materialize_alpha_v2_identity.py` and the Phase-54 runbook
+contract. The helper accepts only the exact TLS/JWT file sets, rejects
+symlinks, directories, extra/missing/empty files and an existing target, and
+requires effective root only for `--apply` ownership changes. It atomically
+renames a staged output under `workload-identities/<workload-id>`; `tls/` and
+`jwt/` are `0500` and UID/GID-bound, client/JWT private keys are `0400`, and
+certificates/CA/public key are `0444`. The protected source remains mode
+`0440`/unchanged. The root-only filesystem test plus release generator test
+passed `7/7` in 1.715s inside immutable `qdl-v2-python:2.0.0-136c52e`,
+network-disabled, read-only with tmpfs-only test state. `git diff --check` and
+`py_compile` passed. A separate disposable Docker bind-mount check remains the
+required real UID-1000 proof because the intentionally private host state root
+is not directly traversable by the alpha process. No runtime role, provider,
+durable state, V1, Trading System, alpha service or order path changed.
+
+**Phase D two-identity materialization packet (`APPROVED / PRE-APPLY`,
+2026-09-02).** Invoke the committed helper through one disposable root Docker
+container per exact paper probe identity: `phase54-reference-binance` from the
+existing `alpha-binance` TLS/JWT sources and `phase54-reference-okx` from the
+existing `alpha-okx` TLS/JWT sources. Each helper has network disabled,
+read-only root/source mounts, tmpfs `/tmp`, and only the governed QDL state
+root bind-mounted writable for its new target. It may create only
+`workload-identities/<id>`; it must not mutate the protected source identity
+or existing release bundle. Then a UID-1000 alpha image mounts only the two
+leaf directories read-only and proves it can open both private keys without
+printing them. No running service, provider request, durable state, V1,
+Trading System, alpha process, Gateway/Risk or order path is included.
+
+**Phase D two-identity materialization (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** The helper created only
+`workload-identities/phase54-reference-binance` (manifest SHA-256
+`c7b0b95fc9d5533ba9ab25f2b2ec1dab35af6b746fb9801147a9b2f459c6c13d`) and
+`workload-identities/phase54-reference-okx` (manifest SHA-256
+`035c8ca6f80bbf11ce720e80c76cbc3bc2a35d4a8fd429a214914baf4439bfac`). The
+four protected source-key SHA-256 values were identical before/after. The host
+operator cannot traverse the new workload-owned `0500` leaf directories; two
+disposable non-network `execution-alpha-runtime:2.0.0-3f366a9` containers
+running UID/GID `1000:1000` successfully opened both mounted TLS and JWT
+private keys without printing them. No provider or V2 API request, service
+recreate, durable mutation, V1/Trading System/alpha process or order action
+occurred. The exact paired Binance USD-M/OKX Swap reference readers may now
+retry once with the new binding bundle and these leaf mounts only.
+
+**Phase D reference-window and funding-boundary correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The paired authenticated no-order diagnostic reached the real V2 reference plane with the active alpha manifest revisions (`9` Binance, `8` OKX) and no broker credential or durable alpha state. It exposed two bounded semantic defects rather than a provider outage: the reusable probe applied one daily closed-BAR right edge to every reference product, while funding is an independently settled series; and Binance funding rows may arrive a few milliseconds after an official settlement boundary although the adapter's existing tolerance was only applied after the provider response had already been bounded and filtered. The correction is deliberately narrow: retain raw provider timestamps and strict full-coverage/freshness checks, use a declared settled funding window for the probe while preserving completed-period windows for taker/basis and provider snapshot windows for OI/long-short, and make the existing Binance funding tolerance effective in the outbound pagination envelope and selection boundary. No TTL is widened, no result is fabricated, no cross-venue fallback is permitted, and V1, Kafka, Redis, SQLite, Rust, ingestors, projectors, Trading System, alpha services and every order path remain excluded. Required gates: deterministic boundary/coverage and stale-history regression tests, immutable source test subset, then one concurrent real Binance/OKX reference pair; any non-OK product remains a fail-closed result.
+
+**Phase D Binance funding-boundary source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** `BinanceUsdmReferenceAdapter` now applies its pre-existing 60-second funding-settlement tolerance to the outbound provider end boundary and the accepted right-edge selection, while retaining the provider's raw timestamp in the canonical observation. It does not relax other products or make a full-coverage claim for a row outside the declared tolerance. A deterministic regression simulates a provider that withholds the final `+3ms` funding row unless the requested end is widened; it passes only with the real envelope and selection behavior. In immutable `qdl-v2-python:2.0.0-136c52e`, network-disabled/read-only/non-root source tests `tests.test_phase104_reference_batch`, `tests.test_phase113_reference_v2` and `tests.test_reference_l2_consumer_acceptance` passed `48/48` in `7.645s`; focused adapter coverage passed `25/25` in `0.235s`. The prior paired real diagnostic remains evidence only: Binance funding had a genuine `+5ms` provider settlement jitter and the requested daily right edge omitted it. No runtime service, provider configuration, durable state, V1, Trading System, alpha or order path changed. The source is ready for a single shared query-reader image after its companion Alpha Runtime source slice commits.
+
+**Phase D settled-reference reader packet (`APPROVED / PRE-BUILD`,
+2026-09-02).** Build exactly one shared Python reader image from committed
+source `a3f423d` as `qdl-v2-python:2.0.0-a3f423d`, with OCI revision/release
+labels pinned to that commit. Independently build exactly one standard Alpha
+Runtime probe image from committed source `b1299bc` and the already pinned
+Trading System Alpha SDK revision, as `execution-alpha-runtime:2.0.0-b1299bc`.
+No Numba derivative is needed for the reference-only probe. Both builds are
+sequential because the host has bounded free memory; they must be inspected
+and smoke-imported as non-root, read-only, network-disabled images before any
+runtime use. The only eligible runtime change after the build gates is a
+serial replacement of `query_v2_2` then `query_v2_1` with the new shared
+reader image through one operator-state override. Their exact rollback is the
+currently active `qdl-v2-python:2.0.0-136c52e` image ID
+`sha256:2a2b533ad073d18953fab526fbfca22dc2c76d7b8d656b7cae059e8d43b48a50`
+and unchanged runtime mount. The packet excludes streams, V1, Kafka
+topology/offsets, Redis, SQLite, Rust, ingestors, bar edge, projectors,
+Trading System, alpha services, broker credentials and every order path. Its
+acceptance is one concurrent disposable Binance USD-M/OKX Swap real V2
+reference probe using sealed bindings/UID-1000 workload identities; every
+requested reference product must be strict-OK and no alpha durable state,
+Gateway/Risk request or order may be created. Disk baseline before this packet:
+`/dev/root` 229 GiB used / 62 GiB available; Docker images 77.74 GiB with
+56.55 GiB reclaimable and BuildKit cache 27.84 GiB with 8.579 GiB reclaimable.
+Cleanup is deferred until Phase D closes so the explicit active/rollback
+images remain recoverable.
+
+**Phase D settled-reference image gate (`PASS / PRE-ROLL`, 2026-09-02).** The
+single reader build completed sequentially as `qdl-v2-python:2.0.0-a3f423d`,
+image ID `sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`.
+OCI labels report `revision=a3f423d`, `release=2.0.0-a3f423d`, and the image
+runs as `qdl:qdl` (`10001:10001`). A disposable non-root/read-only/no-network
+import of `BinanceUsdmReferenceAdapter` passed. The new operator-only override
+is `/home/bobby/.local/state/qdl-v2/phase54-settled-reference-a3f423d/query-image.override.yml`
+(SHA-256 `a2c804c9fbc786618a41a1e99d351cc03f91137b660ecec623000760bf0051c8`)
+and changes only `query_v2_1` and `query_v2_2`; the paired rollback override is
+SHA-256 `8154ece125e412e636470dd8acc79443c0f7a04ce26c435874f4a5865d738640`
+and restores only those roles to `2.0.0-136c52e`. The exact current Compose
+stack, stable env and all existing overrides rendered successfully with the new
+file appended last. The next approved action is serial `query_v2_2`, then
+`query_v2_1`, with bounded health/restart/image checks after each role. No
+other service is eligible.
+
+**Phase D settled-reference reader handoff and paired proof (`PASS / NO-ORDER`,
+2026-09-02).** `query_v2_2` then `query_v2_1` were serially recreated through
+the recorded override. Both now run
+`qdl-v2-python:2.0.0-a3f423d` / image ID
+`sha256:dccc24b2f4a9f4f0aff58551cfe09f7ce8e7a5f42e4ef372b27b0c5b6b58d659`,
+are healthy and have restart count `0`. The exact `136c52e` override/image is
+retained as rollback; streams, V1, Kafka/Redis/SQLite, Rust, ingestors, bar
+edge, projectors, Trading System, alpha services and order path were unchanged.
+
+One concurrent disposable UID-1000/no-broker/no-Gateway/Risk Binance USD-M and
+OKX Swap reference pair then used V2_PRIMARY, sealed bindings, mTLS/JWT leaf
+mounts and tmpfs-only cursor/audit state. Every request used `require_all=true`.
+Binance `BTCUSDT` passed: FUNDING_RATE `90` observations
+(`/fapi/v1/fundingRate`), OPEN_INTEREST `30`
+(`/futures/data/openInterestHist`), LONG_SHORT_RATIO `30`
+(`/futures/data/globalLongShortAccountRatio`), TAKER_FLOW `30`
+(`/futures/data/takerlongshortRatio`), CONTINUOUS BASIS `30`
+(`data.binance.vision` plus `/fapi/v1/klines`) and CONTRACT_METADATA `1`
+(`/fapi/v1/exchangeInfo`). OKX `BTC-USDT-SWAP` passed the two products its
+sealed binding actually declares: FUNDING_RATE `90`
+(`/api/v5/public/funding-rate-history`) and CONTRACT_METADATA `1`
+(`/api/v5/public/instruments`). This is real provider evidence, not generated
+data or a cross-venue fallback. An initial Binance invocation stopped before a
+provider request because CLI enum `continuous` was invalid; the rerun used the
+declared `CONTINUOUS` enum and both sides passed. All `--rm` containers
+self-removed and the scoped `/tmp` cursor/audit/output directory was removed.
+No alpha durable state, V1 fallback read, Gateway/Risk request, signal/sizing
+mutation, database/Redis test row or broker action was created. Phase D remains
+in progress only for the approved paired representative alpha-class no-order
+proofs.
+
+**Phase 54.2 Phase C release-render defect (`FAIL-CLOSED / SOURCE FIX`,
+2026-09-02).** The bounded canonical-reader preflight stopped before any
+container recreation because the newly sealed `reader-image.override.yml` was
+not valid YAML: the generator emitted each service name without its required
+mapping colon. This was a control-plane renderer defect, not a provider,
+reader, runtime or data-plane failure. The release bundle remains unconsumed;
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, bar edge,
+projectors, Trading System, alpha and every order path remain unchanged. The
+in-scope repair is exactly one generator character plus a regression that
+parses both generated candidate and per-role rollback overrides with the same
+YAML parser used by Compose. The bundle must then be regenerated atomically
+from the unchanged candidate image and exact inventory/compiler digests; only
+after a successful canonical Compose render may the already approved four-role
+serial reader/stream packet resume. Rollback remains the recorded mixed-image
+per-role selector map; no broad cleanup or durable mutation is authorized.
+
+**Phase 54.2 Phase C release-render source gate (`PASS / SOURCE-ONLY`,
+2026-09-02).** The generator now emits a valid YAML service mapping for both
+candidate and exact per-role rollback overrides. The regression parses each
+generated override with PyYAML and verifies exactly the four permitted reader
+roles and their immutable selectors, closing the blind spot that allowed a
+text-count-only test to pass. In the existing immutable reader image with the
+working source mounted read-only, `--network none`, non-root UID `10001`,
+read-only root and tmpfs-only scratch, `tests.test_alpha_reader_release` and
+`tests.test_python310_compat` passed `7/7` in `1.887s`. No image, release
+bundle, Compose service, provider, V1/V2 data plane, alpha, Trading System,
+Gateway/Risk or order state was changed. The next operation is commit/push
+this source correction to `dev`, rebuild one canonical image from that exact
+revision, regenerate the prior invalid bundle under a new versioned release
+path, and rerun canonical Compose preflight before the already authorized
+four-role serial handoff.
+
+**Phase 54.2 Phase C canonical reader/stream handoff (`PASS / DEV
+PRE-RELEASE`, 2026-09-02).** Data Layer `dev@69629668a48471c6c6871d7fae98ef7ee515d8b2`
+built the one shared canonical reader/stream image
+`qdl-v2-python:2.0.0-6962966` / image ID
+`sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+OCI revision and release labels equal that source/release coordinate; it runs
+as `qdl:qdl` (`10001:10001`). With no source mount, `--network none`,
+read-only root, non-root UID and tmpfs-only scratch, the image regression
+matrix passed `64/64` with `1` expected ownership skip in `7.377s`.
+
+The verified, repeatable real-Compose inventory/compiler inputs remained
+unchanged. A new atomically sealed, secret-free bundle at
+`/home/bobby/.local/state/qdl-v2/releases/2.0.0-6962966` has `18` bindings,
+manifest SHA-256 `40e244b54d8c228e8cd967e5bc2b8f9a7ab5cce7570acc45b1fb99725220abe2`,
+candidate override SHA-256
+`60b865c2b538af0883d1ce2417da812247d97f47e146b59226786be817e4cbaf` and
+exact mixed-image rollback override SHA-256
+`6f0f7cd50788c769698e4f600d8e968cee3e47fc12b8063dcfa6dd882d9e7e15`.
+Canonical Compose rendered successfully: only `query_v2_1`, `query_v2_2`,
+`stream_v2_active` and `stream_v2_passive` select the candidate; Rust,
+Binance/OKX ingestors, projector and bar edge retain their prior selectors.
+
+The approved serial handoff recreated exactly `query_v2_2`, `query_v2_1`,
+the observed standby `stream_v2_passive`, then the observed lease holder
+`stream_v2_active`, always with `--no-deps`. Every role is Docker healthy on
+the candidate, restart count `0`, OOM `false`; both query replicas return mTLS
+`READY`; stream lease converged to exactly one `READY` (`stream_v2_passive`)
+and one `STANDBY` (`stream_v2_active`). Post-roll RSS was `111.8`, `197.3`,
+`109.6` and `115.3 MiB` respectively, below the unchanged `512 MiB` cgroup;
+the bounded eight-minute error scan found `0` fatal/panic/OOM/traceback/
+exception/not-ready/unavailable matches for each role. No V1 service, Kafka
+topology/offset, Redis, SQLite, Rust core, ingestor, bar edge, projector,
+Trading System, alpha, Gateway/Risk or order path was recreated, reset or
+otherwise mutated. The rejected invalid `2.0.0-a04c899` bundle was never
+referenced by Compose and remains only as a trace artifact until Phase E exact
+cleanup inventory; it is not a rollback coordinate. Phase C is closed. The
+only next permitted work is Phase D's declared disposable paired no-order
+alpha proof using this sealed bundle.
+
+**Phase 54.2 Phase D final-BAR policy regression (`IN PROGRESS / NARROW
+SOURCE FIX`, 2026-09-02).** The first paired `adaptive_hma_cpp` V2-primary
+no-order attempt authenticated correctly and reached the sealed native
+Binance/OKX BAR warmup routes, then failed closed with `required data exceeds
+its freshness policy`; pre/post scoped execution evidence remains zero. The
+cause is local and deterministic: the config-derived alpha inventory regressed
+non-1m final BAR routes to a fixed `180000` ms, and Alpha Runtime also treated
+its legacy `180000` ms default as a hard cap even when a sealed binding declared
+a longer interval-aware policy. This is not a provider outage, retry issue or
+permission to widen a generic SLA.
+
+Approved in-scope repair: restore the previously certified final-BAR rule of
+`max(declared_policy, one complete BAR interval + 180000 ms settlement grace)`
+while preserving the explicit daily Basis policy; make an *absent* alpha local
+BAR cap defer to the sealed route, while an explicitly configured smaller cap
+may remain stricter and an explicitly weaker cap is rejected. Required tests:
+deterministic `1m/5m/15m/30m/1h/1d` inventory values, invalid interval
+fail-closed behavior, sealed-binding effective-freshness selection, and the
+existing compiler/parser matrix. No Data Layer provider, V2 reader/stream
+image, Kafka, Redis, SQLite, Rust, ingestor, projector, V1, Trading System,
+broker, order path or alpha strategy logic is in scope. Rollback is a normal
+Execution Alpha source revert plus removal of only regenerated sealed binding
+artifacts; the currently running canonical reader image remains unchanged.
+
+**Phase 54.2 Phase D final-BAR policy source gate (`PASS / RUNTIME
+UNCHANGED`, 2026-09-02).** The Alpha Runtime repair was validated in the
+existing shared `execution-alpha-runtime-numba:v2-primary-83b28a6` image with
+the complete Execution Alpha source and Trading System SDK mounted read-only,
+`--network none`, UID/GID `1000:1000`, read-only root and tmpfs-only scratch.
+`tests.test_deployment_requirements`, `tests.test_data_layer_v2_runtime`,
+`tests.test_v2_no_order_probe` and `tests.test_typed_execution_intent` passed
+**75/75** in `5.131s`. The source test proves the interval policy for
+`1m/5m/15m/30m/1h/1d`, explicit stricter cap behavior, omitted-cap sealed
+binding authority and explicit weaker-cap rejection.
+
+A second isolated export emitted the real 93-deployment inventory with SHA-256
+`35a18db3e0c946306d6796902428028dfd6f9e0b69d7e13db4d3834319e52762`.
+The unchanged Data Layer compiler admitted `18` bindings and typed-blocked
+`75`, compilation SHA-256
+`a98d66c2d7fe09968bb14a36700e00a93d436051f3e9a31925ed4ffbd84d61eb`.
+The Data Layer compiler/release suite passed `10/10`; the shared Trading System
+binding parser accepted all `18/18` regenerated bindings with each binding's
+required local consumer and manifest identity. Observed final-BAR policies are
+now Binance/OKX `15m=1080000`, multi-symbol `5m=480000`, Fib `30m=1980000`,
+Grid `1h=3780000`, and the explicit Basis `1d=172800000` ms. No image build,
+bundle mount, service, provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha process, broker or execution state changed. The caller-owned temporary
+inventory/binding directory is retained only for the next sealed-bundle step;
+it contains no secret or durable runtime data and must be removed in Phase E.
+
+**Phase 54.2 Phase D projector handoff repair (`OWNER-APPROVED / ACTIVE`,
+2026-09-02).** The rerun did not fall back: both native 15m alpha reads were
+correctly authenticated against their sealed V2 bindings and fail-closed with
+`required data exceeds its freshness policy` before any Gateway/Risk request.
+This is now traced to the durable projection handoff, not the alpha policy:
+`binance_bar_edge` continues to ACK real Binance and OKX final BARs, including
+the bound ETH 15m routes at `06:00`, `06:15` and `06:30` UTC, while all three
+long-lived projectors repeatedly report `no active stable stream gateway
+accepted canonical data`. The active stream lease is presently held by
+`stream_v2_passive`; mTLS health from a projector reaches both stream roles,
+so the safe repair is to refresh only the projector HTTP clients and preserve
+the authoritative Kafka group/checkpoints and shared durable cache.
+
+**Approved bounded packet.** Recreate one at a time exactly
+`projector_v2`, `projector_v2_2` and `projector_v2_3` into the existing
+canonical reader image `qdl-v2-python:2.0.0-6962966`
+(`sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`)
+with the exact existing runtime/TLS/state mounts and consumer group
+`stable-projector-v1`. This is a reconnect/image-normalisation repair only:
+do **not** reset Kafka offsets or topology, flush Redis, delete SQLite, change
+V1/Rust/ingestor/bar-edge/query/stream, recreate Trading System or alpha, or
+touch any order path. Rollback is the exact three-role image
+`qdl-v2-python:2.0.0-phase533-projector-631d694`
+(`sha256:288e617c7ec137dfcac5e94a5977772f2e0f39eac3ff48585980c0b26b0071bb`)
+under the same mounts. Normal canonical/cache catch-up writes are expected;
+they are the intended durable projection, not alpha execution mutation.
+
+**Exit tests.** Require all three projectors running without OOM/restart and
+without the rejected-canonical loop; verify a fresh V2 latest final 15m BAR
+for native Binance `ETHUSDT` and OKX `ETH-USDT-SWAP`, then rerun the same
+concurrent directional no-order pair. Before/after scoped PostgreSQL and
+Redis checks must remain zero for the temporary alpha/Gateway namespace. Stop
+and rollback the three projectors if the canonical handoff still rejects or a
+cache/identity mismatch appears; do not weaken the sealed freshness policy.
+
+**Phase 54.2 Phase D projector image-completeness correction (`OWNER-AUTHORISED / ACTIVE`, 2026-09-02).** The bounded projector reconnect exposed a packaging defect in the candidate Python image, not a data or policy defect: the running `qdl-v2-python:2.0.0-6962966` image starts the projector health process but `python -c 'import confluent_kafka'` fails, while the retained approved rollback projector image imports `confluent_kafka==2.15.0`. A projector without its Kafka client cannot consume `md.canonical.v2`; its HTTP health process alone is therefore not projection evidence. Rust core and bar edge continue to emit/ACK real canonical/final-BAR data, but query correctly fails closed until a Kafka-capable projector materialises it.
+
+**Exact correction and invariants.** Rebuild the same committed Data Layer source revision `dev@6962966` without build cache as one canonical non-phase artifact `qdl-v2-python:2.0.0-6962966-r2`; source, Dockerfile, lockfile, release schema and topology are unchanged. Before rollout, prove OCI revision/release labels, non-root/read-only import of `confluent_kafka` and the stable projector modules. Then rolling-recreate exactly `projector_v2`, `projector_v2_2` and `projector_v2_3`, one at a time, to this image with their existing runtime/TLS/state mounts and group `stable-projector-v1`. Query/stream remain on their already verified reader image in this bounded repair. Do not reset Kafka offsets/topology, flush Redis, delete SQLite, recreate Rust/ingestor/bar-edge/query/stream/V1, alter Trading System/alpha or touch the order path. Rollback remains the named Kafka-capable `qdl-v2-python:2.0.0-phase533-projector-631d694` image with the same mounts.
+
+**Exit and cleanup.** Require all three projectors `restart=0`, `OOM=false`, no rejected-canonical loop, and a new final 15m native BAR in the V2 query cache for Binance `ETHUSDT` and OKX `ETH-USDT-SWAP`; only then rerun the existing disposable paired adaptive no-order proof. The rejected incomplete reader image is retained only while its running query/stream roles need their documented rollback coordinate; no broad image/cache prune is authorised until Phase D proof closes.
+
+**Phase 54.2 Phase D historical-BAR provenance correction (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-02).** With the repaired projectors, authenticated native Binance/OKX 15m V2 reads now return 700 complete, authoritative, gap-free final bars and a LIVE tail. The paired alpha probe still correctly stops before Gateway/Risk because Alpha Runtime permits only `LAST_EVENT_STALE` on historical rows: Binance history also carries `BACKFILLED`, and OKX bars carry `FIELD_MISSING` because the native candle does not expose a trade-count field. These are declared BAR provenance/optional-field facts, not missing OHLC values, synthetic history, a stale tail, or a reason to relax execution quality. The bounded repair changes only shared Alpha Runtime historical-BAR validation: permit `BACKFILLED` and `FIELD_MISSING` alongside `LAST_EVENT_STALE` for non-current BAR warmup rows; current tail remains `LIVE`/final, and non-BAR, unknown flags, gaps, incomplete/non-authoritative rows, source-policy mismatch and stale current bars remain fail-closed. Required gates are deterministic validator regressions for Binance/OKX historical flags and rejection cases, the focused source suite, then the same disposable Binance/OKX directional proof. No Data Layer runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha strategy/config, broker or order state is in scope.
+
+**Phase 54.2 Phase D V2 stream-loop ownership correction (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-02).** The provenance gate now passes, and the paired no-order probe reaches its signed stream reconnect. It then fails before Gateway/Risk because `DataLayerGateway` constructs the async V2 adapter on its dedicated `AsyncSdkRunner`, while legacy `V2PubSub` opens a second event loop for the same client. The resulting cross-loop `asyncio.Event` error is deterministic and cannot be fixed by retrying. The bounded correction is to schedule `V2PubSub` on the adapter-owner runner when it is supplied by `DataLayerGateway`; its existing standalone thread/loop remains only for directly constructed test adapters. It changes no route, freshness rule, provider call, stream protocol, consumer identity, runtime role, data-plane state or order path. Required gates: owner-loop regression, existing PubSub acknowledgement/backpressure/final-bar tests, complete focused source suite, then the same disposable paired Binance/OKX no-order proof with pre/post zero-mutation evidence. Rollback is an Execution Alpha source revert; no Data Layer runtime mutation is required for this source correction.
+
+**Phase 54.2 Phase D owner-loop gate and first paired class (`PASS / NO-ORDER`, 2026-09-02).** The shared runtime now runs gateway-created typed streams and their cursor acknowledgements on the adapter-owner `AsyncSdkRunner`; direct test-only PubSub use retains its standalone loop. The new owner-loop regression plus all focused source gates passed **77/77** in `4.902s` in the existing shared Numba image with complete Alpha source and Trading System SDK mounted read-only, non-root, network-disabled and tmpfs-only. The first real class pair, `adaptive_hma_cpp` 15m, then passed concurrently against native Binance USD-M `ETHUSDT` and OKX Swap `ETH-USDT-SWAP`: each read 700 FIFO closed bars, observed its initial V2 final bar, verified two signed-cursor `REPLAYING -> LIVE` handoffs, and reached one no-order Gateway/Risk preview preserving `data_layer_contract=V2_PRIMARY`. Both previews returned the expected `PREVIEW_REJECTED` rather than creating an execution action. The active stable consumer manifest revisions were read from runtime and used exactly (`9` Binance, `8` OKX); no claim was made from the stale probe revision. Scoped PostgreSQL evidence for the 20-minute proof window is zero for `execution_sessions`, `orders`, `fills` and `order_brackets`; the exact temporary Redis namespace is empty and both `--rm` containers removed themselves. Projector/query/stream/V1/Kafka/Redis/SQLite/Trading System/alpha services and order paths remain unchanged. The phase stays open only for its three already-approved representative pairs: multi-symbol, bracket and grid/L2; no new class, role or topology is authorised.
+
+**Phase 54.2 Phase D mark/index request-shape diagnosis (`IN PROGRESS / ALPHA SOURCE ONLY`, 2026-09-02).** The Fib bracket pair proved that active reader manifests are revision `9` (Binance) and `8` (OKX), and each explicitly admits the bound `MARK_INDEX_PRICE` identity under `crypto_liquid_v2`. The request nevertheless failed access control because the Alpha Runtime adds its generic `45s` session-liveness attribute to a mark/index reference snapshot; that attribute is deliberately absent from the registered mark entitlement. This is an Alpha request-shape defect, not a provider, manifest, Rust, projector, Kafka or entitlement gap. The bounded correction leaves all Data Layer source/runtime/topology/state untouched: Alpha stops attaching a WebSocket session SLA to `MARK_INDEX_PRICE`, retains the explicit SLA for TRADE/QUOTE/L2, and reruns the approved Fib/Grid no-order pairs. No retry-based acceptance, SLA widening, manifest mutation or runtime recreation is permitted.
+
+**Phase 54.2 Phase D mark/index source-plane correction (`IN PROGRESS / ALPHA SOURCE ONLY`, 2026-09-02).** After the liveness attribute was removed, the same authenticated Fib pair reached the generic V2 snapshot endpoint and exposed the actual source-plane mismatch: the bound mark/index route is a `REFERENCE` fresh snapshot, while Alpha Runtime still asks the durable stable-source catalog for a generic cache snapshot. That catalog correctly has no reference-route materialization key, so the query reader raises before Gateway/Risk. The narrow Alpha correction calls the existing signed `/v2/market-data/reference:batch` contract for one `MARK_INDEX_PRICE` result, preserves the sealed native identity/policy and `ALPHA` grade, validates exact `OK`/one-row/lineage/unit/decimal semantics, and returns the existing typed advisory shape. No Data Layer runtime, image, manifest, provider, Kafka, Redis, SQLite, V1, Rust, query/stream, Trading System, service or order path changes. This does not widen an SLA or synthesize data; quote/L2 remain their existing durable-cache routes.
+
+**Phase 54.2 Phase D L2 bootstrap/live repair (`IN PROGRESS / NARROW SHARED RUST CORE`, 2026-09-02).** The real disposable Dynamic Grid Binance proof reached the sealed V2 L2 route after BAR/quote/mark/index and signed cursor handoff passed, then correctly failed closed at `BOOK_SNAPSHOT/ETHUSDT`: the exact typed status was `STALE`, `LAST_EVENT_STALE`, age `9088ms`, versus the sealed `2000ms` bound. In the same read, `BOOK_DELTA` was `LIVE`, age `845ms`, session LIVE, complete and gap-free. This isolates one semantic defect: the one existing `snapshot_refresh_seconds=30` setting currently serves two different jobs, provider bootstrap/renewal and materializing a durable current book view. The provider anchor is healthy and must remain 30 seconds; using it as the public snapshot cadence makes a 2-second L2 route structurally impossible.
+
+**Approved in-scope correction.** Add a provider-neutral `materialized_snapshot_interval_ms` only to the Rust-core L2 mapping. It is distinct from the existing provider `snapshot_refresh_seconds`, which remains unchanged in the native ingestor configuration. Opt in only the two currently demanded Dynamic Grid ETH perpetual books (`BINANCE/USDM/ETHUSDT`, `OKX/SWAP/ETH-USDT-SWAP`) at `1000ms`; no all-universe expansion, vendor bypass, source fallback, new endpoint, service, topic, worker or per-symbol container is allowed. A verified core emits at most one materialized top-100 `BOOK_SNAPSHOT` per declared cadence after genuine delta/keepalive state progression; it preserves the native sequence/generation, partition ordering, dedup, gap/resync block and the original lossless `BOOK_DELTA`. The 30-second Binance REST anchor and OKX websocket bootstrap renewal stay unchanged.
+
+**Exit, rollback and decision boundary.** Source gates must prove compiler separation of provider-refresh and materialization cadence; reject malformed/out-of-range values; prove Binance and OKX verified delta materialization at 1 second, no materialization during gap/resync/duplicate and no mutation of raw-ingestor config. Then build one immutable Rust image and roll only existing `rust_core`, `rust_core_2`, `rust_core_3` with regenerated `core.json`, `core-002.json`, `core-003.json`; retain the exact current image/runtime files as rollback. No V1, Kafka topology/offsets, Redis/SQLite deletion, ingestor, query/stream, Trading System, alpha service, state or order path may change. Real acceptance is the same Dynamic Grid no-order pair on Binance/OKX: 180 final 1h bars, signed BAR reconnect, a fresh sequence-verified snapshot plus delta, LIMIT/OCO `PREVIEW_REJECTED`, zero scoped execution rows and self-removal of disposable clients. Measure added canonical event rate, Rust CPU/RAM and disk delta; any gap, OOM, duplicate or unexplained data loss fails closed and rolls the three core roles back.
+
+**Runtime-render guard alignment (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The existing bounded three-core refresh tool currently allows only the historical `snapshot_refresh_seconds` transition, so it would correctly reject this distinct field. Extend that guard, rather than introduce a new rollout script: prove each retained provider refresh remains byte-equivalent at `30s`; permit only the explicit `materialized_snapshot_interval_ms=1000` addition for `binance-usdm-ethusdt-book-primary-v2` and `okx-swap-eth-usdt-swap-book-primary-v2`; reject every other binding/member/field/image/authority mutation. Required gate: deterministic dry-run/apply rollback tests plus the compiler/deployment and full Rust core suites. This remains one three-core packet with the already recorded rollback boundary.
+
+**Runtime packet prepared (`OWNER-APPROVED / PENDING APPLY`, 2026-09-02).** Source `fix/phase54-l2-bootstrap@0a122a8` passed the focused deployment/render suite (`30/30`) and Rust core suite (`30 passed, 1 explicit isolated-Redis skip`). Immutable candidate `qdl-v2-rust:2.0.0-0a122a8-l2hot` is digest `sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`; its OCI revision label is `0a122a8`. The read-only actual-runtime dry run against `session-liveness-43cdbe3-20260829T162719Z` proves authority SHA `1cd55d7...981fb107` is unchanged and only `core.json` (`0cc241...c1674ab -> f77e31...0b4e26`), `core-002.json` (`d6e25f...7dc9cd -> f2b322...16c680`) and `core-003.json` (`2a7605...a47b2f -> 568089...2e4978`) will change, plus the rollout image selector. Apply writes exact previous bytes to a new private rollback directory, then rolling-recreates only `rust_core`, `rust_core_2`, `rust_core_3`, each with `--no-deps`. V1, Kafka topology/offsets, Redis/SQLite, ingestors, bar edge, projectors, query/stream, Trading System, alpha and order path remain excluded. Rollback restores the three named JSON bytes and selector, then recreates only those same three roles to retained digest `sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`.
+
+**Pre-roll runtime safety finding (`ACTIVE / MUST CLOSE BEFORE ACCEPTANCE`, 2026-09-02).** The bounded config apply completed and created the declared rollback receipt, but it ran in a Docker user namespace that persisted the updated private `rollout.env` as `nobody:nogroup 0600`; repair only its ownership and the new rollback directory to the normal host operator account before Compose can consume it. Separately, `rust_core` member 1 was already `OOMKilled=true`, exit `137`, four hours before this packet; members 2/3 are still live at approximately `252/275MiB` of their `512MiB` limits. No core was recreated after discovering this. The Phase D exit now requires identifying and bounding the core's live dedup/state retention before recreate, then all three members must remain `OOM=false`; a restart without that evidence is not acceptance.
+
+**Bounded dedup repair (`IN PROGRESS / SAME THREE-CORE PACKET`, 2026-09-02).** The active core configs reveal the direct retained-memory pressure: `dedup_capacity=1,000,000`, represented in both a `HashSet<Vec<u8>>` and FIFO `VecDeque<Vec<u8>>`, while the transactional Kafka bridge atomically commits canonical/quarantine outputs and raw offsets. It is a process-local replay guard, not durable correctness authority. Lower only the stable generated bound to `100,000`: still more than 390 times the maximum `256`-event transaction batch and a substantial reconnect window, while Kafka producer idempotence, transaction fencing, durable cursor/offset commits, canonical event IDs and projector idempotence remain unchanged. Extend the existing three-core refresh validator to allow exactly `1,000,000 -> 100,000` plus the already-declared two ETH materialization additions, reject all other core/binding changes, and test this transition deterministically. Rebuild one final immutable Rust image from that committed source; prior candidate and active `cfb686...49951f` remain rollback until post-roll memory/continuity acceptance completes. No new service, worker, topic, endpoint or data-plane reset is authorised.
+
+**Candidate reuse clarification (`APPROVED / SOURCE-ONLY`, 2026-09-02).** The bounded-dedup change affects only the Python runtime-config compiler and sealed JSON, not the Rust binary. Do not manufacture a third Rust image: retain already-built `sha256:c63d54...aaf15ee0` as the exact tested L2 binary and permit the refresh tool to reuse an already-selected immutable digest when only the bounded JSON changes. The tool must state whether the selector changes and count only actual writes; its rollback retains the intermediate candidate config, while the first packet's rollback retains the original `cfb686...49951f` image selector and JSON bytes for full reversal.
+
+**Phase 54.2-D Dynamic Grid L2 consumer proof (`PASS / CLOSED`, 2026-09-02).** No Data Layer source, topology, offset, cache, role or authority mutation was required for the final consumer proof. Against the active Rust core digest `sha256:c63d54...aaf15ee0`, an isolated V2_PRIMARY Dynamic Grid client consumed native Binance USD-M `ETHUSDT` and OKX Swap `ETH-USDT-SWAP` through their sealed bindings. Each proof read `180` final closed `1h` bars, quote and mark/index, a fresh verified top-100 L2 snapshot, and two signed reconnect handoffs ending in non-reset sequence-bearing `BOOK_DELTA`; both observed the valid `SNAPSHOT_REQUIRED` bootstrap followed by `REPLAYING` (with `LIVE` delivered on this run). The consumer reached only an isolated no-order Gateway/Risk preview, where typed LIMIT/OCO requests were terminal `PREVIEW_REJECTED`.
+
+Post-proof evidence: all three Rust cores were running with `restart=0` and `OOM=false`; the Dynamic Grid scoped PostgreSQL counts remained zero for `execution_sessions`, `orders`, `fills` and `order_brackets`; both `--rm` consumer clients self-removed; and the exact disposable no-order Gateway was removed. V1, Kafka, Redis, SQLite, ingestors, projectors, query/stream, Trading System, alpha services and order paths were not changed. This is real-provider V2 consumer evidence for the declared two ETH L2 bindings, not a broad alpha paper rollout or a claim about unbound symbols.
+
+**Phase 54.2-D cleanup evidence (`COMPLETE / SCOPED`, 2026-09-02).** After confirming no container reference, removed exactly two test-only images: `trading-system-phase4-test:bracket-context-20260901-r2` (`sha256:e0a95c...`) and `tradingsystem-image:1.2.0-09fda78` (`sha256:ac2fd3...`). No V2 Data Layer image, role, Kafka topic/offset, Redis key, SQLite state, volume, network, V1 service, Trading System or alpha service was removed. The Alpha Runtime probe image remains because a separately user-stopped alpha container still references it. No broad prune was used. Post-cleanup host evidence: `54,881,800,192` bytes free (`83%` used); Docker inventory is `80.42GB` images, `36.55GB` build cache and `2.11GB` reclaimable local volumes. A pre-cleanup byte baseline was not captured before this exact image deletion, so this record deliberately does not claim bytes freed.
+
+### Phase 54.3 - Final V2 Consumer Closure, Release And Hygiene
+
+Status: `OWNER-APPROVED / ACTIVE` (2026-09-02).
+
+**Goal.** Close the already-approved V2 work as an operable product rather than
+as isolated proof: source convergence through `dev`, an authenticated
+Trading-System V2 reader, one bounded no-order acceptance, release provenance,
+and exact artifact/worktree cleanup across Data Layer, Trading System and
+Execution Alpha. This is not a new data-plane feature phase.
+
+**Root cause and scope.** The active V2 server loads
+`trading-system.paper.stable` manifest revision `7`, while the running Trading
+System service mints JWTs with revision `6`; V2 correctly rejects the request
+as `UNAUTHENTICATED`. The consumer binding currently carries route/release
+provenance but not the manifest revision needed to make this mismatch
+machine-checkable. Add that single immutable field to the binding contract and
+its parser/generator tests. Trading System must validate the sealed revision
+against its JWT configuration before startup. The only permitted runtime
+recreate is `market_data_service`; V1, Kafka, Redis, SQLite, V2 ingest/core/
+projector/query/stream roles, Gateway/Risk/executor, alpha strategy containers,
+brokers and order paths remain out of scope.
+
+**Required gates.**
+
+1. Rebase/integrate only reviewed V2 commits onto each repository's current
+   `origin/dev`; rerun affected Data Layer contract/compiler tests, Trading
+   System V2 bridge/deployment tests and Execution Alpha V2 runtime/no-order
+   tests. Every retained source change must be an ancestor of `dev` before a
+   worktree can be removed.
+2. Generate a revision-7 Trading-System binding/JWT configuration from the
+   active consumer manifest, render the one-service override, and prove stale
+   revision `6` is rejected before any network/order action. Build one
+   immutable Trading System image only if source changes require it.
+3. Serially recreate only `market_data_service`, preserving its logs, symbols,
+   V2 cursor/audit state and mTLS/JWT mounts. Rollback restores its exact
+   prior image and runtime binding; no store reset, topic/offset change or
+   alpha service start is allowed.
+4. Run one 300-second real V2 no-order acceptance using the existing
+   Binance/OKX bindings: final BAR, quote/trade, mark/index, L2 snapshot/delta,
+   signed cursor/reconnect, typed Risk read-back and zero execution state
+   mutation. A health response alone is insufficient.
+5. After all three repositories have pushed `dev` and the reviewed release
+   path reaches `main`, retain only active images plus one named rollback
+   image per runtime family. Remove only merged worktrees, stopped disposable
+   smoke containers, exact unreferenced test images and their unused BuildKit
+   cache. Never remove volumes, networks, source state, secrets or a
+   user-stopped alpha container without separate approval.
+
+**Exit.** Trading System reports its demanded V2 slices ready with no active
+fallback for V2-primary routes; source/release/runtime provenance is recorded
+in all three plans; all removable worktrees and test artifacts have an exact
+inventory and cleanup receipt. Only then may alpha logic refinement resume on
+the canonical `dev` checkout.
+
+**Phase 54.3 generation-bound binding source gate (`PASS / SOURCE-ONLY`,
+2026-09-02).** The sealed consumer-route artifact now has an additive
+`qdl.v2.consumer-route-binding.v2` form which binds the exact
+`consumer_manifest_revision`; its V1 predecessor remains readable for
+unpromoted consumers. The pure renderer emits V2 only when given the canonical
+consumer manifest, validates its consumer ID and positive revision, and emits
+no provider/runtime/order side effect. In the isolated, read-only, no-network
+V2 Python image, `tests.test_phase115_universal_release` and
+`tests.test_alpha_deployment_bindings` passed **19/19**. This includes V2
+round-trip/tamper rejection and retained V1 alpha compiler compatibility for
+native Binance/OKX routes. No runtime artifact, service, Kafka/Redis/SQLite
+state, V1 route, Trading System, alpha or order path changed.
+
+**Phase 54.3 Trading System binding artifact (`PREPARED / NO RUNTIME CUTOVER`,
+2026-09-02).** Both active V2 query replicas read
+`trading-system.paper.stable` revision `7`. A new binding was derived
+deterministically from the active sealed V1 42-product artifact: it retains
+release revision `2`, universal manifest
+`1f04190793e56b1fff9a39f0a377d54a40f947b6a7d702dfde334f03593021e9`, all
+42 exact product identities and V1 rollback data, and adds only
+`consumer_manifest_revision=7`. Its V2 binding checksum is
+`b2f6b0334a0bf2842880e7f917927d842f9ac06186c0902319c9e847915f2a64`.
+Data Layer and Trading System parsers independently accept it for revision 7;
+the Trading System parser rejects revision 6 before a network connection. The
+new file is in a new `0700` operator directory and has not replaced the active
+mount, changed a service, or mutated Kafka/Redis/SQLite/V1/alpha/order state.
+
+**Phase 54.3 reference receipt-timestamp correction (`OWNER-APPROVED /
+SOURCE-ONLY`, 2026-09-02).** A real authenticated Trading-System V2 read
+found that `ReferenceBatch._resolve_request` captures `received_at_ns` before
+the bounded provider await. OKX mark/index legitimately returns a provider
+timestamp a few tens of milliseconds later, which then appears impossible to
+a strict consumer even though the request/identity/coverage are correct. The
+root correction keeps the adapter's request-start timestamp for its documented
+missing-provider-time fallback, but stamps a successful
+`ReferenceBatchResult.received_at_ns` only after the provider fetch completes.
+This makes the public receipt timestamp a real local completion boundary and
+keeps provider observation time unmodified. Error/unavailable paths retain
+their original early timestamp because no provider observation is accepted.
+
+**Invariant and gates.** No clock tolerance, freshness relaxation, cross-venue
+substitution, fabricated observation, provider adapter behavior, contract
+shape, runtime role, Kafka/Redis/SQLite state or order path is changed. Add a
+deterministic clock/adapter regression proving adapter fallback receives the
+request-start instant while a successful result reports the later completion
+instant; retain existing bounded batch/coverage behavior. Run focused
+reference batch plus V2 reference contract tests in an isolated no-network
+image. Only after source gates pass may one standard V2 Python image be built
+and exactly `query_v2_1` then `query_v2_2` be serially recreated with their
+existing runtime/TLS/state mounts; the prior query image is the rollback.
+
+**Source-gate evidence (`PASS / NO RUNTIME MUTATION`, 2026-09-02).** In the
+existing non-root, read-only, network-disabled V2 Python test image,
+`python -m unittest tests.test_phase104_reference_batch
+tests.test_phase113_reference_v2 tests.test_reference_l2_consumer_acceptance`
+passed **49/49** in `6.589s`. The new deterministic regression proves the
+adapter receives `100_000_000` as request-start while a successful result is
+stamped at the later `200_000_000` completion instant. `git diff --check` and
+`python -m py_compile qdl/reference/batch.py` pass. Repository-wide Ruff is
+not an exit gate here: its isolated invocation reports pre-existing style and
+unused-import findings throughout this legacy module/test file, including
+lines untouched by this patch; no changed-line formatting or compile failure
+was accepted. No container, image, provider request, cache, Kafka, Redis,
+SQLite, V1, Trading System, alpha or order path changed during source
+verification.
+
+**Reader repair rollout packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+Build one canonical shared Python reader image carrying the runtime source
+correction `dev@1f64da7b2288db1debf2d5d83e819abcf1467204` as
+`qdl-v2-python:2.0.1-1f64da7`, with OCI revision and release labels. The
+following plan-only commit does not alter the runtime source label. Verify it
+as non-root, read-only and network-disabled before use. Render an operator-only
+image override that changes exactly `query_v2_1` and `query_v2_2`; serially
+recreate those services with `--no-deps` and their existing runtime/TLS/state
+mounts. Their exact current rollback is
+`qdl-v2-python:2.0.0-6962966@sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+The packet cannot recreate stream, projector, Rust core, bar-edge, either
+ingestor, V1 or any Trading-System/alpha/order role; it cannot alter Kafka
+topology/offsets, Redis, SQLite or runtime identity. Per-replica image,
+health, restart and real MARK/INDEX read checks gate the next operation.
+
+**Reader repair rollout evidence (`PASS / RUNTIME READ-PLANE ONLY`,
+2026-09-02).** The canonical image was built from
+`dev@1f64da7b2288db1debf2d5d83e819abcf1467204` as
+`qdl-v2-python:2.0.1-1f64da7`, immutable digest
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`.
+Its OCI revision/release labels match the source coordinate; a non-root,
+read-only, network-disabled import gate passed. Operator-only overrides in
+`/home/bobby/.local/state/qdl-v2/phase543-reader-binding-20260902/`
+changed exactly `query_v2_1` and then `query_v2_2`, each with
+`--no-deps --force-recreate`; both are healthy, restart count zero and retain
+the recorded `2.0.0-6962966` query image as exact rollback. No stream,
+projector, Rust, bar-edge, ingestor, V1, Kafka, Redis, SQLite, Trading System,
+alpha, Gateway/Risk or order role was recreated or reset. Real typed
+mark/index reads through the active Trading-System facade passed for Binance
+USD-M `BTCUSDT`/`ETHUSDT` and OKX Swap `BTC-USDT-SWAP`/`ETH-USDT-SWAP`; the
+Gateway demanded-slice health subsequently reported `24/24 READY` with no
+unhealthy slice.
+
+**Final C2 no-order packet (`OWNER-APPROVED / READY`, 2026-09-02).** Create
+one disposable client on only the existing V2 stable-internal and
+`executor_network` networks. It will use the four declared authenticated
+consumer identities (`monitoring.multivenue.stable`,
+`trading-system.paper.stable`, `alpha.binance.paper.stable`,
+`alpha.okx.paper.stable`) against both query replicas and both stream aliases,
+with the authoritative `RUST_PRIMARY` record. The current release compiler
+resolves **299** exact products across the four identities: final BAR,
+TRADE, QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT, BOOK_DELTA, funding, open
+interest, long/short, taker flow, basis and contract metadata. It is a
+300-second upper-bound real-provider read-only acceptance, not a synthetic
+smoke. It verifies warmup, signed cursor replay/reconnect, reference lineage,
+bounded V1 fallback then return for routes that explicitly allow it, and
+fail-closed behavior for `BLOCKED` routes. It cannot call Gateway/Risk,
+create an execution session/order/fill/bracket, mutate alpha signal/sizing or
+connect directly to a venue.
+
+**C2 preconditions, rollback and cleanup.** Before start, derive a fresh
+payload-free V1 fallback runtime binding from the current
+`data_layer_service` container and frozen immutable V1 provenance; an old
+container ID is not reusable evidence. The client mounts certificates only
+read-only, copies the four declared identities to tmpfs, drops to non-root,
+and removes its cursor directory before exit. Its sole mutable artifacts are
+a `0700` evidence namespace with bounded receipt/stderr hashes and the
+temporary client container, which is removed on either pass or failure.
+V1, Kafka topology/offsets, Redis, SQLite, all persistent V2 roles, Trading
+System, alpha containers and the order path remain unchanged. Failure leaves
+V2 reader rollback available at the exact prior query digest and blocks
+release closure; it does not retry by weakening freshness, identity, fallback
+or source-authority rules.
+
+**C2 reference admission diagnosis (`FAIL-CLOSED / RUNTIME CONFIG DEFECT`,
+2026-09-02).** The first disposable C2 client exited before any order/Gateway
+action and retained only bounded stderr hashes. A non-sensitive diagnostic
+added expected/actual identity, status and provider problem context to the
+certification error; its focused reference suite remained `49/49` passing.
+The exact first failed route is Binance USD-M perpetual `DOGEUSDT`
+(`8aedd349-6999-5874-b0dd-34c6451c0b3a`) `BASIS`, returned as typed
+`SOURCE_UNAVAILABLE`: `Binance native basis Rust admission is unavailable`.
+Read-only inspection proves the query reader is correctly bound to the fixed
+private URL `http://rust_core:8300`, but the serving `rust_core` has
+`QDL_PROVIDER_ADMISSION_ENABLED=false` and the port refuses connections.
+This is a rollout configuration omission, not a DOGE delisting, vendor
+response, entitlement, symbol mapping, freshness failure or a reason to
+remove the declared BASIS product.
+
+**Bounded Rust-admission repair packet (`OWNER-APPROVED / READY`,
+2026-09-02).** Render one operator-only override that sets only
+`QDL_PROVIDER_ADMISSION_ENABLED=true` for the existing `rust_core` service;
+retain its current immutable Rust image, runtime/core mount, TLS, Kafka group,
+Redis prefix and all other environment exactly as-is. Compose preflight must
+prove only that one effective environment delta. Then recreate only
+`rust_core` with `--no-deps --force-recreate`, preserving V1, both query
+readers, streams, projectors, `rust_core_2`/`rust_core_3`, ingestors, bar edge,
+Kafka topology/offsets, Redis contents, SQLite, Trading System, alpha and
+order path. Rollback is the same one-service recreate using the exact
+operator override with the flag `false`.
+
+The private admission service is Rust's existing bounded coordinator, not a
+new public endpoint or worker. Its first real native-basis read may create a
+short-lived, namespaced lease/CAS record under the existing
+`qdl:stable:v2:provider-admission:v1` prefix; that is the intended minimal
+coordination write and is neither a market-data cache reset nor an execution
+mutation. Require post-roll endpoint liveness and one real native BASIS read
+for each Binance `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, `BNBUSDT`, with
+exact identity/lineage/coverage and no cross-venue fallback. Only then rerun
+one full C2 acceptance from a fresh disposable namespace.
+
+**Rust image-selection correction (`FAIL-CLOSED / IMMEDIATE BOUNDED
+ROLLBACK-CORRECTION`, 2026-09-02).** The first one-service recreate exposed a
+separate deployment-provenance defect before any admission request: the base
+stable environment still selected Rust image
+`2.0.0-7b7388348615@sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`,
+while the active shared Rust-core set had previously been
+`2.0.0-0a122a8-l2hot@sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`.
+That older image starts the core loop but does not expose the required private
+admission listener. The flag itself is correct; the effective image selector
+was incomplete. Do not accept a mixed core revision.
+
+The immediate correction adds the exact existing `0a122a8-l2hot` immutable
+selector to the same one-service operator override and recreates only
+`rust_core` again. It is a rollback-correction to the prior active core image,
+not a Rust build, topology change or additional role. The false-flag rollback
+retains this same image selector. Exit requires all three core replicas to
+report the identical Rust image digest, `rust_core` to listen on the private
+port, restart/OOM zero, and no data-plane or execution side effect before any
+native BASIS request/C2 retry.
+
+**Rust-admission repair evidence (`PASS / ONE-ROLE RUNTIME CORRECTION`,
+2026-09-02).** The first recreate was immediately corrected before any native
+BASIS request. All three core replicas now run the identical retained image
+`qdl-v2-rust:2.0.0-0a122a8-l2hot@sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`,
+each `running`, restart `0`, `OOMKilled=false`. The corrected `rust_core`
+reports `QDL_PROVIDER_ADMISSION_ENABLED=true` and its log records
+`qdl_provider_admission_started` with one sealed lane; a no-auth private GET
+now returns `404` rather than connection refused, which proves listener
+reachability without invoking a state-changing admission operation. V1,
+query/stream/projector/ingestor/bar-edge, Kafka topology/offsets, Redis,
+SQLite, Trading System, alpha and every order path remain untouched. The next
+operation is one fresh full C2 namespace; its declared real BASIS products
+cover Binance BTC/ETH/SOL/DOGE/BNB and will be the first actual admission/data
+proof.
+
+**Phase 54.3 C2 full-route result (`FAIL-CLOSED / RUNTIME-CONVERGENCE DEFECT`,
+2026-09-02).** The fresh 299-product, four-identity C2 progressed beyond the
+previous Binance DOGE native `BASIS` failure after the bounded Rust admission
+repair. The next exact failed product was `trading-system.paper.stable` on
+OKX Swap perpetual `DOGE-USDT-SWAP` `BOOK_DELTA`, rejected by the existing
+freshness contract. This is not a vendor substitution, disabled freshness
+gate, missing C2 identity, order action or alpha mutation: the sealed product
+is valid but has not been materialized by the shared realtime plane.
+
+**Phase 54.3 shared-runtime convergence (`APPROVED / IN PROGRESS`,
+2026-09-02).** Read-only compiler comparison found that the mounted
+`RUST_PRIMARY` bundle is an older partial runtime: every three core files
+contain `16` bindings while the current canonical catalog/acquisition compiler
+renders `182`; Binance USD-M ingestor contains `4` of `19` bindings and OKX
+Swap ingestor contains `6` of `89`. The missing declared set includes the
+five-liquid Binance/OKX TRADE/QUOTE/final-BAR plane plus the shared native
+top-100 L2 snapshot/delta mappings for BTC, ETH, SOL, DOGE and BNB, and the
+currently catalog-resolved BTC/ETH quarterly legs. This is the root cause of
+the DOGE L2 C2 failure. It is a runtime materialization/provenance defect, not
+a reason to relax freshness, fabricate a book, bypass Rust, add a per-symbol
+worker or declare V2 certified prematurely.
+
+**Approved bounded repair.** Use the existing canonical
+`StableSourceCatalog` and `StableAcquisitionPlan` compiler to render one
+authority-preserving convergence bundle. Before any write, prove exact
+identity/membership/order, authority/raw-topic/transactional identity,
+provider endpoints, and all retained DNSE/V1-compatible bindings; only the
+declared additions, catalog/config lineage and the previously approved bounded
+dedup setting may differ. The operation may atomically replace only the three
+mounted `core*.json` files and the two existing Binance/OKX ingestor JSON
+files, retaining byte-for-byte backups in a new private operator directory.
+It may rolling-recreate only `ingestor_binance_usdm`, `ingestor_okx_swap`,
+`rust_core`, `rust_core_2`, and `rust_core_3`, using their already active
+immutable images and existing mounts. It must not change authority mode,
+consumer routes, TLS, Kafka topology or offsets, Redis/SQLite data, V1,
+bar-edge, projectors, query/stream, Trading System, alpha containers or any
+order path; normal provider-originated market-data writes are expected.
+
+**Required gates and rollback.** Source tests must cover the legacy partial
+bundle -> canonical convergence, rejection of any non-declared field drift,
+and atomic rollback. A read-only rendered diff must enumerate all five
+perpetual identities and the six SOL/DOGE/BNB L2 additions without cross-venue
+mixing. Runtime acceptance requires all five shared roles healthy with no
+OOM/restart, real V2 top-100 `BOOK_SNAPSHOT` plus sequence-bearing
+`BOOK_DELTA` for the ten Binance/OKX perpetual books, then exactly one fresh
+299-product C2 no-order acceptance. Failure restores the five exact backed-up
+JSON files and recreates only the same roles; V1 remains the route rollback.
+No release/consumer promotion is allowed before that receipt passes.
+
+**Convergence source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** Added the
+reusable `scripts/converge_v2_primary_runtime.py` operator tool instead of a
+manual file copy. It renders from the canonical compiler with the active
+authority bytes, permits only the measured catalog/instrument lineage updates,
+the already-approved `1,000,000 -> 100,000` core dedup bound, and the declared
+session-liveness metadata. It rejects an unknown binding, retained semantic
+drift, non-core/non-binding drift, unexpected dedup change and an output path
+outside the private QDL state root. It stages all five exact rollback files
+before atomic replacement and restores already-written files on failure.
+
+In a non-root, read-only, network-disabled image,
+`tests.test_converge_v2_primary_runtime`,
+`tests.test_refresh_v2_l2_core_runtime`,
+`tests.test_refresh_v2_native_ingestor_runtime`,
+`tests.test_phase104_reference_batch` and
+`tests.test_reference_l2_consumer_acceptance` passed **54/54** in `17.941s`.
+`py_compile` and `git diff --check` pass. No provider/runtime/data-plane
+operation occurred during this gate.
+
+**Live convergence dry-run (`PASS / NO RUNTIME MUTATION`, 2026-09-02).** The
+isolated renderer validates the active authority digest
+`1cd55d7...981fb107` unchanged and reports exactly five changed mounted files:
+each core is `16 -> 182` bindings with the ten Binance/OKX five-liquid
+perpetual L2 source IDs included and `dedup_capacity 1,000,000 -> 100,000`;
+Binance ingestor is `4 -> 19` bindings (nine native books including BTC/ETH
+quarterlies) and OKX ingestor is `6 -> 89` bindings (nine native books and
+its cataloged final-BAR set). Existing retained bindings have only validated
+catalog/instrument lineage updates. This proves the full compiler output is
+compatible with the mounted legacy subset; it has not written any runtime
+file, restarted a role, called a provider or changed V1/Kafka/Redis/SQLite,
+Trading System, alpha or order state.
+
+**Native-ingestor authority log correction (`SOURCE PASS / IMMUTABLE IMAGE AND
+BOUNDED INGESTOR ROLLOUT PENDING`, 2026-09-02).** The first Binance ingestor recreate started with its rendered
+authority record correctly set to `RUST_PRIMARY`, and `RawPublisher` applies
+that record to the fenced sink to select `PrimaryRaw`. Read-only source
+inspection found its startup JSON nevertheless writes the literal
+`"RUST_SHADOW"`. This does not alter the selected sink/data behavior, but it
+would make operational evidence lie about the active authority. Correct the
+shared Rust startup formatter to report `config.authority.mode`, add a focused
+mode regression, then build one immutable Rust image and recreate the same two
+existing ingestors once each. No core, V1, Kafka/Redis/SQLite, query/stream,
+projector, Trading System, alpha or order role is in this correction.
+
+The formatter now maps the already-fenced `AuthorityMode` enum directly to
+`RUST_SHADOW`, `RUST_CANARY` or `RUST_PRIMARY`; it does not introduce a second
+authority decision. The full native-ingestor Rust suite passed **13/13** in the
+repository's dependency-complete, disposable builder image with network
+disabled, including the new three-mode startup-log regression. The builder is
+test-only. The next bounded action is to build one immutable shared Rust image,
+pin it only for `ingestor_binance_usdm` and `ingestor_okx_swap`, then recreate
+those two roles serially and verify their rendered authority, binding count,
+restart/OOM state and real V2 L2 materialization before the one final C2 run.
+
+**Authority-log image (`BUILT / TWO-INGESTOR ROLLOUT PENDING`, 2026-09-02).**
+Commit `7d9d5d4` built one shared, immutable Rust image
+`qdl-v2-rust:2.0.1-7d9d5d4@sha256:f29fe2a6e4acd5fcff1a94601a837cfcc99b47ae5b970061fd1101155f54c334`.
+Its OCI labels bind revision `7d9d5d4` and release `2.0.1-7d9d5d4`; it is the
+only new runtime image required by this correction. The pre-roll override pins
+only the two native ingestors to it. Their exact rollback is the currently
+running immutable image
+`sha256:cfb686cf23fce8bea8c9c29c31630571bb6aad1b3a137f6dae1d28644649951f`.
+The Rust cores remain pinned to their existing c63 image and are excluded from
+this rollout. The disposable builder tag is retained only until this bounded
+evidence is complete, then removed under the phase cleanup rule.
+
+**C2 reference-cache freshness repair (`IN PROGRESS / PYTHON QUERY SOURCE
+ONLY`, 2026-09-02).** The first post-convergence C2 client exited before its
+observation window at the Binance BTC execution `MARK_INDEX_PRICE` request:
+the typed V2 response was correctly fail-closed as `DATA_STALE` against the
+declared `2,000ms` bound. A separate read-only query using the same Trading
+System identity then returned the same official `/fapi/v1/premiumIndex`
+product as `OK`, with provider observation age `1,094ms` and receipt age
+`720ms`; it did not contact a venue directly, write an order or mutate a
+service. The discrepancy is not an SLA reason to retry: `ReferenceBatch`
+caches any snapshot for two seconds without checking the requesting
+requirement's freshness limit. A source observation already around one second
+old can therefore be returned from cache after its `2,000ms` execution limit.
+
+The in-scope correction makes the query service bypass/refetch an `OK` cached
+result only when its newest provider observation no longer satisfies the
+current request's declared freshness. It preserves the strict provider
+timestamp, does not alter the `2,000ms` SLA, cache key, provider adapter,
+source lineage or external API. The refetch is exactly once and only after a
+cache-hit `DATA_STALE`; a provider result genuinely stale remains terminal
+`DATA_STALE`.
+
+The focused valid-cache, stale-cache-refresh and genuinely-stale regression
+passed **3/3**. The broader non-root, read-only, network-disabled matrix of
+reference, runtime convergence, L2, native-ingestor and handoff behavior
+passed **78/78** in `19.000s`; no provider or runtime role was accessed.
+After source commit, build one immutable Python query image, recreate only
+`query_v2_1` and `query_v2_2` serially, retain their current
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`
+rollback image, then run exactly one fresh C2 client. No stream, core,
+ingestor, projector, V1, Kafka/Redis/SQLite, Trading System, alpha or order
+role is in this repair.
+
+**Reader-cache repair runtime packet (`OWNER-APPROVED / PRE-BUILD`, 2026-09-02).**
+Build the shared canonical reader from committed source `dev@40b7165` as
+`qdl-v2-python:2.0.1-40b7165`, attest its OCI revision/release labels, and
+prove the focused cache-regression inside the immutable image under a
+non-root, read-only, network-disabled container. Render one operator-only
+query image override, then rolling-recreate exactly `query_v2_1` followed by
+`query_v2_2`; require each replacement to be healthy with `restart=0` and
+`OOMKilled=false` before continuing. The exact rollback coordinate is the
+currently active `qdl-v2-python:2.0.1-1f64da7`
+`sha256:4a2b8d55116d582c6e142be81259695002461dc7757d23cb85858e1eaf35da24`
+with the same runtime mounts. Keep stream/core/ingestor/projector/V1,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha and the order
+path unchanged. On a healthy pair, create exactly one fresh 299-product,
+four-identity, 300-second C2 no-order client namespace; it must use public
+V2 query/stream only, establish signed cursor replay/reconnect, exercise its
+declared V1 fallback drill, and prove zero venue-direct connections, zero
+Gateway/Risk/order action and zero scoped execution rows. Failure stops here
+and restores only the two query roles to the named rollback image.
+
+**Reader-cache repair rollout evidence (`PASS / TWO-QUERY ROLLING`, 2026-09-02).**
+Built `qdl-v2-python:2.0.1-40b7165`
+`sha256:0272638902ce33f45715c13c0c0bdb54975d36b1cc8bb3aee2a6b0835c0d64fe`
+from `dev@40b7165`; OCI labels report the same revision and release. Its
+three exact cache regressions passed in an isolated non-root, read-only,
+network-disabled container (`3/3`). Compose preflight resolved that image
+only for `query_v2_1` and `query_v2_2`. The roles were recreated serially;
+both now report the identical digest, `healthy`, `restart=0`, `OOM=false` and
+bounded clean Uvicorn startup. Core, ingestor, stream, projector, V1,
+Kafka/Redis/SQLite, Trading System, alpha and order paths were unchanged.
+The named `1f64da7` query image remains the exact rollback coordinate. The
+only remaining acceptance for this correction is one fresh C2 namespace.
+
+**C2 batch-receipt freshness diagnosis (`FAIL-CLOSED / NARROW QUERY REPAIR`,
+2026-09-02).** The fresh C2 client exited before its observation window on
+`OKX.SWAP.PERPETUAL.ETH-USDT` execution `MARK_INDEX_PRICE`. A separately
+authenticated, V2-only, read-only query using the same Trading-System identity
+returned the identical official OKX mark/index route as `OK` with provider
+observation age `342ms` and receipt age `227ms`; it used no V1 or direct venue
+connection. The source is therefore healthy. The defect is internal batch
+timing: a concurrent reference batch can receive a current snapshot early,
+then complete other bounded provider work after that snapshot has crossed its
+`2,000ms` execution bound. The response is correctly rejected, but the prior
+repair only refreshed a literal cache hit and not an otherwise valid result
+whose local receipt has aged while shared/batched work was completing.
+
+The bounded correction is provider-neutral and remains fail-closed: after all
+initial bounded work returns, revalidate every on-demand snapshot and refresh
+the identical request exactly once only when its provider observation was
+within bound at `received_at_ns` but aged while cache/shared/batch work was
+completing. A provider observation that is already stale when freshly received
+is not refreshed and remains terminal `DATA_STALE`. It changes no SLA,
+adapter, provider endpoint, manifest, cache key, topology or consumer route.
+Required source gates cover fresh cached, aged shared/batch receipt, genuinely
+stale fresh provider, identity preservation and no duplicate provider work;
+then rebuild one query image, roll only the two query roles back through the
+same exact rollback coordinate if unhealthy, and run one fresh C2 namespace.
+
+**Batch-receipt source gate (`PASS / SOURCE-ONLY`, 2026-09-02).** The shared
+query service now classifies a snapshot as internally ageable only when its
+provider observation was within the declared bound at `received_at_ns`; after
+the initial bounded batch completes, an aged cache hit, leader result or
+coalesced result receives one exact-identity bypass-cache refresh immediately
+before response assembly. A response whose provider observation was already
+stale at receipt cannot take that path and remains `DATA_STALE`. The focused
+reference suite passed **14/14**: valid cache, ordinary cache refresh,
+snapshot aging only after initial batch completion, shared refresh singleflight
+and freshly received genuinely stale provider values. The broader non-root,
+read-only, network-disabled matrix passed **81/81** in `19.083s`, covering the
+reference, L2, runtime-convergence, native-ingestor and handoff boundaries.
+No runtime, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order
+state was accessed by these source gates. Next: commit, build one final reader
+image, serially replace only the two query replicas and rerun the one C2
+namespace with the existing exact rollback image retained.
+
+**Assembly-freshness runtime packet (`OWNER-APPROVED / PRE-BUILD`,
+2026-09-02).** Commit `e634b95` is the final narrow query correction: it moves
+the one governed refresh from worker completion to response assembly, so a
+snapshot cannot become stale while sibling work completes unnoticed. Build
+`qdl-v2-python:2.0.1-e634b95`, attest source labels and execute the 14 focused
+regressions from the immutable image. Render one operator-only selector and
+recreate only `query_v2_1`, then `query_v2_2`, with health/restart/OOM checks
+between them. The active `30b0d91` reader and the retained `1f64da7` reader
+are rollback coordinates until the fresh C2 receipt passes. No other role,
+state store, consumer, topology or order path is in scope.
+
+**C2 L2 quiet-session contract correction (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** The post-`e634b95` C2 failure is now precisely classified. Both
+V2 query replicas agree that all five OKX perpetual top-100 `BOOK_SNAPSHOT`
+products are verified, complete, gap-free and within their declared 60-second
+snapshot bound; `BTC` `BOOK_DELTA` is actively changing, while the quieter
+`ETH`/`SOL`/`DOGE`/`BNB` deltas legitimately have no provider book mutation for
+longer than the generic 2-second event age. The existing Rust ingestor writes
+real per-connection session evidence every second and the shared V2 state
+contains a LIVE `okx-swap` public session. The defect is the consumer contract:
+it declares `BOOK_DELTA` as a price snapshot with `BLOCK`/2-second recency and
+omits the already-supported session-liveness predicate. This is neither a
+missing binding, a provider outage, a reason to fabricate a delta nor a reason
+to weaken L2 sequence/gap protection.
+
+**Approved narrow behavior.** For every declared Binance USD-M and OKX Swap
+perpetual `BOOK_DELTA` demand, preserve the 2-second last-delta age as an
+observable `LAST_EVENT_STALE` fact, but request `OBSERVE` event recency plus a
+bounded real provider-session liveness check. A quiet delta is readable only
+when its exact socket session is LIVE, within the declared heartbeat bound,
+complete and gap-free; disconnected/unknown/stale sessions, unverified books,
+duplicate/out-of-order/gap transitions and every `BLOCK` request remain
+fail-closed. `BOOK_DELTA` remains a sequence/replay input, never the sole
+price-selection primitive: limit/conditional risk read-back continues to use a
+fresh verified `BOOK_SNAPSHOT` (and quote/mark policy where applicable).
+
+**Scope, gates and rollback.** Change only the shared demand/manifest policy,
+the V2 quality/admission predicate and C2 validation for quiet connected book
+deltas. Add deterministic regressions for LIVE quiet delta, disconnected
+delta, stale session, gap/unverified rejection, and manifest round-trip for
+both venues/five symbols. Run the focused contract/L2/consumer test matrix in
+an isolated no-network container. No Rust provider code, image, role, Kafka
+topic/offset, Redis/SQLite state, V1, Trading System, alpha, Gateway/Risk or
+order action is in this source slice. If any gate fails, revert the source
+slice; runtime remains on the already-active `e634b95` query image. A separate
+recorded bounded bundle/query-stream handoff is required before the one final
+299-product C2 retry.
+
+**Quiet-session source correction (`PASS / SOURCE-ONLY`, 2026-09-02).** The
+three paper manifests now govern every Binance USD-M and OKX Swap perpetual
+`BOOK_DELTA` as `event_recency_policy: OBSERVE` with a 45-second explicit
+provider-session SLA, while retaining the existing 2-second event-age,
+`BLOCK` stale/gap policies, verified sequence and full-coverage requirements.
+Their governed revisions advance exactly once (`trading-system: 8`,
+`alpha-binance: 10`, `alpha-okx: 9`); release routing revision `16` seals the
+new manifest SHA-256 values. Validation now checks the exact session before
+reporting an old event, so a disconnected channel cannot be misclassified as
+merely quiet. It does not make a quiet delta price-eligible: snapshot/quote/
+mark remains the price-selection input.
+
+The first focused run exposed two fail-closed configuration defects before any
+runtime operation: Trading System `BOOK_DELTA` had no session SLA, and the
+release route still bound pre-change manifest hashes. Both were corrected in
+source and YAML parsing plus manifest digest verification passed. The isolated
+non-root, read-only, network-disabled matrix passed **52/52 in 30.899s**:
+Phase-10.3/10.5 scope and receipt invariants, stable-route/release
+certification, five-liquid Binance/OKX L2 quiet/disconnect/gap/sequence
+regressions, and alpha deployment binding compilation. `git diff --check`
+passed. No image, container, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path was accessed by this source gate.
+Next permitted operation: commit this source slice, build one canonical reader
+image from that commit, then use the already-approved bounded query/stream
+handoff and exactly one 299-product C2 no-order acceptance.
+
+**Quiet-session reader handoff (`OWNER-APPROVED / PRE-ROLL`, 2026-09-02).**
+Source commit `09e5d03b3f9a068b37b4b8199b0b5337972344d6` built one canonical
+reader/stream image `qdl-v2-python:2.0.1-09e5d03`, image ID
+`sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`.
+OCI revision/release labels equal that source coordinate; an immutable,
+non-root, read-only, network-disabled image gate passed the same **52/52**
+matrix in `32.685s`. The one operator-only selector
+`quiet-book-delta-09e5d03/reader-image.override.yml` (SHA-256
+`43978fc755a827dc2f2f4373564c097793931f07f9c34aee1d5287524132d1c5`) changes
+exactly `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`. Its exact rollback selector (SHA-256
+`e446b4efa3ab5653fb7584f79a4cf984dbb3ec2ccb6db263eb75f0cbd60a8e32`) restores
+both queries to `qdl-v2-python:2.0.1-e634b95@sha256:7288e921ba4902deb4477cebc911bd4c6cc93e39a368773def722717ba77b504`
+and both streams to
+`qdl-v2-python:2.0.0-6962966@sha256:221aceb394b9ad55661bb6d81e0b1acad6a880ac18f75b1b44d03d9b4c0c3377`.
+
+Compose validation with the exact current environment/override chain passed.
+Rolling order is queries one at a time, then standby stream then lease-holder
+stream after observing lease state. Between roles require health/dependencies,
+restart count `0`, `OOMKilled=false` and expected immutable image. This packet
+does not recreate or write V1, Kafka topology/offsets, Redis, SQLite, Rust
+core, ingestors, bar-edge, projectors, Trading System, alpha or any order path;
+normal reader audit writes only are expected. On any failure stop and recreate
+only the failed role with its exact rollback selector. After all four are
+healthy, run exactly one fresh 299-product, four-identity, 300-second C2
+no-order acceptance and remove only its disposable client namespace.
+
+**Quiet-session reader rolling evidence (`PASS / READY FOR ONE C2`, 2026-09-02).**
+The approved selector was applied once, in the recorded order, to exactly
+`query_v2_2`, `query_v2_1`, `stream_v2_active`, and
+`stream_v2_passive`. All four now run
+`qdl-v2-python:2.0.1-09e5d03@sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`,
+are Docker-healthy with restart count `0` and `OOMKilled=false`. The stream
+lease converged normally: `stable-stream-active` holds epoch `15`; passive is
+the expected standby. Query/stream logs contained no new error record during
+the bounded post-roll check. V1, Kafka topology/offsets, Redis, SQLite, Rust
+core, ingestors, bar edge, projectors, Trading System, alpha and order paths
+were not recreated or mutated. The only remaining operation in this bounded
+packet is one fresh 299-product, four-identity, 300-second C2 no-order
+acceptance from a disposable, execution-network-only client; its V1
+provenance/binding will be derived afresh from the running V1 container and
+the client namespace will be removed after its receipt is retained.
+
+**C2 DOGE BAR continuity diagnosis and bounded repair packet (`APPROVED / IN
+PROGRESS`, 2026-09-02).** The first wrapper-only preflight stopped before the
+unprivileged client could start because its public static wrapper had mode
+`0700`; it made no V2 request and was retained separately as preflight
+evidence. The fresh client then reached the real V2 route and correctly
+failed closed at `trading-system.paper.stable` / Binance USD-M `DOGEUSDT` /
+final `BAR 1m`: both query replicas reported a healthy current tail but
+returned `OPEN_SEQUENCE_GAP` for the governed warmup. A read-only canonical
+spool audit found one exact market-time discontinuity, 26 missing final opens
+from `2026-09-02T12:15:00Z` through `2026-09-02T12:41:00Z`, between retained
+opens `12:15` and `12:42`; this is real durable history loss, not an SLA,
+session, reader, or source-lineage issue.
+
+**Repair scope and invariant.** Stop only the existing
+`binance_bar_edge` container, retain a hash-recorded checkpoint backup, remove
+only `binance-usdm-dogeusdt-bar-1m` from its checkpoint map, then start the
+same container/image/runtime. Its established bootstrap path must fetch 1,000
+closed Binance rows, compare every open against the canonical cache and
+publish only missing final opens through the normal Kafka/canonical/projector
+pipeline. Expected normal data-plane writes are the 26 real missing BARs;
+there is no direct SQLite write, image build, source change, new topology,
+offset reset, Redis/SQLite flush/deletion, V1/Trading System/alpha/order
+mutation. If bootstrap or health fails, stop only this role, restore its exact
+checkpoint backup and start it on its unchanged image. After projector catch-up,
+prove both replicas return a contiguous governed DOGE warmup and run one new
+299-product C2 no-order client; the failed client does not count as acceptance.
+
+**DOGE BAR repair evidence (`PASS / READY FOR FRESH C2`, 2026-09-02).** A
+read-only real-provider preflight through the same Binance bar wrapper returned
+exactly 1,000 contiguous closed `DOGEUSDT 1m` rows and covered the full missing
+window. The stopped role's checkpoint backup was retained, then only the DOGE
+`1m` watermark was removed and byte-verified after installation. Starting the
+same `qdl-v2-python:2.0.0-7c8db16@sha256:b87b03fbde11a913e9e057b17886e7d7a2d457f2f1b12b4dab4c687f3ec21ea8`
+bar-edge container produced one normal bootstrap acknowledgement: 1,000
+provider rows, `973` already durable and `27` published (the 26 repaired
+historical bars plus the next naturally closed BAR). The role is running with
+restart `0` and `OOMKilled=false`. After projector catch-up, a read-only spool
+audit reported `gap_segments=0`; authenticated Trading-System-paper warmups
+through both V2 replicas returned 1,000 LIVE, complete, gap-free rows at the
+same watermark `4169` and tail open. No V1, topology, offsets, Redis/SQLite
+reset/delete, Rust, ingestor, query/stream role, Trading System, alpha or order
+path changed. The sole next operation is one fresh 299-product, four-identity,
+300-second C2 client with the same V1 rollback drill.
+
+**C2 quiet `BOOK_DELTA` SDK admission correction (`APPROVED / SOURCE-ONLY`,
+2026-09-02).** The repaired C2 client reached the next governed route and
+failed closed only at the Trading-System-paper `OKX.SWAP.PERPETUAL.DOGE-USDT`
+`BOOK_DELTA` snapshot because `qdl_sdk.client._validate_query_payload` still
+accepted a quiet, connected execution-grade `TRADE` but rejected the
+equivalent explicitly governed `BOOK_DELTA` before the existing C2 continuity
+validator could classify it. A direct authenticated typed read immediately
+afterward from both V2 query replicas reported the same product `LIVE`,
+complete, gap-free, session-live, within the 45-second session SLA and
+`execution_eligible=false` solely because its last book mutation was quiet.
+
+**Narrow correction and invariant.** Generalize that SDK exception only to
+`BOOK_DELTA` with `event_recency_policy=OBSERVE`, stale event recency, a LIVE
+provider session, bounded declared session liveness, complete coverage and no
+open gap. It remains non-executable continuity/replay input. `BOOK_SNAPSHOT`,
+`QUOTE`, `MARK_INDEX_PRICE`, every `BLOCK` request, missing/expired/
+disconnected session, incomplete coverage and open sequence gap remain
+fail-closed. No manifest, Rust/provider, durable store, Kafka/Redis/SQLite,
+runtime role, V1, Trading System, alpha, Gateway/Risk or order behavior is in
+this source slice.
+
+**Exit, rollback and next boundary.** Add SDK unit regressions for the allowed
+quiet delta and the rejected session-SLA/session-state/gap/coverage/price-feed
+variants, then run the focused SDK/C2 acceptance matrix in an isolated
+no-network image. If any test fails, revert this source slice; the active
+reader image remains untouched. Only after source exit may one canonical
+reader/stream image be built and the already-approved four reader roles be
+rolled with `09e5d03` retained as exact rollback, followed by one fresh
+four-identity 300-second C2 acceptance.
+
+**Quiet `BOOK_DELTA` SDK source exit (`PASS / READY FOR BOUNDED READER ROLL`,
+2026-09-02).** `qdl_sdk.client` now centralizes the existing quiet-continuity
+exception. It preserves legacy `TRADE` behavior and admits `BOOK_DELTA` only
+with the explicitly governed `OBSERVE` policy, LIVE provider session, declared
+and in-bound session liveness, complete coverage and no open gap. It does not
+admit `BOOK_SNAPSHOT` or any price-bearing feed, and it does not change
+`execution_eligible=false`: a quiet delta is still non-executable replay
+evidence. The initial regression correctly showed that a missing session SLA
+is rejected even earlier at `DataRequirement` construction; the test now
+asserts that stronger contract boundary.
+
+`git diff --check` passed. The isolated immutable-image, non-root, read-only,
+network-disabled matrix passed **62/62 in 28.551s**:
+`test_qdl_sdk_stream_projection`, Phase-10.3/10.5 acceptance and release
+certification, five-liquid handoff, and alpha deployment bindings. It covers
+allowed quiet delta, missing SLA, `BLOCK`, disconnected session, open gap,
+incomplete coverage and quiet `BOOK_SNAPSHOT` rejection. No runtime role,
+provider, Kafka/Redis/SQLite, V1, Trading System, alpha, Gateway/Risk or order
+path was accessed. Next: commit this source-only slice; build one canonical
+reader/stream image, roll only the approved two query and two stream roles,
+then run exactly one fresh C2 client after normal health checks.
+
+**Quiet `BOOK_DELTA` reader handoff (`OWNER-APPROVED / PRE-ROLL`, 2026-09-02).**
+Committed source `43faf3d20630bcc4720af326e0b60c9aeaa0e601` built exactly one
+canonical shared reader/stream image,
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`.
+Its OCI revision/version labels equal `43faf3d`/`2.0.1`, and its configured
+container user is non-root `qdl:qdl`. The immutable no-network, read-only,
+non-root image gate passed the same **62/62 in 32.349s** matrix.
+
+Pre-roll evidence shows precisely four affected roles, all healthy, restart
+`0`, non-OOM and currently on the exact rollback image
+`qdl-v2-python:2.0.1-09e5d03@sha256:9403705e86099de96c38d064cbc7a86e74c76c71cbbcebb028e9c587568b2dd4`:
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`. The
+runtime selector will change only their image field, serially queries first
+then current stream standby and lease holder; any failing role is recreated
+only with that exact `09e5d03` selector. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, bar edge, projectors, Trading System, alpha and order
+paths remain excluded. Pre-roll disk capacity is `32G` free on `/`.
+
+**Fresh C2 packet after quiet-delta correction (`OWNER-APPROVED / IN
+PROGRESS`, 2026-09-02).** Run exactly one disposable four-identity, 300-second
+Phase-10.5 C2 client from the candidate image on `executor_network`. It can
+reach only `https://query_v2_1:8200`, `https://query_v2_2:8200`,
+`qdl-v2-stream-a:8210`, `qdl-v2-stream-b:8210` and the existing local V1
+fallback endpoint for the manifest-authorized local comparison. It has a
+read-only root filesystem, tmpfs-only cursor/input state, dropped privileges
+after narrowly copying declared mTLS/JWT files, no Docker socket, no provider
+credential, no Trading System/Gateway/Risk credential and no order path.
+
+The serving V1 container was read-only verified unchanged against its frozen
+`v1.2.4` provenance: image
+`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`,
+container-ID hash `0ec6292fc6fd94f88410cff826674e17ba8076fe63f5933f4258263c3217bd7a`.
+The fresh evidence namespace therefore seals the same valid V1 binding rather
+than mutating/recreating V1. C2 must prove all declared products across
+monitoring, Trading-System paper, Binance paper alpha and OKX paper alpha:
+warmup, signed cursor/replay/reconnect, V2-primary selection, permitted
+`V2 -> V1 -> V2` fallback and `BLOCKED` no-fallback behavior. Exit requires
+`order_actions=0`, `provider_connections=0`, temporary cursor removal and no
+unexpected runtime mutation. Any failure retains only bounded diagnostic
+evidence and leaves V1 plus the exact `09e5d03` reader rollback selector
+available.
+
+**C2 bootstrap preflight correction (`NO ENDPOINT REQUEST / CLEANED`,
+2026-09-02).** Two disposable namespaces stopped at bootstrap with `setpriv:
+setgroups failed: Operation not permitted`; neither made a V2/V1 request. The
+first hypothesis about Docker-level `no-new-privileges` was disproved by the
+second run without that flag. The actual cause is the candidate image's
+intentional default `qdl` user: the bootstrap needs a one-time root process to
+copy the declared files into tmpfs before it drops to UID/GID `10001`. The real
+C2 command therefore uses `--user 0:0` only for that reviewed bootstrap.
+`setpriv --clear-groups`, empty inheritable/ambient capabilities and
+`--no-new-privs` still apply to the actual unprivileged client process. No
+provider, broker/order path or runtime role was contacted or mutated; each
+container was `--rm` and each wrapper-only namespace is disposable and removed
+before the one real C2 probe.
+
+**C2 runtime-record preflight (`NO ENDPOINT REQUEST / CLEANED`, 2026-09-02).**
+The first correctly dropped-privilege client reached its local command and
+proved UID `10001`, no effective/inheritable/ambient capabilities and
+`NoNewPrivs=1`, but exited before any V2/V1 request because the disposable
+container was missing the existing read-only `/runtime/authority.json` mount.
+This is a harness mount omission, not an authority or data-plane failure. The
+retry mounts precisely the same already-serving runtime directory used by the
+query roles (`phase103-shared-primary-e0bedff-retry.../runtime`) read-only;
+it does not write or recreate it. The failed namespace contains only wrapper,
+bounded error and non-secret provenance/binding files and is removed before
+the real C2 probe.
+
+**C2 real route finding (`FAIL-CLOSED / BOUNDED BAR AUDIT REQUIRED`,
+2026-09-02).** The first actual unprivileged C2 client correctly reached V2
+and stopped at `trading-system.paper.stable` / `OKX.SWAP.PERPETUAL.SOL-USDT` /
+final `BAR 1m` with `required feed has an unresolved sequence gap`. Its
+security receipt remains correct (UID `10001`, no effective/inheritable/
+ambient capabilities, `NoNewPrivs=1`). This is an actual durable final-BAR
+continuity failure, not quiet L2 admission, fallback, provider-session SLA or
+an execution action. The failed receipt is retained as bounded diagnosis;
+there were no order actions, provider connections or runtime writes from the
+client.
+
+**Next correction scope.** Before any further C2 attempt, run a read-only
+audit over the full governed Binance/OKX final-BAR set to identify every open
+sequence gap at once. For each confirmed gap, verify the same exact closed
+window from the real venue provider, back up the relevant existing bar-edge
+checkpoint, remove only the affected binding watermark(s), then restart only
+the relevant existing shared bar-edge role(s) on their unchanged image. Normal
+provider-to-Kafka/canonical/projector repair writes are allowed; direct SQLite
+writes, synthetic bars, topology/offset reset, Redis flush, V1, Rust,
+query/stream, Trading System, alpha and order mutations remain prohibited.
+If the audit is clean after repair, run exactly one fresh C2 client.
+
+**Full governed BAR audit and repair packet (`OWNER-APPROVED / PRE-APPLY`,
+2026-09-02).** A bounded read-only audit inspected the latest 1,000 distinct
+opens for every `51` materialized primary final-BAR partition. It found exactly
+eight gaps: `okx-swap-sol-usdt-swap-bar-1m`,
+`okx-swap-eth-usdt-swap-bar-30m`, `binance-usdm-btcusdt-bar-30m`,
+`binance-usdm-btcusdt-bar-5m`, `binance-usdm-bnbusdt-bar-15m`,
+`binance-usdm-ethusdt-bar-15m`, `binance-usdm-ethusdt-bar-1m` and
+`binance-usdm-ethusdt-bar-5m`. The same existing multiplexed
+`binance_bar_edge` owns bounded history bootstrap for both Binance and OKX;
+there is no per-symbol worker or new topology.
+
+Real-provider read-only preflight passed for every one of those eight bindings:
+each Binance/OKX wrapper returned exactly `1,000` contiguous confirmed closed
+rows with `test_provenance=false`. The apply packet backs up and hashes only
+`phase54-alpha-demand-5edbc8c.json`, stops only `binance_bar_edge`, removes
+only those eight keys from `last_open_ms` with an atomic structured JSON
+rewrite, then starts its unchanged image/runtime. Its normal bootstrap must
+deduplicate existing cache rows and publish real missing final BARs through the
+existing Kafka/canonical/projector route. Rollback restores the exact backup
+and starts only this role. No direct SQLite write, source/image change, V1,
+Kafka offset/topology, Redis, Rust, ingestor, query/stream, Trading System,
+alpha or order action is allowed.
+
+**BAR checkpoint ownership correction (`IN PROGRESS / BOUNDED RUNTIME
+REPAIR`, 2026-09-02).** The atomic eight-watermark JSON rewrite correctly
+preserved content but was performed by the host privileged helper, leaving the
+single checkpoint `phase54-alpha-demand-5edbc8c.json` as `root:root 0600`.
+The existing bar-edge deliberately runs as UID/GID `10001`; its next startup
+therefore failed closed with `stable BAR checkpoint is unreadable`. This is a
+local file-ownership defect introduced by the repair procedure, not a provider
+or data-quality failure. No direct durable-store mutation happened after the
+role stopped, and the exact pre-apply checkpoint remains retained.
+
+**Approved corrective scope, invariants and rollback.** Change only that
+checkpoint's owner/group to `10001:10001` and its mode to `0640`, matching the
+runtime directory's non-root ownership while keeping it non-world-readable;
+then start only the same existing `binance_bar_edge` role on its unchanged
+image/runtime. Verify restart count, OOM state and normal real-provider
+bootstrap acknowledgement before re-auditing continuity. If the role cannot
+read or bootstrap after the permission repair, stop only this role, restore the
+captured pre-apply checkpoint byte-for-byte with UID/GID `10001:10001` and
+mode `0640`, then start only this role. V1, Kafka topology/offsets, Redis,
+SQLite, Rust, ingestors, projectors, query/stream, Trading System, alpha and
+order paths remain excluded. A fresh C2 run remains forbidden until the
+post-repair governed BAR audit is clean.
+
+**Shared all-interval BAR convergence (`IN PROGRESS / BOUNDED RUNTIME
+HANDOFF`, 2026-09-02).** The durable route contract now exposes `299` V2
+products, including `140` unique Binance USD-M/OKX Swap BAR partitions across
+the five-liquid universe and native intervals. The already-running shared
+query/stream image `qdl-v2-python:2.0.1-43faf3d` parses the committed catalog
+as `142` enabled crypto BAR bindings (`70` Binance, `70` OKX, plus the two
+preserved legacy BTC `1m` identities). The only mismatch is operational:
+the existing `binance_bar_edge` remains on its older `7c8db16` image and its
+checkpoint consequently declares only `35` bindings. This is why a broad
+cache audit sees unmaterialized long/native BAR lanes even though the source
+and consumer manifest are already complete.
+
+**Approved narrow handoff.** Reuse the existing immutable
+`43faf3d` Python image; do not build another image, add a service, worker,
+topic, volume, group, or per-symbol process. Before replacing only the shared
+`binance_bar_edge` role, perform an isolated no-network constructor test with
+the exact current checkpoint expanded to the candidate's enabled binding ID
+set. It must preserve every existing watermark, preserve authority/catalog/
+acquisition/cache identity, set only the `binding_ids` list to the exact
+candidate set, and prove the edge marks the `107` newly enabled bindings for
+normal real-provider bootstrap. Then atomically rewrite only this checkpoint,
+with an exact SHA-256 backup record and non-root `10001:10001`/`0640` metadata,
+and recreate only `binance_bar_edge` on `43faf3d`. The normal bootstrap is
+allowed to write only authentic closed BARs through the existing
+provider -> Kafka -> Rust canonical -> projector pipeline. It must not write
+SQLite directly or synthesize data.
+
+**Exit, rollback and C2 boundary.** Require the focused final-BAR/checkpoint
+regression matrix, role health/no OOM, an acknowledgement showing all `142`
+bindings checkpointed, and a governed C2 BAR audit over the exact manifest
+partitions before one fresh 299-product/four-identity C2 no-order acceptance.
+Rollback is exact: stop only `binance_bar_edge`, restore the checkpoint backup
+with the preserved non-root mode/ownership, recreate only that role on
+`qdl-v2-python:2.0.0-7c8db16@sha256:b87b03fbde11a913e9e057b17886e7d7a2d457f2f1b12b4dab4c687f3ec21ea8`.
+V1, Kafka topology/offsets, Redis, SQLite, Rust, ingestors, projectors,
+query/stream, Trading System, alpha and order paths remain excluded.
+
+**Runtime-mount provenance correction (`IN PROGRESS / NO DATA-PLANE WRITE`,
+2026-09-02).** The first all-interval bar-edge recreate failed before provider
+bootstrap because the generic bundle env resolved `QDL_STABLE_RUNTIME_DIR` to
+the query runtime (`phase103...`) rather than the role's serving runtime
+(`session-liveness-43cdbe3...`). The new edge intentionally reads its sealed
+`phase54-alpha-demand-5edbc8c/catalog.yaml` and `acquisition.yaml` from the
+latter; the generic mount lacks those files, so startup failed closed with
+`FileNotFoundError`. The checkpoint stayed at `35/140` watermarks/bindings and
+the role emitted zero bootstrap acknowledgements: no provider, Kafka,
+canonical, projector, Redis or SQLite data-plane write occurred.
+
+**Correction.** Preserve the same four compose files and the already-created
+canonical image selector, but supply only the bar-edge's verified existing
+runtime-directory value for Compose interpolation. Validate the rendered
+service's three mounts before recreate; it must mount
+`session-liveness-43cdbe3.../runtime -> /runtime:ro`, the existing state
+volume and TLS volume, with no other diff. Then recreate only
+`binance_bar_edge` and continue the exact 140-binding bootstrap. The rollback
+selector/path remains unchanged.
+
+**Sealed BAR projection convergence (`IN PROGRESS / CONFIG-ONLY REPAIR`,
+2026-09-02).** With the correct mount restored, the new image correctly proved
+that the mounted `phase54-alpha-demand-5edbc8c` projection itself still
+contains only `35` BAR bindings. The full committed/image catalog is revision
+`8` and acquisition revision `16` as the checkpoint expects, but its sealed
+projection was never materialized from the all-interval crypto catalog. This
+is a stale control-plane projection, not a Python/Rust/provider defect. The
+first corrected recreate therefore failed closed before any provider call,
+with checkpoint watermarks unchanged (`35/140`).
+
+**Bounded materialization and rollback.** While only `binance_bar_edge` is
+stopped, atomically replace just the mounted phase54 `catalog.yaml`,
+`acquisition.yaml` and their projection receipt from the already tested,
+immutable-image-matching committed source documents. The receipt must record
+the exact `140` enabled Binance/OKX crypto BAR IDs, source SHA-256 values and
+the four C2 consumer identities; DNSE remains absent. Rename the existing
+three-file projection directory to a timestamped rollback directory on the
+same filesystem, retaining its hashes. This changes no source checkout,
+authority, identity, image, Kafka/Redis/SQLite state or consumer route. Then
+recreate only the existing shared bar-edge with the verified mount/image. The
+previous projection directory plus `7c8db16` image/checkpoint backup are the
+complete rollback coordinate.
+
+**All-interval bootstrap result and final active-gap repair (`IN PROGRESS`,
+2026-09-02).** The corrected shared edge started on
+`qdl-v2-python:2.0.1-43faf3d`, restored the preserved `35` watermarks and
+completed real-provider bootstrap for all `140` Binance/OKX crypto BAR
+bindings, publishing `87,435` authentic closed rows. Its checkpoint is now
+`140/140`; all three projectors are running with restart/OOM `0`. A read-only
+audit over the exact C2 route set reports `140/140` partitions present,
+`0` missing, `0` insufficient, and one remaining real discontinuity:
+Binance USD-M BTCUSDT `1m` on its governed preserved
+`binance-usdm-btcusdt-bar-stable-001` partition. This identity is active C2
+input, so it cannot be dismissed as legacy.
+
+**Final bounded repair.** Verify the latest 1,000 closed BTCUSDT `1m` rows
+from the real Binance provider through the existing bar wrapper, then stop
+only `binance_bar_edge`, back up/hash the current 140-binding checkpoint,
+remove only `binance-usdm-btcusdt-bar-1m` from `last_open_ms`, and start the
+same role/image/mount. Its normal deduplicating bootstrap must fill only
+missing authentic final opens; it must retain the other `139` watermarks. If
+provider/bootstrap/health fails, restore this exact checkpoint and start only
+this role. Re-run the exact 140-partition read-only audit; C2 remains blocked
+until it reports zero missing/gapped/insufficient partitions.
+
+**All-interval BAR repair exit (`PASS / FRESH C2 AUTHORIZED`, 2026-09-02).**
+The targeted BTCUSDT `1m` provider preflight returned `1,000` real,
+contiguous, closed rows with `test_provenance=false`. Removing only its
+watermark made the shared edge publish `27` missing opens while deduplicating
+the other `973`; it completed the same `140`-binding bootstrap and restored a
+`140/140` checkpoint. After projector catch-up, the exact governed C2 audit
+reports `140/140` partitions present, `0` missing, `0` gapped, `0`
+insufficient, with `156..1000` retained distinct final rows per partition.
+All three projectors and the edge are running with restart/OOM `0`. The two
+runtime preflight failures before this result made zero provider/Kafka writes;
+the successful repairs used only normal authentic provider BAR writes.
+
+**Fresh C2 scope.** Run exactly one disposable `299`-product, four-identity,
+`300`-second no-order acceptance from `qdl-v2-python:2.0.1-43faf3d`. The
+launcher starts as root only to copy declared mTLS/JWT files into tmpfs, then
+uses `setpriv` to run the actual client as UID/GID `10001` with all effective,
+inheritable and ambient capabilities cleared and `NoNewPrivs=1`. It has a
+read-only root filesystem, no Docker socket, provider credential, order,
+Gateway/Risk or broker connection; it may reach only the two V2 query replicas,
+the two V2 stream endpoints and the manifest-authorized local V1 fallback for
+the required `V2 -> V1 -> V2` drill. Exit requires full route coverage,
+signed cursor/reconnect, V2-primary, policy-correct fallback, zero order
+actions/provider connections, and deletion of temporary cursor state. Any
+failure preserves bounded evidence only and leaves V1 plus the exact bar-edge
+and reader rollback coordinates available.
+
+**C2 launcher preflight (`NO ENDPOINT REQUEST / CLEANED`, 2026-09-02).** The
+first disposable launcher stopped before the dropped-privilege client started:
+the mechanically copied `run-c2.sh` wrapper had mode `0700`, so UID `10001`
+could not open it. The only output was local shell `Permission denied`; no
+V2/V1 endpoint, stream, provider, cursor, order or runtime state was touched.
+Correct only this non-secret static wrapper to be readable/executable by the
+runtime UID, remove its two local error receipts from the same disposable
+namespace, then run the one real C2 probe. This launcher-only preflight does
+not count as an acceptance attempt.
+
+**C2 BAR freshness diagnosis (`APPROVED / READ-ONLY`, 2026-09-02).** The
+all-interval durable continuity gate is clean (`140/140`, no missing or open
+sequence gap), but the first real C2 client subsequently stopped at a governed
+OKX final `BAR 1m` freshness decision. Before any retry, run a compact,
+read-only typed-status matrix for BTC, ETH, SOL, DOGE and BNB across both V2
+query replicas. The isolated client uses only the existing Trading-System
+paper identity and reads state, freshness, session liveness, gap and
+completeness; it has no provider, order, Gateway/Risk or write capability.
+The decision boundary is narrow: repair only a confirmed shared
+projection/provider-lineage defect, never relax the SLA or manufacture a bar.
+
+**C2 OKX final-BAR root cause and narrow repair (`APPROVED / IN PROGRESS`,
+2026-09-02).** The typed read-only matrix reached both V2 query replicas with
+zero provider connections/order actions. All five Binance USD-M `BAR 1m`
+routes were `LIVE`, complete and gap-free at about `39-40s`; all five OKX Swap
+routes were consistently complete/gap-free but `STALE` at about `1,600s`.
+The shared edge logs prove the 140-route historical bootstrap succeeded, then
+acknowledges only Binance recurring final BARs. The active `phase54`
+acquisition projection declares all 70 OKX final BAR routes `RUST_NATIVE`,
+while the running OKX Rust ingestor has only its declared realtime/L2 bindings
+and does not materialize those candle routes. This is a shared ownership
+mismatch, not DOGE-specific provider behaviour, a gap, or a reason to relax
+freshness.
+
+The already-certified bound-bar compiler deliberately projects an enabled,
+final OKX Swap BAR from broad `RUST_NATIVE` capability to the shared Python
+REST finality edge. Repair only the stale union-projection path so a retained
+multi-consumer projection can be rematerialized from its exact 140 binding IDs;
+strict-load the candidate, prove all 70 Binance and 70 OKX BAR routes have
+`PYTHON_REST` ownership, atomically swap only the three phase54 projection
+files with an exact rollback directory, then recreate only `binance_bar_edge`
+on its existing immutable image. Normal authentic provider BAR writes are
+allowed. V1, Kafka topology/offsets, Redis, SQLite, Rust/ingestors/projectors,
+query/stream, Trading System, alpha and order paths remain excluded. C2 may
+retry only after the five-symbol/two-replica matrix is LIVE and the 140-route
+continuity audit remains clean.
+
+**Union-projection compiler source exit (`PASS / CONFIG-ONLY REPAIR READY`,
+2026-09-02).** `scripts/phase12_materialize_bound_bar_edge.py` now accepts
+both its original single-consumer receipt and its own multi-consumer
+`consumer_ids` receipt when retaining a declared baseline. The retained route
+identity remains the exact final BAR binding IDs plus catalog/acquisition
+hashes; it does not broaden a consumer, venue, symbol or interval. The
+compiler preserves the legacy singleton receipt shape and emits an explicit
+plural identity only for a union receipt. Its new regression proves a retained
+OKX final BAR is rematerialized as `PYTHON_REST`, not silently left
+`RUST_NATIVE`.
+
+An isolated, read-only, no-network source matrix passed **45/45** in
+`17.304s`: union/retention identity, invalid/missing/non-final rejection,
+strict catalog/acquisition loading, Binance/OKX native history pagination and
+finality, checkpoint/cache-generation fail-closed behavior, bounded retries,
+and fast final-BAR scheduling. No runtime role, provider, Kafka, Redis,
+SQLite, V1, Trading System, alpha or order path was touched. Next is exactly
+one configuration-only materialization from the active 140-route union, then
+the bounded one-role bar-edge handoff already described above.
+
+**Receipt normalization preflight (`NO RUNTIME MUTATION`, 2026-09-02).** The
+active union receipt is semantically correct but was copied with one literal
+trailing `\\n` byte sequence, so the strict compiler rejects it rather than
+silently accepting malformed JSON. Preserve the active receipt byte-for-byte;
+create only a parsed/normalized diagnostic copy in the scoped repair evidence
+directory, verify it has the same JSON object and route IDs, then use that copy
+as the compiler input. The active projection is not changed by this preflight.
+
+**OKX final-BAR union materialization (`PASS / ONE-ROLE SWAP READY`,
+2026-09-02).** The no-network compiler strictly materialized the normalized,
+preserved active union into a scoped candidate projection. Its `140` catalog
+and acquisition binding IDs are unique and identical: `70` Binance USD-M and
+`70` OKX Swap final-BAR routes. Every candidate acquisition route is exactly
+`PYTHON_REST`; there are no residual `RUST_NATIVE` BAR owners. Candidate
+SHA-256 values are catalog `c8bc73879c631d9979d2bcd060b610a9eeb849edbd1df267a033a38ba694c527`,
+acquisition `8d7976672b6cb67765ebfe5e6ea6147f721b6802240e569be63d925c131bba70`
+and receipt `05acdcaa8683c974619e2155206ef551cb7bae08c23ae0ff3d13f61fe7f404f5`.
+The invoking Trading System binding remains explicit at the receipt top level;
+the retained baseline records the exact four C2 identities
+`monitoring.multivenue.stable`, `trading-system.paper.stable`,
+`alpha.binance.paper.stable` and `alpha.okx.paper.stable`, preserving the
+already active union rather than narrowing an entitlement. This step contacted
+no provider and changed no runtime/durable data.
+
+**Next bounded mutation.** Stop only the existing shared `binance_bar_edge`,
+rename the active phase54 projection directory to a timestamped rollback
+directory on the same filesystem, install this verified candidate as the active
+phase54 directory with existing `bobby:bobby`/`0755` directory and `0644` file
+permissions, then recreate only that edge with the already-running immutable
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`
+and verified serving runtime mount. The old directory is the exact rollback;
+restoring it and recreating the same one role returns the prior ownership model.
+The edge may write only authentic provider-confirmed final BARs through its
+existing Kafka -> Rust canonical -> projector path. No V1, Kafka
+topology/offset, Redis, SQLite, Rust/ingestor/projector/query/stream, Trading
+System, alpha or order path mutation is in scope.
+
+**OKX final-BAR runtime repair exit (`PASS / C2 RETRY AUTHORIZED`,
+2026-09-02).** The exact one-role atomic swap retained the prior phase54
+projection under a timestamped rollback directory and recreated only
+`binance_bar_edge` on the already active immutable `43faf3d` reader image.
+The role is `running`, `restart=0`, `oom=false`; all three unchanged projectors
+are also `running`, `restart=0`, `oom=false`. Its checkpoint now has exactly
+`140` declared IDs and `140` watermarks (`70` Binance, `70` OKX). Bounded edge
+logs prove authentic final-BAR acknowledgement for the bootstrap and the next
+five-liquid Binance and OKX `1m` closes; no direct durable-store write or
+synthetic market datum was used.
+
+The isolated typed status probe then read both V2 query replicas as the
+restricted Trading System paper identity. All `20/20` observations (five
+symbols x two venues x two replicas) are `LIVE`, complete and gap-free, with
+final-BAR freshness about `7.5-8.4s`; all BAR provider-session fields are
+correctly `NOT_APPLICABLE`. The initial no-client preflight omitted an explicit
+root bootstrap user and stopped before any endpoint request; rerunning with the
+documented bootstrap UID reached the dropped-privilege client successfully.
+This is a launcher correction only, not a data-plane failure. The full C2
+client itself already validates every product's final-BAR warmup/order/parity
+contracts across both replicas, so its fresh 299-product run is the governed
+140-route continuity acceptance rather than a duplicate ad-hoc audit.
+
+**C2 retry scope.** Run exactly one disposable, four-identity, `300`-second
+no-order acceptance from the existing `43faf3d` image. It must validate all
+declared V2 products, including the 140 final-BAR set, reference reads, signed
+cursor/reconnect and policy-correct V2 -> V1 -> V2 fallback. Exit requires
+`PASS_V2_DATA_PLANE_ONLY`, zero provider connections and order actions,
+removed temporary cursor state, and no mutation outside its bounded evidence
+directory. Failure leaves V1 and the exact projection rollback directory
+unchanged; it does not trigger another runtime change automatically.
+
+**C2 reference transport correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first fresh C2 client reached the real V2 data plane but
+stopped on a reference-batch HTTP `ReadTimeout`; its acceptance file is empty,
+the bounded error receipt is retained, and it made no broker/order action.
+This is not a BAR/provider freshness failure: every V2 reference requirement
+is deliberately constructed with a `60s` provider deadline, while the C2
+launcher passed a generic `15s` timeout and the client derived only `30s`
+(`15s + 15s` return margin). The query boundary permits the declared request
+up to its bounded `90s` server deadline, so the disposable client was
+incorrectly cancelling a valid in-flight reference contract.
+
+Correct only the acceptance client: derive its reference HTTP transport timeout
+from the maximum declared reference-request deadline, plus the existing
+bounded return margin (`60s -> 75s`), while preserving the `15s` timeout for
+durable BAR/TRADE/QUOTE/L2 reads. Add deterministic tests for normal and
+declared-long reference deadlines; do not alter reference product freshness,
+provider retry policy, query runtime, image, Kafka/Redis/SQLite, V1, Rust,
+ingestors, projectors, query/stream services, Trading System, alpha or order
+path. The follow-up C2 client may mount only this committed source file over
+its disposable test client path; it is not a runtime rollout or new image.
+
+**C2 reference transport source exit (`PASS / RETRY READY`, 2026-09-02).**
+The acceptance client now computes reference HTTP transport time from the
+largest declared `ReferenceRequirement.deadline_ms`, not the unrelated generic
+durable-read timeout. In the governed scope, `60,000ms` produces the existing
+bounded `75s` transport window; ordinary BAR/TRADE/QUOTE/L2 reads remain at
+their existing `15s` timeout. No endpoint contract, freshness limit, retry
+policy, runtime service or image changed. The focused isolated/no-network
+regression `tests.test_phase105_identity_acceptance` passed **11/11**,
+including `60s -> 75s`, short-deadline retention and empty-scope fail-closed
+cases. An earlier combined command named a nonexistent test module after the
+relevant 11 tests passed; it was corrected and is not counted as evidence.
+
+The next C2 client is a fresh disposable namespace and mounts this committed
+acceptance source file read-only over
+`/app/scripts/phase105_consumer_v2_identity_acceptance.py`. That isolates the
+test-client correction without changing the reader/runtime image. It still
+reaches only V2 query/stream and the policy-authorized V1 fallback, has no
+provider/broker/Gateway/Risk path, and is deleted by Docker on exit.
+
+**Universal final-BAR freshness contract correction (`IN PROGRESS / SOURCE +
+TWO-QUERY-ROLE ROLLOUT`, 2026-09-02).** The corrected C2 reached a real DOGE
+`BAR 12h` request and exposed an actual V2 request-model error:
+`max_freshness_ms` was globally clamped to one day. This violates the existing
+sealed final-BAR route contract, which intentionally declares `12h=36h`,
+`1d=3d`, `2d=6d`, `3d=9d` and `1w=21d` freshness windows. The fault is
+independent of DOGE/provider data; the same public request would reject every
+long interval before query execution. Current `max_session_liveness_ms` is
+only `45s`, so no session policy is being broadened.
+
+Correct the shared V2 request/demand bound to the exact current maximum final
+BAR policy (`21d = 1,814,400,000ms`) in the Python API and Rust demand-core,
+with tests that accept the governed weekly horizon and reject one millisecond
+above it. Regenerate/verify the public OpenAPI contract as required. This is a
+backward-compatible expansion of a versioned numeric bound; it does not change
+endpoint shape, identity, provider, finality, freshness values, source
+authority or fallback policy. Build exactly one immutable Python reader image
+after source tests pass, roll only `query_v2_1` then `query_v2_2` with the
+active runtime/TLS/state mounts, verify no restart/OOM and both replicas accept
+the long final-BAR request. Retain `43faf3d` as the explicit rollback image.
+Do not recreate stream, bar-edge, Rust, ingestor, projector, V1, Kafka, Redis,
+SQLite, Trading System, alpha or order path. Only after this bounded repair
+passes may one final full C2 retry run.
+
+**Universal final-BAR freshness source exit (`PASS / QUERY ROLLOUT AUTHORIZED`,
+2026-09-02).** The shared public V2 request bound and Rust demand validator now
+admit exactly the sealed maximum final-BAR SLA (`1,814,400,000ms = 21d`) and
+still reject `21d + 1ms`. The four V2 query routes (`snapshot`, `warmup`,
+`history`, `feed status`) import the same Python contract constant; session
+liveness remains independently capped at `86,400,000ms`, so this does not
+weaken quiet-feed/session admission. `contracts/v2/openapi.snapshot.json` was
+regenerated from the edited source and records the expanded `max_freshness_ms`
+bound for the request model and all four query parameters.
+
+Focused isolated evidence: Python contract/API plus C2/fallback/release
+regressions passed **54/54** in the existing reader image with a read-only
+source mount and `--network none`; Rust `qdl-venue-core` passed **37/37** with
+the repository lockfile. The first Rust attempt correctly exposed a missing
+test-module import for the new private constant; that compile defect was fixed
+before the passing run. A discarded offline attempt found no local crates.io
+cache, so the locked dependency cache was populated only in a temporary
+`/tmp` test directory; it is not source, runtime state, or a retained image
+and must be removed during this slice's cleanup. `git diff --check` passed.
+
+The next bounded runtime step is now authorized by the approved scope: build
+one immutable Python reader image from this committed source, rolling recreate
+only `query_v2_1` and then `query_v2_2` with the existing runtime/TLS/state
+mounts. Verify each is healthy/no-OOM and accepts declared long final-BAR
+requirements; retain `qdl-v2-python:2.0.1-43faf3d` as the exact rollback
+image. No other role, data store, consumer, provider connection, Trading
+System, alpha or order path is in scope. A single fresh full C2 retry follows
+only if both readers pass.
+
+**C2 L2 typed-status finding (`FAIL-CLOSED / SHARED-LIVENESS DIAGNOSIS`,
+2026-09-02).** The bounded C2 retry reached the real V2 read plane through the
+two freshly rolled query replicas and stopped without any order, signal,
+provider-client, or durable-store action at `OKX.SWAP.PERPETUAL.DOGE-USDT /
+BOOK_DELTA`: the client received `required data exceeds freshness policy` with
+`C2 strict BOOK_DELTA retry requires a live provider session`. This is a real
+quality admission failure, not a launcher, long-final-BAR, identity, fallback,
+or missing-demand error. Read-only runtime inventory confirms that the single
+shared OKX ingestor has `BOOK` bindings for all five governed swaps (`BTC`,
+`ETH`, `SOL`, `DOGE`, `BNB`) and its normal 30-second snapshot-renewal loop is
+active. The next bounded source investigation is to read typed
+`BOOK_SNAPSHOT` and `BOOK_DELTA` status from both query replicas for all five
+OKX swaps, then correct only the shared provider-session lineage if the status
+proves the current heartbeat is not being joined to the corresponding logical
+delta. No additional container, per-symbol worker, feed policy/SLA relaxation,
+synthetic event, data-store mutation, V1, Trading System, alpha or order-path
+change is permitted. A fresh C2 run remains prohibited until the typed status
+and regression result are clean.
+
+**C2 L2 typed-status exit (`PASS / ONE RETRY AUTHORIZED`, 2026-09-02).** A
+fresh disposable read-only probe used the restricted Trading System paper
+identity against both active V2 query replicas. It observed all `20/20`
+governed OKX L2 products (five swaps x `BOOK_SNAPSHOT` and `BOOK_DELTA` x two
+replicas) as `LIVE`, complete and gap-free. Every `BOOK_DELTA`, including
+`DOGE-USDT-SWAP`, has `provider_session_state=LIVE`, a bounded
+`3-444ms` session-liveness age and a fresh `368-837ms` event; snapshots are
+fresh `1.2-23.6s` under their declared `60s` SLA. The probe contacted only the
+existing query replicas, reported `provider_connections=0` and
+`order_actions=0`, and its Docker client self-removed. This proves the earlier
+C2 observation was a transient session-generation transition that the existing
+shared session-lineage design correctly exposed fail-closed, not a missing
+symbol binding, cross-symbol mix, stale SLA, or provider-adapter defect.
+
+No source or runtime correction is required for that transient state. The
+single remaining C2 retry is now authorized: a fresh four-identity,
+300-second, no-order acceptance on the existing V2 reader/stream runtime. It
+must still fail closed on a renewed non-LIVE/gap/incomplete state; no retry or
+policy widening follows automatically if it fails.
+
+**C2 durable-BAR horizon correction (`IN PROGRESS / SHARED HARNESS + ONE EDGE
+CONVERGENCE`, 2026-09-02).** The authorized retry reached the V2 reader with a
+healthy L2 session and instead exposed a deterministic semantic mismatch at
+`BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 12h`: C2 treated the consumer quota
+`max_warmup_rows=10,000` as an exact required retained history horizon, so the
+query correctly returned `PARTIAL_RESULT` when its bounded durable cache held
+fewer than ten thousand 12-hour bars. This is not a missing BAR, a provider
+failure, a stale quality admission, or a server-side partial response being
+accepted. The source policy deliberately caps durable bootstrap history to
+three years for long intervals because neither venue can truthfully provide
+ten thousand weekly/long-duration bars; requests above retained availability
+must use the existing explicit `FRESH_SNAPSHOT` history path and return typed
+coverage rather than invented rows.
+
+The repair has two bounded parts. First, C2 will use an explicit 700-row
+certification horizon for governed `BAR` products, while retaining the public
+per-consumer `10,000` quota and all `2,500/5,000/10,000` source contract gates.
+This is an acceptance workload size, not a reduction of caller capability or
+an SDK/endpoint policy change. Second, converge the one live shared
+`binance_bar_edge` from its observed old `1,000`-row environment to the
+already committed canonical `10,000` bound. The edge will receive a new
+namespaced checkpoint so it makes authentic, bounded provider history reads
+and normal Kafka/canonical/cache writes for the existing 140 governed bindings;
+no current state is erased. Its exact old image/config/checkpoint remain the
+rollback. The initial retained horizon is still interval-aware and capped at
+three years, so this step cannot imply fictional 10,000-week data.
+
+Required exit: deterministic helper/unit tests for the 700-row C2 horizon and
+the unchanged `10,000` quota; a read-only two-venue 700-row warmup sample; one
+role health/restart/OOM check after the edge bootstrap; then exactly one fresh
+four-identity 300-second C2 acceptance. No V1, Kafka topology/offsets,
+Redis/SQLite deletion or flush, Rust/ingestor/projector/query/stream role,
+Trading System, alpha or order-path mutation is in scope. If provider history
+cannot complete an interval-aware bounded window, the edge stays fail-closed
+and the old checkpoint/image is restored; no retry silently lowers coverage.
+
+**C2-horizon source gate (`PASS / RUNTIME UNCHANGED`, 2026-09-02).** The C2
+client now derives a certification-only `700`-row BAR request from its sealed
+product requirement, leaving the manifest's public `max_warmup_rows=10,000`
+quota unchanged. Non-BAR requirements retain their exact request object. The
+focused non-network, read-only, UID-`10001` matrix in the immutable
+`qdl-v2-python:2.0.1-413683a` image passed `54/54` in `5.986s`, including the
+new BAR-bound and non-BAR identity regressions plus the existing C2,
+identity/fallback and Phase-10.5 acceptance cases. No provider, runtime role,
+Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed.
+The next permitted action is the already approved one-role bar-edge
+convergence using a fresh checkpoint; source rollback is the committed helper
+revert and runtime rollback is the recorded prior image/config/checkpoint.
+
+**Bar-edge history convergence packet (`APPROVED / PRE-FLIGHT PASS`,
+2026-09-02).** The active service is healthy with no restart or OOM and is
+currently the already certified immutable
+`qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545`.
+Its sole divergence is an inherited overlay setting
+`QDL_STABLE_BAR_WARMUP_ROWS=1000` and
+`QDL_STABLE_BAR_MAX_CATCHUP_ROWS=1000`; canonical Compose already declares
+`10000` for both. The one-role packet overlays only those two values and a
+fresh state path
+`/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.history10000-20260902.json`,
+then recreates only `binance_bar_edge` without dependencies. It keeps the
+current image, runtime/TLS mounts, Kafka topology/offsets, Redis, SQLite, V1,
+Rust/ingestors/projectors/readers, Trading System, alpha and order path
+unchanged. Rollback is exactly the existing image plus its old `1000` values
+and `/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.json` checkpoint.
+Preflight disk is `30 GB` available; no prune occurs while authentic bootstrap
+writes are in flight.
+
+**Packet render correction (`PASS / NO RECREATE YET`, 2026-09-02).** The first
+Compose render exposed an old environment-file default for
+`QDL_STABLE_RUNTIME_DIR`; it would have mounted an earlier runtime bundle than
+the currently serving edge. The packet was stopped before mutation and then
+rendered again with the exact active read-only bind mount
+`session-liveness-43cdbe3-20260829T162719Z/runtime`. The final render proves
+the unchanged image, `10000/10000` history limits, `0.10s` final-bar
+settlement delay, fresh checkpoint and exact active runtime/TLS/volume mounts.
+This is a preflight correction, not a runtime change.
+
+**History-convergence execution (`FAIL-CLOSED / ROLLBACK REQUIRED`,
+2026-09-02).** The one approved edge recreate started with the rendered exact
+mounts, correct `10000/10000` values, restart count `0` and no OOM. It
+authentically ACKed `130` existing Binance/OKX BAR bindings before the next
+OKX history page was rejected by the shared validator with
+`RuntimeError: OKX closed-bar history contains a time gap`. This is a real
+provider-history continuity failure under the expanded retention horizon, not
+a health-only failure, retry budget issue, synthetic record, or a reason to
+lower/ignore the gap. The edge entered its existing fail-closed cycle while
+the durable records already ACKed remained valid idempotent normal market-data
+writes. The packet therefore rolls only this role back to the exact prior
+`1000` overlay/state path; it does not erase the fresh checkpoint or any
+acknowledged data, and it does not touch V1, Kafka topology/offsets, Redis,
+SQLite, Rust, readers, Trading System, alpha or orders. Source investigation
+must reproduce and repair OKX paginated historical continuity before any later
+larger-retention packet is permitted.
+
+**Provider-gap diagnosis and corrected C2 invariant (`IN PROGRESS /
+SOURCE-ONLY`, 2026-09-02).** A disposable, read-only, real-provider probe of
+the exact failed binding `OKX SOL-USDT-SWAP / BAR 1m` returned `FULL` page
+coverage and `10,000` confirmed rows but one authentic two-minute step at
+`1787905740000 -> 1787905860000`. The provider's own historical series is
+therefore not contiguous over that ten-thousand-row range. C2 must not turn a
+per-consumer *ceiling* into an unconditional durable-retention promise, nor
+fill or ignore that native gap. Its governed BAR requirement is corrected to
+the smaller of `700`, the declared client quota and the shared three-year
+interval-aware durable capacity (`1w=156`, `3d=365`, `2d=547`, then `700` for
+the shorter supported intervals). Larger strategy-specific warmups remain the
+existing explicit `FRESH_SNAPSHOT` provider-history path, which returns typed
+coverage and stays blocked on a real gap. The shared capacity calculation will
+be exported from the bar-edge module and reused by C2; no new service,
+provider bypass, coverage relaxation, runtime mutation or data synthesis is
+allowed. Required source exit is deterministic short/long-interval capacity
+tests plus the focused no-network C2 matrix; the one final real C2 retry uses
+the restored healthy `1000` checkpoint and the corrected exact horizon.
+
+**Interval-aware durable-capacity source gate (`PASS / RUNTIME UNCHANGED`,
+2026-09-02).** `qdl.runtime.stable_bar_edge` now exposes the same
+provider-neutral three-year capacity calculation that its bootstrap uses, and
+the C2 harness takes the minimum of that capacity, `700` and the sealed public
+quota. It preserves a row-based explicit warmup object where one was supplied.
+The deterministic regression proves the public `10000` request remains
+unchanged, a `12h` C2 proof remains `700`, and `1w` uses the truthful `156`
+rows. The isolated immutable-image, non-network, read-only UID-`10001` matrix
+passed `105/105` in `15.184s`, covering C2/identity/fallback, BAR bootstrap,
+strict pagination/gap rejection and interval canonicalisation. The failed
+expanded checkpoint remains preserved only as runtime evidence; no service,
+provider, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path
+changed during this source gate. The next permitted action is one fresh
+four-identity C2 receipt on the restored edge; it must still prove real
+two-venue warmup rather than relying on this test alone.
+
+**Final C2 interval-aware packet (`APPROVED / IN PROGRESS`, 2026-09-02).** One
+fresh evidence namespace pins source commit `27dd967` read-only into the
+otherwise existing immutable client image
+`qdl-v2-python:2.0.1-413683a@sha256:4125cb95e2954cdef8bc1a97a43b3cb82a61530328b544126d8170e2dbbcb17c`.
+It mounts only the committed `qdl/` source and changed C2 helper so its shared
+capacity import is exact; it does not build an image or alter a service. The
+`--rm` client runs on `executor_network`, copies only the four sealed paper
+identities into tmpfs, drops to UID `10001` with `NoNewPrivs` and no effective
+capabilities, and observes exactly `300s`. It reaches existing query/stream
+and permitted V1 local fallback endpoints only. It has no provider credentials
+or Docker socket, and cannot invoke broker, Gateway, Risk, order, signal,
+sizing or alpha state. Exit requires `299` product views, V2-primary quality,
+bounded 700/interval-capacity BAR warmup, signed cursor/reconnect, correct
+fallback policy, zero provider connections/order actions and removed cursor
+state. Any failure leaves all runtime roles unchanged.
+
+**C2 launcher preflight (`NON-EXECUTION INPUT FIX`, 2026-09-02).** The first
+disposable container exited at its shell entrypoint with `Permission denied`
+opening the read-only mounted bootstrap script. It never executed bootstrap,
+copied an identity, contacted V1/V2, created a cursor or wrote an evidence
+receipt; Docker removed it. The two private evidence scripts were changed from
+host-only mode to read-only `0644` and will be invoked through `/bin/sh`, which
+does not grant the client any additional privilege. This launcher correction
+does not count as a C2 run and changed no runtime role or data plane.
+
+**C2 privilege-drop preflight (`NON-EXECUTION LAUNCHER FIX`, 2026-09-02).** A
+second disposable launch also stopped before bootstrap because the immutable
+image defaults to UID `10001`, while the bootstrap intentionally needs a
+brief root phase only to copy sealed identity material into tmpfs before
+dropping it. A network-disabled, read-only probe proves that explicit
+`--user 0:0` followed by the existing `setpriv --reuid=10001 --regid=10001
+--clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs` produces
+UID/GID `10001`, no effective/permitted/inheritable/ambient capabilities and
+`NoNewPrivs=1`. The actual client will use exactly that bootstrap boundary;
+root has no network-only execution code, Docker socket or lasting evidence
+write path. The two failed launchers self-removed before identity copy, V1/V2
+request, cursor creation or data action, so neither is an acceptance attempt.
+
+**BOOK_SNAPSHOT receipt correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-02).** The first real client reached V2 under the required non-root
+boundary and failed at `Trading System / OKX DOGE / BOOK_SNAPSHOT` before its
+300-second observation. The manifest declares a `60s` snapshot freshness SLA,
+but the C2 query path incorrectly used its generic `15s` transport deadline
+and only permitted retry for quote/trade/book-delta continuity feeds. A
+verified book snapshot has no stream-session liveness field by design; it must
+be allowed to wait through its own declared renewal cadence only while typed
+status remains identity-matched, `LIVE` or `STALE`, complete and gap-free with
+`NOT_APPLICABLE` session state. This does not accept stale data: the next
+snapshot must still pass the original V2 freshness admission before the fixed
+deadline. The correction is limited to C2's client timeout/retry policy and
+adds positive plus gap/mismatched-state regressions. No data-plane service,
+provider or consumer configuration changes.
+
+**BOOK_SNAPSHOT source gate (`PASS / READY FOR ONE FRESH C2`, 2026-09-02).**
+The C2 client now derives the strict `BOOK_SNAPSHOT` request deadline from the
+declared snapshot freshness SLA (`60s` for the governed execution books), not
+the unrelated generic `15s` transport default. A stale snapshot is still never
+accepted: retry is allowed only if the typed status matches the same instrument,
+feed and source policy, remains `LIVE` or `STALE`, is complete and gap-free,
+and declares `NOT_APPLICABLE` session liveness as required for snapshot
+delivery. A gap, a conventional provider session field or any identity/policy
+mismatch fails closed. The retry cadence is one second in production; the unit
+test substitutes a millisecond delay solely to keep deterministic no-network
+tests fast.
+
+Evidence: the existing immutable reader image
+`qdl-v2-python:2.0.1-413683a@sha256:4125cb95e2954cdef8bc1a97a43b3cb82a61530328b544126d8170e2dbbcb17c`
+ran the read-only, `--network none`, UID `10001` regression matrix:
+`python -m unittest tests.test_phase103_consumer_receipt_harness tests.test_phase105_consumer_acceptance tests.test_phase105_identity_acceptance tests.test_phase105_fallback_acceptance tests.test_phaseb_bar_history_bootstrap tests.test_canonical_intervals`.
+Result: `107/107 PASS` in `15.460s`. The first run exposed only the new unit
+test's `0.25s` artificial deadline versus the real one-second retry cadence;
+the test now stubs that cadence rather than changing production behavior. No
+runtime role, provider request, Kafka/Redis/SQLite state, V1, Trading System,
+alpha or order path changed. The one permitted next action is a fresh
+299-product/four-identity/300-second no-order C2 receipt in a new namespace.
+
+**C2 canonical-cache capacity repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The fresh C2 client passed its non-root launcher boundary, then stopped at a real Binance USD-M `TRADE` read because the V2 cache reported `LAST_EVENT_STALE`. Read-only runtime evidence establishes the shared cause: all three projectors repeatedly receive `stable canonical ingest rejected http_status=500 detail=unavailable`; the stream-side stack identifies `BackpressureRequired: bridge max_records exhausted`. The shared `canonical-cache.sqlite3` contains exactly `1,000,000` records (`851,927,749` payload bytes, about `1.74 GiB` physical), across `178` physical partitions, with zero active checkpoints and a truthful approximately-24-hour retained horizon. The existing per-partition replay window is `10,000`, so the catalog permits `1,780,000` retained records while the static global cap permits only `1,000,000`; the cache reaches the global ceiling before its own declared partition windows/retention can coexist. This is a shared durable-capacity configuration defect, not a provider, identity, alpha, Trading System, order, or V1 fallback defect.
+
+Approved narrow correction: derive the stable spool record ceiling from the loaded canonical catalog's **unique physical partition keys** times the existing bounded per-partition window, with the prior one-million floor retained. The payload, physical-storage, free-disk, 24-hour retention, signed generation-bound cursor, monotonic checkpoints, idempotent event IDs and fail-closed bounds remain authoritative; the correction must not delete, compact early, flush, rebuild, or replay the live cache. Source tests must prove the old under-provisioned shape is rejected, the catalog-derived ceiling is deterministic and provider-neutral, and full/expired/active-consumer retention semantics are unchanged. Map a stream-side capacity rejection to typed temporary-unavailable only after preserving the fail-closed body and retry semantics. Runtime is explicitly excluded until source evidence passes; then one immutable Python image and a rolling recreate only of the existing seven cache users (`projector_v2`, `projector_v2_2`, `projector_v2_3`, `stream_v2_active`, `stream_v2_passive`, `query_v2_1`, `query_v2_2`) may adopt the same code/config with V1, Kafka topology/offsets, Redis, SQLite files, Rust, ingestors, Trading System, alpha and order paths untouched. Rollback is the exact active image/runtime mount and no data deletion.
+
+**C2 canonical-cache capacity source gate (`PASS / RUNTIME ROLLOUT READY`, 2026-09-02).** `qdl.runtime.stable` now derives one shared `StableSpoolCapacity` from the loaded source catalog before every query, stream or projector opens the cache. It counts distinct physical `partition_key` values, intentionally counting an L2 snapshot/delta pair once, retains the established `10,000` per-partition hard window and uses the higher of that product and the legacy one-million floor. The current sealed source catalog has `206` logical bindings and `188` physical partitions, so its runtime ceiling is deterministically `1,880,000` records rather than the inconsistent static `1,000,000`. Existing payload (`2 GiB`), physical storage (`3 GiB`), free-disk reserve (`512 MiB`), 24-hour age retention and cursor/checkpoint limits remain independent fail-closed bounds; this correction removes only the contradictory record ceiling.
+
+`/internal/v2/canonical/events` now maps only `BackpressureRequired` to a typed `503 stable canonical cache capacity temporarily unavailable`; it still rejects invalid lineage, capacity exhaustion and fenced writers, and it never converts a capacity rejection into an ACK. Focused deterministic tests cover catalog-derived capacity above the old static ceiling, unchanged legacy floor, active/expired-consumer retention, append atomicity, cursor expiry and typed `503` mapping. The immutable existing reader image `qdl-v2-python:2.0.1-413683a` ran the network-disabled, read-only UID-`10001` matrix: `184/184 PASS`, `1 skipped`, `26.486s` across C2 receipt/identity/fallback, stable edge/projector, spool, BAR bootstrap and interval contracts. A separate read-only catalog proof returned `{logical_bindings: 206, physical_partitions: 188, per_partition_records: 10000, global_max_records: 1880000}`. No provider, runtime role, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed.
+
+Next permitted step is deliberately one runtime packet, not another design phase: build one immutable Python image from this commit, preserve the active reader/stream/projector images as the exact per-role rollback set, then rolling-recreate exactly the seven existing shared cache users in the order `stream_v2_passive -> stream_v2_active -> projector_v2* -> query_v2_*`. This preserves an available stream peer while the canonical sink adopts the wider bound before projectors resume catch-up. The cache files stay mounted in place; startup simply recognizes the larger bounded configuration. Verify stream ingest accepts canonical records, projectors catch up, both query replicas report fresh five-symbol Binance/OKX `TRADE`, and then run one fresh C2 299-product/four-identity/300-second no-order acceptance. V1, Rust, ingestors, Kafka topology/offsets, Redis, SQLite deletion/flush, Trading System, alpha and orders remain excluded.
+
+**Canonical-cache capacity runtime packet (`APPROVED / PRE-FLIGHT`, 2026-09-02).** Immutable image `qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7` is built from source commit `d9dea34`, with OCI revision/version labels matching that source. The same `184/184` network-disabled suite passed from the built image without a source mount. Runtime override and exact per-role rollback override are retained under `/home/bobby/.local/state/qdl-v2/releases/2.0.1-d9dea34/canonical-cache-capacity/`; they name only the existing seven cache users and do not create a topology, volume, network, state path or service. Pre-flight must render this override last against the active Compose stack, verify those seven image substitutions only, and preserve current mounts, TLS/runtime directory and environment. The bounded rolling packet then follows the stated stream -> projector -> query order. No cache delete/flush/replay or broader service action is authorized.
+
+**C2 projector memory immutable-image gate and runtime packet (`PASS / APPROVED`,
+2026-09-02).** The single shared image
+`qdl-v2-python:2.0.1-7352a1a@sha256:21084686cee5f6b108b34cd39183c0d839eac1723c85795f2fa50bb2b2764896`
+was built from source commit `7352a1a` with matching OCI revision/version
+labels. Its isolated, network-disabled, read-only UID-`10001` matrix passed
+`175` tests with `1` explicit skip in `31.155s`, without a source mount. The
+only approved runtime mutation is a rolling recreate of the three existing
+shared projector roles: `projector_v2`, `projector_v2_2`, and `projector_v2_3`.
+The final override is applied last and pins that image, `768 MiB` memory, `1024`
+pending records, `16 MiB` pending bytes, `128` records per batch and `8 MiB`
+per batch. The exact rollback is the current
+`qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7`
+with its current `512 MiB`, `2048` record and `32 MiB` pending configuration.
+The packet preserves the current runtime/TLS/state mounts, Kafka group and
+offsets, Kafka topology, Redis, SQLite files, V1, Rust, ingestors, query/stream,
+Trading System, alpha and all order paths. It stops and rolls back immediately
+on any new OOM/restart, cache admission failure, duplicate/gap evidence or
+freshness regression. Runtime exit is all three projectors running without OOM,
+bounded memory, accepted canonical ingestion, five-symbol Binance/OKX TRADE
+freshness convergence and one fresh disposable four-identity/299-product/300s
+C2 no-order receipt. No cache rebuild, flush, deletion, synthetic record or
+SLA relaxation is authorized.
+
+**C2 projector-memory launcher correction (`NON-EXECUTION / RETRY READY`,
+2026-09-02).** The first disposable C2 client proved its bootstrap boundary
+(UID/GID `10001`, no effective/permitted/inheritable/ambient capabilities and
+`NoNewPrivs=1`) and self-removed, then stopped before its first identity,
+market-data, cursor or fallback read because the packet omitted the existing
+read-only runtime bind that supplies `/runtime/authority.json`. The failure is
+therefore a packet mount defect, not a provider, V2 reader, fallback or C2
+acceptance result. The retry mounts only the already active
+`/home/bobby/.local/state/qdl-v2/phase103-shared-primary-e0bedff-retry-20260825T054740Z/runtime`
+directory read-only at `/runtime`; it changes no service, image, Kafka/Redis/
+SQLite state, V1, Trading System, alpha or order path. Fresh evidence stays in
+a new namespace, and the original failed launcher receipt remains preserved.
+
+**C2 resumed-quote diagnosis and acceptance-clock correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The corrected disposable read-only probe exercised the same sealed Trading System paper identity, V2 query replicas and signed gRPC stream path for `BINANCE.USDM.PERPETUAL.DOGE-USDT / QUOTE`. It found the live path healthy at the time of measurement: warmup freshness was `686ms`, the first post-warmup durable event was `587ms` old at logical offset `2288389`, and the resumed event was `662ms` old at offset `2288390`; both were source/identity matched, `LIVE`, execution-eligible and strictly increasing. This rules out a permanently stale DOGE provider/source binding and shows the earlier C2 failure occurred while the projector/cache was still converging after the authentic backlog.
+
+Source review nevertheless found two C2-harness correctness gaps that must be closed before a certificate is credible. First, `--observation-seconds 300` currently bounds the whole task but permits it to return early; it is not a real 300-second observation. Second, reconnect currently validates every replayed durable frame as current execution price even when the frame is correctly ordered but predates the fresh reconnect snapshot watermark. That conflates replay used only to restore consumer state with an executable current price. The narrow correction is limited to the shared C2/SDK acceptance boundary: retain strict identity, source, sequence, gap and offset checks for every replay frame; keep stale replay non-executable; require a fresh strict V2 snapshot after replay before the receipt can declare the route current/execution-ready; and hold the accepted four-consumer scope through a real bounded time window followed by full strict closing revalidation. No SLA is relaxed, no replayed payload may drive order/risk/signal/sizing, and no provider/runtime role, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changes are in scope. Required tests cover fresh live resume, valid stale replay followed by a fresh read-back, stale read-back rejection, gap/identity mismatch rejection, and the actual observation-duration floor. After source and immutable-image gates pass, one new 299-product/four-identity/300-second no-order C2 receipt is the only runtime acceptance action; its client self-removes and its scoped evidence is retained without payloads or secrets.
+
+**C2 projector memory/throughput repair (`APPROVED / IN PROGRESS`, 2026-09-02).** The capacity rollout exposed a separate bounded-runtime defect before C2 can be rerun. The current three existing projector roles share one Kafka group and one SQLite cache; `projector_v2_2` and `projector_v2_3` were OOM-killed at their `512 MiB` cgroup limit after authentic backlog catch-up, while `projector_v2` remains live at about `522 MiB` cgroup usage (`~385 MiB` anonymous PSS). The live passive-named stream is the active lease holder and reports `READY`; this is not a provider, lease or consumer identity failure. The single surviving projector is therefore insufficient to catch up canonical TRADE freshness promptly and C2 correctly remains fail-closed.
+
+Approved source scope is deliberately narrow and shared: replace the canonical HTTP sink's repeated full-JSON chunk measurement with linear bounded chunk accounting; make projector batch and pending limits explicit, bounded runtime configuration rather than a hard-coded `512` batch; bound the Confluent consumer prefetch queue; and assign only the three existing projector roles an evidence-backed `768 MiB` cgroup budget. No provider adapter, event identity, schema, Kafka topic/group/offset, Redis, SQLite data/file, V1, Rust, ingestor, query/stream, Trading System, alpha or order path changes. Source exit requires deterministic chunk-equivalence/max-byte tests, config-bound tests, existing projector/order/retention regression, full focused non-network reader matrix, and an immutable-image rerun. Runtime exit is a rolling recreate only of the three existing projector roles with the exact prior image/config retained as rollback; require all three running, no OOM/restart, accepted canonical ingestion, cache event-recency convergence across the governed five-symbol Binance/OKX TRADE set, then one fresh disposable 299-product/four-identity/300-second C2 receipt. Do not reset Kafka offsets, delete/flush the cache, synthesize records, relax freshness, or retry C2 before that evidence exists.
+
+**C2 projector memory source slice (`PASS / IMMUTABLE IMAGE PENDING`, 2026-09-02).** The shared HTTP sink now materializes only one bounded encoded chunk at a time. Its previous candidate-length loop repeatedly serialized the entire growing JSON payload and retained all chunks before the first request; the new exact size calculation uses the fixed UUID-envelope length plus deterministic per-item JSON length, then serializes each actual request once. Existing chunk-order, request-byte, oversized-event and acknowledgement tests cover the wire invariant. `StableRuntimeConfig` now carries projector-only record and byte batch bounds; stable projectors use `128` records, `8 MiB` per batch, `1,024` pending records and `16 MiB` pending bytes, while queries/streams preserve their prior behavior. A polled record that would exceed the byte bound is retained in-order for the next drain, never dropped or accepted above the bound. Test fixtures with a smaller pending ceiling derive a smaller default byte batch automatically. `ConfluentProjectorBroker` additionally caps its client-side queue at `16 MiB` with an `8 MiB` fetch and `2 MiB` partition fetch; this is a memory bound, not a Kafka offset or delivery-semantic change. The three existing projector services alone override the shared Python `512 MiB` ceiling to `768 MiB`; no other Python role changes.
+
+The first isolated test run found the new batch/pending relationship was incorrectly enforced for `query_v2`; it was narrowed to `projector_v2` before any runtime action. The final expanded immutable-base-image, network-disabled, read-only UID-`10001` regression ran C2 receipt/identity/fallback, BAR history bootstrap, interval, stable edge/projector, stable release and query readiness modules: `175 PASS`, `1 explicit skip`, `30.266s`. It includes configuration boundary, byte-deferred in-order batch drain, Kafka read-committed/checkpoint, canonical chunking/ack, spool retention and projector recovery tests. No image, service, provider, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed during source verification. Next: build one immutable shared Python image, repeat this matrix from that image without a source mount, then use a three-projector-only rolling packet.
+
+**C2 resumed-quote/observation source gate (`PASS / IMMUTABLE CLIENT PENDING`, 2026-09-02).** `market_data_view_from_stream(..., replay_only=True)` now has one explicit state-recovery use: it keeps identity, source, authority, schema and gap checks fail-closed, returns old replay as `STALE` and non-execution-eligible, and never changes the default strict behavior. C2 invokes it only when the resumed logical offset is at or behind the fresh reconnect handoff watermark. It acknowledges the bounded replay state and then requires a separate strict V2 snapshot/read-back before attesting the route as current. `validate_product_view(..., state_replay=True)` likewise keeps identity/provenance/gap/payload validation while refusing to claim current quality; provider-session/freshness authority is the mandatory current read-back. A replay after the new handoff stays ordinary strict execution validation.
+
+The four-identity runner now performs a full opening warmup/query/cursor/reconnect/fallback sweep, remains alive through the requested observation floor, then repeats the exact governed scope at the closing boundary. Receipt evidence records requested/actual duration and opening cardinality; final revalidation has a bounded `90s` budget. This corrects the prior misleading use of `--observation-seconds` as only a task deadline. Two historical acceptance assertions were also aligned with the already-approved interval-aware C2 BAR warmup bound rather than the public `10,000` quota.
+
+Evidence: the network-disabled, read-only UID-`10001` matrix in existing immutable image `qdl-v2-python:2.0.1-7352a1a` passed `172/172` in `22.219s`: SDK stream projection, cursor/reconnect, C2 harness/identity/fallback, consumer acceptance, stable BAR history/canonical intervals and five-liquid handoff. New deterministic cases prove stale replay stays non-executable, gaps still fail, stale session state can be replayed only with `state_replay=True`, fresh read-back is mandatory, replay offset/watermark classification is exact, and the C2 timing helper cannot return before its declared duration. No runtime role, provider connection, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed.
+
+**C2 immutable-client gate (`PASS / REAL RECEIPT IN PROGRESS`, 2026-09-02).** The correction is now packaged as `qdl-v2-python:2.0.1-0cfdc1e@sha256:ee019d6c5d78824c8fe8e21ce76c947cd1d35aa271121abe65dd844b3bf613af`, with OCI revision `0cfdc1e798a521b681f6689817e4521f5d2d52b3`, version `2.0.1-0cfdc1e` and non-root runtime user `qdl:qdl`. The same network-disabled, read-only, no-source-mount UID-`10001` matrix passed `172/172` in `22.897s`. This verifies the shipped client artifact rather than the checkout. The sole next action is one fresh four-identity `299`-product C2 no-order acceptance for a true `300s` observation; the disposable client has no Docker socket, broker/Gateway/Risk/order/signal/sizing capability or provider credential and self-removes. No service rollout is needed for this client-only correction.
+
+**C2 runner-mode preflight (`NON-EXECUTION INPUT FIX`, 2026-09-02).** The first new disposable launcher copied the evidence-private runner with mode `0600`; after its intentional UID-`10001` privilege drop, `/bin/sh` correctly refused to read `/run-c2.sh`. It exited before the C2 Python client, V1/V2 request, cursor, product receipt, provider connection or order-capable code ran. The preserved evidence namespace records this failed preflight. The replacement packet copies only the two public launcher scripts as read-only `0644`; sealed credentials remain copied from the read-only state mount into tmpfs only after startup. This changes no image, service, data plane, secret material, V1, Kafka/Redis/SQLite state, Trading System, alpha or order path and does not count as a C2 attempt.
+
+**C2 typed-snapshot boundary repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The corrected launcher reached the real C2 reader and stopped before its observation window at `monitoring.multivenue.stable / BINANCE.USDM.PERPETUAL.ETH-USDT / TRADE`. The SDK correctly returns a typed `SnapshotResponse`; the resumed-replay strict read-back passed that envelope directly to `validate_product_view`, which correctly expects the enclosed `MarketDataView`. This is an acceptance-client type-boundary defect, not a provider, symbol, freshness, replay, session, cache, V1 fallback or runtime-role defect. The narrow repair must unwrap only the typed SDK response before validation and add a regression proving the real response contract reaches the validator's view layer. No policy/SLA/coverage relaxation, source/provider change, data-plane mutation or retry counts as C2 until the immutable client gate is repeated.
+
+**C2 typed-snapshot first correction (`INVALIDATED / SOURCE CORRECTION REQUIRED`, 2026-09-02).** The first source correction unwrapped `SnapshotResponse.data` inside `_strict_snapshot_for_c2`, and its isolated test passed `173/173`; the immutable client also passed that matrix. The real C2 correctly exposed the omitted second caller: `_query_product_with_quality` consumes the same helper and needs the typed envelope for its own `.data` access. This is a deterministic acceptance-client interface error, not a provider, symbol, freshness, replay, session, cache, V1 fallback or runtime-role defect. The failed no-order client produced no receipt and did not reach the observation window. The correction is now narrowed further: `_strict_snapshot_for_c2` keeps its established typed `SnapshotResponse` contract for both callers; only the resumed-replay validator reads `.data`. Required regression covers the query caller preserving the envelope and the replay caller validating its inner view. No policy/SLA/coverage relaxation, source/provider change, data-plane mutation or service rollout is allowed.
+
+**C2 typed-snapshot final source gate (`PASS / IMMUTABLE CLIENT REBUILD REQUIRED`, 2026-09-02).** The helper again returns the public typed SDK envelope exactly as the normal query path requires; the replay-only branch alone unwraps `current.data` for `validate_product_view`. Regressions now prove both contracts: strict query retains the real `SnapshotResponse`, while state recovery validates its enclosed view after a replay and before attestation. The network-disabled, read-only, source-mounted UID-`10001` matrix passed `173/173` in `21.218s`, covering C2 query/replay callers, cursor/reconnect, identity/fallback, strict gap/identity rejection, BAR bootstrap and interval cases. No runtime role, provider, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed. The required next step is one final immutable-client rebuild and the single approved true-300-second C2 receipt.
+
+**C2 typed-snapshot final immutable-client gate (`PASS / REAL RECEIPT IN PROGRESS`, 2026-09-02).** Final client `qdl-v2-python:2.0.1-6fecc6b@sha256:021186754b334ee6a926f6405da341ba24cccec13c82219b816c7ed2171212a1` was built from source commit `6fecc6b`, with matching OCI revision/version labels and `qdl:qdl` user. The complete no-source-mount, network-disabled, read-only UID-`10001` matrix passed `173/173` in `21.447s`. The only remaining C2 action is the already-approved fresh four-identity, 299-product, true-300-second no-order receipt. It has no service-recreate, provider, broker/Gateway/Risk/order/signal/sizing or alpha-state capability; V1 is read only through the governed fallback drill.
+
+**C2 calendar-anchor replay repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The final client reached a real governed alpha route and stopped before its observation window at `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 1w`. `1w` is a fixed-duration canonical interval but its documented provider grid is Monday-anchored, not Unix-epoch aligned. C2's historical replay seed performed a raw `open_time % duration` check, incorrectly rejecting a real final weekly bar that the shared provider-aware interval contract already accepts. The repair must use the shared provider-calendar alignment helper with the product venue and preserve millisecond precision, then derive prior seeds by fixed-duration subtraction. It must reject malformed nanoseconds/unanchored bars, preserve execution-BAR blocking and add Binance/OKX weekly-anchor regression. This is a C2 client calendar-contract defect only: no provider, runtime role, source data, policy/SLA, Kafka/Redis/SQLite, V1, Trading System, alpha or order path mutation is permitted; the failed client produced no certificate.
+
+**C2 calendar-anchor source gate (`PASS / IMMUTABLE CLIENT REBUILD REQUIRED`, 2026-09-02).** Historical BAR replay now delegates alignment to the shared `is_valid_bar_open_ms` contract with the real product venue and rejects sub-millisecond/misaligned data. The retained seed remains exactly two fixed-duration bars before the latest validated final BAR. Regression covers `1w` for Binance and OKX plus `3d` where Binance is Monday-anchored and OKX is Unix-anchored; existing execution, malformed and unbounded-history rejection stays covered. The source-mounted, network-disabled, read-only UID-`10001` matrix passed `174/174` in `23.344s`. No service, provider data, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed. Next: build one immutable client from this source, repeat the matrix without a source mount, then run the single approved C2 receipt again.
+
+**C2 calendar-anchor immutable-client gate (`PASS / REAL RECEIPT IN PROGRESS`, 2026-09-02).** Immutable client `qdl-v2-python:2.0.1-95142bd@sha256:662105d7f6970093407fcda06256104c9fa9aab2ebf3c660a888622fb8aa68ad` was built from source `95142bd`, with matching OCI labels and non-root `qdl:qdl` user. The no-source-mount, network-disabled, read-only UID-`10001` matrix passed `174/174` in `24.144s`. One fresh four-identity, 299-product, true-300-second C2 no-order receipt remains the only acceptance action; it cannot alter V1, any service, Kafka/Redis/SQLite state, Trading System, alpha or order path.
+
+**C2 restored-cursor semantics repair (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The calendar-corrected client completed the strict opening read and stream checks, then stopped in the reconnect probe at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.BNB-USDT / QUOTE`. A restored signed cursor is state recovery evidence, but C2 treated its first returned frame as executable when its logical offset happened to be newer than the reconnect warmup watermark. That can be a legitimately delivered older source observation from durable recovery, and the SDK correctly rejected it under the execution freshness policy. The C2 contract must treat the bounded resumed frame(s) as non-executable state replay regardless of watermark ordering, retain identity/source/gap/offset checks, then require the already-existing strict fresh V2 snapshot before attestation. The independent first live stream remains strict and execution-grade, so this neither accepts a stale price nor weakens production SDK behavior. Required regression covers stale replay on both sides of a reconnect watermark, mandatory strict read-back and gap/identity failure. No provider/runtime/cache/policy/SLA/V1/Trading System/alpha/order mutation is in scope; the failed client produced no certificate.
+
+**C2 restored-cursor source gate (`PASS / IMMUTABLE CLIENT REBUILD REQUIRED`, 2026-09-02).** The resumed session is now explicitly state-recovery-only: its bounded frame preserves strict identity, source, gap and monotonic-offset checks, is marked non-executable, and is followed by a required strict current V2 snapshot before C2 can attest the route. The initial live stream remains unmodified and strict. Regression proves the resumed frame remains state replay even when its logical offset is after the reconnect watermark; it also verifies historical BAR replay, execution BAR strict read-back, quiet-channel policy and gap/identity rejection. The source-mounted, network-disabled, read-only UID-`10001` matrix passed `174/174` in `22.816s`. No runtime service, provider data, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed. Next: rebuild one immutable client, repeat that matrix without a source mount, then run C2 once.
+
+**C2 restored-cursor immutable-client gate (`PASS / REAL RECEIPT IN PROGRESS`, 2026-09-02).** Immutable client `qdl-v2-python:2.0.1-02f0afb@sha256:9ba060e5ab55181412490408d10daeaf2dac45815c3a4e06f58148d24141142f` was built from source `02f0afb`, with matching OCI labels and non-root `qdl:qdl` user. The no-source-mount, network-disabled, read-only UID-`10001` matrix passed `174/174` in `21.400s`. The sole remaining action is one fresh four-identity, 299-product, true-300-second C2 no-order receipt; it cannot modify any runtime role, V1, Kafka/Redis/SQLite state, Trading System, alpha or order path.
+
+**C2 real DOGE 1h gap diagnosis (`IN PROGRESS / READ-ONLY`, 2026-09-02).** The restored-cursor client reached the governed alpha product plane and then stopped fail-closed at `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 1h`: V2 warmup returned typed `required feed has an unresolved sequence gap`. This is real data-plane quality evidence, not a C2, SDK, cursor, calendar, fallback or policy defect. C2 cannot certify V2-primary while this flag exists. The next work is read-only lineage inspection of both query replicas, bar edge/projector logs and the canonical gap state for this exact binding. If repair is needed, it must be a narrow, provider-backed final-BAR resync/recovery packet that retains gap fencing until contiguous history is verified; no synthetic fill, SLA/policy relaxation, V1/Trading System/alpha/order mutation or broad cache reset is allowed.
+
+**C2 DOGE final-BAR targeted recovery (`APPROVED / IN PROGRESS`, 2026-09-02).** Read-only lineage proved the exact defect: canonical partition `binance-usdm-dogeusdt-bar-1h-primary-v2` has `9,002` distinct final opens with no flagged payload, but it is missing exactly `1,001` contiguous `1h` opens from `1784689200000` onward before current live rows resume. The active bar edge continues to ACK current DOGE `1h` closes, so this is a historical continuity hole retained in the cache rather than a missing binding, stale provider or C2 policy issue. Approved repair scope is one reusable, provider-neutral final-BAR history recovery primitive plus a narrowly scoped CLI for named enabled Binance/OKX bindings. It reads the bounded authenticated provider window, validates exact provider calendar continuity, reads durable opens read-only, publishes only provider-confirmed missing final opens through the existing raw Kafka/Rust canonical/projector path, and waits for cache coverage to converge. It must not clear a gap flag manually, alter edge checkpoint/watermark, reset offsets, delete/flush SQLite/Redis, recreate any service, touch V1, Trading System, alpha or order path, or use synthetic data. The DOGE invocation is fixed to `binance-usdm-dogeusdt-bar-1h` and must observe the diagnosed `1,001` missing opens before applying; a changed count fails closed. Source gates: exact binding identity, Binance/OKX calendar, duplicate/overlap, no-write dry-run, bounded publish and post-projection convergence. Runtime exit: the exact partition is contiguous for the bounded provider window, both V2 query replicas report no gap for the DOGE `1h` requirement, and one fresh C2 receipt may then proceed. Rollback is operationally fail-closed: stop the disposable repair client; already accepted authentic events remain durable evidence and are never deleted.
+
+**C2 targeted final-BAR recovery source gate (`PASS / IMMUTABLE REPAIR CLIENT PENDING`, 2026-09-02).** `StableBinanceBarEdge` now exposes a provider-neutral prepared repair window: it obtains bounded authenticated Binance/OKX history, validates exact opens/calendar, calculates durable coverage read-only, and can publish only still-missing final rows through the existing raw Kafka path. The apply path fences the approved missing count immediately before publish, rechecks cache generation, never advances the active edge checkpoint and has no cache/Redis/offset/service mutation path. `scripts/repair_stable_final_bar_history.py` requires named bindings, exact row window, exact `binding=count` expectation and an explicit confirmation token; dry-run performs provider/canonical validation only, while apply waits for the existing projectors to materialize the same expected opens. The script writes only temporary state under `/tmp` and uses a distinct Kafka client ID, so it cannot race the active edge checkpoint. Regression ran inside `qdl-v2-python:2.0.1-7352a1a` with read-only source mount, UID `10001`, `--network none`: `43 PASS` across durable history bootstrap, provider-calendar anchors, overlap/idempotency, cache-generation fencing, scheduled final-BAR catch-up and the new Binance/OKX targeted-repair tests (`10.796s`). `py_compile` and `git diff --check` pass. No image, service, provider connection, Kafka/Redis/SQLite data, V1, Trading System, alpha or order path changed. Next is one immutable repair-client image, then a real-provider dry-run pinned to DOGE `1h`; only if its exact count remains `1,001` may the explicit normal-data-plane repair run.
+
+**C2 targeted-repair bound correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The first immutable-client dry-run exited before any provider call, Kafka publish or state write because `prepare_history_repair(..., rows=10,000)` incorrectly inherited the service's ordinary `warmup_rows=500` ceiling. A normal startup warmup and a one-time provider-backed continuity repair have distinct contracts: the former remains bounded by the running service configuration; the latter must be bounded by the existing interval-aware truthful durable capacity and the global `10,000` maximum. The narrow correction changes only that repair bound, adds a regression proving a `500`-row runtime can safely prepare a larger valid repair window, then repeats the network-disabled regression and the exact DOGE dry-run. No runtime role, provider data, Kafka/Redis/SQLite state, V1, Trading System, alpha or order path changed in the failed preflight.
+
+**C2 targeted-repair bound source gate (`PASS / IMMUTABLE REPAIR IMAGE REBUILD REQUIRED`, 2026-09-02).** `prepare_history_repair` now distinguishes the live loop's configured startup warmup from a deliberately invoked recovery window: repair is capped only by the global `10,000` maximum and the same provider-neutral interval-aware durable capacity used for truthful retained history. The active edge configuration remains unchanged at `warmup_rows=500`; no service configuration was widened. New deterministic coverage proves an edge with a two-row normal warmup can prepare a three-row provider-confirmed recovery plan. The network-disabled, read-only, source-mounted UID-`10001` matrix passed `44/44` in `10.965s` across durable bootstrap, provider-calendar anchors, overlap/idempotency, cache-generation fencing, scheduled catch-up and targeted Binance/OKX repair. The former immutable client is superseded for repair only; no runtime role, provider call, Kafka/Redis/SQLite data, V1, Trading System, alpha or order path changed. Next: build one replacement immutable repair image, rerun the same no-source-mount test matrix, then run the exact DOGE `1h` provider dry-run with the already-approved `1,001` fence.
+
+**C2 DOGE repair real-provider dry-run (`PASS / APPLY TARGET RE-FENCED`, 2026-09-02).** Immutable image `qdl-v2-python:2.0.1-2b8690b` passed the no-source-mount, network-disabled, read-only UID-`10001` regression matrix `44/44` in `11.612s`. Its first provider dry-run failed closed before publishing because the previously recorded `1,001` count no longer matched the exact present cache/provider window. A follow-up read-only probe against the same authenticated Binance `10,000`-row window and canonical cache found `8,998` covered, `1,002` missing and no non-contiguous or current-final-bar ambiguity: the contiguous hole is `2026-07-22T03:00:00Z` through `2026-09-01T20:00:00Z` inclusive, while the window ends `2026-09-02T20:00:00Z`. The original fence was therefore one row short, not a reason to relax quality. Apply is re-fenced to exactly `1,002` provider-confirmed rows for the same named DOGE `1h` binding; any changed count, cache generation, provider calendar/coverage failure or non-convergence still aborts without partial workaround. This applies normal authentic BAR writes only through raw Kafka -> Rust canonical -> existing projectors/cache. It does not recreate services, advance bar-edge checkpoint/watermark, reset offsets, flush/delete state, touch V1, Trading System, alpha or order path. Rollback remains fail-closed by stopping the disposable client; already accepted authentic historical events are retained as auditable market-data evidence.
+
+**C2 late-backfill physical-capacity repair (`APPROVED / IN PROGRESS`, 2026-09-02).** The approved `1,002`-row authentic repair published and canonicalized, but cache convergence correctly stopped at `4` missing rows rather than pretending success. Read-only cache lineage proves why: public consumer history is bounded at `10,000` rows and the physical SQLite partition window was also exactly `10,000`; four valid older late-backfill records (`2025-07-12T23:00:00Z` through `2025-07-13T02:00:00Z` by their raw epoch values) remain in the physical replay tail, so four current provider-window rows (`2026-09-01T21:00:00Z` through `2026-09-02T00:00:00Z`) cannot coexist. This is a physical-retention defect at the late-backfill boundary, not a provider gap, Rust rejection, projector lag, duplicate, quality-policy or C2 problem. The narrow correction adds a fixed `64`-row physical late-backfill headroom per partition while retaining the public `10,000` maximum and all SDK/API quotas exactly unchanged. It is capacity-derived in the existing shared spool, not a per-symbol exception. Required tests prove public limits remain `10,000`, physical/global capacity includes bounded headroom and normal cursor/retention behavior remains bounded. Runtime packet after immutable-image validation is limited to rolling `projector_v2`, `projector_v2_2` and `projector_v2_3` with the same runtime/TLS/state mounts; it preserves Kafka offsets/topology, Redis, SQLite files/cache generation, V1, Rust/ingestors/bar-edge/query/stream, Trading System, alpha and order path. Rollback recreates only those three projectors with their current image `qdl-v2-python:2.0.1-7352a1a@sha256:21084686cee5f6b108b34cd39183c0d839eac1723c85795f2fa50bb2b2764896` and same mounts. Then a four-row provider-backed repair uses a new exact `4` fence; it may only publish the still-missing four and must converge before C2 resumes.
+
+**C2 late-backfill physical-capacity source gate (`PASS / IMMUTABLE IMAGE REBUILD REQUIRED`, 2026-09-02).** The shared stable spool now retains a bounded `10,064` physical-record window per partition: the public query/SDK warmup ceiling remains exactly `10,000`, and the `64` rows are explicitly reserved for late authentic backfill/revision ordering. Global cache capacity remains catalog-derived from physical partitions, so the change scales with the shared topology rather than a symbol/interval special case. The network-disabled, read-only, source-mounted UID-`10001` matrix passed `54/54` in `12.178s`, including query/projector readiness capacity, public-history contract, BAR bootstrap/repair, calendar, overlap/idempotency and final-BAR scheduling regressions. No runtime role, provider call, Kafka/Redis/SQLite data, V1, Trading System, alpha or order path changed during the source gate. Next: one immutable Python image from this commit, repeat the same matrix without a source mount, then rolling-recreate only the three projectors with their existing mounts and verify cache generation/health before the new four-row repair.
+
+**C2 late-backfill projector runtime preflight (`PASS / ROLLING IN PROGRESS`, 2026-09-02).** Immutable `qdl-v2-python:2.0.1-1994258@sha256:b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430` carries source commit `1994258` and passed the same no-source-mount, network-disabled, read-only UID-`10001` matrix `54/54` in `13.172s`. Compose render confirms the exact rollout scope resolves that digest for the existing shared Python role; the command will apply it only to `projector_v2`, `projector_v2_2` and `projector_v2_3`, one at a time, with `--no-deps --no-build --force-recreate`. The existing runtime directory remains `/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/runtime`, and both `stable_state`/`stable_tls` volumes retain their current identities. No additional role, network, volume, topic, offset, V1, Rust/ingestor/bar-edge/query/stream, Trading System, alpha or order-path mutation is authorized.
+
+**C2 late-backfill projector rolling (`PASS / FOUR-ROW REPAIR PENDING`, 2026-09-02).** The approved rolling packet completed one replica at a time: `projector_v2`, `projector_v2_2` and `projector_v2_3` now each run immutable image `sha256:b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430`, report `running=true`, `OOMKilled=false` and `RestartCount=0`. During the expected cooperative assignment transition, replicas two and three each logged a bounded `Kafka assignment changed before stable checkpoint` reconnect; they subsequently returned to serving without a process restart or fatal traceback. No other role was recreated and no V1, Kafka topology/offset, Redis, SQLite, runtime/TLS mount, Trading System, alpha or order-path state was changed. Next is a no-write provider-backed dry-run for the same named DOGE `1h` binding fenced at exactly four remaining rows; only that exact result permits the four-row normal data-plane repair.
+
+**C2 late-backfill four-row repair (`FAIL-CLOSED / REPLAY LINEAGE INSPECTION`, 2026-09-02).** The replacement immutable client dry-run returned exactly four provider-confirmed missing DOGE `1h` opens (`window_rows=10,000`, no production mutation). The explicit four-row apply was then allowed to use the normal raw Kafka path and a disposable non-root audit client. It did not converge after its fixed `180s` wait: the audit client exited `1`, never OOM-killed, with `remaining={"binance-usdm-dogeusdt-bar-1h":4}`. A follow-up read-only provider/cache probe independently returns the same four. This is not accepted as a successful repair and C2 remains blocked. The physical headroom rollout is live, so the remaining likely lineage is that already-canonical historical raw identities are deduplicated upstream and therefore are not re-emitted to projectors after the cache capacity correction. Next scope is read-only trace of the exact canonical/projector replay path and existing bounded replay tooling; no retry lottery, manual gap clearing, synthetic/revisioned data, V1 mutation, broad cache reset, Kafka topology mutation, Redis/SQLite deletion, Trading System, alpha or order-path mutation is allowed.
+
+**C2 bounded Rust dedup-generation recovery (`APPROVED / IN PROGRESS`, 2026-09-02).** Read-only code/runtime trace confirms the four rows are blocked by the active Rust cores' in-memory canonical event-ID deduplication: re-publishing the same provider-backed recovery rows cannot emit a new canonical Kafka record while the core generation remembers their stable BAR identities. This is intentionally distinct from durable idempotency: a fresh Rust generation deterministically canonicalizes the same captured raw rows, while the canonical SQLite/gateway layer accepts only records absent from its physical partition window and still suppresses all retained duplicates. The narrow recovery packet rolling-recreates only existing `rust_core`, `rust_core_2` and `rust_core_3`, one at a time, with their current immutable image `sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`, unchanged sealed runtime/TLS/state mounts and unchanged shared Kafka group. Each replica must return `running=true`, `OOMKilled=false`, `RestartCount=0` before the next moves. No source/config change, service/topology addition, offset reset, cache/Redis/SQLite deletion, V1, query/stream/projector image, Trading System, alpha or order-path mutation is authorized. Then one exact four-row provider-backed repair repeats through raw Kafka -> fresh Rust generation -> existing canonical/projector path. Exit requires coverage zero on a fresh read-only probe; otherwise it stops fail-closed. Rollback is only rolling the same three cores back to their identical current image/runtime, so no code or durable state rollback is needed.
+
+**C2 Rust recovery image preflight (`PASS / PIN REQUIRED`, 2026-09-02).** The sealed environment still names old Rust image `sha256:3056cf849d4d767f19431af92b944698b4dbef15c044942831619d296f8cd156`, while all three active cores are demonstrably the newer identical binary `qdl-v2-rust:2.0.0-0a122a8-l2hot@sha256:c63d54f05cd00407f7440e48d10d13daf3beea581cc624cd5c748e88aaf15ee0`. A naive Compose recreate would silently downgrade them. The recovery command must therefore override only `QDL_STABLE_RUST_IMAGE` to the active `c63d...15ee0` immutable digest, retaining every other sealed environment value and mount; this is a runtime provenance pin, not a bundle/config mutation.
+
+**C2 four-row replay root-cause correction (`PASS / STREAM-WRITER ROLLING REQUIRED`, 2026-09-02).** The bounded Rust generation roll completed safely but the post-replay audit still failed closed. Exact SQLite inspection then isolated the actual remaining defect: the DOGE canonical partition remains physically `10,000` rows (`logical_offset 1019..11018`) even though projectors run the `10,064`-headroom image. The canonical SQLite writer is `stream_v2_active`/`stream_v2_passive`, not the projector; both streams still run the prior Python artifact and therefore retain the old trim bound. The earlier Rust rolling was safe (`RUST_PRIMARY`, same pinned `c63...15ee0`, no OOM/state mutation) but did not address the writer ownership boundary. Correct runtime scope is now a rolling recreate of exactly `stream_v2_passive` then `stream_v2_active` onto immutable Python image `b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430`, retaining runtime/TLS/state/Redis/Kafka and every other role. Passive must be healthy before active moves; active lease/failover must remain available. No query, V1, core, ingestor, bar-edge, projector, offsets, cache reset/deletion, Trading System, alpha or order mutation is authorized. Once both writers expose the corrected shared spool capacity, the exact four-row provider repair is repeated once and must make the same read-only coverage probe report zero missing.
+
+**C2 bounded DOGE repair scope refresh (`PASS / FIVE-ROW APPLY AUTHORIZED`, 2026-09-02).** The stream-writer rollout completed passive first then active: both now run `b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430`, remain `healthy`, `running=true`, `OOMKilled=false` and `RestartCount=0`. The exact no-write provider/cache dry-run correctly stopped rather than widening its prior four-row fence: because the rolling ten-thousand-row history window advanced by one closed hourly BAR during remediation, it now observes five authentic missing DOGE opens, precisely `2026-09-02T09:00:00Z`, `10:00:00Z`, `11:00:00Z`, `12:00:00Z`, and `21:00:00Z`. This is the same one binding and provider-backed recovery window, not a symbol/venue expansion. The next bounded action is one apply with `expected_missing=5`, a fixed `180s` convergence wait and a read-only zero-coverage verification. It may emit only those normal final-BAR recovery writes through the existing raw -> Rust -> canonical -> projector path; it does not change offsets, delete/flush cache state, touch V1, Trading System, alpha or order state. Any count change again stops fail-closed.
+
+**C2 late-backfill coverage-reader correction (`IN PROGRESS / SOURCE-ONLY`, 2026-09-02).** The five-row provider-backed apply reached the live canonical SQLite writer: the DOGE `1h` partition grew to `10,005` physical rows and contains five real `FINAL` BAR envelopes at the exact approved openings. The client still timed out with four remaining because `StableBinanceBarEdge._durable_final_bar_opens()` reads only `LIMIT 10,000`; its own new physical late-backfill headroom therefore makes the first four retained rows invisible to the coverage reader. This is a narrow shared contract defect between physical spool retention and the reader, not a provider gap, Rust dedup fault, projector failure, query/stream consumer fault, or evidence of lost repair data. The source correction must centralize public (`10,000`) and physical (`10,064`) BAR window constants, retain the public API ceiling unchanged, and make durable coverage inspect the physical window. Required tests prove no caller can request more than `10,000` public BAR rows, while coverage sees a bounded late-backfill tail and is not confused by non-BAR or mismatched identity. Then build one immutable Python image, rolling-recreate only `binance_bar_edge` with existing mounts, use that image for a read-only zero-coverage verification, and only then resume C2. No cache reset, re-publish, V1, Kafka topology/offset mutation, Redis/SQLite deletion, Trading System, alpha or order-path change is allowed; the five raw/canonical writes already committed are preserved as real evidence.
+
+**C2 late-backfill coverage-reader source gate (`PASS / IMMUTABLE EDGE IMAGE REQUIRED`, 2026-09-02).** `qdl.runtime.stable_capacity` is now the single source for the public `10,000` BAR contract and the bounded `10,064` physical spool window. `stable_spool_capacity()` and `StableBinanceBarEdge` consume the same shared constants; durable final-BAR coverage binds the physical window as a SQLite `LIMIT` parameter, while public request validation remains capped at `10,000`. The new regression proves the reader requests the physical tail and still recognizes only an identity-matched final BAR; existing provider/gap/mismatch regressions remain in the same matrix. The isolated, network-disabled, read-only UID-`10001` matrix passed `55/55` in `11.763s`: `test_phase533_query_readiness`, `test_phaseb_bar_history_bootstrap`, `test_c419_fast_final_bar_delivery`, and `test_phase115c_bar_edge_schedule`. No runtime role or data state changed during this source gate. Next: commit this source slice, build one immutable Python image, rolling-recreate only `binance_bar_edge`, read-only verify zero missing for the already-persisted five provider BARs, then resume C2 without re-publishing them.
+
+**C2 coverage-reader edge rollout (`APPROVED / IN PROGRESS`, 2026-09-02).** Source commit `9e3a99f` was built as immutable `qdl-v2-python:2.0.2-9e3a99f@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`; the no-source-mount, network-disabled, read-only UID-`10001` image matrix passed `55/55` in `12.326s`. The runtime packet rolling-recreates exactly `binance_bar_edge` with this image, retaining its existing runtime/TLS/state/Redis/Kafka mounts, service name, network and authority record. The exact rollback coordinate is the current `qdl-v2-python:2.0.1-43faf3d@sha256:6090b3a6c1c6bc431a329ab85cad7fe61750a33dbed3a5bb2d264c532f211545` with the same mounts. No stream/query/projector/core/ingestor/V1 role, Kafka topology or offsets, Redis/SQLite reset/deletion, Trading System, alpha or order path is in scope. After the role returns running without OOM/restart, a disposable read-only coverage probe must report zero missing for the five already-canonical provider BARs; no re-publish is permitted.
+
+**C2 edge rollout manifest correction (`PASS / RECOVERY ROLLING REQUIRED`, 2026-09-02).** The first edge recreate failed before its event loop because the command omitted the pre-existing runtime overlay `/home/bobby/.local/state/qdl-v2/phase543-reader-binding-20260902/bar-edge-history-convergence-20260902T1815Z/bar-edge-history.override.yml`. Without it, Compose fell back to legacy `stable-crypto-bar-edge.json` (`state.v1`, four obsolete bindings), which the current V4-only runtime correctly rejects. The attempted same-image rollback repeated that command omission and also stopped before any provider request, Kafka publish, checkpoint persist or data-plane mutation. Read-only compatibility probes prove the overlay's exact V4 checkpoint `/var/lib/qdl-stable/runtime/phase54-alpha-demand-5edbc8c.history10000-20260902.json` matches current catalog/acquisition `8/16`, warmup `10,000`, canonical cache identity and 140 BAR bindings; it restores with 130 already checkpointed and preserves the existing bounded bootstrap behavior for the ten newly demanded OKX SOL BAR bindings. Correct recovery is a one-role recreate using the existing history overlay plus a disposable image-only overlay for `2ab6...42e0`. The image-only file is removed immediately after the service starts. This restores the original runtime configuration rather than copying/deleting a checkpoint or creating a new state namespace.
+
+**C2 edge recovery checkpoint selection (`PASS / ONE-ROLE RECOVERY`, 2026-09-02).** The history-`10000` checkpoint attempted the ten uncheckpointed OKX SOL bindings; its truthful provider history returned an authentic time gap and the edge retried fail-closed. The role remained running, but cannot progress while that incomplete bootstrap blocks the shared loop. A separate existing V4 checkpoint `phase54-alpha-demand-5edbc8c.json` is a strict match for the same current catalog/acquisition/cache identity and all 140 binding IDs; a disposable no-loop probe with its matching `QDL_STABLE_BAR_WARMUP_ROWS=1000` restored all 140 watermarks and issued a new generation successfully. `1000` is the edge's bootstrap retention parameter only; it does not reduce the public `10,000` request ceiling or the explicit provider `FRESH_SNAPSHOT` coverage contract. The recovery overlay therefore selects this complete real checkpoint and sets only the matching bootstrap value; current `10,000` bounded catch-up remains unchanged. This avoids fabricated provider history and prevents one known native long-history gap from blocking already-certified Binance/OKX BAR lanes.
+
+**C2 durable-coverage reader runtime exit (`PASS / ONE REAL C2 RECEIPT PENDING`, 2026-09-02).** The recovered `binance_bar_edge` now runs immutable `qdl-v2-python:2.0.2-9e3a99f@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0` with the matching existing V4 checkpoint `phase54-alpha-demand-5edbc8c.json`, `warmup_rows=1000`, the unchanged catalog/acquisition/cache identity and all `140` BAR bindings checkpointed. It is `running`, has no OOM kill/restart, restores the same real provider-derived watermark generation and continues normal final-BAR ACKs. A disposable no-write, authenticated provider/cache probe on the formerly blocked `binance-usdm-dogeusdt-bar-1h` reads the physical `10,064` spool window and returns `missing_rows=0`; it publishes nothing and confirms the five already-committed provider BARs are visible to the corrected coverage reader. The next and only acceptance action is one fresh C2 four-identity, 299-product, true-300-second no-order receipt using the existing V2 query/stream endpoints and V1 local fallback policy. It may read V2/V1 only; it has zero provider, Gateway, Risk, order or state-mutation authority. Rollback is immediate by stopping/removing only the disposable C2 client; V1, Kafka topology/offsets, Redis, SQLite, all runtime roles, Trading System, alpha and order paths remain unchanged.
+
+**C2 retry 20260902T223058Z (`FAIL-CLOSED / READ-ONLY FRESHNESS DIAGNOSIS`, 2026-09-02).** The immutable `2ab6...42e0` C2 client passed its `116/116` no-source-mount, network-disabled preflight matrix. Its first two launcher starts stopped before an endpoint request because copied wrapper permissions omitted, respectively, world read/execute for the container mount and the documented bootstrap `--user 0:0`; both were corrected only on the disposable evidence scripts. The actual client then dropped to UID `10001`, `NoNewPrivs=1`, all effective/permitted/inheritable/ambient capabilities zero, and made no provider, Gateway, Risk, order or state mutation. It correctly stopped at `trading-system.paper.stable / OKX.SWAP.PERPETUAL.ETH-USDT / BAR 1m` with typed `required data exceeds its freshness policy`; it did not reach the 300-second observation. This is a real V2 quality decision, not a DOGE coverage regression or a basis for widening SLA. Next scope is read-only typed status, cache/watermark and bar-edge lineage for the five OKX liquid symbols on both query replicas; only a proven shared projection/provider defect may be repaired, then one new C2 receipt is permitted.
+
+**C2 OKX final-BAR projection attachment (`APPROVED / CONFIG-ONLY RUNTIME REPAIR`, 2026-09-02).** Read-only deployed-config inspection proves the C2 failure is a missing overlay, not a provider, quality-policy or Rust-core defect. The sealed V4 projection `/runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml` contains all `140` binding identities and deliberately projects every enabled OKX Swap final BAR to the bounded Python provider-finality edge (`PYTHON_REST`), while the image-default acquisition plan declares the same routes `RUST_NATIVE`. The active edge retained only its state/warmup override and therefore read the image-default plan; it ACKed Binance only, leaving `OKX ETH 1m` stale. The corrected packet recreates only `binance_bar_edge` with immutable `2ab6...42e0` and the existing sealed `catalog.yaml`, `acquisition.yaml`, complete V4 checkpoint `phase54-alpha-demand-5edbc8c.json`, `warmup_rows=1000` and unchanged `max_catchup_rows=10000`. It permits normal authentic final-BAR writes through the existing raw -> Rust canonical -> projector/cache plane. It excludes V1, Kafka topology/offsets, Redis/SQLite reset/deletion, Rust/ingestors/projectors/query/stream, Trading System, alpha and order path. Rollback is one recreate of only the same edge with its prior image/config; no durable state is deleted. Exit requires live real-provider ACKs for both Binance and OKX final BAR lanes, no OOM/restart, and a fresh C2 receipt.
+
+**C2 sealed-BAR config hardening (`APPROVED / SOURCE + ONE-ROLE CONFIG ONLY`, 2026-09-02).** The source Compose contract will expose `QDL_STABLE_SOURCE_BINDINGS` and `QDL_STABLE_ACQUISITION_BINDINGS` as explicit optional runtime overrides with the current image paths as safe defaults. This does not change any default source deployment; it prevents a future bounded edge recreate from silently discarding an already-sealed projection. The one-role runtime override supplies the existing V4 catalog/acquisition paths plus state/warmup/image provenance. Gates are Compose render with the sealed env, stable catalog/acquisition validation and the focused final-BAR/C2 regression matrix before the sole edge recreate. Rollback is removal of the overlay/variables and the prior one-role image/config only. No bundle secret is printed or committed.
+
+**C2 source/runtime projector-bound reconciliation (`APPROVED / SOURCE-ONLY`, 2026-09-02).** The focused Compose contract test correctly caught an unrelated source drift before rollout: all three live projectors have `QDL_STABLE_MAX_PENDING_RECORDS=2048` under their approved `512 MiB` bound, while the current source Compose file had regressed to `1024` in all three service stanzas. The runtime is healthy; no projector is being recreated. The source must restore `2048` so the next ordinary deployment cannot silently halve the tested bounded backlog. This is a three-line declarative reconciliation, covered by the existing Compose isolation/capacity test; it does not widen memory, queue bytes, topology, V1, data plane or consumer authority.
+
+**C2 source/runtime projector-byte reconciliation (`APPROVED / SOURCE-ONLY`, 2026-09-02).** The same contract gate then identified the paired source drift: live projectors retain the approved `QDL_STABLE_MAX_PENDING_BYTES=33554432`, while all three source stanzas declared `16777216`. Restore the existing `32 MiB` tested limit in source together with the `2048` record bound. No runtime role changes, no memory limit increase, and no data-plane/consumer mutation is permitted.
+
+**C2 sealed-BAR mount correction (`FAIL-CLOSED / ONE-ROLE RECOVERY`, 2026-09-02).** The first sealed-projection recreate stopped before its event loop, provider request, Kafka publish or checkpoint write because the generic Compose environment mounted `/runtime` from `phase103...`, whereas the existing sealed BAR projection is under `session-liveness-43cdbe3.../runtime`. The container is cleanly `exited`, `restart=0`, `OOMKilled=false`; no data-plane mutation occurred. Recovery is still one role only: retain the same `2ab6...42e0` image and sealed override, but set only the Compose host `QDL_STABLE_RUNTIME_DIR` for this edge recreate to the existing session-liveness runtime directory. This makes the already-declared `/runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml` paths resolvable. All other service mounts remain untouched because `--no-deps` targets only the edge. Rollback remains the prior one-role image/config.
+
+**C2 sealed-BAR mount recovery exit (`PASS / C2 RETRY READY`, 2026-09-02).** The one-role recovery is now `running` on immutable `2ab6...42e0`, `restart=0`, `OOMKilled=false`, restores the matched 140-binding V4 checkpoint and produces real provider final-BAR ACKs for both venue lanes. The first catch-up ACK contains the enabled OKX Swap BAR identities across BTC/ETH/SOL/DOGE/BNB; subsequent real `1m` ACKs include `okx-swap-eth-usdt-swap-bar-1m` and the other four liquid OKX swaps alongside their Binance USD-M peers. These are normal authentic provider -> raw Kafka -> Rust canonical -> projector/cache writes, not synthetic repair data. The sealed source/acquisition path is therefore the required stable edge contract. A fresh four-identity C2 no-order client will use a new evidence namespace; its inherited V1 fallback policy and all no-order exclusions remain unchanged.
+
+**C2 final no-order receipt (`IN PROGRESS`, 2026-09-02).** A prior C2 attempt
+stopped fail-closed before its 300-second observation at an OKX BAR freshness
+read; the root cause was the missing sealed acquisition projection now repaired
+by the one-role edge recovery above. Two disposable diagnostics were used only
+to validate the launcher topology and were not acceptance: the one-network
+probe correctly could not resolve the executor-network stream aliases, while
+the two-network probe demonstrated the full scope needs the declared 300-second
+window rather than a shortened diagnostic deadline. Both made no provider,
+Gateway, Risk, order or persistent-state mutation and are excluded from
+evidence. The one valid next operation is exactly one new four-identity,
+299-product, 300-second C2 client attached to the existing stable-internal and
+executor networks. It is read-only, non-root after bootstrap, has no order or
+provider authority, uses immutable image `2ab6...42e0`, and self-removes after
+writing only bounded receipt evidence. V1 remains the governed rollback path;
+all runtime services, Kafka/Redis/SQLite state, Trading System and alpha remain
+unchanged during this receipt.
+
+**C2 final launcher correction (`FAIL-CLOSED / RETRY READY`, 2026-09-02).**
+The first final-client creation inherited the immutable image's normal Uvicorn
+entrypoint rather than explicitly running `/bin/sh /bootstrap-c2.sh`. Its
+read-only root filesystem made that mistake fail before bootstrap, identity
+copy, endpoint, provider, stream, Gateway, Risk, order or state activity; the
+exited disposable container was removed. The retry changes only the test
+container entrypoint/command to the already-proven bootstrap pair. It keeps the
+same two existing networks, image, read-only inputs and bounded evidence path.
+
+**C2 DOGE 1h physical-tail reader diagnosis (`FAIL-CLOSED / SOURCE REPAIR`,
+2026-09-02).** The corrected final client reached V2 with its governed alpha
+identity and stopped at `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 1h` because the
+warmup returned `OPEN_SEQUENCE_GAP`. A read-only typed-status probe proves the
+latest tail itself is `LIVE`, complete, gap-free and execution-eligible; the
+warmup failure is therefore not a provider/session/SLA issue. A no-network,
+read-only audit of the canonical SQLite partition found `10,006` unique,
+market-time-contiguous final BAR opens and no duplicate payloads. The defect is
+the shared reader's contradictory retention view: the spool correctly retains
+the bounded physical `10,064` rows for authentic late backfills, but
+`StableSpoolQueryBackend` still scans only `10,000` rows by logical append
+offset. Six valid late-backfill rows fall just outside that scan even though
+their market times lie in the public warmup tail; the reader then correctly
+fails closed on the artificial gap.
+
+The in-scope repair is one shared source change: every internal BAR scan used
+to construct history, latest quality, stored events and gap status must read
+`STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW`, then sort/select the caller's market
+time window and retain the unchanged public maximum of `10,000` rows. It must
+not widen any public API/SDK quota, clear a gap manually, alter providers,
+Kafka, Redis, SQLite, V1, Trading System, alpha or order behavior. Regression
+must cover a physical tail containing late valid BARs whose logical offsets are
+old enough to fall outside a `10,000` append-tail scan, plus normal gaps and
+public-limit invariants. After source/image gates, only existing V2 query and
+stream readers may be rolled to consume the fix; a new full C2 receipt is then
+the sole acceptance action.
+
+**C2 physical-tail reader source gate (`PASS / IMMUTABLE READER HANDOFF
+READY`, 2026-09-02).** The repair centralizes the distinction between the
+public BAR ceiling and the small retained physical headroom. `SQLiteDurableSpool`
+now permits an internal tail read up to the explicit configured partition
+capacity only; default/public callers remain capped at `10,000`. The shared
+stable reader uses the physical `10,064` window only for BAR latest/history/
+quality/gap construction, then sorts by market time and returns the caller's
+unchanged bounded public result. Book and non-BAR paths retain their existing
+public bounds. A regression materializes `10,064` authentic-shaped rows where
+64 recent market-time repairs have old append offsets: a 700-BAR public warmup
+is ordered, full and gap-free, while a real missing bar remains fail-closed.
+
+The isolated source gate used the existing immutable
+`qdl-v2-python@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`
+with the candidate source mounted read-only, UID/GID `10001`, a read-only root,
+ephemeral `/tmp` and `--network none`. It passed **117/117** with one explicit
+skip in `33.853s`: stable reader/edge, durable transport, bounded bar-edge
+projection, fast final-bar delivery, C2 consumer acceptance and stable
+deployment. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path changed. `git diff --check` passed.
+
+**Next bounded operation.** Commit this source/documentation slice, build one
+canonical immutable Python reader image from that commit, rerun the same
+no-source-mount matrix, then rolling-recreate only `stream_v2_passive`,
+`stream_v2_active`, `query_v2_1` and `query_v2_2` with their exact current
+images retained as rollback coordinates. After healthy/restart-free checks,
+run exactly one fresh four-identity C2 no-order receipt. V1 and every other
+role remain unchanged.
+
+**C2 physical-tail reader handoff packet (`OWNER-APPROVED / PRE-ROLL`,
+2026-09-02).** Commit `f9c27e7` is sealed as
+`qdl-v2-python:2.0.3-f9c27e7@sha256:c13c2a9d7d39f2fcac29c65bb57b16e0dfc9132563a1518c945db20006455386`.
+Its no-source-mount, read-only, UID/GID-`10001`, `--network none` matrix passed
+**117/117** with one explicit skip in `32.480s`. The bounded runtime handoff
+may recreate exactly four existing cache readers in dependency-safe order:
+`stream_v2_passive`, `stream_v2_active`, `query_v2_1`, then `query_v2_2`.
+It must reuse the complete active Compose configuration set and env file,
+preserving each role's TLS/runtime/state mounts, network attachments, identity,
+ports, resource limits, volumes and service name; an image-only override is
+the sole rendered configuration change.
+
+The exact rollback images are
+`qdl-v2-python@sha256:b335d609db7b55000cba7cce455a525dbc8d7793faa83b94bc2cfbaa12f64430`
+for both stream roles and
+`qdl-v2-python:2.0.1-d9dea34@sha256:dcb15154ccff53490d152152af99a8aa808c9901c5d210135d791d74d0398bd7`
+for both query roles. Before each recreate, render/inspect must demonstrate
+that only `image` differs. After each, require `healthy`, zero new restarts,
+`OOMKilled=false` and no bounded error signature. V1, Kafka topology/offsets,
+Redis, SQLite, bar-edge, Rust, ingestors, projectors, Trading System, alpha,
+Gateway/Risk and order paths are excluded. On any failure, recreate only the
+failed role with its exact retained rollback image and stop this packet.
+
+**Acceptance boundary.** A healthy four-role roll does not count as C2. It
+only unlocks one fresh, disposable four-identity, 299-product, 300-second
+no-order receipt with governed V2 reads and declared V1 fallback drill. The
+client has no provider, Gateway, Risk, order or durable-state mutation
+authority and is removed after bounded evidence is captured.
+
+**C2 reader handoff render gate (`PASS / ROLL AUTHORIZED`, 2026-09-02).** The
+complete active Compose file chain and current `stable.env` were rendered both
+with and without the new final image override. For
+`stream_v2_passive`, `stream_v2_active`, `query_v2_1` and `query_v2_2`, a
+canonical hash of the rendered service after removing `image` is identical;
+the only configuration diff is the new immutable digest. The preflight records
+four non-image hashes in the bounded handoff evidence. Runtime inspection also
+found an old Compose history artifact: the active stream containers still use
+`b335...4430` while the rendered historical base says `d9dea...8bd7`; their
+mounts, networks, identities and runtime are unchanged. The rollback overlay
+therefore pins the *actual* active stream digest `b335...4430` and actual query
+digest `d9dea...8bd7`, rather than relying on stale Compose history. This is
+provenance hardening only; no role, data plane or topology changed during
+rendering.
+
+**Fresh C2 namespace (`OWNER-APPROVED / EXECUTING`, 2026-09-02).** The
+four-role handoff completed in declared order on `c13c...5386`; every role is
+running, healthy, `restart=0`, `OOMKilled=false`, and a bounded five-minute
+error scan is empty. One new disposable C2 client now uses this reader image,
+the pre-existing Phase-10.3 runtime authority mount, the existing V2 stable
+internal and executor networks, and only four governed identities. It runs the
+unchanged 299-product, 300-second no-order receipt script with signed cursor
+replay/reconnect and declared V1 fallback drill. It cannot reach a venue
+provider directly and has no Gateway, Risk, order or persistent-state mutation
+credential. Any nonzero exit is fail-closed; the client is removed and the four
+reader roles stay on `c13c...5386` unless their own health changes.
+
+**C2 launcher capability correction (`FAIL-CLOSED / RETRY READY`, 2026-09-02).**
+The first new client exited before it could create `/tmp/inputs`: the outer
+Docker launcher dropped all capabilities before `/bootstrap-c2.sh`, so its
+intentional `setpriv --reuid=10001` failed with `setresuid: Operation not
+permitted`. Query replica logs confirm zero endpoint request, and no receipt,
+provider, Gateway, Risk, order or durable-state action exists. The previous
+approved C2 topology correctly starts bootstrap as root with only
+`no-new-privileges:true`; bootstrap then drops UID/groups/capabilities before
+copying identities and before running the Python client. The fresh retry will
+match that proven topology exactly, retain no additional capability after the
+drop, use a new evidence namespace and remove its container on exit. This is a
+launcher repair only; no V2 role is recreated and no policy/SLA is relaxed.
+
+**C2 historical replay watermark diagnosis (`FAIL-CLOSED / SOURCE-ONLY
+ACCEPTANCE REPAIR`, 2026-09-02).** A disposable governed DOGE `1h` trace proved
+the reader/runtime is not gapped: strict V2 warmup returned watermark `11024`;
+the deliberate historical seed returned `10004`, then signed stream replay
+advanced contiguously through `10005..10037` before the bounded diagnostic
+stopped. The C2 harness incorrectly assumes all authentic late/backfill events
+after a historical seed fit its arbitrary 16-event observation cap and demands
+that this test-only cursor reach the *current* watermark. That is not the
+production SDK path: real consumers take a strict current warmup cursor first,
+whereas the C2 historical seed exists solely to prove cursor/reconnect without
+waiting for a future 1h close.
+
+The repair is narrow and preserves stricter domain checks: for a historical
+alpha BAR, require one monotonic signed replay event across query/stream
+replicas, then require a new strict current V2 snapshot using the original
+governed requirement. It must not drain arbitrary historic offsets, relax
+freshness/gap/finality, use a provider/V1 substitute, or change reader/runtime
+services. Regression will cover the real shape (`seed=10004`, first=`10005`,
+strict=`11024`) and prove it passes only after strict current readback; failure
+of that readback remains fail-closed. After source/image tests, build a
+disposable acceptance-client image only and run one fresh C2 receipt. The
+already-rolled reader roles remain on `c13c...5386`.
+
+**C2 historical replay contract source gate (`PASS / DISPOSABLE CLIENT IMAGE
+REQUIRED`, 2026-09-02).** The harness now treats the historical BAR seed as
+what it is: a bounded signed-cursor/reconnect proof, not an unbounded backlog
+consumer. It requires exactly one monotonic replay frame across replicas and
+then a strict current V2 snapshot using the original governed requirement.
+The regression reproduces the real `10004 -> 10005 -> 10006` seed/replay shape
+against strict watermark `11024`, proves later historical offsets are not
+drained, and fails if the current snapshot cannot be read. The isolated,
+read-only, non-root, no-network C2 matrix passed **68/68 in 15.362s** across
+receipt replay, identity, fallback and release-certification cases. No runtime
+reader role, provider, Kafka, Redis, SQLite, V1, Trading System, alpha,
+Gateway/Risk or order path changed. Next: commit this source slice, build one
+immutable disposable acceptance-client image, run its no-source-mount matrix,
+then run exactly one fresh 299-product/four-identity C2 receipt. The current
+reader runtime remains `c13c...5386` throughout.
+
+**C2 stale-first-frame diagnosis (`FAIL-CLOSED / SOURCE-ONLY ACCEPTANCE
+REPAIR`, 2026-09-03).** The replay-revalidation C2 progressed beyond DOGE BAR
+and then stopped at Trading System's `OKX BTC QUOTE` when its first stream
+frame was stale under the execution freshness policy. A governed read-only
+trace immediately afterward proves the actual route is healthy: V2 snapshot
+freshness `227ms`, typed status `235ms`, first stream frame `134ms`, all
+`LIVE`, complete, gap-free and execution-eligible at `3136504 -> 3136505`.
+This identifies an admissible replay race, not an OKX outage: a delayed frame
+can arrive after a fresh snapshot cursor and must never be treated as an
+execution price.
+
+The C2 harness must therefore handle only a first-frame `DATA_STALE` as
+replay-only state, then immediately require/validate a new strict current V2
+snapshot before accepting cursor continuity. `OPEN_SEQUENCE_GAP`, identity,
+session, finality, source-authority and a failed strict read remain fail-closed;
+no SLA or provider data is altered. Regression must cover stale-first/fresh
+readback and stale-first/stale-readback rejection. This changes acceptance
+semantics only, not SDK runtime delivery or any V2 reader service. After the
+source/image matrix, one fresh C2 receipt is again permitted.
+
+**C2 replay-revalidation image gate (`PASS / FINAL RECEIPT READY`,
+2026-09-02).** Commit `7cd0265` is sealed as
+`qdl-v2-python:2.0.4-7cd0265@sha256:8099b83488fb583e9d06c8021e2195c0724a12107ea921c2caf9d269741dd0cd`.
+The image-contained, no-source-mount matrix ran read-only as UID/GID `10001`
+with `--network none` and passed **178/178** with one explicit skip in
+`45.342s`. It combines the physical-tail reader/transport/bar-edge matrix with
+the C2 replay, identity, fallback and release-certification suite. The next
+operation is exactly one fresh C2 four-identity/299-product/300-second receipt
+using this image only as a disposable client; it does not recreate the already
+healthy reader roles on `c13c...5386`.
+
+**C2 stale-first-frame contract source gate (`PASS / IMMUTABLE CLIENT REBUILD
+REQUIRED`, 2026-09-03).** The acceptance harness now distinguishes a delayed
+first durable stream frame from a current execution price. Only a first-frame
+`DATA_STALE` outside historical BAR replay may be projected as `state_replay`;
+it is acknowledged solely for signed-cursor continuity and is immediately
+followed by a strict current V2 snapshot under the original requirement. The
+current read must pass normal freshness, session, gap, identity, finality and
+source-authority validation before resume proceeds. `OPEN_SEQUENCE_GAP`, every
+non-stale error, and a stale current read still fail closed. New regressions
+prove both the fresh-readback success and stale-readback rejection. The
+isolated source-mounted Docker matrix ran `64/64` in `5.985s` as UID/GID
+`10001`, read-only, capability-dropped and network-disabled. No runtime role,
+provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
+order path changed. Next is one immutable disposable client build, a
+no-source-mount regression, then one fresh 299-product/four-identity/300-second
+C2 receipt; readers remain on `c13c...5386`.
+
+**C2 stale-first-frame immutable-client gate (`PASS / ONE REAL RECEIPT
+AUTHORIZED`, 2026-09-03).** Commit `a497ab0` is sealed as
+`qdl-v2-python:2.0.5-a497ab0@sha256:08f43a67393cea317fff3765cc8b369d49e1378cb25f0644c2243f35f3ed5c0c`.
+Its OCI revision/version labels exactly match `a497ab0` / `2.0.5-a497ab0`, and
+the image runs as `qdl:qdl`. The image-contained, no-source-mount regression
+ran with a read-only root, UID/GID `10001`, all capabilities dropped,
+`no-new-privileges`, an ephemeral `/tmp` and `--network none`; it passed
+**193/193** with one explicit skip in **41.359s**. Coverage includes the
+physical-tail durable reader/transport/bar-edge paths, C2 receipt and cursor
+reconnect, governed identity/fallback policy and release-observation contracts.
+No V2 reader role is recreated for this client-only change. The sole runtime
+operation now permitted is one fresh, disposable, four-identity, 299-product,
+true-300-second C2 no-order receipt. It may read the existing V2 query/stream
+and governed V1 fallback only, has no provider, Gateway, Risk, order, signal,
+sizing, Redis/Kafka/SQLite or Docker authority, and is removed after terminal
+result. The rolled readers stay on `c13c...5386`; V1 is unchanged.
+
+**C2 consumer-quota diagnosis (`FAIL-CLOSED / SOURCE-ONLY ACCEPTANCE
+SCHEDULING REPAIR`, 2026-09-03).** The single authorized `a497ab0` receipt
+started with the declared four identities and 299 products, read only the
+existing V2 query/stream plane and local governed V1 fallback, then stopped at
+`alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR 4h`.
+The historical signed cursor correctly expired into the SDK's required fresh
+snapshot path; that strict V2 request received `RATE_LIMITED: consumer request
+quota is exhausted`. The disposable client exited `1`, was not OOM-killed,
+recorded no receipt and made no provider, Gateway, Risk, order, signal, sizing
+or durable-state mutation. Its launcher dropped to UID/GID `10001` with
+`NoNewPrivs=1` and every effective/permitted/inheritable/ambient capability
+zero before the read loop.
+
+This is a C2 harness scheduling defect, not a source-data, provider,
+freshness, reader, cursor, session or fallback defect. The harness starts all
+durable products concurrently while each alpha identity is correctly bounded
+to `180` REST requests/minute. A normal product proof performs multiple
+query/warmup/read-back calls, so the full 125-route alpha scope can exceed its
+own declared minute budget before C2 reaches its real 300-second observation.
+The repair remains source-only and preserves the whole 299-product proof:
+
+1. derive one shared request budget from each sealed consumer manifest and
+   pace every C2 REST request across both query replicas below that consumer's
+   real limit, after a fresh wall-clock quota window;
+2. keep opening proof for every durable route: primary/secondary typed reads,
+   signed cursor/reconnect, strict current read-back and the governed fallback
+   drill;
+3. replace only the closing duplicate stream sweep with a full, per-consumer
+   V2 `warmup:batch` revalidation on both replicas, preserving strict identity,
+   finality, quality, cardinality and replica checks for every declared route;
+4. record opening, observed-300-second and closing durations separately. The
+   acceptance is bounded by an explicit opening deadline; the 300-second
+   observation begins only after the full opening proof, rather than treating
+   an incomplete opening timeout as evidence.
+
+The repair must fail closed for any real `RATE_LIMITED`, identity, quality,
+gap, finality, cursor, reconnect or cardinality failure. It must not raise
+runtime quotas, relax freshness/SLA, reduce the 299-product scope, generate
+data, alter any deployed role, or use V1 as a V2 substitute. Regression gates
+cover per-identity quota pacing, clean-window alignment, opening cardinality,
+full batch closing cardinality/replica validation, and the existing
+stale-first/cursor/fallback failures. After a commit and immutable disposable
+client image matrix, exactly one new C2 receipt is allowed; the failed client
+is then removed as scoped test cleanup while its compact failure digest remains
+traceable in evidence.
+
+**C2 quota-aware opening and batch-closing source gate (`PASS / DISPOSABLE
+CLIENT IMAGE REQUIRED`, 2026-09-03).** The acceptance harness now loads the
+real per-identity request-per-minute quota from the sealed release manifest and
+wraps only its disposable REST query transport in a shared identity pacer.
+Both query replicas, warmups, status retries and reference batches therefore
+share the same bounded allowance; V1 fallback remains the separately governed
+local read drill. C2 first aligns to a fresh Redis minute window, uses at most
+75% of the declared quota, and records the exact request count and pacing wait
+per identity. Production quota values, SDK construction, query/stream service
+runtime and all public contracts are unchanged.
+
+The opening continues to prove every non-on-demand product individually:
+primary/secondary typed read, signed cursor/reconnect, strict current read-back
+and declared V1 fallback-return. After that opening, the actual 300-second
+observation begins. The closing boundary now revalidates the complete scope
+through typed V2 `warmup:batch` calls against both replicas, bounded by each
+manifest's `max_batch_items`; it validates every item identity, source,
+quality, gap/finality, history/latest view, cardinality and replica alignment.
+It does not open a second copy of every stream. Opening, observation and
+closing each have explicit bounded clocks (`900s`, `300s`, `120s` defaults)
+and evidence fields; any quota, partial batch, stale/gap, cursor, reconnect or
+identity error remains terminal.
+
+The reusable Phase-10.3 receipt primitive accepts an optional acceptance-only
+client factory, preserving its default SDK client exactly. The C2 harness uses
+that seam solely to pace itself; normal consumer and service code cannot enter
+this path. Focused no-network/read-only UID-`10001` regression passed **64/64
+in 10.787s**, including deterministic minute alignment/pacing, both-replica
+batch closing for every test product and missing-cardinality rejection. The
+expanded reader/transport/bar-edge/C2 matrix contains **196** cases and exited
+successfully under the same offline, read-only container controls. `git diff
+--check` passed. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, Gateway/Risk or order path changed. Next: commit this coherent
+source slice, build one immutable disposable acceptance-client image, repeat
+the no-source-mount matrix, then run exactly one quota-aware 299-product C2
+receipt. The failed `a497ab0` client container is test-only and will be removed
+after its failure digest is retained in bounded evidence.
+
+**C2 quota-aware receipt (`FAIL-CLOSED / QUIET FINAL-BAR ACCEPTANCE REPAIR`,
+2026-09-03).** Immutable client
+`qdl-v2-python:2.0.6-8620303@sha256:a7a7cf86422955158c1e17002fece142814ce5fb6ac1c3a15b1359cf7d8778e2`
+was built from source commit `8620303`, with matching OCI revision/version
+labels. Its focused no-source-mount C2 image suite passed `15/15`; the client
+was then launched once as the declared read-only, non-root-after-bootstrap
+four-identity receipt. It ran for roughly four minutes, did not OOM, emitted no
+receipt, made no provider/Gateway/Risk/order/signal/sizing/durable-state
+mutation, and stopped at `alpha.binance.paper.stable / DOGE-USDT / BAR 4h`.
+The bounded stderr digest is
+`9167bb583160b245a02417bbfb5f36a4e29f960d226938a651c0a309ea112c90`.
+
+The failure is no longer `RATE_LIMITED`: the manifest pacing held. It is a
+second C2-only semantic mismatch. A slow historical alpha BAR can have a valid
+signed warmup cursor and receive only `REPLAYING`/`LIVE` controls during a
+300-second window because no new closed `4h` bar exists. The existing harness
+unconditionally calls `_next_data()` and rejects controls without a market
+event, even though it can already prove a strict current, final, authoritative
+BAR through V2. This must not be solved by generating a bar, changing a venue
+SLA, weakening finality, or claiming a replay event that did not arrive.
+
+The narrow source repair is to admit a *quiet historical alpha BAR handoff*
+only after both sessions prove the signed cursor controls and each immediately
+passes a strict current V2 warmup/snapshot under the original requirement. Its
+evidence is explicitly non-price/no-event; execution-grade BARs and every
+non-BAR product retain their current event/replay behavior. Missing controls,
+gap, stale/finality, identity/source, cursor or strict-current failure remains
+terminal. Regression covers quiet-final-BAR success, missing controls and
+stale-current rejection, alongside ordinary event replay. Then one final
+immutable client rebuild and one fresh 299-product C2 receipt are allowed; no
+reader/runtime role is recreated.
+
+**C2 quiet final-BAR source gate (`PASS / FINAL DISPOSABLE RECEIPT REQUIRED`,
+2026-09-03).** The receipt primitive now admits no-event handling only for a
+durable, non-execution historical `BAR`: both replica sessions must emit
+`REPLAYING` and `LIVE`, and each must immediately pass a strict current,
+final, original-requirement V2 snapshot. The resulting handoff is recorded as
+`CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR`, explicitly not as a durable event
+replay or executable price. `TRADE`, `QUOTE`, `BOOK_*`, execution BAR and every
+ordinary BAR event path are unchanged. The closed cases are: missing signed
+controls before any current read, and a failed/stale current read after valid
+controls. No timeout, freshness, finality, source, identity, gap or policy was
+relaxed.
+
+Evidence from the source-mounted disposable image
+`qdl-v2-python:2.0.6-8620303`: historical-BAR focused suite passed **8/8** in
+`0.068s`; receipt harness plus identity-pacing suite passed **56/56** in
+`1.635s`; the full C2-relevant acceptance set
+(`test_phase103_consumer_acceptance`, receipt harness, handoff, identity and
+five-liquid handoff) passed **96/96** in `6.390s`. All were run network-less,
+read-only, UID/GID `10001`, with dropped Linux capabilities and a tmpfs `/tmp`.
+`git diff --check` and syntax compilation passed. The image does not include
+`ruff`, so no lint result is claimed; repository CI remains the formatting/lint
+authority. No runtime role, provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha, Gateway/Risk, order path or runtime identity changed. Next exact action:
+commit this source slice, build one immutable final C2 client from it, run one
+fresh quota-aware C2 receipt, then remove the two stopped disposable C2
+containers and any non-retained client image after compact evidence is retained.
+
+**C2 stream-handoff closure (`IN PROGRESS / NARROW SOURCE FIX`, 2026-09-03).**
+The final disposable C2 client reached the real V2 read plane and failed
+closed at `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT /
+BAR 4h`: the quiet historical-bar path observed repeated `SNAPSHOT_REPLACED`
+controls rather than the required signed `REPLAYING -> LIVE` sequence. This is
+not a data freshness or provider failure. Read-only inspection proves
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive` all
+open the same durable `canonical-cache.sqlite3` generation
+`99704a2e9486486e8822156550d1d2e3`, use the same cursor key id and config
+revision, and have no restart or OOM event. The active stream target is
+currently fenced by the scoped lease; the SDK correctly moves to the peer, but
+the peer rejects the query-issued handoff cursor and the SDK keeps replacing
+the snapshot. That is a real REST-query-to-gRPC-stream contract failure and
+must remain fail-closed.
+
+Approved scope is deliberately narrow: trace the exact cursor rejection with
+a disposable, read-only diagnostic; correct only the shared SDK/stream handoff
+or its cursor issuance if the contract is wrong; add deterministic regressions
+for active-to-peer failover, fresh query cursor acceptance, expired cursor
+replacement, and no cross-instrument/consumer mixing. No timeout/SLA
+relaxation, synthetic event, provider change, runtime role recreate, Kafka,
+Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or order-path mutation
+is allowed. Exit requires an immutable client image without a source mount,
+the relevant offline matrix, and one fresh C2 no-order receipt. If the real
+diagnostic instead proves a live runtime misconfiguration, source changes stop
+and a separate exact runtime packet is required.
+
+**C2 cursor rejection root cause (`CONFIRMED / HARNESS-ONLY REPAIR`,
+2026-09-03).** The disposable mTLS/JWT diagnostic retained only cursor
+metadata and proved the issued token is correctly signed, consumer-scoped,
+generation-bound and unexpired. The DOGE 4h durable partition currently spans
+logical offsets `1..6572`; the artificial one-prior-bar C2 seed carried
+watermark `1000`, so the active peer correctly returned `GATEWAY_FENCED` and
+the lease-owning peer correctly returned `CURSOR_EXPIRED: replay backlog
+exceeds the bounded gateway window`. Repeating the deliberately historical
+query merely issued another valid-but-too-old cursor, producing the observed
+`SNAPSHOT_REPLACED` loop. The retained diagnostic is
+`c2-quiet-final-bar-20260903T005238Z/diagnostic-cursor-handoff-20260903T013035Z/diagnostic.json`
+with SHA-256 `3b29bdcab87c8d21dad9dfc1bcaab4a3ef6213a701bb1f59624a39693933539f`;
+it made zero provider connections and zero order actions.
+
+The correction is C2 harness-only: a non-execution durable BAR will use the
+normal, current governed warmup boundary for signed `REPLAYING -> LIVE` and
+cross-replica reopen. A quiet BAR still needs strict final/current read-back on
+both replicas and is recorded as no-event handoff evidence. C2 will no longer
+manufacture a stale time-range cursor merely to force replay beyond the
+server's deliberate bound. This preserves the real SDK behavior for an
+expired consumer cursor: it remains a mandatory fresh snapshot rebuild. Tests
+must prove current-boundary controls, quiet final BAR read-back, execution BAR
+exclusion, and that an actual expired cursor still fails/rebuilds rather than
+being silently accepted.
+
+**C2 current-boundary source gate (`PASS / IMMUTABLE CLIENT BUILD REQUIRED`,
+2026-09-03).** The acceptance harness now uses the real current governed BAR
+warmup as its stream handoff boundary. Non-execution durable BARs may be quiet,
+but only after the current signed cursor emits `REPLAYING` and `LIVE`, and only
+after strict current/final V2 read-back on both query replicas. Execution BAR,
+quote/trade/book behavior, `CURSOR_EXPIRED` semantics, replay limit and every
+runtime service stay unchanged. A source-mounted, read-only mTLS/JWT probe
+against the live V2 plane confirmed DOGE 4h current cursor watermark `6572`
+through active-to-peer failover on both query replicas, yielding
+`REPLAYING`, `LIVE`, then the expected quiet timeout; it made zero provider
+connections and zero order actions. Compact evidence is
+`diagnostic-current-handoff-controls-20260903T013858Z/diagnostic.json` under
+the same C2 evidence root.
+
+The focused receipt harness passed **41/41**. The expanded offline,
+network-disabled, read-only UID/GID-`10001`, capability-dropped matrix passed
+**130/130** in `20.530s`: Phase-10.3 acceptance/receipt, Phase-10.5 consumer,
+fallback, handoff and identity paths, shared stream SDK, and workload TLS
+security. The gRPC test-server `GOAWAY` diagnostic is expected teardown output;
+the test exit was successful. `git diff --check` passed. No V2 runtime role,
+provider, Kafka, Redis, SQLite, V1, Trading System, alpha, Gateway/Risk or
+order path changed. Next: commit this coherent source slice, build one
+immutable disposable C2 client image, run the same no-source-mount matrix, and
+run exactly one fresh C2 299-product/four-identity/300-second no-order receipt.
+
+**C2 current-boundary immutable client (`PASS / ONE REAL RECEIPT IN
+PROGRESS`, 2026-09-03).** Commit `3d73891` is sealed as
+`qdl-v2-python:2.0.8-3d73891@sha256:674c29164035d8b22a83ce5f10153d47b334ae50293adfb6491e82f62a2aea14`.
+OCI `revision` and `version` labels are exactly `3d73891` and
+`2.0.8-3d73891`. Its image-contained, no-source-mount regression ran
+network-disabled, read-only as UID/GID `10001` with all capabilities dropped,
+`no-new-privileges` and a tmpfs `/tmp`; it passed **130/130** in `21.174s`.
+Coverage is the C2 consumer/receipt/fallback/handoff/identity suite, shared
+stream SDK and workload TLS transport security. This disposable client has no
+Docker socket, provider, Gateway/Risk, order, signal, sizing, Kafka, Redis or
+SQLite authority.
+
+The approved next action is exactly one fresh four-identity, 299-product,
+300-second C2 receipt using this image and a new evidence namespace. It may
+read V2 query/stream and governed V1 fallback only. V2 reader/runtime roles,
+V1, Kafka, Redis, SQLite, Trading System, alpha and the order path remain
+unchanged. On terminal result, retain only compact hashes/metrics and remove
+the disposable C2 container; test-only images are inventoried for exact
+post-closure cleanup.
+
+**C2 current-boundary receipt (`FAIL-CLOSED / RAW READER DIAGNOSIS`,
+2026-09-03).** The one authorized `3d73891` receipt exited `1` after roughly
+13 minutes; it was not OOM-killed (`137.4 MiB / 512 MiB` while active), and
+its post-bootstrap client was UID `10001`, `NoNewPrivs=1`, with effective,
+permitted, inheritable and ambient capabilities all zero. It made no receipt,
+provider, Gateway/Risk, order, signal, sizing or durable-state mutation. The
+first terminal route was `alpha.binance.paper.stable /
+BINANCE.USDM.PERPETUAL.BTC-USDT / BAR 1d`: C2 asks the intentionally bounded
+but exact public warmup horizon of `700` rows and the SDK rejected the V2
+response because its returned BAR count differed from that horizon. The
+failure digest is `36a40d4c1ff413940e53eb48985cc27d4136eab4c3d3018becc6297a32dda51a`
+under `releases/2.0.8-3d73891/c2-current-boundary-20260903T014559Z`.
+
+This is a valid fail-closed data-contract result, not a reason to reduce the
+requested horizon or accept a partial response. Next is one scoped read-only
+mTLS/JWT diagnostic against both V2 query replicas that records only count,
+coverage, finality/open-time bounds, quality and hashed cursor metadata for
+this exact governed requirement. No runtime role is recreated until that
+evidence distinguishes missing materialized history from an incorrect reader
+window/provider projection.
+
+**C2 durable-history closure (`IN PROGRESS / SHARED BAR-EDGE REPAIR`,
+2026-09-03).** The two-replica raw V2 diagnostic now confirms the reader is
+correctly fail-closed: `alpha.binance.paper.stable / BTC-USDT / BAR 1d`
+requested `700` governed rows and both replicas returned `409 PARTIAL_RESULT`
+with no accepted partial payload. The compact read-only evidence is
+`releases/2.0.8-3d73891/btc-1d-raw-reader-20260903T020411Z/diagnostic.json`
+with SHA-256 `ec2ebd9da90078def19e134d643fc5887966b646a03250f5a8fb12c12760b146`.
+Direct durable-cache inspection shows only `95` Binance BTC `1d` BAR rows,
+whereas the interval-aware truthful retention ceiling and C2 requirement are
+both at least `700`. This is not a reader fallback defect and it must not be
+papered over by lowering the warmup, changing `SNAPSHOT_AND_REPLAY` to a
+pass-through source policy, weakening finality, synthesizing rows, or silently
+returning a partial response.
+
+The shared defect is that the stable multi-venue BAR edge treats the presence
+of a persisted `last_open_ms` checkpoint as proof that durable history remains
+complete. A cache generation can retain a current checkpoint while historical
+rows were never materialized or were compacted/rebuilt. The repair scope is
+one provider-neutral edge validation: on bootstrap, verify bounded durable
+history coverage for every enabled Binance/OKX BAR binding against the
+configured interval-aware warmup requirement; for a deficient binding, fetch
+only the real authenticated provider window, validate calendar/finality and
+publish only still-missing rows through the existing raw Kafka -> Rust
+canonical -> projector path. It must not delete/flush cache or Redis, reset
+Kafka offsets/topology, alter V1, touch Trading System/alpha/order paths, or
+accept a partial reader result. Existing targeted-repair primitives remain the
+idempotent publisher; no symbol-specific service, image, or worker is added.
+
+Before the code/runtime slice, exact disposable C2 diagnostic containers and
+unreferenced Data Layer test images/build artifacts are inventoried and removed
+under the approved cleanup scope to recover the workspace required for SQLite
+read-only preflight. Active V2 roles, V1 fallback, Kafka, Redis, projectors,
+volumes, runtime/TLS state, and the current C2 image until its closure result
+are retained. Pre-clean filesystem state is `/dev/root 290G, used 276G,
+available 15G (96%)`; post-clean measurements and exact retention/removal set
+are recorded below before any durable repair is attempted.
+
+**C2 durable-history cleanup and source gate (`PASS / ONE SHARED RUNTIME ROLE
+PENDING`, 2026-09-03).** Exact cleanup recovered workspace without touching a
+running role, V1, Kafka, Redis, volume, runtime/TLS state, SQLite file or
+rollback image: removed six terminal disposable C2/diagnostic containers and
+the unreferenced client images `2.0.4-7cd0265`, `2.0.5-a497ab0`,
+`2.0.6-8620303`, `2.0.7-5ba4ff1`, plus three unreferenced Rust builder images
+(`authority-log-test`, `ready-refresh-test`, `depthupdate-test`). The retained
+runtime set is V1 `qdl-v1-fallback:v1.2.4-2b0dcf7`, active query/stream
+`c13c...`, edge `2ab6...`, Rust core `c63d...`, projectors `b335...`, current
+ingestors, Kafka/Redis and the current disposable client
+`qdl-v2-python:2.0.8-3d73891`. Disk changed from `276G used / 15G available`
+to `270G used / 21G available`; Docker image footprint changed from `101.1G`
+to `94.13G`. No service restarted during cleanup.
+
+The corrected all-binding read-only preflight uses the actual catalog
+`source_id` partition key, not a guessed binding name: `139/140` BAR bindings
+meet the current interval-aware `1000`-row warmup target. The sole deficit is
+`binance-usdm-btcusdt-bar-1d`, `95/1000`, short `905`; this verifies the repair
+is bounded and prevents a broad provider replay. The shared edge now validates
+the exact durable calendar window behind every restored checkpoint. It removes
+only a deficient binding watermark so the existing bootstrap publishes only
+provider-confirmed missing final rows through normal raw Kafka/Rust/projector
+flow; all healthy bindings retain their checkpoint and are not re-fetched.
+
+Source gates passed with `qdl-v2-python:2.0.8-3d73891`, source mounted
+read-only, network disabled, UID/GID `10001`, capability drop, no-new-privs
+and tmpfs `/tmp`: full BAR bootstrap/recovery/cache-generation suite
+`37/37` in `12.072s`, then C2 consumer/receipt/fallback/handoff/identity,
+shared SDK and workload-TLS matrix `130/130` in `21.123s`. The expected gRPC
+GOAWAY was teardown-only; both test exits were successful. Next is to seal one
+immutable Python image from this commit, run its no-source-mount regression,
+then rolling-recreate **only** `binance_bar_edge`. Its startup may make the
+normal, provider-authentic final-BAR writes for this one verified BTC `1d`
+deficit. Rollback is the current `2ab6...` image/runtime mount; no cache
+deletion, offset reset, topology change or consumer/order mutation is allowed.
+
+**C2 checkpoint-validation startup bound (`IN PROGRESS / SOURCE-ONLY
+PERFORMANCE CORRECTION`, 2026-09-03).** The first one-role start on the new
+image exposed an implementation cost without weakening any correctness gate:
+checkpoint validation called the physical-tail reader for each of 140 healthy
+bindings and eagerly decoded all `10,064` retained payloads per partition even
+when the bounded expected warmup set was already complete. The role remained
+fail-closed/running with no OOM, provider publish, Kafka or cache mutation, but
+startup is not acceptable at that complexity. The narrow correction retains the
+same physical-tail query, identity/finality checks and missing-open semantics;
+it iterates the SQLite cursor in bounded batches and stops as soon as every
+expected open has been proven. A deficient binding still scans its bounded tail
+and remains marked for normal authenticated repair. Required regression proves
+early completion, late-tail visibility, mismatch fail-closed behavior and the
+existing 140-binding checkpoint contracts. Then seal one replacement shared
+image and recreate only the same edge again with the already-rendered exact
+runtime mount. No provider/service/data-plane policy changes are permitted.
+
+**C2 durable-history one-role runtime packet (`APPROVED / READY`, 2026-09-03).**
+The exact replacement coordinate is
+`qdl-v2-python:2.0.9-ce530ef@sha256:344ba6abce45e39c0dbe9834df36d06154a18da975e5bb417d725f18cdf4d829`.
+The packet renders the same Compose project `qdl_v2_stable_candidate` with the
+same env file, `docker-compose.v2-stable.yml`, current C2 override and sealed
+BAR projection override, plus a disposable image-only override for
+`binance_bar_edge`. It recreates that role with `--no-deps --force-recreate`;
+its three existing mounts stay exactly `/runtime:ro` from
+`session-liveness-43cdbe3-20260829T162719Z/runtime`, the existing
+`stable_state` volume read-write and existing `stable_tls` volume read-only.
+The current rollback coordinate is the explicitly sealed
+`qdl-v2-python@sha256:2ab6a946e5ca59e234063fb661a7a7738795dab124e371b5579db31febfd42e0`
+with the same compose inputs and mounts. Excluded: every other role, V1,
+Kafka topology/offsets, Redis, SQLite deletion/reset, Trading System, alpha
+and order path. Post-roll requirements are no restart/OOM, exactly one
+provider-authentic BTC `1d` history repair bounded by the observed 905-row
+deficit, projector convergence, all-binding preflight and a fresh C2 receipt.
+
+**C2 durable-history first runtime result (`CONVERGED / EXACT GAP AUDIT
+EXPANDED`, 2026-09-03).** The first image-only recreate failed closed before
+provider access because the inherited Compose env file mounted an older
+`phase103` runtime directory while the running edge's inspected mount was the
+sealed `session-liveness-43cdbe3-20260829T162719Z/runtime` directory. No row,
+checkpoint or external action was emitted by that failed attempt. The packet
+was corrected by rendering and preserving the inspected mount exactly, then
+recreating only `binance_bar_edge` again on `2.0.9-ce530ef`; it is running,
+`restart=0`, `OOMKilled=false`.
+
+The exact open-time validation correctly proved that count-only preflight was
+insufficient: it found 38 affected bindings (not merely BTC `1d`) with 22,351
+missing authentic opens in their current windows. The edge fetched only their
+provider-confirmed final windows and published `22,355` normal final-BAR
+events through raw Kafka -> Rust canonical -> existing projectors. It included
+BTC `1d` (`999` rows at the current provider window, one already durable) and
+hidden gaps across Binance/OKX short/mid intervals; no record was fabricated,
+deleted, or written directly to SQLite, and no V1/Trading System/alpha/order
+route was touched. The updated checkpoint reached all 140 binding watermarks
+and the role resumed normal close ACKs for both venues. The small difference
+between detected missing and ACK totals is expected overlap with concurrent
+current final-BAR ACKs; post-projection exact coverage preflight remains
+mandatory before C2.
+
+The source-only startup-bound correction is now implemented: physical-tail
+coverage keeps the same bounded `10,064` SQL window and all identity/finality
+checks but consumes cursor batches of `256` and returns as soon as the expected
+opens are proven. The regression injects an unreadable payload after a complete
+expected set, proving it is never decoded; missing/mismatched tails remain
+fail-closed. Offline source-mounted suite passed `167/167` in `32.666s`
+(BAR history/cache recovery plus C2/SDK/fallback/handoff/identity/TLS), with
+syntax and diff checks passing. Next is a single coherent commit, one new
+immutable shared image, its no-source-mount regression, then one final
+one-role recreate against the preserved sealed runtime mount. It must observe
+zero historical repair requirement after projector convergence; any new normal
+closed BAR at a real boundary remains allowed.
+
+**C2 checkpoint-history closure packet (`IN PROGRESS / FINAL NO-ORDER
+RECEIPT NEXT`, 2026-09-03).** Commit `82b4830`
+(`perf(bar-edge): bound checkpoint coverage reads`) preserves the exact
+provider-neutral durability contract and improves only healthy-start cost: its
+physical SQLite tail cursor reads at most `256` rows at a time and exits once
+the requested calendar opens are proven. It does not lower the `10,064` tail,
+relax identity/finality checks, alter a deficient binding's repair path, or
+introduce a cache shortcut. The immutable image is
+`qdl-v2-python:2.0.10-82b4830@sha256:74617d3ffc79dc539d1d25dfd025546728d4ceeb5c93ff57c29e919a4d6fef74`.
+The image-contained, no-source-mount, network-disabled, read-only UID/GID
+`10001`, capability-dropped matrix passed `167/167` in `34.350s`.
+
+The approved one-role rollout rendered only `binance_bar_edge` with that
+image, the existing `stable_state` and read-only `stable_tls` volumes, and the
+inspected sealed runtime directory
+`session-liveness-43cdbe3-20260829T162719Z/runtime`. All other V2 roles, V1,
+Kafka topology/offsets, Redis, SQLite deletion/reset, Trading System, alpha
+and order paths remain excluded. The role is `running`, `restart=0`,
+`OOMKilled=false`. Exact calendar-window validation correctly found 18 newly
+missing real final BARs across 14 Binance/OKX `5m/15m/30m` bindings; they were
+published only through the normal provider -> raw Kafka -> Rust canonical ->
+projector flow and bootstrap completed `bindings=140 rows=18`. This reflects
+normal window advance after the earlier checkpoint, not a count-only bypass or
+synthetic write.
+
+The sole next action is one fresh Phase-10.5 C2 four-identity, 299-product,
+true-300-second no-order receipt from the immutable `2.0.10-82b4830` image.
+It uses only V2 query/stream and its explicitly governed local V1 fallback
+drill; it receives no Docker socket, provider credential, Gateway/Risk/order,
+signal, sizing, Kafka, Redis or SQLite authority. The disposable client starts
+as root only to copy declared mTLS/JWT files into tmpfs, then drops to UID/GID
+`10001` with `NoNewPrivs=1` and all capabilities cleared. Its fresh evidence
+namespace retains only bounded receipt/security/error hashes. A nonzero result
+remains fail-closed; after the terminal result, remove only the named
+disposable client and obsolete C2 test images/temporary override once they are
+unreferenced. No retry may weaken history, freshness, gap, identity, cursor or
+fallback policy.
+
+**C2 durable-history receipt result (`FAIL-CLOSED / READ-ONLY L2 SESSION
+DIAGNOSIS`, 2026-09-03).** The one disposable client ran from the immutable
+`2.0.10-82b4830` image, was removed automatically on exit, and retained only
+the bounded stderr hash
+`1953a7cbd83f77613e47acdcb2ee09c50a6e70e89f2637ff2bf64020ba3837d5` in
+`releases/2.0.10-82b4830/c2-durable-history-20260903T024207Z`. It started as
+root solely for tmpfs identity copy, then recorded UID `10001`, zero effective,
+permitted, inherited and ambient capabilities, and `NoNewPrivs=1`. It made no
+provider, Gateway/Risk, order, signal, sizing, Kafka, Redis or SQLite action.
+The terminal requirement is
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.BTC-USDT / BOOK_DELTA`:
+the strict warmup returned typed freshness rejection and its bounded retry
+correctly refused to accept a session lacking live-provider evidence. This is
+not a BAR repair regression and is not eligible for an SLA relaxation,
+synthetic BOOK_DELTA, fallback substitution or retry-by-luck.
+
+Next scope is read-only only: query typed status/view lineage for the exact
+OKX BTC `BOOK_DELTA` identity from both V2 replicas and inspect the shared
+Rust/book projection health. If it is a genuine provider disconnect, keep C2
+blocked and record the operational condition; if both replicas show a
+healthy provider session but an incorrect shared projection/liveness state,
+repair only that shared Rust/provider-lineage path with regression evidence,
+then rebuild the immutable client and run one new C2 receipt. V1, Kafka,
+Redis, SQLite deletion/reset, Trading System, alpha and the order path remain
+out of scope.
+
+**C2 L2 typed-status diagnosis (`PASS / HARNESS-ONLY TRANSIENT-RECOVERY
+REPAIR`, 2026-09-03).** A fresh bounded, read-only probe used the same Trading
+System paper identity against both V2 replicas for the exact failed identity.
+Both return `state=LIVE`, `complete=true`, `gap_open=false`,
+`execution_eligible=true`, `event_recency_state=LIVE`,
+`provider_session_state=LIVE`, session liveness `517ms`/`559ms`, and a strict
+snapshot succeeds. The probe had no provider/order/durable-state authority;
+its output is `releases/2.0.10-82b4830/l2-status-20260903T025900Z/status.json`.
+This rules out a persistent OKX admission, symbol binding, sequence, gap,
+Rust projection or replica-cross-mix defect. The C2 terminal point instead
+caught a genuine short-lived provider/session transition and the current
+harness treated the first non-LIVE status as permanently terminal.
+
+The corrective scope is harness-only and deliberately does not change serving
+freshness, reader behavior or retryable data semantics. During a C2 strict
+`QUOTE`/`BOOK_DELTA` retry, an identity-matched, complete and gap-free
+transitional session (`UNKNOWN`, `STALE` or `DISCONNECTED`) may be re-polled
+only until the existing strict deadline; no transitional snapshot is accepted,
+and final admission still requires an independently read `LIVE` session within
+the declared liveness SLA plus a new strict snapshot. Gapped, incomplete,
+identity/policy mismatch, bad status response and deadline expiry remain
+terminal. Regression must cover recovery to `LIVE`, persistent disconnect,
+gap rejection and no cross-symbol state reuse. The following immutable-client
+and one fresh C2 receipt remain the only permitted runtime actions.
+
+**C2 transient-session source repair (`PASS / IMMUTABLE CLIENT RECEIPT NEXT`,
+2026-09-03).** The repair is confined to
+`scripts/phase103_consumer_receipt_acceptance.py`: strict C2 retry for only
+`QUOTE` and `BOOK_DELTA` now re-polls an exact identity-matched, complete,
+gap-free, non-executable reconnect state (`UNKNOWN`, `STALE` or
+`DISCONNECTED`) on a bounded `0.5s` cadence inside the already-declared
+deadline. It neither changes SDK/query/Rust freshness rules nor admits that
+transitional response. The next snapshot must independently pass the existing
+fresh/live/session-SLA/complete/gap-free typed contract. `BOOK_SNAPSHOT`,
+`TRADE`, policy mismatch, cross-symbol status, open gap and persistent
+disconnect retain fail-closed behavior.
+
+The source-only, network-disabled, read-only UID/GID `10001` regression
+evidence is: `test_phase103_consumer_receipt_harness.py` `44/44` in `9.618s`,
+`test_phase105_consumer_acceptance.py` `7/7` in `8.844s`,
+`test_phase105_fallback_acceptance.py` `7/7` in `6.405s`, and
+`test_phase115c_five_liquid_handoff.py` `8/8` in `0.168s`. The new harness
+cases prove recover-to-fresh for quote and book delta, persistent disconnect
+deadline failure, open-gap rejection and no cross-symbol status reuse. No
+runtime role, provider, Kafka, Redis, SQLite, V1, Trading System, alpha or
+order path was changed. Next permitted action: commit this source slice, build
+one immutable disposable C2 client image and run exactly one fresh C2 receipt.
+
+**C2 transient-session immutable receipt (`FAIL-CLOSED / BAR GAP
+DIAGNOSIS`, 2026-09-03).** Commit `10bb4c6` was sealed as the one disposable
+client image `qdl-v2-python:2.0.11-10bb4c6@sha256:d3254eaddf769547fc017f63e066ddf6db9f70404f40a4b656cd329647125227`;
+OCI revision/version are exact and the immutable, no-source-mount,
+network-disabled C2 matrix passed `66/66` in `17.076s`. The one authorized
+four-identity no-order client then ran about 14 minutes at roughly `116-134MiB`
+of its `512MiB` bound, self-removed, and produced no order, signal, sizing or
+durable-store action. It did not reach the observation window: the first
+terminal condition is `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.
+BTC-USDT / BAR 1h`, whose strict warmup correctly rejected the typed V2
+response with `required feed has an unresolved sequence gap`. The compact
+stderr is `3,948` bytes and is retained only in
+`releases/2.0.11-10bb4c6/c2-transient-session-20260903T031000Z`.
+
+This proves the transient-session retry did not weaken read admission. Next
+scope is read-only two-replica status/warmup lineage for that exact Binance
+`BTC 1h BAR` identity, then targeted shared bar-edge/Rust/projector repair only
+if a real materialized gap is confirmed. No retry C2 is permitted until that
+truthful diagnosis and its regression exit are recorded; V1, Kafka topology or
+offsets, Redis, SQLite reset/deletion, Trading System, alpha and order paths
+remain excluded.
+
+**C2 BTC 1h BAR lineage (`CONFIRMED / SHARED CACHE-GENERATION REPAIR`,
+2026-09-03).** Read-only inspection of the exact canonical partition
+`a953e16e-7138-5562-b5e8-c337a44d0b65/bar/binance-usdm-btcusdt-bar-1h-primary-v2`
+proved a real 24-open hourly hole, not a C2, query or SDK false positive:
+the bounded durable tail had `703` distinct FINAL opens, no duplicate opens,
+and `24` missing expected hourly opens. The typed latest status can still be
+`LIVE/complete/gap_open=false` because it describes the current provider
+session, whereas governed warmup correctly refuses the historical hole. No
+synthetic event, fallback substitution, SLA relaxation or retry was used.
+
+Root cause is a shared lifecycle gap: after a canonical SQLite generation
+rebuild, a continuously running BAR edge can retain its old checkpoint
+watermarks because ordinary recurring final-BAR polling does not currently
+compare the cache generation before deciding that no binding is due. The
+narrow source repair is provider-neutral and applies to every Binance/OKX
+BAR binding: detect a changed canonical-cache identity before the next
+bootstrap/poll, clear only the edge's in-memory watermark/retry state, issue
+a new source connection generation, persist the rebased V4 checkpoint, then
+run the existing bounded provider-authentic bootstrap path. It does not alter
+Kafka topology/offsets, Redis, SQLite deletion, query policy, Rust domain
+logic, V1, Trading System, alpha or any order path. Tests must prove one
+generation change triggers one truthful re-bootstrap, old watermarks are never
+reused, same-generation polling is a no-op, and missing/invalid cache identity
+continues fail-closed. Only after this source gate, an immutable image and a
+bounded V2-only recovery can repair the observed cache before exactly one new
+C2 receipt.
+
+**C2 live cache-generation source repair (`PASS / RUNTIME RECOVERY NEXT`,
+2026-09-03).** `StableBinanceBarEdge` now performs one inexpensive
+canonical-cache identity read at the beginning of its existing bootstrap path.
+If and only if the identity changed, it clears only that edge's in-memory
+watermark/retry maps, issues a new provider connection generation, atomically
+persists a V4 checkpoint bound to the new cache identity, then enters the
+existing bounded authenticated Binance/OKX history bootstrap. Equal identities
+are a no-op; an unavailable/invalid identity remains fail-closed; a generation
+change during a publish still fails closed and is repaired on the next loop.
+No per-symbol worker, service, provider bypass, synthetic data, reader policy
+or public contract was added.
+
+The source-mounted, network-disabled, read-only UID/GID-`10001`,
+capability-dropped test matrix passed **105/105 in 24.176s**:
+all stable BAR history/recovery/cache-generation tests plus Phase-10.3 receipt,
+Phase-10.5 acceptance/fallback and Phase-11.5-C handoff suites. New regression
+proves a live cache generation change clears old watermarks/retries, increments
+the source generation, persists the rebased checkpoint, reboots every governed
+Binance/OKX BAR binding through the bounded bootstrap path exactly once, and
+does not rebase an unchanged cache; unreadable identity fails before mutation.
+The isolated test had no provider, Kafka, Redis, SQLite, V1, Trading System,
+alpha, Gateway/Risk or order-path authority. Next is a bounded V2-only runtime
+recovery from the retained state/volumes, real-provider repair of the confirmed
+hole, projector convergence verification, then exactly one fresh C2 receipt.
+
+**C2 V2 runtime recovery packet (`APPROVED / PRE-FLIGHT PASS`, 2026-09-03).**
+Read-only Docker inventory found no remaining V2 containers or local V2 images;
+the external cause is not asserted. V1 remains live as
+`data_layer_service@qdl-v1-fallback:v1.2.4-2b0dcf7`; the existing V2 Compose
+volumes (`kafka1_data`, `kafka2_data`, `kafka3_data`, `stable_state`,
+`stable_tls`, `stable_authority_db`) and external `executor_network` remain
+present. No V2 volume, Kafka offset, Redis key, SQLite file, V1 service,
+Trading System, alpha or order path will be reset, deleted or changed.
+
+Recovery uses the canonical existing Compose project
+`qdl_v2_stable_candidate`, the sealed runtime directory
+`session-liveness-43cdbe3-20260829T162719Z/runtime`, and its preserved private
+environment. Only a mode-`0600`, payload-free selector overlay changes the
+Python/Rust image coordinates to the newly built immutable shared images from
+commit `8ba4165`: Python
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`
+and Rust
+`qdl-v2-rust:2.0.12-8ba4165@sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`.
+Both OCI labels are revision `8ba4165`, release `2.0.12-8ba4165`, and run as
+non-root. The Python image-contained, no-source-mount, network-disabled
+matrix passed **105/105 in 24.087s**. Compose render passed and resolves the
+existing 21-role topology only; no per-symbol/container topology is created.
+
+The allowed runtime effect is normal real-provider V2 market-data traffic.
+On bar-edge startup, the existing V4 checkpoint validation must detect the
+confirmed missing BTC 1h window, re-bootstrap only that deficient binding
+through raw Kafka -> Rust canonical -> existing projector/cache, and leave all
+other covered bindings untouched. Rollback is stopping only the restored V2
+project; V1 remains available. Post-start gates are all role health/no OOM,
+projector catch-up, exact coverage `0` for the failed binding, then one and
+only one fresh C2 four-identity no-order receipt.
+
+**C2 V2 recovery first-start correction (`FAIL-CLOSED / APPROVED CONTINUATION`,
+2026-09-03).** The restored base Compose topology started only its existing
+V2 roles and did not touch V1, Trading System, alpha, order state, Kafka
+topology or durable volumes. It correctly stopped rather than accepting an
+ambiguous runtime: `binance_bar_edge` rejected the image-default catalog while
+the retained environment still named an obsolete r14 checkpoint; all three
+projectors rejected a new ephemeral Redis identity while their durable spool
+is non-empty (`ProjectionCacheMismatch`). These are configuration/recovery
+guards, not provider data failures.
+
+Read-only checkpoint inventory corrects the initial r14 hypothesis before any
+write: r14 is a legacy `catalog=7/acquisition=14` state, while the only strict
+match for the current 140 governed BAR bindings is the existing V4 checkpoint
+`phase54-alpha-demand-5edbc8c.json`, paired with sealed
+`runtime/phase54-alpha-demand-5edbc8c/{catalog,acquisition}.yaml`, revisions
+`8/16`, and `QDL_STABLE_BAR_WARMUP_ROWS=1000`. The continuation therefore
+reuses that already sealed projection through one external, mode-`0600`,
+non-secret Compose override for the existing `binance_bar_edge` only. It pins
+those two paths, the matching V4 state path, and the matching warmup value; it
+creates no service, binding, worker, image or public contract. A private
+composed environment will bind that override plus the immutable `8ba4165`
+image selectors. Before apply it must pass Compose render and the existing
+projection-rebuild tool dry-run. The approved apply remains exactly the
+governed V2-only cache rebuild: stop the seven V2 cache users, remove only
+canonical SQLite `sqlite3/-wal/-shm`, FLUSHDB only `stable_redis`, reset only
+`stable-projector-v1` on `md.canonical.v2` to 900 seconds, then start stream
+-> projector -> query. Afterward the edge rehydrates provider-authentic BAR
+history through the existing Kafka/Rust/projector path and C2 remains blocked
+until the exact coverage and fresh receipt gates pass. V1, Trading System,
+alpha, order path, other Redis DBs, Kafka topology/other offsets and all
+volumes remain excluded.
+
+**C2 recovery composed-config preflight (`PASS / APPLY AUTHORIZED`,
+2026-09-03).** The private selector and the one `binance_bar_edge` override
+rendered cleanly with the immutable Python image
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+sealed `phase54-alpha-demand-5edbc8c` catalog/acquisition paths, matching V4
+checkpoint, `warmup_rows=1000`, and the existing session-liveness runtime
+mount. The governed rebuild tool's dry-run names only the approved seven cache
+users, three SQLite files, `stable_redis` DB, `stable-projector-v1` group and
+15-minute canonical replay. Read-only preflight also proves all three
+projectors share that same immutable Python image and that its embedded
+catalog SHA-256 equals the source catalog SHA-256
+`c2fe0fe5326856ffb504fc4c2251ac77de9bc315e743248c543b394d8df18d3b`.
+No runtime mutation occurred in these preflights. The approved rebuild may now
+run exactly once; if it fails, it stops fail-closed without widening scope.
+
+**C2 recovery cache-rebuild result (`FAIL-CLOSED / THROUGHPUT DIAGNOSIS`,
+2026-09-03).** The governed apply executed its exact V2-only scope: stream
+then projector replicas started and the isolated Redis/cache identity guard was
+cleared through the documented SQLite/Redis/group recovery route. All three
+projectors remained running with `OOMKilled=false` and restart count `0`; no
+V1, Trading System, alpha, order path or topology mutation occurred. The
+script deliberately did not start query because its fixed 900-second recovery
+deadline expired before the live canonical group met its `<=250`-record lag
+gate (`last_lag=12,199`, six partitions). This is an honest incomplete
+recovery, not success and not a reason to reset/replay again. The remaining
+work is read-only throughput/lag diagnosis of the already-running projector
+group, then a narrow runbook correction only if the observed rate proves that
+the fixed deadline is invalid for the approved bounded live replay. Query/edge
+and C2 remain blocked; no timeout/SLA/finality policy may be relaxed and no
+second cache rebuild is authorized by this result.
+
+**C2 recovery live-lag gate correction (`APPROVED / SOURCE-ONLY`,
+2026-09-03).** Five read-only Kafka samples after the failed script prove the
+projector group is caught up to a bounded live tail rather than stalled:
+observed totals were `344, 177, 432, 359, 394` across all six canonical
+partitions; no individual partition exceeded `236`. The three projectors
+remained `running`, `OOMKilled=false`, restart `0`, at roughly `84-106 MiB`
+of their `768 MiB` limits. The previous `total <=250` gate is therefore an
+invalid aggregate criterion for a six-partition live stream: it can reject a
+healthy current tail even when every partition remains within the old
+per-partition-sized bound.
+
+The narrow source correction retains the original `250` record bound per
+partition, adds an explicit `500` aggregate cap, parses/records both values,
+and requires three consecutive samples satisfying both before query starts.
+It also raises only the recovery-command default observation budget from 900
+to 1200 seconds so one bounded real replay can complete under the measured
+live ingress; it does not alter V2 endpoint freshness, finality, sequence,
+cursor, fallback, data-retention, consumer or runtime capacity policy. Unit
+tests must reject an over-limit single partition even if the aggregate is low,
+reject an aggregate over 500, preserve the exact six-partition requirement,
+and record both limits in the dry-run plan. Existing active projectors are not
+reset or restarted for this source slice. After the source gate, the already
+recovered runtime may continue from its current offsets: wait for the new
+two-dimensional gate, start only the existing query replicas, verify their
+typed readiness, then recreate the one shared BAR edge with the sealed V4
+projection. C2 remains blocked until all later data-quality evidence passes.
+
+**C2 recovery live-lag source gate (`PASS / RUNTIME RESUME READY`,
+2026-09-03).** `rebuild_v2_stable_projection_cache.py` now records and enforces
+the two-dimensional gate (`total <=500`, each partition `<=250`, all six
+partitions, three consecutive samples) and uses a 1200-second default
+observation budget. The parser rejects repeated partition lines rather than
+silently double-counting them; the dry-run plan now exposes both bounds.
+Focused isolated regression passed **16/16** with the immutable
+`qdl-v2-python:2.0.12-8ba4165` image, source mounted read-only, network
+disabled, UID/GID `10001`, capability-free, and an ephemeral noexec `/tmp`
+tmpfs solely for `tempfile` fixtures. An initial fully read-only attempt
+correctly revealed that those standard-library fixtures need scratch space;
+it did not run the affected cases or mutate source/runtime. No V2 role was
+recreated for this source gate. The current live projector group may now be
+observed under the corrected gate and query may start only after it passes.
+
+**C2 recovery runtime resume and final receipt (`IN PROGRESS / ONE DISPOSABLE
+NO-ORDER CLIENT`, 2026-09-03).** The recovered live projector group subsequently
+met the corrected two-dimensional gate in three read-only samples: totals
+`113`, `401`, and `114`, with maximum individual partition lags `39`, `177`,
+and `41` respectively across all six partitions. Only the existing
+`query_v2_1` and `query_v2_2` roles were started after that proof. Only the
+existing shared `binance_bar_edge` role was then recreated with the sealed V4
+`phase54-alpha-demand-5edbc8c` projection; its real-provider bootstrap
+acknowledged exactly `140` governed Binance USD-M/OKX Swap BAR bindings and
+persisted `catalog=8`, `acquisition=16`, `warmup_rows=1000`, `bindings=140`,
+`watermarks=140`. The three projectors have since converged to an aggregate
+canonical lag of `178`; query replicas report healthy and the edge has no
+restart/OOM evidence. This is real provider -> raw Kafka -> Rust canonical ->
+projector/cache data only, not a synthetic repair.
+
+The sole remaining closure gate is exactly one fresh Phase-10.5 C2
+four-identity, 299-product, true-300-second no-order receipt from immutable
+`qdl-v2-python:2.0.12-8ba4165`. The disposable client may read the existing V2
+query/stream pair and perform the governed local V1 fallback-return drill only.
+It has no Docker socket, provider credentials, Kafka, Redis, SQLite,
+Trading-System, alpha, Gateway/Risk, signal, sizing, or order authority.
+It mounts selected workload material read-only, copies only required credentials
+to an in-memory tmpfs before dropping to UID/GID `10001` with all capabilities
+cleared, retains only bounded receipt/error hashes, and self-removes on exit.
+Rollback is stopping/removing that named client; V1 and every running service,
+volume, offset, runtime/TLS mount and data-plane role are excluded. A nonzero
+receipt is terminal fail-closed and will be diagnosed narrowly before any new
+runtime mutation.
+
+**C2 client mount correction (`IN PROGRESS / HARNESS-ONLY`, 2026-09-03).** The
+first disposable C2 container self-removed before any V1/V2 request, provider
+connection, durable-store access or order action: the rootless Docker mapping
+could not traverse the broad host `/v2state` bind mount. Its terminal stderr is
+only the bounded bootstrap permission failure. The corrective launch changes
+no data-plane code or service: a host `/dev/shm` staging tree copies exactly
+one CA file and twelve named mTLS/JWT files required by the four declared
+identities, preserving their expected temporary `/v2state` paths. The staging
+tree is mode-`0700`, RAM-backed, mounted read-only, and removed by the host
+trap when the client exits; no secret enters the evidence namespace. The client
+receives no other state file, then performs the existing tmpfs copy and
+UID/GID-`10001` capability-free drop before its first request. A minimal
+bootstrap-only `DAC_READ_SEARCH`, `SETUID`, `SETGID` set is confined to those
+explicit read-only files and is cleared by `setpriv`; no Docker socket or host
+mutation is introduced. The retry remains one full C2 observation, not a
+data-plane retry, and its prior zero-request exit does not count as an
+acceptance result.
+
+**C2 reader trust configuration repair (`APPROVED / SOURCE AND FOUR-ROLE
+ROLLING ONLY`, 2026-09-03).** The second harness attempt reached UID/GID
+`10001`, `NoNewPrivs=1` and zero effective capabilities, then stopped at its
+first V2 `TRADE` request for `monitoring / BINANCE.USDM.PERPETUAL.BTC-USDT`.
+Both query replicas stayed healthy with zero restart/OOM. Public certificate
+inspection proves the external monitoring/OKX identities are valid and the
+existing query/stream `client-ca-bundle.crt` files already contain their issuer.
+The actual fault is narrower: base Compose supplies only
+`QDL_STABLE_TLS_CA_FILE`, so the runtime defaults client authentication to the
+server CA and ignores the installed additive bundle.
+
+The source correction makes query/stream use their additive client-CA bundle
+as the canonical client-auth authority. `stable_tls_init` deterministically
+copies the server CA into a missing bundle for a base deployment, preserving
+legacy one-CA startup; when an approved bundle is supplied it remains unchanged.
+Focused source tests must prove all four public reader roles name the bundle and
+the bootstrap fallback cannot overwrite it. The bounded runtime packet then
+rolls only `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive` with existing image, runtime/TLS/state mounts and the
+already-tracked C2 overlay. Its `rust_core` stanza is configuration only and is
+not recreated. Rollback re-creates those same four roles with the preceding
+Compose revision and server-CA client authority. Kafka, Redis, SQLite, V1,
+Rust/ingestors/projectors/bar edge, Trading System, alpha and order paths stay
+excluded. After the four roles are healthy, one new full C2 receipt starts from
+zero; the prior transport failure remains a terminal harness evidence, not a
+successful observation.
+
+**C2 reader trust source gate (`PASS / FOUR-ROLE ROLL NEXT`, 2026-09-03).**
+Base `docker-compose.v2-stable.yml` now declares
+`QDL_STABLE_TLS_CLIENT_CA_FILE` on exactly the existing two query and two
+stream roles. `stable_tls_init` preserves a supplied additive
+`client-ca-bundle.crt`; only when it is absent does it seed that file from
+the existing server CA, so a one-CA deployment remains backward-compatible.
+There is no new image, service, port, volume, credential, authority or
+provider behavior. The focused source matrix
+`python -m unittest tests.test_phase105_handoff tests.test_phaseb_stable_edge`
+ran from the existing immutable `qdl-v2-python:2.0.12-8ba4165` image with
+`--network none --read-only`: **66 passed, 1 intentional skip, 16.106s**.
+The exact base-plus-C2-overlay Compose render also passed. A first assertion
+count typo was corrected before the final pass and before any runtime action.
+
+The next bounded runtime operation recreates only `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with their
+current immutable image, current state/TLS/runtime mounts and C2 overlay.
+Rollback is the same four roles with a private external override that sets the
+preceding server-CA client authority. Kafka, Redis, SQLite, V1, Rust,
+ingestors, projector, bar edge, Trading System, alpha and every order path
+remain excluded. Only after reader health and exact env verification may one
+fresh C2 299-product/four-identity/300-second no-order receipt run.
+
+**C2 admission-runtime preflight correction (`APPROVED / FIVE-ROLE ROLL`,
+2026-09-03).** Read-only inspection of the recovered runtime found
+`rust_core` still has `QDL_PROVIDER_ADMISSION_ENABLED=false`; the sealed C2
+overlay already sets it to `true`, but a `--no-deps` reader-only Compose
+roll cannot apply an environment change to a running core. Without this exact
+private listener, the C2 reference-data products would fail truthfully after
+the mTLS repair. This is a recovery-config omission, not a new architecture,
+image, route, symbol worker or authority model.
+
+The bounded packet therefore recreates existing `rust_core` first using its
+current immutable Rust image, existing core runtime/TLS/Kafka/Redis mounts and
+the already-sealed `QDL_PROVIDER_ADMISSION_ENABLED=true` overlay; it then
+recreates only the same four reader roles with their current immutable Python
+image. The other two Rust replicas, ingestors, bar edge, projectors, V1,
+Kafka topology/offsets, Redis, SQLite, Trading System, alpha and order path
+remain excluded. The rollback override explicitly restores this one core to
+`false` and the four readers to their preceding server-CA authority, then
+recreates only those same five roles. Successful private listener readiness
+and all five role health are required before the single fresh C2 receipt.
+
+**C2 trust/admission runtime roll (`PASS / FRESH RECEIPT RUNNING NEXT`,
+2026-09-03).** The bounded packet recreated only the existing `rust_core`
+and then `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive`. All five retain their prior immutable image digest;
+there was no build, new container class, new port, new volume, Kafka/Redis/
+SQLite operation, V1 operation, Trading System/alpha operation or order-path
+mutation. `rust_core` is running with restart `0`, `OOMKilled=false`,
+`QDL_PROVIDER_ADMISSION_ENABLED=true`, and emitted
+`qdl_provider_admission_started` with its sealed policy hash. Each reader is
+`healthy`, restart `0`, `OOMKilled=false`, and has its exact additive
+`client-ca-bundle.crt` environment path. Bounded startup logs show normal
+Uvicorn readiness only. The explicit runtime rollback override retains the
+prior server-CA path for these same four readers and `false` for this same
+core; no other role is in either direction.
+
+The next and only acceptance action is a fresh disposable C2 namespace: four
+declared identities, all 299 governed products, real V2 query/stream reads,
+one governed V1 fallback-return drill and a true 300-second no-order
+observation. It starts from zero, has no Docker socket, provider credential,
+Kafka/Redis/SQLite, Trading System, alpha, Gateway/Risk, signal, sizing or
+order authority, self-removes on exit, and retains only bounded receipt/error
+hashes. Any nonzero outcome remains terminal fail-closed.
+
+**C2 trust/admission receipt (`FAIL-CLOSED / TYPED TRADE-SESSION
+DIAGNOSIS`, 2026-09-03).** The fresh disposable client self-removed after
+`17.99s`; its RAM-only credential staging directory was immediately removed.
+It reached UID/GID `10001` with `NoNewPrivs=1` and zero effective
+capabilities, proving the prior mTLS transport failure is repaired: the query
+returned a typed V2 freshness response rather than disconnecting. It made no
+order/signal/sizing/Gateway/Risk mutation and retained only its bounded stderr
+hash `bbec929b69f04b78fcb0251621906372e7b2763912757c9d9ad3a155cac0cdad`.
+The receipt is not successful: the first monitoring product
+`BINANCE.USDM.PERPETUAL.BTC-USDT / TRADE` reported
+`required data exceeds its freshness policy`, and strict retry exhausted
+because its provider session was not `LIVE`. `acceptance.json` is empty;
+the reader replicas stayed healthy and no C2 client container remains.
+
+This proves the reader trust correction, but not V2 consumer readiness. It
+does not justify an SLA change or another receipt. The sole next scope is
+read-only typed status/lineage for this exact Binance trade identity from both
+query replicas and the matching shared ingestor/Rust/projection path: session
+state, event recency, gap, watermark and completeness. If the status is
+incorrect while the provider session is live, repair only the shared
+projection/provider lineage with regression evidence; if the session is truly
+down, restore it through the existing shared role and record the real provider
+condition. C2 remains blocked until that exact condition is resolved.
+
+**C2 Binance TRADE typed-status diagnosis (`CONFIRMED / HARNESS-ONLY
+SOURCE REPAIR`, 2026-09-03).** A disposable, read-only, mTLS/JWT
+monitoring probe queried the exact failed `BINANCE.USDM.PERPETUAL.BTC-USDT /
+TRADE` identity from both V2 query replicas. Both returned the same governed
+truth: `state=LIVE`, `event_recency_state=LIVE`, `complete=true`,
+`gap_open=false`, `execution_eligible=true`, `policy_id=crypto_primary_v2`
+and sub-second freshness. The latest indexed canonical event also matches the
+currently `LIVE` Binance source session and config generation; all shared
+ingestor/core/projector roles remain running, restart `0`, OOM false.
+
+The observed `provider_session_state=NOT_APPLICABLE` is correct, not an
+outage: the affected monitoring TRADE manifest deliberately declares no
+`max_session_liveness_ms`. C2's retry branch nevertheless treated every
+TRADE stale-snapshot race as requiring a `LIVE` session and rejected the
+subsequent fresh/executable typed status. The correction is confined to the
+acceptance harness: a TRADE without a declared session SLA may re-read only
+when its status is already identity-matched, `LIVE`, current, complete,
+gap-free and execution-eligible with `NOT_APPLICABLE` session fields. It
+never admits a stale price, quiet trade, disconnected provider or missing
+session as success; the next snapshot must still pass ordinary strict V2
+freshness. Regression must cover the permitted fresh race and rejected
+quiet/disconnected cases. No provider, runtime role, image, manifest,
+freshness SLA, authority, V1, Kafka, Redis, SQLite, Trading System, alpha or
+order path changes are in scope.
+
+**C2 no-session TRADE race source gate (`PASS / ONE IMMUTABLE CLIENT
+RECEIPT NEXT`, 2026-09-03).** The acceptance-only retry now honors the
+declared consumer contract. It can make one ordinary strict snapshot re-read
+for a TRADE with no session SLA only after the typed status proves fresh,
+executable, complete, gap-free and `NOT_APPLICABLE` session semantics. It
+still immediately rejects a quiet/stale event or a disconnected state, and
+the re-read remains subject to normal strict freshness. Focused regressions
+cover the allowed race plus both rejected states; the complete C2
+domain/receipt/handoff suite ran from the existing immutable read-only,
+network-disabled image: **79 passed in 15.028s**.
+
+This is client-harness source only. Exactly one new immutable Python image is
+now required because the disposable C2 client executes this changed source;
+no reader, stream, Rust, ingestor, projector, V1 or other runtime role needs
+an image or config change. The next permitted operation is one fresh C2
+four-identity/299-product/300-second no-order receipt from that image. Its
+previous trust/admission roll remains the serving runtime and V1 remains the
+explicit fallback/rollback route.
+
+**C2 immutable client receipt (`IN PROGRESS / ONE CLIENT IMAGE`, 2026-09-03).**
+The approved closure action is narrowed to one immutable Python client image
+from source revision `f2e5654`, tagged `qdl-v2-python:2.0.13-f2e5654`, then
+one fresh disposable four-identity/299-product/true-300-second C2 receipt.
+The image is not a serving-role rollout: query/stream retain their current
+`qdl-v2-python:2.0.12-8ba4165` image and all V2 data-plane roles, V1, Kafka,
+Redis, SQLite, Trading System, alpha and order paths remain unchanged. The
+client mounts only the predeclared read-only evidence/runtime/ram-backed
+credential staging inputs, has no provider or order authority, and self-removes
+on completion. A nonzero receipt remains terminal fail-closed; rollback is
+removing that disposable client and retaining the current V1 fallback route.
+
+**C2 native-BASIS admission correction (`IN PROGRESS / HARNESS-ONLY`,
+2026-09-03).** The first immutable `2.0.13-f2e5654` receipt passed mTLS and
+the repaired TRADE-session path, then stopped fail-closed while reading the
+first `BINANCE.USDM.PERPETUAL.BTC-USDT / BASIS` reference product. The typed
+public response was `SOURCE_UNAVAILABLE` with `reference batch provider lane
+did not complete`; no receipt, order, signal, sizing, Gateway/Risk or runtime
+mutation occurred, and the RAM-only credential staging tree was removed.
+
+The exact cause is C2-client concurrency, not a provider defect: each
+consumer/replica independently starts its singleton Binance native-BASIS
+batch, while the declared shared Rust `REFERENCE_NATIVE_BASIS` lane correctly
+allows one in-flight request. The existing per-batch isolation and one typed
+cooldown retry are therefore insufficient when both replicas and multiple
+identities race the same lane. The narrow correction is to share one C2-local
+semaphore across *only* these singleton native-BASIS batches, for opening and
+closing reads. It preserves the Rust admission authority, all real-provider
+requests, normal reference parallelism, strict errors and the one bounded
+cooldown retry. Tests must prove native requests serialize across replicas and
+ordinary reference batches remain outside that lane. No provider policy,
+runtime role/image/config, manifest, freshness SLA, V1, Kafka, Redis, SQLite,
+Trading System, alpha or order-path change is in scope.
+
+**C2 native-BASIS serialization source gate (`PASS / ONE REPLACEMENT CLIENT
+IMAGE NEXT`, 2026-09-03).** The C2 harness now shares one local semaphore for
+the Rust-admitted singleton Binance native-BASIS batch across all four
+identities and both V2 reader replicas, in both opening and closing reads.
+Ordinary reference batches remain under their existing bounded concurrency and
+do not wait on that native lane. The shared classifier moved into the
+Reference/L2 acceptance contract so batch construction and C2 use the exact
+same definition. Source-only regression ran from immutable
+`qdl-v2-python:2.0.13-f2e5654`, source mounted read-only, network disabled,
+UID/GID `10001`, capability-free and tmpfs-only scratch: **99 passed,
+25.533s**. The matrix includes the new concurrent native-lane and
+ordinary-reference-not-blocked regressions plus C2 scope/receipt, V1 fallback,
+Reference/L2, rollout and Rust-admission binding tests. A broad `compileall`
+attempt was intentionally rejected by the read-only source mount because it
+writes `.pyc`; it made no source/runtime mutation and is not a code failure.
+
+This source slice needs one replacement immutable disposable-client image
+after commit. It does not roll a reader, stream, Rust core, ingestor,
+projector, V1 or any deployed service. The only next runtime action remains
+one fresh C2 receipt with the replacement client; V1 remains rollback.
+
+**C2 replacement-client runtime trace (`FAIL-CLOSED / REAL DATA-PLANE
+DIAGNOSIS`, 2026-09-03).** Immutable disposable client
+`qdl-v2-python:2.0.14-1c135af` (digest
+`sha256:ac6125fc496f9ea0d59a164903906c5eb560141a42086c1013617c9f29be945f`)
+passed the repaired mTLS and serialized native-BASIS entry path, then stopped
+before its 300-second observation because the first governed
+`BINANCE.USDM.PERPETUAL.BTC-USDT / TRADE` status was truthfully
+`STALE/LAST_EVENT_STALE`. Both reader replicas reported the same stale typed
+state; no synthetic event, SLA relaxation, order, signal, sizing, Gateway/Risk
+or durable-state mutation was used to force progress. The disposable client
+self-removed and its RAM-only credential stage was removed.
+
+Read-only runtime trace then proved the BTC trade binding is present in the
+active Binance ingestor, all three ingestor lanes and all three projectors are
+running with restart `0` and no OOM, and provider-session liveness later resumed
+on every Binance lane. This rules out a missing demand binding or a permanently
+dead process, but does **not** certify continuity: the failed C2 receipt remains
+terminal until the raw-to-canonical-to-cache path is traced and a single fresh
+receipt reaches its full 300-second observation. The next scope is strictly
+read-only offsets/cache/lineage diagnosis followed by the smallest proven
+shared recovery or source correction; V1, Kafka topology/offsets, Redis,
+SQLite, Trading System, alpha and order paths remain excluded unless an exact
+approved recovery is required.
+
+**Kafka diagnostic recovery (`APPROVED / NARROW RUNTIME REPAIR`,
+2026-09-03).** The Java Kafka administrative CLI used for a read-only offset
+inspection was invoked inside the memory-bounded `kafka1` broker container and
+exceeded its `768MiB` container limit, leaving only `kafka1` in
+`exited/OOMKilled` state. This is an operational error in the diagnostic
+method, not a provider, data-contract or consumer defect. Recover only that
+existing stopped container with `docker start`, retaining its current image,
+network, Kafka data volume, TLS and KRaft identity exactly as-is. No recreate,
+topic/offset/ACL mutation, Redis/SQLite operation, V1, Rust, ingestor,
+projector, Trading System, alpha or order-path action is permitted. Verify all
+three broker health checks and the existing core/projector roles afterward;
+rollback is stopping only the restarted broker if it cannot rejoin. Future
+offset diagnostics use the existing bounded librdkafka client outside broker
+JVM memory, never a Java CLI inside a broker container.
+
+**Shared Rust-core transient receive recovery (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-03).** The failed C2 trace and bounded structured-log evidence show
+retryable librdkafka receive failures (including a transient resolver failure)
+reach `bridge.next()?`, which currently tears down the entire transactional
+generation before the outer retry loop runs. That behavior is correct for a
+transaction/commit/fencing failure, but it unnecessarily forces a cooperative
+group rebalance for a recoverable receive-side hiccup and can create a
+freshness gap in otherwise healthy TRADE bindings.
+
+The narrow correction is confined to `qdl-realtime-core`: retry a bounded
+retryable *receive* error in the current bridge/generation with the existing
+backoff policy and shutdown awareness. Persistent receive errors still return
+to the existing outer generation retry; all commit, output, authority,
+quarantine and non-retryable errors retain their present fail-closed behavior.
+No provider adapter, subscription, manifest, Kafka topology/offset, Redis,
+SQLite, V1, query/stream, Trading System, alpha or order path changes are in
+scope. Source exit requires focused policy regressions plus the existing Rust
+core suite. A later, separately journaled bounded roll of only the three Rust
+core roles is allowed only if source tests pass; it must retain the current
+runtime JSON, image rollback coordinate and all durable state. A fresh single
+C2 receipt remains the only acceptance gate after that recovery.
+
+Implementation is now present in the isolated `dev` worktree: retryable
+`bridge.next()` failures retain the current generation for at most three
+backoff attempts, emit bounded structured receive diagnostics, and remain
+shutdown-aware; an error while filling a batch defers that batch rather than
+tearing down the bridge. The explicit policy regression covers retryable,
+bounded-exhaustion and non-retryable cases. `git diff --check` passes. The
+host has no Cargo toolchain, and the otherwise isolated, network-disabled
+existing-builder test invocation was blocked before execution by the external
+command-approval service returning HTTP `404`; therefore no Rust test or
+runtime roll is claimed here. No runtime state was changed by this source
+slice. The next action is to rerun exactly that existing source-only Rust
+formatter/clippy/test suite when the approved Docker executor is available;
+only then may the correction be committed and the separately bounded core roll
+and one C2 receipt proceed.
+
+The sandboxed source executor also cannot reach the host-published V2 ports
+`18201`, `18202`, `18210` or `18211` (all returned local connect failure from
+its isolated network namespace). That is not health evidence for or against
+the host runtime and must not be interpreted as a V2 outage. Host-runtime
+verification remains limited to the approved Docker executor or an operator
+shell in the host namespace; no fallback probe may substitute a synthetic or
+different-network result for the C2 receipt.
+
+**Shared Rust-core transient receive source exit (`PASS / COMMIT AND NARROW
+ROLL NEXT`, 2026-09-04).** The correction was compiled in the pinned Rust
+`1.82` Docker builder only; the builder is a disposable test artifact and no
+running service, Kafka, Redis, SQLite, V1, Trading System, alpha or order path
+was changed. Exact evidence:
+
+- `docker build --target builder -f Dockerfile.phase8-rust .` completed the
+  locked release build including `qdl-realtime-core` successfully.
+- `rustfmt --edition 2021 --check rust/qdl-kafka/src/bin/qdl-realtime-core.rs`
+  passed from a read-only, network-disabled container.
+- `cargo clippy -p qdl-kafka --bin qdl-realtime-core --locked --offline --
+  -D warnings` passed in `50.38s` in the same isolated builder.
+- `cargo test -p qdl-kafka --bin qdl-realtime-core --locked --offline` passed
+  `5/5`, including retryable receive, bounded exhaustion and non-retryable
+  policy. `git diff --check` also passes.
+
+The broad workspace `cargo fmt --all -- --check` remains non-green solely
+because pre-existing formatting deviations in
+`qdl-native-raw-ingestor.rs` are outside this correction; that file was not
+changed. The changed realtime-core file is format-clean and the focused
+compile/lint/test gate is sufficient for this narrow slice. Commit only the
+two tracked source/journal files with the configured BobbyAxerol identity.
+After commit, build one immutable Rust runtime image from that commit, retain
+the current `qdl-v2-rust:2.0.12-8ba4165@sha256:d86f0e832ba9...` image as
+rollback, and rolling-recreate exactly the existing three core containers.
+They retain current runtime JSON/TLS/state mounts and all durable state. A
+single fresh disposable C2 no-order receipt of exactly `300s` is the only
+post-roll acceptance; any failed receipt remains terminal and rolls those
+three cores back without touching V1 or consumers.
+
+**Shared Rust-core transient receive rolling packet (`APPROVED / APPLIED`,
+2026-09-04).** Source commit `5875d35aff3710be884eefa7bce9f8463aa73bcd`
+was built as immutable
+`qdl-v2-rust:2.0.14-5875d35@sha256:6d0668f1ded3648eb727d07872175b528ee38e4a01c1ae041e9469f354de168a`.
+The exact rollback image is the three cores' pre-roll
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`.
+Only these existing services were rolling-recreated, one healthy replica at a
+time: `rust_core`, `rust_core_2`, `rust_core_3`. Their existing private runtime
+JSON mounts remain byte-identical: `core.json`
+`4ff72e09649a7d00d02b8b006e9dfc1bd82ff6b5a6718a02a03fcc07c629d74f`,
+`core-002.json`
+`fe85911773eedda38a9fc84ef485c1e2bd1a5bd115a1268bac361075972a25ce`, and
+`core-003.json`
+`84081f68a6290bd130d770e1d36b197aa52d8df71c8a249bea3c0baa4a6dd946`.
+The existing TLS volume, state mounts, Kafka group/topic/offsets, Redis,
+SQLite, V1, ingestors, projectors, query/stream roles, Trading System, alpha
+and order paths are excluded. All three replacement cores start
+`RUST_PRIMARY`, `bindings=182`, `restart=0`, `OOMKilled=false`; the first
+retains the already-enabled private provider-admission listener. Rollback is a
+rolling recreate of these same three names with the exact old image and the
+same current runtime config; no durable reset or topology mutation is part of
+either direction.
+
+The sole remaining receipt is one new disposable C2 client namespace using the
+immutable Python client `qdl-v2-python:2.0.14-1c135af`, exactly four paper
+identities (monitoring, Trading System paper, Binance alpha paper, OKX alpha
+paper), all governed `299` products, V2 query/stream, and only its declared
+local V1 fallback-return drill. It observes exactly `300s`, has no provider
+credentials, Docker socket, Kafka, Redis, SQLite, Gateway/Risk, signal, sizing
+or order authority, and self-removes. Its credential staging is RAM-only and
+only bounded payload-free receipt/error hashes persist. A nonzero exit is
+terminal fail-closed and triggers only the stated three-core image rollback;
+it never causes a synthetic event, policy/SLA relaxation, consumer mutation or
+retry ceremony.
+
+**C2 client bootstrap preflight (`NO RECEIPT / HARNESS ENTRYPOINT ONLY`,
+2026-09-04).** The first launch attempt did not create a client process: OCI
+rejected direct execution of the read-only bind-mounted bootstrap script with
+`permission denied` before the process, network namespace, mTLS/JWT material,
+V2/V1 request, provider, data-plane or order action existed. The disposable
+container name was not retained and this is not a C2 retry or acceptance
+result. The sole harness correction is to invoke the same immutable,
+read-only bootstrap bytes through `/bin/sh /bootstrap-c2.sh`; it preserves the
+same mount set, capabilities, tmpfs staging, identities, 300-second scope and
+self-removal. No runtime role, image, config, credential, consumer or durable
+state changes.
+
+The shell-interpreter preflight then reached the bootstrap but still stopped
+before Python, mTLS/JWT construction or any V2/V1 request: the inherited
+mode-`0700` `run-c2.sh` could not be read by the intentionally dropped UID
+`10001`, and the capability-restricted bootstrap parent could not synthesize
+an exit code into that UID's tmpfs directory. This is still no receipt and no
+data-plane action. The new disposable namespace corrects only those two
+harness mechanics: its non-secret run script is mode `0755`, and bootstrap
+writes a fallback exit code through the same already-dropped UID `10001`.
+The actual receipt starts in a new evidence namespace, preserving a clear
+terminal preflight trail rather than overwriting it.
+
+**C2 consumer-network correction (`FAIL-CLOSED / HARNESS ATTACHMENT ONLY`,
+2026-09-04).** The first client that reached Python used
+`stable_internal` and stopped at the first gRPC stream open because
+`qdl-v2-stream-b` is deliberately published only on the declared external
+consumer network. The typed error is DNS `UNAVAILABLE`, not a stream process,
+Rust core, TLS, data freshness or provider failure. Read-only inspection proves
+the sealed `QDL_STABLE_CONSUMER_NETWORK=executor_network` and that exact
+network contains `data_layer_service`, both V2 query replicas, and both stream
+replicas with their public aliases. The failed client self-removed; its security
+evidence confirms UID `10001`, no effective/inheritable/ambient capability and
+`NoNewPrivs=1`; no order, signal, sizing, Gateway/Risk or durable mutation
+occurred. The fresh receipt changes only its Docker network attachment to the
+declared `executor_network`; no service or source code is recreated or changed.
+
+**C2 bounded product-concurrency correction (`FAIL-CLOSED / HARNESS SCHEDULING
+ONLY`, 2026-09-04).** The correctly attached fresh C2 client reached its
+immutable Python acceptance code and then exhausted the fixed `900s` opening
+deadline while tasks were queued on its own `product_semaphore`. Its sealed
+run artifact requested concurrency `2` for all governed `299` products; the
+failure occurred before any typed per-product freshness, gap, session,
+provider, TLS, cursor or fallback result was produced. The client self-removed
+with exit `1`; its UID/capability evidence remains `10001`/no capabilities/
+`NoNewPrivs=1`, and no order, signal, sizing, Gateway/Risk or durable mutation
+occurred. This is not a Rust-core or data-plane failure and is not a reason to
+relax a data SLA.
+
+The one permitted fresh receipt changes only the disposable C2 artifact from
+`--concurrency 2` to `--concurrency 4`: that equals the already sealed
+reference-batch maximum, retains the existing 75% per-consumer request quota
+and native-basis semaphore, and neither raises provider concurrency nor changes
+any runtime service. It uses the same four paper identities, `299` governed
+products, `executor_network`, V2 routes, declared V1 fallback-return drill and
+exact `300s` observation. Any nonzero result remains terminal and triggers the
+recorded three-core rollback only; a passing receipt is the sole remaining
+closure gate for this narrowly approved repair.
+
+**C2 bootstrap transport preflight (`PASS / NO NETWORK`, 2026-09-04).** The
+same immutable client image, read-only root, root-only bootstrap, RAM-only
+credential staging, UID-`10001` capability drop, evidence mounts and resource
+limits completed with `--network none`; it produced only `exit_code=0` and the
+expected capability record. It opened no V1/V2/provider endpoint and changed
+no runtime state. A first attached executor-network launcher left no receipt,
+stderr or exit artifact before Docker auto-removal, so it is not counted as a
+C2 result and has no data-plane evidence. The one fresh C2 receipt is launched
+detached solely to decouple the 300-second observation from the shell transport;
+the same immutable image, identity/mount set, `executor_network`, quota and
+no-order constraints remain in force. No service, source or durable state
+changes.
+
+**C2 real acceptance after receive recovery (`FAIL-CLOSED / ROLLBACK REQUIRED`,
+2026-09-04).** The detached, auto-removed C2 client completed the reviewed
+root-to-UID-`10001` boundary (`CapEff=0`, `CapAmb=0`, `NoNewPrivs=1`) and made
+real V2 reads through the declared `executor_network`; it had no provider,
+Docker, Kafka, Redis, SQLite, Gateway/Risk, signal, sizing or order authority.
+It stopped before the 300-second observation during initial reference
+validation for demand UID `8aedd349-6999-5874-b0dd-34c6451c0b3a`, product
+`MARK_INDEX_PRICE`: the returned identity is exact, but its typed availability
+is `DATA_STALE` with `reference provider result exceeds the declared freshness
+bound`. This is a real V2 quality failure, not a timeout, retry, identity
+cross-mix, TLS, cursor, Rust receive-recovery or resource/OOM result. The
+receipt is terminal; its client self-removed and left only bounded security and
+error evidence.
+
+All three rolled Rust cores remain `running`, `restart=0`, `OOMKilled=false`
+on `sha256:6d0668f...de168a`; no core error was observed. Nevertheless the
+approved packet makes a nonzero C2 terminal: roll back only `rust_core`,
+`rust_core_2` and `rust_core_3` to
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`,
+retaining byte-identical runtime JSON/TLS/state mounts. Do not change V1,
+Kafka topology/offsets, Redis, SQLite, ingestors, projectors, query/stream,
+Trading System, alpha or order path. This closes the receive-recovery runtime
+packet as `SOURCE PASS / RUNTIME C2 NOT CERTIFIED`; the MARK_INDEX freshness
+defect is a separate data-quality scope and blocks closure honestly.
+
+**Receive-recovery rollback exit and scoped cleanup (`APPLIED / CLOSURE
+BLOCKED`, 2026-09-04).** The three rollback recreates completed serially and
+all now run the retained prior image
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`
+with `restart=0` and `OOMKilled=false`. No C2 container remains. Before
+cleanup, Docker reported `14GB` images (`4.974GB` reclaimable) and `8.365GB`
+BuildKit cache (`5.336GB` reclaimable). The only disposable artifacts from this
+slice are the no-longer-referenced immutable candidate
+`qdl-v2-rust:2.0.14-5875d35@sha256:6d0668f...de168a` and builder
+`qdl-v2-rust-builder:receive-recovery-1c135af`; retain the active rollback
+image, all running V1/V2 images, volumes, networks, runtime state and compact
+receipt evidence. No broad prune, cache purge, volume/network/data deletion or
+worktree removal is in scope. Post-cleanup disk and runtime health are recorded
+before the journal commit.
+
+**Scoped cleanup result (`PASS / NO BROAD PRUNE`, 2026-09-04).** Docker confirmed
+neither disposable image had a container reference, then removed exactly
+`qdl-v2-rust:2.0.14-5875d35` and
+`qdl-v2-rust-builder:receive-recovery-1c135af`. Image usage fell from `14GB`
+to `10.84GB` (reclaimable image space from `4.974GB` to `1.808GB`). The active
+rollback image remains present; every V1/V2 running image, volume, network,
+runtime directory and compact evidence namespace is retained. BuildKit cache
+is intentionally untouched (`8.365GB`, `5.421GB` reported reclaimable): it is
+shared across current projects and a broad cache prune is outside this narrow
+approval. Final post-cleanup checks show all three rollback cores running on
+`sha256:d86f0e...86983`, `restart=0`, `OOMKilled=false`.
+
+**MARK_INDEX_PRICE exact-scope diagnosis (`IN PROGRESS / READ-ONLY`,
+2026-09-04).** The terminal C2 product is Binance USD-M `DOGEUSDT`, demand UID
+`8aedd349-6999-5874-b0dd-34c6451c0b3a`, `MARK_INDEX_PRICE`; this is a bounded
+on-demand provider snapshot behind `/v2/market-data/reference:batch`, not a
+Kafka BAR/L2 materialization defect. The approved diagnostic reads the exact
+signed V2 requirement through both existing query replicas and records only
+typed status, provider-observed age, response/receive age, cache provenance,
+timestamp origin and lineage. It does not relax the 60-second contract, make a
+synthetic observation, use V1, recreate any role, or mutate Kafka, Redis,
+SQLite, Trading System, alpha, signal, sizing or order state.
+
+Exit decision: if both replicas return current V2 data, repair the C2/reference
+batch lifecycle so a fresh execution-grade snapshot cannot age behind unrelated
+history work; if either replica returns stale V2 data, repair only the shared
+query/reference timestamp or cache path and add focused fresh/missing/stale and
+two-replica regression coverage. The Rust receive-recovery patch is independent
+of this defect and is not re-rolled merely to retry the same reference failure.
+Only after the exact fault is fixed and source gates pass may one immutable,
+bounded rollout packet and one fresh 300-second C2 receipt be prepared.
+
+**MARK_INDEX_PRICE exact-scope diagnostic result (`PASS / SOURCE REPAIR
+REQUIRED`, 2026-09-04).** A disposable, signed V2-only read used the declared
+`alpha.binance.paper.stable` identity and the exact DOGE requirement through
+both live query replicas. `query_v2_1` returned `OK` in `172ms` with
+provider-observed age `407ms`; `query_v2_2` returned `OK` in `85ms` with
+provider-observed age `494ms`. Both retained the exact demand UID, native
+symbol `DOGEUSDT`, `timestamp_origin=PROVIDER`, cache miss provenance and only
+`/fapi/v1/premiumIndex` lineage. This rules out a missing catalog identity,
+permanent Binance provider staleness, replica cross-mix, V1 fallback and
+Kafka/L2 materialization as the C2 root cause.
+
+The remaining defect is bounded reference-snapshot recovery: a transient stale
+provider MARK/INDEX row can terminalize the whole C2 batch even though the
+same provider lane is current immediately afterward. The approved source scope
+is therefore one cache-bypassing re-read only for a non-history
+`MARK_INDEX_PRICE` requirement with a declared freshness bound. It does not
+relax freshness, substitute a source, synthesize data, or retry any other
+reference product. The re-read must independently satisfy the original bound;
+otherwise the typed `DATA_STALE` result remains fail-closed. Focused tests must
+cover stale-then-current pass, stale-then-stale fail, and the existing
+batch-aging recovery without changing history/reference semantics. No runtime
+role, V1, Kafka, Redis, SQLite, Trading System, alpha or order state is changed
+by this source slice.
+
+**MARK_INDEX_PRICE bounded recovery source exit (`PASS / RUNTIME C2 PENDING`,
+2026-09-04).** `qdl/query/service.py` now re-reads only a non-history
+`MARK_INDEX_PRICE` result that fails its declared freshness bound, using the
+existing bounded executor, same provider lane and `bypass_cache=True`. The
+re-read is exactly once: a current second result is returned normally; a second
+stale result remains the same typed `DATA_STALE`. Existing current-at-receipt
+batch-aging recovery remains unchanged. Funding, OI, long/short, taker, basis,
+metadata, history and V1 never enter this new branch.
+
+Source-only gates passed in an isolated, read-only, network-disabled container
+using the active immutable Python runtime image as the dependency carrier:
+`py_compile qdl/query/service.py tests/test_phase113_reference_v2.py`, then
+`62/62` tests across `test_phase104_reference_batch`,
+`test_phase113_reference_v2`, `test_reference_l2_consumer_acceptance` and
+`test_phase115c_five_liquid_handoff`. The matrix covers decimal/unit fidelity,
+identity isolation, provider lane bounds, cached-snapshot aging, transient
+stale-to-current MARK/INDEX recovery, stale-to-stale fail-closed behavior,
+non-MARK stale no-retry, API/SDK serialization, L2 generation/gap guards and
+five-symbol manifest admission. No provider call, V1 fallback, Kafka, Redis,
+SQLite, runtime role, Trading System, alpha, signal, sizing or order state was
+changed. Disposable test containers self-removed; no image was built and no
+cache/image cleanup is required for this source slice. Post-test Docker
+inventory is unchanged at `10.84GB` images (`1.808GB` reclaimable), `8.365GB`
+BuildKit cache (`5.421GB` reclaimable), `47` volumes (`13` active) and no
+reference test container. The active V1/V2 images, retained Rust rollback
+image, runtime state, TLS, volumes and networks remain the explicit retention
+set; shared BuildKit cache is outside this source-only cleanup boundary.
+
+**Next approved-boundary packet (`PENDING OWNER RELEASE APPROVAL`).** Build one
+immutable Python image from the committed source revision, retain current
+`sha256:bd0163fd76b0...` as rollback, then rolling-recreate only
+`query_v2_1` and `query_v2_2` with their existing runtime/TLS/state mounts.
+After both are healthy, run one exact 300-second C2 no-order receipt with the
+existing consumer identities and the same V2 manifest; verify DOGE
+`MARK_INDEX_PRICE` through both replicas, final BAR/quote/trade/reference,
+signed cursor/reconnect and V1 fallback-return policy. Any nonzero result rolls
+only those two query roles back to `sha256:bd0163fd76b0...`; V1, Rust cores,
+Kafka offsets/topology, Redis, SQLite, ingestors, projectors, stream roles,
+Trading System, alpha and all order paths remain untouched. This packet is the
+remaining certification gate before release; no SLA relaxation or retry loop is
+permitted.
+
+**MARK_INDEX_PRICE bounded recovery runtime packet (`APPROVED / APPLIED`,
+2026-09-04).** Owner approved exactly the preceding packet: build one immutable
+Python image from source commit `f5b14f141a5a36abee7ddda543b274f3feccb4bf`,
+rolling-recreate only `query_v2_1` then `query_v2_2` with their existing
+runtime/TLS/state mounts, and run one C2 no-order receipt with a true
+300-second observation. The only authorized rollback is those two query roles
+to `sha256:bd0163fd76b0...`. No V1 role, Rust core, Kafka topology/offset,
+Redis, SQLite, ingestor, projector, stream role, Trading System, alpha or
+order/signal/sizing path is in this blast radius. A passing receipt permits
+release certification; a failing receipt triggers the declared two-role
+rollback and remains fail-closed. After either terminal result, remove only
+the disposable C2 client and test-only build artifacts not retained as the
+named active/rollback image set, then record pre/post disk evidence.
+
+**MARK_INDEX_PRICE bounded recovery rollout and C2 exit (`SOURCE PASS /
+RUNTIME NOT CERTIFIED`, 2026-09-04).** Immutable Python image
+`qdl-v2-python:2.0.13-f5b14f1@sha256:55a63fb82381829c7089075c64a1276f5fa865f8a7031a5930acc2054aa23a42`
+was built from exactly `f5b14f141a5a36abee7ddda543b274f3feccb4bf`; OCI
+revision/version and non-root `qdl:qdl` user were verified. Its no-source-mount,
+read-only, network-disabled `py_compile` plus four-module regression matrix
+passed `62/62` in `5.849s`.
+
+Only `query_v2_1` then `query_v2_2` were rolling-recreated to that image after
+Compose preflight; each reached `healthy`, `restart=0`. Two disposable launcher
+preflights stopped before an endpoint request: the first copied a non-secret
+runner at mode `0700`, and the second lacked the read-only `/runtime` authority
+mount. A fresh namespace corrected only those launch mechanics (`0755` public
+runner and the existing `/runtime` read-only mount); it dropped to UID `10001`
+with no effective/inheritable/ambient capability and `NoNewPrivs=1`.
+
+That third receipt reached real V2 reads but stopped fail-closed before the
+300-second observation and before an acceptance JSON could be emitted. The
+exact typed cause is `RESOURCE_EXHAUSTED: consumer request quota is exhausted`
+while the C2 harness opens `alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL
+DOGE-USDT / BOOK_SNAPSHOT`. This is not a `MARK_INDEX_PRICE`, DOGE catalog,
+provider freshness, V1 fallback, Rust, Kafka or data-materialization defect.
+It exposes a harness correctness gap: the C2 pacer bounds query REST requests
+but does not pace its own concurrent gRPC stream opens against the same
+per-identity quota. No SLA was relaxed and no synthetic/provider-direct data
+was used. The disposable client has no Docker socket, Gateway/Risk, broker,
+signal, sizing or order authority; only its approved bounded V2 query/stream
+and normal quota/audit activity occurred.
+
+Per the approved nonzero exit rule, only `query_v2_1` then `query_v2_2` were
+rolled back to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+Both are now `running`, `healthy`, `restart=0`. V1, Rust cores, Kafka
+topology/offsets, Redis data, SQLite, ingestors, projectors, stream roles,
+Trading System, alpha and order paths were not recreated or changed. All C2
+containers self-removed. The unattached candidate image was removed exactly;
+Docker images returned from `11.5GB` to the pre-packet `10.84GB`.
+BuildKit cache is `9.049GB` (`6.106GB` reclaimable), shared and intentionally
+not broadly pruned without a separate approval. The compact three receipt
+namespaces are retained as failure evidence; they contain no copied secret
+material. The narrow next source scope, if approved, is to apply the existing
+per-identity C2 quota pacer to stream-open scheduling, add quota/stream
+regressions, then build one replacement image and run exactly one fresh C2.
+Release remains blocked until that single receipt reaches `300s` and passes.
+
+**C2 stream-open quota pacing source gate (`PASS / IMMUTABLE IMAGE PENDING`,
+2026-09-04).** `_PacedStreamTransport` now wraps only the disposable C2 SDK
+client's `stream_transport`. It reserves the existing shared identity pacer at
+async-iterator start, so an initial subscription and every SDK reconnect share
+the same allowance as C2 REST warmup/snapshot/reference reads. The wrapper
+passes frames and failures through unchanged; it cannot turn a rejected or
+stale stream into data. `_paced_client_factory` applies the two wrappers to the
+same client instance, while distinct C2 consumer identities still receive
+separate pacers.
+
+The standard isolated source matrix used active immutable image `bd0163fd76b0`,
+with a read-only source mount, `--network none`, UID/GID `10001`, no Linux
+capabilities, no-new-privileges and tmpfs-only bytecode. It ran
+`py_compile scripts/phase105_consumer_v2_identity_acceptance.py
+tests/test_phase105_identity_acceptance.py`, then `127/127` unittest cases in
+`test_phase104_reference_batch`, `test_phase113_reference_v2`,
+`test_reference_l2_consumer_acceptance`, `test_phase115c_five_liquid_handoff`,
+`test_phase105_identity_acceptance` and `test_phase103_consumer_receipt_harness`
+in `16.053s`. New deterministic cases prove factory wiring, shared REST/stream
+spacing, independent identity pacers and fail-closed stream errors. No network,
+provider, V1 fallback, Kafka, Redis, SQLite, service, Trading System, alpha,
+signal, sizing or order mutation occurred; the disposable test client removed
+itself. `git diff --check` passes. Next and only next action is to commit this
+source slice, build one immutable image from its SHA, repeat this exact matrix
+without a source mount, then execute the recorded two-query-role C2 packet.
+
+**C2 stream-open quota pacing immutable-image gate (`PASS / QUERY ROLLOUT
+PENDING`, 2026-09-04).** Immutable candidate
+`qdl-v2-python:2.0.14-a8fdb55@sha256:be78f3b864b44809354a26fa3d9f2e28b49c15f03ff325188cccbc1d1f0eb341`
+was built from source commit `a8fdb5556207888958b97c8383b4baa6fde9752b`.
+OCI revision/version labels match that source and `qdl:qdl` remains the runtime
+user. The same `py_compile` plus six-module C2 matrix ran from the immutable
+image with no source mount, `--network none`, read-only root, UID/GID `10001`,
+no capabilities/no-new-privileges and tmpfs-only bytecode: `127/127 PASS` in
+`15.714s`. No provider, V1, Kafka, Redis, SQLite, runtime service, Trading
+System, alpha, signal, sizing or order path was touched; the test client
+self-removed.
+
+The exact remaining approved action is serial rolling recreate of only
+`query_v2_1` and `query_v2_2` to this digest with unchanged runtime/TLS/state
+mounts, readiness verification after each, then one fresh disposable C2
+four-identity 300-second no-order receipt. A nonzero receipt triggers only the
+named two-query rollback digest in the preceding packet; no second C2 retry or
+scope expansion follows automatically.
+
+**C2 bootstrap capability preflight (`PASS / NO RECEIPT`, 2026-09-04).** The
+first detached client self-removed before writing any security, exit or C2
+evidence. It therefore did not reach Python, a V1/V2 endpoint, a provider,
+cursor, fallback drill or the 300-second observation and is not a C2 result.
+The launcher was missing the two temporary bootstrap capabilities needed solely
+to drop from root to UID/GID `10001`. A disposable `--network none` preflight
+with only `SETUID` and `SETGID` added proved the exact intended child boundary:
+`uid=10001`, `CapEff=0`, `NoNewPrivs=1`. The next real C2 uses those two
+bootstrap-only caps; its child still receives no effective/inheritable/ambient
+capabilities. Nothing else in the packet changes, and the failed empty
+namespace is retained as a launcher preflight record.
+
+**C2 read-only identity-mount preflight (`PASS / NO RECEIPT`, 2026-09-04).** The
+second empty launcher namespace likewise stopped before Python/evidence because
+the minimal root bootstrap could drop UID/GID but had no `DAC_OVERRIDE` to read
+the declared mode-restricted identity files from its read-only `/v2state` mount.
+This is a capability boundary of the disposable launcher, not an endpoint,
+quota, data-plane or runtime failure. A second `--network none` preflight
+proved that only `DAC_OVERRIDE`, `SETUID` and `SETGID` are sufficient to read
+the exact declared alpha-Binance identity input, then drop to `uid=10001`,
+`CapEff=0`, `NoNewPrivs=1`. The real C2 launcher is revised only to use those
+three bootstrap-only capabilities; the child has no capability and the mount
+remains read-only. It is still the first actual C2 receipt, not a retry of a
+receipt, because neither prior launcher opened an endpoint or wrote C2 output.
+
+**C2 stream-open quota pacing repair (`APPROVED / IN PROGRESS`, 2026-09-04).**
+Owner approved one final narrow closure repair: the existing acceptance-only
+per-identity C2 pacer must govern gRPC stream opens as well as REST reads. The
+source change is limited to the disposable C2 client factory: wrap its existing
+`stream_transport.subscribe()` path so each initial subscription and every SDK
+reconnect reserves the same manifest-derived identity budget already used by
+`_PacedQueryTransport`. It does not alter a server quota, consumer manifest,
+SDK/public endpoint semantics, provider concurrency, stream service, Rust,
+Kafka, Redis, SQLite, V1 fallback policy, or runtime topology. Separate C2
+identities retain separate pacers; a transport exception must propagate
+fail-closed unchanged.
+
+**Required source gates:** deterministic regressions prove same-identity stream
+opens are serialized below the existing safe rate, stream and REST share one
+budget, distinct identities do not share a local lock, and a failing stream
+remains terminal. Run the existing focused C2/identity/reference/L2/five-symbol
+matrix plus `py_compile` and `git diff --check` in the standard isolated,
+network-disabled, read-only image environment. The detailed consumer-cutover
+invariants remain those in architecture-guide Appendix J.7.
+
+**Approved runtime/rollback/cleanup packet:** build exactly one immutable Python
+image from the tested source commit; rolling-recreate only `query_v2_1` then
+`query_v2_2` with their existing runtime/TLS/state mounts; run exactly one
+disposable, no-order, four-identity C2 receipt with a true `300s` observation.
+If it exits nonzero, roll back only those two query roles to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors, stream
+roles, Trading System, alpha and all order/signal/sizing paths remain outside
+the blast radius. Retain only the active candidate plus named rollback image;
+remove the self-removed C2 client and any unattached candidate after a failed
+receipt, record pre/post Docker disk evidence, and do not broad-prune shared
+BuildKit cache.
+
+**C2 stream-pacing receipt and bounded MARK/INDEX assembly correction (`IN
+PROGRESS / SAME CLOSURE`, 2026-09-04).** The first real receipt using the
+stream-paced candidate reached authenticated V2 reads and the disposable child
+correctly ran as UID `10001` with no effective/inheritable/ambient capability
+and `NoNewPrivs=1`. It failed before the 300-second observation on Binance
+USD-M `DOGEUSDT` `MARK_INDEX_PRICE`: the typed result was `DATA_STALE` because
+the final batch assembly evaluated a refreshed mark snapshot after other
+refresh work had completed. Direct bounded read-only Binance observations
+showed provider timestamps 0--18ms old, so this is neither provider staleness
+nor a reason to relax the declared 2-second SLA.
+
+The approved closure repair remains narrow and does not create a new phase:
+for an already-admitted, non-history `MARK_INDEX_PRICE` item that needs the
+existing one cache-bypass recovery, execute and validate that exact item at its
+own response-assembly turn. It remains on the existing bounded executor and
+same venue/provider lane, is still allowed exactly one recovery read, and a
+second stale/error result remains fail-closed. This prevents a fresh DOGE mark
+from aging behind unrelated MARK refresh candidates without changing cache TTL,
+provider admission, public API/SDK contracts, quota policy, V1 fallback,
+Rust, Kafka, Redis, SQLite, manifests, topology or any order path.
+
+**Required correction tests and exit:** add a deterministic multi-symbol MARK
+batch regression which advances the test clock between refresh candidates and
+proves every response is validated immediately after its own re-read; retain
+the existing stale-to-current, stale-to-stale, non-MARK no-retry, shared
+singleflight and identity/stream-quota cases. Run the focused six-module
+isolated matrix and `py_compile` with network disabled before one replacement
+immutable image. The only runtime action remains the already-approved serial
+two-query-role rollout and one fresh C2 receipt. A nonzero receipt rolls back
+only `query_v2_1` and `query_v2_2` to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+
+**C2 MARK/INDEX assembly source gate (`PASS / REPLACEMENT IMAGE PENDING`,
+2026-09-04).** `V2QueryService.reference_data_batch_async()` no longer submits
+all stale MARK/INDEX recoveries as one second batch. It first identifies only
+the existing eligible one-read candidates, then at each candidate's response
+assembly turn submits that exact item through the same bounded executor with
+`bypass_cache=True` and validates it immediately. This keeps provider token
+budgeting, venue isolation, request identity, result ordering and the exact
+one-refresh limit intact. A second stale/error result is still returned as its
+typed terminal problem; history and all non-MARK products retain the old path.
+
+The new deterministic two-symbol regression models the failure exactly: both
+initial marks age after initial work, while a legacy two-item refresh would age
+again before response assembly. Per-item refresh/validation returns two current
+results in request order after four provider calls; the legacy grouped form
+would fail `DATA_STALE`. Focused test first passed `16/16` in `0.319s`; the
+complete isolated source matrix then passed `128/128` in `16.198s` after
+`py_compile` of the query service and C2 source/tests. Both runs used the
+existing immutable dependency image, source mounted read-only, `--network
+none`, read-only root, UID/GID `10001`, no Linux capabilities,
+no-new-privileges and tmpfs-only bytecode/cache state. The launch explicitly
+preserved `/opt/venv/bin` rather than invoking login-shell PATH reset. No
+provider, V1, Kafka, Redis, SQLite, service, Trading System, alpha, signal,
+sizing or order mutation occurred; disposable test containers removed
+themselves. `git diff --check` passes.
+
+**Next exact action:** commit this tested source-and-journal slice, build one
+replacement immutable Python image from that commit, repeat the same 128-case
+matrix with no source mount, then use the already-approved serial two-query
+rollout and exactly one fresh C2 300-second receipt. The prior unattached
+`2.0.14-a8fdb55` image remains test-only and will be removed after the
+replacement source/image evidence is captured; no broad cache prune is in
+scope.
+
+**C2 MARK/INDEX immutable image gate (`PASS / TWO-QUERY ROLLOUT PENDING`,
+2026-09-04).** Tested source and journal were committed as
+`5ba7342 fix(reference): validate mark refresh per item`. One replacement image
+was built from exactly that revision:
+`qdl-v2-python:2.0.15-5ba7342@sha256:f29ee76868fa38b4e540d5f906adb1db332ef298675a21f870229fb4474275e6`.
+OCI revision/version labels are `5ba7342` / `2.0.15-5ba7342`, and the image
+user remains `qdl:qdl`. With no source mount, the same read-only,
+network-disabled, UID/GID-`10001`, no-capability, no-new-privileges,
+tmpfs-only matrix passed `128/128` in `15.841s`. It included the new
+multi-MARK assembly oracle plus C2 quota, reference, L2, five-symbol and
+receipt-harness tests. No provider or runtime/data-plane was touched.
+
+Pre-rollout verification confirms both approved roles currently run the named
+rollback digest `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+are `healthy` with `restart=0`, and the sealed runtime env still names that
+digest. The next command overrides only the image value for a serial
+`query_v2_1`, then `query_v2_2`, recreate with their existing compose/runtime,
+TLS and state mounts. It must verify health after each role before one
+disposable 300-second C2 no-order receipt. A nonzero receipt restores only
+those same roles to the verified rollback digest.
+
+**C2 MARK/INDEX rollout exit and quiet-final-BAR correction (`IN PROGRESS /
+SAME CLOSURE`, 2026-09-04).** The two-query rollout to
+`sha256:f29ee76868fa38b4e540d5f906adb1db332ef298675a21f870229fb4474275e6`
+completed serially and both roles were `healthy`, `restart=0`. The one actual
+four-identity C2 receipt then passed the earlier quota and DOGE MARK/INDEX
+opening work, but failed before its 300-second observation on a different
+typed harness transition: `alpha.okx.paper.stable`, `OKX.SWAP.PERPETUAL
+ETH-USDT`, `BAR 5m` recorded `CURRENT_FINAL_BAR` for a valid quiet first
+session and `EVENT_AFTER_REOPEN` when a real final BAR arrived after the signed
+reopen. `_stream_handoff_mode()` incorrectly accepted the latter only after a
+price/continuity initial session and rejected a current final BAR initial
+session. This is an acceptance-harness state-transition defect, not provider
+staleness, quota, MARK/INDEX, V1 fallback, Rust, catalog, materialization or
+data loss. The terminal C2 client self-removed and wrote only scoped failure
+evidence; no acceptance JSON was emitted.
+
+Per the approved nonzero rule, `query_v2_1` then `query_v2_2` were rolled back
+serially to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are again `running`, `healthy`, `restart=0`. No other V2 role, V1, Rust,
+Kafka, Redis, SQLite, provider, Trading System, alpha, signal, sizing or order
+path changed. The only remaining source correction is to admit the valid
+`CURRENT_FINAL_BAR -> EVENT_AFTER_REOPEN` no-cursor handoff for a non-execution
+durable BAR, with a direct regression through `_stream_resume` and the existing
+handoff classifier. It must not make an initial BAR executable, weaken signed
+cursor control requirements, accept a gap/identity mismatch, or alter any
+public/runtime contract. After focused source/image gates, a fresh C2 receipt
+requires its own explicit owner packet because the declared one receipt has
+already been consumed and failed closed.
+
+**Quiet-final-BAR handoff source gate (`PASS / REPLACEMENT IMAGE PENDING`,
+2026-09-04).** `_stream_handoff_mode()` now recognizes the only missing valid
+transition: a non-execution durable BAR first session proved by a strict
+`CURRENT_FINAL_BAR` read, followed by a real `EVENT_AFTER_REOPEN` after signed
+reopen. It returns the existing no-cursor live-event evidence label, while the
+initial BAR remains non-executable and all cursor controls, identity, gap,
+quality and finality checks remain unchanged. A new end-to-end `_stream_resume`
+regression proves both signed session controls, the strict first final read,
+the real reopened event and acknowledgement; the legacy classifier rejects
+that exact evidence pair. The focused harness passed `47/47` in `11.893s`, and
+the complete C2/reference/L2/five-symbol/identity matrix passed `129/129` in
+`18.243s` after `py_compile`. Tests used the existing immutable dependency
+image with source read-only, `--network none`, read-only root, UID/GID `10001`,
+no capabilities/no-new-privileges and tmpfs-only bytecode/cache state. No
+provider, V1, Kafka, Redis, SQLite, runtime role, Trading System, alpha,
+signal, sizing or order mutation occurred; every test client self-removed.
+`git diff --check` passes.
+
+**Decision boundary:** the previous C2 receipt is terminal and remains failure
+evidence. This source correction is ready for a single replacement image, but
+another 300-second C2 rollout is intentionally not started: it requires a new
+explicit owner packet naming the replacement digest and the same two-query
+rollback because the prior approved receipt was already consumed. No other
+source or runtime scope is open.
+
+**Quiet-final-BAR immutable candidate and same-scope C2 packet (`APPROVED /
+IN PROGRESS`, 2026-09-04).** The owner has standing approval to complete this
+closure without a follow-up prompt, using the same bounded query-only blast
+radius and rollback previously specified. Candidate
+`qdl-v2-python:2.0.16-6d6cfca@sha256:077271ceb7cfb2aaf444e5a019237cab60d14e23882e7ff7513eed9fee0da39c`
+was built from exactly commit `6d6cfca`; OCI labels match and user remains
+`qdl:qdl`. Its no-source-mount, network-disabled, read-only,
+UID/GID-`10001`, no-capability/no-new-privileges, tmpfs-only matrix passed
+`129/129` in `18.011s`.
+
+The sole runtime packet serially recreates only `query_v2_1` then `query_v2_2`
+with this digest and their unchanged runtime/TLS/state mounts, verifies each
+role `healthy`/`restart=0`, and runs one disposable four-identity C2 no-order
+receipt with a true 300-second observation. It uses the established read-only
+identity bootstrap boundary and scoped evidence namespace. On nonzero, only
+those two roles return serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+No V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestor, projector,
+stream role, Trading System, alpha or order/signal/sizing path is authorized.
+
+**C2 strict-reference batch correction (`IN PROGRESS / SAME CLOSURE`,
+2026-09-04).** The final candidate passed source/image gates and both query
+replicas were healthy, but its one C2 receipt reached the reference plane and
+failed before observation with `reference response exceeds its governed
+freshness bound`. This is not the repaired DOGE query error: C2's
+`trading-system.paper.stable` scope places ten independent execution
+`MARK_INDEX_PRICE` snapshots, each with the declared `2,000ms` bound, in one
+ordinary 12-item reference batch. Provider work and exact one-read recovery
+remain bounded/fail-closed, but a batch receipt cannot honestly certify every
+two-second snapshot at client receipt when earlier rows must wait behind later
+strict rows. The failure is correct; it exposed an invalid certification batch
+shape rather than grounds to relax the 2-second product contract.
+
+Per the same nonzero rule, only `query_v2_1` then `query_v2_2` were restored
+serially to `sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `healthy`, `restart=0`. The narrow source fix is acceptance-only:
+`reference_acceptance_batches()` must isolate each `MARK_INDEX_PRICE` whose
+declared freshness is at most `2,000ms`, just as it already isolates native
+Binance basis. All looser reference products remain bounded 12-item batches;
+no provider, cache, public batch contract, manifest, runtime role, quota,
+SLA, V1/Rust/Kafka/Redis/SQLite, Trading System, alpha or order path changes.
+Regression must prove complete identity preservation, native-basis isolation,
+strict-Mark singleton isolation and ordinary batch bounds. It fixes request
+shape only; every strict response still needs to meet its original 2-second
+bound and a stale response remains terminal.
+
+**C2 strict-reference source gate (`PASS / IMMUTABLE CANDIDATE PENDING`,
+2026-09-04).** `reference_acceptance_batches()` now isolates only
+`MARK_INDEX_PRICE` products whose declared freshness is at most `2,000ms`, in
+addition to the pre-existing singleton native-Binance-basis lane. All other
+reference products remain in bounded batches of at most twelve. The public
+batch endpoint, consumer manifest, provider/cache implementation, quotas,
+SLA, runtime topology and V1 fallback remain unchanged. The new regression
+constructs two strict Mark products, one `2,001ms` Mark product and one
+ordinary funding product; it proves singleton isolation exactly at the strict
+threshold, complete identity preservation, and ordinary batching for the
+looser Mark/funding pair.
+
+The focused Reference/L2 test module passed `14/14` in `6.563s`; the complete
+C2/reference/L2/five-symbol/identity matrix passed `130/130` in `18.414s`
+after `py_compile`. Both used the repository Dockerfile builder with source
+mounted read-only, `--network none`, UID/GID `10001`, no capabilities,
+no-new-privileges and tmpfs-only bytecode/cache state. The temporary builder
+tag `qdl-v2-builder:c2-strict-mark-test` is test-only and is retained only
+until the final immutable candidate has passed its no-source-mount matrix,
+then must be removed in the closure cleanup. No runtime role, V1, Rust, Kafka,
+Redis, SQLite, provider, Trading System, alpha, signal, sizing, order path or
+market data was changed. The next and only remaining execution is to commit
+this source slice, build one immutable Python candidate, roll the same two
+query roles with the recorded rollback digest, and run one C2 receipt with its
+true 300-second observation.
+
+**C2 strict-reference immutable image gate (`PASS / QUERY-ONLY ROLLOUT
+PENDING`, 2026-09-04).** Commit `19727174f0d31926c28fdc0465637d9cbfb2095e`
+was built as `qdl-v2-python:2.0.17-1972717` with immutable digest
+`sha256:28d7a6a538b7da69c7718977dae409acaff469fd663f96e09b6b1342d6a0f006`.
+OCI revision and release labels are exactly `19727174...` and
+`2.0.17-1972717`; the image runs as `qdl:qdl`. Its no-source-mount,
+network-disabled, read-only, UID/GID-`10001`, no-capability,
+no-new-privileges, tmpfs-only full C2/reference/L2/five-symbol/identity matrix
+passed `130/130` in `19.076s` after `py_compile`. The only remaining packet is
+the already-approved serial recreate of `query_v2_1` and `query_v2_2` with
+their unchanged runtime/TLS/state mounts, health/restart verification, and one
+disposable C2 no-order receipt with a true `300s` observation. Any nonzero
+returns only those two roles to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors,
+streams, Trading System, alpha and the order path remain excluded.
+
+**C2 strict-reference runtime receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** The approved query-only packet recreated `query_v2_1` then
+`query_v2_2` with
+`sha256:28d7a6a538b7da69c7718977dae409acaff469fd663f96e09b6b1342d6a0f006`.
+Each reached `healthy` with `restart=0`. A new V1 provenance and running
+container binding both passed for the frozen `v1.2.4` image
+`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`
+at commit `2b0dcf74454c9f87c352d3c47389955aeb955804`. The one detached,
+self-removing C2 client ran through the sealed root-to-UID-`10001` bootstrap,
+the exact four identities, V2 query/stream endpoints on `executor_network`,
+and no Docker socket, provider credential, Kafka/Redis/SQLite, Gateway/Risk or
+order authority.
+
+The receipt exited `1` before its 300-second observation and emitted no
+acceptance JSON because the governed `V2 -> V1 -> V2` fallback drill rejected
+its V1 response as stale at
+`qdl.certification.phase105_fallback._source_age_ms`. This is a real fail-closed
+V1 fallback freshness result, not a successful V2 certificate, a strict-Mark
+batch error, a V2 query error, or permission to relax freshness/retry the same
+receipt. The disposable client self-removed; its compact, payload-free evidence
+is under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-strict-reference-1972717-20260904T090512Z/`.
+Per the predeclared nonzero rule, `query_v2_1` then `query_v2_2` were rolled
+back serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `running`, `healthy`, `restart=0`. No other V2 role, V1, Rust, Kafka
+topology/offsets, Redis, SQLite, ingestor, projector, stream role, Trading
+System, alpha, signal, sizing or order path changed.
+
+**Decision boundary:** C2 is not certified and the candidate must not be
+released. The next permitted work is read-only diagnosis of the exact V1
+fallback product/payload freshness and its mapping. Any source/runtime repair
+requires a new, separately journaled scope; do not relax the declared V1
+freshness bound or rerun C2 as a luck-based retry.
+
+**V1 execution-fallback policy correction (`IN PROGRESS / SAME C2 CLOSURE`,
+2026-09-04).** Read-only probing of all twelve manifest-authorized V1 fallback
+routes showed the endpoint can currently return fresh Binance trade rows, but
+the terminal C2 receipt proved the opposite can occur during a real handoff.
+This is expected for a generic last-trade cache: V1 exposes event age but no
+typed provider/session liveness, generation or gap state. It therefore cannot
+be a trustworthy automatic fallback for the five
+`trading-system.paper.stable` execution TRADE products with a `3,000ms`
+contract. Waiting/retrying until a print arrives would turn certification into
+a luck-based test and would not make V1 semantically equivalent.
+
+The narrow correction is configuration-only: retain `V2_PRIMARY`, change only
+those five V1 fallback declarations to `BLOCKED` with the explicit reason
+`V1_EXECUTION_SESSION_LIVENESS_UNPROVEN`, and retain the existing V1 fallback
+declarations for monitoring/alpha products whose governed contract permits the
+legacy age-only source. No freshness bound is relaxed and no live route is
+mutated by this source change. Required source gates must prove exact five-row
+selection, unchanged V2-primary identities, retained allowed V1 probes for the
+other consumers, and `BLOCKED` routes making zero V1 requests. A fresh C2
+receipt remains a separately bounded runtime action after these gates; it is
+not started by this source correction.
+
+**V1 execution-fallback policy source gate (`PASS / SINGLE C2 CANDIDATE
+PENDING`, 2026-09-04).** The stable release-routing revision is now `17`.
+Only the five Binance USD-M `TRADE` products of
+`trading-system.paper.stable` changed: each remains `V2_PRIMARY` and is now
+`fallback: BLOCKED` with
+`V1_EXECUTION_SESSION_LIVENESS_UNPROVEN`. This makes the execution-grade
+three-second route fail closed if V2 is unavailable rather than silently
+switching to a V1 last-trade cache that cannot prove provider/session/gap
+state. Monitoring and `alpha.binance.paper.stable` retain their existing,
+manifest-governed V1 fallback declarations; all Binance/OKX/VN identities,
+freshness bounds, V2 routes, public API/SDK contracts and runtime topology are
+unchanged.
+
+`tests.test_phase105_fallback_acceptance` now proves the exact five-symbol
+selection (`BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`, `BNBUSDT`), unchanged
+V2-primary route, explicit block reason and zero Trading-System V1 probe; it
+also proves the remaining probes are only monitoring/alpha identities. The
+focused route/fallback/stream-quota/reference suite passed `55/55` in
+`22.276s`. The complete source-mounted C2/reference/L2/five-liquid/identity
+matrix passed `138/138` in `20.472s`, network-disabled, read-only,
+UID/GID-`10001`, no capability/no-new-privileges and tmpfs-only. No provider,
+V1, Rust, Kafka, Redis, SQLite, runtime role, Trading System, alpha, signal,
+sizing or order path changed. The next action is exactly one immutable Python
+image from this commit followed by the bounded two-query-role C2 packet; any
+nonzero rolls back only those two roles to the recorded `bd0163...` image.
+
+**C2 execution-fallback candidate and receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** Commit `cde0fff54df28108aa6568178b23856ed6dcbdf8` was built
+once as `qdl-v2-python:2.0.18-cde0fff@sha256:3d21a09314303c1c78d11b272ac09e0456e704af3d54c5f23271e93be2449a83`.
+Its OCI revision/release labels, `qdl:qdl` user and the no-source-mount,
+network-disabled/read-only `138/138` C2/reference/L2/five-liquid/identity
+matrix passed. Only `query_v2_1`, then `query_v2_2`, were serially recreated
+with that digest and each reached `healthy`, `restart=0` before acceptance.
+
+The first disposable client launcher stopped before any bootstrap, identity
+copy or endpoint request because its outer `cap-drop ALL` could not read the
+bind-mounted bootstrap script. This was a harness permission preflight only,
+not a C2 attempt: no C2 output, provider/V1/V2 request, data-plane or order
+action existed. The exact documented outer boundary was then used: root with
+`no-new-privileges` only for bootstrap, followed by mandatory `setpriv` to UID
+`10001` with empty effective/permitted/inheritable/ambient capabilities before
+the C2 program started. The payload-free client security receipt records UID
+`10001`, `CapPrm/Eff=0` and `NoNewPrivs=1`.
+
+The single actual C2 ran for about twelve minutes, self-removed, and exited
+`1` before the 300-second observation with no acceptance JSON. It failed
+closed at the existing signed-cursor no-event handoff requirement for exactly
+`alpha.okx.paper.stable`, `OKX.SWAP.PERPETUAL.DOGE-USDT`, `BAR 1h`:
+`C2 no-event continuity observation did not confirm the signed cursor stream`.
+This is distinct from stream-open quota pacing and the now-blocked V1
+execution fallback; it is not a valid release receipt. Compact failure
+evidence is under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-exec-fallback-blocked-cde0fff-20260904T093057Z/`.
+Per the predeclared nonzero rule, only `query_v2_1`, then `query_v2_2`, were
+serially restored to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`;
+both are `running`, `healthy`, `restart=0`. V1, Rust, Kafka topology/offsets,
+Redis, SQLite, ingestors, projectors, streams, Trading System, alpha, provider
+state and signal/sizing/order paths were not changed.
+
+**Decision boundary:** this C2 closure is not certified and the candidate
+must not be released. The remaining diagnosis is narrowly limited to the
+shared signed-cursor/no-event BAR handoff used by the named OKX `DOGE-USDT`
+`1h` route. Do not relax the cursor requirement, freshness SLA or route policy,
+and do not rerun C2 as a luck-based retry. A source repair, if the read-only
+trace shows one, must retain the existing stream contract and add a direct
+regression for quiet-but-connected `1h` BAR handoff before any new bounded C2
+packet.
+
+**C2 stream-open pacing diagnosis and repair scope (`APPROVED / IN PROGRESS`,
+2026-09-04).** Read-only trace proved that the named DOGE route is not missing
+provider data or signed-cursor server controls. The C2-only stream pacer is
+correctly charging a lazy gRPC `Subscribe` open to the same per-identity quota
+as REST. However, the quiet BAR helper starts its fixed two-second *event*
+observation on the first `__anext__`; that call includes the client-local
+quota wait before the server can emit `REPLAYING` and `LIVE`. The second quiet
+session can therefore time out with an empty control list while waiting for its
+own admitted stream-open slot. This is a C2 harness timing defect introduced
+by the approved quota pacing, not an OKX data or cursor-contract defect.
+
+The repair remains deliberately narrow: C2 will distinguish bounded local
+stream-open scheduling from the existing two-second post-open quiet-event
+window. It will wait only to the existing C2 opening deadline for the first
+server control, then retain the original signed `REPLAYING -> LIVE` requirement
+and original final/current BAR validation. Freshness, provider/session quality,
+cursor semantics, manifest policy, public SDK/runtime contracts and all data
+plane roles remain unchanged. Regression must prove a quota-delayed open can
+receive both controls, a connection that emits one/no control still fails on
+the original post-open bound, and the stream pacer still charges REST plus
+every open/reconnect to one identity quota. Source gates must pass before one
+new immutable Python image and exactly one 300-second C2 retry; the existing
+two-query-role rollback remains unchanged.
+
+**C2 paced-stream-open source gate (`PASS / IMMUTABLE BUILD PENDING`,
+2026-09-04).** The shared receipt helper now accepts an optional C2-only
+`stream_open_timeout_seconds`. With no value, its prior behavior is byte-for-
+byte equivalent: no other receipt path changes. With the C2 value, it permits
+only the bounded local admission wait until the first server response. After
+`REPLAYING` (or any server handshake control), the original event window is
+restarted; a client-local `RECONNECTED` or `SNAPSHOT_REPLACED` opens one new
+bounded admission window for the next lazy subscription. The phase-10.5 C2
+runner supplies its existing global opening budget, which is already bounded
+by the enclosing `900s` opening gate. It does not alter any provider or public
+SDK timeout/SLA.
+
+The isolated source-only regression ran as UID/GID `10001`, read-only,
+network-disabled, capability-free/no-new-privileges with tmpfs scratch:
+`python -m unittest tests.test_phase103_consumer_receipt_harness
+tests.test_phase105_identity_acceptance tests.test_phase105_fallback_acceptance`
+passed `77/77` in `19.588s`. New cases prove a quota-delayed quiet final BAR
+receives `REPLAYING -> LIVE` before the original post-open observation, an
+incomplete `REPLAYING`-only handshake remains rejected before any current read,
+and the phase-10.3 certificate function receives the bounded opening budget.
+Existing C2 stream/REST shared-quota and fail-closed open regressions remain
+green. `git diff --check` passed. No runtime service, image, provider, Kafka,
+Redis, SQLite, V1, Trading System, alpha or order path changed. Next: build one
+immutable Python candidate, run the complete no-source-mount source matrix,
+then serially recreate only the two approved query roles for one C2 retry.
+
+**C2 paced-stream-open immutable candidate (`PASS / QUERY-ONLY ROLLOUT
+PENDING`, 2026-09-04).** Commit `7d7f8102f6f59e4e7b7a444c7b26dc9faa65cddd`
+was built once as `qdl-v2-python:2.0.19-7d7f810` with immutable digest
+`sha256:2a087564eb4d442a59e6eff05629934ef221ad0b6b448cfc3c9c110578d88b6f`.
+OCI source revision and release labels match the commit/tag and the process
+user remains `qdl:qdl`. The candidate was exercised without a source mount,
+with network disabled, a read-only root filesystem, UID/GID `10001`, no Linux
+capabilities, `no-new-privileges`, and tmpfs-only scratch. `py_compile` plus
+the C2 receipt harness (`50/50`), identity/fallback suites (`27/27`),
+reference batch (`26/26`), reference-v2 (`16/16`), reference/L2 consumer
+acceptance (`14/14`) and five-liquid handoff (`8/8`) passed: `141/141` total.
+No runtime role, provider request, durable store, V1 route, Trading System,
+alpha, signal, sizing or order path changed during the gate.
+
+**Authorized next action and rollback.** Serially recreate only
+`query_v2_1`, verify `healthy` with `restart=0`, then `query_v2_2` under their
+unchanged runtime, TLS and state mounts using the candidate digest. Run exactly
+one disposable four-identity C2 no-order receipt with its genuine
+`300s` observation. A nonzero receipt restores only those same query roles,
+serially, to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+V1, Rust, Kafka topology/offsets, Redis, SQLite, ingestors, projectors,
+streams, Trading System, alpha and all order/signal/sizing paths remain out of
+scope. Candidate/test-only artifacts will be inventory-cleaned only after this
+single terminal receipt, retaining the active image and named rollback image.
+
+**C2 paced-stream-open runtime receipt (`FAIL-CLOSED / ROLLED BACK`,
+2026-09-04).** Two launcher-only preflights stopped before the C2 program:
+the immutable image's declared non-root user needed an explicit root bootstrap,
+and the next launch mounted the recovery subdirectory rather than the existing
+read-only `qdl-v2` state root. Neither preflight copied identities, opened an
+endpoint, created C2 output, or consumed the approved receipt. The clean third
+launcher used root only for the established tmpfs copy/bootstrap and then
+executed the client as UID `10001`, with empty effective/permitted/inheritable
+and ambient capabilities and `NoNewPrivs=1`.
+
+The one actual disposable C2 client then exited nonzero before its true
+`300s` observation. It had already passed the repaired paced stream-open path;
+the terminal, unrelated fail-closed condition was
+`alpha.okx.paper.stable / OKX.SWAP.PERPETUAL.SOL-USDT / BOOK_SNAPSHOT`: the
+secondary V2 read could not prove a current complete, gap-free snapshot inside
+the declared freshness policy. The client wrote no acceptance receipt, had no
+order/provider credential, Docker socket, Kafka/Redis/SQLite mount or
+Gateway/Risk/alpha authority, and self-removed. Compact payload-free evidence
+is retained under
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/recovery-2.0.12-8ba4165-20260903/c2-paced-open-7d7f810-r3-sQFo1t/`.
+
+Per the approved nonzero rule, only `query_v2_1`, then `query_v2_2`, were
+restored serially to
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`.
+Both are `running`, `healthy`, `restart=0`. V1, Rust, Kafka topology/offsets,
+Redis, SQLite, ingestors, projectors, streams, Trading System, alpha, market
+data, signals, sizing and order paths were unchanged.
+
+**Decision boundary.** The C2 pace repair is source-tested, but this receipt
+does not certify release. The SOL L2 completeness/freshness failure is outside
+the approved C2 scheduling scope and must be separately diagnosed and repaired
+at the shared L2 materialization/quality boundary with a targeted regression
+before any new C2 packet. Do not relax freshness/completeness, silently fall
+back, or rerun C2 as a luck-based retry. The unused candidate and builder may
+be removed after their hashes/evidence are retained; scoped failure evidence
+and the active named rollback image remain.
+
+**Scoped artifact cleanup (`COMPLETE`, 2026-09-04).** After the terminal
+receipt and rollback verification, only unused Data Layer test/candidate images
+were removed: `qdl-v2-python:2.0.13-f2e5654` through
+`qdl-v2-python:2.0.19-7d7f810`, plus
+`qdl-v2-builder:c2-strict-mark-test`. The active
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163...` rollback/runtime image,
+running containers, volumes, networks and compact evidence directories remain.
+Root disk changed from `164G used / 126G available` to `160G used / 130G
+available`; Docker image storage changed from `17.21GB` to `10.62GB`.
+BuildKit reports `11.88GB` reclaimable cache, but it is shared/unattributed at
+this point and was deliberately not broadly pruned. Both rolled-back query
+roles remained `healthy`, `restart=0` after cleanup.
+
+### L2 execution-readiness closure (`APPROVED / IN PROGRESS`, 2026-09-04)
+
+**Goal.** Close the real multi-symbol execution-L2 gap revealed by the paced
+C2 receipt, then run exactly one new no-order C2 certificate. The applicable
+source of truth is the declared execution demand, not a manually maintained
+symbol allow-list: every currently active execution-grade `BOOK_SNAPSHOT` /
+`BOOK_DELTA` pair for Binance USD-M and OKX Swap must receive the same shared
+Rust-core verified-view materialization policy. Current intended scope is
+`BTC`, `ETH`, `SOL`, `DOGE`, and `BNB` on both venues, with depth `100`.
+
+**Known defect and invariant.** The active three-core runtime proves that the
+previous refresh tool hard-coded two ETH source IDs. All other active L2 pairs
+therefore fell back to `snapshot_refresh_seconds=30` instead of the declared
+hot materialization cadence. This closure must remove that hard-coded source
+set. Provider bootstrap/renewal remains `30s`; only a *verified, gap-free*
+canonical book view may materialize at the common hot cadence. A duplicate,
+out-of-order frame, gap, resync, unverified sequence, wrong identity, or
+cross-replica divergence must remain non-execution-eligible. No freshness SLA
+may be relaxed and no synthetic book, V1 substitution, per-symbol process, new
+topic, or topology may be used to force a pass.
+
+**Approved scope and rollback.** First run a read-only typed-status matrix for
+the ten active venue/symbol books through both V2 query replicas. The matrix
+must record compact payload-free `state`, event age, provider-session
+liveness, `complete`, `gap_open`, book generation, sequence-verification,
+source sequence, materialization age and watermark/replica identity. Then
+make the runtime compiler manifest-derived, add deterministic Rust/Python
+regressions and make C2 retain that same compact typed status on failure.
+After source gates, regenerate only `core.json`, `core-002.json` and
+`core-003.json`, serially recreate only `rust_core`, `rust_core_2` and
+`rust_core_3`, perform a short real-provider L2 readiness preflight, then run
+one disposable four-identity C2 no-order receipt with its real `300s`
+observation. A nonzero core/preflight/C2 result restores exactly the three
+core JSON files and their existing image selector from the generated rollback
+directory. V1, Kafka topology/offsets, Redis flushes, SQLite deletion,
+ingestors, projectors, query/stream roles, Trading System, alpha runtime,
+signals, sizing and all order paths are excluded.
+
+**Required evidence and exit.** Source tests must cover all ten execution
+books across both replicas for verified ready, quiet-but-connected,
+duplicate, out-of-order, gap/resync and recovery behavior; compiler tests must
+prove adding/removing a declared execution book changes the derived set without
+hard-coded symbols. The real preflight must show both replicas `LIVE`,
+`complete=true`, `gap_open=false`, verified sequence and bounded snapshot age
+for all ten books before C2 starts. C2 then proves the existing final-BAR,
+quote/trade, reference, signed-cursor/reconnect and governed V1 fallback
+behaviors without an order or consumer-state mutation. Only a passing C2 is a
+release-certification exit. Each slice records exact commands, counts, runtime
+image/config hashes, rollback state and cleanup evidence below this entry.
+
+**Source compiler and diagnostic slice (`PASS / RUNTIME PREFLIGHT PENDING`,
+2026-09-04).** Replaced the hand-maintained ETH-only hot-book allow-list in
+both Rust-core refresh tools with `qdl.runtime.execution_l2`, a fail-closed
+join of `stable-crypto-demand.yaml`, catalog and acquisition contracts. It
+derives the ten active execution physical source IDs (`BTC/ETH/SOL/DOGE/BNB`
+on Binance USD-M and OKX Swap) only when each has an exact
+`BOOK_SNAPSHOT`/`BOOK_DELTA` pair, depth `100`, Rust-native contiguous
+acquisition, provider refresh `30s`, and common verified-view materialization
+of `1000ms`. The acquisition configuration now declares that common cadence
+for all ten pairs; provider refresh itself remains unchanged at `30s` and
+ingestors do not gain a per-symbol loop or a new service.
+
+The C2 strict-snapshot harness now attaches bounded, payload-free typed status
+evidence to a non-retryable stale BOOK failure: identity, feed, state, event
+age, provider-session liveness, `complete`, `gap_open`, execution eligibility,
+policy and at most sixteen flags. Phase 10.5 renders that evidence as a compact
+failure JSON with primary/secondary replica attribution; it records no book
+levels/prices, cursor, credentials or market payload.
+
+Source gates actually run inside immutable
+`qdl-v2-python:2.0.12-8ba4165@sha256:bd0163...`, UID/GID `10001`, read-only
+root, `--network none`, no capabilities, no-new-privileges and tmpfs-only
+scratch:
+
+- `tests.test_execution_l2_materialization`,
+  `tests.test_refresh_v2_rust_core_runtime`, and
+  `tests.test_refresh_v2_l2_core_runtime`: **15/15 PASS** in `12.866s`.
+- `StableDeploymentContractTests.test_hot_l2_materialization_is_core_only_and_keeps_provider_refresh`,
+  all `Phase103QuietQuoteRetryTests`, and all
+  `Phase105IdentityAcceptanceTests`: **29/29 PASS** in `1.498s` after one
+  test-fixture correction (`subscription_id`, not a runtime-only binding ID).
+
+The compiler tests prove an incomplete snapshot/delta pair and missing hot
+cadence fail closed; refresh tests prove only the three core JSON files and
+optional existing immutable image selector can change, with exact rollback
+copies. No runtime role, image, provider call, Kafka/Redis/SQLite state, V1,
+Trading System, alpha, signal, sizing or order path has changed. Next approved
+slice: run the new read-only ten-book/two-replica matrix, then only if it
+passes apply/roll exactly `core.json`, `core-002.json`, `core-003.json` and
+`rust_core`, `rust_core_2`, `rust_core_3` before the one C2 receipt.
+
+**Matrix hardening and final source gates (`PASS / RUNTIME PREFLIGHT PENDING`,
+2026-09-04).** `scripts/phase105_execution_l2_status_matrix.py` now derives
+the exact ten physical `BOOK_SNAPSHOT` products from the declared execution
+demand and reads each through both V2 query replicas. Its compact, payload-free
+row records product/replica identity, typed quality state, event age,
+provider-session liveness, `complete`, `gap_open`, execution eligibility,
+verified book generation/native sequence/depth, materialization age and
+durable `watermark_offset`; no levels, prices, quantities, cursor or credential
+is retained. A status-transport failure itself becomes a typed fail-closed row
+instead of an unstructured harness error.
+
+The final source-only Python matrix/regression ran `118/118 PASS` in
+`42.368s` with exit `0`, network disabled, read-only root, UID/GID `10001`, no
+Linux capabilities, no-new-privileges, `1 CPU`, `768MiB` memory and no provider
+or runtime access. The visible BAR/DNSE messages are intentional failure
+fixtures that passed their fail-closed assertions. The Rust workspace library
+suite ran release-mode from a temporary local builder with network disabled,
+`1.5 CPU` and `2GiB` memory; it exited `0`, including Binance/OKX verified
+materialization, gap/resync, duplicate suppression and cross-source isolation.
+One explicitly isolated Redis coordination test remained `ignored` because no
+test Redis URL was supplied. The temporary Rust test container and
+`qdl-l2-rust-test:8bd84de` image were removed immediately after the gate.
+
+**Runtime preflight and bounded recovery (`ROLLBACK PASS / ONE FINAL ATTEMPT
+PENDING`, 2026-09-04).** Immutable source tool image
+`qdl-v2-python:2.0.12-1d0110e-l2-tool@sha256:198ff9...` first read the ten
+books through both V2 query replicas: `10/10` parity passed, with no provider
+connection, order action, cursor retention, market levels or prices recorded.
+The refresh compiler then wrote exactly `core.json`, `core-002.json` and
+`core-003.json`, plus reconciled `rollout.env` to the Rust digest actually
+running (`sha256:d86f0e...`, revision `8ba4165`). Its former selector pointed
+to absent digest `sha256:c63d54...`; retaining that stale selector would make a
+Compose recreate pull a non-existent rollback binary. No Rust binary changed.
+
+The three Rust cores were recreated serially and all remained `running`,
+`restart=0`, `OOMKilled=false`. An immediate post-roll matrix at about eight
+seconds failed only `BINANCE/USDM DOGEUSDT`: both replicas reported
+`STALE`, age about `61s`, `complete=true`, `gap_open=false`, and no verified
+snapshot. The other nine books remained `LIVE`, complete, gap-free,
+depth-100 and sequence-verified. This was not retried: the three core JSON
+files were restored from their exact SHA-verified rollback copies, the
+selector was kept at the actual unchanged `d86f0e...` digest so the rollback
+could be recreated, and all three cores were rolled back serially. The recovery
+matrix passed `10/10` again.
+
+**Diagnosis and final decision boundary.** Rust L2 adapter state is
+intentionally memory-resident and fail-closed after a core restart. A Binance
+diff-depth book cannot become execution-eligible until the next provider REST
+snapshot bridges its new state; the declared common provider bootstrap/renewal
+contract is `30s`. The failed eight-second probe was below that documented
+bootstrap bound, not evidence that relaxed freshness or a synthetic snapshot
+is needed. The final approved attempt therefore waits a deterministic `40s`
+after the last of the three serial core restarts (`30s` provider bound plus
+`10s` scheduling margin), then runs exactly one ten-book/two-replica matrix.
+Only `PASS` permits exactly one C2 no-order `300s` receipt. A matrix/C2 failure
+again restores the three JSON files and retains the actual immutable `d86f0e...`
+binary selector; no C2 retry or SLA relaxation is allowed without a new source
+diagnosis.
+
+**C2 closing-read diagnosis and bounded repair (`APPROVED / IN PROGRESS`,
+2026-09-04).** The post-preflight matrix completed `10/10` execution books on
+both query replicas after the declared `40s` Rust-book bootstrap bound. The
+single disposable C2 then failed before writing its receipt inside closing
+`warmup:batch` with an HTTP read timeout. This is not an L2 quality failure:
+the C2 scope has `299` V2-primary products, including `150` durable/pass-through
+BAR products. The opening proof already reads each bounded BAR history and
+proves signed cursor/reconnect. Closing incorrectly rebuilt the same
+`_c2_requirement` for every BAR (`min(manifest rows, 700, retained capacity)`)
+and sent those histories concurrently to both replicas for all four identities.
+That turns a current-state closing check into a large duplicate history transfer
+and can exceed the unchanged per-request `15s` transport deadline.
+
+The final approved core attempt did wait the deterministic `40s`: its
+ten-book/two-replica matrix passed `10/10` before the one actual C2 client
+started. C2 then reached closing revalidation and exited on that unwrapped
+`httpx.ReadTimeout`; it produced no acceptance receipt and is not a
+certificate. The exact three core JSON files were restored from the generated
+rollback directory and the three cores were recreated serially with the
+unchanged `d86f0e...` image selector. This returned the runtime to its prior
+baseline without touching V1, query/stream, Kafka/Redis/SQLite, Trading
+System, alpha or order state.
+
+The approved repair is limited to the C2 harness, not the public SDK/query
+contract: opening warmup, signed cursor, reconnect, full history/finality and
+all manifest policy remain unchanged. Closing retains the exact product
+identity, grade, source policy, interval, freshness/session/gap/finality,
+coverage, recovery and deadline fields, but requests exactly one final BAR row
+for BAR products. It continues to use `require_all=true`, validates that row
+strictly, and requires exact final-BAR content parity between the two replicas.
+Non-BAR closing reads retain their existing current-view semantics. The patch
+must also convert a closing batch transport failure into compact payload-free
+typed evidence (consumer, replica, batch identity digest/count and bounded
+feed-status observations); it must never record a price, level, quantity,
+cursor, credential or raw provider payload.
+
+**Exit / rollback.** Add deterministic regressions for one-row-only closing
+BAR requests, preserved public/full opening requirements, strict final-BAR
+parity, and compact timeout evidence. Run the existing source-only C2/L2
+matrix under the constrained immutable image. No query/core/ingestor/runtime
+service is changed by this harness repair. Only after those source gates pass,
+reapply the already-approved three core JSON files, serially recreate only
+`rust_core`, `rust_core_2` and `rust_core_3`, wait the documented `40s`, rerun
+the ten-book matrix, and consume exactly one new `300s` C2 receipt. Any
+nonzero result restores only those three core JSON files and core roles; V1,
+Kafka offsets/topology, Redis, SQLite, ingestors, projectors, query/stream,
+Trading System, alpha and every order path remain excluded.
+
+**C2 closing-read source gate (`PASS / RUNTIME C2 CANDIDATE PENDING`,
+2026-09-04).** The harness now derives a separate closing requirement. For a
+BAR it retains the exact manifested identity, grade, source policy, interval,
+freshness/session/gap/finality/coverage/recovery controls and all warmup
+deadline/cache fields, while changing only the history horizon to one final
+row. Both supported SDK representations are covered: an explicit
+`WarmupSpecification(rows=N)` and the equivalent `warmup_limit=N` form. The
+opening C2 proof remains unchanged at its bounded historical window and signed
+cursor/reconnect proof; closing compares the one final BAR's canonical content
+across both replicas. A failed closing transport batch now emits
+`qdl.phase105.c2-closing-batch-failure.v1` with a batch identity digest/count
+and at most one payload-free typed status per feed. It never records market
+payload, levels, prices, quantities, cursors or secrets.
+
+The real sealed scope was compiled source-only: `234` durable/pass-through
+stream products, including `150` BAR products, all resulting in exactly
+`rows=1` with `require_final_bars=true` and `require_full_coverage=true`.
+The constrained immutable tool image
+`qdl-v2-python:2.0.12-1d0110e-l2-tool`, with the candidate source mounted
+read-only, ran the execution-L2, C2 receipt,
+consumer/route/fallback, reference/L2, universe and core-refresh regression
+matrix: **`175/175 PASS` in `78.422s`**, network disabled, read-only root,
+UID/GID `1001`, no Linux capabilities, `1 CPU`, `768MiB`, tmpfs-only scratch
+and no runtime/provider access. No runtime role, image selector, provider
+session, Kafka/Redis/SQLite/V1 state, Trading System, alpha, signal, sizing or
+order path changed by this source gate.
+
+**Next exact packet.** Build one immutable Python C2-client image from this
+source revision, apply the already-reviewed manifest-derived materialization to
+only `core.json`, `core-002.json`, `core-003.json`, serially recreate only the
+three existing Rust cores, wait `40s`, and require the ten-book/two-replica
+matrix to pass. Then run exactly one disposable four-identity no-order C2 with
+its full `300s` observation. Any nonzero result restores the three core JSON
+files/core roles; the Python candidate is test-only and does not alter query
+or stream roles. Cleanup retains only the active image set and named rollback
+image after the terminal result.
+
+**L2 runtime recovery fact and revised terminal packet (`IN PROGRESS`,
+2026-09-04).** The manifest-derived core refresh was applied to exactly
+`core.json`, `core-002.json`, and `core-003.json` (new SHA-256 values
+`7a092e...f7dfb381`, `05ba9e...02be6edf`, and
+`e91c038b...de0d1698`), then `rust_core`, `rust_core_2`, and `rust_core_3`
+were recreated serially on their unchanged
+`sha256:d86f0e...ed86983` Rust image. All three were `running`,
+`restart=0`, and `OOMKilled=false` after the documented 40-second provider
+bootstrap window. The source regression matrix ran `175/175 PASS` both from a
+constrained source mount and again from immutable client image
+`qdl-v2-python:2.0.12-0843d2d-c2@sha256:b17173...32f42e1` with no source
+mount.
+
+The live L2 matrix then exposed an operational recovery defect before C2: both
+existing query replicas had previously been kernel-OOM killed at 12:30 UTC
+(`exit=137`, `OOMKilled=true`, `restart=no`) and their prior Python image ID
+`sha256:bd0163...` was already pruned from the local image inventory. Starting
+the stopped containers is possible, but recreating them through Compose fails
+because the runtime selector points at a non-retained image ID. Once started,
+the typed ten-book matrix reached both replicas but correctly failed all ten
+books as `STALE` with `complete=true` and `gap_open=false`; Rust core progress
+and the 30-second provider snapshot renewals continued. This is a
+projection/query recovery failure, not a DOGE/SOL-specific source admission
+failure and not grounds to relax freshness.
+
+**Revised bounded terminal scope.** Build one canonical immutable shared
+Python image from source revision `0843d2d` using a canonical
+`qdl-v2-python:2.0.12-0843d2d` tag and matching OCI revision/version labels.
+Seal its digest in the runtime selector. Roll only the seven existing V2
+Python cache/read roles, serially and with their existing TLS/state/runtime
+mounts: `stream_v2_passive`, `stream_v2_active`, `projector_v2`,
+`projector_v2_2`, `projector_v2_3`, `query_v2_2`, `query_v2_1`. The stream
+pair must keep one healthy lease holder; projectors must prove cache binding
+and canonical consumption before query replicas are rolled. This adds no
+service, container, topic, symbol worker, provider credential, data-plane
+schema, Redis flush, SQLite deletion, Kafka offset change, V1 mutation,
+Trading System/alpha change, or order action. It replaces an unrecreatable
+pruned Python runtime with one shared immutable image and reloads the same
+manifest/catalog contract used by the cores.
+
+**Rollback and exit.** Retain the currently running legacy Python containers
+only until the new image's seven-role recovery proves ready; record their
+per-role image IDs and runtime mounts before each recreate. If any role fails
+its bounded health/lease/cache gate, stop immediately and restore only that
+role to its recorded container/image when locally available; otherwise retain
+V1 as the product fallback and fail closed rather than invent an image.
+After all seven roles are healthy, wait through one provider renewal window,
+require the compact ten-book/two-replica L2 matrix to pass, then run exactly
+one C2 no-order 300-second receipt. C2 failure records compact typed evidence
+and does not trigger additional retries. A pass permits cleanup of the
+disposable C2 client/test artifacts while retaining the active canonical image
+and one explicitly named rollback image. This revision supersedes the prior
+statement that query/stream/projector could remain excluded: their actual
+pruned-image/projection state makes that exclusion incompatible with an honest
+C2 certificate.
+
+**L2 stale-envelope correction (`APPROVED / IN PROGRESS`, 2026-09-04).** The
+seven Python cache/read roles above have now recovered on the single canonical
+immutable image `qdl-v2-python:2.0.12-0843d2d`; both query replicas are
+healthy. The resulting typed ten-book/two-replica matrix still correctly
+fails closed because each latest execution L2 view carries a `received_at_ns`
+roughly 45 minutes older than its current spool commit, while the raw Kafka
+topic and all native-ingestor/core clocks are current. This is neither a
+SOL/DOGE-specific contract issue nor a reason to relax query freshness.
+
+**Approved narrow repair.** Rust is the authority for this provider-neutral
+ingress invariant. For any declared L2 binding, core must reject a raw frame
+whose receipt age exceeds that binding's existing
+`snapshot_refresh_seconds`; it must request adapter resync and emit ordinary
+bounded quarantine evidence, never re-date or materialize the old frame. The
+native lossless publisher must use the same declared bound for BOOK delivery:
+a Kafka delivery that cannot complete before the provider renewal bound ends
+the affected connection generation so its normal bootstrap/reconnect path
+obtains a fresh verified view. Python remains unchanged. This is shared
+Binance/OKX behavior, adds no public schema, service, worker, topic, cache or
+SLA relaxation.
+
+**Gate / runtime packet / rollback.** Add only deterministic Rust unit tests
+for stale-L2 rejection/resync and delivery-bound calculation, then run the
+existing targeted Rust suites in the constrained builder. Build one canonical
+Rust image from the tested commit; serially recreate exactly `rust_core`,
+`rust_core_2`, `rust_core_3`, then `ingestor_binance_usdm` and
+`ingestor_okx_swap`. Wait one 40-second bootstrap bound, require the compact
+ten-book/two-replica matrix to pass, then run exactly one 300-second C2
+no-order receipt. V1, Kafka topology/offsets, Redis, SQLite, projectors,
+query/stream, Trading System, alpha and order paths remain untouched.
+Rollback restores only these five roles to the current
+`sha256:d86f0e832ba945d302fd3f782e26fd41c5b08709a80f6de16bdd36af5ed86983`
+image and their saved runtime configs. A final C2 pass permits only scoped
+image/BuildKit cleanup, retaining active images plus one named rollback image.
+
+**Build-capacity guard.** The first disposable Rust builder attempt was killed
+before it could tag an image while compiling the whole release binary set; it
+did not alter any running role. The release Dockerfile now constrains Cargo to
+one job, so the canonical Rust build is deterministic within the host's
+available memory rather than relying on unconstrained parallel compilation.
+This is build hygiene only: it changes no runtime thread, provider cadence,
+data-plane contract or topology. The temporary builder tag is retained only
+until the targeted source gate finishes, then removed with the final scoped
+image/cache cleanup.
+
+**Source gate (`PASS`, 2026-09-04).** The constrained builder ran with one
+CPU and a 4 GiB memory cap, network disabled, and no provider/runtime access.
+`cargo fmt --all -- --check` passed against the read-only worktree. The two
+new release-profile regressions passed: `stale_l2_raw_is_quarantined_without_redating_and_fresh_snapshot_recovers`
+and `book_delivery_bound_is_exact_and_never_applies_to_non_book_frames`.
+The first fixture run exposed only two test mistakes (escaped JSON, then the
+documented Binance delta-to-snapshot bridge requirement); both were corrected
+before the passing run. No runtime container, broker, cache, topic, offset,
+consumer, provider request, V1 route, Trading System, alpha or order state was
+changed by the source gate. The next operation is the already-approved single
+canonical Rust image build and five-role rolling packet; there will be no
+additional test image or topology.
+
+The named regression container `qdl-rust-regression-l2-temp` exited `0` with
+`OOMKilled=false` and was removed immediately. Its temporary builder image is
+the only remaining test artifact and is retained solely to build the canonical
+runtime image in the next step.
+
+**Stale-envelope runtime rollout and catch-up evidence (`IN PROGRESS / C2
+HELD`, 2026-09-04).** One canonical Rust runtime image was built from tested
+source `d53609850558bd6e243ada220c93a9500ef48757` with OCI revision
+`d536098` and version `2.0.12-d536098`:
+`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`.
+Before mutation, the operator state received an exact SHA-verified rollback
+copy of `rollout.env`, `core.json`, `core-002.json`, `core-003.json`,
+`ingestor-binance-usdm.json`, and `ingestor-okx-swap.json` under
+`rollback-d536098-20260904T150845Z`; the prior image is retained explicitly as
+`qdl-v2-rust:rollback-2.0.12-8ba4165@sha256:d86f0e...ed86983`.
+
+Only the approved existing roles were serially recreated:
+`rust_core`, `rust_core_2`, `rust_core_3`, `ingestor_binance_usdm`, and
+`ingestor_okx_swap`. Each started on `36a822...dce65` with `restart=0` and
+`OOMKilled=false`. V1, Kafka topology and offsets, Redis, SQLite,
+projector/query/stream roles, Trading System, alpha, and order paths were not
+changed. The first disposable L2 preflight exposed a malformed legacy C2
+identity-directory mount before any request. It was deleted; the replacement
+uses four individual read-only governed identity file mounts, tmpfs-only
+cursor state, UID/GID `10001`, no capabilities, no provider credential and
+only the two V2 query replicas.
+
+The replacement real V2 preflight completed and retained compact typed
+evidence only (`10` physical execution books x `2` replicas,
+`provider_connections=0`, `order_actions=0`, no cursor or payload retained).
+It correctly returned `FAIL`, not a certificate: every view remains
+`STALE`, `complete=true`, `gap_open=false`, `execution_eligible=false`, with
+an approximately 46-minute event age. Read-only Kafka evidence isolates the
+cause: the Rust core group is near current (partition lag `69..266`), while
+`stable-projector-v1` has an inherited canonical backlog (`1,434,640` records
+at the last measurement) from its earlier recovery. This is a normal durable
+catch-up, not a symbol-specific L2 parsing defect. Its initial observed drain
+rate was about `50k` records/minute. No offset reset is permitted because it
+would silently skip retained BAR/history records. C2 is deliberately held
+until projector lag is drained and the ten-book matrix returns `PASS`; no C2
+attempt has been counted in this packet.
+
+**Scoped artifact cleanup (`PASS / RUNTIME CATCH-UP CONTINUES`).** After the
+canonical image completed, removed only unreferenced test artifacts:
+`qdl-v2-rust-builder:2.0.12-l2-stale-test`, the two disposable Python C2/L2
+tool images, and the obsolete stream/projector rollback tag. The redundant old
+Rust release tag was removed while its explicit rollback tag was retained. An
+attempt to remove `qdl-v2-python:2.0.12-8ba4165` was refused because a stopped
+container still references it; it was left intact and not force-removed.
+`docker builder prune -f` removed only unused BuildKit cache. Docker images
+fell from `27 / 16.12GB` to `23 / 11.7GB`; BuildKit from `18.34GB` (`15.39GB`
+reclaimable) to `2.278GB` (`0B` reclaimable); root filesystem changed from
+`177GB used / 113GB available` to `161GB used / 130GB available`. No volume,
+network, source, runtime-state, active container, Kafka/Redis/SQLite data or
+V1 artifact was removed. Retained set is active V2 Python
+`f608105...b3014`, active Rust `36a822...dce65`, one Python rollback
+`86a236...cbf5d`, one Rust rollback `d86f0e...ed86983`, and V1 fallback
+`dbfb57...15d65`.
+
+**Next and only release action.** Allow the existing projector group to catch
+up without offset mutation; when its lag is near zero, run one new ten-book
+matrix using the corrected file-bind client. Only a `PASS` may start the one
+already-approved 300-second four-identity C2 no-order receipt. A non-pass
+returns to the exact five-role rollback above; it does not create another
+phase, image, topology, or retry ceremony.
+
+**Stable stream deadline-propagation repair (`IN PROGRESS / NARROW RELEASE
+BLOCKER`, 2026-09-04).** Read-only runtime inspection found the exact reason
+the inherited projector catch-up intermittently stalls: the active containers
+declare `QDL_STABLE_REQUEST_DEADLINE_SECONDS=90`, and the query application
+propagates that value, but `create_stable_stream_runtime()` constructs its
+`BoundedRequestMiddleware` without `request_deadline_seconds`. The stream
+therefore silently falls back to the `RequestBounds` default of `10s`, emits
+truthful `504 DEADLINE_EXCEEDED` responses while a canonical batch is still
+being durably accepted, and forces projector generation reconnects. This is a
+configuration-propagation bug, not an L2/provider/data-quality defect.
+
+Approved scope is deliberately limited to one shared stable-request-bounds
+constructor, use by the existing query and stream applications, and a
+regression proving a configured `90s` deadline reaches both. No public API,
+schema, deadline value, Kafka topic/offset, Redis/SQLite state, provider,
+Rust role, V1 path, Trading System, alpha, or order path changes. Source gates
+are targeted unit/regression tests in the existing constrained Python image.
+If they pass, build one immutable Python image and serially recreate only
+`stream_v2_active` then `stream_v2_passive`, retaining their exact current
+image/runtime selector as rollback. The projectors continue from their
+committed offsets without reset; after their natural catch-up, rerun one
+ten-book matrix and the already-authorized single C2 no-order receipt. Any
+failure restores only the two Stream roles and does not create a retry image,
+new role, or topology.
+
+**Source gate (`PASS / STREAM ROLLOUT PENDING`, 2026-09-04).**
+`qdl.runtime.stable.stable_request_bounds()` is now the single constructor for
+both the V2 query application and internal stable-stream ingress. It carries
+the configured maximum request bytes, request deadline and concurrency bound,
+so a declared `QDL_STABLE_REQUEST_DEADLINE_SECONDS=90` cannot be applied to
+query while silently omitted from stream. The focused boundary regression and
+the complete stable-edge module passed in the existing immutable Python image
+with network disabled, read-only root, UID/GID `10001`, and tmpfs-only scratch:
+`1/1 PASS` for the direct propagation case and `52 PASS, 1 skipped` in
+`20.670s` for `tests.test_phaseb_stable_edge`. No provider call, runtime role,
+image selector, Kafka/Redis/SQLite state, V1 route, Trading System, alpha or
+order mutation occurred during source verification.
+
+The next bounded mutation is one immutable Python image from this tested
+commit, an exact runtime backup, then serial recreation of only
+`stream_v2_active` and `stream_v2_passive`. Existing projectors keep their
+committed offsets and will naturally drain; no offset reset is valid. Retain
+the currently active Python image as the sole rollback selector until the
+matrix and C2 receipt pass.
+
+**Stream rollout and recovery measurement (`PASS / C2 HELD FOR DURABLE
+CATCH-UP`, 2026-09-04).** One immutable Python image was built from source
+`8343f10cb483cc78c66763270957aed2c9d23b35` as
+`qdl-v2-python:2.0.12-8343f10@sha256:08dd22c37c3b4373622d4a1315897343c541ad877ed24ab2589db386808ed29b`.
+Before selector change, exact `rollout.env` rollback evidence was SHA-recorded
+under `rollback-stream-deadline-20260904T154113Z`; the active prior image is
+retained as `qdl-v2-python:rollback-stream-0843d2d@sha256:f608105...b3014`.
+Only `stream_v2_active` and then `stream_v2_passive` were serially recreated.
+Both reached `running/healthy`, `restart=0`, `OOMKilled=false`. No projector,
+Rust, ingestor, query, V1, Kafka topology/offset, Redis/SQLite, Trading
+System, alpha or order role changed.
+
+A bounded post-rollout recovery measurement recorded projector group lag
+`1,107,501 -> 1,091,748 -> 1,075,713` in `79s`; the sampled recent
+stream-side `504` count was zero after rollout. This verifies the hitherto
+silent `10s` middleware deadline was the catch-up stall, while preserving
+durable ordering rather than skipping retained data. C2 remains intentionally
+held until lag is near zero and the compact ten-book/two-replica matrix passes.
+No additional image, role, retry or topology is permitted before that gate.
+
+**Bounded projector catch-up tuning (`IN PROGRESS / SAME RELEASE CLOSURE`,
+2026-09-04).** After the stream deadline correction, all `504` samples stayed
+at zero and lag drained, but read-only partition evidence showed nearly all
+remaining work assigned to one ordered canonical partition while its projector
+was only about half of its existing `0.75` CPU allowance. The stable projector
+already validates `QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS` through `512`; the
+canonical Compose value is an unnecessarily conservative `128`, while the
+existing `8MiB` per-batch byte cap, `2,048` pending-record cap, `32MiB`
+pending-byte cap, request-byte bound and idempotent/checkpoint ordering remain
+unchanged. The narrow correction raises only the declared projector batch
+count to `512` for the three existing replicas.
+
+This is throughput-only: it does not alter source/provider events, sequence,
+event IDs, durable ACK/checkpoint ordering, retention, Kafka partitions or
+offsets, Redis/SQLite state, public contracts, image binary, V1, Rust,
+ingestors, query/stream, Trading System, alpha or order paths. Source gate:
+update the Compose regression and prove `512` is accepted while `2049`
+continues to fail. Runtime packet: SHA-backup the exact Compose file, serially
+recreate only `projector_v2`, `projector_v2_2`, `projector_v2_3` on their
+current immutable Python image with unchanged runtime/TLS/state mounts; then
+measure lag, error count, health/restart/OOM. Rollback restores the saved
+Compose file and recreates only those same three projectors at `128`. C2 stays
+held until durable lag is near zero.
+
+**Source gate (`PASS / PROJECTOR ROLLING PENDING`, 2026-09-04).** The canonical
+Compose declaration now sets the existing three projector roles to the already
+validated `512` record bound. The constrained immutable Python image
+`qdl-v2-python:2.0.12-8343f10` ran the direct runtime-boundary case plus the
+stable deployment Compose suite: **`28/28 PASS` in `14.639s`**. The suite
+proves `512` parses under the bounded configuration and `2049` remains
+rejected. Its expected negative subprocess and provider fixtures logged their
+bounded errors but did not mutate runtime/provider data; there were no failed
+tests. No runtime role, image selector, Kafka/Redis/SQLite state, V1,
+Trading System, alpha or order path changed during this source gate.
+
+**Read-only catch-up decision (`RUNTIME PACKET REQUIRED`, 2026-09-04).** The
+old `128`-record runtime was allowed to drain after the Stream fix, but the
+remaining ordered partition became producer-bound: read-only group samples
+showed partition `5` carrying about `177,774` records while total lag moved
+from `176,952` to `186,387` then `193,582` as new canonical data arrived.
+All sampled `504` counts stayed zero; this is not a deadline failure or data
+corruption. With the existing live producer rate, natural catch-up cannot
+reach the near-zero C2 gate. The already-tested `512` cap is therefore a
+required bounded capacity correction, not an optional optimization.
+
+The only remaining approval boundary is explicit serial recreation of exactly
+`projector_v2`, `projector_v2_2`, and `projector_v2_3` using their current
+immutable Python image and the committed Compose cap `512`; preserve Kafka
+offsets/topology, Redis, SQLite, V1, Rust, ingestors, query/stream, Trading
+System, alpha and order paths. The SHA-recorded prior Compose file is the
+rollback to `128`. Once applied, measure lag/error/health/OOM, then continue
+the existing matrix and single C2 closure path. No other role or image is
+needed.
+
+**Projector capacity runtime packet (`APPROVED / EXECUTING`, 2026-09-04).**
+The owner approved a serial recreate of exactly `projector_v2`,
+`projector_v2_2`, and `projector_v2_3` with
+`QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=512`. The current image and all
+runtime/TLS/state mounts remain unchanged. Kafka offsets/topology, Redis,
+SQLite, V1, Rust, ingestors, query/stream, Trading System, alpha and every
+order path are explicitly excluded. Rollback is restricted to the SHA-recorded
+Compose snapshot at
+`rollback-projector-batch-20260904T163638Z`, which restores batch `128` only
+for these three roles. The post-rollout gate is bounded health/restart/OOM,
+recent projector/stream error evidence and durable-lag measurement; C2 remains
+held until the normal durable backlog is near zero.
+
+**Projector capacity rollout and catch-up (`PASS / C2 PREFLIGHT READY`,
+2026-09-04).** Applied the approved packet serially to only
+`projector_v2`, `projector_v2_2`, and `projector_v2_3`. Each now runs
+`qdl-v2-python:2.0.12-8343f10` with the declared `512` record batch bound;
+all three reported `running`, `restart=0`, `OOMKilled=false`. The bounded
+post-rollout error scan found no `504`, deadline, reject, exception, fatal or
+OOM record from the three projector logs. Read-only Kafka group evidence for
+`stable-projector-v1` on `md.canonical.v2` recorded six assigned partitions,
+total lag `468`, maximum partition lag `150`; offsets were neither reset nor
+otherwise altered. This is below the C2 preflight lag bound, so the next and
+only release proof is the existing ten-book/two-replica read-only L2 matrix,
+then one disposable four-identity no-order C2 receipt if and only if that
+matrix passes. The exact rollback remains
+`rollback-projector-batch-20260904T163638Z` at batch `128` for only these
+three roles.
+
+**C2 preflight (`PASS / ONE TERMINAL RECEIPT EXECUTING`, 2026-09-04).** The
+disposable, payload-free execution-L2 matrix read all ten physical books
+(`BTC/ETH/SOL/DOGE/BNB` across Binance USD-M and OKX Swap) from both V2 query
+replicas and passed `10/10` in `1.641s`. It recorded zero provider
+connections, zero order actions and removed its temporary cursor directory.
+The projector group was below the lag bound before this preflight. The one
+remaining allowed operation is a fresh four-identity C2 no-order observation
+for `300s`, using a fresh V1 runtime binding derived from the currently
+serving fallback container. It is terminal for this closure: a non-pass is
+recorded fail-closed and does not start another retry.
+
+**C2 launcher correction (`PREFLIGHT PASS / RECEIPT PENDING`, 2026-09-04).**
+The first disposable launcher stopped before the C2 Python program started:
+its supplementary group was incorrectly `1000`, while the approved external
+monitoring/OKX identity files are group-readable only by host group
+`bobby=1001`. It emitted no receipt or C2 stdout and had no provider, order,
+Gateway/Risk or data-plane action. The correction is launcher-only: three
+non-secret authority/V1 evidence JSON files were copied into the existing
+`0700` C2 evidence namespace at mode `0440`, with SHA-256 equality to their
+sources, and the disposable client uses supplementary group `1001`. A
+network-disabled, read-only preflight confirmed all `16` individual input
+mounts readable as UID/GID `10001`, with no capability. The actual C2 program
+has not yet been invoked after this preflight; the next invocation remains the
+single terminal `300s` receipt.
+
+**C2 opening diagnostic (`FAIL-CLOSED / TWO SHARED READ-PLANE DEFECTS`,
+2026-09-04).** The corrected launcher reached the C2 program, but its first
+real opening reads stopped before the observation window and produced no
+certificate. A bounded no-order SDK diagnostic of the first manifested product
+for each of the four identities isolated two shared defects: (1)
+`qdl-v2-stream-b:8210` is a declared stable gRPC target but the passive stream
+role does not publish that Docker DNS alias, so the monitoring and Trading
+System probes fail reconnect resolution; (2) Binance/OKX DOGE `BAR 12h`
+warmup results do not satisfy their declared horizon, so both alpha probes
+correctly fail full-coverage validation. This is a genuine V2 read-plane
+failure, not an alpha/order mutation, a permission issue, or a reason to
+relax freshness/coverage. The only in-scope repair is to publish the stable
+passive-stream alias and repair the shared final-BAR/warmup lineage so the
+declared horizon is materialized or provider-backed. Then rerun the focused
+read-only diagnostics and only one fresh `300s` C2 receipt; V1 stays the
+rollback route.
+
+**C2 cache-rebuild recovery (`APPROVED / IN PROGRESS`, 2026-09-04).** Read-only
+runtime inspection narrowed the BAR failure further. The sealed Phase 54
+catalog and acquisition projection is valid and contains all `140` governed
+Binance USD-M/OKX Swap BAR bindings, including DOGE `12h`; its V4 checkpoint
+also records those bindings as bootstrapped. The later approved canonical-cache
+rebuild intentionally removed the durable SQLite history, while retaining that
+checkpoint. Therefore the edge correctly resumed only new final BARs and did
+not repopulate the historical 700-row C2 horizon. This is a recovery-lineage
+issue, not a provider gap, a missing symbol binding, or a reason to relax
+coverage.
+
+The repair has exactly two bounded parts. First, publish the already-declared
+`qdl-v2-stream-a` and `qdl-v2-stream-b` aliases on `stable_internal` as well as
+the existing consumer network; C2 starts from the internal network and must be
+able to reconnect to both replicas without changing its public targets. Second,
+recreate only the shared `binance_bar_edge` with the same sealed catalog and
+acquisition paths, the same current immutable image and mounts, a new
+namespaced V4 checkpoint, and a truthful `700`-row bootstrap horizon. The
+existing Phase 54 checkpoint remains intact as rollback; no retained market
+data is deleted. The edge may make bounded real provider reads and publish
+normal final-BAR data through the existing raw -> Rust -> Kafka -> projector
+path for the existing 140 bindings. Its bootstrap bound is deliberately 700:
+it is the already-approved C2 proof horizon and avoids claiming that a
+three-year durable cache can always reconstruct a 10,000-row long interval.
+Larger strategy-specific warmups remain the separately declared,
+non-authoritative `FRESH_SNAPSHOT` provider-history product and must retain
+typed full-coverage checks.
+
+Source gates: Compose regression proves both stream aliases are present on
+both required networks; existing C2/edge tests prove interval-aware durable
+capacity and strict final coverage. Runtime packet: serial recreate
+`stream_v2_active`, then `stream_v2_passive`, then `binance_bar_edge` only,
+using current images/runtime/TLS/state mounts and a sealed external override
+for the new edge checkpoint. Rollback restores the prior stream Compose
+topology and the original edge image/config/checkpoint; it never resets Kafka
+offsets/topology, flushes Redis, deletes SQLite, or touches V1, Rust,
+ingestors, projectors, query, Trading System, alpha or order paths. Exit is a
+read-only four-identity diagnostic proving both stream aliases plus DOGE 12h
+full coverage, followed by exactly one new C2 no-order `300s` receipt.
+
+The source repair also makes this recovery durable for future approved cache
+rebuilds: `rebuild_v2_stable_projection_cache.py` must stop and restart the
+existing shared BAR edge after stream/projector/query recovery. Its normal
+startup coverage check then detects a retained-history deficit even if the
+cache identity is deliberately preserved for cursor continuity, and refills
+only missing final bars through the normal provider/Kafka path. This adds no
+role, topology or independent cache; it prevents a future cache rebuild from
+silently leaving a live edge with stale history watermarks.
+
+**C2 cache-rebuild recovery source gate (`PASS / RUNTIME PACKET READY`,
+2026-09-04).** The Compose contract now publishes `qdl-v2-stream-a` and
+`qdl-v2-stream-b` on both `stable_internal` and `stable_consumer`; the existing
+TLS target names, ports and service count are unchanged. The stable-cache
+rebuild runbook now treats `binance_bar_edge` as a cache user: it stops it
+before cache deletion and starts it after streams/projectors but before the
+bounded projector-lag gate. That ordering lets its pre-existing checkpoint
+coverage validator request only missing real provider final BARs while the
+projectors are live to materialize them.
+
+The existing immutable image `qdl-v2-python:2.0.12-8343f10` ran the focused,
+network-disabled, read-only, non-root matrix: **`80/80 PASS` in `17.078s`**
+across stable Compose isolation/alias assertions, cache-rebuild stop/start
+ordering, C2 identity/cursor/fallback behavior, and Binance/OKX strict
+history/finality/gap bootstrap tests. Expected negative provider/checkpoint
+fixtures remained bounded; no runtime, provider, Kafka, Redis, SQLite, V1,
+Trading System, alpha, signal, sizing or order mutation occurred. The next
+operation is the already-journaled three-role runtime packet only.
+
+**C2 cache-rebuild recovery runtime packet (`APPROVED / EXECUTING`,
+2026-09-04).** Runtime preflight verified the active stream roles use immutable
+Python image `sha256:08dd22c37c3b4373622d4a1315897343c541ad877ed24ab2589db386808ed29b`,
+have `restart=0` and `OOMKilled=false`, and currently expose their stable
+aliases only on the consumer network, not `stable_internal`. The existing BAR
+edge uses immutable image
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`,
+the sealed Phase 54 catalog/acquisition files, a 1,000-row warmup declaration,
+and checkpoint `phase54-alpha-demand-5edbc8c.json`. The approved packet is
+therefore limited to an external, mode-`0600` override in
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/c2-bar-recovery-20260904T172959Z`:
+it gives the edge a new namespaced checkpoint and a truthful 700-row C2
+bootstrap bound while retaining the same catalog, acquisition projection,
+image, mounts and 10,000-row catch-up ceiling. It serially recreates only
+`stream_v2_active`, `stream_v2_passive`, then `binance_bar_edge`.
+
+The packet may make bounded real-provider reads and normal final-BAR writes
+through the existing raw -> Rust -> Kafka -> projector path, because history
+recovery cannot be verified without materializing real provider data. It must
+not reset Kafka offsets/topology, flush Redis, delete SQLite, change V1, Rust,
+ingestors, projectors, query, Trading System, alpha, signals, sizing or any
+order path. Rollback is restricted to removing this external override from the
+Compose invocation and recreating only these same three roles with their
+recorded current stream topology and Phase 54 edge checkpoint. Exit requires
+role health/restart/OOM checks, internal alias resolution, two-replica DOGE
+`BAR 12h` full-coverage proof, and then exactly one fresh four-identity
+no-order C2 receipt; any failure is terminal evidence, not a retry loop.
+
+**Packet image correction (`IN PROGRESS`, 2026-09-04).** The first BAR-edge
+recreate correctly applied the new checkpoint and started a real bootstrap
+(`140` bindings; `71,810` final-BAR rows), but Compose inherited the global
+Python selector `qdl-v2-python:2.0.12-8343f10` rather than retaining the
+edge's recorded pre-packet digest
+`sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d`
+(`qdl-v2-python:2.0.12-8ba4165`). That is outside the approved image scope,
+even though the three-role service boundary and all data-store exclusions held.
+Before any C2 diagnostic, the same external edge override is amended to pin
+that locally retained digest/tag and only `binance_bar_edge` is recreated once
+more. The new checkpoint and already materialized normal BAR data are retained;
+no Kafka offset/topology, Redis, SQLite, V1, Rust, ingestor, projector, query,
+Trading System, alpha or order state is reverted or changed. This restores the
+exact approved runtime image boundary rather than treating an accidental image
+selection as acceptable.
+
+**Focused post-recovery diagnostic (`APPROVED / EXECUTING`, 2026-09-04).**
+Before consuming the single full C2 receipt, run one disposable Alpha-OKX
+SDK preflight for the exact recovered failure product family. It is restricted
+to the manifest-bound Alpha-OKX identity, the two V2 query replicas and the
+two stable stream aliases on `executor_network`, with a 30-second observation.
+It reads the complete Alpha-OKX V2 scope so DOGE `BAR 12h` is checked through
+the same public SDK warmup/full-coverage/parity path as C2; it has no provider
+credential, Docker socket, Kafka/Redis/SQLite mount, Gateway/Risk/order route,
+or deployed consumer mutation. Private client material exists only on the
+client tmpfs and the retained host evidence is limited to C2-produced compact
+JSON/exit metadata. This is a narrow preflight, not a replacement C2
+certificate: a pass permits the one four-identity, true-300-second receipt;
+a fail records typed evidence and stops the closure path.
+
+**Diagnostic credential preflight (`BLOCKED BEFORE ENDPOINT READ`,
+2026-09-04).** The recovered BAR edge and two stream aliases are healthy, and
+the projector group is back within its bounded live-lag window (`170` total,
+`54` maximum partition in the read-only sample). However, the previously
+referenced Alpha-OKX/CA C2 seed paths are now directories rather than regular
+credential files; the surviving repository-local copies are zero-byte input
+skeleton placeholders. This is consistent with a prior failed bind-mount
+launcher creating host directories for absent source files. No diagnostic
+client was started, no V2/V1 endpoint, provider, order, Gateway/Risk or
+durable store was read or mutated by this failed preflight. The only permitted
+next investigation is path/permission-only discovery of an existing active
+external consumer identity. If none exists, do not synthesize a credential or
+retry C2: prepare a separate, explicit trust/keyring extension packet first.
+
+**C2 external-identity recovery packet (`APPROVED / SOURCE IMPLEMENTATION`,
+2026-09-04).** The owner has authorized completing the remaining release
+closure without another approval round. Discovery found no recoverable private client material for the
+four governed C2 identities: the active query/stream trust volume contains
+server and internal service credentials plus the client-CA bundle, but not
+external client private keys by design; the old host seed paths are only empty
+directories/skeletons. The smallest correct repair is additive and reuses
+`phase105_prepare_external_consumer_extension.sh`: generate a fresh external
+client CA and four mTLS/JWT key pairs in a new mode-`0700` state namespace,
+delete the generated CA private key after issuance, append only the new public
+CA to the existing query/stream client-trust bundles, and add four new,
+versioned public JWT key IDs mapped to the same four existing manifest
+subjects. Private keys remain only in the protected C2 namespace; no secret
+is committed or emitted in evidence.
+
+The runtime packet would serially recreate exactly `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` so they load the
+additive trust/keyring extension. It changes no provider adapter, binding,
+manifest route, Rust role, BAR edge, projector, ingestor, V1, Kafka topology
+or offsets, Redis, SQLite, Trading System, alpha, Gateway/Risk, signal, sizing
+or order path. Rollback restores the recorded prior client-CA bundle and
+key-subject/keyring environment and recreates only those four reader roles.
+After their bounded health/restart/OOM and alias checks, run the focused
+Alpha-OKX diagnostic once and then one full four-identity C2 300-second
+receipt. This packet is necessary because reusing a server/internal identity
+would invalidate the consumer-identity proof; it is intentionally not applied
+without the explicit four-reader trust/keyring approval.
+
+**C2 identity recovery implementation boundary (`IN PROGRESS`, 2026-09-04).**
+The recovery is deliberately an additive credential rotation, not a runtime
+architecture change. Source work may extend the existing external-consumer
+generator so it can issue exactly `monitoring`, `trading-system`,
+`alpha-binance`, and `alpha-okx`; it must preserve support for the historical
+`reference-l2` identity. The new JWT public keys use distinct `*-rs256-v2` key
+IDs bound to the four already-governed SPIFFE subjects, while the five retained
+`*-rs256-v1` public keys stay valid in the reader keyring. The generated client
+CA is appended to the current query/stream trust bundles; existing trust is
+never replaced. Tests must prove: duplicate/unknown role rejection, no CA
+private key retention, exact old-plus-new key/subject map, private material
+absent from public handoff output, and that the historical Reference/L2 packet
+continues to use its unchanged five-key contract.
+
+The following bounded runtime packet is authorized after source gates pass:
+create one fresh `0700` C2 state namespace, retain only four disposable client
+key pairs and compact evidence there, back up the two public trust bundles,
+append the new external CA, then serially recreate only `query_v2_1`,
+`query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with their existing
+images, runtime mounts, ports and aliases plus the additive public JWT overlay.
+Rollback restores the two bundle backups and prior five-key public overlay,
+then recreates the same four reader roles. It does not touch V1, Rust,
+ingestors, BAR edge, projectors, Kafka topology/offsets, Redis, SQLite,
+Trading System, alpha containers, signal/sizing or order paths. Exit is one
+focused Alpha-OKX read-only preflight followed by exactly one four-identity,
+300-second C2 receipt; failures are recorded as terminal evidence rather than
+retried by changing the contract.
+
+**C2 identity recovery source gate (`PASS / FOUR-READER PACKET READY`,
+2026-09-04).** The handoff module now separates the preserved five-key
+Reference/L2 contract from an explicit recovery key map. The recovery compiler
+adds only four versioned public keys (`monitoring`, `trading-system`,
+`alpha-binance`, `alpha-okx`) and retains all five original v1 public keys and
+subjects. `phase105_prepare_external_consumer_extension.sh` now accepts the
+four governed C2 roles, retains historical `reference-l2` support, and builds
+the successor client trust from an operator-supplied current bundle plus one
+new external CA. `phase105_prepare_c2_identity_recovery.py` writes only the
+expanded public key/subject overlay and a hash-only packet; private key paths
+never enter reader environment or repository output.
+
+Source-only evidence used immutable `qdl-v2-python:2.0.12-8343f10`, UID/GID
+`10001`, read-only root and no network: `tests.test_phase105_handoff` **16/16
+PASS** and `tests.test_phaseb_stable_deployment` **27/27 PASS**. The latter
+prints expected negative fixture diagnostics for missing CLI input, bounded
+BAR continuity and DNSE queue exhaustion; its process exit was `0`. A separate
+tmpfs-only generator check issued all four C2 mTLS/JWT identities, preserved a
+two-certificate trust chain and confirmed the generated external CA private
+key was deleted. No runtime, provider, Kafka, Redis, SQLite, V1, Trading
+System, alpha, signal, sizing or order state changed during source gates.
+
+The next bounded operation is now valid: extract public current query/stream
+trust bundles to the new `0700` packet namespace, generate the additive C2
+bundle there, back up then replace only those two public trust files in
+`stable_tls`, and serially recreate the four reader roles with a Compose
+overlay pinned to their currently active images. C2 is not run until those
+reader health/restart/OOM and two-alias checks pass. The recorded rollback is
+the two bundle backups plus removal of the additive public overlay and
+recreation of those same four readers at their recorded image digests.
+
+**C2 identity recovery runtime (`APPROVED / EXECUTING`, 2026-09-04).** The
+owner explicitly approved the additive trust/keyring handoff. The bounded
+runtime packet is
+`/home/bobby/.local/state/qdl-v2/session-liveness-43cdbe3-20260829T162719Z/c2-identity-recovery-20260904T180000Z`.
+The operation is limited to appending its generated external CA to the
+existing `query` and `stream` public client trust bundles in
+`qdl_v2_stable_candidate_stable_tls`, then serially recreating exactly
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with
+the packet's additive public JWT keyring and each role's already-recorded
+immutable image/runtime mounts. The prior bundle digests and PEM counts are
+recorded in the packet before mutation. Rollback restores those two exact
+bundle backups, removes the additive overlay, and recreates only the same
+four readers. V1, Rust, ingestors, BAR edge, projectors, Kafka topology and
+offsets, Redis, SQLite, Trading System, alpha and order paths are excluded.
+
+The first bounded command verified both pre-mutation bundles against their
+packet backups and copied the additive four-certificate bundle into exactly
+the `query` and `stream` trust paths. Its final shell-only hash assertion
+used an invalid nested `awk` escape and exited before any reader recreate;
+the resulting partial state is therefore `trust append applied / reader
+rolling pending`, with four certificates present. The verification command
+will be rerun with a simpler hash extraction before the four-reader rollout;
+no broader retry or scope change is permitted.
+
+**C2 identity recovery runtime evidence (`FOCUSED PREFLIGHT SKIPPED / FULL C2
+AUTHORIZED`, 2026-09-04).** The four readers were then recreated serially and
+passed health, restart, OOM, alias, bundle and additive-key checks. Two
+disposable Alpha-OKX-only launcher attempts stopped before endpoint access:
+the first could not traverse the protected packet directory; the corrected
+launcher reached the acceptance program but its optional `--consumer-id`
+subset exposed an existing harness invariant requiring the complete four
+consumer fallback scope. A third launcher reached the same boundary after
+metadata staging and confirmed the failure is harness scope validation, not
+provider/auth/data/runtime behavior. These attempts recorded only compact
+exit/error evidence and made no endpoint, provider, order or durable-state
+mutation. Per the fixed C2 contract, the subset diagnostic is not retried or
+expanded; the next and only acceptance operation is the complete four-identity
+no-order C2 with a real `300s` observation, which exercises Alpha-OKX together
+with the other governed consumers.
+
+**C2 identity recovery runtime exit (`FAIL-CLOSED / RELEASE BLOCKED`,
+2026-09-04).** The approved reader rollout completed: both public trust
+bundles changed from the recorded SHA
+`931e12cf2d2b63ea0cc46d148d24ca74972ae909e9293f456984338be84c199a` to
+`441af36962b83608e1d0f336dab1822a761d136b104589a4c421af6cef34e874`, each
+with four certificates; all four readers are healthy, `restart=0`,
+`OOMKilled=false`, use their recorded images, resolve both stable stream
+aliases, and expose the retained five plus additive four public JWT IDs.
+The V1/Rust/ingestor/BAR-edge/projector/Kafka/Redis/SQLite/Trading-System/
+alpha/order exclusions were preserved.
+
+The one full four-identity C2 invocation then stopped before the observation
+window and produced no receipt. Its compact terminal error is
+`BASIS / SOURCE_UNAVAILABLE`: the Binance native-basis query lane could not
+obtain Rust provider admission. Read-only runtime inspection confirmed the
+query is bound to `http://rust_core:8300`, while all three unchanged Rust core
+roles currently declare `QDL_PROVIDER_ADMISSION_ENABLED=false`; no provider
+connection, order action, signal/sizing mutation or durable-state mutation
+occurred. This is a real runtime configuration blocker, not a trust or C2
+launcher defect. No C2 retry, fallback widening, Rust recreate or release
+publication is allowed under this packet. The next permitted packet must
+explicitly enable/verify the existing Rust admission lane (or remove the
+native BASIS product from the certified consumer manifest through a separate
+decision), then run one fresh complete C2 `300s` receipt.
+
+**Rust provider-admission recovery packet (`APPROVED / EXECUTING`,
+2026-09-05).** The owner approved the remaining narrow runtime action. The
+existing `docker-compose.phase105c-c2.override.yml` is used only for its
+already-reviewed `rust_core` setting
+`QDL_PROVIDER_ADMISSION_ENABLED=true`; it is not applied to any other role.
+Only `qdl_v2_stable_candidate-rust_core-1` is serially recreated because the
+shared admission listener is the single internal lane at `rust_core:8300`.
+The current immutable Rust image (`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`),
+`core.json`, TLS/Redis/Kafka mounts, policy SHA, secret binding, authority
+revision and all three-core topology remain unchanged. `rust_core_2` and
+`rust_core_3` are not recreated. Rollback is one bounded recreate of
+`rust_core` with the base Compose definition and
+`QDL_PROVIDER_ADMISSION_ENABLED=false`; no Kafka offset/topology, Redis,
+SQLite, V1, ingestor, BAR edge, projector, query/stream, Trading System,
+alpha or order path is touched. Exit requires listener/config verification
+and exactly one fresh complete four-identity C2 no-order receipt for `300s`.
+
+**Rust provider-admission packet evidence (`C2 RETRY REQUIRED / PROVIDER
+RATE-LIMIT BLOCKER`, 2026-09-05).** The approved `rust_core` recreate passed:
+the active immutable image is unchanged, `QDL_PROVIDER_ADMISSION_ENABLED=true`,
+the private listener started with the sealed policy SHA, and all three Rust
+cores remained running with `restart=0` and `OOMKilled=false`; only `rust_core`
+was recreated. The first complete four-identity C2 was then run once and
+failed before its observation window with no acceptance receipt and no order or
+durable-state mutation. Its typed failure was
+`BASIS/SOURCE_UNAVAILABLE` after the Binance native-basis provider lane did not
+complete. Read-only admission state showed `admitted=11`, `deferred=8`,
+`cooldowns=3`, `lease_count=0`; a bounded real provider probe reproduced
+Binance HTTP `418`, provider code `-1003`, with the documented IP-ban response.
+Rust admission therefore performed the intended fail-closed coordination; it
+did not fabricate data or bypass the native provider. The next and only
+permitted runtime action is one fresh complete C2 `300s` after the provider
+ban/cooldown expires. No policy widening, fallback substitution, repeated C2
+storm, or topology change is allowed. Release remains blocked until that
+receipt passes.
+
+**Narrow C2 DOGE 12h continuity repair (`APPROVED / EXECUTING`,
+2026-09-05).** The admission-enabled C2 reached the data plane and stopped
+fail-closed on `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 12h` with
+`OPEN_SEQUENCE_GAP`. Read-only inspection of the active canonical cache found
+700 real provider envelopes for that partition and exactly one missing
+12-hour open between adjacent final bars; the route, identity, interval and
+provider lineage are otherwise correct. The existing
+`scripts/repair_stable_final_bar_history.py` is the approved bounded repair
+path. Its dry-run confirmed `window_rows=700`, `missing_rows=1`, and zero
+production mutations. Apply is limited to
+`binance-usdm-dogeusdt-bar-12h`, `rows=700`, `expected_missing=1`; it may
+publish only that provider-confirmed final BAR through the existing
+raw -> Rust -> Kafka -> projector/cache path. It must not reset Kafka,
+flush Redis, delete SQLite, recreate services, change manifests/policy/SLA,
+touch V1, Trading System, alpha or order state. Exit requires the missing
+open to materialize and both query replicas to report complete, ordered,
+gap-free DOGE 12h warmup. Only then may the one fresh complete four-identity
+C2 `300s` receipt run; any later typed failure remains release-blocking.
+
+**C2 full BAR gap inventory (`C2 RETRY REQUIRED / BOUNDED REPAIR SET`,
+2026-09-05).** After the one-row DOGE 12h repair, the next complete C2
+stopped at `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 15m`. A read-only scan of
+all `140` governed BAR partitions found `104` partitions with one real
+timestamp discontinuity and no duplicate open; the already repaired Binance
+DOGE 12h partition is clean, leaving `103` partitions to repair. The pattern
+is cross-venue and cross-symbol, concentrated in the historical warmup
+windows (not a single-symbol provider defect). This explains why repairing
+one route and retrying would merely reveal the next route.
+
+The next bounded action is a serial set of invocations of the existing
+`scripts/repair_stable_final_bar_history.py` for exactly those `103` manifest
+bindings, one process at a time, each with `rows=700` and
+`expected_missing=1`. A dry-run attempt that assembled all windows in one
+process was stopped by the disposable client's `512 MiB` limit (`exit=137`);
+it did not restart or mutate any service. Serial execution is therefore an
+explicit memory-safety invariant, not a new architecture or extra worker.
+Each invocation must prepare its window from real Binance/OKX provider
+history, verify the missing-row count before publish, publish only the
+missing final BAR envelope through the existing pipeline, and require zero
+remaining rows. No manifest, SLA, policy, topology, Kafka offset,
+Redis/SQLite reset, V1, Trading System, alpha or order mutation is included.
+After projector catch-up, an inventory must show every one of 140 BAR
+partitions ordered and gap-free; only then is one fresh complete
+four-identity C2 `300s` run permitted.
+
+**C2 BAR continuity recovery evidence (`AUTO-REPAIR CONVERGED / C2 RETRY
+REQUIRED`, 2026-09-05).** The bounded bar-edge restart used the already sealed
+runtime and its existing startup coverage validator. It detected the exact
+cache-rebuild deficit across the governed routes and published `3364` real
+provider final BAR rows for all `140` bindings through the normal raw -> Rust
+-> Kafka -> projector/cache path; the log ended with
+`stable multi-venue BAR bootstrap complete bindings=140 rows=3364`. The edge
+is running with `OOMKilled=false`, `restart=0`, and approximately `168 MiB`
+RSS under its existing `512 MiB` limit. No manifest, policy, topology, V1,
+Trading System, alpha or order path changed.
+
+The earlier read-only inventory process itself exceeded the edge container's
+`512 MiB` cgroup and caused a diagnostic-only `OOMKilled=true` exit; the exact
+same container was started again with its original image, mounts and config,
+and the built-in bounded repair completed. Future verification must therefore
+use a separate read-only disposable verifier, never an in-process scan inside
+the live bar-edge cgroup. Exit remains: projector catch-up, a read-only
+140-partition gap-free check, then one fresh complete four-identity C2
+`300s` receipt.
+
+**C2 3m continuity repair (`APPROVED / EXECUTING`, 2026-09-05).** The
+separate low-memory verifier isolated ten remaining `3m` partitions after the
+bounded bar-edge bootstrap. Each real Binance/OKX provider window returned
+`700/700` contiguous final rows; the durable cache was missing the same three
+opens (`1788486840000`, `1788487020000`, `1788487200000` ms, corresponding to
+`2026-09-04T01:54:00Z`, `01:57:00Z`, and `02:00:00Z`) on exactly these existing
+manifest bindings: Binance `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`,
+`BNBUSDT`, and OKX `BTC-USDT-SWAP`, `ETH-USDT-SWAP`, `SOL-USDT-SWAP`,
+`DOGE-USDT-SWAP`, `BNB-USDT-SWAP`. This is a bounded cache-materialization
+hole, not a provider gap or a new demand binding.
+
+The approved repair is ten serial invocations of the existing
+`repair_stable_final_bar_history.py`, each `rows=700` and
+`expected_missing=3`, publishing only those provider-confirmed rows through
+the normal raw -> Rust -> Kafka -> projector/cache path. The serial invariant
+keeps provider history and Kafka working sets below the existing bar-edge
+`512 MiB` limit. No manifest, provider policy, SLA, Kafka offset/topology,
+Redis/SQLite reset, V1, Trading System, alpha or order mutation is included.
+Each route must report `CONVERGED`, then the disposable verifier must confirm
+all 140 BAR partitions ordered and gap-free before the single complete
+four-identity C2 `300s` receipt is run. A failed route remains fail-closed and
+blocks C2; no count widening or retry storm is permitted.
+
+**C2 3m repair execution note (`PARTIAL / COUNT-FENCED`, 2026-09-05).** The
+first three serial repairs (`binance-usdm-dogeusdt-bar-3m`,
+`okx-swap-doge-usdt-swap-bar-3m`, and `okx-swap-sol-usdt-swap-bar-3m`) each
+published exactly three rows and converged to zero remaining rows. The fourth
+route's pre-approved count changed from three to four while the live window
+advanced, so the CLI correctly refused the stale `expected_missing=3` before
+publishing. The remaining serial repairs therefore use the same
+`prepare_history_repair` result as both the read and write fence: count the
+provider-confirmed missing opens immediately, publish only that exact plan,
+and require zero remaining rows. This is a timing-safe execution of the same
+approved ten-binding repair, not a scope expansion or count widening.
+
+**C2 complete BAR-window inventory (`REPAIR SET EXPANDED WITHIN APPROVED
+CACHE-CONTINUITY SCOPE`, 2026-09-05).** The manifest-derived verifier now
+resolves source partitions by `instrument_uid/source_id` (including the two
+BTC 1m source-id partitions) and confirms `140/140` partitions present. Its
+700-final-open window still finds the same durable materialization defect on
+`60` routes: all five symbols on both Binance and OKX for `5m`, `15m`, `30m`,
+`1h`, `2h`, and `3m`; there are no duplicate opens or missing partitions. The
+provider-backed window is contiguous for these routes, so this remains the
+same approved cache continuity repair, not a new demand or provider contract.
+
+The repair runner will process exactly this derived set serially, computing
+the missing count from each freshly fetched real-provider plan immediately
+before its count-fenced publish. It must not scan or retain all plans at once;
+the live edge stays under its existing memory limit. The 140-partition
+verifier is rerun after projector catch-up, and only a zero-gap result permits
+the one final four-identity C2 `300s` receipt.
+
+**C2 3m repair convergence note (`RETRY SAME SET`, 2026-09-05).** The
+post-retry verifier reduced the remaining defect to the ten `3m` routes only.
+The real provider window exposes the next missing opens in the same historical
+block as earlier rows are materialized; therefore a single fixed count is not
+a valid exit criterion. The ten-route repair repeats with a freshly prepared
+700-row provider window and an exact per-plan missing count until the isolated
+140-route verifier reports zero gaps. No provider, manifest, topology,
+consumer, order or fallback policy is changed.
+
+**C2 5m convergence note (`RETRY BOUNDED / SAME SET`, 2026-09-05).** The
+140-route verifier now has zero gaps for every interval except the ten `5m`
+bindings. They exhibit the same moving-window behavior: each fresh provider
+plan fills the next exact missing opens in one shared historical block. A
+bounded serial loop over only those ten existing bindings will repeat the
+count-fenced repair for a finite number of rounds and stop on the first
+zero-missing round. Any non-convergent route remains release-blocking; no
+unbounded retry, provider fallback or architecture change is allowed.
+
+**C2 verifier guard (`FAIL-CLOSED / NO BROADENING`, 2026-09-05).** An
+in-process diagnostic briefly classified all bindings as bad because it used
+the 700-row BAR window for long intervals whose truthful provider capacity is
+smaller; the existing repair API rejected the first `1w` request before any
+publish. The only extra accepted event from that attempt was the already
+known Binance BNBUSDT `15m` repair row pair. The diagnostic is discarded as
+an acceptance result. The authoritative isolated verifier remains the source
+for the exact 30-route set (`5m`, `15m`, `30m` across five symbols and two
+venues); no weekly/daily or other interval is included in further repair.
+
+**C2 post-projection recheck (`REPAIR RETRY REQUIRED / SAME SCOPE`,
+2026-09-05).** The first 60-route serial pass converged every prepared
+provider window, but the independent cache verifier immediately after
+projector catch-up still found eight `5m` routes with one historical hole plus
+the newest not-yet-materialized close. A fresh real-provider plan for each
+route reports exactly those two missing opens; this is the normal moving
+window race between provider observation and durable projection, not a new
+binding. Re-run only the eight affected existing routes with the same
+count-fenced repair primitive, then repeat the verifier before C2.
+
+**C2 verifier-driven convergence (`APPROVED SAME-SCOPE RECOVERY`,
+2026-09-05).** The post-pass inventory can expose the next layer of one
+shared historical block after an earlier layer is materialized; a static list
+therefore cannot be the exit condition. The final recovery loop is bounded by
+`12` rounds, reads one manifest-derived partition at a time, derives the bad
+set from the durable cache, then calls the existing provider-backed repair
+primitive only for that current bad set. It stops on a zero-gap inventory and
+fails closed on a non-convergent round or timeout. No new source file,
+container, manifest, provider fallback, reset, or consumer/order mutation is
+introduced.
+
+**Rust provider-admission packet and final C2 (`APPROVED / EXECUTING`, 2026-09-05).** The approved runtime packet is limited to verifying the existing Rust admission authority at private `rust_core:8300` and then running one complete four-identity no-order C2 observation for `300s`. Current runtime evidence confirms `QDL_PROVIDER_ADMISSION_ENABLED=true`, policy digest `e4a4330d503e3dd163b6ff7391f5e034a80555a23679ba30bb23ea78ca8053ad`, Redis namespace `qdl:stable:v2:provider-admission:v1`, and both query replicas configured with `QDL_STABLE_PROVIDER_ADMISSION_URL=http://rust_core:8300`; no public or Python policy bypass is permitted. A bounded read-only probe showed the Rust authority admitted/deferred requests and correctly failed closed for Binance HTTP `418` / provider `-1003`; that is evidence of admission behavior, not a certification pass.
+
+Before C2, the existing provider-backed BAR repair primitive may be used serially for only the ten current `15m` bindings (five Binance USD-M and five OKX Swap symbols). The read-only matrix found the same two moving-window observations on each route: one historical missing open and the newest closed open awaiting durable projection. The repair must derive the exact missing count immediately before each publish, publish only real provider-final rows, wait for durable cache convergence, and stop on any count change or non-convergence. It must not reset offsets, flush Redis, delete SQLite, recreate topology, touch V1, Trading System, alpha or order paths. The four C2 identities remain `monitoring.multivenue.stable`, `trading-system.paper.stable`, `alpha.binance.paper.stable`, and `alpha.okx.paper.stable`; C2 must prove V2 warmup, signed cursor/reconnect, allowed V1 fallback, and zero order/state mutation for the sealed manifest. A failed C2 remains a release blocker; no second C2 storm or policy widening is allowed.
+**Rust provider-admission replacement C2 result (`FAIL-CLOSED / NEXT ROUTE
+REQUIRES EXPLICIT SCOPE`, 2026-09-05).** The count-fenced repair for
+`binance-usdm-dogeusdt-bar-15m` published `4` real provider-final rows and
+converged with `0` remaining rows. The one replacement four-identity C2 then
+ran its bounded `300s` observation but stopped at the next sealed route,
+`alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 1h`,
+with `required feed has an unresolved sequence gap`. No order action or V1,
+Kafka offset, Redis, SQLite, topology, manifest or policy mutation occurred.
+The provider-admission packet is verified, but certification/release remains
+blocked until the exact remaining BAR route is explicitly repaired and a
+replacement C2 passes; no automatic scope expansion is permitted.
+
+**Grouped endpoint/route closure (`CERTIFIED / RELEASE PACKAGE READY`, 2026-09-05).**
+The owner requests grouped diagnosis and repair of failing routes, reuse of
+unaffected certification, and completion of the release. This supersedes the
+prior per-DOGE-interval decision boundary for the existing manifest. Follow the
+fund-grade guide's history/replay and stable certification contracts. Inventory
+all current BAR bindings read-only, distinguish actual missing open times,
+retained ingest-gap flags, query window selection and projector lag; fix the
+shared cause and exercise affected Binance/OKX routes together before C2.
+Use source regressions and bounded genuine-provider repair where necessary.
+Keep existing service topology, schemas/public contracts, V1, Kafka offsets,
+Redis/SQLite generations, Trading System and order paths intact. Any necessary
+rollout is limited to the affected existing V2 roles with their prior image and
+mounts retained for rollback. No new phase, per-symbol image or repeated broad
+suite is required. Release needs a successful current receipt, not just uptime.
+
+Evidence correction: both earlier C2 tracebacks failed in `initial_results`
+before `observation_started`. Their elapsed launch time does not prove a full
+300-second successful observation. Earlier wording claiming that observation
+is superseded here. Preserve the failure receipts; do not count them as PASS.
+
+**Grouped diagnosis and shared correction (2026-09-05, IN PROGRESS).**
+Read-only inventory found real holes in 49/140 BAR partitions, with zero
+duplicates and zero retained sequence-gap flags. Three bounded genuine-provider
+probes (Binance DOGE 1h/3m, OKX DOGE 1h) returned continuous windows while cache
+holes appeared at about now minus 24h. The canonical spool's age maintenance
+removes sparse history by commit age despite its existing 10,064-record window.
+Standalone repair also issues a new source generation, fencing the running
+BAR edge's subsequent messages. Earlier repeated repairs treated symptoms.
+
+Fix only these shared boundaries: opt the bounded canonical projection into
+count-window retention (record/byte/disk limits and cursor TTL remain enforced;
+generic spool retains its age policy), and make repair reuse and validate the
+active checkpoint generation without writing it or becoming a scheduled writer.
+Regression gates cover age expiry vs count bounds, restart/dedup, changed/missing
+checkpoint, both venues, and repair followed by normal publication. Roll only
+existing V2 spool users and BAR edge if source tests pass, preserve their exact
+old images/mounts, then recover provider-final history once and verify all 140
+BAR windows together before the one replacement C2. No Rust fencing relaxation,
+Kafka reset, cache deletion, V1/consumer/order-path mutation or invented bars.
+
+Source verification: disposable existing Python image, read-only source mount,
+network disabled, 768 MiB / 2 CPU cap. Transport/history/stable-edge suite:
+114 tests, 113 PASS and 1 external-Redis integration SKIP (25.540s).
+BAR bootstrap/scheduler/release/repair suite after adjusting constructor-bypass
+fixtures: 61/61 PASS (17.582s); its first run had four fixture AttributeErrors,
+not a provider failure. Syntax and `git diff --check` pass. Suites overlap;
+do not add their counts as unique coverage. No runtime change yet. Test
+containers auto-removed. Pre-build disk: 147G used / 143G available; Docker
+22 images, 10.92GB total, 3.797GB build cache. Next rollout is exactly the
+two query, two stream, three projector and one existing BAR edge, image-only,
+retaining each role's current environment/mounts and digest rollback. Restart
+BAR edge last so its newer active generation restores normal publication and
+uses the existing bounded provider bootstrap for deficient windows.
+
+Runtime update (2026-09-05 ~03:48 UTC): committed source `c57658a` built once
+as `qdl-v2-python:2.0.12-c57658a`, image
+`sha256:46a04c1e444fba13536d68f971195ac55c718d2322302a071513e3a9d26950d0`.
+Packaged-image focused tests: 30/30 PASS. Rolled exactly the eight roles above,
+validated unchanged environment/mount/command/CPU/memory per role. Rollback
+snapshots and per-role Compose overrides are under local-state
+`session-liveness-43cdbe3-20260829T162719Z/bounded-history-closure-20260905/`
+(private runtime state, not repository evidence). Old query image is `f6081050`,
+stream/projector `08dd22c3`, BAR edge `bd0163fd`; Rust remains `36a822c0`.
+
+Existing BAR startup recovery published authentic missing closed rows. The
+independent read-only inventory at `1788580149854478302` ns found
+**140/140 complete windows, 0 internal holes, 0 duplicates, 0 sequence-gap
+flags**; recurring OKX final 1m ACKs then continued at 03:49 UTC. No independent
+repair writer, count-loop, new BAR checkpoint, reset, or offset mutation was
+needed. Started one full-manifest replacement C2 using the new image and
+existing four identities. Observation duration begins after opening succeeds;
+receipt remains pending, so release is not declared certified yet.
+
+Replacement C2 result: opening timed out at its existing 900s deadline before
+observation. Error digest `eb98e6b23588672fd212d20dc4bb35294e141036cf8ca241084968c0761cdadc`;
+no new DATA_STALE/gap/provider error was emitted. The traceback is waiting for
+the second stream BAR after acknowledging a first event. Non-execution BARs
+already allow a quiet signed handoff on the first session, but omitted that
+same case after an event-then-reconnect. A long-interval channel need not emit
+a second candle inside the test window. Correct only this C2 branch: require
+signed REPLAYING/LIVE controls and a strict current final-BAR read-back on the
+second replica; classify it as signed cursor reopened with no new event, never
+fabricate replay. Execution BAR semantics remain unchanged. Also teach the
+offline observation builder the existing CURRENT_FINAL_BAR no-cursor receipt,
+with BAR-only/two-session validation. Add bounded opening/closing progress and
+active-product cancellation diagnostics. Test these receipt semantics, then
+run the replacement client with readonly test-source mounts on the same image;
+do not rebuild/recreate any production role for a test-harness-only correction.
+The 300s observation and all freshness/identity/gap/ordering gates stay intact.
+
+Harness correction verified: 86/86 targeted receipt/identity/observation/
+certificate tests PASS in 37.390s using the existing runtime image with readonly
+source and network disabled. A test syntax typo was corrected before this run.
+No production source/config changed in this slice, except the offline
+certificate parser; no second image build is needed. Replacement client uses
+the same image, identities, quotas and networks, with the two acceptance scripts
+and offline observation module mounted readonly from the committed source.
+Preserve the first timeout receipt, and use `c2-quiet-bar/` for the replacement.
+
+Dev synchronization: fast-forward pushed through `9766659`. GitHub CI run
+`33944089886` reports Python3.10 SDK PASS, Rust contract step FAIL (exit101),
+general unit step FAIL. Public job metadata is readable; log download returns
+403 without GitHub auth. Reproduce only these failed job classes using bounded
+disposable containers: Python 1GiB/2CPU/network-none, Rust pinned1.82 2GiB/2CPU,
+readonly source, no runtime data mounts. Rust fmt passes; a local first compile
+attempt used noexec tmpfs and was corrected to the disposable writable layer,
+not treated as a repository bug. Main/tag publication remains conditional on
+these failures being resolved. No gate is disabled.
+
+C2 replacement milestone: `C2_OPENING_PASS`, **299/299 products**,
+`877.600s` opening. Full manifest has now passed the opening proof including
+declared fallback; the unchanged 300s observation and closing revalidation
+are running. This is an opening pass, not yet the terminal certificate.
+
+CI reproduction identified one Clippy argument-count error in `process_l2`
+and the obsolete four-key Reference/L2 fixture against the now-five-key
+compatibility contract. Remove only the redundant materialization timestamp
+argument (it is `raw.received_at_ns`) and update the fixture to include the
+existing approved reference identity; do not weaken keyring validation.
+Four other local discovery import errors came from readonly `/app/logs`, not
+repository behavior; use a disposable tmpfs for logs on the next run.
+
+C2 replacement completed the full `300.1008135129814s` observation after
+299/299 opening PASS, but closing `warmup:batch` of 50 products timed out on
+the Trading System primary replica. The compact failure receipt reports all
+sampled DOGE products LIVE/complete/no-gap (BAR, BOOK_DELTA, BOOK_SNAPSHOT,
+QUOTE, TRADE). This is not a new DOGE data gap. Investigate the shared batch
+read path and test that class together; retain the failed receipt, no timeout
+or freshness relaxation and no claim of terminal certification yet.
+
+Batch diagnosis: readonly profiling of 202 current cached crypto products
+took 5.6744s in total (slowest 0.1383s); the shared warmup executor nevertheless
+charges every cached row request against OKX's REST token bucket (5/s), across
+all consumers. Closing queues local reads behind a quota for HTTP calls that
+never happen. Fix the source boundary, not the C2 deadline: a backend-declared
+local-only canonical lane gets bounded concurrency/singleflight/deadlines but
+no provider token wait. Unknown backends and any path that can invoke provider
+fallback retain the existing venue budgets. Test cache-vs-provider selection,
+concurrency, cancellation, retry and unchanged domain quality. Roll only the
+two query replicas after tests; keep the other six roles on `c57658a`.
+
+Verification: the CI fixture/lint correction passes full Python discovery
+(1377 tests, 1370 PASS / 7 environment SKIP, 291.095s), Rust Clippy and
+workspace tests (153 PASS / 1 broker-dependent IGNORE). The additional local
+cache lane passes 75/75 targeted executor/query-routing/identity tests in
+10.992s, including explicit backend opt-in, 100 local reads bounded to eight
+concurrent workers with no provider sleep, and unchanged Binance/OKX rates.
+These suites overlap; counts are not additive. No runtime query change yet.
+
+Runtime closure update: `d7c7506` is pushed to `dev`; one standard immutable
+Python image was built as `qdl-v2-python:2.0.12-d7c7506`, digest
+`sha256:cca6355ceb9ddfc12dcee2ff68ea7b9b42b10e44034fb011b31d9e0f8483a517`.
+Only query_v2_1/query_v2_2 were rolled, preserving exact env/mounts and keeping
+`46a04c1e` as their rollback. Capture confirms 44 protected services unchanged,
+11 V2 roles running, authority RUST_PRIMARY. The existing four-identity C2
+replacement uses this packaged image, evidence `c2-cache-lane-final/`, and
+the unchanged 299-product/300-second contract. Other V2 Python roles remain
+`46a04c1e`; Rust remains `36a822c0`. No extra Rust runtime build or rollout.
+
+Cleanup so far: removed the stopped disposable `qdl-rust-ci-check-20260905`
+builder and its unreferenced `rust:1.82-slim` image. Disk measured 152G used /
+138G available before this cleanup and 149G / 142G afterwards; do not attribute
+the full delta exclusively to one layer. No shared volumes, offsets or data
+were removed. Per-role rollback artifacts remain intentionally retained.
+
+Publication scope remains the approved release, not a new phase: prepare a
+minimal tag-triggered GitHub release publisher because this host has SSH Git
+access but no GitHub API token/gh login. It must refuse a tag outside `main`
+or a missing/failed committed certificate; it uploads only the compact public
+certificate and release notes. Existing `v2.0.0` is never moved. Proposed
+patch release tag `v2.0.12` remains conditional on C2 PASS and green CI; do not
+publish a tag, promote main or claim certification before those results exist.
+
+Current replacement did not certify: an HTTP `RemoteProtocolError` occurred on
+a quiet BAR snapshot re-read (Binance SOL 12h), with both query replicas still
+running, zero restarts/OOM and no server error. Shared SDK transport has no
+recovery for a stale keep-alive socket. Add exactly one retry for this read-only
+transport error across query operations, within the original elapsed timeout;
+no HTTP status/freshness/security retry relaxation. Test GET/POST query reads,
+permanent disconnect, timeout and semantic errors. Remote CI now passes actual
+unit and contract stages but its final image vulnerability scan fails. Scan the
+same immutable image in isolation and remediate actual fixable findings before
+publication; do not suppress the scanner. C2 failure receipt remains retained.
+
+SDK reconnect verification: 30/30 transport/feed-status/stream SDK tests PASS
+in 0.629s. Scope is one RemoteProtocolError retry with remaining original
+timeout only, including read-only query POSTs. Persistent disconnect, timeout,
+401/403/429/503 remain failures. Both serving queries still have zero restarts
+and no OOM. No production change is required for the disposable client's SDK.
+
+Cleanup/security safety: broad dangling BuildKit prune was rejected by the
+execution safety reviewer and was NOT run; existing shared build cache remains.
+A mutable networked scanner with the application archive was also rejected
+before execution. Use the verified official Trivy0.74.0 digest `62b1e65e`
+instead: download its public DB with no application mounts, then scan the
+readonly exported candidate image with network disabled. Delete this scoped
+test image/archive/cache when complete; retain production/rollback images.
+
+Offline security scan isolates both findings to the copied `app/Cargo.lock`:
+quinn-proto0.11.9, fixed by0.11.15 (CVE-2026-31812 and
+GHSA-4w2j-m93h-cj5j). This optional HTTP/3 dependency is not enabled by our
+reqwest rustls-tls build. Its fixed release requires Rust1.85; do not upgrade
+the production toolchain opportunistically. Update only the inactive lockfile
+dependency with Cargo and prove the selected Linux normal/build graph is
+unchanged under the pinned1.82 toolchain. If that proof fails, stop that
+approach rather than bypass the scanner or silently change runtime features.
+
+Cargo update succeeded under1.82. Selected Linux normal/build dependency graph
+is byte-identical before/after, SHA256
+`d1d65596caa0f2c88d45c137e8f3eb82e06ddd69dc679a24f2a5cccf7e728956`.
+Only inactive QUIC dependencies changed. Offline scan of the corrected lockfile
+has no fixable HIGH/CRITICAL findings. No vulnerability ignore/suppression was
+added. The scanner public DB download needed 512MiB scratch after its first
+128MiB scratch filled; this was an isolated scanner setup error, not runtime
+storage exhaustion. Release workflow YAML/permissions and shell blocks pass
+syntax checks; remote publication itself remains pending certification.
+
+Final image consolidation scope: build once from `35a7cd8`; after offline
+image scan passes, roll the same eight approved Python roles (two query, two
+stream, three projector, BAR edge last) onto that one standard release image.
+This removes the flagged inactive lockfile from all serving Python image sets,
+not only the disposable C2 client. Capture each role's current digest/env/mounts
+first (query `cca6355c`, remaining six `46a04c1e`) for exact rollback. No Rust,
+ingestor, V1, Kafka topology/offset reset, cache reset or order-path action.
+Then run the single replacement C2 from the packaged final image, with no
+source patch mounts; use a new evidence directory and preserve prior failures.
+
+Final image result: `qdl-v2-python:2.0.12-35a7cd8`, digest
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`,
+passes packaged SDK30/30 and offline Trivy fixable HIGH/CRITICAL count0.
+All eight approved Python roles now use that one image. Per-role env/mounts
+are preserved; capture again reports44 protected services unchanged and
+RUST_PRIMARY. Final C2 evidence target is `c2-release-final/`; no source mounts
+or replay/cache resets are used. Release remains conditional on its result.
+
+Safe source cleanup inventory: Python310 SDK worktree and phase-D no-order
+worktree are clean and ancestors of remote dev; the detached V1 test worktree
+is also represented. None is referenced by any container mount or Compose
+provenance. Remove only those after checking ignored files are disposable
+bytecode. Retain phase-C reader worktree: it has four commits not represented
+by dev (`cbb5161`, `9991ed2`, `2fb9146`, `70ac65b`), so deleting it would lose
+unmerged development. Do not merge that unrelated projector branch into this
+release just to claim a tidy directory. Active closure worktree stays until
+publication and canonical-checkout synchronization are complete.
+
+Final C2 stopped during opening with BOOK_SNAPSHOT DATA_STALE for OKX ETH.
+Its immediate typed status is LIVE/complete/no-gap, event age633ms and LIVE
+session age806ms. The C2 retry predicate still requires NOT_APPLICABLE for
+every book snapshot, contradicting the shared session-aware runtime contract.
+This is a harness contract defect, not evidence that the rejected stale read
+was usable. Correct only that predicate: a matching verified book may wait
+within the existing deadline for a subsequent strict read when its session is
+LIVE and within the declared SLA, or legitimately NOT_APPLICABLE without a
+session requirement. Unknown/disconnected/stale session, mismatched identity,
+gap, incomplete data and deadline exhaustion remain failures. Test the shared
+matrix, not an ETH exception. No runtime image/build/recreate is needed for
+this harness-only correction; use the final packaged SDK with the exact tested
+harness file mounted read-only. Retain the failed receipt. Run the affected
+book class together before the replacement full-scope acceptance.
+
+Cleanup completed: disposable Rust/scanner/C2 clients, the scanner/toolchain
+images and exported test image archives removed; disk152G used/138G available
+before scoped cleanup,149G/141G after. Removed two merged feature worktrees and
+one clean detached V1 test checkout after no-runtime-reference verification.
+The phase-C reader branch has four genuinely unmerged commits and is retained.
+Shared BuildKit records and exact active/rollback images remain deliberately
+retained; no broad prune or production data deletion was performed.
+
+Shared book-session correction: 83/83 receipt/identity/observation tests PASS
+(29.758s), including40 venue/symbol/session-SLA/event-state combinations and
+12 identity/quality/session rejection cases. Legacy sessionless snapshot is
+preserved, absent required session and deadline exhaustion still reject.
+Real read-only probe `book-class-verified/acceptance.json`: 10/10 books across
+Binance/OKX, both replicas, 20/20 strict snapshot validations PASS; zero order
+actions/provider-direct connections. Initial probe helper missing a required
+factory argument made no reads and was corrected; its failed setup evidence
+is retained. The first unit invocation also had one mistyped test-module name;
+the complete corrected invocation above passed. Serving runtime remains35a7cd8.
+Run the replacement C2 with only the tested harness file mounted read-only;
+this is an auditable test-harness revision, not a serving-image substitution.
+
+Publication documentation check: the service-access guide still introduces
+the V1 Redis client as its universal default. Clarify the existing versioned
+V2 primary SDK/query/gRPC contract first and label the preserved V1 sections
+as compatibility/fallback instructions. This changes no endpoint, entitlement,
+consumer config or runtime. The release must not direct new crypto consumers
+back to the legacy route by accident. Public certificate/notes will include
+the actual image digests and tested scope, not a claim that every possible
+symbol or VN market-hours execution has been certified.
+
+Replacement C2 milestone: `c2-session-book-final/` reports opening299/299 PASS
+in881.495s with the quota policy unchanged. The subsequent300s observation
+and batch closing revalidation are in progress; this is not a final PASS.
+CI run33948049168 for harness commit92edc17 is fully green (unit, contract,
+Python3.10 SDK). The real book-class probe took2.532s for20 strict reads,
+slowest0.058s; all typed states LIVE. Service-guide route inventory matches
+all11 current V2 HTTP router operations. Read-only capture still reports44
+protected services unchanged and RUST_PRIMARY. No additional image was built.
+
+C2 closing result: opening299/299 and300.100s observation PASS; closing failed
+with `native BASIS cooldown exceeds the bounded Reference/L2 acceptance
+deadline`. No release certificate is issued. The shared closing harness passes
+the15s cache-read timeout as the deadline for all reference batches, although
+reference requests declare60s and the approved overall closing bound is120s.
+Propagate the one existing absolute closing deadline to every reference worker
+instead of creating a shorter cache-read deadline. Keep per-request provider
+deadlines, Rust cooldown/one-deferral policy and overall120s unchanged. Test
+deadline propagation, cooldown beyond the bound, cancellation and both venues;
+run the real closing/reference class as a bounded probe before any further
+full replacement. No runtime/source-provider change, quota increase or image.
+
+The grouped closing probe completed in13.042s: monitoring4/4 and Binance
+alpha125/125 PASS, including native BASIS on both replicas. Trading-System
+and OKX alpha groups instead expose the remaining shared BAR harness error:
+closing asks for a single row but the parity validator requires an immutable
+overlap across one legitimate final-candle rollover. Keep two final rows for
+the bounded closing read; compare the immutable overlap using the existing
+one-row-rollover validator and still validate each current tail strictly.
+No timestamp adjustment or arbitrary skew is allowed. Test exact/one-row
+rollover and conflicting/disjoint/multi-row windows, then rerun only this
+closing class. The overall acceptance and market-data contract stay unchanged.
+
+Closing-class corrections pass59/59 focused tests in10.570s (including native
+60s deferral within the existing120s bound, rejection beyond the same bound,
+two-row immutable overlap and unchanged strict tail quality). First reference
+suite invocation had one mistyped module name; the corrected complete command
+is `python -B -m unittest -q tests.test_phase105_native_basis_lane
+tests.test_phase105_identity_acceptance tests.test_reference_l2_consumer_acceptance
+tests.test_phase103_consumer_acceptance` inside the network-none existing image.
+Real probe `closing-class-aligned/acceptance.json` is PASS across all4 consumers:
+monitoring4, Trading-System60, Binance alpha125, OKX alpha110 =299/299 products.
+It reads both query replicas, respects the existing provider admission lane,
+and makes zero order calls. Both disposable closing-probe clients were removed.
+Use the same final serving image with the exact three tested harness scripts
+mounted read-only for the final replacement C2; no image build or runtime roll.
+
+Final C2 **PASS**:299 opening/closing products,234 durable +65 on-demand,
+opening883.031s, observation300.100s, closing13.401s. Client/cursor removed;
+zero order/provider-direct calls; protected44 services unchanged. Raw receipt
+is `c2-deadline-final/acceptance.json`; it is immutable and must not be replaced.
+
+Offline certificate assembly exposed two evidence-mapping defects, not a
+failed endpoint: the helper passed the normalized three-field V1 summary
+instead of the original complete verified attestation, and the aggregator
+uses opening quality and drops session/eligibility metadata for OBSERVE TRADE.
+Correct the helper input and carry the existing typed session/complete/
+execution-eligibility evidence into release observations. A quiet TRADE or
+BOOK_DELTA may be available only under declared OBSERVE + live bounded session,
+complete/no-gap and non-executable quality; price/BLOCK/PAUSE contracts retain
+their freshness bound. Missing session evidence cannot certify a stale feed.
+Use a separately hashed, current full-scope closing read for freshness, linked
+to the unchanged passing C2 for cursor/reconnect/fallback/300s proof. This is
+offline certificate mapping plus no-order current reads, not another C2,
+runtime change, freshness relaxation or new phase. Preserve failed assembly.
+
+Certificate mapping tests:104/104 release/identity/receipt regressions PASS
+in51.703s; final age-binding subset26/26 PASS in30.842s. Tests cover the10-symbol
+venue matrix for quiet TRADE/BOOK_DELTA, BLOCK/PAUSE/QUOTE/book-price rejection,
+disconnected/expired/missing session, incomplete/gapped data, malformed fields,
+current-read C2 digest/full-scope identity, duplicate/missing products, old or
+expired evidence and immutable original C2. Counts overlap, not additive.
+This code is offline certification only; no serving image is rebuilt/rolled.
+Capture current closing observations using the tested mapping, bind their hash
+to the immutable passing C2, and certify with the original full V1 attestation.
+
+Current-read helper initially stopped before any endpoint call: the immutable
+host C2 receipt is mode0600 and the test client drops to UID10001. Preserve that
+original and failed setup; mount an identical payload-free receipt copy with
+read permission into the disposable client. No credentials or runtime file
+permissions change. Capture label is `release-current-reads-verified/`.
+
+Current-read capture299/299 completed, but the stricter offline certificate
+correctly rejects26 hot products whose receive age exceeded2-3s while the
+mixed warmup batch finished. All reported source ages/session states remained
+valid; do not discard receive age or bless executable stale data. Closing must
+separate feed classes and cap hot batches at8 (one bounded local cache lane),
+retaining the declared BAR batch limit, existing identity quotas and120s total
+deadline. Verify exact scope/cardinality, class isolation and both replicas;
+then recapture current reads only. Original full C2 remains immutable and PASS;
+certificate remains BLOCKED until the strict source AND receive bounds pass.
+
+Grouped closing/certificate regressions42/42 PASS in22.310s, covering all10
+venue/symbol pairs and feed-isolated bounded batch/cardinality on both replicas.
+The initial invocation also named a nonexistent extra test module; the exact
+corrected invocation used `tests.test_phase105_identity_acceptance`,
+`tests.test_release_session_observations`, `tests.test_phase105_release_observations`,
+`tests.test_phase105_release_certification`. Container removed; no new image.
+
+**Final exit (2026-09-05 ~07:08 UTC): CERTIFIED.** Feed-isolated current reads
+cover299/299 products. The offline certificate passes all5 existing gates:
+release route readiness, V1 provenance, runtime handoff, V2 consumer acceptance,
+V1 fallback-return. Result:299 V2_PRIMARY,4 explicitly excluded VN V1_PRIMARY,
+0 blocked,0 active fallback,0 resource-budget violations. No SLA was changed.
+Certificate SHA256 `0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`.
+Public compact evidence and notes live in
+[`upgrade/evidence/releases/v2.0.12/`](upgrade/evidence/releases/v2.0.12/).
+The original full C2 and failed attempts stay immutable in the private evidence
+root; current-read and harness/source digests are recorded separately.
+
+Scope: monitoring4, Trading-System paper adapter60, Binance alpha SDK125,
+OKX alpha SDK110. There are234 durable and65 on-demand consumer products,
+including150 BAR consumer requirements over140 physical final-BAR bindings,
+24 TRADE,20 QUOTE,20 BOOK_SNAPSHOT,20 BOOK_DELTA,20 MARK_INDEX_PRICE and45 other
+reference products. The full C2 proves opening883.031s, observation300.100s,
+closing13.401s; quota pacing is included in opening duration, not endpoint
+latency. Current closing capture uses117 millicores and215113728 bytes RSS;
+full C2 uses69 millicores and256983040 bytes peak RSS. These are client metrics,
+not whole-platform resource claims. Zero order/direct-provider client calls;
+all44 protected services and Rust authority unchanged. Signed cursor/reconnect,
+seven allowed V1 fallbacks and292 forbidden-fallback routes retain their proof.
+
+No further C2, image build or runtime roll is required by this closure.
+Serving Python remains `qdl-v2-python:2.0.12-35a7cd8` / `sha256:1c1392bf...2045a`
+for2 query,2 stream,3 projector and BAR edge; Rust remains
+`qdl-v2-rust:2.0.12-d536098` / `sha256:36a822c0...4dce65`.
+Source corrections after35a7cd8 affect certification/test harness only.
+Runtime config is `phasec36-reference-l2-r14`, outside source under local-state.
+V1 `sha256:dbfb5784...5d65`, Kafka offsets/topology, Redis, SQLite, Trading System,
+alpha and order path were preserved. This certifies declared crypto data-plane
+products on this host, not VN market-hours, broker execution or independent DR.
+
+Publication is separate from certification: reserve new tag `v2.0.12` (do not
+move existing `v2.0.0`). Repo policy requires release PR dev -> main. No such PR
+is open and host has SSH push but no authenticated GitHub API/CLI; owner was
+asked for the release PR through the async channel. Push tested source/package
+to dev, then the tag-triggered release workflow publishes notes/certificate
+after the tag is on main. Do not describe an uncreated tag/release as published.
+
+Approved cleanup retention: keep active35a7cd8 plus the exact immediate rollback
+set, query `cca6355c` (d7c7506) and other Python roles `46a04c1e` (c57658a),
+with private per-role Compose overrides in `final-release-images/`. Retire only
+the superseded, container-unreferenced images `08dd22c3`, `f6081050`, `bd0163fd`;
+their old rollout packets are historical evidence, not the current rollback.
+Keep Rust/V1/Trading-System images and all data/volumes/networks. Broad BuildKit
+prune was not permitted and will not be substituted by an equivalent command.
+
+Cleanup guard stopped before deletion: `bd0163fd` is referenced by the exited
+operational `stable_tls_init` and `stable_state_init` containers. Retain that
+image/container pair as operational references, not disposable smoke. Revised
+deletion set is only08dd22c3/f6081050; no force, no removal of init containers.
+
+Cleanup completed: two image IDs / three tags removed; available disk increased
+from152239054848 to153267318784 bytes (+1028263936 bytes, about0.96GiB).
+All container IDs/image/start/restart tuples are unchanged across cleanup;
+read-only postcheck again confirms44 protected services unchanged and11V2
+roles healthy without OOM/restarts. Disposable C2/current-read clients and
+cursor directories are absent. No volume, network or runtime data was removed.
+BuildKit inventory57 records/5.801GB includes shared retained-layer cache;
+broad prune was intentionally not performed. Earlier scoped builder/scanner
+artifacts and three fully represented temporary worktrees were removed as
+recorded above. Do not delete unrelated operational stopped containers.
+
+Source/release reconciliation: canonical checkout `/home/bobby/data_layer`
+remains clean at1d933960 (`fix/phase54-l2-bootstrap`); runtime uses immutable
+images and external r14 configuration, not that branch's source. Active closure
+checkout is `/home/bobby/.worktrees/data-layer-dev-closure`, branch
+`fix/l2-execution-readiness-closure`; tested source throughf0118d8 is on remote
+dev. Keep it until release/main synchronization. The separate phase-C checkout
+at70ac65b has four genuinely unmerged commits and is deliberately preserved.
+Remote stable main remains9d6dfb9 and existingv2.0.0 remains7ebe1d1; newv2.0.12
+package is certified but not tagged/published before the required release PR.
+This is the remaining publication boundary, not another market-data test gate.

@@ -19,6 +19,8 @@ use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationConte
 use serde::Deserialize;
 use serde_json::json;
 
+const MAX_IN_GENERATION_RECEIVE_RETRIES: u32 = 3;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeConfig {
@@ -106,6 +108,10 @@ fn retryable_runtime_error(error: &RuntimeError) -> bool {
         .is_some_and(|value| should_retry_transport(value.retry_class()))
 }
 
+fn should_retry_receive_in_generation(error: &KafkaTransportError, failures: u32) -> bool {
+    should_retry_transport(error.retry_class()) && failures < MAX_IN_GENERATION_RECEIVE_RETRIES
+}
+
 fn approved_subscription_scope(config: &RuntimeConfig) -> HashSet<String> {
     config
         .core
@@ -164,7 +170,11 @@ fn authority_mode_name(mode: AuthorityMode) -> &'static str {
     }
 }
 
-async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), RuntimeError> {
+async fn run_generation(
+    config: &RuntimeConfig,
+    generation: u64,
+    backoff: &BackoffPolicy,
+) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
     let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
@@ -200,15 +210,47 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
     let mut ignored_out_of_scope = 0_u64;
     let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
+    let mut receive_failures = 0_u32;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
     let stop_reason = 'service: loop {
         if config.max_events > 0 && processed >= config.max_events {
             break 'service "MAX_EVENTS";
         }
-        let first = tokio::select! {
-            result = bridge.next() => result?,
-            result = &mut shutdown => break 'service result?.as_str(),
+        let first = loop {
+            let received = tokio::select! {
+                result = bridge.next() => result,
+                result = &mut shutdown => break 'service result?.as_str(),
+            };
+            match received {
+                Ok(input) => {
+                    receive_failures = 0;
+                    break input;
+                }
+                Err(error) if should_retry_receive_in_generation(&error, receive_failures) => {
+                    receive_failures = receive_failures.saturating_add(1);
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_realtime_core_receive_retry",
+                            "generation": generation,
+                            "attempt": receive_failures,
+                            "max_attempts": MAX_IN_GENERATION_RECEIVE_RETRIES,
+                            "error": error.to_string(),
+                        }))?
+                    );
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(
+                            backoff.delay_ms(
+                                receive_failures.saturating_sub(1),
+                                receive_failures as u16,
+                            ),
+                        )) => {}
+                        result = &mut shutdown => break 'service result?.as_str(),
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
         };
         let mut inputs = vec![first];
         while inputs.len() < config.batch_size
@@ -217,7 +259,24 @@ async fn run_generation(config: &RuntimeConfig, generation: u64) -> Result<(), R
             match tokio::time::timeout(Duration::from_millis(config.batch_wait_ms), bridge.next())
                 .await
             {
-                Ok(Ok(input)) => inputs.push(input),
+                Ok(Ok(input)) => {
+                    receive_failures = 0;
+                    inputs.push(input);
+                }
+                Ok(Err(error)) if should_retry_receive_in_generation(&error, receive_failures) => {
+                    receive_failures = receive_failures.saturating_add(1);
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_realtime_core_receive_deferred",
+                            "generation": generation,
+                            "attempt": receive_failures,
+                            "max_attempts": MAX_IN_GENERATION_RECEIVE_RETRIES,
+                            "error": error.to_string(),
+                        }))?
+                    );
+                    break;
+                }
                 Ok(Err(error)) => return Err(error.into()),
                 Err(_) => break,
             }
@@ -363,7 +422,7 @@ async fn main() -> Result<(), RuntimeError> {
     let mut failures = 0_u32;
     let result = loop {
         generation = generation.saturating_add(1);
-        match run_generation(&config, generation).await {
+        match run_generation(&config, generation, &backoff).await {
             Ok(()) => break Ok(()),
             Err(error) if retryable_runtime_error(&error) => {
                 failures = failures.saturating_add(1);
@@ -399,6 +458,23 @@ mod tests {
         assert!(should_retry_transport(RetryClass::Retryable));
         assert!(should_retry_transport(RetryClass::Capacity));
         assert!(!should_retry_transport(RetryClass::NonRetryable));
+    }
+
+    #[test]
+    fn retryable_receive_errors_preserve_generation_only_within_bound() {
+        let retryable = KafkaTransportError::SnapshotTimeout("transient receive".into());
+        assert!(should_retry_receive_in_generation(&retryable, 0));
+        assert!(should_retry_receive_in_generation(
+            &retryable,
+            MAX_IN_GENERATION_RECEIVE_RETRIES - 1,
+        ));
+        assert!(!should_retry_receive_in_generation(
+            &retryable,
+            MAX_IN_GENERATION_RECEIVE_RETRIES,
+        ));
+
+        let fatal = KafkaTransportError::Configuration("bad config".into());
+        assert!(!should_retry_receive_in_generation(&fatal, 0));
     }
 
     #[test]

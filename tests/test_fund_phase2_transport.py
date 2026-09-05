@@ -79,6 +79,7 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             replay_retention_seconds=10,
             maintenance_interval_seconds=1,
             max_partition_records=overrides.get("max_partition_records", 0),
+            retain_partition_windows=overrides.get("retain_partition_windows", False),
         )
         return SQLiteDurableSpool(config, clock_ns=self.clock)
 
@@ -144,6 +145,56 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
             self.assertEqual(
                 [row.event.payload for row in latest], [b"event-4", b"event-5"]
             )
+
+    def test_tail_allows_only_configured_internal_partition_headroom(self):
+        with self.spool(max_partition_records=10_064) as spool:
+            self.assertEqual(
+                spool.read_tail(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    limit=10_064,
+                ),
+                [],
+            )
+        with self.spool() as spool:
+            with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+                spool.read_tail(
+                    stream=event(1).stream,
+                    partition_key=event(1).partition_key,
+                    limit=10_001,
+                )
+
+    def test_retained_window_survives_age_and_restart_but_remains_count_bounded(self):
+        with self.spool(max_partition_records=3, retain_partition_windows=True) as spool:
+            first = spool.append(event(1))
+            spool.append(event(2))
+            self.clock.now_ns += 86_400_000_000_000
+            spool.append(event(3))
+            self.assertEqual(spool.stats().records, 3)
+            self.assertTrue(spool.append(event(1)).duplicate)
+            self.assertEqual(spool.trim_consumed(), 0)
+        with self.spool(max_partition_records=3, retain_partition_windows=True) as spool:
+            self.assertEqual(spool.stats().records, 3)
+            spool.append(event(4))
+            spool.append(event(5))
+            self.assertEqual(spool.stats().records, 3)
+            with self.assertRaises(CursorExpired):
+                spool.read(stream=event(1).stream, partition_key=event(1).partition_key,
+                           after=first.cursor)
+            self.assertTrue(spool.integrity_check())
+
+    def test_default_partition_window_still_expires_by_age(self):
+        with self.spool(max_partition_records=3) as spool:
+            spool.append(event(1))
+            self.clock.now_ns += 11_000_000_000
+            spool.append(event(2))
+            self.assertIsNone(spool.find_event(stream=event(1).stream, event_id=event(1).event_id))
+
+    def test_retained_partition_window_requires_finite_bound(self):
+        for value, bound in ((True, 0), ("true", 3)):
+            with self.subTest(value=value, bound=bound), self.assertRaises(ValueError):
+                SpoolConfig(path=self.path, retain_partition_windows=value,
+                            max_partition_records=bound)
 
     def test_partition_window_is_bounded_and_old_cursor_expires(self):
         with self.spool(max_records=10, max_partition_records=3) as spool:

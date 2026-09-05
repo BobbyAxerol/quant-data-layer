@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generate only the new external paper-consumer material needed by Phase 10.5-B.
-# It never receives the existing CA private key and must not rotate the Kafka or
-# server TLS mesh. Query/stream may later trust client-ca-bundle.crt while they
-# continue serving their existing certificate.
+# Generate only additive external paper-consumer material. It never receives an
+# existing CA private key and must not rotate the Kafka or server TLS mesh.
+# Supplying QDL_PHASE105_EXISTING_CLIENT_BUNDLE preserves every active client
+# CA while appending exactly one newly generated external CA.
 
 OUTPUT_DIR="${1:?usage: phase105_prepare_external_consumer_extension.sh OUTPUT_DIR SERVER_CA_FILE}"
 SERVER_CA_FILE="${2:?usage: phase105_prepare_external_consumer_extension.sh OUTPUT_DIR SERVER_CA_FILE}"
 CERT_DAYS="${QDL_PHASE105_EXTERNAL_CERT_DAYS:-90}"
-REQUESTED_ROLES="${QDL_PHASE105_EXTERNAL_ROLES:-monitoring,alpha-okx,reference-l2}"
+REQUESTED_ROLES="${QDL_PHASE105_EXTERNAL_ROLES:-monitoring,trading-system,alpha-binance,alpha-okx}"
+EXISTING_CLIENT_BUNDLE="${QDL_PHASE105_EXISTING_CLIENT_BUNDLE:-${SERVER_CA_FILE}}"
 
 if [[ ! -f "${SERVER_CA_FILE}" ]]; then
   printf 'server CA file is unavailable: %s\n' "${SERVER_CA_FILE}" >&2
+  exit 64
+fi
+if [[ ! -f "${EXISTING_CLIENT_BUNDLE}" ]]; then
+  printf 'existing client trust bundle is unavailable: %s\n' "${EXISTING_CLIENT_BUNDLE}" >&2
   exit 64
 fi
 if [[ -e "${OUTPUT_DIR}" ]] && find "${OUTPUT_DIR}" -mindepth 1 -print -quit | grep -q .; then
@@ -79,6 +84,8 @@ if [[ "${#roles[@]}" -eq 0 ]]; then
 fi
 declare -A subjects=(
   [monitoring]='spiffe://qdl/paper/monitoring-multivenue-stable'
+  [trading-system]='spiffe://qdl/paper/trading-system-stable'
+  [alpha-binance]='spiffe://qdl/paper/alpha-binance-stable'
   [alpha-okx]='spiffe://qdl/paper/alpha-okx-stable'
   [reference-l2]='spiffe://qdl/paper/reference-l2-stable'
 )
@@ -93,9 +100,9 @@ for role in "${roles[@]}"; do
   issue_jwt_key "${role}"
 done
 
-# The first PEM is the active CA trusted by existing paper clients. The second
-# is additive and signs only the newly introduced external consumers.
-cat "${SERVER_CA_FILE}" "${EXTERNAL_CA_CERT}" >"${OUTPUT_DIR}/client-ca-bundle.crt"
+# The first PEM set remains the exact active trust bundle. The final PEM is
+# additive and signs only newly introduced external consumers.
+cat "${EXISTING_CLIENT_BUNDLE}" "${EXTERNAL_CA_CERT}" >"${OUTPUT_DIR}/client-ca-bundle.crt"
 chmod 0444 "${OUTPUT_DIR}/client-ca-bundle.crt" "${EXTERNAL_CA_CERT}"
 rm -f "${EXTERNAL_CA_KEY}" "${OUTPUT_DIR}/external-client-ca.srl"
 

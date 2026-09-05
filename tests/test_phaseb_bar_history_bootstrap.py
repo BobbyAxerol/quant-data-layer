@@ -37,9 +37,14 @@ from qdl.canonical.trade import TradeContext
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_bar_edge import (
     StableBinanceBarEdge,
+    _DURABLE_COVERAGE_BATCH_ROWS,
     _canonical_cache_id,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+)
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
     stable_authority_record,
@@ -181,6 +186,65 @@ class BarHistoryAdapterTests(unittest.TestCase):
         self.assertEqual(len(values), 1_000)
         self.assertEqual(calls[0]["limit"], 1_000)
         self.assertEqual(calls[0]["end_time"], 1_002 * interval_ms - 1)
+
+    def test_binance_history_pages_to_the_declared_v2_maximum(self):
+        interval_ms = 60_000
+        observed_ms = 10_002 * interval_ms + 123
+        calls = []
+
+        def fetcher(*_args, **kwargs):
+            calls.append(kwargs)
+            last_open = int(kwargs["end_time"]) - 59_999
+            first_open = last_open - (int(kwargs["limit"]) - 1) * interval_ms
+            return {
+                "data": [
+                    _binance_row(first_open + index * interval_ms)
+                    for index in range(int(kwargs["limit"]))
+                ]
+            }
+
+        values = fetch_binance_history(
+            _binance_binding(),
+            limit=10_000,
+            now_ms=observed_ms,
+            fetcher=fetcher,
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(len(values), 10_000)
+        self.assertEqual([call["limit"] for call in calls], [1_000] * 10)
+        self.assertEqual(calls[0]["end_time"], 10_002 * interval_ms - 1)
+        payloads = [json.loads(item.raw_frame_bytes) for item in values]
+        self.assertEqual(payloads[0]["row"][0], 2 * interval_ms)
+        self.assertEqual(payloads[-1]["row"][0], 10_001 * interval_ms)
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            fetch_binance_history(
+                _binance_binding(),
+                limit=10_001,
+                now_ms=observed_ms,
+                fetcher=fetcher,
+                sleep=lambda _seconds: None,
+            )
+
+    def test_binance_history_rejects_a_repeated_page(self):
+        interval_ms = 60_000
+        observed_ms = 1_002 * interval_ms + 123
+        rows = [
+            _binance_row((2 + index) * interval_ms)
+            for index in range(1_000)
+        ]
+        with self.assertRaisesRegex(RuntimeError, "exceeds requested end boundary"):
+            fetch_binance_history(
+                _binance_binding(),
+                limit=1_001,
+                now_ms=observed_ms,
+                # Ignore the requested cursor but still honour the requested
+                # page length. The second one-row page is therefore valid in
+                # shape yet outside its requested end boundary.
+                fetcher=lambda *_args, **kwargs: {
+                    "data": rows[-int(kwargs["limit"]):]
+                },
+                sleep=lambda _seconds: None,
+            )
 
     def test_okx_history_preserves_confirmed_native_rows_and_rejects_partial(self):
         start = 60_000
@@ -501,6 +565,196 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_checkpoint_history_gap_is_binding_scoped_and_detected_from_cache(self):
+        """A current checkpoint never certifies a partial durable warmup window."""
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-checkpoint-gap-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=120_000)
+                self.assertEqual(
+                    edge._checkpoint_history_gaps({source.binding_id: 120_000}),
+                    {source.binding_id: 1},
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                self.assertEqual(
+                    edge._checkpoint_history_gaps({source.binding_id: 120_000}),
+                    {},
+                )
+            finally:
+                spool.close()
+
+    def test_targeted_history_repair_publishes_only_missing_without_advancing_checkpoint(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                edge._last_open_ms[source.binding_id] = 180_000
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                    return_value=(Envelope(60_000), Envelope(120_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=2,
+                        observed_ms=180_000,
+                    )
+                self.assertEqual(len(plan.missing_envelopes), 1)
+                self.assertEqual(edge.history_repair_remaining_rows(plan), 1)
+                self.assertEqual(edge.apply_history_repair(plan, expected_missing_rows=1), 1)
+                self.assertEqual(edge._last_open_ms[source.binding_id], 180_000)
+                self.assertEqual(
+                    [json.loads(item.raw_frame_bytes)["row"][0] for item in publisher.batches[0]],
+                    [120_000],
+                )
+            finally:
+                spool.close()
+
+    def test_durable_coverage_reads_physical_tail_without_widening_public_limit(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-physical-tail-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                payload = spool._connection.execute(
+                    "SELECT payload FROM events WHERE stream = ? AND partition_key = ?",
+                    (source.canonical_stream, source.partition_key),
+                ).fetchone()[0]
+
+                class Cursor:
+                    def __init__(self):
+                        self.calls = []
+                        self.rows = [(payload,), (b"\xff",)]
+
+                    def fetchmany(self, size):
+                        self.calls.append(size)
+                        rows = self.rows
+                        self.rows = []
+                        return rows
+
+                class Connection:
+                    def __init__(self):
+                        self.calls = []
+                        self.cursor = Cursor()
+
+                    def execute(self, statement, parameters):
+                        self.calls.append((statement, parameters))
+                        return self.cursor
+
+                    def close(self):
+                        return None
+
+                connection = Connection()
+                with patch.object(edge, "_assert_canonical_cache_identity"), patch(
+                    "qdl.runtime.stable_bar_edge.sqlite3.connect",
+                    return_value=connection,
+                ):
+                    covered = edge._durable_final_bar_opens(source, frozenset({60_000}))
+
+                self.assertEqual(covered, frozenset({60_000}))
+                self.assertEqual(
+                    connection.cursor.calls, [_DURABLE_COVERAGE_BATCH_ROWS]
+                )
+                self.assertEqual(STABLE_SPOOL_PUBLIC_PARTITION_WINDOW, 10_000)
+                self.assertEqual(STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, 10_064)
+                self.assertEqual(
+                    connection.calls[0][1],
+                    (
+                        source.canonical_stream,
+                        source.partition_key,
+                        STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                    ),
+                )
+            finally:
+                spool.close()
+
+    def test_targeted_history_repair_bound_is_independent_from_runtime_warmup(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({"row": _binance_row(open_ms)}).encode()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_bindings
+                    if pair[0].instrument.native_symbol == "BTCUSDT"
+                    and pair[0].interval == "1m"
+                )
+                self.assertEqual(edge.warmup_rows, 2)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_binance_history",
+                    return_value=(Envelope(60_000), Envelope(120_000), Envelope(180_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=3,
+                        observed_ms=240_000,
+                    )
+                self.assertEqual(len(plan.envelopes), 3)
+                self.assertEqual(len(plan.missing_envelopes), 3)
+            finally:
+                spool.close()
+
+    def test_targeted_history_repair_is_provider_neutral_and_count_fenced(self):
+        class Envelope:
+            def __init__(self, open_ms: int):
+                self.raw_frame_bytes = json.dumps({
+                    "data": [[str(open_ms), "1", "1", "1", "1", "1", "1", "1", "1"]]
+                }).encode()
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-targeted-repair-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                source, _acquisition = next(
+                    pair for pair in edge.history_okx_bindings
+                    if pair[0].instrument.native_symbol == "BTC-USDT-SWAP"
+                    and pair[0].interval == "1m"
+                )
+                self._cached_final_bar(spool, source, open_ms=60_000)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                    new_callable=AsyncMock,
+                    return_value=(Envelope(60_000), Envelope(120_000)),
+                ):
+                    plan = edge.prepare_history_repair(
+                        source.binding_id,
+                        rows=2,
+                        observed_ms=180_000,
+                    )
+                with self.assertRaisesRegex(RuntimeError, "missing-row count changed"):
+                    edge.apply_history_repair(plan, expected_missing_rows=0)
+            finally:
+                spool.close()
+
     def test_cache_binding_mismatch_fails_closed_before_publish(self):
         class Envelope:
             raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
@@ -617,6 +871,105 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_live_cache_generation_change_rebases_then_bootstraps_all_bindings(self):
+        """A live edge cannot retain watermarks across a cache rebuild."""
+
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-live-cache-rebase-") as directory:
+            cache_path = Path(directory) / "canonical-cache.sqlite3"
+            state_path = Path(directory) / "bar-edge.json"
+            spool = SQLiteDurableSpool(SpoolConfig(
+                path=cache_path,
+                max_records=100,
+                max_payload_bytes=1_000_000,
+                max_event_bytes=64_000,
+                max_storage_bytes=2_000_000,
+                min_free_disk_bytes=0,
+            ))
+            try:
+                original_cache_id = _canonical_cache_id(cache_path)
+                edge = StableBinanceBarEdge(
+                    catalog=self.catalog,
+                    acquisition=self.acquisition,
+                    authority=self.authority,
+                    publisher=self._NoopPublisher(),
+                    warmup_rows=2,
+                    state_path=state_path,
+                    canonical_cache_id=original_cache_id,
+                    canonical_cache_path=cache_path,
+                    generation_clock_ns=lambda: 100,
+                )
+                edge._last_open_ms = {
+                    binding_id: 120_000 for binding_id in edge._binding_ids
+                }
+                edge._history_bootstrapped = True
+                edge._retry_attempts = {edge._binding_ids[0]: 1}
+                edge._next_retry_at = {edge._binding_ids[0]: 200.0}
+                edge._last_retry_log = {edge._binding_ids[0]: 100.0}
+
+                rebuilt_cache_id = "e" * 32
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ):
+                    self.assertTrue(edge._rebase_if_canonical_cache_generation_changed())
+
+                self.assertEqual(edge.canonical_cache_id, rebuilt_cache_id)
+                self.assertEqual(edge._last_open_ms, {})
+                self.assertFalse(edge._history_bootstrapped)
+                self.assertEqual(edge._retry_attempts, {})
+                self.assertEqual(edge._next_retry_at, {})
+                self.assertEqual(edge._last_retry_log, {})
+                self.assertEqual(edge.connection_generation, 101)
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["canonical_cache_id"], rebuilt_cache_id)
+                self.assertEqual(persisted["last_open_ms"], {})
+
+                published = []
+
+                def publish(source, _acquisition, values, *, expected_rows):
+                    self.assertEqual(len(values), expected_rows)
+                    published.append(source.binding_id)
+                    edge._last_open_ms[source.binding_id] = 120_000
+                    return 0
+
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ), patch.object(
+                    edge,
+                    "_fetch_history",
+                    return_value=(object(), object()),
+                ), patch.object(edge, "_publish_history", side_effect=publish):
+                    self.assertEqual(edge.bootstrap_history(), 0)
+
+                self.assertEqual(set(published), set(edge._binding_ids))
+                self.assertTrue(edge._history_bootstrapped)
+
+                previous_generation = edge.connection_generation
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    return_value=rebuilt_cache_id,
+                ):
+                    self.assertFalse(edge._rebase_if_canonical_cache_generation_changed())
+                self.assertEqual(edge.connection_generation, previous_generation)
+            finally:
+                spool.close()
+
+    def test_live_cache_rebase_fails_closed_when_identity_is_unavailable(self):
+        with tempfile.TemporaryDirectory(prefix="qdl-stable-live-cache-rebase-") as directory:
+            spool, edge = self._cached_edge(directory, self._NoopPublisher())
+            try:
+                original_cache_id = edge.canonical_cache_id
+                with patch(
+                    "qdl.runtime.stable_bar_edge._canonical_cache_id",
+                    side_effect=RuntimeError("stable BAR canonical cache identity is unavailable"),
+                ), self.assertRaisesRegex(RuntimeError, "identity is unavailable"):
+                    edge._rebase_if_canonical_cache_generation_changed()
+                self.assertEqual(edge.canonical_cache_id, original_cache_id)
+                self.assertEqual(edge._last_open_ms, {})
+            finally:
+                spool.close()
+
     def test_cache_short_kafka_ack_does_not_advance_watermark(self):
         class Envelope:
             raw_frame_bytes = json.dumps({"row": _binance_row(60_000)}).encode()
@@ -685,6 +1038,45 @@ class StableBarBootstrapTests(unittest.TestCase):
         self.assertEqual([len(item) for item in publisher.batches], [2] * expected_bindings)
         self.assertEqual(len(edge._last_open_ms), expected_bindings)
         self.assertTrue(edge._history_bootstrapped)
+
+    def test_repair_reuses_live_generation_and_never_updates_writer_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "edge.json"
+            arguments = dict(catalog=self.catalog, acquisition=self.acquisition,
+                             authority=self.authority, publisher=self._NoopPublisher(),
+                             state_path=path, warmup_rows=2)
+            writer = StableBinanceBarEdge(**arguments, generation_clock_ns=lambda: 100)
+            before = path.read_bytes()
+            repair = StableBinanceBarEdge(**arguments, repair_only=True,
+                                         generation_clock_ns=lambda: 999)
+            self.assertEqual(repair.connection_generation, writer.connection_generation)
+            self.assertEqual(repair.binance_session_id, writer.binance_session_id)
+            self.assertEqual(repair.okx_session_id, writer.okx_session_id)
+            self.assertEqual(path.read_bytes(), before)
+            repair._assert_repair_writer_current()
+            for action in (repair._persist_state, repair.run_forever,
+                           repair.bootstrap_history, repair.run_cycle):
+                with self.assertRaisesRegex(RuntimeError, "repair cannot"):
+                    action()
+            # A scheduled watermark change is allowed; a new writer is not.
+            source = next(s for s, _ in writer.history_bindings if s.interval == "1m")
+            writer._last_open_ms[source.binding_id] = 60_000
+            writer._persist_state()
+            repair._assert_repair_writer_current()
+            replacement = StableBinanceBarEdge(**arguments, generation_clock_ns=lambda: 101)
+            self.assertEqual(replacement.connection_generation, 101)
+            with self.assertRaisesRegex(RuntimeError, "generation or identity changed"):
+                repair._assert_repair_writer_current()
+            with self.assertRaisesRegex(RuntimeError, "generation or identity changed"):
+                repair._apply_history_repair_plan(None, advance_watermark=False)
+
+    def test_repair_fails_without_active_writer_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            RuntimeError, "active writer checkpoint"
+        ):
+            StableBinanceBarEdge(catalog=self.catalog, acquisition=self.acquisition,
+                                authority=self.authority, publisher=self._NoopPublisher(),
+                                state_path=Path(directory) / "missing.json", repair_only=True)
 
     def test_checkpoint_accepts_provider_calendar_anchored_multiday_watermarks(self):
         with tempfile.TemporaryDirectory(prefix="qdl-stable-calendar-checkpoint-") as raw:
@@ -832,6 +1224,10 @@ class StableBarBootstrapTests(unittest.TestCase):
             compose["services"]["binance_bar_edge"]["environment"]
             ["QDL_STABLE_BAR_WARMUP_ROWS"]
         )
+        catchup = int(
+            compose["services"]["binance_bar_edge"]["environment"]
+            ["QDL_STABLE_BAR_MAX_CATCHUP_ROWS"]
+        )
         source_by_id = {item.binding_id: item for item in self.catalog.bindings}
         history_uids = {
             source_by_id[item.binding_id].instrument.instrument_uid
@@ -853,8 +1249,29 @@ class StableBarBootstrapTests(unittest.TestCase):
                 if item["feed"] == "BAR"
                 and item["instrument_uid"] in history_uids
             )
-        self.assertEqual(max(declared), 1000)
+        self.assertEqual(max(declared), 10_000)
         self.assertGreaterEqual(configured, max(declared))
+        self.assertGreaterEqual(catchup, max(declared))
+
+    def test_stable_bar_edge_accepts_the_public_10000_row_bound(self):
+        edge = StableBinanceBarEdge(
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            authority=self.authority,
+            publisher=self._NoopPublisher(),
+            warmup_rows=10_000,
+            max_catchup_rows=10_000,
+        )
+        self.assertEqual(edge.warmup_rows, 10_000)
+        self.assertEqual(edge.max_catchup_rows, 10_000)
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            StableBinanceBarEdge(
+                catalog=self.catalog,
+                acquisition=self.acquisition,
+                authority=self.authority,
+                publisher=self._NoopPublisher(),
+                warmup_rows=10_001,
+            )
 
     def test_durable_ack_watermark_skips_overlapping_restart_bootstrap(self):
         class Envelope:

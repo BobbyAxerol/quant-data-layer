@@ -27,7 +27,7 @@ class RetryableWarmupError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class ProviderBudgetPolicy:
     max_concurrency: int = 4
-    requests_per_second: float = 5.0
+    requests_per_second: float | None = 5.0
     burst_requests: int = 5
     max_attempts: int = 4
     circuit_failures: int = 5
@@ -36,7 +36,7 @@ class ProviderBudgetPolicy:
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
             raise ValueError("provider concurrency must be between 1 and 64")
-        if self.requests_per_second <= 0 or self.burst_requests < 1:
+        if (self.requests_per_second is not None and self.requests_per_second <= 0) or self.burst_requests < 1:
             raise ValueError("provider token budget values must be positive")
         if not 1 <= self.max_attempts <= 10:
             raise ValueError("provider attempts must be between 1 and 10")
@@ -74,6 +74,11 @@ class BoundedWarmupExecutor(Generic[T, R]):
     """Bounded provider-fair execution with cross-request singleflight."""
 
     DEFAULT_PROVIDER_POLICIES = {
+        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+            max_concurrency=8,
+            requests_per_second=None,
+            max_attempts=1,
+        ),
         "BINANCE": ProviderBudgetPolicy(
             max_concurrency=8,
             requests_per_second=8.0,
@@ -339,6 +344,8 @@ class BoundedWarmupExecutor(Generic[T, R]):
         provider: str,
         policy: ProviderBudgetPolicy,
     ) -> None:
+        if policy.requests_per_second is None:
+            return
         lock = self._rate_locks.setdefault(provider, asyncio.Lock())
         async with lock:
             state = self._tokens.get(provider)

@@ -3,15 +3,21 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    STABLE_CORE_DEDUP_CAPACITY,
     StableAcquisitionPlan,
     stable_authority_record,
     write_stable_runtime_bundle,
 )
-from scripts.refresh_v2_rust_core_runtime import CORE_FILES, refresh
+from qdl.runtime.execution_l2 import execution_l2_materialization_plan
+from scripts.refresh_v2_rust_core_runtime import (
+    CORE_FILES,
+    refresh,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +25,17 @@ CATALOG = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION = ROOT / "config/v2/stable-acquisition-bindings.yaml"
 OLD_IMAGE = "sha256:" + "a" * 64
 NEW_IMAGE = "sha256:" + "b" * 64
+
+
+@lru_cache(maxsize=1)
+def _execution_l2_source_ids() -> frozenset[str]:
+    catalog = StableSourceCatalog.load(CATALOG)
+    acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+    return frozenset(execution_l2_materialization_plan(
+        demand_path=ROOT / "config/v2/stable-crypto-demand.yaml",
+        catalog=catalog,
+        acquisition=acquisition,
+    ).source_ids)
 
 
 class RustCoreRuntimeRefreshTests(unittest.TestCase):
@@ -44,9 +61,10 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
         authority_bytes = (runtime / "authority.json").read_bytes()
         for name in CORE_FILES:
             payload = json.loads((runtime / name).read_text())
+            payload["core"]["dedup_capacity"] = 1_000_000
             for binding in payload["core"]["bindings"]:
-                if binding.get("l2") is not None:
-                    binding["l2"].pop("snapshot_refresh_seconds", None)
+                if binding.get("source_id") in _execution_l2_source_ids():
+                    binding["l2"].pop("materialized_snapshot_interval_ms", None)
             (runtime / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         (runtime / "unrelated.json").write_text('{"untouched":true}\n')
         environment = root / "rollout.env"
@@ -69,13 +87,24 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             state_root=root / "state",
         )
 
-    def test_dry_run_proves_only_l2_cadence_changes(self):
+    def test_dry_run_proves_only_declared_hot_l2_materialization_changes(self):
         with tempfile.TemporaryDirectory() as raw:
             result = self._refresh(Path(raw), apply=False)
             self.assertEqual(result["status"], "DRY_RUN")
             self.assertTrue(result["authority_bytes_preserved"])
             self.assertEqual(len(result["changes"]), 3)
             self.assertTrue(all(item["l2_source_ids"] for item in result["changes"]))
+            self.assertTrue(all(
+                set(item["execution_l2_source_ids"]) == _execution_l2_source_ids()
+                for item in result["changes"]
+            ))
+            self.assertTrue(
+                all(
+                    item["dedup_capacity"]
+                    == {"before": 1_000_000, "after": STABLE_CORE_DEDUP_CAPACITY}
+                    for item in result["changes"]
+                )
+            )
             self.assertEqual(result["production_mutations"], 0)
 
     def test_apply_keeps_authority_and_unrelated_runtime_file(self):
@@ -97,12 +126,42 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             self.assertIn(NEW_IMAGE, environment.read_text())
             for name in CORE_FILES:
                 payload = json.loads((runtime / name).read_text())
+                self.assertEqual(payload["core"]["dedup_capacity"], STABLE_CORE_DEDUP_CAPACITY)
                 self.assertTrue(all(
                     binding["l2"].get("snapshot_refresh_seconds") == 30
                     for binding in payload["core"]["bindings"]
                     if binding.get("l2") is not None
                 ))
+                self.assertEqual(
+                    {
+                        binding["source_id"]
+                        for binding in payload["core"]["bindings"]
+                        if binding.get("l2", {}).get("materialized_snapshot_interval_ms") == 1000
+                    },
+                    _execution_l2_source_ids(),
+                )
                 self.assertTrue((root / "state" / "refresh" / "rollback" / name).is_file())
+
+    def test_config_only_refresh_reuses_selected_immutable_image(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runtime, environment, _ = self._active_runtime(root)
+            environment.write_text(
+                "QDL_CONFIG_REVISION=phasec36-reference-l2-r13\n"
+                f"QDL_STABLE_RUST_IMAGE={NEW_IMAGE}\n"
+                "QDL_STABLE_RUNTIME_DIR=/runtime\n"
+            )
+            result = refresh(
+                runtime_dir=runtime,
+                rollout_env=environment,
+                active_rust_image=NEW_IMAGE,
+                new_rust_image=NEW_IMAGE,
+                output_dir=None,
+                apply=False,
+                state_root=root / "state",
+            )
+            self.assertFalse(result["image_selector_changed"])
+            self.assertEqual(result["production_mutations"], 0)
 
     def test_fails_closed_when_non_l2_binding_changes(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -113,6 +172,24 @@ class RustCoreRuntimeRefreshTests(unittest.TestCase):
             binding["native_symbol"] = "unexpected"
             (runtime / "core.json").write_text(json.dumps(payload))
             with self.assertRaisesRegex(ValueError, "non-L2 binding"):
+                refresh(
+                    runtime_dir=runtime,
+                    rollout_env=environment,
+                    active_rust_image=OLD_IMAGE,
+                    new_rust_image=NEW_IMAGE,
+                    output_dir=None,
+                    apply=False,
+                    state_root=root / "state",
+                )
+
+    def test_fails_closed_when_dedup_capacity_is_not_an_approved_predecessor(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runtime, environment, _ = self._active_runtime(root)
+            payload = json.loads((runtime / "core.json").read_text())
+            payload["core"]["dedup_capacity"] = 100_001
+            (runtime / "core.json").write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "bounded dedup transition"):
                 refresh(
                     runtime_dir=runtime,
                     rollout_env=environment,

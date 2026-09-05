@@ -12,6 +12,17 @@ from typing import Mapping
 V1_FALLBACK_COMMIT = "2b0dcf74454c9f87c352d3c47389955aeb955804"
 V1_FALLBACK_VERSION = "v1.2.4"
 
+# The original five-key handoff remains a compatibility contract for the
+# Reference/L2 rollout.  C2 credential recovery adds versioned keys alongside
+# it; it never changes a public key already trusted by an active reader.
+LEGACY_KEY_SUBJECTS = {
+    "stable-trading-system-rs256-v1": "spiffe://qdl/paper/trading-system-stable",
+    "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
+    "stable-monitoring-rs256-v1": "spiffe://qdl/paper/monitoring-multivenue-stable",
+    "stable-alpha-okx-rs256-v1": "spiffe://qdl/paper/alpha-okx-stable",
+    "stable-reference-l2-rs256-v1": "spiffe://qdl/paper/reference-l2-stable",
+}
+
 EXTERNAL_IDENTITY_SPECS = {
     "stable-monitoring-rs256-v1": {
         "subject": "spiffe://qdl/paper/monitoring-multivenue-stable",
@@ -27,12 +38,32 @@ EXTERNAL_IDENTITY_SPECS = {
     },
 }
 
-ALL_KEY_SUBJECTS = {
-    "stable-trading-system-rs256-v1": "spiffe://qdl/paper/trading-system-stable",
-    "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
+ALL_KEY_SUBJECTS = dict(LEGACY_KEY_SUBJECTS)
+
+RECOVERY_IDENTITY_SPECS = {
+    "stable-monitoring-rs256-v2": {
+        "subject": "spiffe://qdl/paper/monitoring-multivenue-stable",
+        "public_key": "monitoring-jwt/public.pem",
+    },
+    "stable-trading-system-rs256-v2": {
+        "subject": "spiffe://qdl/paper/trading-system-stable",
+        "public_key": "trading-system-jwt/public.pem",
+    },
+    "stable-alpha-binance-rs256-v2": {
+        "subject": "spiffe://qdl/paper/alpha-binance-stable",
+        "public_key": "alpha-binance-jwt/public.pem",
+    },
+    "stable-alpha-okx-rs256-v2": {
+        "subject": "spiffe://qdl/paper/alpha-okx-stable",
+        "public_key": "alpha-okx-jwt/public.pem",
+    },
+}
+
+RECOVERY_ALL_KEY_SUBJECTS = {
+    **ALL_KEY_SUBJECTS,
     **{
         key_id: str(value["subject"])
-        for key_id, value in EXTERNAL_IDENTITY_SPECS.items()
+        for key_id, value in RECOVERY_IDENTITY_SPECS.items()
     },
 }
 
@@ -523,14 +554,16 @@ def validate_active_query_environment_commitment(
     }
 
 
-def prepare_handoff_environment(
+def _prepare_handoff_environment(
     base_environment: Mapping[str, str],
     *,
     extension_dir: str | Path,
     python_image: str,
     runtime_binding: Mapping[str, object] | None = None,
+    identity_specs: Mapping[str, Mapping[str, object]],
+    approved_key_subjects: Mapping[str, str],
 ) -> dict[str, str]:
-    """Append only approved external public signing keys.
+    """Append only an approved set of external public signing keys.
 
     Private key paths deliberately never enter the query/stream environment.
     """
@@ -570,9 +603,7 @@ def prepare_handoff_environment(
         for key, value in keys.items()
     ):
         raise ValueError("stable JWT public keyring is invalid")
-    missing_existing = sorted(
-        {"stable-trading-system-rs256-v1", "stable-alpha-binance-rs256-v1"} - set(keys)
-    )
+    missing_existing = sorted(set(ALL_KEY_SUBJECTS) - set(keys))
     if missing_existing:
         raise ValueError(f"stable JWT public keyring misses existing identities {missing_existing}")
     prior_subjects_raw = result.get("QDL_STABLE_JWT_KEY_SUBJECTS_JSON")
@@ -586,7 +617,7 @@ def prepare_handoff_environment(
             for key, value in prior_subjects.items()
         ):
             raise ValueError("stable JWT key-subject bindings are invalid")
-        unknown_subjects = sorted(set(prior_subjects) - set(ALL_KEY_SUBJECTS))
+        unknown_subjects = sorted(set(prior_subjects) - set(approved_key_subjects))
         if unknown_subjects:
             raise ValueError(
                 "stable JWT key-subject bindings contain unapproved identities "
@@ -595,7 +626,7 @@ def prepare_handoff_environment(
         mismatched_subjects = sorted(
             key
             for key, subject in prior_subjects.items()
-            if ALL_KEY_SUBJECTS[key] != subject
+            if approved_key_subjects[key] != subject
         )
         if mismatched_subjects:
             raise ValueError(
@@ -603,7 +634,7 @@ def prepare_handoff_environment(
                 f"{mismatched_subjects}"
             )
     extension = Path(extension_dir)
-    for key_id, spec in EXTERNAL_IDENTITY_SPECS.items():
+    for key_id, spec in identity_specs.items():
         public_key_path = extension / str(spec["public_key"])
         if not public_key_path.is_file():
             raise ValueError(f"Phase 10.5-C {key_id} public key is missing")
@@ -614,14 +645,48 @@ def prepare_handoff_environment(
         if prior is not None and prior != public_key:
             raise ValueError(f"Phase 10.5-C {key_id} conflicts with the existing keyring")
         keys[key_id] = public_key
-    if set(keys) != set(ALL_KEY_SUBJECTS):
+    if set(keys) != set(approved_key_subjects):
         raise ValueError("Phase 10.5-C JWT keyring does not exactly match approved identities")
     result["QDL_STABLE_JWT_KEYS_JSON"] = json.dumps(keys, sort_keys=True, separators=(",", ":"))
     result["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"] = json.dumps(
-        ALL_KEY_SUBJECTS, sort_keys=True, separators=(",", ":")
+        dict(approved_key_subjects), sort_keys=True, separators=(",", ":")
     )
     result["QDL_STABLE_PYTHON_IMAGE"] = python_image
     return result
+
+
+def prepare_handoff_environment(
+    base_environment: Mapping[str, str],
+    *,
+    extension_dir: str | Path,
+    python_image: str,
+    runtime_binding: Mapping[str, object] | None = None,
+) -> dict[str, str]:
+    """Preserve the historical five-key Reference/L2 handoff contract."""
+    return _prepare_handoff_environment(
+        base_environment,
+        extension_dir=extension_dir,
+        python_image=python_image,
+        runtime_binding=runtime_binding,
+        identity_specs=EXTERNAL_IDENTITY_SPECS,
+        approved_key_subjects=ALL_KEY_SUBJECTS,
+    )
+
+
+def prepare_c2_identity_recovery_environment(
+    base_environment: Mapping[str, str],
+    *,
+    extension_dir: str | Path,
+    python_image: str,
+) -> dict[str, str]:
+    """Append four rotated C2 keys while retaining every trusted V1 key."""
+    return _prepare_handoff_environment(
+        base_environment,
+        extension_dir=extension_dir,
+        python_image=python_image,
+        identity_specs=RECOVERY_IDENTITY_SPECS,
+        approved_key_subjects=RECOVERY_ALL_KEY_SUBJECTS,
+    )
 
 
 def public_handoff_overlay(environment: Mapping[str, str]) -> dict[str, str]:
@@ -682,6 +747,7 @@ def handoff_packet(
     v1_attestation: Mapping[str, object],
     runtime_binding: Mapping[str, object] | None = None,
     query_environment_commitment: Mapping[str, object] | None = None,
+    approved_key_subjects: Mapping[str, str] = ALL_KEY_SUBJECTS,
 ) -> dict[str, object]:
     """Make an auditable packet without serializing a secret-bearing env file."""
     if v1_attestation.get("status") != "PASS":
@@ -702,7 +768,7 @@ def handoff_packet(
         raise ValueError(f"Phase 10.5-C handoff environment is missing {missing}")
     public_keyring = json.loads(environment["QDL_STABLE_JWT_KEYS_JSON"])
     subjects = json.loads(environment["QDL_STABLE_JWT_KEY_SUBJECTS_JSON"])
-    if set(public_keyring) != set(ALL_KEY_SUBJECTS) or subjects != ALL_KEY_SUBJECTS:
+    if set(public_keyring) != set(approved_key_subjects) or subjects != dict(approved_key_subjects):
         raise ValueError("Phase 10.5-C packet identity map is not exact")
     packet = {
         "schema": "qdl.phase105c.handoff-packet.v1",

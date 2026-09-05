@@ -30,6 +30,7 @@ from qdl.runtime.stable_deployment import (
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
     STABLE_CORE_WORKER_COUNT,
+    STABLE_CORE_DEDUP_CAPACITY,
     AuthorityPromotionScope,
     StableAcquisitionPlan,
     stable_authority_record,
@@ -214,8 +215,11 @@ class StableDeploymentContractTests(unittest.TestCase):
             "issue_client \"${role}\"",
             "issue_jwt_key \"${role}\"",
             "spiffe://qdl/paper/monitoring-multivenue-stable",
+            "spiffe://qdl/paper/trading-system-stable",
+            "spiffe://qdl/paper/alpha-binance-stable",
             "spiffe://qdl/paper/alpha-okx-stable",
             "spiffe://qdl/paper/reference-l2-stable",
+            "QDL_PHASE105_EXISTING_CLIENT_BUNDLE",
             "client-ca-bundle.crt",
             "external-client-ca.key",
             "rm -f \"${EXTERNAL_CA_KEY}\"",
@@ -574,6 +578,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             }
             self.assertTrue(core["strict_subscription_scope"])
             self.assertEqual(core["raw_topics"], ["md.raw.realtime.v2"])
+            self.assertEqual(core["core"]["dedup_capacity"], STABLE_CORE_DEDUP_CAPACITY)
             self.assertEqual(
                 {item["source_id"] for item in core["core"]["bindings"]},
                 expected_sources,
@@ -1127,11 +1132,60 @@ class StableDeploymentContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "OKX L2 acquisition"):
                 StableAcquisitionPlan.load(path, catalog=self.catalog)
 
+            invalid_hot_l2 = copy.deepcopy(payload)
+            for item in invalid_hot_l2["bindings"]:
+                if item["binding_id"] in {
+                    "binance-usdm-ethusdt-book_delta",
+                    "binance-usdm-ethusdt-book_snapshot",
+                }:
+                    item["l2"]["materialized_snapshot_interval_ms"] = 99
+            path.write_text(
+                yaml.safe_dump(invalid_hot_l2, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "materialized snapshot cadence"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
         primary = copy.deepcopy(self.authority)
         primary["mode"] = "RUST_PRIMARY"
         primary["public_write_allowed"] = True
         with self.assertRaisesRegex(ValueError, "not an isolated shared Rust"):
             self.acquisition.core_config(catalog=self.catalog, authority=primary)
+
+    def test_hot_l2_materialization_is_core_only_and_keeps_provider_refresh(self):
+        core = self.acquisition.core_config(
+            catalog=self.catalog, authority=self.authority
+        )
+        from qdl.runtime.execution_l2 import execution_l2_materialization_plan
+
+        execution_l2 = execution_l2_materialization_plan(
+            demand_path=ROOT / "config/v2/stable-crypto-demand.yaml",
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+        )
+        hot = {
+            item["source_id"]: item["l2"]
+            for item in core["core"]["bindings"]
+            if item.get("l2", {}).get("materialized_snapshot_interval_ms") == 1_000
+        }
+        self.assertEqual(set(hot), set(execution_l2.source_ids))
+        self.assertEqual(len(hot), 10)
+        self.assertTrue(all(
+            item["depth_per_side"] == 100
+            and item["snapshot_refresh_seconds"] == 30
+            and item["materialized_snapshot_interval_ms"] == 1_000
+            for item in hot.values()
+        ))
+        ingestors = self.acquisition.native_ingestor_configs(
+            catalog=self.catalog, authority=self.authority
+        )
+        for config in ingestors.values():
+            for binding in config["bindings"]:
+                if (
+                    binding["subscription_id"] in execution_l2.source_ids
+                    and binding["feed"] == "BOOK"
+                ):
+                    self.assertNotIn("materialized_snapshot_interval_ms", binding["l2"])
+                    self.assertEqual(binding["l2"]["snapshot_refresh_seconds"], 30)
 
     def test_generated_primary_authority_builds_every_shared_runtime_role(self):
         primary = stable_authority_record(
@@ -1220,6 +1274,24 @@ class StableComposeAndBundleTests(unittest.TestCase):
             self.assertTrue(
                 all(str(port).startswith("127.0.0.1:") for port in services[name]["ports"])
             )
+        for name in ("query_v2_1", "query_v2_2"):
+            with self.subTest(query_healthcheck=name):
+                healthcheck = services[name]["healthcheck"]
+                command = " ".join(healthcheck["test"])
+                self.assertIn("https://localhost:8200/health/ready", command)
+                self.assertIn("/stable-certs/query/ca.crt", command)
+                self.assertEqual(healthcheck["interval"], "5s")
+                self.assertEqual(healthcheck["timeout"], "3s")
+                self.assertEqual(healthcheck["retries"], 20)
+        for name in ("stream_v2_active", "stream_v2_passive"):
+            with self.subTest(stream_healthcheck=name):
+                healthcheck = services[name]["healthcheck"]
+                command = " ".join(healthcheck["test"])
+                self.assertIn("https://localhost:8200/health/dependencies", command)
+                self.assertIn("/stable-certs/stream/ca.crt", command)
+                self.assertEqual(healthcheck["interval"], "5s")
+                self.assertEqual(healthcheck["timeout"], "3s")
+                self.assertEqual(healthcheck["retries"], 20)
         projector_names = ("projector_v2", "projector_v2_2", "projector_v2_3")
         for name in projector_names:
             self.assertNotIn("ports", services[name])
@@ -1322,6 +1394,12 @@ class StableComposeAndBundleTests(unittest.TestCase):
         for name, alias in ingress_aliases.items():
             self.assertEqual(
                 services[name]["networks"]["stable_consumer"]["aliases"],
+                [alias],
+            )
+        for name in ("stream_v2_active", "stream_v2_passive"):
+            alias = ingress_aliases[name]
+            self.assertEqual(
+                services[name]["networks"]["stable_internal"]["aliases"],
                 [alias],
             )
         for name in ("query_v2_1", "query_v2_2"):

@@ -39,6 +39,8 @@ class SpoolConfig:
     replay_retention_seconds: int = 24 * 3600
     maintenance_interval_seconds: int = 30
     max_partition_records: int = 0
+    retain_partition_windows: bool = False
+    verify_integrity_on_open: bool = True
 
     def __post_init__(self) -> None:
         if self.max_records <= 0 or self.max_payload_bytes <= 0:
@@ -49,6 +51,10 @@ class SpoolConfig:
             raise ValueError("max_batch_events must be positive")
         if self.max_partition_records < 0:
             raise ValueError("max_partition_records cannot be negative")
+        if not isinstance(self.retain_partition_windows, bool) or (
+            self.retain_partition_windows and self.max_partition_records <= 0
+        ):
+            raise ValueError("retained partition windows require a positive record bound")
         if self.max_storage_bytes <= self.max_event_bytes:
             raise ValueError("max_storage_bytes must exceed max_event_bytes")
         if min(
@@ -85,6 +91,18 @@ class SpoolStats:
         )
 
 
+@dataclass(frozen=True)
+class SpoolReadiness:
+    """Bounded, read-only cache health summary.
+
+    `spool_state` is updated atomically alongside append and retention work.
+    Health checks need that durable state, not a full aggregate over `events`.
+    """
+
+    records: int
+    payload_bytes: int
+
+
 class SQLiteDurableSpool:
     """Bounded, fsync-backed migration bridge with portable logical cursors.
 
@@ -102,7 +120,8 @@ class SQLiteDurableSpool:
         )
         self._connection.row_factory = sqlite3.Row
         self._initialize_schema()
-        self._validate_integrity()
+        if config.verify_integrity_on_open:
+            self._validate_integrity()
 
     def _initialize_schema(self) -> None:
         for attempt in range(4):
@@ -149,7 +168,6 @@ class SQLiteDurableSpool:
                 PRIMARY KEY (stream, partition_key, logical_offset),
                 UNIQUE (stream, event_id)
             );
-            DROP INDEX IF EXISTS idx_qdl_spool_events_retention;
             CREATE INDEX IF NOT EXISTS idx_qdl_spool_events_retention
                 ON events (committed_at_ns);
 
@@ -183,10 +201,6 @@ class SQLiteDurableSpool:
                 payload_bytes INTEGER NOT NULL,
                 last_maintenance_ns INTEGER NOT NULL
             );
-            INSERT OR IGNORE INTO spool_state(
-                singleton, event_records, payload_bytes, last_maintenance_ns
-            )
-            SELECT 1, COUNT(*), COALESCE(SUM(LENGTH(payload)), 0), 0 FROM events;
 
             CREATE TABLE IF NOT EXISTS cache_identity (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -195,6 +209,7 @@ class SQLiteDurableSpool:
             );
             """
         )
+        self._ensure_usage_state()
         self._connection.execute(
             """
             INSERT OR IGNORE INTO cache_identity(singleton, cache_id, created_at_ns)
@@ -202,6 +217,41 @@ class SQLiteDurableSpool:
             """,
             (uuid.uuid4().hex, self._clock_ns()),
         )
+
+    def _ensure_usage_state(self) -> None:
+        """Initialize legacy spool usage once without rescanning live caches."""
+        with self._lock:
+            existing = self._connection.execute(
+                "SELECT 1 FROM spool_state WHERE singleton = 1"
+            ).fetchone()
+            if existing is not None:
+                return
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT 1 FROM spool_state WHERE singleton = 1"
+                ).fetchone()
+                if existing is None:
+                    records, payload_bytes = self._aggregate_event_usage_locked()
+                    self._connection.execute(
+                        """
+                        INSERT INTO spool_state(
+                            singleton, event_records, payload_bytes, last_maintenance_ns
+                        ) VALUES (1, ?, ?, 0)
+                        """,
+                        (records, payload_bytes),
+                    )
+                self._connection.execute("COMMIT")
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
+    def _aggregate_event_usage_locked(self) -> tuple[int, int]:
+        row = self._connection.execute(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM events"
+        ).fetchone()
+        return int(row[0]), int(row[1])
 
     @property
     def cache_id(self) -> str:
@@ -398,10 +448,18 @@ class SQLiteDurableSpool:
         partition_key: str,
         limit: int = 100,
     ) -> list[StoredEvent]:
-        """Return the newest bounded partition window in logical order."""
+        """Return a bounded retained partition window in logical order.
 
-        if limit <= 0 or limit > 10_000:
-            raise ValueError("limit must be between 1 and 10000")
+        The public replay/query contract remains capped independently at
+        10,000 rows.  A stable runtime may retain a small, explicitly bounded
+        per-partition headroom for authentic late backfills; its internal
+        reader must be able to inspect that configured physical window before
+        selecting the public market-time tail.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        if limit <= 0 or limit > max_tail_rows:
+            raise ValueError(f"limit must be between 1 and {max_tail_rows}")
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -535,6 +593,8 @@ class SQLiteDurableSpool:
     def trim_consumed(self, *, now_ns: int | None = None) -> int:
         """Delete only records acknowledged by every active consumer."""
 
+        if self.config.retain_partition_windows:
+            return 0
         effective_now = now_ns or self._clock_ns()
         deleted = 0
         with self._lock:
@@ -730,6 +790,25 @@ class SQLiteDurableSpool:
             newest_accepted_at_ns=int(row["newest"]) if row["newest"] is not None else None,
         )
 
+    def readiness_summary(self) -> SpoolReadiness:
+        """Read the bounded, transaction-maintained usage state for health checks.
+
+        A missing or invalid singleton is a durable-state invariant violation,
+        so callers deliberately fail closed rather than approximating it from
+        the much larger event table.
+        """
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT event_records, payload_bytes FROM spool_state WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            raise PayloadCorruption("spool usage state is missing")
+        records = int(row["event_records"])
+        payload_bytes = int(row["payload_bytes"])
+        if records < 0 or payload_bytes < 0:
+            raise PayloadCorruption("spool usage state is invalid")
+        return SpoolReadiness(records=records, payload_bytes=payload_bytes)
+
     def storage_bytes(self) -> int:
         return sum(
             path.stat().st_size
@@ -804,6 +883,10 @@ class SQLiteDurableSpool:
         )
 
     def _trim_aged_unowned_locked(self, now_ns: int) -> None:
+        # Canonical warmup windows are count-bounded: age eviction would punch
+        # holes into sparse bars even while their advertised window still fits.
+        if self.config.retain_partition_windows:
+            return
         cutoff = now_ns - self.config.replay_retention_seconds * 1_000_000_000
         removed = self._connection.execute(
             """

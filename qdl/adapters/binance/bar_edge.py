@@ -12,6 +12,10 @@ from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
 
+_MAX_HISTORY_ROWS = 10_000
+_HISTORY_PAGE_ROWS = 1_000
+
+
 @dataclass(frozen=True)
 class BinanceBarRawBinding:
     market: str
@@ -66,7 +70,7 @@ def _interval_ms(interval: str) -> int:
 def _fetch_rows(
     binding: BinanceBarRawBinding,
     *,
-    observed_ms: int,
+    end_time_ms: int,
     limit: int,
     attempts: int,
     fetcher: Callable,
@@ -82,7 +86,7 @@ def _fetch_rows(
                 binding.native_symbol,
                 interval=binding.interval,
                 limit=limit,
-                end_time=observed_ms,
+                end_time=end_time_ms,
                 market=binding.market.lower(),
             )
             break
@@ -176,29 +180,66 @@ def fetch_closed_bar_history_raw_envelopes(
     sleep: Callable[[float], None] = time.sleep,
     test_provenance: bool = False,
 ) -> tuple[raw_provider_pb2.RawProviderEnvelope, ...]:
-    if limit < 1 or limit > 1000:
-        raise ValueError("Binance history limit must be between 1 and 1000")
+    if limit < 1 or limit > _MAX_HISTORY_ROWS:
+        raise ValueError(
+            f"Binance history limit must be between 1 and {_MAX_HISTORY_ROWS}"
+        )
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = _interval_ms(binding.interval)
-    # Binance caps a kline response at 1000 rows.  Asking through wall-clock
-    # `now` can consume one slot with the still-open candle, yielding only 999
-    # usable closed rows.  The history API's cutoff is therefore the exclusive
-    # boundary of the current interval, not request observation time.
-    provider_end_ms = latest_closed_boundary_ms(
+    # Each Binance REST page is capped at 1,000 rows. The cursor starts at the
+    # latest known closed boundary and walks backward one complete page at a
+    # time; every provider response must stay within its requested end bound.
+    # This keeps a 10,000-row warmup exact rather than accepting duplicate or
+    # shifted pages when a vendor ignores a cursor.
+    page_end_ms = latest_closed_boundary_ms(
         binding.interval,
         observed_ms,
         provider="BINANCE",
     ) - 1
-    rows = _fetch_rows(
-        binding,
-        observed_ms=provider_end_ms,
-        limit=min(1000, limit + 2),
-        attempts=attempts,
-        fetcher=fetcher,
-        sleep=sleep,
-    )
-    closed = _closed_rows(rows, observed_ms=observed_ms, interval_ms=interval_ms)
-    selected = closed[-limit:]
+    remaining = limit
+    selected_by_open: dict[int, list] = {}
+    while remaining:
+        page_limit = min(_HISTORY_PAGE_ROWS, remaining)
+        rows = _fetch_rows(
+            binding,
+            end_time_ms=page_end_ms,
+            limit=page_limit,
+            attempts=attempts,
+            fetcher=fetcher,
+            sleep=sleep,
+        )
+        closed = _closed_rows(
+            rows,
+            observed_ms=observed_ms,
+            interval_ms=interval_ms,
+        )
+        if len(closed) != page_limit:
+            raise RuntimeError(
+                "Binance closed-bar history page is incomplete "
+                f"requested={page_limit} observed={len(closed)}"
+            )
+        if any(int(row[6]) > page_end_ms for row in closed):
+            raise RuntimeError(
+                "Binance closed-bar history page exceeds requested end boundary"
+            )
+        for row in closed:
+            open_time = int(row[0])
+            previous = selected_by_open.get(open_time)
+            if previous is not None and previous != row:
+                raise RuntimeError(
+                    "Binance history pages conflict for one open time"
+                )
+            selected_by_open[open_time] = row
+        earliest_open_ms = min(int(row[0]) for row in closed)
+        next_page_end_ms = earliest_open_ms - 1
+        if next_page_end_ms >= page_end_ms:
+            raise RuntimeError(
+                "Binance history pagination made no backward progress"
+            )
+        page_end_ms = next_page_end_ms
+        remaining -= page_limit
+
+    selected = tuple(selected_by_open[key] for key in sorted(selected_by_open))
     if len(selected) != limit:
         raise RuntimeError(
             f"Binance closed-bar history is incomplete requested={limit} observed={len(selected)}"
@@ -232,7 +273,7 @@ def fetch_latest_closed_bar_raw_envelope(
     interval_ms = _interval_ms(binding.interval)
     rows = _fetch_rows(
         binding,
-        observed_ms=observed_ms,
+        end_time_ms=observed_ms,
         limit=3,
         attempts=attempts,
         fetcher=fetcher,

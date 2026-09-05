@@ -154,12 +154,28 @@ class ReferenceBatch:
 
         return tuple(await asyncio.gather(*(self.fetch_one(request) for request in requests)))
 
-    async def fetch_one(self, request: ReferenceRequest) -> ReferenceBatchResult:
+    async def fetch_one(
+        self,
+        request: ReferenceRequest,
+        *,
+        bypass_cache: bool = False,
+    ) -> ReferenceBatchResult:
+        """Resolve one request, optionally replacing a stale cached snapshot.
+
+        ``bypass_cache`` is intentionally an internal query-service recovery
+        primitive. It preserves the request identity and provider lane while
+        preventing an already diagnosed stale cache entry from being returned
+        a second time. It is not a generic retry policy.
+        """
         key = request.cache_key
         now = self._monotonic()
         async with self._lock:
             self._evict_expired(now)
-            cached = self._cache.get(key)
+            if bypass_cache:
+                self._cache.pop(key, None)
+                cached = None
+            else:
+                cached = self._cache.get(key)
             if cached is not None:
                 self._cache.move_to_end(key)
                 self._cache_hits += 1
@@ -191,7 +207,7 @@ class ReferenceBatch:
                 self._inflight.pop(key, None)
 
     async def _resolve_request(self, request: ReferenceRequest) -> ReferenceBatchResult:
-        received_at_ns = self._clock_ns()
+        request_started_at_ns = self._clock_ns()
         try:
             profile = self._capability_resolver(request.instrument)
             capability_name = product_feed_name(request.product)
@@ -200,7 +216,7 @@ class ReferenceBatch:
             return self._unavailable_result(
                 request,
                 FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint=str(error)),
-                received_at_ns,
+                request_started_at_ns,
                 "ADAPTER_UNAVAILABLE",
                 str(error),
             )
@@ -208,7 +224,7 @@ class ReferenceBatch:
             return self._unavailable_result(
                 request,
                 FeedCapability(CapabilityAvailability.UNAVAILABLE, constraint=str(error)),
-                received_at_ns,
+                request_started_at_ns,
                 "CAPABILITY_UNDECLARED",
                 str(error),
             )
@@ -217,7 +233,7 @@ class ReferenceBatch:
             return self._unavailable_result(
                 request,
                 capability,
-                received_at_ns,
+                request_started_at_ns,
                 "CAPABILITY_UNAVAILABLE",
                 capability.constraint or "provider capability is unavailable",
             )
@@ -227,7 +243,7 @@ class ReferenceBatch:
             return self._unavailable_result(
                 request,
                 capability,
-                received_at_ns,
+                request_started_at_ns,
                 "ADAPTER_UNAVAILABLE",
                 f"no registered reference adapter for {request.provider_key[0]}/{request.provider_key[1]}",
             )
@@ -241,7 +257,9 @@ class ReferenceBatch:
                 self._source_calls += 1
                 fetched = await asyncio.wait_for(
                     adapter.fetch(
-                        request, capability=capability, received_at_ns=received_at_ns
+                        request,
+                        capability=capability,
+                        received_at_ns=request_started_at_ns,
                     ),
                     timeout=self._policy.request_timeout_seconds,
                 )
@@ -250,7 +268,7 @@ class ReferenceBatch:
             return self._error_result(
                 request,
                 capability,
-                received_at_ns,
+                request_started_at_ns,
                 "PROVIDER_TIMEOUT",
                 "reference provider request exceeded its bounded deadline",
             )
@@ -258,7 +276,7 @@ class ReferenceBatch:
             return self._unavailable_result(
                 request,
                 capability,
-                received_at_ns,
+                request_started_at_ns,
                 "CAPABILITY_UNAVAILABLE",
                 str(error),
             )
@@ -266,20 +284,29 @@ class ReferenceBatch:
             return self._error_result(
                 request,
                 capability,
-                received_at_ns,
+                request_started_at_ns,
                 "PROVIDER_RETRY_EXHAUSTED",
                 str(error),
                 retry_after_ms=getattr(error, "retry_after_ms", None),
             )
         except ReferenceProviderError as error:
             return self._error_result(
-                request, capability, received_at_ns, "PROVIDER_PROTOCOL", str(error)
+                request,
+                capability,
+                request_started_at_ns,
+                "PROVIDER_PROTOCOL",
+                str(error),
             )
         except Exception as error:  # adapter failures are isolated to this item
             return self._error_result(
-                request, capability, received_at_ns, "PROVIDER_FAILURE", type(error).__name__
+                request,
+                capability,
+                request_started_at_ns,
+                "PROVIDER_FAILURE",
+                type(error).__name__,
             )
 
+        received_at_ns = self._clock_ns()
         if not fetched.observations:
             return ReferenceBatchResult(
                 request=request,

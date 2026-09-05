@@ -167,9 +167,18 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 )
                 checked.append((manifest.consumer_id, requirement.interval))
         self.assertEqual(
-            checked,
-            [("alpha.binance.paper.stable", "15m")] * 5
-            + [("alpha.okx.paper.stable", "1h")] * 5,
+            sorted(checked),
+            sorted(
+                [
+                    (consumer_id, interval)
+                    for consumer_id in (
+                        "alpha.binance.paper.stable",
+                        "alpha.okx.paper.stable",
+                    )
+                    for interval in ("15m", "1h")
+                    for _ in range(5)
+                ]
+            ),
         )
 
     def test_a_requirement_no_source_can_answer_still_fails(self):
@@ -179,10 +188,12 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         manifest = ConsumerManifestLoader.load(
             CONSUMER_DIR / "alpha-binance-paper.yaml"
         )
-        served = next(
-            item for item in manifest.requirements
-            if item.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+        materialized_bar = next(
+            item
+            for item in manifest.requirements
+            if item.feed is FeedType.BAR
         )
+        served = replace(materialized_bar, recovery=RecoveryPolicy.FRESH_SNAPSHOT)
         self.assertTrue(pass_through_eligible(self.catalog, served))
 
         # Asking for replay continuity: only a binding can promise that.

@@ -24,7 +24,9 @@ from qdl.certification.phase103_consumer_acceptance import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.query.contracts import FeedType, RecoveryPolicy, StalePolicy
 from scripts.phase103_consumer_receipt_acceptance import (
+    _c2_requirement,
     _query_product,
     _query_product_with_quality,
     _stream_event_timeout_seconds,
@@ -62,18 +64,17 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             {item.consumer_id for item in scope.products},
             PHASE103_CONSUMER_IDS,
         )
-        self.assertEqual(len(scope.products), 45)
+        self.assertEqual(len(scope.products), 110)
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            40,
+            110,
         )
         pass_through = [
             item
             for item in scope.products
             if item.delivery is DeliveryClass.PROVIDER_PASS_THROUGH
         ]
-        self.assertEqual(len(pass_through), 5)
-        self.assertTrue(all(item.binding_id is not None for item in pass_through))
+        self.assertEqual(pass_through, [])
         self.assertEqual(
             {
                 item.binding_id
@@ -92,7 +93,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "binance-usdm-solusdt-bar-15m",
             },
         )
-        self.assertEqual(len(scope.excluded), 66)
+        self.assertEqual(len(scope.excluded), 76)
         excluded = next(
             item for item in scope.excluded
             if item.reason == "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"
@@ -104,7 +105,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             item for item in scope.excluded
             if item.reason == "LATER_PHASE_PRODUCT"
         ]
-        self.assertEqual(len(later_phase), 65)
+        self.assertEqual(len(later_phase), 75)
         self.assertEqual(
             {item.consumer_id for item in later_phase},
             {"trading-system.paper.stable", "alpha.binance.paper.stable"},
@@ -206,6 +207,39 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             )
         )
 
+    def _pass_through_bar(self):
+        """Exercise the legal provider history path without weakening the manifest."""
+        durable = self._product(
+            feed="BAR",
+            consumer_id="alpha.binance.paper.stable",
+            interval="15m",
+        )
+        return replace(
+            durable,
+            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
+            requirement=replace(
+                durable.requirement,
+                recovery=RecoveryPolicy.FRESH_SNAPSHOT,
+            ),
+        )
+
+    def _quiet_book_delta_product(self):
+        """Build one governed quiet-delta receipt without weakening price rules."""
+        trade = self._product(feed="TRADE")
+        return replace(
+            trade,
+            feed=FeedType.BOOK_DELTA,
+            requirement=replace(
+                trade.requirement,
+                feed=FeedType.BOOK_DELTA,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                event_recency_policy=StalePolicy.OBSERVE,
+                max_session_liveness_ms=45_000,
+                require_final_bars=False,
+            ),
+        )
+
     def _view(
         self,
         product,
@@ -237,6 +271,22 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "ask_quantity": d("2"),
                 "quantity_unit": "BASE_ASSET",
                 "level": 1,
+            }
+        elif product.feed.value == "BOOK_DELTA":
+            payload = {
+                "feed": "BOOK_DELTA",
+                "native_sequence_start": "101",
+                "native_sequence_end": "102",
+                "snapshot_sequence": "100",
+                "updates": [{
+                    "side": "BID",
+                    "price": d("10.1"),
+                    "quantity": d("1"),
+                    "quantity_unit": "BASE_ASSET",
+                }],
+                "reset": False,
+                "book_generation": 1,
+                "sequence_verified": True,
             }
         else:
             payload = {
@@ -366,18 +416,103 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider session"):
             validate_product_view(product, disconnected)
 
+    def test_state_replay_keeps_identity_and_gap_checks_but_defers_old_session_quality(self):
+        product = self._quiet_book_delta_product()
+        stale = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=False,
+        ).model_copy(
+            update={
+                "quality": self._view(
+                    product,
+                    freshness_ms=product.requirement.max_freshness_ms + 1,
+                    execution_eligible=False,
+                ).quality.model_copy(
+                    update={
+                        "state": "STALE",
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "STALE",
+                        "provider_session_liveness_ms": 45_001,
+                    }
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "provider session"):
+            validate_product_view(product, stale, require_current_quality=False)
+        validate_product_view(
+            product,
+            stale,
+            require_current_quality=False,
+            state_replay=True,
+        )
+        with self.assertRaisesRegex(ValueError, "cannot claim current"):
+            validate_product_view(product, stale, state_replay=True)
+
+    def test_quiet_connected_book_delta_is_observable_but_never_price_eligible(self):
+        product = self._quiet_book_delta_product()
+        quiet = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=False,
+        )
+        quiet = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "LIVE",
+                        "provider_session_liveness_ms": 1,
+                    }
+                )
+            }
+        )
+        validate_product_view(product, quiet)
+
+        blocked = replace(
+            product,
+            requirement=replace(product.requirement, event_recency_policy=None),
+        )
+        with self.assertRaisesRegex(ValueError, "freshness"):
+            validate_product_view(blocked, quiet)
+
+        disconnected = quiet.model_copy(
+            update={
+                "quality": quiet.quality.model_copy(
+                    update={"provider_session_state": "DISCONNECTED"}
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "provider session"):
+            validate_product_view(product, disconnected)
+
+        with self.assertRaisesRegex(ValueError, "gap"):
+            validate_product_view(
+                product,
+                quiet.model_copy(
+                    update={"quality": quiet.quality.model_copy(update={"gap_open": True})}
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "verified"):
+            validate_product_view(
+                product,
+                quiet.model_copy(
+                    update={
+                        "payload": quiet.payload.model_copy(
+                            update={"sequence_verified": False}
+                        )
+                    }
+                ),
+            )
+
     def test_typed_views_enforce_durable_and_pass_through_domain_semantics(self):
         for feed in ("TRADE", "QUOTE", "BAR"):
             with self.subTest(feed=feed):
                 product = self._product(feed=feed)
                 validate_product_view(product, self._view(product))
 
-        pass_through = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        pass_through = self._pass_through_bar()
         validate_product_view(pass_through, self._view(pass_through))
         baseline = self._view(pass_through)
         durable_upgrade = baseline.model_copy(
@@ -495,6 +630,12 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             rollover["secondary_content_sha256"],
         )
 
+        two_row_rollover = validate_final_bar_warmup_windows(primary[-2:], secondary[-2:])
+        self.assertEqual(two_row_rollover["common_row_count"], 1)
+        self.assertEqual(two_row_rollover["comparison"], "SINGLE_FINAL_BAR_ROLLOVER")
+        with self.assertRaisesRegex(ValueError, "no immutable common window"):
+            validate_final_bar_warmup_windows(primary[-1:], secondary[-1:])
+
     def test_final_bar_warmup_window_rejects_immutable_or_multi_row_divergence(self):
         bar = self._product(feed="BAR")
         minute = 60_000_000_000
@@ -561,8 +702,8 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _query_product(bar, primary=primary, secondary=secondary)
         )
         self.assertNotEqual(primary_hash, secondary_hash)
-        self.assertEqual(primary.requirement, sdk_requirement(bar))
-        self.assertEqual(secondary.requirement, sdk_requirement(bar))
+        self.assertEqual(primary.requirement, _c2_requirement(sdk_requirement(bar)))
+        self.assertEqual(secondary.requirement, _c2_requirement(sdk_requirement(bar)))
 
         quality_primary = WarmupClient(primary_rows)
         quality_secondary = WarmupClient(secondary_rows)
@@ -577,12 +718,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         self.assertEqual(result[5]["common_row_count"], 2)
 
     def test_provider_pass_through_bar_keeps_exact_replica_comparison(self):
-        bar = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        bar = self._pass_through_bar()
         minute = 60_000_000_000
 
         class WarmupClient:
@@ -665,7 +801,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _query_product(bar, primary=primary, secondary=secondary)
         )
         self.assertEqual(primary_hash, secondary_hash)
-        self.assertEqual(primary.requirement, sdk_requirement(bar))
+        self.assertEqual(primary.requirement, _c2_requirement(sdk_requirement(bar)))
 
     def test_bar_stream_wait_covers_one_close_but_stays_sla_bounded(self):
         bar = self._product(
@@ -678,12 +814,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             _stream_event_timeout_seconds(bar, 15.0) * 1_000,
             bar.requirement.max_freshness_ms,
         )
-        alpha_bar = self._product(
-            feed="BAR",
-            delivery=DeliveryClass.PROVIDER_PASS_THROUGH,
-            consumer_id="alpha.binance.paper.stable",
-            interval="15m",
-        )
+        alpha_bar = self._pass_through_bar()
         self.assertEqual(_stream_event_timeout_seconds(alpha_bar, 15.0), 915.0)
         trade = self._product(feed="TRADE")
         self.assertEqual(_stream_event_timeout_seconds(trade, 15.0), 15.0)

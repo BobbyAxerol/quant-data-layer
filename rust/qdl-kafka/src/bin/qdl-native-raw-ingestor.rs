@@ -39,6 +39,7 @@ use qdl_venue_core::backpressure::DeliveryClass;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tokio::time::Instant;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -309,6 +310,14 @@ impl IngestorConfig {
             }
         }
         Ok(())
+    }
+}
+
+fn authority_mode_name(mode: &AuthorityMode) -> &'static str {
+    match mode {
+        AuthorityMode::RustShadow => "RUST_SHADOW",
+        AuthorityMode::RustCanary => "RUST_CANARY",
+        AuthorityMode::RustPrimary => "RUST_PRIMARY",
     }
 }
 
@@ -609,6 +618,7 @@ impl RawPublisher {
         &self,
         frame: RawFrameRef<'_>,
         stopped: &AtomicBool,
+        deadline: Option<Instant>,
     ) -> Result<PendingKafkaAppend, KafkaTransportError> {
         let record = self.record(
             frame.binding,
@@ -629,6 +639,11 @@ impl RawPublisher {
         .map_err(KafkaTransportError::Configuration)?;
         let mut failures = 0_u32;
         loop {
+            if deadline.is_some_and(|value| Instant::now() >= value) {
+                return Err(KafkaTransportError::SnapshotTimeout(
+                    "L2 raw Kafka enqueue exceeded provider renewal bound".into(),
+                ));
+            }
             match self.sink.enqueue(&record, &publication) {
                 Ok(delivery) => return Ok(delivery),
                 Err(error)
@@ -647,10 +662,21 @@ impl RawPublisher {
                         }))
                         .unwrap_or_else(|_| "{\"event\":\"qdl_native_raw_enqueue_retry\"}".into())
                     );
-                    tokio::time::sleep(Duration::from_millis(
+                    let delay = Duration::from_millis(
                         backoff.delay_ms(failures, failures.min(10_000) as u16),
-                    ))
-                    .await;
+                    );
+                    if let Some(deadline) = deadline {
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {}
+                            _ = tokio::time::sleep_until(deadline) => {
+                                return Err(KafkaTransportError::SnapshotTimeout(
+                                    "L2 raw Kafka enqueue exceeded provider renewal bound".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        tokio::time::sleep(delay).await;
+                    }
                 }
                 Err(error) => return Err(error),
             }
@@ -660,8 +686,54 @@ impl RawPublisher {
 
 type RawPublishFuture = Pin<Box<dyn Future<Output = Result<(), KafkaTransportError>> + Send>>;
 
-fn raw_publish_future(delivery: PendingKafkaAppend) -> RawPublishFuture {
-    Box::pin(async move { delivery.wait().await.map(|_| ()) })
+fn raw_publish_future(delivery: PendingKafkaAppend, deadline: Option<Instant>) -> RawPublishFuture {
+    Box::pin(async move {
+        if let Some(deadline) = deadline {
+            return tokio::time::timeout_at(deadline, delivery.wait())
+                .await
+                .map_err(|_| {
+                    KafkaTransportError::SnapshotTimeout(
+                        "L2 raw Kafka delivery exceeded provider renewal bound".into(),
+                    )
+                })?
+                .map(|_| ());
+        }
+        delivery.wait().await.map(|_| ())
+    })
+}
+
+fn book_delivery_remaining_ns(
+    binding: &RawBinding,
+    received_at_ns: i64,
+    current_at_ns: i64,
+) -> Result<Option<u64>, KafkaTransportError> {
+    if binding.feed != RawFeed::Book {
+        return Ok(None);
+    }
+    let refresh_seconds = binding
+        .l2
+        .as_ref()
+        .and_then(|l2| l2.snapshot_refresh_seconds)
+        .ok_or_else(|| {
+            KafkaTransportError::Configuration(
+                "BOOK binding is missing validated snapshot renewal configuration".into(),
+            )
+        })?;
+    let max_age_ns = refresh_seconds
+        .checked_mul(1_000_000_000)
+        .ok_or_else(|| KafkaTransportError::Configuration("BOOK renewal bound overflow".into()))?;
+    let max_age_ns = i64::try_from(max_age_ns)
+        .map_err(|_| KafkaTransportError::Configuration("BOOK renewal bound exceeds i64".into()))?;
+    let elapsed_ns = current_at_ns.saturating_sub(received_at_ns).max(0);
+    let remaining_ns = max_age_ns.saturating_sub(elapsed_ns);
+    if remaining_ns <= 0 {
+        return Err(KafkaTransportError::SnapshotTimeout(
+            "L2 raw frame exceeded provider renewal bound before Kafka delivery".into(),
+        ));
+    }
+    Ok(Some(u64::try_from(remaining_ns).map_err(|_| {
+        KafkaTransportError::Configuration("BOOK delivery remaining time is invalid".into())
+    })?))
 }
 
 #[derive(Clone, Debug)]
@@ -912,6 +984,20 @@ async fn enqueue_lossless_frame(
     if !reserve(accepted, max_events).await {
         return Ok(false);
     }
+    let remaining_ns = match book_delivery_remaining_ns(
+        &frame.binding,
+        frame.received_at_ns,
+        now_ns().map_err(|error| KafkaTransportError::Configuration(error.to_string()))?,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            if max_events > 0 {
+                accepted.fetch_sub(1, Ordering::AcqRel);
+            }
+            return Err(error);
+        }
+    };
+    let deadline = remaining_ns.map(|value| Instant::now() + Duration::from_nanos(value));
     let delivery = publisher
         .enqueue_with_retry(
             RawFrameRef {
@@ -923,11 +1009,12 @@ async fn enqueue_lossless_frame(
                 transport_protocol: frame.transport_protocol,
             },
             stopped,
+            deadline,
         )
         .await;
     match delivery {
         Ok(delivery) => {
-            inflight.push(raw_publish_future(delivery));
+            inflight.push(raw_publish_future(delivery, deadline));
             Ok(true)
         }
         Err(error) => {
@@ -2003,7 +2090,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         serde_json::to_string(&json!({
             "event": "qdl_native_raw_ingestor_started",
             "runtime": format!("{:?}", config.runtime).to_ascii_uppercase(),
-            "authority": "RUST_SHADOW",
+            "authority": authority_mode_name(&config.authority.mode),
             "bindings": config.bindings.len(),
             "latest_state_flush_ms": config.latest_state_flush_ms,
             "production_public_writes": 0,
@@ -2088,10 +2175,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        book_snapshot_renewal_period, next_connection_generation, partition_binance_bindings,
-        partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
-        DeliveryClass, LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
-        SessionLivenessWriter,
+        authority_mode_name, book_delivery_remaining_ns, book_snapshot_renewal_period,
+        next_connection_generation, partition_binance_bindings, partition_bindings,
+        partition_okx_bindings, pending_binance_frame, pending_okx_frame, AuthorityMode,
+        DeliveryClass, KafkaTransportError, LatestStateBuffer, PendingRawFrame, ProviderRuntime,
+        RawBinding, RawFeed, SessionLivenessWriter,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2130,6 +2218,47 @@ mod tests {
             delivery_class,
             l2: None,
         }
+    }
+
+    #[test]
+    fn book_delivery_bound_is_exact_and_never_applies_to_non_book_frames() {
+        let mut book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        book.l2 = Some(super::RawL2Config {
+            provider_protocol: "BINANCE_DIFF_DEPTH".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: Some("https://example.test/depth".into()),
+            snapshot_refresh_seconds: Some(30),
+        });
+        assert_eq!(
+            book_delivery_remaining_ns(&book, 1_000, 29_000_001_000).unwrap(),
+            Some(1_000_000_000)
+        );
+        assert!(matches!(
+            book_delivery_remaining_ns(&book, 1_000, 30_000_001_001),
+            Err(KafkaTransportError::SnapshotTimeout(_))
+        ));
+
+        let trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        assert_eq!(
+            book_delivery_remaining_ns(&trade, 1, i64::MAX).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn startup_authority_name_matches_fenced_mode() {
+        assert_eq!(
+            authority_mode_name(&AuthorityMode::RustShadow),
+            "RUST_SHADOW"
+        );
+        assert_eq!(
+            authority_mode_name(&AuthorityMode::RustCanary),
+            "RUST_CANARY"
+        );
+        assert_eq!(
+            authority_mode_name(&AuthorityMode::RustPrimary),
+            "RUST_PRIMARY"
+        );
     }
 
     #[test]

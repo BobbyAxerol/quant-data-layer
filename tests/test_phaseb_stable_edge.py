@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 import unittest
 from datetime import datetime, timezone
@@ -56,8 +58,12 @@ from qdl.projection.stable import (
 from qdl.raw.capture import bind_capture_context, capture_exact_frame
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+)
 from qdl.runtime.stable import (
     StableRuntimeConfig,
+    stable_request_bounds,
     stable_grpc_server_credentials,
     stable_uvicorn_tls,
 )
@@ -74,7 +80,7 @@ from qdl.runtime.stable_source import (
 )
 from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
@@ -410,6 +416,7 @@ class StableQueryContractTests(unittest.TestCase):
             max_payload_bytes=8 * 1024 * 1024,
             max_storage_bytes=16 * 1024 * 1024,
             min_free_disk_bytes=0,
+            max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
         ))
 
     def tearDown(self):
@@ -592,6 +599,7 @@ class StableQueryContractTests(unittest.TestCase):
             gap_spool = SQLiteDurableSpool(SpoolConfig(
                 path=Path(directory) / "market-tail-gap.sqlite3",
                 min_free_disk_bytes=0,
+                max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
             ))
             try:
                 for index in (6, 7, 9, 10, 11):
@@ -611,6 +619,7 @@ class StableQueryContractTests(unittest.TestCase):
             invalid_spool = SQLiteDurableSpool(SpoolConfig(
                 path=Path(directory) / "market-tail-lineage.sqlite3",
                 min_free_disk_bytes=0,
+                max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
             ))
             try:
                 for index in range(8, 13):
@@ -630,6 +639,97 @@ class StableQueryContractTests(unittest.TestCase):
                     invalid.history(requirement)
             finally:
                 invalid_spool.close()
+
+    def test_public_bar_warmup_scans_physical_tail_before_market_selection(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        template = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        minute_ns = 60 * 1_000_000_000
+
+        def stored(index: int, offset: int):
+            event = type(template)()
+            event.CopyFrom(template)
+            event.event_id = hashlib.sha256(
+                f"phase-b-physical-tail-{index}".encode()
+            ).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(
+                f"phase-b-physical-tail-raw-{index}".encode()
+            ).digest()[:16]
+            event.bar.open_time_ns = template.bar.open_time_ns + index * minute_ns
+            event.bar.close_time_ns = template.bar.close_time_ns + index * minute_ns
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.bar.close_time_ns + 1
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = f"phase-b-physical-tail-{index}"
+            event.partition_sequence = offset
+            event.correlation_id = f"phase-b-physical-tail-{index}"
+            return SimpleNamespace(
+                event=SimpleNamespace(
+                    payload=event.SerializeToString(), event_id=bytes(event.event_id)
+                ),
+                cursor=SimpleNamespace(
+                    stream=binding.canonical_stream,
+                    partition_key=binding.partition_key,
+                    offset=offset,
+                ),
+            )
+
+        # The first logical records simulate authentic late repairs.  Once the
+        # cache has grown, a public-size append-tail scan would evict precisely
+        # these recent market-time bars and manufacture a false warmup gap.
+        repaired_indices = tuple(range(9_900, 9_964))
+        repaired_set = set(repaired_indices)
+        remaining_indices = tuple(
+            index
+            for index in range(-64, 10_000)
+            if index not in repaired_set
+        )
+        rows = tuple(
+            stored(index, offset)
+            for offset, index in enumerate(
+                (*repaired_indices, *remaining_indices), start=1
+            )
+        )
+        self.assertEqual(len(rows), STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW)
+
+        class PhysicalTailSpool:
+            def __init__(self, values):
+                self.values = values
+                self.limits = []
+
+            def read_tail(self, *, stream, partition_key, limit):
+                self.limits.append((stream, partition_key, limit))
+                return tuple(self.values[-limit:])
+
+        spool = PhysicalTailSpool(rows)
+        backend = StableSpoolQueryBackend(
+            spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            clock_ns=lambda: template.bar.close_time_ns + 10_001 * minute_ns,
+        )
+        history = backend.history(_requirement(binding, warmup=700))
+        self.assertIsNotNone(history)
+        self.assertEqual(history.coverage.value, "FULL")
+        self.assertEqual(
+            [item.payload["open_time_ns"] for item in history.items],
+            [
+                template.bar.open_time_ns + index * minute_ns
+                for index in range(9_300, 10_000)
+            ],
+        )
+        self.assertFalse(backend.latest(_requirement(binding, warmup=700)).quality.gap_open)
+        self.assertTrue(spool.limits)
+        self.assertTrue(all(
+            limit == STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+            for _stream, _partition, limit in spool.limits
+        ))
 
     def test_vn_time_range_accepts_lunch_break_but_rejects_missing_session_bar(self):
         binding = next(
@@ -696,6 +796,7 @@ class StableQueryContractTests(unittest.TestCase):
             incomplete_spool = SQLiteDurableSpool(SpoolConfig(
                 path=Path(directory) / "incomplete.sqlite3",
                 min_free_disk_bytes=0,
+                max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
             ))
             try:
                 _append(incomplete_spool, self.catalog, event_at(start_ns, 1))
@@ -750,7 +851,10 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertIsNotNone(backend.latest(_requirement(trade)))
         self.assertIsNotNone(backend.history(_requirement(trade, warmup=1)))
         self.assertIsNotNone(backend.latest(_requirement(bar)))
-        self.assertEqual(observed_limits, [1, 1, 10_000])
+        self.assertEqual(
+            observed_limits,
+            [1, 1, STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW],
+        )
 
     def test_latest_uses_newest_tail_after_partition_exceeds_query_window(self):
         binding = next(
@@ -1310,6 +1414,50 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([broker.closed for broker in brokers], [1, 1])
         self.assertEqual(sleeps, [0.25])
         self.assertEqual(active, [brokers[0], None, brokers[1], None])
+
+    async def test_run_once_defers_a_polled_record_at_the_batch_byte_bound(self):
+        class Record:
+            def __init__(self, payload):
+                self.payload = payload
+
+        class PollingBroker(_Broker):
+            def __init__(self, records):
+                super().__init__()
+                self.records = list(records)
+
+            def poll(self, timeout_seconds):
+                del timeout_seconds
+                return self.records.pop(0) if self.records else None
+
+        first = Record(b"aaa")
+        second = Record(b"bbb")
+        broker = PollingBroker((first, second))
+        engine = StableProjectorEngine(
+            broker=broker,
+            spool=self.spool,
+            catalog=self.catalog,
+            canonical_topic="qdl.stable.canonical.phase-b.v2",
+            raw_topics=(),
+            sink=LocalStableCanonicalSink(self.gateway, self.spool),
+            projector=StableCompatibilityProjector(self.catalog),
+            target=InMemoryStableProjectionTarget(),
+            max_pending_records=10,
+            max_pending_bytes=1024,
+            max_batch_records=4,
+            max_batch_bytes=4,
+        )
+        accepted = []
+
+        async def accept_many(records):
+            accepted.append(tuple(records))
+
+        engine.accept_many = accept_many
+        self.assertTrue(await engine.run_once(timeout_seconds=0.01))
+        self.assertEqual(accepted, [(first,)])
+        self.assertIs(engine._deferred_record, second)
+        self.assertTrue(await engine.run_once(timeout_seconds=0.01))
+        self.assertEqual(accepted, [(first,), (second,)])
+        self.assertIsNone(engine._deferred_record)
 
     async def test_canonical_before_raw_waits_and_checkpoints_after_all_downstreams(self):
         binding, raw, event = _stable_pair(
@@ -2142,6 +2290,51 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await sink.close()
             await client.aclose()
 
+    async def test_canonical_ingest_maps_shared_spool_capacity_to_typed_503(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, _canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        app = FastAPI()
+        secret = b"phase-b-stable-capacity-secret-32"
+        install_stable_canonical_ingest(
+            app, gateway=self.gateway, catalog=self.catalog,
+            spool=self.spool, secret=secret,
+        )
+        body = json.dumps({
+            "schema": "qdl.v2.stable-canonical-ingest.v1",
+            "batch_id": "00000000-0000-4000-8000-000000000001",
+            "events": [{
+                "canonical": base64.b64encode(canonical_record.payload).decode("ascii"),
+                "raw_stream": raw_topic,
+                "raw_event_id": raw_record.event_id.hex(),
+                "raw_provider_envelope": base64.b64encode(raw_record.payload).decode("ascii"),
+            }],
+        }, sort_keys=True, separators=(",", ":")).encode()
+        signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        )
+        try:
+            with patch.object(
+                self.gateway,
+                "publish_many",
+                side_effect=BackpressureRequired("bridge max_records exhausted"),
+            ):
+                response = await client.post(
+                    "/internal/v2/canonical/events", content=body,
+                    headers={"X-QDL-Stable-Signature": signature},
+                )
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.json(),
+                {"detail": "stable canonical cache capacity temporarily unavailable"},
+            )
+        finally:
+            await client.aclose()
+
     async def test_signed_http_sink_chunks_by_exact_request_bytes(self):
         durable = tuple(
             DurableEvent(
@@ -2335,9 +2528,13 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
                 root / "state" / "session-liveness",
             )
             values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "90"
+            configured = StableRuntimeConfig.from_environment("query_v2", values)
+            self.assertEqual(configured.request_deadline_seconds, 90.0)
+            bounds = stable_request_bounds(configured)
+            self.assertEqual(bounds.request_deadline_seconds, 90.0)
+            self.assertEqual(bounds.max_request_bytes, configured.max_request_bytes)
             self.assertEqual(
-                StableRuntimeConfig.from_environment("query_v2", values).request_deadline_seconds,
-                90.0,
+                bounds.max_concurrent_requests, configured.max_concurrent_requests
             )
             values["QDL_STABLE_REQUEST_DEADLINE_SECONDS"] = "121"
             with self.assertRaisesRegex(ValueError, "request deadline"):
@@ -2361,12 +2558,28 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values.update({
                 "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "512",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
                 "projector_v2", values
             )
             self.assertEqual(bounded_projector.max_pending_records, 2048)
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
+            self.assertEqual(bounded_projector.projector_max_batch_records, 512)
+            self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "2049"
+            with self.assertRaisesRegex(ValueError, "projector batch bound"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "512"
+            values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
+            with self.assertRaisesRegex(ValueError, "pending records"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_MAX_PENDING_RECORDS"] = "2048"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES"] = "33554433"
+            with self.assertRaisesRegex(ValueError, "batch byte bound"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES"] = "8388608"
             authority_path = Path(values["QDL_STABLE_RUNTIME_DIR"]) / "authority.json"
             primary = json.loads(authority_path.read_text(encoding="utf-8"))
             primary.update({"mode": "RUST_PRIMARY", "revision": 2})

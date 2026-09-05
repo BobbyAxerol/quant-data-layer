@@ -101,6 +101,32 @@ def _fixed_interval_ns(interval: str) -> int:
     return count * units[value[-1]]
 
 
+def _allows_quiet_execution_continuity(requirement: DataRequirement, quality) -> bool:
+    """Admit a live but quiet non-price continuity channel.
+
+    A stale last event is not a broken provider session.  `BOOK_DELTA` is
+    sequence/replay evidence only, so it may be observed under an explicit
+    session SLA while remaining non-executable.  Price-bearing feeds keep the
+    normal execution-eligibility gate.
+    """
+    if (
+        requirement.effective_event_recency_policy.value != "OBSERVE"
+        or quality.event_recency_state != "STALE"
+    ):
+        return False
+    if requirement.feed is Feed.TRADE:
+        return quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
+    return (
+        requirement.feed is Feed.BOOK_DELTA
+        and requirement.max_session_liveness_ms is not None
+        and quality.provider_session_state == "LIVE"
+        and quality.provider_session_liveness_ms is not None
+        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
+        and quality.complete
+        and not quality.gap_open
+    )
+
+
 def _validate_query_payload(
     requirement: DataRequirement, payload: dict, *, warmup: bool
 ) -> SnapshotResponse | WarmupResponse:
@@ -181,12 +207,7 @@ def _validate_query_payload(
             is_tail
             and requirement.consumer_grade is Grade.EXECUTION
             and not quality.execution_eligible
-            and not (
-                requirement.feed is Feed.TRADE
-                and requirement.effective_event_recency_policy.value == "OBSERVE"
-                and quality.event_recency_state == "STALE"
-                and quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
-            )
+            and not _allows_quiet_execution_continuity(requirement, quality)
         ):
             raise ContinuityError(
                 "SOURCE_NON_AUTHORITATIVE",

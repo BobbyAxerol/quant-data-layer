@@ -88,12 +88,14 @@ class ReferenceL2RolloutTests(unittest.TestCase):
             "stable-alpha-binance-rs256-v1": self._key("binance"),
             "stable-monitoring-rs256-v1": self._key("monitoring-jwt"),
             "stable-alpha-okx-rs256-v1": self._key("alpha-okx-jwt"),
+            "stable-reference-l2-rs256-v1": self._key("reference-l2-jwt"),
         }
         subjects = {
             "stable-trading-system-rs256-v1": "spiffe://qdl/paper/trading-system-stable",
             "stable-alpha-binance-rs256-v1": "spiffe://qdl/paper/alpha-binance-stable",
             "stable-monitoring-rs256-v1": "spiffe://qdl/paper/monitoring-multivenue-stable",
             "stable-alpha-okx-rs256-v1": "spiffe://qdl/paper/alpha-okx-stable",
+            "stable-reference-l2-rs256-v1": "spiffe://qdl/paper/reference-l2-stable",
         }
         base_env = root / "base.env"
         self._write_env(base_env, {

@@ -60,12 +60,11 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in scope.products
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(scope.products), 149)
+        self.assertEqual(len(scope.products), 299)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 74,
-                DeliveryClass.PROVIDER_PASS_THROUGH: 10,
+                DeliveryClass.DURABLE: 234,
                 DeliveryClass.ON_DEMAND: 65,
             },
         )
@@ -102,13 +101,12 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             (product.consumer_id, requirement_key(product.requirement))
             for product in scope.products
         }
-        self.assertEqual(len(scope.products), 145)
+        self.assertEqual(len(scope.products), 295)
         self.assertEqual(actual, expected)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 70,
-                DeliveryClass.PROVIDER_PASS_THROUGH: 10,
+                DeliveryClass.DURABLE: 230,
                 DeliveryClass.ON_DEMAND: 65,
             },
         )
@@ -133,6 +131,45 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in trades
         ))
 
+    def test_paper_book_delta_routes_declare_observed_continuity_and_session_sla(self):
+        scope = build_release_consumer_acceptance_scope(
+            self.release,
+            catalog=self.catalog,
+            acquisition=self.acquisition,
+            consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
+        )
+        deltas = [item for item in scope.products if item.feed is FeedType.BOOK_DELTA]
+        self.assertEqual(len(deltas), 20)
+        self.assertTrue(all(
+            item.requirement.event_recency_policy is StalePolicy.OBSERVE
+            and item.requirement.max_session_liveness_ms == 45_000
+            and item.requirement.max_freshness_ms == 2_000
+            and item.requirement.stale_policy is StalePolicy.BLOCK
+            and item.requirement.gap_policy.value == "BLOCK"
+            for item in deltas
+        ))
+        self.assertEqual(
+            {
+                (
+                    self.catalog.instrument_for(item.instrument_uid).identity.venue,
+                    self.catalog.instrument_for(item.instrument_uid).native_symbol,
+                )
+                for item in deltas
+            },
+            {
+                ("BINANCE", "BTCUSDT"),
+                ("BINANCE", "ETHUSDT"),
+                ("BINANCE", "SOLUSDT"),
+                ("BINANCE", "DOGEUSDT"),
+                ("BINANCE", "BNBUSDT"),
+                ("OKX", "BTC-USDT-SWAP"),
+                ("OKX", "ETH-USDT-SWAP"),
+                ("OKX", "SOL-USDT-SWAP"),
+                ("OKX", "DOGE-USDT-SWAP"),
+                ("OKX", "BNB-USDT-SWAP"),
+            },
+        )
+
     def test_paper_quote_routes_keep_strict_freshness_and_session_sla(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
@@ -141,14 +178,25 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
         )
         quotes = [item for item in scope.products if item.feed is FeedType.QUOTE]
-        self.assertEqual(len(quotes), 10)
+        self.assertEqual(len(quotes), 20)
         self.assertTrue(all(
             item.requirement.event_recency_policy is None
-            and item.requirement.max_freshness_ms == 2_000
             and item.requirement.max_session_liveness_ms == 45_000
             and item.requirement.stale_policy is StalePolicy.BLOCK
             for item in quotes
         ))
+        self.assertEqual(
+            Counter((
+                item.consumer_id,
+                item.requirement.consumer_grade.value,
+                item.requirement.max_freshness_ms,
+            ) for item in quotes),
+            {
+                ("alpha.binance.paper.stable", "ALPHA", 5_000): 5,
+                ("alpha.okx.paper.stable", "ALPHA", 5_000): 5,
+                ("trading-system.paper.stable", "EXECUTION", 2_000): 10,
+            },
+        )
 
     def test_execution_mark_and_l2_routes_are_exact_and_fail_closed(self):
         consumer = next(

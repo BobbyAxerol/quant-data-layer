@@ -127,6 +127,51 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(isolated), 5)
         self.assertTrue(all(len(batch) == 1 for batch in isolated))
 
+    def test_reference_acceptance_batches_isolate_strict_mark_snapshots(self):
+        marks = tuple(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.MARK_INDEX_PRICE
+        )
+        self.assertGreaterEqual(len(marks), 3)
+        strict_marks = tuple(
+            replace(
+                item,
+                requirement=replace(item.requirement, max_freshness_ms=2_000),
+                sdk_requirement=item.sdk_requirement.model_copy(
+                    update={"max_freshness_ms": 2_000}
+                ),
+            )
+            for item in marks[:2]
+        )
+        loose_mark = replace(
+            marks[2],
+            requirement=replace(marks[2].requirement, max_freshness_ms=2_001),
+            sdk_requirement=marks[2].sdk_requirement.model_copy(
+                update={"max_freshness_ms": 2_001}
+            ),
+        )
+        ordinary = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.FUNDING_RATE
+        )
+
+        batches = reference_acceptance_batches((*strict_marks, loose_mark, ordinary))
+        flattened = tuple(item for batch in batches for item in batch)
+
+        self.assertEqual(
+            tuple(batch[0].identity for batch in batches[:2]),
+            tuple(item.identity for item in strict_marks),
+        )
+        self.assertTrue(all(len(batch) == 1 for batch in batches[:2]))
+        self.assertEqual(
+            {item.identity for item in flattened},
+            {item.identity for item in (*strict_marks, loose_mark, ordinary)},
+        )
+        self.assertEqual(
+            {item.identity for item in batches[-1]},
+            {loose_mark.identity, ordinary.identity},
+        )
+
     def test_acceptance_transport_timeout_keeps_provider_deadline_bounded(self):
         self.assertEqual(acceptance_transport_timeout_seconds(60.0), 75.0)
         self.assertEqual(acceptance_transport_timeout_seconds(5.0), 20.0)

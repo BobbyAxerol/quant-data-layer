@@ -10,6 +10,7 @@ from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 
 def _edge(*sources: SimpleNamespace) -> StableBinanceBarEdge:
     edge = object.__new__(StableBinanceBarEdge)
+    edge.repair_only = False
     edge._last_open_ms = {}
     edge.bindings = tuple((source, SimpleNamespace(runtime="BINANCE")) for source in sources)
     edge.okx_bindings = ()
@@ -35,6 +36,7 @@ class Phase115CBarScheduleTests(unittest.TestCase):
                 return True
 
         edge = object.__new__(StableBinanceBarEdge)
+        edge.repair_only = False
         edge._history_bootstrap_active = True
         edge._history_bootstrapped = False
         edge._rest_fallback_active = False

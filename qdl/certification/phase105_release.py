@@ -23,6 +23,7 @@ from qdl.consumer import (
     is_explicit_v1_exclusion,
     requirement_key,
 )
+from qdl.consumer.release import v2_observation_is_current
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -40,6 +41,10 @@ _OBSERVATION_FIELDS = frozenset({
     "consumer_lag",
     "cpu_millicores",
     "rss_bytes",
+})
+_SESSION_OBSERVATION_FIELDS = frozenset({
+    "v2_quality_state", "v2_session_state", "v2_session_liveness_ms",
+    "v2_complete", "v2_execution_eligible",
 })
 _RUNTIME_SCHEMA = "qdl.phase105c.runtime-handoff-evidence.v1"
 _ACCEPTANCE_SCHEMA = "qdl.phase105.v2-identity-acceptance.v1"
@@ -142,7 +147,7 @@ def parse_release_observations(raw: object) -> tuple[ReleaseRouteObservation, ..
     values: list[ReleaseRouteObservation] = []
     for index, item in enumerate(raw):
         value = _mapping(item, f"observation[{index}]")
-        if set(value) != _OBSERVATION_FIELDS:
+        if set(value) not in (_OBSERVATION_FIELDS, _OBSERVATION_FIELDS | _SESSION_OBSERVATION_FIELDS):
             raise ValueError("Phase 10.5-D observation fields differ from public contract")
         if not all(
             isinstance(value[field], str) and value[field]
@@ -265,18 +270,14 @@ def _measurements_are_current(
     }
     for item in observations:
         product, requirement = requirements[(item.consumer_id, item.requirement_key)]
-        maximum = requirement.max_freshness_ms
         if product.route == "V1_PRIMARY":
             if not is_explicit_v1_exclusion(product, item):
                 return False
             continue
         if item.route == "V2_PRIMARY":
-            ages = (item.v2_source_age_ms, item.v2_receive_age_ms)
-            if item.v2_gap_open or any(age is None for age in ages):
+            if not v2_observation_is_current(requirement, item):
                 return False
         else:
-            return False
-        if maximum is not None and any(age > maximum for age in ages if age is not None):
             return False
     return True
 

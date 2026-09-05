@@ -1027,6 +1027,16 @@ Với derived bar có thể partition theo `instrument_uid + interval`.
 
 Retention là config theo environment/data class, không hardcode trong adapter.
 
+Stable canonical projection clarification (2026-09-05): its advertised warmup
+is a bounded record window, not a 24-hour commit-age window. The shared spool
+opts into `retain_partition_windows` only with a positive per-partition bound
+(currently 10,064 physical records, at most 10,000 public rows). Global record,
+payload/disk limits and signed-cursor expiry remain enforced. Consumer ACK or
+age maintenance must not punch holes into this window. Generic/raw spools keep
+their existing age policy. An explicit historical repair reuses the active BAR
+writer checkpoint generation, validates it before publication and never writes
+that checkpoint; writer restart fences an in-flight repair normally.
+
 ### 11.4 Raw and canonical transaction
 
 Hai deployment mode:
@@ -1476,6 +1486,13 @@ Mọi switch có cooldown/hysteresis để tránh flapping và có audit record.
 ---
 
 ## 15. Historical storage and short warmup architecture
+
+Canonical-cache read admission (2026-09-05): provider REST token budgets apply
+only to reads that may call that provider. A backend-declared local-only
+canonical warmup uses bounded concurrency (8), singleflight and request
+deadlines without a vendor token wait. A missing binding or a FRESH_SNAPSHOT
+route that may invoke provider recovery keeps the existing venue quota. This
+does not alter freshness, lineage, finality, replay or public entitlement.
 
 ### 15.1 Historical tiers
 
@@ -6160,3 +6177,21 @@ and STOP_LIMIT/TAKE_PROFIT_LIMIT were added to the conditional policy before
 closure. No provider, runtime role, manifest, data store or order path was
 mutated. See the main-plan evidence in section 24.2.1 for exact test modules,
 counts and cleanup.
+
+### Declared Crypto Release Closure (2026-09-05)
+
+The grouped route closure in the main plan now has a PASS certificate for the
+declared Binance USD-M / OKX Swap consumer scope. See
+[`v2.0.12 evidence and notes`](evidence/releases/v2.0.12/RELEASE_NOTES.md).
+All299 crypto consumer products are V2_PRIMARY:234 durable and65 on-demand;
+four VN products remain explicit V1 exclusions, not implied V2 certification.
+The actual full-scope C2 includes300.100s observation, signed reconnect/replay,
+allowed V1 fallback-return and blocked-fallback enforcement. Independent
+current reads bind to the immutable C2 by digest and satisfy the same source
+AND receive-age bounds. Certification preserves typed session evidence for
+quiet OBSERVE event feeds; it never treats that evidence as a fresh price.
+Closing batches separate hot feed classes from history to avoid head-of-line
+age inflation without increasing quotas or weakening deadlines. Public V1/V2
+endpoints, Rust authority and protected execution services are unchanged.
+GitHub publication still follows the existing dev -> main release PR and new
+tag workflow; certification does not claim that an unpublished tag exists.

@@ -227,6 +227,8 @@ services:
         cp /source/query/* /stable-certs/query/ &&
         cp /source/stream/* /stable-certs/stream/ &&
         cp /source/authority-dispatcher/* /stable-certs/authority-dispatcher/ &&
+        test -f /stable-certs/query/client-ca-bundle.crt || cp /stable-certs/query/ca.crt /stable-certs/query/client-ca-bundle.crt &&
+        test -f /stable-certs/stream/client-ca-bundle.crt || cp /stable-certs/stream/ca.crt /stable-certs/stream/client-ca-bundle.crt &&
         chown -R 10001:10001 /stable-certs &&
         find /stable-certs -type f -exec chmod 0440 {} +
     restart: "no"
@@ -263,6 +265,7 @@ services:
       QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-1-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
@@ -286,15 +289,17 @@ services:
       QDL_STABLE_PASS_THROUGH_ENABLED: "true"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-query-2-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key'); urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   stream_v2_active:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
-      stable_internal: {}
+      stable_internal: {aliases: [qdl-v2-stream-a]}
       stable_ingress: {}
       stable_consumer: {aliases: [qdl-v2-stream-a]}
     ports: ["127.0.0.1:18210:8200", "127.0.0.1:18220:8210"]
@@ -306,15 +311,17 @@ services:
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-active-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/stream/ca.crt'); c.load_cert_chain('/stable-certs/stream/server.crt','/stable-certs/stream/server.key'); urllib.request.urlopen('https://localhost:8200/health/dependencies',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   stream_v2_passive:
     <<: *python
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
-      stable_internal: {}
+      stable_internal: {aliases: [qdl-v2-stream-b]}
       stable_ingress: {}
       stable_consumer: {aliases: [qdl-v2-stream-b]}
     ports: ["127.0.0.1:18211:8200", "127.0.0.1:18221:8210"]
@@ -326,12 +333,15 @@ services:
       QDL_STABLE_GRPC_PORT: "8210"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-stream-passive-audit.jsonl
       QDL_STABLE_TLS_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/stream/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/stream/server.key
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/stream/ca.crt'); c.load_cert_chain('/stable-certs/stream/server.crt','/stable-certs/stream/server.key'); urllib.request.urlopen('https://localhost:8200/health/dependencies',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   projector_v2:
     <<: *python
+    mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
       <<: *stable-env
@@ -348,10 +358,12 @@ services:
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
-      # Bound r11 catch-up inside this role's existing 512 MiB cgroup. Kafka
-      # retains pressure once the projector pauses canonical consumption.
+      # Keep the Kafka and Python working sets bounded while a shared durable
+      # cache catches up; every durable event remains Kafka-authoritative.
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
@@ -368,6 +380,7 @@ services:
 
   projector_v2_2:
     <<: *python
+    mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
       <<: *stable-env
@@ -386,6 +399,8 @@ services:
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
@@ -402,6 +417,7 @@ services:
 
   projector_v2_3:
     <<: *python
+    mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
       <<: *stable-env
@@ -420,6 +436,8 @@ services:
       QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
       QDL_STABLE_MAX_PENDING_RECORDS: "2048"
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
@@ -665,14 +683,19 @@ services:
       <<: *stable-env
       QDL_STABLE_INSTANCE_ID: stable-binance-bar-edge
       QDL_STABLE_CONSUMER_GROUP: stable-binance-bar-edge
-      QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
+      # The image defaults are valid for a standalone build. A sealed runtime
+      # projection may override both files together without changing service
+      # topology or losing the final-BAR ownership contract on recreate.
+      QDL_STABLE_SOURCE_BINDINGS: ${QDL_STABLE_SOURCE_BINDINGS:-/app/config/v2/stable-source-bindings.yaml}
+      QDL_STABLE_ACQUISITION_BINDINGS: ${QDL_STABLE_ACQUISITION_BINDINGS:-/app/config/v2/stable-acquisition-bindings.yaml}
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_KAFKA_CERT_ROOT: /stable-certs/producer
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
       # Must cover the greatest durable final-BAR warmup declared by the
       # governed Trading System/alpha manifests.
-      QDL_STABLE_BAR_WARMUP_ROWS: "1000"
+      QDL_STABLE_BAR_WARMUP_ROWS: "10000"
+      QDL_STABLE_BAR_MAX_CATCHUP_ROWS: "10000"
       # A final row is provider-confirmed, not timer-confirmed. Start the
       # first bounded read promptly after the close, then retry that exact
       # target until it is durably ACKed.

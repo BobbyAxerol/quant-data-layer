@@ -9,6 +9,7 @@ import signal
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from qdl.adapters.intervals import (
@@ -29,6 +30,10 @@ from qdl.adapters.okx.bar_edge import (
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+)
 from qdl.runtime.stable_deployment import (
     StableAcquisitionBinding,
     StableAcquisitionPlan,
@@ -38,6 +43,9 @@ from qdl.transport.kafka_raw import KafkaRawPublisher, KafkaRawPublisherConfig
 
 
 logger = logging.getLogger(__name__)
+
+_MAX_DURABLE_BAR_ROWS = STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+_DURABLE_COVERAGE_BATCH_ROWS = 256
 
 
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
@@ -51,6 +59,23 @@ _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # reports real coverage rather than inventing missing rows.
 _BOOTSTRAP_HISTORY_LOOKBACK_DAYS = 1_095
 _BOOTSTRAP_HISTORY_LOOKBACK_MS = _BOOTSTRAP_HISTORY_LOOKBACK_DAYS * 86_400_000
+
+
+@dataclass(frozen=True, slots=True)
+class StableBarHistoryRepairPlan:
+    """One verified, provider-backed final-BAR recovery window.
+
+    The plan deliberately contains provider envelopes instead of writing cache
+    state directly. Applying it must still travel through raw Kafka, the Rust
+    canonical core and projectors, exactly like normal market data.
+    """
+
+    source: StableSourceBinding
+    acquisition: StableAcquisitionBinding
+    envelopes: tuple[object, ...]
+    opens: tuple[int, ...]
+    expected_opens: frozenset[int]
+    missing_envelopes: tuple[object, ...]
 
 
 def _canonical_cache_id(path: str | Path) -> str:
@@ -80,6 +105,12 @@ def _bar_interval_ms(interval: str) -> int:
         return canonical_interval_ms(interval)
     except ValueError as error:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
+
+
+def durable_bar_history_capacity_rows(interval: str) -> int:
+    """Return the truthful retained-row ceiling for one durable BAR interval."""
+
+    return max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // _bar_interval_ms(interval))
 
 
 def _source_provider(source: StableSourceBinding) -> str:
@@ -136,13 +167,18 @@ class StableBinanceBarEdge:
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
         canonical_cache_path: str | Path | None = None,
+        repair_only: bool = False,
         clock=time.time,
         generation_clock_ns=time.time_ns,
     ) -> None:
-        if not 1 <= warmup_rows <= 1000:
-            raise ValueError("stable BAR warmup rows must be between 1 and 1000")
-        if not 1 <= max_catchup_rows <= 1000:
-            raise ValueError("stable BAR catch-up rows must be between 1 and 1000")
+        if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
+            raise ValueError(
+                "stable BAR warmup rows must be between 1 and 10000"
+            )
+        if not 1 <= max_catchup_rows <= _MAX_DURABLE_BAR_ROWS:
+            raise ValueError(
+                "stable BAR catch-up rows must be between 1 and 10000"
+            )
         if not 0.01 <= settlement_delay_seconds <= 2.0:
             raise ValueError("stable BAR initial poll delay must be between 0.01 and 2 seconds")
         if not 0.01 <= final_retry_initial_seconds <= final_retry_max_seconds <= 5.0:
@@ -160,6 +196,9 @@ class StableBinanceBarEdge:
         self.final_retry_max_seconds = final_retry_max_seconds
         self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
+        self.repair_only = repair_only
+        if repair_only and (self.state_path is None or not self.state_path.is_file()):
+            raise RuntimeError("stable BAR repair requires the active writer checkpoint")
         self.canonical_cache_id = (
             str(canonical_cache_id).strip().lower()
             if canonical_cache_id is not None
@@ -252,11 +291,16 @@ class StableBinanceBarEdge:
         self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
         if self._history_bootstrap_active:
             self._restore_state()
-            self._issue_connection_generation()
-            # Persist the new generation before any provider row can be sent to
-            # Kafka. A crash after issuance must never reuse an older source
-            # generation on restart.
-            self._persist_state()
+            if self.repair_only:
+                if self.connection_generation <= 0:
+                    raise RuntimeError("stable BAR repair requires a versioned writer generation")
+                self._set_session_ids()
+                self._assert_repair_writer_current()
+            else:
+                self._issue_connection_generation()
+                # Persist before publishing, so a restart cannot reuse an
+                # older writer generation. Repairs never claim a generation.
+                self._persist_state()
         else:
             self._history_bootstrapped = True
 
@@ -305,6 +349,9 @@ class StableBinanceBarEdge:
         self.connection_generation = max(previous + 1, floor)
         if self.connection_generation > _MAX_CONNECTION_GENERATION:
             raise RuntimeError("stable BAR connection generation is exhausted")
+        self._set_session_ids()
+
+    def _set_session_ids(self) -> None:
         suffix = f"r{self._authority_revision}-g{self.connection_generation}"
         self.binance_session_id = f"qdl-v2-stable-binance-rest-{suffix}"
         self.okx_session_id = f"qdl-v2-stable-okx-rest-{suffix}"
@@ -390,6 +437,16 @@ class StableBinanceBarEdge:
                 "stable BAR checkpoint cache generation changed; bounded bootstrap required"
             )
             return
+        gaps = {} if self.repair_only else self._checkpoint_history_gaps(restored)
+        if gaps:
+            for binding_id in gaps:
+                restored.pop(binding_id, None)
+            logger.warning(
+                "stable BAR checkpoint history incomplete; bounded repair required "
+                "bindings=%s missing_rows=%s",
+                ",".join(sorted(gaps)),
+                sum(gaps.values()),
+            )
         self._last_open_ms = restored
         self._history_bootstrapped = set(restored) == set(self._binding_ids)
         logger.info(
@@ -400,6 +457,8 @@ class StableBinanceBarEdge:
         )
 
     def _persist_state(self) -> None:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot write the active checkpoint")
         if self.state_path is None:
             return
         parent = self.state_path.parent
@@ -440,6 +499,40 @@ class StableBinanceBarEdge:
             if descriptor is not None:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
+
+    def _checkpoint_history_gaps(
+        self,
+        restored: dict[str, int],
+    ) -> dict[str, int]:
+        """Return incomplete warmup windows behind a matching checkpoint.
+
+        A checkpoint watermark proves only that the edge previously observed a
+        final close. It cannot prove that the durable cache still retains the
+        bounded history needed by a V2 warmup after cache rebuild or compaction.
+        This validation is cache-only; deficient bindings re-bootstrap through
+        the normal real-provider pipeline on the next edge loop.
+        """
+
+        if self.canonical_cache_path is None:
+            return {}
+        sources = {
+            source.binding_id: source
+            for source, _acquisition in self.history_bindings + self.history_okx_bindings
+        }
+        gaps: dict[str, int] = {}
+        for binding_id, last_open_ms in restored.items():
+            source = sources[binding_id]
+            interval_ms = _bar_interval_ms(source.interval or "")
+            expected_opens = frozenset(
+                last_open_ms - index * interval_ms
+                for index in range(self._bootstrap_rows_for(source))
+            )
+            missing = len(expected_opens - self._durable_final_bar_opens(
+                source, expected_opens
+            ))
+            if missing:
+                gaps[binding_id] = missing
+        return gaps
 
     def _binance_binding(
         self,
@@ -483,14 +576,14 @@ class StableBinanceBarEdge:
             instrument_catalog_revision=self.catalog.catalog_revision,
         )
 
-    def _publish_history(
+    def _history_repair_plan(
         self,
         source: StableSourceBinding,
         acquisition: StableAcquisitionBinding,
         envelopes,
         *,
         expected_rows: int,
-    ) -> int:
+    ) -> StableBarHistoryRepairPlan:
         values = tuple(envelopes)
         if len(values) != expected_rows:
             raise RuntimeError(
@@ -508,31 +601,211 @@ class StableBinanceBarEdge:
             item for item, open_ms in zip(values, opens, strict=True)
             if open_ms not in existing_opens
         )
-        acknowledgements = self.publisher.publish_many(missing) if missing else ()
-        if len(acknowledgements) != len(missing):
+        return StableBarHistoryRepairPlan(
+            source=source,
+            acquisition=acquisition,
+            envelopes=values,
+            opens=opens,
+            expected_opens=expected_opens,
+            missing_envelopes=missing,
+        )
+
+    def _apply_history_repair_plan(
+        self,
+        plan: StableBarHistoryRepairPlan,
+        *,
+        advance_watermark: bool,
+        expected_missing_rows: int | None = None,
+        revalidate_missing_rows: bool = False,
+    ) -> int:
+        self._assert_repair_writer_current()
+        if self.repair_only and advance_watermark:
+            raise RuntimeError("stable BAR repair cannot advance the writer watermark")
+        current = plan
+        if revalidate_missing_rows:
+            current = self._history_repair_plan(
+                plan.source,
+                plan.acquisition,
+                plan.envelopes,
+                expected_rows=len(plan.envelopes),
+            )
+            if current.expected_opens != plan.expected_opens:
+                raise RuntimeError("stable BAR recovery window changed before publish")
+        if (
+            expected_missing_rows is not None
+            and len(current.missing_envelopes) != expected_missing_rows
+        ):
+            raise RuntimeError(
+                "stable BAR recovery missing-row count changed before publish "
+                f"binding={plan.source.binding_id} expected={expected_missing_rows} "
+                f"actual={len(current.missing_envelopes)}"
+            )
+        self._assert_repair_writer_current()
+        acknowledgements = (
+            self.publisher.publish_many(current.missing_envelopes)
+            if current.missing_envelopes
+            else ()
+        )
+        if len(acknowledgements) != len(current.missing_envelopes):
             raise RuntimeError("stable BAR bootstrap did not receive every Kafka ACK")
         published_opens = {
-            self._open_time_ms(acquisition, item) for item in missing
+            self._open_time_ms(plan.acquisition, item)
+            for item in current.missing_envelopes
         }
-        if existing_opens | published_opens != expected_opens:
+        if self._durable_final_bar_opens(
+            plan.source, plan.expected_opens
+        ) | published_opens != plan.expected_opens:
             raise RuntimeError(
-                f"stable BAR bootstrap did not cover every durable open binding={source.binding_id}"
+                f"stable BAR bootstrap did not cover every durable open binding={plan.source.binding_id}"
             )
         self._assert_canonical_cache_identity()
-        self._last_open_ms[source.binding_id] = max(expected_opens)
-        self._persist_state()
+        if advance_watermark:
+            self._last_open_ms[plan.source.binding_id] = max(plan.expected_opens)
+            self._persist_state()
         logger.info(
-            "stable real-provider BAR bootstrap ACK binding=%s venue=%s expected_rows=%s "
-            "published_rows=%s existing_durable_rows=%s first_open_ms=%s last_open_ms=%s",
-            source.binding_id,
-            acquisition.runtime,
-            len(values),
-            len(missing),
-            len(existing_opens),
-            min(expected_opens),
-            max(expected_opens),
+            "stable provider final BAR history ACK binding=%s venue=%s expected_rows=%s "
+            "published_rows=%s existing_durable_rows=%s advance_watermark=%s",
+            plan.source.binding_id,
+            plan.acquisition.runtime,
+            len(plan.envelopes),
+            len(acknowledgements),
+            len(plan.expected_opens) - len(current.missing_envelopes),
+            advance_watermark,
         )
         return len(acknowledgements)
+
+    def _assert_repair_writer_current(self) -> None:
+        if not self.repair_only:
+            return
+        self._assert_canonical_cache_identity()
+        try:
+            checkpoint = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("stable BAR repair writer checkpoint is unavailable") from error
+        expected = self._state_payload()
+        if not isinstance(checkpoint, dict) or any(
+            checkpoint.get(key) != value
+            for key, value in expected.items() if key != "last_open_ms"
+        ):
+            raise RuntimeError("stable BAR repair writer generation or identity changed")
+
+    def _publish_history(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        envelopes,
+        *,
+        expected_rows: int,
+    ) -> int:
+        return self._apply_history_repair_plan(
+            self._history_repair_plan(
+                source,
+                acquisition,
+                envelopes,
+                expected_rows=expected_rows,
+            ),
+            advance_watermark=True,
+        )
+
+    def _fetch_history(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        *,
+        rows: int,
+        observed_ms: int,
+    ) -> tuple[object, ...]:
+        if acquisition.runtime == "BINANCE":
+            return tuple(fetch_binance_history(
+                self._binance_binding(source),
+                limit=rows,
+                now_ms=observed_ms,
+                attempts=4,
+                test_provenance=False,
+            ))
+        if acquisition.runtime == "OKX":
+            return tuple(asyncio.run(fetch_okx_history(
+                self._okx_binding(source),
+                limit=rows,
+                now_ms=observed_ms,
+                test_provenance=False,
+            )))
+        raise ValueError("stable crypto BAR runtime is unsupported")
+
+    def prepare_history_repair(
+        self,
+        binding_id: str,
+        *,
+        rows: int,
+        observed_ms: int | None = None,
+    ) -> StableBarHistoryRepairPlan:
+        """Return one provider-confirmed repair plan without writing state."""
+
+        if not 1 <= rows <= _MAX_DURABLE_BAR_ROWS:
+            raise ValueError("stable BAR repair rows must be between 1 and 10000")
+        pairs = {
+            source.binding_id: (source, acquisition)
+            for source, acquisition in self.history_bindings + self.history_okx_bindings
+        }
+        try:
+            source, acquisition = pairs[binding_id]
+        except KeyError as error:
+            raise ValueError(
+                f"stable BAR repair binding is not enabled history demand: {binding_id}"
+            ) from error
+        # A repair is a bounded recovery operation, not an ordinary service
+        # warmup.  The active edge may intentionally retain a smaller startup
+        # warmup (for example 500 rows), while a verified historical hole can
+        # require a larger provider-backed window.  Keep the repair bounded by
+        # the same truthful interval capacity and global public maximum, but
+        # never couple it to the live loop's configured warmup size.
+        maximum_rows = min(
+            _MAX_DURABLE_BAR_ROWS,
+            durable_bar_history_capacity_rows(source.interval or ""),
+        )
+        if rows > maximum_rows:
+            raise ValueError(
+                f"stable BAR repair rows exceed durable provider window binding={binding_id} "
+                f"requested={rows} maximum={maximum_rows}"
+            )
+        return self._history_repair_plan(
+            source,
+            acquisition,
+            self._fetch_history(
+                source,
+                acquisition,
+                rows=rows,
+                observed_ms=(
+                    self._settled_observed_ms()
+                    if observed_ms is None
+                    else observed_ms
+                ),
+            ),
+            expected_rows=rows,
+        )
+
+    def apply_history_repair(
+        self,
+        plan: StableBarHistoryRepairPlan,
+        *,
+        expected_missing_rows: int,
+    ) -> int:
+        """Publish only a prepared window's still-missing provider final bars."""
+
+        if expected_missing_rows < 0:
+            raise ValueError("stable BAR repair expected missing rows must be non-negative")
+        return self._apply_history_repair_plan(
+            plan,
+            advance_watermark=False,
+            expected_missing_rows=expected_missing_rows,
+            revalidate_missing_rows=True,
+        )
+
+    def history_repair_remaining_rows(self, plan: StableBarHistoryRepairPlan) -> int:
+        """Return the authoritative missing-open count for a prepared window."""
+
+        covered = self._durable_final_bar_opens(plan.source, plan.expected_opens)
+        return len(plan.expected_opens - covered)
 
     def _assert_canonical_cache_identity(self) -> None:
         """Refuse to certify a bootstrap if its durable generation changed."""
@@ -541,6 +814,40 @@ class StableBinanceBarEdge:
         assert self.canonical_cache_id is not None
         if _canonical_cache_id(self.canonical_cache_path) != self.canonical_cache_id:
             raise RuntimeError("stable BAR canonical cache generation changed during bootstrap")
+
+    def _rebase_if_canonical_cache_generation_changed(self) -> bool:
+        """Re-bootstrap from providers after an external canonical-cache rebuild.
+
+        The edge checkpoint and canonical cache are separate durable artifacts.
+        If a cache rebuild happens while this process remains alive, a watermark
+        alone cannot prove that the rebuilt cache still contains its warmup
+        history. Rebase exactly as a fresh edge process would: clear only this
+        edge's watermarks, issue a new provider-session generation, and let the
+        existing bounded provider-history bootstrap replenish the cache.
+        """
+        if self.canonical_cache_path is None:
+            return False
+        assert self.canonical_cache_id is not None
+        observed_cache_id = _canonical_cache_id(self.canonical_cache_path)
+        if observed_cache_id == self.canonical_cache_id:
+            return False
+
+        previous_cache_id = self.canonical_cache_id
+        self.canonical_cache_id = observed_cache_id
+        self._last_open_ms.clear()
+        self._retry_attempts.clear()
+        self._next_retry_at.clear()
+        self._last_retry_log.clear()
+        self._history_bootstrapped = False
+        self._issue_connection_generation()
+        self._persist_state()
+        logger.warning(
+            "stable BAR canonical cache generation changed; rebased checkpoint "
+            "previous=%s current=%s",
+            previous_cache_id,
+            observed_cache_id,
+        )
+        return True
 
     def _durable_final_bar_opens(
         self,
@@ -559,23 +866,27 @@ class StableBinanceBarEdge:
         if not expected_opens or self.canonical_cache_path is None:
             return frozenset()
         self._assert_canonical_cache_identity()
+        connection = None
         try:
             connection = sqlite3.connect(
                 f"{self.canonical_cache_path.as_uri()}?mode=ro", uri=True
             )
-            try:
-                rows = connection.execute(
-                    """
-                    SELECT payload FROM events
-                    WHERE stream = ? AND partition_key = ?
-                    ORDER BY logical_offset DESC
-                    LIMIT 10000
-                    """,
-                    (source.canonical_stream, source.partition_key),
-                ).fetchall()
-            finally:
-                connection.close()
+            cursor = connection.execute(
+                """
+                SELECT payload FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC
+                LIMIT ?
+                """,
+                (
+                    source.canonical_stream,
+                    source.partition_key,
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                ),
+            )
         except (OSError, sqlite3.Error) as error:
+            if connection is not None:
+                connection.close()
             raise RuntimeError("stable BAR durable coverage is unavailable") from error
 
         covered: set[int] = set()
@@ -584,34 +895,40 @@ class StableBinanceBarEdge:
             market_data_pb2.BAR_LIFECYCLE_REVISED,
         }
         expected_role = getattr(common_pb2, f"SOURCE_ROLE_{source.source_role}")
-        for (payload,) in rows:
-            try:
-                envelope = market_data_pb2.EventEnvelope.FromString(payload)
-            except Exception as error:
-                raise RuntimeError("stable BAR durable payload is unreadable") from error
-            if envelope.WhichOneof("payload") != "bar":
-                raise RuntimeError("stable BAR durable partition contains a non-BAR payload")
-            if (
-                envelope.instrument_uid != source.instrument.instrument_uid
-                or envelope.instrument_id != source.instrument.instrument_id
-                or not source.accepts_instrument_revision(envelope.instrument_revision)
-                or envelope.venue != source.instrument.identity.venue
-                or envelope.market != source.instrument.identity.market
-                or envelope.product_type != source.instrument.identity.product_type.value
-                or envelope.native_symbol != source.instrument.native_symbol
-                or envelope.provider != source.provider
-                or envelope.source_id != source.source_id
-                or envelope.source_role != expected_role
-                or envelope.bar.interval != source.interval
-            ):
-                raise RuntimeError("stable BAR durable partition differs from its binding")
-            open_ms = int(envelope.bar.open_time_ns) // 1_000_000
-            if (
-                open_ms in expected_opens
-                and envelope.bar.is_final
-                and envelope.bar.lifecycle in final_lifecycles
-            ):
-                covered.add(open_ms)
+        try:
+            while rows := cursor.fetchmany(_DURABLE_COVERAGE_BATCH_ROWS):
+                for (payload,) in rows:
+                    try:
+                        envelope = market_data_pb2.EventEnvelope.FromString(payload)
+                    except Exception as error:
+                        raise RuntimeError("stable BAR durable payload is unreadable") from error
+                    if envelope.WhichOneof("payload") != "bar":
+                        raise RuntimeError("stable BAR durable partition contains a non-BAR payload")
+                    if (
+                        envelope.instrument_uid != source.instrument.instrument_uid
+                        or envelope.instrument_id != source.instrument.instrument_id
+                        or not source.accepts_instrument_revision(envelope.instrument_revision)
+                        or envelope.venue != source.instrument.identity.venue
+                        or envelope.market != source.instrument.identity.market
+                        or envelope.product_type != source.instrument.identity.product_type.value
+                        or envelope.native_symbol != source.instrument.native_symbol
+                        or envelope.provider != source.provider
+                        or envelope.source_id != source.source_id
+                        or envelope.source_role != expected_role
+                        or envelope.bar.interval != source.interval
+                    ):
+                        raise RuntimeError("stable BAR durable partition differs from its binding")
+                    open_ms = int(envelope.bar.open_time_ns) // 1_000_000
+                    if (
+                        open_ms in expected_opens
+                        and envelope.bar.is_final
+                        and envelope.bar.lifecycle in final_lifecycles
+                    ):
+                        covered.add(open_ms)
+                        if covered == expected_opens:
+                            return frozenset(covered)
+        finally:
+            connection.close()
         self._assert_canonical_cache_identity()
         return frozenset(covered)
 
@@ -619,15 +936,14 @@ class StableBinanceBarEdge:
         """Return the real-history bound for one fixed-duration BAR.
 
         `warmup_rows` stays a global upper bound, but a weekly provider request
-        for 1,000 rows would require roughly nineteen years that neither
+        for 10,000 rows would require roughly 192 years that neither
         Binance nor OKX can truthfully supply.  The interval-aware cap makes
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.
         """
-        interval_ms = _bar_interval_ms(source.interval or "")
         return min(
             self.warmup_rows,
-            max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // interval_ms),
+            durable_bar_history_capacity_rows(source.interval or ""),
         )
 
     def _settled_observed_ms(self) -> int:
@@ -707,6 +1023,9 @@ class StableBinanceBarEdge:
         return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
     def bootstrap_history(self) -> int:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot bootstrap as writer")
+        self._rebase_if_canonical_cache_generation_changed()
         if not self._history_bootstrap_active:
             return 0
         if self._history_bootstrapped:
@@ -720,12 +1039,11 @@ class StableBinanceBarEdge:
             published += self._publish_history(
                 source,
                 acquisition,
-                fetch_binance_history(
-                    self._binance_binding(source),
-                    limit=bootstrap_rows,
-                    now_ms=observed_ms,
-                    attempts=4,
-                    test_provenance=False,
+                self._fetch_history(
+                    source,
+                    acquisition,
+                    rows=bootstrap_rows,
+                    observed_ms=observed_ms,
                 ),
                 expected_rows=bootstrap_rows,
             )
@@ -736,12 +1054,12 @@ class StableBinanceBarEdge:
             published += self._publish_history(
                 source,
                 acquisition,
-                asyncio.run(fetch_okx_history(
-                    self._okx_binding(source),
-                    limit=bootstrap_rows,
-                    now_ms=observed_ms,
-                    test_provenance=False,
-                )),
+                self._fetch_history(
+                    source,
+                    acquisition,
+                    rows=bootstrap_rows,
+                    observed_ms=observed_ms,
+                ),
                 expected_rows=bootstrap_rows,
             )
         self._history_bootstrapped = (
@@ -900,6 +1218,8 @@ class StableBinanceBarEdge:
         raise ValueError("stable crypto BAR runtime is unsupported")
 
     def run_cycle(self) -> int:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot run the writer cycle")
         if not self._rest_fallback_active:
             return 0
         observed_ms = self._settled_observed_ms()
@@ -1005,6 +1325,8 @@ class StableBinanceBarEdge:
         return max(0.01, self._next_ready_at(now) - now)
 
     def run_forever(self) -> None:
+        if self.repair_only:
+            raise RuntimeError("stable BAR repair cannot run the writer loop")
         if not self._history_bootstrap_active:
             logger.info("stable crypto BAR edge idle; no enabled crypto BAR demand")
             while not self._stopped.wait(60.0):
@@ -1037,7 +1359,14 @@ class StableBinanceBarEdge:
         self.publisher.close()
 
 
-def build_from_environment() -> StableBinanceBarEdge:
+def build_from_environment(
+    *,
+    state_path: str | Path | None = None,
+    client_id: str | None = None,
+    repair_only: bool = False,
+) -> StableBinanceBarEdge:
+    """Build the shared edge or an isolated repair client from one runtime env."""
+
     catalog = StableSourceCatalog.load(os.environ["QDL_STABLE_SOURCE_BINDINGS"])
     acquisition = StableAcquisitionPlan.load(
         os.environ["QDL_STABLE_ACQUISITION_BINDINGS"], catalog=catalog
@@ -1047,7 +1376,7 @@ def build_from_environment() -> StableBinanceBarEdge:
     cert_root = Path(os.environ["QDL_KAFKA_CERT_ROOT"])
     publisher = KafkaRawPublisher(KafkaRawPublisherConfig(
         bootstrap_servers=os.environ["QDL_KAFKA_BOOTSTRAP_SERVERS"],
-        client_id=os.environ["QDL_KAFKA_CLIENT_ID"],
+        client_id=client_id or os.environ["QDL_KAFKA_CLIENT_ID"],
         topic=acquisition.raw_topic,
         ca_path=cert_root / "ca.crt",
         certificate_path=cert_root / "client.crt",
@@ -1086,7 +1415,7 @@ def build_from_environment() -> StableBinanceBarEdge:
         max_concurrent_requests=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")
         ),
-        state_path=os.environ.get(
+        state_path=state_path or os.environ.get(
             "QDL_STABLE_BAR_STATE_PATH",
             str(
                 Path(
@@ -1100,6 +1429,7 @@ def build_from_environment() -> StableBinanceBarEdge:
         ),
         canonical_cache_id=_canonical_cache_id(canonical_cache_path),
         canonical_cache_path=canonical_cache_path,
+        repair_only=repair_only,
     )
 
 

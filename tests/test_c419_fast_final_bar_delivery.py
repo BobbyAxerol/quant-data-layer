@@ -60,6 +60,7 @@ def _source(binding_id: str, *, interval: str = "1m", venue: str = "BINANCE"):
 
 def _edge(*pairs, clock, max_workers: int = 32) -> StableBinanceBarEdge:
     edge = object.__new__(StableBinanceBarEdge)
+    edge.repair_only = False
     edge.bindings = tuple(pair for pair in pairs if pair[1].runtime == "BINANCE")
     edge.okx_bindings = tuple(pair for pair in pairs if pair[1].runtime == "OKX")
     edge._rest_fallback_active = True

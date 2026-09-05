@@ -346,11 +346,19 @@ def market_data_view_from_stream(
     template: MarketDataView,
     requirement: DataRequirement,
     now_ns: int | None = None,
+    replay_only: bool = False,
 ) -> MarketDataView:
     """Project one SDK stream event through its authoritative query handoff.
 
     The query template owns source policy/catalog metadata. Any stream identity
     or source transition requires a new snapshot and fails closed here.
+
+    ``replay_only`` is deliberately narrow: a consumer that has atomically
+    restored the state associated with an acknowledged durable cursor may
+    project an older, ordered frame only to rebuild that state. The returned
+    view preserves its stale/non-executable quality and the caller must obtain
+    a fresh strict snapshot before using a price for execution. Identity,
+    source, authority and gap checks remain fail-closed in both modes.
     """
 
     envelope = event.event
@@ -453,11 +461,12 @@ def market_data_view_from_stream(
     if (
         event_stale
         and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+        and not replay_only
     ):
         raise ContinuityError(
             "DATA_STALE", "stream event violates the requested freshness policy"
         )
-    if session_stale:
+    if session_stale and not replay_only:
         raise ContinuityError(
             "DATA_STALE", "stream event transport liveness exceeds its policy"
         )
@@ -467,7 +476,11 @@ def market_data_view_from_stream(
         and template.source.source_role == "PRIMARY"
         and state == "LIVE"
     )
-    if requirement.consumer_grade.value == "EXECUTION" and not authoritative:
+    if (
+        requirement.consumer_grade.value == "EXECUTION"
+        and not authoritative
+        and not replay_only
+    ):
         code = (
             "OPEN_SEQUENCE_GAP"
             if gap_open
