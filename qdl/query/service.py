@@ -321,6 +321,15 @@ class V2QueryService:
         executor_before = self.warmup_executor.stats()
         backend_before = self._warmup_backend_stats()
 
+        def provider(requirement: DataRequirement) -> str:
+            local = getattr(self.backend, "warmup_is_local", None)
+            if callable(local) and local(requirement):
+                return "LOCAL_CANONICAL_CACHE"
+            try:
+                return self.instruments.get(requirement.instrument_uid).identity.venue
+            except KeyError:
+                return "UNKNOWN"
+
         async def work(requirement: DataRequirement) -> WarmupResult:
             try:
                 return await asyncio.to_thread(
@@ -330,22 +339,16 @@ class V2QueryService:
                     request_id=request_id,
                 )
             except QueryServiceError as error:
-                if error.problem.retryable:
+                # A local canonical-cache miss/stale result is already a typed
+                # per-requirement data outcome. It must not trip one shared
+                # circuit and hide unrelated symbols/intervals as a provider outage.
+                if error.problem.retryable and provider(requirement) != "LOCAL_CANONICAL_CACHE":
                     raise RetryableWarmupError(
                         error.problem.detail,
                         retry_after_ms=error.problem.retry_after_ms,
                         cause=error,
                     ) from error
                 raise
-
-        def provider(requirement: DataRequirement) -> str:
-            local = getattr(self.backend, "warmup_is_local", None)
-            if callable(local) and local(requirement):
-                return "LOCAL_CANONICAL_CACHE"
-            try:
-                return self.instruments.get(requirement.instrument_uid).identity.venue
-            except KeyError:
-                return "UNKNOWN"
 
         def deadline(requirement: DataRequirement) -> int:
             specification = requirement.warmup_specification
@@ -684,17 +687,29 @@ class V2QueryService:
             or result.received_at_ns <= 0
         ):
             return False
-        newest_observed_ns = max(
-            (item.observed_at_ns for item in result.observations),
-            default=0,
-        )
-        if newest_observed_ns <= 0:
+        observed_ns = self._reference_freshness_timestamp(result)
+        if observed_ns <= 0:
             return False
         source_age_at_receipt_ms = max(
             0,
-            (result.received_at_ns - newest_observed_ns) // 1_000_000,
+            (result.received_at_ns - observed_ns) // 1_000_000,
         )
         return source_age_at_receipt_ms <= freshness_ms
+
+    @staticmethod
+    def _reference_freshness_timestamp(result: ReferenceBatchResult) -> int:
+        # A snapshot pair is only as current as its oldest component. History
+        # instead measures how recently the series was updated, not its start.
+        select = (
+            min
+            if result.request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and not result.request.is_history
+            else max
+        )
+        return select(
+            (item.observed_at_ns for item in result.observations),
+            default=0,
+        )
 
     def _reference_problem(
         self,
@@ -730,8 +745,8 @@ class V2QueryService:
                         False,
                     )
             if requirement.max_freshness_ms is not None:
-                newest = max(item.observed_at_ns for item in result.observations)
-                freshness_ms = max(0, (self._clock_ns() - newest) // 1_000_000)
+                observed_ns = self._reference_freshness_timestamp(result)
+                freshness_ms = max(0, (self._clock_ns() - observed_ns) // 1_000_000)
                 if freshness_ms > requirement.max_freshness_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,

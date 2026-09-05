@@ -1320,6 +1320,22 @@ class ActiveDemandCompiler:
                         raise InventoryError(
                             "production BOOK demand acquisition fields are invalid"
                         )
+                elif feed is DemandFeed.MARK_INDEX_PRICE:
+                    depth_levels = 0
+                    freshness = row.get("max_freshness_ms")
+                    require_live = row.get("require_live")
+                    if (
+                        isinstance(freshness, bool)
+                        or not isinstance(freshness, int)
+                        or not isinstance(require_live, bool)
+                        or (
+                            venue == "OKX"
+                            and not str(row.get("index_native_symbol") or "").strip()
+                        )
+                    ):
+                        raise InventoryError(
+                            "production MARK_INDEX demand acquisition fields are invalid"
+                        )
                 else:
                     depth_levels = 0
                     freshness = (

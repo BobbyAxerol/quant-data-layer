@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import copy
 import unittest
 
 from qdl.common.v1 import common_pb2
@@ -538,6 +539,16 @@ class SdkStreamProjectionTests(unittest.TestCase):
                 {"request_id": "blocked-book-delta", "data": data},
                 warmup=False,
             )
+
+        fresh = copy.deepcopy(data)
+        fresh["quality"].update(freshness_ms=1, event_recency_state="LIVE")
+        accepted_fresh = _validate_query_payload(
+            requirement, {"request_id": "fresh-book-continuity", "data": fresh}, warmup=False,
+        )
+        self.assertFalse(accepted_fresh.data.quality.execution_eligible)
+        fresh["payload"].update(sequence_verified=False, book_generation=0)
+        with self.assertRaisesRegex(ContinuityError, "sequence"):
+            _validate_query_payload(requirement, {"request_id": "unverified-book", "data": fresh}, warmup=False)
 
         with self.assertRaisesRegex(ValueError, "provider session SLA"):
             DataRequirement(

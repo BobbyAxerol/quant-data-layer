@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -1367,6 +1368,56 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             accepted_at_ns=accepted_at_ns,
         )
 
+    def test_projector_round_robins_coowned_partition_backlog_without_reordering(self):
+        def record(partition: int, offset: int) -> KafkaProjectorRecord:
+            return KafkaProjectorRecord(
+                topic="qdl.stable.canonical.phase-b.v2",
+                partition=partition,
+                offset=offset,
+                key=f"fixture/{partition}",
+                event_id=(partition.to_bytes(1) + offset.to_bytes(15, "big")),
+                payload=b"fixture",
+                accepted_at_ns=1,
+            )
+
+        queues = {
+            ("qdl.stable.canonical.phase-b.v2", 2): deque(
+                record(2, offset) for offset in (0, 1, 2)
+            ),
+            ("qdl.stable.canonical.phase-b.v2", 3): deque(
+                record(3, offset) for offset in (40, 41)
+            ),
+        }
+
+        selected = StableProjectorEngine._round_robin_candidates(queues, 5)
+
+        self.assertEqual(
+            [(record.partition, record.offset) for _partition, record in selected],
+            [(2, 0), (3, 40), (2, 1), (3, 41), (2, 2)],
+        )
+        self.assertEqual(
+            [record.offset for partition, record in selected if partition[1] == 2],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [record.offset for partition, record in selected if partition[1] == 3],
+            [40, 41],
+        )
+        self.assertEqual(
+            [
+                record.offset
+                for record in queues[("qdl.stable.canonical.phase-b.v2", 2)]
+            ],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [
+                record.offset
+                for record in queues[("qdl.stable.canonical.phase-b.v2", 3)]
+            ],
+            [40, 41],
+        )
+
     async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):
         stopped = [False]
         sleeps = []
@@ -2435,6 +2486,48 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await sink.close()
             await client.aclose()
 
+    async def test_signed_http_sink_reports_fenced_and_backpressure_gateways(self):
+        durable = DurableEvent(
+            stream=self.catalog.canonical_stream,
+            partition_key="stable-gateway-diagnostics",
+            event_id=b"g" * 16,
+            payload=b"canonical-diagnostics",
+            accepted_at_ns=1,
+            headers={
+                "raw_stream": "md.raw.gateway-diagnostics",
+                "raw_event_id": (b"r" * 16).hex(),
+            },
+        )
+        responses = iter((
+            httpx.Response(409, json={"detail": "stable gateway is not active"}),
+            httpx.Response(
+                503,
+                json={"detail": "stable canonical cache capacity temporarily unavailable"},
+            ),
+        ))
+
+        async def reject(_request: httpx.Request) -> httpx.Response:
+            return next(responses)
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(reject), base_url="http://localhost"
+        )
+        sink = StableHttpCanonicalSink(
+            ("http://stream_v2_active:8200", "http://stream_v2_passive:8200"),
+            b"s" * 32,
+            self.spool,
+            client=client,
+        )
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "statuses=409:stable gateway is not active,503:stable canonical cache capacity temporarily unavailable",
+            ):
+                await sink.publish(durable)
+        finally:
+            await sink.close()
+            await client.aclose()
+
     async def test_stale_projection_epoch_fails_without_broker_checkpoint(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
@@ -2558,7 +2651,7 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values.update({
                 "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
-                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "512",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "1000",
                 "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
@@ -2566,12 +2659,12 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(bounded_projector.max_pending_records, 2048)
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
-            self.assertEqual(bounded_projector.projector_max_batch_records, 512)
+            self.assertEqual(bounded_projector.projector_max_batch_records, 1000)
             self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
-            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "2049"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1001"
             with self.assertRaisesRegex(ValueError, "projector batch bound"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
-            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "512"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1000"
             values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
             with self.assertRaisesRegex(ValueError, "pending records"):
                 StableRuntimeConfig.from_environment("projector_v2", values)

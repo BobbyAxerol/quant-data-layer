@@ -14,6 +14,11 @@ from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.stable import StableCompatibilityProjector, StableProjectionTarget
 from qdl.provider.v1 import raw_provider_pb2
+from qdl.runtime.mark_index_lineage import (
+    DERIVED_MARK_INDEX_COMPONENT_V1,
+    is_derived_mark_index_lineage,
+    validate_derived_mark_index_component,
+)
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
@@ -92,6 +97,7 @@ class _ReadyCanonical:
     semantic_duplicate: bool = False
     project_latest: bool = True
     terminal_reason: str | None = None
+    derived_mark_index_component: bool = False
 
 
 class StableProjectorEngine:
@@ -305,7 +311,11 @@ class StableProjectorEngine:
                 )
             )
             projections = [
-                self.projector.build(stored, item.raw_envelope)
+                self.projector.build(
+                    stored,
+                    item.raw_envelope,
+                    derived_mark_index_component=item.derived_mark_index_component,
+                )
                 for item, stored in projected
             ]
             applied = (
@@ -592,16 +602,13 @@ class StableProjectorEngine:
 
     async def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
         candidates = []
-        for partition in sorted(self._queues):
-            for record in self._queues[partition]:
-                if len(candidates) >= self.max_batch_records:
-                    break
-                envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
-                candidates.append((
-                    partition, record, envelope, bytes(envelope.raw_capture_id)
-                ))
-            if len(candidates) >= self.max_batch_records:
-                break
+        for partition, record in self._round_robin_candidates(
+            self._queues, self.max_batch_records
+        ):
+            envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
+            candidates.append((
+                partition, record, envelope, bytes(envelope.raw_capture_id)
+            ))
 
         existing_by_id = await asyncio.to_thread(
             self.spool.find_events,
@@ -687,7 +694,13 @@ class StableProjectorEngine:
                 raw_envelope = record.raw_provider_envelope
                 raw = raw_provider_pb2.RawProviderEnvelope.FromString(raw_envelope)
                 validate_raw_envelope(raw)
-                if bytes(raw.capture_id) != capture_id:
+                binding = self.catalog.binding_for_envelope(envelope)
+                derived_mark_index_component = is_derived_mark_index_lineage(
+                    envelope
+                )
+                if derived_mark_index_component:
+                    validate_derived_mark_index_component(envelope, raw, binding)
+                elif bytes(raw.capture_id) != capture_id:
                     raise ValueError(
                         "private Kafka raw lineage differs from canonical capture ID"
                     )
@@ -706,6 +719,7 @@ class StableProjectorEngine:
                 raw_envelope = stored_raw.event.payload
                 raw_stream = stored_raw.event.stream
                 raw_event_id = stored_raw.event.event_id
+                derived_mark_index_component = False
 
             project_latest = True
             if envelope.WhichOneof("payload") == "bar":
@@ -738,14 +752,49 @@ class StableProjectorEngine:
                         "raw_provider_envelope": base64.b64encode(
                             raw_envelope
                         ).decode("ascii"),
+                        **(
+                            {
+                                "raw_lineage_kind": (
+                                    DERIVED_MARK_INDEX_COMPONENT_V1
+                                )
+                            }
+                            if derived_mark_index_component
+                            else {}
+                        ),
                         "kafka_topic": record.topic,
                         "kafka_partition": str(record.partition),
                         "kafka_offset": str(record.offset),
                     },
                 ),
                 project_latest=project_latest,
+                derived_mark_index_component=derived_mark_index_component,
             ))
         return tuple(ready)
+
+    @staticmethod
+    def _round_robin_candidates(
+        queues: dict[tuple[str, int], deque[KafkaProjectorRecord]],
+        limit: int,
+    ) -> tuple[tuple[tuple[str, int], KafkaProjectorRecord], ...]:
+        """Select a bounded, fair prefix while preserving each partition's FIFO."""
+
+        if limit <= 0:
+            return ()
+        active = deque(
+            (partition, iter(queues[partition]))
+            for partition in sorted(queues)
+            if queues[partition]
+        )
+        selected = []
+        while active and len(selected) < limit:
+            partition, records = active.popleft()
+            try:
+                record = next(records)
+            except StopIteration:
+                continue
+            selected.append((partition, record))
+            active.append((partition, records))
+        return tuple(selected)
 
     def _find_raw_many(
         self, capture_ids: tuple[bytes, ...]

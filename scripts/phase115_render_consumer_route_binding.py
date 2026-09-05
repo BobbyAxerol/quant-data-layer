@@ -10,6 +10,7 @@ to Kafka, Redis, SQLite, V1, Trading System or an alpha.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -19,7 +20,74 @@ import yaml
 from qdl.consumer.universal_release import (
     ConsumerRouteBinding,
     UniversalReleaseManifest,
+    UniversalReleaseProduct,
+    UniversalConsumerClass,
+    UniversalReleasePolicy,
 )
+from qdl.consumer.release import StableReleaseRoutePlan
+from qdl.consumer.realtime_route import requirement_key
+from qdl.runtime.stable_catalog import StableSourceCatalog
+
+
+def binding_from_stable_release(path: Path, root: Path, consumer_id: str) -> ConsumerRouteBinding:
+    """Project an already admitted stable release; never infer extra entitlements."""
+    plan = StableReleaseRoutePlan.load(path, manifest_root=root)
+    consumer = next((c for c in plan.consumers if c.consumer_id == consumer_id), None)
+    if consumer is None:
+        raise ValueError("stable release has no requested consumer")
+    policy = UniversalReleasePolicy.load(root / "config/v2/universal-release-policy.yaml", manifest_root=root)
+    catalog = StableSourceCatalog.load(plan.source_catalog.path)
+    routes = {r.requirement_key: r for r in consumer.products}
+    products = []
+    consumer_class = UniversalConsumerClass.TRADING_SYSTEM
+    if not consumer_id.startswith("trading-system."):
+        raise ValueError("stable renderer currently supports the Trading System consumer only")
+    for requirement in consumer.manifest.requirements:
+        key = requirement_key(requirement)
+        route = routes[key]
+        if route.route == "V1_PRIMARY":
+            continue
+        instrument = catalog.instrument_for(requirement.instrument_uid)
+        identity = instrument.identity
+        feed = requirement.feed.value
+        plane = "L2" if feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"} else (
+            "REALTIME" if feed in {"TRADE", "QUOTE", "BAR"} else "REFERENCE"
+        )
+        rule = None
+        if route.fallback == "V1":
+            rule = next((r.rule_id for r in policy.fallback_rules if (
+                r.venue, r.market, r.product_type, r.feed, r.interval
+            ) == (identity.venue, identity.market, identity.product_type.value,
+                  feed, requirement.interval)), None)
+            if rule is None:
+                raise ValueError("stable V1 route has no matching compatibility rule")
+        products.append(UniversalReleaseProduct(
+            consumer_id=consumer_id, consumer_class=consumer_class,
+            requirement_id=hashlib.sha256(f"{consumer_id}:{key}".encode()).hexdigest(),
+            instrument_uid=identity.instrument_uid, instrument_id=identity.instrument_id,
+            venue=identity.venue, market=identity.market,
+            product_type=identity.product_type.value, native_symbol=instrument.native_symbol,
+            feed=feed, interval=requirement.interval,
+            source_policy_id=requirement.source_policy_id, provider_plane=plane,
+            max_freshness_ms=requirement.max_freshness_ms,
+            require_final_bars=requirement.require_final_bars, require_live=True,
+            execution_grade=requirement.consumer_grade.value == "EXECUTION",
+            route=route.route, fallback=route.fallback, fallback_rule_id=rule,
+            blocked_reason=route.reason if route.fallback == "BLOCKED" else None,
+        ))
+    # The existing portable binding contract also accepts a stable routing
+    # generation digest, as used by compile_alpha_deployment_bindings.py.
+    return ConsumerRouteBinding(
+        consumer_id=consumer_id, consumer_class=consumer_class,
+        release_revision=plan.revision, universal_manifest_sha256=plan.digest,
+        policy_sha256=policy.policy_sha256,
+        capability_matrix_sha256=plan.capability_matrix.sha256,
+        capability_matrix_revision=plan.capability_matrix.revision,
+        inventory_sha256=plan.crypto_demand.sha256, v1_rollback=policy.v1_rollback,
+        independent_v1_venues=("DNSE",),
+        products=tuple(sorted(products, key=lambda p: p.requirement_id)),
+        consumer_manifest_revision=consumer.manifest.manifest_revision,
+    )
 
 
 def _read_mapping(path: Path) -> Mapping[str, Any]:
@@ -71,7 +139,10 @@ def _consumer_manifest_revision(path: Path, *, consumer_id: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-artifact", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--release-artifact", type=Path)
+    inputs.add_argument("--stable-release-routing", type=Path)
+    parser.add_argument("--manifest-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--consumer-id", required=True)
     parser.add_argument(
         "--consumer-manifest",
@@ -89,9 +160,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicit V1-only venue retained outside this V2 release (repeatable).",
     )
     args = parser.parse_args(argv)
-    if args.release_artifact.resolve() == args.output.resolve():
+    source = args.release_artifact or args.stable_release_routing
+    if source.resolve() == args.output.resolve():
         raise ValueError("release artifact and binding output must be different files")
-    manifest = _manifest_from_artifact(_read_mapping(args.release_artifact))
+    if args.stable_release_routing:
+        binding = binding_from_stable_release(source, args.manifest_root, str(args.consumer_id))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(binding.canonical_mapping(), indent=2, sort_keys=True) + "\n")
+        print(json.dumps({"product_count": len(binding.products), "binding_sha256": binding.binding_sha256,
+                          "consumer_manifest_revision": binding.consumer_manifest_revision,
+                          "runtime_mutations": 0, "order_actions": 0}))
+        return 0
+    manifest = _manifest_from_artifact(_read_mapping(source))
     consumer_id = str(args.consumer_id)
     consumer_manifest_revision = (
         _consumer_manifest_revision(args.consumer_manifest, consumer_id=consumer_id)

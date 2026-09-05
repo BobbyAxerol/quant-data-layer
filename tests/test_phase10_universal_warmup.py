@@ -25,6 +25,7 @@ from qdl.demand import (
 from qdl.adapters.intervals import okx_candle_channel
 from qdl.query import (
     AccessPurpose,
+    BatchRequirement,
     BarLifecycle,
     CanonicalErrorCode,
     ConsumerGrade,
@@ -1169,6 +1170,64 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
                 requirement, purpose=AccessPurpose.INTERNAL_ALPHA), "warmup-ok")
             self.assertEqual(set(service.warmup_executor._semaphores), {expected})
             self.assertEqual(set(service.warmup_executor._tokens), set() if local else {"OKX"})
+
+    async def test_retryable_local_cache_error_does_not_open_shared_circuit(self):
+        unavailable_uid = BINANCE_ETH
+        ready_uid = "ee93fabf-68df-5b50-8924-51bf25a5a758"
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.instruments = SimpleNamespace(get=lambda _: SimpleNamespace(
+                    identity=SimpleNamespace(venue="OKX")))
+                self.backend = SimpleNamespace(warmup_is_local=lambda _: True)
+                self.warmup_executor = BoundedWarmupExecutor(
+                    provider_policies={
+                        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                            max_attempts=1,
+                            circuit_failures=1,
+                            circuit_cooldown_ms=60_000,
+                        )
+                    }
+                )
+                self.last_batch_evidence = {}
+
+            def warmup(self, requirement, *, purpose, request_id=None):
+                del purpose, request_id
+                if requirement.instrument_uid == unavailable_uid:
+                    raise QueryServiceError(
+                        QueryProblem(
+                            CanonicalErrorCode.DATA_NOT_READY,
+                            "injected local cache not ready",
+                            True,
+                        ),
+                        request_id="local-cache",
+                    )
+                return "warmup-ok"
+
+        def requirement(instrument_uid: str) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1),
+            )
+
+        service = Service()
+        result = await service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="phase10-local-cache-isolation",
+                requirements=(requirement(unavailable_uid), requirement(ready_uid)),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertEqual([item.status for item in result.results], ["DATA_NOT_READY", "OK"])
+        self.assertEqual(service.warmup_executor.circuit_rejections, 0)
+        self.assertEqual(
+            service.warmup_executor._circuit["LOCAL_CANONICAL_CACHE"],
+            (0, 0.0),
+        )
 
     async def test_single_warmup_is_nonblocking_and_reuses_retry_policy(self):
         class Service(V2QueryService):

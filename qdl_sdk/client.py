@@ -109,13 +109,13 @@ def _allows_quiet_execution_continuity(requirement: DataRequirement, quality) ->
     session SLA while remaining non-executable.  Price-bearing feeds keep the
     normal execution-eligibility gate.
     """
-    if (
-        requirement.effective_event_recency_policy.value != "OBSERVE"
-        or quality.event_recency_state != "STALE"
-    ):
+    if requirement.effective_event_recency_policy.value != "OBSERVE":
         return False
     if requirement.feed is Feed.TRADE:
-        return quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
+        return (
+            quality.event_recency_state == "STALE"
+            and quality.provider_session_state in {"LIVE", "NOT_APPLICABLE"}
+        )
     return (
         requirement.feed is Feed.BOOK_DELTA
         and requirement.max_session_liveness_ms is not None
@@ -165,6 +165,10 @@ def _validate_query_payload(
         if requirement.interval is not None and row.interval != requirement.interval:
             raise ContinuityError("CONFLICT", "query response interval does not match requirement")
         quality = row.quality
+        if requirement.feed is Feed.BOOK_DELTA and (
+            not row.payload.sequence_verified or row.payload.book_generation < 1
+        ):
+            raise ContinuityError("OPEN_SEQUENCE_GAP", "book delta sequence is not verified")
         if quality.policy_id != requirement.source_policy_id:
             raise ContinuityError(
                 "CONFLICT", "query response source policy does not match requirement"

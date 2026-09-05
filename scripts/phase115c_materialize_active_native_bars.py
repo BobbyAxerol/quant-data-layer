@@ -213,7 +213,11 @@ def _merge_source_bindings(
     # the cosmetic binding ID, is the matching key.
     for item in generated:
         current = existing_by_requirement.get(_source_requirement_key(item))
-        chosen = deepcopy(current if current is not None else item)
+        # MARK_INDEX_PRICE changed from a bounded REST reference route to a
+        # generated native canonical route.  Its binding policy is therefore
+        # deliberately refreshed while its requirement identity stays stable.
+        refresh_mark_index = str(item.get("feed")) == "MARK_INDEX_PRICE"
+        chosen = deepcopy(item if refresh_mark_index or current is None else current)
         result.append(chosen)
         remap[str(item["binding_id"])] = str(chosen["binding_id"])
     result.extend(
@@ -250,7 +254,15 @@ def _merge_acquisition_bindings(
             str(item.get("runtime")) == "OKX"
             and str(item.get("provider_kind")) == "okx_bar"
         )
-        chosen = deepcopy(item if refresh_okx_bar_policy or current is None else current)
+        refresh_mark_index_policy = str(item.get("provider_kind")) in {
+            "binance_usdm_mark_index",
+            "okx_mark_index",
+        }
+        chosen = deepcopy(
+            item
+            if refresh_okx_bar_policy or refresh_mark_index_policy or current is None
+            else current
+        )
         chosen["binding_id"] = target_id
         result[target_id] = chosen
     for binding_id in source_binding_ids:
@@ -356,7 +368,14 @@ def build_documents(
     active_authority_ids = {
         item.binding_id
         for item in next_catalog.bindings
-        if item.feed.value in {"BAR", "TRADE", "QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"}
+        if item.feed.value in {
+            "BAR",
+            "TRADE",
+            "QUOTE",
+            "MARK_INDEX_PRICE",
+            "BOOK_SNAPSHOT",
+            "BOOK_DELTA",
+        }
         and (item.instrument.identity.venue, item.instrument.identity.market) in ACTIVE_BAR_FAMILIES
     }
     next_scope_ids = sorted(
@@ -453,8 +472,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--binance-spot-capture", type=Path, default=ROOT / "config/v2/captures/binance-spot-exchangeinfo.filtered.json")
     parser.add_argument("--okx-swap-capture", type=Path, default=ROOT / "config/v2/captures/okx-instruments-swap.filtered.json")
     parser.add_argument("--okx-spot-capture", type=Path, default=ROOT / "config/v2/captures/okx-instruments-spot.filtered.json")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help=(
+            "write generated runtime artifacts into this existing directory instead "
+            "of modifying the checked-in source artifacts; requires --apply"
+        ),
+    )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
+    if args.output_dir is not None and not args.apply:
+        raise SystemExit("--output-dir requires --apply")
+    if args.output_dir is not None and not args.output_dir.is_dir():
+        raise SystemExit("--output-dir must be an existing directory")
 
     demand, catalog, acquisition, scope, summary = build_documents(
         demand=_load_yaml(args.demand),
@@ -469,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
     route = _update_release_route(_load_yaml(args.release_routing), summary=summary)
     changed_files: list[str] = []
     if args.apply:
+        output = args.output_dir
         for path, value in (
             (args.demand, demand),
             (args.catalog, catalog),
@@ -476,11 +508,13 @@ def main(argv: list[str] | None = None) -> int:
             (args.promotion_scope, scope),
             (args.release_routing, route),
         ):
-            if _write_if_bytes_differ(path, value):
-                changed_files.append(str(path))
+            target = output / path.name if output is not None else path
+            if _write_if_bytes_differ(target, value):
+                changed_files.append(str(target))
     print(json.dumps({
         **summary,
         "changed_files": changed_files,
+        "output_dir": str(args.output_dir) if args.output_dir is not None else None,
         "status": "APPLIED" if args.apply else "DRY_RUN",
     }, sort_keys=True))
     return 0

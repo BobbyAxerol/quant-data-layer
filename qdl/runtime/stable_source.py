@@ -468,12 +468,17 @@ class StableSpoolQueryBackend:
         *,
         gap_open: bool,
     ) -> QualityMetadata:
-        observed_ns = (
+        source_observed_ns = (
             envelope.bar.close_time_ns
             if envelope.WhichOneof("payload") == "bar"
             else envelope.source_event_time_ns
         )
-        freshness_ms = max(0, (self._clock_ns() - observed_ns) // 1_000_000)
+        freshness_observed_ns = (
+            envelope.received_at_ns
+            if binding.freshness_basis == "PROVIDER_CONFIRMATION"
+            else source_observed_ns
+        )
+        freshness_ms = max(0, (self._clock_ns() - freshness_observed_ns) // 1_000_000)
         flags = _quality_flag_names(envelope)
         explicit_gap = any(
             value in {"SEQUENCE_GAP_BEFORE", "OUT_OF_ORDER", "RESYNC_REQUIRED"}
@@ -491,6 +496,9 @@ class StableSpoolQueryBackend:
             else min(binding.stale_after_ms, requirement.max_freshness_ms)
         )
         event_stale = freshness_ms > event_limit_ms
+        source_value_age_ms = max(
+            0, (self._clock_ns() - source_observed_ns) // 1_000_000
+        )
         event_recency_state = "STALE" if event_stale else "LIVE"
         session_state = "NOT_APPLICABLE"
         session_liveness_ms = None
@@ -562,6 +570,19 @@ class StableSpoolQueryBackend:
             flags=(
                 flags
                 + session_flags
+                + (
+                    ("FRESHNESS_BASIS_PROVIDER_CONFIRMATION",)
+                    if binding.freshness_basis == "PROVIDER_CONFIRMATION"
+                    else ()
+                )
+                + (
+                    ("SOURCE_VALUE_TIMESTAMP_OLD",)
+                    if (
+                        binding.freshness_basis == "PROVIDER_CONFIRMATION"
+                        and source_value_age_ms > event_limit_ms
+                    )
+                    else ()
+                )
                 + (("LAST_EVENT_STALE",) if event_stale else ())
                 + (("MARKET_CLOSED",) if market_closed else ())
             ),

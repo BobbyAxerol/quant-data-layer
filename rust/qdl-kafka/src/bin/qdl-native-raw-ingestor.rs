@@ -57,6 +57,7 @@ enum RawFeed {
     Quote,
     Bar,
     Book,
+    MarkIndex,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -84,6 +85,11 @@ struct RawBinding {
     delivery_class: DeliveryClass,
     #[serde(default)]
     l2: Option<RawL2Config>,
+    /// The logical MARK_INDEX_PRICE target.  OKX emits mark and index on
+    /// distinct physical subscriptions; this keeps both raw components in
+    /// one Kafka partition without turning symbols into worker identities.
+    #[serde(default)]
+    mark_index_target: Option<String>,
 }
 
 impl RawBinding {
@@ -111,11 +117,13 @@ impl RawBinding {
         }
         if !matches!(
             (self.feed, self.delivery_class),
-            (RawFeed::Quote, DeliveryClass::LatestState)
-                | (
-                    RawFeed::Trade | RawFeed::Bar | RawFeed::Book,
-                    DeliveryClass::Lossless
-                )
+            (
+                RawFeed::Quote | RawFeed::MarkIndex,
+                DeliveryClass::LatestState
+            ) | (
+                RawFeed::Trade | RawFeed::Bar | RawFeed::Book,
+                DeliveryClass::Lossless
+            )
         ) {
             return Err("raw binding feed/delivery class is invalid".into());
         }
@@ -144,6 +152,12 @@ impl RawBinding {
                 } else if self.l2.is_some() {
                     return Err("non-BOOK raw binding cannot carry L2 configuration".into());
                 }
+                if self.feed == RawFeed::MarkIndex
+                    && self.native_channel
+                        != format!("{}@markPrice@1s", self.native_symbol.to_ascii_lowercase())
+                {
+                    return Err("Binance MARK_INDEX binding channel is invalid".into());
+                }
             }
             ProviderRuntime::Okx => {
                 if self.venue != "OKX"
@@ -166,7 +180,24 @@ impl RawBinding {
                 } else if self.l2.is_some() {
                     return Err("non-BOOK raw binding cannot carry L2 configuration".into());
                 }
+                if self.feed == RawFeed::MarkIndex
+                    && !matches!(self.native_channel.as_str(), "mark-price" | "index-tickers")
+                {
+                    return Err("OKX MARK_INDEX binding channel is invalid".into());
+                }
             }
+        }
+        if self.feed == RawFeed::MarkIndex {
+            if self
+                .mark_index_target
+                .as_deref()
+                .map(|target| target.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err("MARK_INDEX raw binding requires a logical target".into());
+            }
+        } else if self.mark_index_target.is_some() {
+            return Err("only MARK_INDEX raw bindings may carry a logical target".into());
         }
         Ok(())
     }
@@ -214,17 +245,23 @@ fn partition_feed_lanes(bindings: &[RawBinding], max_subscriptions: usize) -> Ve
     // and QUOTE stay isolated as well, so rotating a book snapshot connection
     // never disconnects another feed class. These are lanes inside one shared
     // venue/market role, never symbol workers.
-    [RawFeed::Book, RawFeed::Bar, RawFeed::Trade, RawFeed::Quote]
-        .into_iter()
-        .flat_map(|feed| {
-            let lane = bindings
-                .iter()
-                .filter(|binding| binding.feed == feed)
-                .cloned()
-                .collect::<Vec<_>>();
-            partition_bindings(&lane, max_subscriptions)
-        })
-        .collect()
+    [
+        RawFeed::Book,
+        RawFeed::Bar,
+        RawFeed::Trade,
+        RawFeed::Quote,
+        RawFeed::MarkIndex,
+    ]
+    .into_iter()
+    .flat_map(|feed| {
+        let lane = bindings
+            .iter()
+            .filter(|binding| binding.feed == feed)
+            .cloned()
+            .collect::<Vec<_>>();
+        partition_bindings(&lane, max_subscriptions)
+    })
+    .collect()
 }
 
 fn partition_binance_bindings(
@@ -585,12 +622,17 @@ impl RawPublisher {
             correlation_id: hex::encode(&capture_id),
             test_provenance: false,
         };
-        DurableRecord {
-            stream: self.raw_stream.clone(),
-            partition_key: format!(
+        let partition_key = if let Some(target) = &binding.mark_index_target {
+            format!("{}/{}/mark-index/{}", binding.venue, binding.market, target)
+        } else {
+            format!(
                 "{}/{}/{}/{}",
                 binding.venue, binding.market, binding.native_symbol, binding.native_channel
-            ),
+            )
+        };
+        DurableRecord {
+            stream: self.raw_stream.clone(),
+            partition_key,
             event_id: capture_id,
             payload: raw.encode_to_vec(),
             accepted_at_ns: received_at_ns,
@@ -2209,6 +2251,7 @@ mod tests {
                 RawFeed::Quote => "btcusdt@bookTicker",
                 RawFeed::Bar => "btcusdt@kline_1m",
                 RawFeed::Book => "btcusdt@depth@100ms",
+                RawFeed::MarkIndex => "btcusdt@markPrice@1s",
             }
             .into(),
             subscription_id: "test-source".into(),
@@ -2217,6 +2260,7 @@ mod tests {
             feed,
             delivery_class,
             l2: None,
+            mark_index_target: None,
         }
     }
 
@@ -2386,6 +2430,31 @@ mod tests {
         assert!(binding(RawFeed::Quote, DeliveryClass::Lossless)
             .validate(ProviderRuntime::Binance)
             .is_err());
+    }
+
+    #[test]
+    fn mark_index_is_a_shared_latest_state_lane_with_one_logical_target() {
+        let mut binance = binding(RawFeed::MarkIndex, DeliveryClass::LatestState);
+        binance.mark_index_target = Some("uid-BINANCE-USDM-SOLUSDT".into());
+        assert!(binance.validate(ProviderRuntime::Binance).is_ok());
+
+        let mut okx_mark = binance.clone();
+        okx_mark.provider = "OKX_DIRECT".into();
+        okx_mark.venue = "OKX".into();
+        okx_mark.market = "SWAP".into();
+        okx_mark.native_symbol = "SOL-USDT-SWAP".into();
+        okx_mark.native_channel = "mark-price".into();
+        okx_mark.mark_index_target = Some("uid-OKX-SWAP-SOL-USDT-SWAP".into());
+        let mut okx_index = okx_mark.clone();
+        okx_index.native_symbol = "SOL-USDT".into();
+        okx_index.native_channel = "index-tickers".into();
+        assert!(okx_mark.validate(ProviderRuntime::Okx).is_ok());
+        assert!(okx_index.validate(ProviderRuntime::Okx).is_ok());
+
+        let lanes = partition_okx_bindings(&[okx_mark.clone(), okx_index.clone()], 100);
+        assert_eq!(lanes.len(), 1);
+        assert!(lanes[0].iter().all(|item| item.feed == RawFeed::MarkIndex));
+        assert_eq!(okx_mark.mark_index_target, okx_index.mark_index_target);
     }
 
     #[test]

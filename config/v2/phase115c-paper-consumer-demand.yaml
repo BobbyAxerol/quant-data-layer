@@ -4,7 +4,7 @@
 # data-plane manifests.  Keeping them here makes their sealed universal route
 # binding reproducible without hand-editing a generated artifact.
 schema: qdl.v2.production-demand.v1
-revision: 4
+revision: 5
 consumers:
   - consumer_id: trading-system.paper.stable
     consumer_grade: EXECUTION
@@ -102,6 +102,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: null
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -129,6 +132,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: null
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -156,6 +162,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: BTC-USDT
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -183,6 +192,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: ETH-USDT
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -210,6 +222,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: null
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -237,6 +252,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: null
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -264,6 +282,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: null
       - venue: BINANCE
         market: USDM
         product_type: PERPETUAL
@@ -291,6 +312,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: SOL-USDT
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -318,6 +342,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: DOGE-USDT
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL
@@ -345,6 +372,9 @@ consumers:
         feed: MARK_INDEX_PRICE
         interval: null
         source_policy_id: crypto_liquid_v2
+        max_freshness_ms: 2000
+        require_live: true
+        index_native_symbol: BNB-USDT
       - venue: OKX
         market: SWAP
         product_type: PERPETUAL

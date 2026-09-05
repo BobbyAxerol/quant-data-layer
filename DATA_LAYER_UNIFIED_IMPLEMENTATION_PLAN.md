@@ -30224,6 +30224,232 @@ mutated. The feature worktree remains retained because Phase D still uses its
 active source; it is not an archival copy and is eligible for removal only in
 the final exact cleanup inventory.
 
+### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
+
+**Index component freshness correction (2026-09-05, SOURCE/ROLLOUT DONE;
+CONTINUOUS ACCEPTANCE FAIL).**
+Owner requests a narrow fix for OKX SOL index exceeding the sealed 2000ms SLA.
+Root source defect: query freshness selects the newest MARK_INDEX observation,
+so fresh mark hides stale index and prevents the existing bounded cache-bypass
+refresh. Check the oldest component for snapshot MARK_INDEX only; historical
+reference freshness still uses its newest observation. Preserve native times,
+the SLA, provider admission and exactly one recovery read. No symbol hardcoding,
+new topology or state reset. Governing guide: fund-grade architecture, typed
+execution market context and Declared Crypto Release Closure.
+Tests: mixed-age mark/index, both stale/fresh, exact limit, one failed recovery,
+cache coalescing and history regression across both venues/five symbols. Then
+bounded real query evidence; runtime change, if needed, only query replicas
+with their exact prior image retained. Do not call source PASS runtime-certified.
+Rollback is source revert or the same two query replicas' prior image, never
+Kafka/Redis/SQLite reset. Inherit existing299-product certificate.
+
+Source verification: existing Python image, read-only source/network disabled:
+`python -m unittest -q tests.test_phase113_reference_v2
+tests.test_phase104_reference_batch tests.test_phase104_v2_query_stream_integration`
+PASS50 tests including80 mixed-component subcases. History, cache coalescing,
+bounded recovery and integration regressions retained. Native index HTTP probe
+with stdlib returned403 before data; this is not provider freshness evidence.
+Real verification must use existing authenticated/admitted V2 route.
+Deploy only query_v2_1/query_v2_2; exact rollback for each is
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`.
+Use existing immutable parent plus the tested query module; dependencies,
+runtime/mTLS/manifest mounts, provider admission and all other services stay
+unchanged. Observe both query replicas plus existing60-route reader300s; normal
+public reference reads only, no test orders or new consumers/subscriptions.
+
+Runtime slice: source7daeedd, immutable query image
+`45dd2bf104564952faf03f5315a08f4f2956392ca68a3adaf95eaa7f18fbc632`.
+Parent query module SHA matched dev before the patch exactly; only that module
+overlaid. The built image also PASS50 tests. Rolled query_v2_1 thenquery_v2_2;
+no dependencies recreated. Twenty real MARK/INDEX reads across five symbols,
+two venues andtwo pinned replicas PASS; maximum component age1878ms against
+2000ms. Diagnostic DNS pinning now handles bytes as well asstr, so exact replica
+evidence does not accidentally go through DNS load balancing. An initial probe
+before correcting pinning mixed old/new peers and is not replica evidence.
+Initial60-route startup wait expired onQUOTE freshness; it was not a300s
+acceptance and does not erase that failure. Record one actual300s observation
+with the overall60 gate unchanged and separate MARK_INDEX result, rather than
+retrying until a lucky all-green startup. Privatepacket/evidence:
+`~/.local/state/qdl-v2/index-freshness-7daeedd-20260905/`.
+
+Final single observation300.832s,21 samples: MARK_INDEX had0 unhealthy sampled
+states, but exact-window logs contain11 reference PARTIAL_RESULT reconnects;
+therefore continuous index availability is NOT certified. The sampled-health
+PASS was explicitly corrected toFAIL in summary after checking logs. Generic
+PARTIAL_RESULT does not expose the individual reference failure cause here;
+do not claim all11 are provider-age errors without typed item evidence.
+Overall health48-60/60, final48; QUOTE stale and8 other BOOK_DELTA disconnect
+messages also remain outside this query component fix. Cache checks1236/1260
+present/identity/complete-no-gap,210/210 final bars. No release tag/publication;
+existingv2.0.12 certificate retained, not relabeled as this observation.
+Summary SHA25637d21fcb663073bfa819eebdaa7e798ad1571e14856240146e4b945bbd18fce3;
+observation SHA25648f0ab2ae84d1c5c706f37465d054e998d024545fe9c2f3ae801967e837a5adb.
+The narrow algorithm defect is fixed: a fresh mark no longer conceals stale
+index, the existing single bounded refresh is reached, and stale pairs still
+fail closed. Remaining acceptance failures are unfinished investigation, not
+reclassified as external technical debt. Next relevant diagnosis is typed
+per-item reference failure detail; QUOTE/L2 require separately scoped analysis.
+
+Isolation: exactlytwo query container IDs changed, both0 restarts; all other
+running container identities/images/restart counts unchanged. Orders1180,
+fills6094,sessions65361,brackets431,journal434 unchanged. No-order only; no TS,
+alpha,V1,stream,Rust,ingestor,projector,Kafka,Redis,SQLite mutation. Resource
+sample query1=11.66%CPU/131.9MiB,query2=0.15%/117.8MiB,TSreader27.68%/170.8MiB;
+these are instantaneous samples, not capacity guarantees.
+Cleanup removed3 exact build-input records (61.438kB); retained active45dd2bf
+and prior1c1392bf rollback (also active in otherroles). Docker26 images/13.24GB
+before/after, BuildKit61->58 records/5.428GB rounded. No disposable containers
+left; no volumes/networks/state removed. Reproduction scripts and build recipe
+archived in the private packet; temporary build context removed. Canonical
+checkout remains/home/bobby/data_layer; no newworktree; existingphase-c active
+worktree retained. Changes integrate todev only; stablemain/tag unchanged.
+
+**Latest owner-approved consumer correction, 2026-09-05:** Trading System
+e8ee8f7 fixed independent provider-session deadlines, monotonic heartbeat
+evidence/reset and stale reference refresh with valid/expired prior snapshots.
+190 source regressions PASS. Onlyone TS reader image built/deployed:
+bbf00a643aa515e7e27b2c4714ed12dd7da982490826367d7bd6c14e0796dba9.
+Data Layer source/runtime/provider/authority/state unchanged; SDK2.0.2 and
+prior299-product certificate reused. Publication is conditional on acceptance,
+not automatically authorized to relabel a failing runtime gate.
+
+Real300.438s/21-sample acceptance:60 caches/50 durable watermarks progressed,
+1260 identity/complete-no-gap checks and210 final-bar checks PASS; TRADE session
+failure0. Eleven reference refreshes rejected,19 samples60/60 andtwo59/60
+(SOL/OKX MARK_INDEX_PRICE), final60. Sustained60 gate FAIL. Diagnostic ages:
+mark108-179ms,index2070-2451ms against the sealed2000ms limit; configured15000ms
+does not override the stricter binding. Do not widen SLA or forge fresh prices.
+This identifies which field fails but does not yet prove whether delay comes
+from provider cadence or query/provider cache. Source/observation/cleanup are
+recorded in the TS Five-Symbol Consumer Convergence section. No new release
+certificate/tag; v2.0.12 remains stable and its299-product evidence is retained.
+
+Cleanup is limited to the approved TS reader build: temporary alias removed,
+23.02MB disposable input cache reclaimed, activebbf00a64 and rollbackf0d12295
+retained. Docker25 images/13.24GB, BuildKit5.428GB after build/cleanup; no DL
+images, state, volumes or services changed. No new worktree, source/journals
+go todev only while stable release remains blocked by the measured index SLA.
+
+**Consumer stability completion (SDK TESTED; TS SUSTAINED HEALTH FAIL, 2026-09-05).**
+Continue this same closure, no new phase or provider certification rerun.
+The installed TS SDK2.0.1 lacks current certified quiet-continuity handling.
+Package current SDK as2.0.2, run focused SDK/contract/package tests, update TS
+vendor lock and reader continuity/backoff tests. No Data Layer runtime,
+authority, provider, Kafka/Redis/SQLite or topology change. Inherit v2.0.12's
+299-product certificate; add truthful 60-route consumer acceptance and a
+release addendum only after it passes. Reader-only rollout/rollback is recorded
+in the matching TS main-plan section. No stale price is made executable to
+turn health green. Remove temporary SDK/test/build artifacts after verification.
+
+Source slice verified: 42 SDK release/stream/reconnect/contract unittest cases
+PASS in the existing immutable Python image, including fresh and quiet verified
+BOOK_DELTA as non-price continuity, generation0/unverified sequence rejection.
+SDK2.0.2 built reproducibly: wheel SHA256
+eceb28f869e31ea44d69d3deb0a939dbbc3f481a117728f9c217efa60e0f22de;
+SDK source digest fbd0f6306268237715b318b75ca50eb8a4dc1fdfe20b7c21b4ae39f09fea2ebc.
+TS integration adds124 passing tests and pins that wheel. No Data Layer image
+build or runtime change. Certification waits for the approved reader-only real60
+observation; previous299 evidence remains inherited, not rerun or overwritten.
+
+Final reader-only runtime packet (approved explicitly by owner) used TS
+2d89e8f/imagef0d12295 with SDK2.0.2. TS127 focused tests and DL42 SDK tests PASS.
+Real20 query-replica/instrument cases PASS (five symbols per venue,2000 closed
+bars,40 book reads);60 cache products and50 durable watermarks progressed.
+Nevertheless300.364s sustained-health acceptance FAIL: after startup58-60
+ready, final59; typed TRADE liveness and stale OKX MARK_INDEX_PRICE remain.
+TS records exact fail evidence and correction boundary in its corresponding
+main-plan section. No new Data Layer certificate/tag/publication: v2.0.12's
+299-product certificate is preserved, not changed to hide this consumer gap.
+V2 Python1c1392bf/Rust36a822c0, V1, Kafka/Redis/SQLite, alpha and order path
+unchanged. Onlymarket_data_service changed in the complete container inventory;
+DB order/session/bracket/journal counts unchanged. Localdev includesSDK commit
+ab9b545; stablemain remainsf8adb61 pending a genuine successful closure.
+
+Source/journal pusheddevf20a4a5 (TSdev769a144); feature branches merged and
+removed, no new worktrees. TS cleanup removed two superseded reader images and
+18 enumerated build-cache records in dependency passes (~1.00GB reported
+reclaimed). Final Docker inventory24 images/12.69GB, BuildKit4.878GB versus
+baseline23/12.14GB and4.164GB; final reader plus named rollback retained. No DL
+runtime image or state removed. Existing activephase-c worktree retained.
+
+This is completion of the existing consumer charter, not a new phase. Owner
+approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
+`0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`),
+expanding the stale Trading System binding from 42 to 60, its runtime symbols
+from BTC/ETH to BTC/ETH/SOL/DOGE/BNB on Binance USD-M and OKX Swap, and matching
+the consumer quota. The previous 24-slice reader repair was not the complete
+multi-symbol objective. See Trading System's matching convergence journal and
+the architecture guide sections 18.3 (DataRequirement) and deployment manifests.
+
+Scope: consumer manifest revision 8 -> 9; quota 20 -> 50 streams and
+600 -> 1500 requests/minute. Ten instruments require 40 persistent streams,
+600 mark reads/minute and 20 book snapshots/minute plus bounded recovery.
+Keep feed requirements, freshness/finality/authority and all other quotas
+unchanged. Use a versioned read-only manifest mount and the existing immutable
+Python image; no binary rebuild or new topology is needed. Roll only the four
+query/stream readers and Trading System `market_data_service`.
+
+Exit: focused manifest/binding tests; 60 native-identity/feed routes, 40 streams
+within quota; real consumer cache/watermark/health progress on the added six
+instruments, both venues; no order/state mutation. Reuse the certified 299
+products, do not run full C2/provider certification again. Keep V1, Rust,
+ingestors, projectors, Kafka offsets/topology, Redis/SQLite and alpha/order path
+unchanged. Save exact inspected role image/env/mount rollback before rolling;
+restore four reader configurations and the prior TS 42-product/24-demand
+configuration if acceptance fails. Retain bounded evidence outside source,
+remove disposable probes, journal test results and commit using owner identity.
+
+Source gate PASS: `tests.test_trading_consumer_scope` and existing
+`tests.test_phase115_universal_release`: 18/18 offline tests in retained Python
+image, network disabled, tmpfs removed. Initial verification caught a file-hash
+versus canonical manifest hash mismatch; corrected with ConsumerManifestLoader,
+not by bypassing validation. Stable routing is now revision 18, manifest 9.
+The renderer projects the already certified StableReleaseRoutePlan directly
+into the existing portable binding; its digest identifies routing, not a new
+299-product certificate. TS source bridge/deployment/routes: 23/23 PASS.
+Binding SHA `5b18204180db470c27332665bae949a0b1768593769d4c30200e2812bafde8b3`;
+release routing SHA `e61f3bce3f0cbe610f433d51e53959ca874c1cee51ecc3cc549bf897ffd95ffa`.
+The certified execution identity has zero automatic V1 fallback products;
+all 60 V2 failures stay typed BLOCKED, with V1 retained for explicit rollback.
+Other consumers' certified fallback routes are unchanged. Exact inspected
+five-role forward/rollback Compose configs validate; runtime acceptance next.
+
+Runtime result: exactly four query/stream readers and `market_data_service`
+recreated; no added/removed container, no binary build. All image digests and
+existing mounts remain unchanged, except the additive read-only consumer
+manifest and replacement TS binding mount. Manifest revision9 is loaded;
+max_streams50/rpm1500 verified. Source commits DL `e712e67`, TS `43c49f2`.
+
+Focused real-consumer evidence PASS: SOL/DOGE/BNB on both venues and both query
+replicas (12/12 combinations), 1200 authentic contiguous closed 1m bars,
+24 typed mark/book reads. Initial probe used a nonexistent identity attribute;
+the probe was corrected to `canonical_identity`, not production code. Every
+one of 60 TS cache records advanced its observation; 50 advanced logical
+watermark (mark refresh has no durable watermark). 360/360 native-identity
+checks passed over six samples/152.401 seconds. Order-path counts unchanged.
+
+Do not overstate health: ready counts were 58/57/58/44/58/58 out of60, despite
+an earlier point-in-time60/60. Stale/eligibility rejection and reconnect occur
+on old and added symbols. Five-minute bounded log: quota/rate-limit/manifest
+errors0; execution-ineligible38 and stale-reference12. Stream active CPU sample
+64.84% of one core under its unchanged75% cap; cgroup showed960 throttled
+periods/5543, which is capacity evidence, not proof of the sole root cause.
+TS reader source also retains exponential supervision delay after successful
+reads and strict execution eligibility in stream projection. These observations
+are not repaired by changing binding or by weakening quality/Risk checks.
+Functional scope is applied; uninterrupted consumer-health closure is NOT
+claimed and no new stable certificate/tag is minted. Existing v2.0.12 provider
+certificate is inherited, not invalidated or silently enlarged. No full C2
+rerun and no new phase. Keep exact immediate rollback available.
+
+Evidence: private TS `revisions/20260905-r9-sixty/acceptance-summary.json`,
+SDK JSONL, cache/health samples, role snapshots and exact forward/rollback
+Compose files. No secrets/raw market payloads are committed. Cleanup: probe
+tmpfs directories and disposable `--rm` test containers removed; no new image
+or build cache was created. Docker inventory unchanged: images12.14GB,
+BuildKit4.164GB/0B reclaimable, 52 running/4 retained operational stopped
+containers. No broad prune, volume/network cleanup or unrelated worktree removal.
+
 ### Phase C — Canonical reader/stream release artifact
 
 - Build and attest one canonical `qdl-v2-python:<semver>-<gitsha>` reader/stream
@@ -36343,3 +36569,1150 @@ at70ac65b has four genuinely unmerged commits and is deliberately preserved.
 Remote stable main remains9d6dfb9 and existingv2.0.0 remains7ebe1d1; newv2.0.12
 package is certified but not tagged/published before the required release PR.
 This is the remaining publication boundary, not another market-data test gate.
+
+### Hotfix - OKX Mark/Index Realtime Freshness (`EXECUTING`, 2026-09-05)
+
+**Approved scope.** Repair the observed execution-grade
+`MARK_INDEX_PRICE` rejection where the OKX `SOL-USDT-SWAP` index component
+exceeds the existing `2_000ms` SLA. The rejection is correct and remains
+fail-closed: a stale provider timestamp must never be relabelled fresh, cached
+as a substitute, or accepted by execution/risk.
+
+**Root cause confirmed.** The current OKX reference adapter performs separate
+REST `mark-price` then `index-tickers` reads. Their provider timestamps are
+independent and the index response can already be older than the strict
+execution bound when received. A shared REST singleflight may reduce load but
+cannot make a provider-old timestamp current. The provider guide already
+declares public WebSocket `mark-price` and `index-tickers` channels; use those
+through the existing shared Rust provider-neutral raw/canonical plane instead
+of adding a per-symbol worker or widening the SLA.
+
+**Narrowed implementation boundary after provider measurement.** A direct
+`SOL-USDT` index read returned below the SLA, but a five-round documented bulk
+probe (`mark-price?instType=SWAP` plus `index-tickers?quoteCcy=USDT`) returned
+provider index ages of `8-30s`. The latter is provider cache behavior and is
+not execution-safe, so bulk is explicitly rejected for the hot execution
+route. The local violation instead comes from a too-coarse shared `public` /
+`market` token bucket and sequential mark-then-index reads. Keep exact
+per-`instId` provider routes; call the two independent snapshots concurrently
+and rate-limit mark price by its documented `IP + instId` scope while using the
+documented global market endpoint budget for index tickers. This removes local
+queueing without persisting or fabricating a value. It preserves exact-row
+identity and provider timestamps; a truly provider-old component still returns
+`DATA_STALE`. Python remains the bounded provider/API edge, Rust remains the
+existing canonical realtime core. No public endpoint/schema change, no new
+container/topology, Kafka offset reset, Redis/SQLite deletion, V1, Trading
+System, alpha or order-path mutation is permitted.
+
+**Required proof and exit.** Run deterministic exact-identity, concurrent
+per-symbol pair, endpoint-rate-scope, duplicate/missing-row and stale-component
+tests plus the current five-symbol Binance/OKX execution reference matrix. Then
+sample the active OKX five-symbol set from both query replicas, prove `SOL`
+index and mark are individually within `2_000ms` when accepted, and prove a
+deliberately/provider-old component remains `DATA_STALE`. Roll only the two
+existing query roles if source tests pass; retain their exact prior image/config
+as rollback. A bounded no-order reader acceptance follows the roll. Record
+image digest, result counts, runtime impact and scoped cleanup here before
+claiming certification/release.
+
+**Source slice complete; runtime pending.** The rejected bulk probe is retained
+as bounded evidence: its five rounds used two calls each but exposed provider
+index ages of `8-30s`, so no bulk cache entered the serving path. The replacement
+uses exact `instId` pairs, concurrent mark/index reads, a documented global
+`20/2s` market budget, and a separate `10/2s IP+instrument` mark bucket. Isolated
+network-disabled regression passed `60/60` in `6.665s`:
+`tests.test_phase104_reference_batch`, `tests.test_phase113_reference_v2`, and
+`tests.test_reference_l2_consumer_acceptance`. It covers five-symbol concurrent
+pair identity/timestamp preservation, missing/duplicate rows, scoped mark
+buckets, strict oldest-component freshness and fail-closed stale replay.
+
+Bounded real-provider probe used five exact symbols for five rounds: every
+round issued exactly ten paths (five mark plus five index) concurrently; `SOL`
+index ranged `613-1,254ms`. One `ETH` index was provider-old at `2,782ms`; this
+is intentionally not accepted and proves the source fix does not rewrite native
+time. One `1,920ms` provider-response tail remained below the mark freshness
+bound; it is recorded as provider/transport latency rather than attributed to
+the local bucket. Build one immutable
+Python query image from this source, retain digest `45dd2bf10456...` as rollback,
+then rolling-recreate only `query_v2_1` and `query_v2_2`. V1, Rust, ingestors,
+projectors, streams, Kafka, Redis, SQLite, Trading System, alpha and orders
+remain untouched. A short typed real-read matrix follows; it must show accepted
+`SOL/OKX` under the declared bound while an old provider component remains
+blocked.
+
+**Runtime slice complete; strict provider outcome retained (2026-09-05).**
+Built immutable `qdl-v2-python:2.0.12-c1d4c36`, digest
+`sha256:8c3dc599233d8a6e4a8b13831fb62cd66f487e73fb73e8b3cfb1415a6adac51d`,
+from exactly `c1d4c36c6c92595fa660cc8d7343046e4afe8217`. Only
+`query_v2_1` and `query_v2_2` were rolling-recreated; both remained running
+with restart count `0`. The retained exact rollback is
+`sha256:45dd2bf10456...`. V1, Rust, ingestors, projectors, streams, Kafka,
+Redis, SQLite, Trading System, alpha and the order path were not mutated.
+
+The companion Trading System reader acceptance was no-order only: `300.355s`,
+`21` samples and all `60` cached views across the five-symbol/two-venue/six-feed
+matrix had zero missing identity, incomplete, open-gap or non-authoritative
+views; the ten mark/index execution reads were eligible during that bounded
+window and database order/fill/session/bracket/journal counts were unchanged.
+The reader fix is recorded separately in the Trading System main plan at
+`4f99f8a`/`2c10e1c`.
+
+The continuous provider result is intentionally stricter than that bounded
+acceptance: later exact OKX rows can still carry a native index timestamp older
+than `2_000ms` (including SOL). Those rows are now surfaced as typed
+`DATA_STALE`/`StaleExecutionReferenceError`, never rewritten, cached as fresh,
+or degraded to a generic `PARTIAL_RESULT`; execution/risk therefore continues
+to reject them. This closes the local queueing and error-semantics defect, but
+does not claim that an upstream REST timestamp can be made fresh by local code.
+Public WebSocket mark/index ingestion remains the future provider-plane path if
+continuous sub-two-second index availability becomes a separately approved
+requirement. No test-only Data Layer image was retained; the active image and
+named rollback image are the only artifacts retained for this rollout.
+
+### Release Closure - Shared Realtime Mark/Index Plane (`APPROVED / EXECUTING`, 2026-09-05)
+
+**Goal.** Close the remaining continuous execution-read defect without relaxing
+the sealed `2_000ms` `MARK_INDEX_PRICE` SLA: an accepted mark/index pair must
+be provider-authentic, complete, exact-identity and current; a missing,
+duplicate, cross-instrument, previous-generation or old component must remain
+typed `DATA_STALE`/unreadable to Trading System Risk. This is the consolidated
+repair for the observed eleven generic reference reconnects, now correctly
+typed as stale provider components by `c1d4c36` and `4f99f8a`; previously
+certified BAR, TRADE, QUOTE, BOOK, cursor and fallback evidence is inherited
+and is not rerun wholesale.
+
+**Approved source scope.** Extend the existing provider-neutral shared Rust
+raw/canonical plane, not a Python polling bypass or a per-symbol worker:
+
+1. Add one logical `MARK_INDEX_PRICE` acquisition family with physical native
+   components. Binance USD-M uses its documented single mark-price stream;
+   OKX Swap uses documented public `mark-price` and `index-tickers` channels,
+   paired only through an explicit target-instrument identity in the generated
+   catalog.
+2. The core may publish a canonical latest-state mark/index envelope only when
+   all required components belong to the same configured target and connection
+   generation. Its event time is the oldest component event time, so a true
+   provider-old price is still rejected by the existing strict query/Risk
+   check. Receipt time, heartbeat and cache time must never overwrite source
+   time.
+3. Generate active bindings for the already certified Binance USD-M and OKX
+   Swap execution universe (`BTC`, `ETH`, `SOL`, `DOGE`, `BNB`) only. The
+   result remains one shared Binance role and one shared OKX role; no
+   symbol/interval image, container, Kafka topic, consumer group or public API
+   is introduced.
+4. Query/stream continues to prefer the canonical V2 record for an active
+   execution binding. The existing bounded REST reference adapter remains
+   available only where a route is not active; it cannot substitute for a
+   failed strict active execution record. V1 policy and public V1 compatibility
+   are unchanged.
+
+**Invariant and tests.** Before any runtime packet, source gates must cover
+both venues and all five symbols: provider-frame parse/identity, mark/index
+pair completion, stale oldest-component rejection, same-generation fencing,
+reconnect reset, duplicate/out-of-order handling, no cross-symbol or
+cross-venue mix, canonical decimal/unit/lineage, query preference and strict
+staleness. Build in the repository builder, run Rust and Python focused suites
+plus contract/golden checks. A bounded real-provider probe must observe actual
+public frames for the active five-symbol routes; synthetic frames remain test
+provenance only.
+
+**Runtime boundary and rollback.** Only after source gates pass, build one
+immutable Rust image and regenerate a sealed runtime revision. The prospective
+packet rolls the existing shared Binance/OKX ingestors and three Rust core
+replicas serially; it permits normal real-provider canonical writes but does
+not touch V1, Kafka topology/offsets, Redis flush, SQLite deletion,
+projectors, readers, Trading System, alpha or the order path. The current
+image/config pair is retained as named rollback and a failed preflight restores
+only those five roles. A single V2 no-order acceptance then verifies the 60
+execution slices over `300s`, including strict mark/index and zero order/state
+mutation. Only that receipt may advance the release certification decision.
+
+**Decision boundary.** No SLA widening, source-time rewriting, stale cache
+acceptance, fake provider event, inferred symbol mapping or additional release
+phase is allowed. If official provider frames cannot meet the declared SLA,
+the route remains correctly fail-closed and the release cannot claim
+continuous execution eligibility.
+
+**Implementation note before source edit (2026-09-05).** The current
+`reference:batch` path cannot distinguish an old provider value timestamp from
+a current WebSocket confirmation of an unchanged index; a REST receipt cannot
+prove that distinction either. The shared native path therefore preserves
+`source_event_time_ns` as the provider value timestamp, while a generated
+execution `MARK_INDEX_PRICE` binding explicitly evaluates its SLA against the
+latest authenticated provider-frame receipt (`PROVIDER_CONFIRMATION`). This is
+not source-time rewriting: query output retains the original observed time and
+lineage. A missing/disconnected/old confirmation, incomplete pair, gap or
+previous connection generation remains `DATA_STALE`. The scope is one shared
+physical mark/index lane per existing venue role, with a current confirmation
+event emitted even when the provider repeats an unchanged component value.
+
+**Compiler correction identified during implementation (2026-09-05).** The
+existing native-materialization compiler admitted only `BAR`, `TRADE`, `QUOTE`
+and L2 bindings into the Rust promotion scope. That would leave a generated
+execution `MARK_INDEX_PRICE` binding present in catalog/acquisition artifacts
+but absent from the promoted shared core. The correction is deliberately
+narrow: include `MARK_INDEX_PRICE` in the same active Binance USD-M/OKX Swap
+scope predicate, and prove the five-symbol logical demand renders five shared
+Binance physical inputs plus ten paired OKX physical inputs. No new role,
+topic, worker or authority mode is introduced.
+
+**Source exit record (2026-09-05, `IMPLEMENTED / TESTED LOCALLY`).** The
+shared Rust parser/canonicalizer now accepts Binance USD-M `@markPrice@1s` and
+OKX `mark-price` plus `index-tickers`, while the stable compiler renders the
+physical components from explicit signed identity. A five-symbol execution
+manifest produces ten logical `MARK_INDEX_PRICE` bindings and exactly fifteen
+shared physical inputs: five Binance `BOTH`, five OKX `MARK`, and five OKX
+`INDEX`; all ten logical bindings enter the Rust promotion scope. Query
+freshness for these generated bindings is provider-confirmation based; output
+preserves the original source timestamp and marks it old for audit rather than
+rewriting it. Missing, expired, disconnected, old-generation, incomplete,
+duplicate-conflicting, gap or cross-identity evidence remains unreadable.
+
+**Tests actually run.** Isolated no-network Python: catalog/deployment `32/32`,
+native-ingestor/query/manifest `32/32`, and the targeted compiler/query
+matrix `27/27`; `py_compile` passed for every changed Python module. Isolated
+Rust builder: `cargo fmt --check`, `qdl-core` `38/38`, and
+`qdl-realtime-core` `34/34` with one intentionally skipped isolated-Redis
+integration test. A no-write compiler dry-run produced catalog revision `9`,
+acquisition revision `17`, promotion-scope revision `8`, and no changed host
+files. These are source/test facts only, not a real-provider or runtime
+certificate.
+
+**Remaining bounded action.** Build one immutable Rust image from this tested
+revision, seal a runtime revision, then serially recreate only
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`, `rust_core_2` and
+`rust_core_3`; retain the current image/config pair for rollback. Afterwards,
+run the already-defined 60-slice/300-second no-order acceptance. V1, Kafka
+topology and offsets, Redis, SQLite, projectors/readers, Trading System,
+alpha and order paths remain outside this action.
+
+**Runtime packet clarification (2026-09-05).** The original five-role wording
+is insufficient for an end-to-end fix because all existing V2 projectors,
+query replicas and stream replicas load `StableSourceCatalog` at process
+startup. Leaving their old catalog active would correctly reject the new
+canonical mark/index binding before a consumer can read it. The bounded packet
+therefore uses exactly two immutable images from this source revision and
+serially recreates the existing twelve shared roles only: the two native
+ingestors, three Rust cores, three projectors, two query replicas and two
+stream replicas. It adds no topology, symbol worker, volume, topic, consumer
+group, credential or route policy; V1, Kafka offsets/topology, Redis, SQLite,
+Trading System, alpha and the order path remain unchanged. The prior Rust and
+Python image/config pairs are retained as named rollback coordinates.
+
+**Producer-revision compatibility correction (2026-09-05, before runtime
+mutation).** `qdl-realtime-core` correctly fences the catalog revision *per
+binding*, not as one global runtime number. Read-only inspection confirmed the
+active core has 182 revision-8 bindings, including separate non-crypto and
+dated-contract producer routes. The generated revision-9 reader catalog is an
+additive superset of the active 140 reader bindings (190 total), but a full
+generic core regeneration would rename/drop unrelated legacy raw source IDs.
+The generic refresh utility fails closed for this topology rather than emitting
+an empty standard core, which is correct.
+
+The safe bounded render retains every existing core/ingestor binding byte-for-
+byte at revision 8 and appends only the fifteen verified revision-9 physical
+MARK/INDEX inputs: five Binance `BOTH`, five OKX `MARK`, and five OKX `INDEX`.
+Thus `binance_bar_edge` and its checkpoint remain untouched: its revision-8
+BAR envelopes continue to match their retained revision-8 core bindings. The
+runtime packet is exactly twelve existing roles:
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`, `rust_core_2`,
+`rust_core_3`, `projector_v2`, `projector_v2_2`, `projector_v2_3`,
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive`. It adds no service, container, topic, binding worker,
+credential, consumer group, checkpoint mutation or authority mode.
+
+The render validates zero loss from active reader binding IDs, zero loss from
+active raw core source IDs, five/ten venue-native MARK input counts, exact
+instrument identity and mixed revision fencing before Compose is invoked. A
+failed preflight restores only the exact prior role image/config pair. No
+Kafka-offset reset, Redis flush, SQLite deletion or state-file mutation is
+permitted. The replacement C2 remains one no-order, 300-second observation
+after all twelve roles are healthy.
+
+**Packet preflight (`PASS / NOT YET ROLLED`, 2026-09-05).** The active reader
+catalog has 140 bindings at revision 8; the sealed revision-9 catalog has 190
+and loses zero existing reader binding IDs. The additive renderer retained all
+182 active core inputs at revision 8 and added exactly fifteen revision-9
+physical components to each core (five Binance `BOTH`, five OKX `MARK`, five
+OKX `INDEX`), rendering 197 inputs. It retained the native ingestor inputs and
+added exactly five Binance and ten OKX inputs (`19 -> 24`, `19 -> 29`). Parser
+validation accepted catalog `9/190`, acquisition `17/190`, and promotion scope
+`8/190`; authority bytes are unchanged. Compose forward and exact per-role
+rollback configurations both passed `config --quiet`.
+
+Forward images are immutable Python
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+and Rust
+`sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd`.
+Rollback preserves Rust
+`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`,
+Python projector/stream
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`,
+and Python query
+`sha256:8c3dc599233d8a6e4a8b13831fb62cd66f487e73fb73e8b3cfb1415a6adac51d`.
+The isolated, mode-`0750` packet is
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z`; its
+private environment files are mode `0600` and contain no committed evidence.
+
+**First forward attempt / rollback (`FAIL-CLOSED / RECOVERED`, 2026-09-05).**
+Only the three projector replicas were recreated before the next query role
+was attempted. They exited before processing because the new packet parent was
+mode `0750` while all runtime containers correctly run as UID/GID `10001`; the
+read-only `/runtime/authority.json` mount was therefore inaccessible. The
+failure was configuration-file permission only, not a provider, Kafka,
+Redis, SQLite, order or data-quality failure. The rollout stopped immediately;
+`query_v2_1` was never healthy and stream/core/ingestor roles were not
+recreated. All three projectors were serially restored to their exact captured
+image and original runtime and each became healthy.
+
+The correction exposes only the non-secret packet/bundle/runtime directories
+and public runtime JSON/YAML as `0755/0644`, matching the existing non-root
+runtime contract. The copied `rollout.env` and `rollback.env` remain `0600`;
+no certificate, key, secret or state file permission was widened. A UID-10001
+read-only probe confirmed it can read `authority.json` and the new source
+catalog. The same twelve-role packet may now be retried once; no second
+configuration shape, data source, policy or scope change is authorized.
+
+**C2 manifest parser correction (`IMPLEMENTING`, 2026-09-05).** The live
+reader packet is healthy, but the read-only C2 scope builder correctly rejects
+the generated `MARK_INDEX_PRICE` demand because its legacy release loader
+recognizes execution extras only for L2 books. The MARK demand is valid and
+already declares its strict contract: `max_freshness_ms`, `require_live`, and
+`index_native_symbol`. The narrow source correction is to validate precisely
+those three fields for `MARK_INDEX_PRICE` (including positive freshness,
+boolean liveness and nullable/non-empty index identity), with valid/missing/
+invalid regression cases. It does not change any route, SLA, provider data,
+fallback policy, runtime role, consumer identity or order behavior. C2 remains
+blocked until this parser gate passes; the running twelve-role packet stays
+unchanged during the source-only test.
+
+**Approved implementation slice.** Extend only
+`StableReleaseRoutePlan._load_crypto_demand()` so an execution
+`MARK_INDEX_PRICE` requirement validates its already sealed
+`max_freshness_ms`, `require_live`, and `index_native_symbol` fields. The
+positive two-second source freshness gate remains in the Rust/provider path;
+this reader correction neither changes that SLA nor accepts stale data. The
+regression matrix covers valid Binance/OKX forms plus missing, zero/boolean
+freshness, non-boolean liveness and invalid index identity. Exit is the exact
+candidate release plan loading successfully and malformed MARK demand failing
+closed. No runtime mutation is part of this source slice.
+
+**Candidate artifact compatibility correction (`IMPLEMENTING`).** The sealed
+revision-9 crypto catalog correctly contains the ten active Binance/OKX
+perpetual instruments, but it is not a complete replacement for the stable
+release catalog: it omits twelve retained V1/non-crypto identities and 26
+associated bindings. `StableReleaseRoutePlan` correctly refuses to validate a
+release route whose explicit V1-primary VN product has lost its catalog
+identity. Render an additive revision-9 catalog by retaining every current
+source instrument/binding absent from the candidate and preferring candidate
+rows for overlapping crypto identities. Rehash only the candidate release
+route's catalog artifact reference. `StableAcquisitionPlan` deliberately
+requires an exact binding-ID set match with the catalog, so retain the same 26
+legacy acquisition declarations in the C2-only artifact as disabled/V1
+compatibility metadata; C2 still excludes V1-primary routes and neither
+acquires nor serves them through V2. Validate exact identity/binding
+preservation and load the standard path-safe release plan; this is metadata
+compatibility only, with no service/data-plane mutation.
+
+**Source and C2-preflight exit (`PASS`, 2026-09-05).** The isolated,
+network-disabled regression set passed `24/24` across stable-release route
+validation, C2 scope construction and the five-liquid handoff matrix. It
+proves valid Binance/OKX MARK declarations load and invalid missing/zero/
+boolean/non-boolean/blank fields fail closed. The release parser accepts no
+out-of-root artifact path, so the C2 overlay uses the normal `/app/config/v2`
+paths rather than weakening path validation.
+
+The C2-only compatibility artifact at
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/c2-input`
+retains the candidate revision-9 crypto rows and exactly 12 old V1
+instruments plus 26 binding/acquisition declarations. Candidate canonical IDs
+win over superseded legacy aliases. It validates `22` instruments and `216`
+matching catalog/acquisition bindings; the sealed route revision `19` then
+builds the exact `299`-product C2 V2 scope with only the two declared VN
+V1-primary exclusions. This artifact is read-only test input and is not
+mounted by a running role; no provider data, Kafka, Redis, SQLite, V1,
+Trading System, alpha or order path changed.
+
+**Next gate.** Read the live typed `MARK_INDEX_PRICE` view for SOL/OKX from
+both V2 query replicas. Acceptance requires an authenticated provider
+confirmation and both mark/index components at or below `2_000ms`; an old
+component must remain typed `DATA_STALE`. Only then run the single bounded
+no-order C2 observation using the already validated C2 input.
+
+**Immutable C2 client gate (`APPROVED / EXECUTING`).** Build one Python image
+from source commit `bf2f5c6` and first run a disposable, no-order,
+single-consumer typed preflight through both existing query replicas. The
+client mounts only the sealed C2 input, authority record and temporary
+identity material, reaches V2 query/stream plus the manifest-authorized V1
+fallback endpoint on `executor_network`, and has no Docker socket, provider
+credential, Gateway/Risk, alpha or order capability. It does not replace a
+running reader. On pass, the same immutable client is the only image used for
+the final 300-second C2 run; on failure its compact typed evidence decides the
+next narrow correction.
+
+**Immutable client and stale guard (`PASS`, 2026-09-05).** Immutable client
+`qdl-v2-python:2.0.12-bf2f5c6` resolves to
+`sha256:1a8368dae1c05d1b54baefcfa3cb7d678e7461ddc043fefe097586385e94f8f2` and
+is built from source `bf2f5c675f3ceb739183ed33674c69c502dbfafa`. In isolated,
+network-disabled, read-only containers, Python ran `9/9 PASS` for the strict
+execution MARK snapshot expiry and release-demand contract. The expiry case
+preserves old source lineage but returns `STALE` with
+`execution_eligible=false` once authenticated receipt age exceeds `2_000ms`.
+The Rust builder also passed
+`okx_mark_index_requires_a_current_pair_on_one_generation` with one CPU-bound,
+network-disabled test container: a prior-generation OKX component is
+quarantined rather than paired. The first Rust attempt exposed a no-exec tmpfs
+test harness setting; rerun with an executable isolated tmpfs exited `0` and
+the disposable container was removed. No runtime role, data-plane state, V1,
+Kafka, Redis, SQLite, Trading System, alpha or order path changed. The only
+remaining gate is the one bounded C2 no-order observation using this immutable
+client and the already validated C2-only compatibility input.
+
+**Selected-consumer C2 harness correction (`IMPLEMENTING`, 2026-09-05).** The
+first 60-route C2 runner exited before any network or data-plane read because
+`build_v1_fallback_probes()` treated an otherwise valid selected scope with
+zero allowed V1 fallback routes as an error. The sealed manifest explicitly
+permits a single `--consumer-id` C2, so the correction is limited to returning
+an empty probe set for that fail-closed scope while retaining rejection of a
+missing required fallback. Add a regression proving the selected Trading
+System scope cannot leak a foreign alpha V1 probe. This changes no runtime
+route, SLA, provider, catalog, V1 service, order path or consumer policy.
+After this source-only gate passes, rerun exactly the same disposable 60-route
+C2 client.
+
+**Selected-consumer harness exit (`PASS`, 2026-09-05).** The first failed C2
+container made no network, provider, order or state mutation; its compact
+stderr identifies the preflight-only empty-fallback assumption. The helper now
+returns an empty V1 probe set only when the selected manifest scope declares no
+V1 fallback, while a selected scope that requires a fallback still fails if
+that product is absent. The regression proves a Trading System selection cannot
+inherit a foreign alpha V1 probe. Isolated, network-disabled Python ran `40/40
+PASS` across fallback, C2 identity/pacing and stable-release routing tests.
+Build one replacement immutable C2 client only, then rerun the same 60-route,
+300-second no-order receipt. No serving role is replaced by this source fix.
+
+**Runtime catalog compatibility repair (`APPROVED / EXECUTING`, 2026-09-05).**
+The typed SOL/OKX `MARK_INDEX_PRICE` stale guard remains correct: a provider-old
+component is still rejected at the sealed `2_000ms` boundary. Read-only runtime
+evidence identified the distinct availability fault: the revision-9 crypto-only
+runtime catalog has 10 instruments / 190 bindings while the active Rust core
+continues to emit valid retained legacy bindings. Each projector therefore
+fails closed with `canonical event is outside the stable catalog`, reconnects,
+and stops refreshing the canonical cache; SOL/OKX then becomes stale for the
+right reason but cannot recover.
+
+The repair is deliberately narrow and shared: render the existing stable
+catalog plus the admitted five-symbol MARK/L2 candidate as one additive catalog
+and matching acquisition plan, with candidate rows winning only identical
+canonical identities. Add a compiler guard that refuses any future runtime
+refresh which drops an active catalog binding. Do not relax the `2_000ms` SLA,
+rewrite source timestamps, add a symbol worker/container/topic, or alter V1,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha, or the order
+path. Source tests must prove all retained bindings survive, acquisition IDs
+match exactly, SOL/OKX MARK rows are present, and expired data remains blocked.
+
+Runtime scope after source exit is only serial rolling recreation of
+`projector_v2`, `projector_v2_2`, and `projector_v2_3` against a new immutable
+runtime directory; the existing Python image and all other role images/mounts
+remain unchanged. Rollback restores their exact prior runtime directory and
+recreates those same three projectors. Acceptance is two read-only typed
+SOL/OKX queries after catch-up: current complete data must be eligible within
+the declared SLA, while a deliberately/provider-old component remains typed
+`DATA_STALE` and ineligible. The already-approved 60-route C2 receipt remains
+blocked until this recovery evidence passes.
+
+**Compatibility compiler source exit (`PASS / RUNTIME PENDING`, 2026-09-05).**
+The first candidate compiler was not applied because it would replace retained
+quarterly/legacy L2 rows. The correct existing compiler is
+`scripts/phase115c_materialize_active_native_bars.py`: with the committed
+five-liquid execution demand it renders `216` bindings with exactly `10`
+`MARK_INDEX_PRICE` rows, retains all `206` baseline binding records and keeps
+the active Binance/OKX BTC TRADE/QUOTE source IDs unchanged. The compiler now
+supports a reviewed `--output-dir` apply target, so a runtime packet can render
+the same sealed documents into a new directory without modifying checked-in
+source artifacts. `refresh_stable_runtime_bundle.py` now additionally rejects
+a catalog which omits any source ID in the mounted active core configuration;
+this prevents a future reader/projector refresh from accepting a lineage split
+that would make canonical projection reconnect indefinitely.
+
+**Tests actually run.** In `qdl-v2-python:2.0.12-d4e8a85`, UID `10001`,
+read-only root filesystem and `--network none`,
+`tests.test_stable_runtime_refresh`,
+`tests.test_phase115c_native_bar_materialization`, and
+`tests.test_phase104_v2_query_stream_integration` passed `35/35` in `22.102s`.
+The matrix includes full prior-lineage preservation, five-symbol MARK physical
+mapping, Binance/OKX identity isolation, and source-time expiry returning typed
+ineligible data. A separate real-provider metadata dry-run was read-only and
+persisted no raw response; its Reference/L2 catalog shape was intentionally
+rejected for this runtime because it would remove active legacy L2 rows.
+
+**Projector-only runtime packet (`READY / APPLY APPROVED`, 2026-09-05).**
+The reviewed compiler output is staged outside source at
+`/home/bobby/.local/state/qdl-v2/mark-index-compat-a366d0e-20260905T185000Z/runtime`.
+It contains the additive `216`-binding catalog/acquisition pair, all `206`
+baseline records, ten native MARK rows, and the unchanged active core
+configuration. The packet changes only the `/runtime:ro` mount of
+`projector_v2`, `projector_v2_2`, and `projector_v2_3`; it retains their
+current immutable Python image and existing source-binding environment override.
+The exact rollback overlay restores their prior runtime directory
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/bundle/runtime`
+and recreates only those same roles. Compose preflight must pass before the
+serial roll. No other V2 role, V1, Kafka offsets/topology, Redis, SQLite,
+Trading System, alpha, or order path is in scope.
+
+**Reader-plane packet correction (`READY / APPLY APPROVED`, 2026-09-05).**
+The first serial projector recreation proved the catalog compiler output is
+readable and the process is healthy, but its canonical-post request still
+received `422 canonical event is outside the stable catalog`. Code inspection
+established that `stream_v2_active/passive` own the canonical ingest endpoint
+and independently load the same source catalog. Query replicas also load this
+catalog to resolve typed public reads. Therefore the exact coherent mount
+boundary is the seven existing reader roles:
+`stream_v2_passive` -> `stream_v2_active` -> `query_v2_1` ->
+`query_v2_2` -> `projector_v2` -> `projector_v2_2` ->
+`projector_v2_3`. This corrects the packet boundary only; it adds no role,
+image, topology, provider path, authority change, or data policy. The rollback
+overlay restores the prior runtime directory for exactly those seven roles.
+
+**Paired MARK/INDEX lineage repair (`APPROVED / EXECUTING`, 2026-09-05).**
+After the additive catalog became visible to the coherent reader plane, the
+projectors correctly advanced beyond the prior catalog rejection and exposed
+the remaining strict failure: `private Kafka raw lineage differs from canonical
+capture ID`. This is not a SOL/OKX provider, freshness or SLA defect. Rust
+canonicalizes one logical `MARK_INDEX_PRICE` from one Binance `BOTH` raw frame
+or two OKX `MARK`/`INDEX` raw frames, then deterministically derives the
+canonical capture ID and payload digest from the two component identities.
+Kafka's existing private header intentionally carries the current physical
+component frame, while the Python reader path incorrectly required that one
+component capture ID equal the derived logical capture ID.
+
+The approved repair is source-only and provider-neutral: add one shared
+validator for an explicitly paired `MARK_INDEX_PRICE` lineage. It accepts only
+the Rust `qdl-mark-index-capture-v1` derivation encoded by the six-part source
+sequence; recomputes the derived capture ID; requires the private raw header
+to be a valid MARK or INDEX component; and preserves provider, venue, market,
+session, connection-generation and authority-revision equality. It never
+applies to TRADE/BAR/QUOTE/L2 or an ordinary reference event, and it retains
+`v1_compatibility=NONE` for this path. Generic one-raw validation remains the
+default. Missing, malformed, cross-session, wrong-component, old-generation or
+stale records remain fail-closed; the sealed two-second execution freshness
+gate is unchanged.
+
+**Tests and rollback gate.** Add focused valid Binance/OKX paired-lineage,
+wrong component, session/generation/authority mismatch, malformed sequence and
+non-MARK rejection tests, plus an ingest/projector handoff regression. Run the
+targeted Python suite in the existing non-network, read-only UID-10001 image.
+Only after source tests pass, build one immutable Python reader image and roll
+only `projector_v2`, `projector_v2_2`, `projector_v2_3`; retain the current
+Python digest as exact rollback. No V1, Rust core, ingestor, query/stream,
+Kafka topology/offset, Redis, SQLite, Trading System, alpha or order-path
+mutation is permitted. Success requires projectors to catch up without the
+lineage error and a fresh SOL/OKX typed read; stale price remains rejected.
+
+**Source implementation and regression (`PASS / RUNTIME ROLL PENDING`,
+2026-09-05).** Added the shared
+`qdl.runtime.mark_index_lineage` validator and threaded its explicit
+`DERIVED_MARK_INDEX_COMPONENT_V1` marker through Kafka projector, signed
+canonical ingest and V2 projection. The normal single-raw path remains the
+default and still compares capture ID, payload digest, provider, venue, market,
+native symbol, session, generation and authority exactly. The derived path is
+available only to a valid `MARK_INDEX_PRICE` binding with `v1_compatibility`
+`NONE`; it recomputes the Rust pair capture from both source-sequence component
+IDs and checks that the inline raw frame is one of them. The strict `2,000ms`
+freshness calculation was not changed.
+
+The new focused suite passed `4/4`: valid Binance and OKX component lineage,
+wrong component/session/generation/authority, malformed source sequence,
+non-MARK rejection, projector-to-signed-ingest preservation and absent inline
+component rejection. The isolated read-only, no-network regression command
+then passed `72/72` with `1` existing skip in `27.470s` across
+`test_mark_index_paired_lineage`, `test_phaseb_stable_edge`,
+`test_phase104_v2_query_stream_integration` and
+`test_phase105_stable_release`. No runtime state changed during testing.
+
+**Next bounded action.** Commit this source slice, build exactly one immutable
+Python reader image, then serially recreate only `projector_v2`,
+`projector_v2_2`, `projector_v2_3` with the already-mounted additive reader
+runtime. Retain current digest `sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+as rollback; no other role is recreated. Runtime acceptance must verify no
+`private Kafka raw lineage differs from canonical capture ID`, projector
+catch-up, fresh SOL/OKX typed read, and continued stale rejection.
+
+**Runtime wiring correction (`EXECUTING`, 2026-09-05).** The first serial
+projector roll reached the updated derived-lineage branch and then received a
+bounded `422 stable event reference fields are incomplete or unknown` from the
+still-old stream canonical-ingest endpoint. No canonical/cache mutation was
+accepted. The marker is intentionally carried in the signed projector-to-stream
+request, so both existing `stream_v2_active` and `stream_v2_passive` must use
+the same tested Python image as the projectors. This is the exact code-owner
+boundary; query replicas do not ingest the marker and need no recreation.
+The packet is therefore corrected to roll five existing reader roles only:
+`stream_v2_passive` -> `stream_v2_active` -> `projector_v2` ->
+`projector_v2_2` -> `projector_v2_3`. It remains a no-topology/no-provider/no-
+authority change; V1, Rust, ingestors, query, Kafka offsets, Redis, SQLite,
+Trading System, alpha and order paths remain excluded. The same old Python
+digest remains the exact rollback for all five roles.
+
+**Paired MARK/INDEX runtime exit (`PASS`, 2026-09-05).** Source commit
+`ca8221e` adds the provider-neutral, explicitly marked paired-lineage validator;
+immutable reader image `qdl-v2-python:2.0.12-ca8221e`
+(`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`)
+passed the bounded isolated regression suite (`72/72`, one existing skip,
+`25.634s`). The first projector-only roll correctly exposed the signed
+projector-to-stream ownership boundary: old stream readers rejected the new
+explicit marker with `422` before accepting any canonical/cache write. The
+correction rolled only the two existing stream readers and three projectors,
+in order: `stream_v2_passive`, `stream_v2_active`, `projector_v2`,
+`projector_v2_2`, `projector_v2_3`. Query replicas, V1, Rust, ingestors,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha and order paths
+were not changed. No catalog, lineage or reference-field rejection appeared in
+the post-roll projector scan.
+
+The signed, mTLS/JWT, no-order runtime probe at
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/sol-okx-mark-runtime-direct-ca8221e-20260905T191439Z/acceptance.json`
+read `OKX.SWAP.PERPETUAL.SOL-USDT` `MARK_INDEX_PRICE` through both query
+replicas. It passed with source ages `40ms` and `44ms` against the unchanged
+`2,000ms` execution SLA, `gap_open=false`, zero V1 requests, zero provider
+connections and zero order actions. The existing derived-lineage regression
+also proves expired data stays typed ineligible; no freshness guard, timestamp
+or source policy was relaxed to obtain this result. The exact rollback for all
+five roles remains
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+with the prior reader runtime overlay.
+
+**Scoped cleanup.** The disposable probe container used `--rm`; five failed
+wrapper-only evidence directories and test-generated `__pycache__` paths were
+removed. State-directory disk usage moved from `2.1M` to `2.0M`; source
+`qdl/` from `3.5M` to `2.5M`; `tests/` from `2.7M` to `2.6M`. The sole retained
+receipt is the passing aggregate/digest-only evidence above. Active image
+`d711d2b572d6` and named rollback image `a2ba7af21aca` are retained; no broad
+prune, volume, network, cache or operational data cleanup occurred.
+
+**C2 local-cache circuit isolation (`APPROVED / EXECUTING`, 2026-09-05).** A
+single 60-route no-order C2 follow-up failed before its observation window with
+`provider circuit is open for LOCAL_CANONICAL_CACHE`; it did not create an
+order, signal, alpha state or durable mutation. Read-only evidence excludes a
+missing DOGE/OKX history: the canonical cache retains `2,303` final
+`OKX.SWAP.PERPETUAL.DOGE-USDT` `BAR 1m` rows while C2 asks for `700`, and the
+shared BAR edge continues to ACK that binding. The defect is a shared query
+policy issue: retryable typed errors from unrelated local cache requirements
+are converted into provider failures and can open one process-global
+`LOCAL_CANONICAL_CACHE` circuit, hiding the original product error from every
+other symbol/interval.
+
+The narrowly approved fix keeps concurrency and bounded execution but treats a
+local-cache `QueryServiceError` as its own typed result rather than an external
+provider retry/circuit event. Binance, OKX and other provider failures retain
+their existing retry, rate and circuit policy. Add a regression proving one
+retryable local error neither opens the local circuit nor prevents another
+local requirement from succeeding, while the existing external-provider retry
+test remains unchanged. No catalog, provider, freshness SLA, Rust code,
+container topology or V1 route changes are in scope. After source tests, build
+one reader image and roll only the V2 query replicas; then rerun exactly one
+300-second C2 receipt. Rollback is the current reader image/runtime pair.
+
+**SOL/OKX MARK_INDEX SLA repair and re-verification (`PASS`, 2026-09-05).**
+The underlying execution-reference defect is fixed by source commit
+`ca8221e` (paired OKX MARK/INDEX lineage) and remains guarded by its
+provider-neutral regression matrix: a valid same-generation MARK/INDEX pair
+may materialize one logical `MARK_INDEX_PRICE`; a missing, old or prior-
+generation component remains typed ineligible. The execution threshold is
+unchanged at `2,000ms`; no source timestamp, cache freshness policy or stale
+fallback was relaxed.
+
+The adjacent C2 local-cache isolation correction is source commit `247f9de`.
+It keeps a retryable `LOCAL_CANONICAL_CACHE` result typed per requirement
+instead of opening one process-wide circuit. Targeted tests passed `15/15`;
+the bounded no-network suite passed `66/66`; `py_compile` and
+`git diff --check` passed. Immutable reader image
+`qdl-v2-python:2.0.12-247f9de`
+(`sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`)
+rolled only `query_v2_1` and `query_v2_2`. Both became healthy with zero
+restart/OOM; the exact reader rollback remains
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`.
+
+The final isolated mTLS/JWT, V2-only re-verification used the new reader
+image and queried `OKX.SWAP.PERPETUAL.SOL-USDT` `MARK_INDEX_PRICE` through
+both replicas. It passed at `48ms` (`query_v2_1`) and `37ms`
+(`query_v2_2`), with `gap_open=false`, zero V1 requests, zero provider
+connections and zero order actions. The bounded receipt contains no market
+payload:
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/sol-okx-mark-reverify-247f9de-20260905T195300Z/acceptance.json`.
+The disposable `--rm` client left no container. Two earlier harness-only
+attempt directories were removed; the scoped evidence directory moved from
+`2,108 KiB` to `2,076 KiB`. The active reader image, its named rollback image
+and the one passing digest-only receipt are retained; no image/volume/cache
+prune occurred.
+
+**Decision boundary.** This closes the requested SOL/OKX index SLA defect.
+The attempted 60-route C2 BAR warmup now exposes a separate, correctly
+fail-closed materialization issue: `stable-projector-v1` is behind the
+canonical topic while Rust core is at raw-topic tail, so a final BAR can be
+old in the durable cache even though bar-edge ACKs the new provider BAR. This
+is not an index freshness workaround and was not changed in this repair. A
+release C2 certificate remains blocked until that BAR-plane lag is repaired;
+stale BAR and stale price continue to be rejected rather than accepted.
+
+**Release-closure shared projector/cache repair (`APPROVED / EXECUTING`,
+2026-09-05).** Live bounded inspection found one shared V2 materialization
+failure, not eleven independent symbol defects: all three `stable-projector-v1`
+members are retrying because both stream gateways reject canonical batches.
+The raw Rust group remains near tail, while the canonical cache is stale. The
+cache has `547,998` retained records / `551,063,356` logical payload bytes but
+its SQLite main file plus WAL consume about `3.1 GiB`, exceeding the configured
+`3 GiB` physical bound; the stable ingest endpoint therefore correctly returns
+HTTP `503` rather than accepting an unbounded write. The host has ample free
+disk, so this is bounded WAL/maintenance behavior, not provider loss or a
+reason to raise a capacity limit.
+
+**Approved scope and invariants.** Repair only the shared SQLite durable-spool
+maintenance/diagnostics path: make gateway rejection reason observable without
+logging payloads, and make WAL checkpointing bounded and safe after committed
+retention maintenance so normal operation cannot permanently consume the
+physical bound while logical retention is within policy. Preserve atomic
+append/idempotency, full synchronous durability, cursor generation, existing
+record/payload/storage bounds, and fail-closed behavior for capacity, gaps and
+stale data. Do not widen freshness, synthesize data, change provider/Rust
+admission, Kafka topology or offsets, Redis, SQLite data deletion, V1, Trading
+System, alpha, or order paths. Runtime packet after source proof may recreate
+only the five existing cache users (`stream_v2_passive`, `stream_v2_active`,
+`projector_v2`, `projector_v2_2`, `projector_v2_3`) serially with an exact
+rollback image; it must not delete the cache.
+
+**Test and exit gates.** Add deterministic tests for `409/503` aggregate
+diagnostics, WAL maintenance with a committed bounded spool, retained-window
+correctness, duplicate/idempotent append and failure to checkpoint when SQLite
+cannot safely do so. Run focused no-network Python tests plus the applicable
+existing stable transport/projector regressions. Only after source pass: build
+one immutable reader image, roll the five roles serially, prove cache writes
+resume and canonical lag falls, then run one real V2 no-order acceptance for
+the existing 60-route scope. Acceptance must separately report final BAR,
+session health, execution-price eligibility, recovery/cursor behavior and
+zero order/signal/sizing mutation. Historical certificates are inherited, not
+rerun; no release is claimed if this shared route remains unhealthy.
+
+**Source repair and test gate (`PASS / RUNTIME ROLL PENDING`, 2026-09-05).**
+`SQLiteDurableSpool` now attempts `PRAGMA wal_checkpoint(PASSIVE)` only outside
+an append transaction: after committed periodic maintenance and once before a
+physical-capacity rejection. PASSIVE cannot invalidate or wait for readers; if
+the WAL remains pinned or checkpointing errors, the original physical bound
+still rejects the append. This preserves `FULL` synchronous commits, atomic
+append/trim, event-ID idempotency and all existing logical/physical limits. The
+stable canonical ingest endpoint additionally logs a bounded, payload-safe
+backpressure reason internally, while projector sink errors now aggregate only
+the typed `409`/`503` statuses and bounded public details from both gateway
+attempts. No raw payload, secret, cursor or provider data enters those logs.
+
+New deterministic regressions prove: preflight may recover space through a
+nonblocking checkpoint; a pinned/non-reclaimable WAL remains fail-closed;
+periodic maintenance checkpoints only after a committed append; and a fenced
+active gateway plus a capacity-bound passive gateway produces one actionable,
+bounded aggregate error. The no-network immutable-image matrix passed
+`107/107`, with `1` pre-existing conditional Redis skip, in `24.103s`:
+`test_fund_phase2_transport`, `test_phase533_query_readiness`,
+`test_mark_index_paired_lineage`, `test_phaseb_stable_edge`,
+`test_phase104_v2_query_stream_integration`, and
+`test_phase105_stable_release`. `git diff --check` and `py_compile` pass.
+The disposable test client used no network, read-only source and tmpfs-only
+state; it left no runtime container, provider request or market mutation.
+
+**Next runtime packet.** Build one immutable Python reader image from this
+committed source, retain `sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`
+as the rollback image, then serially recreate only `stream_v2_passive`,
+`stream_v2_active`, `projector_v2`, `projector_v2_2`, `projector_v2_3` with
+the unchanged runtime directory. This closes existing shared SQLite connections
+without deleting a cache row; the successor active writer can checkpoint the
+WAL before retrying canonical input. Verify exact current error reason, cache
+file size/record count, projector recovery and lag before starting the one
+remaining C2 observation. V1, Kafka topology/offsets, Redis, SQLite deletion,
+Rust, ingestors, query replicas, Trading System, alpha and order paths remain
+excluded.
+
+**Prepared bounded runtime packet (`APPROVED / NOT YET APPLIED`, 2026-09-05).**
+Successor image is `qdl-v2-python:2.0.12-d8cb75b`
+(`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`),
+labelled with source revision `d8cb75b`, release `2.0.12` and non-root
+`qdl:qdl`. Its no-source-mount, no-network regression passed `22/22`. The
+packet is stored outside source at
+`/home/bobby/.local/state/qdl-v2/wal-repair-d8cb75b-20260905T202000Z/` and
+contains only a five-role image override, layered after the active three
+runtime overrides. It uses the exact active `rollout.env` and runtime mount
+already identified by Docker labels; no secret is copied or rendered into the
+packet. The exact rollback for all five roles is the active reader digest
+`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`.
+
+**Packet scope correction (`APPROVED / EXECUTING`, 2026-09-05).** Post-roll
+file-descriptor inspection established that `query_v2_1` and `query_v2_2` also
+hold the shared `canonical-cache.sqlite3`, WAL and SHM files. A five-role roll
+cannot honestly guarantee a full nonblocking checkpoint while either unchanged
+query process may retain an SQLite read snapshot. The bounded packet therefore
+includes exactly these two existing cache readers, for seven roles total:
+`stream_v2_passive`, `stream_v2_active`, `projector_v2`, `projector_v2_2`,
+`projector_v2_3`, `query_v2_1`, `query_v2_2`. It remains one shared reader
+image and one existing topology, not a new service or per-symbol worker.
+Rollback remains exact per current role: stream/projector roles return to
+`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`;
+query roles return to
+`sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`.
+The temporary WAL recovery observed immediately after the first five-role roll
+confirms the cache is writable, but continued WAL growth proves the full
+cache-user closure condition has not yet been met; no C2 or release claim is
+valid until the corrected packet is applied and observed.
+
+**Seven-role cache recovery (`PASS / C2 PENDING`, 2026-09-05).** Compose
+preflight resolved the same immutable reader image
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+for all seven declared cache users. The two previously unchanged query
+replicas were then recreated serially; no service outside the seven-role
+packet was recreated. After one maintenance interval, both query replicas and
+both stream gateways are healthy, every packet role has `restart=0` and
+`OOMKilled=false`, and bounded projector scans contain no
+backpressure/reconnect/error line. The shared main cache is `1.3 GiB`, its WAL
+is `8.3 MiB` (down from roughly `1.4-1.7 GiB` before full cache-user closure),
+and read-only state shows `548,297` retained events / `550,654,388` payload
+bytes with a fresh maintenance timestamp. This is a normal durable checkpoint,
+not a cache reset: no SQLite row, Kafka offset, Redis key, V1 route, Trading
+System, alpha, signal, sizing or order state was changed. The exact rollback
+mapping remains stream/projector -> `sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`
+and query -> `sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`.
+
+**Remaining bounded gate.** Run exactly one disposable, non-root,
+read-only 300-second C2 against the sealed Trading System paper 60-route
+scope using the existing V2 query pair and governed stream aliases. It mounts
+only the existing sealed C2 configuration/identity inputs and a new
+payload-free evidence directory; it has no Docker socket, provider, Gateway,
+Risk, alpha or order capability. It must prove current final-BAR and
+execution-price eligibility, signed cursor/reconnect and zero order/provider
+connection mutation. Failure retains only compact typed evidence and does not
+retry or alter the runtime; pass is the next release-certification input.
+
+**Shared projector catch-up throughput repair (`APPROVED / EXECUTING`,
+2026-09-05).** The requested `SOL/OKX` `MARK_INDEX_PRICE` SLA repair must not
+relax its unchanged `2,000ms` execution freshness policy: read-only evidence
+shows that the upstream BAR edge continues to ACK current provider-final
+records while the canonical projector group is draining an earlier retained
+backlog. The first post-cache-recovery C2 correctly stopped on a stale
+`OKX.SWAP.PERPETUAL.DOGE-USDT / BAR / 1m` value; both query replicas agreed on
+`complete=true`, `gap_open=false` and an old event age. This is one shared
+materialization-lag condition, not a DOGE/SOL provider, price, lineage or SLA
+defect. At inspection, the six canonical partitions retained approximately
+`2.0M` unprocessed records and were draining at roughly `600 records/s`; old
+provider events were being materialized in order, so accepting them for an
+execution read would be wrong.
+
+**Approved narrow source/runtime scope.** Lift only the stable projector
+record-batch contract from `1..512` to the engine and HTTP-sink's already
+implemented `1..1000` limit, and set the three canonical Compose projector
+roles to `1000`. The existing `2,048` pending-record bound, `32MiB`
+pending-byte bound, `8MiB` projector-batch byte bound, `1MiB` exact HTTP
+request chunk bound, downstream-before-Kafka-checkpoint ordering, idempotency,
+gap fencing and current memory limits remain unchanged. The sink will continue
+to split any large logical batch by exact wire bytes; no request, queue or
+memory bound is widened. This is provider-neutral shared projection capacity,
+not a SOL/DOGE/venue-specific workaround. No freshness threshold, provider
+admission, catalog, Rust core, Kafka topology/offset, Redis, SQLite deletion,
+V1, Trading System, alpha, signal, sizing or order path may change.
+
+**Gates and rollback.** Add deterministic config regressions for `1000`
+accepted and `1001` rejected, then run the focused no-network stable
+projector/transport/query matrices and immutable-image regression. If source
+passes, build one reader image and serially recreate exactly `projector_v2`,
+`projector_v2_2` and `projector_v2_3` with the new image and batch value. The
+rollback is exact: recreate only those three roles using active
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+with `QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=512`. Observe lag slope, cache
+write errors, RSS/OOM and typed `SOL/OKX MARK_INDEX_PRICE` freshness from both
+query replicas. A fresh price may pass; an expired price must remain typed
+ineligible. Only after that evidence is healthy may one new C2 be run.
+
+**Source gate (`PASS / IMMUTABLE BUILD PENDING`, 2026-09-05).** The stable
+runtime validation and the three production projector declarations now agree
+on `1..1000`; the focused boundary test exercises exactly `1000` accepted and
+`1001` rejected while retaining the existing check that pending capacity must
+cover one batch. The engine has already enforced this upper bound and the
+signed sink already performs exact `1MiB` request chunking, so the source
+change introduces no unbounded batch path. `git diff --check` and Python
+compile checks pass. The isolated, non-root, read-only, no-network matrix
+passed `107/107` with one existing conditional Redis skip:
+`test_phaseb_stable_edge`, `test_fund_phase2_transport`,
+`test_phase533_query_readiness`, `test_mark_index_paired_lineage`,
+`test_phase104_v2_query_stream_integration`, and
+`test_phase105_stable_release`. The test container was disposable and did not
+connect to a provider, Kafka, Redis, V1, Trading System, alpha or order path.
+The next bounded action is one immutable reader-image build from this source;
+no runtime role has yet changed for this throughput repair.
+
+**Immutable image and bounded runtime packet (`APPROVED / EXECUTING`,
+2026-09-05).** Immutable reader image
+`qdl-v2-python:2.0.12-0d03557`
+(`sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`)
+was built from source commit
+`0d035576dae9c740914fc1ffadcfeddb6f41b8c9`, carries matching OCI revision
+and `2.0.12` release labels, and passed the same isolated non-root,
+read-only, no-network `107/107` regression matrix (`1` existing conditional
+skip) in `28.256s`. The only runtime overlay to be created sets this image and
+`QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=1000` for exactly `projector_v2`,
+`projector_v2_2` and `projector_v2_3`; it is layered after the current sealed
+runtime overrides and contains no secret or copied state. Rollback is those
+same three roles only, using active image
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+with the prior batch value `512`. No query/stream role, Rust core, ingestor,
+BAR edge, Kafka topology/offset, Redis, SQLite deletion, V1, Trading System,
+alpha or order path is in this packet.
+
+**Per-partition projector fairness repair (`COMPLETE`,
+2026-09-05).** The post-recovery `SOL/OKX` stale result is correctly rejected
+at the unchanged `2,000ms` execution threshold. Read-only consumer-group
+evidence instead identifies a shared scheduling defect: each of the three
+existing projector members owns two canonical partitions, while
+`StableProjectorEngine._ready_batch` fills a batch greedily from the lowest
+sorted partition. A retained backlog in that first partition can therefore
+delay current records queued for its co-owned partition even though Rust has
+already accepted the provider frame. This is not a provider, lineage, cache
+freshness, or SLA defect.
+
+**Approved scope and invariants.** Replace only the internal batch selector
+with deterministic round-robin selection over non-empty sorted partitions.
+FIFO order within each Kafka partition, the existing `1..1000` record cap,
+byte cap, downstream durable-stream then Redis projection then Kafka
+checkpoint order, idempotency, gap fencing, and fail-closed stale behavior
+must remain unchanged. No record may be skipped, promoted merely because it
+is newer, or reordered within its partition. No catalog, Rust core, provider
+adapter, Kafka topology/offset, Redis/SQLite deletion, V1, Trading System,
+alpha, signal, sizing or order path is in scope.
+
+**Test, runtime and rollback gate.** Add a deterministic two-partition
+backlog/current regression proving bounded interleaving, per-partition FIFO,
+and no checkpoint when a downstream write fails; retain the existing stale
+execution-reference rejection coverage. Run focused no-network projector,
+transport, mark/index and query matrices, then the immutable-image matrix.
+If source passes, build one reader image and serially recreate only
+`projector_v2`, `projector_v2_2` and `projector_v2_3`, preserving their
+runtime mount and batch `1000`; rollback is the current
+`sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`
+image with the same mount/config. Observe per-partition lag, RSS/OOM and the
+typed `SOL/OKX MARK_INDEX_PRICE` result on both replicas. A fresh value may
+be eligible; an expired value must remain typed ineligible.
+
+**Fairness source gate (`PASS / RUNTIME BUILD PENDING`, 2026-09-05).**
+`StableProjectorEngine` now selects a bounded round-robin prefix across its
+assigned non-empty partitions instead of allowing the lowest partition to
+consume an entire batch. The selector is deterministic, does not mutate the
+queues, and preserves FIFO offsets per partition. New regression coverage
+models one retained co-owned backlog plus a current peer partition and proves
+the selected prefix is `2:0, 3:40, 2:1, 3:41, 2:2`; the established
+downstream-failure regression continues to prove that no Kafka checkpoint is
+made before a failed projection can be retried. MARK/INDEX paired-lineage and
+expiry rejection remain unchanged.
+
+The focused isolated read-only/no-network regression passed `6/6`; the bounded
+full matrix passed `108/108`, with `1` existing conditional Redis integration
+skip, across stable-edge, transport, query-readiness, paired MARK/INDEX,
+V2 query/stream and stable-release suites. `git diff --check` and
+`py_compile` passed. Disposable test containers were removed automatically;
+no provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
+was touched. The next action is one immutable reader-image build, followed by
+the already bounded three-projector serial roll only if the image regression
+also passes.
+
+**Fairness immutable packet (`COMPLETE`, 2026-09-05).** Source
+commit `f37644779eab6d009b6abc4f7776188d8e33b4f9` built the single shared
+reader image `qdl-v2-python:2.0.12-f376447`
+(`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`)
+with matching OCI revision and `2.0.12` release label. Its no-source-mount,
+non-root, read-only, network-disabled regression matrix passed the same
+`108/108` cases with `1` existing conditional Redis skip. The runtime packet
+will layer one image override over the exact active Compose file set and
+serially recreate only `projector_v2`, `projector_v2_2` and `projector_v2_3`.
+Their current runtime mount, `1000` record batch bound, Kafka group/offsets,
+Redis, SQLite, V1, Rust, ingestors, query/stream readers, Trading System,
+alpha and order path remain unchanged. Exact rollback is all three roles back
+to `sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`
+with the same runtime directory and batch `1000`.
+
+**Fairness rollout and SOL/OKX verification (`PASS`, 2026-09-05).** The three
+existing projectors were recreated serially, and only those roles, onto
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`.
+All are `running`, `restart=0`, `OOMKilled=false`; bounded post-roll logs have
+no error/reconnect/backpressure line. Their observed RSS is `88.75MiB`,
+`146MiB` and `156.4MiB` against their unchanged `768MiB` limits. The retained
+canonical group backlog fell to `745,704` records while preserving its Kafka
+offsets and no cache reset; fair batching lets a current co-owned partition
+make progress while historical work drains.
+
+The disposable, mTLS/JWT, V2-only and internal-network probe at
+`/home/bobby/.local/state/qdl-v2/projector-fairness-f376447-20260905T220000Z/sol-okx-mark-probe/acceptance.json`
+read `OKX.SWAP.PERPETUAL.SOL-USDT / MARK_INDEX_PRICE` from both query replicas
+at source ages `39ms` and `70ms`, with receive ages `3ms` and `9ms`,
+`gap_open=false`, zero V1 requests, zero provider connections and zero order
+actions. It retains only content digests and typed timing evidence. The strict
+expiry regression continues to return `STALE` and
+`execution_eligible=false` at `2,001ms`; the production `2,000ms` threshold
+was not changed.
+
+**Closure and cleanup.** This closes the requested SOL/OKX index-SLA defect.
+It does not certify the separate full-scope C2 BAR-plane acceptance while the
+recovering projector group still has historical lag. The active image `d190...`
+and explicit rollback `94c9...` are retained. Every test/probe container used
+`--rm`; no test image, volume, network, cache, V1, Trading System, alpha or
+order state was removed or mutated. Build-cache pruning is intentionally
+deferred because it is shared and requires a separately scoped cleanup packet.
+
+**Consolidated release-closure audit and final C2 boundary (`EXECUTING`,
+2026-09-05).** The eleven originally observed generic reference reconnects are
+not eleven independent symbol defects: their shared provider-lineage,
+local-cache circuit, WAL maintenance, batch-size and co-owned-partition fairness
+causes are covered by `ca8221e`, `247f9de`, `d8cb75b`, `0d03557` and
+`f376447`. Earlier BAR/TRADE/QUOTE/BOOK/cursor/fallback certificates remain
+inherited; they are not being re-run as a substitute for this repair.
+
+Read-only audit after the fairness rollout found all thirteen active V2 roles
+running with no post-roll error, reconnect, stale, gap, OOM or backpressure
+record. The only three historical backpressure lines are timestamped
+`20:15:21Z`, before the fairness roll; the shared stream cache is subsequently
+`READY` at roughly `550k` retained records, `515MiB` logical payload,
+`1.4GiB` SQLite main file and `16MiB` WAL against its unchanged `3GiB`
+physical bound. The three projectors retain their existing Kafka assignments,
+offsets and `1000` record cap; the bounded lag is draining rather than growing
+and observed RSS remains below `160MiB` per `768MiB` limit. No data has been
+reset, accepted stale, or reconstructed from a synthetic source.
+
+**Final action, exact scope and exit.** Wait only for the existing live
+projector group to converge to the established `<=250` record live-lag bound
+on each canonical partition (three consecutive read-only samples), then run
+one disposable C2 for the sealed `trading-system.paper.stable` 60-route scope.
+The client uses the already active immutable `d190...` image, is non-root,
+read-only, `--rm`, and may reach only the two V2 query replicas, the two
+governed stream aliases and the manifest-authorized V1 cached fallback. It has
+no Docker socket, provider credentials, Gateway/Risk/alpha endpoint or order
+capability. It must prove V2 primary warmup, final BAR, strict execution price,
+signed cursor/reconnect, declared fallback policy and zero order/provider-direct
+mutation across the sealed scope. A non-pass remains typed evidence and does
+not trigger another design change automatically. A pass is the release-closure
+certificate input; rollback remains V1 plus the named `94c9...` projector image.
+
+**Final selected-consumer C2 and release-closure evidence (`PASS / CERTIFIED
+FOR RELEASE`, 2026-09-05).** The shared projector group reached the existing
+`<=250` live-lag bound on every canonical partition for three consecutive
+read-only samples: `64/94/36/6/18/63`, `54/15/38/12/37/75`, and
+`72/42/34/12/28/78` for partitions `4/5/0/1/2/3`, respectively. It remained
+healthy afterwards at `31/33/50/15/16/76`; no offset reset, Kafka/Redis/SQLite
+deletion, source rewrite, or stale-data acceptance was used to obtain that
+state.
+
+The one sealed, disposable `trading-system.paper.stable` C2 is retained as
+bounded, payload-free evidence at
+`/home/bobby/.local/state/qdl-v2/projector-fairness-f376447-20260905T220000Z/c2-final-60-20260905T215231Z/acceptance.json`.
+It passed with `60/60` opening and closing product reads, `50` durable products,
+`300.099s` real observation after a `303.580s` quota-paced opening proof, and a
+`3.014s` closing revalidation. Its exact scope covers ten products each of
+`BAR`, `BOOK_DELTA`, `BOOK_SNAPSHOT`, `MARK_INDEX_PRICE`, `QUOTE`, and `TRADE`
+for the sealed Binance/OKX five-liquid paper routes. It proved signed
+cursor/reconnect behavior and V2 read eligibility without a provider-direct
+connection or any order action (`provider_connections=0`, `order_actions=0`,
+`cursor_directory_removed=true`). The selected manifest declares all sixty
+routes fail-closed rather than a per-product V1 read (`blocked_fallback_declared=60`,
+`blocked_v1_requests=0`); V1 remains the separately retained rollback service
+and manifest revision, not a hidden data source in this C2.
+
+The first launcher invocation stopped before network access because the
+temporary non-secret script was mode `0700` while its own hardening bootstrap
+dropped to UID `10001`. It produced no C2 receipt or data-plane mutation. The
+launcher was corrected to executable mode and the empty scoped outputs removed
+before the single real C2 above. The real client was `--rm`, read-only,
+non-root after bootstrap, memory-bounded to `384MiB`, had no Docker socket,
+provider credential, Gateway, Risk, alpha or order capability, and was removed
+on exit.
+
+Post-C2 bounded inspection finds all thirteen V2 runtime roles running,
+projector RSS `91-99MiB/768MiB`, reader/stream RSS `117-168MiB/512MiB`, and no
+new error, reconnect, stale, gap, backpressure or OOM record since the fairness
+rollout. The strict execution-price guard is unchanged: the paired SOL/OKX
+`MARK_INDEX_PRICE` probes remain fresh below `2_000ms`, while the regression at
+`2_001ms` remains typed `STALE` and `execution_eligible=false`.
+
+**Release boundary.** The requested SOL/OKX repair and the sealed 60-route
+V2 data-plane closure are certified. The source branch must now be committed,
+reviewed/merged through `dev` into `main`, and tagged from that merged immutable
+revision; no additional runtime test, topology change, consumer mutation, or
+new gate is required for this closure. Retain active projector image
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`,
+named rollback `sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`,
+V1, and the bounded receipt. Disposable C2 container cleanup is complete;
+shared build-cache pruning remains outside this release scope.
+
+**Dev handoff (`PUSHED / REMOTE CI PENDING`, 2026-09-05).** Certified source
+through `40072f3` was fast-forwarded from `origin/dev` `87a1646` to
+`origin/dev` `40072f3`; the review branch
+`fix/v2-realtime-mark-index-release` was pushed at the same revision. This host
+has neither GitHub CLI nor a GitHub API token, so it cannot truthfully inspect
+or bypass the remote Actions result. `main` and release tags are deliberately
+unchanged until the normal `dev -> main` CI/review release handoff completes.
+That is an external publication boundary, not an unimplemented data-plane or
+runtime gate; the sealed C2 certificate above remains the release evidence.
+
+**SDK release-metadata CI repair (`EXECUTING`, 2026-09-05).** Remote
+`sdk-python310` identified a bounded publication defect after the certified
+runtime work: `scripts/build_qdl_sdk_release.py` is already the authoritative
+SDK `2.0.2` builder, while the public `qdl_sdk.__version__`, README example,
+stable-release assertion and CI wheel filename still say `2.0.1`. Align only
+those public metadata expectations to the builder's declared version; do not
+touch V2 runtime, contracts, manifests, images, Kafka, Redis, SQLite, V1,
+consumer routing or order behavior. Exit requires a reproducible standalone
+wheel/import check and the same Python-3.10 CI job green; the temporary wheel
+artifact is removed after the local check.
+
+**SDK metadata source exit (`PASS LOCAL / REMOTE CI PENDING`, 2026-09-05).**
+Aligned `qdl_sdk.__version__`, the public README artifact name, the stable
+release version assertion, and the Python-3.10 CI wheel/import expectation to
+the builder's already-declared `2.0.2`. An isolated, read-only, network-disabled
+Python-3.10 container built the standalone wheel, installed it only into tmpfs
+with `--no-deps`, and imported `qdl_sdk` as `2.0.2`; its generated manifest and
+wheel names also match `2.0.2`. The disposable container and all tmpfs wheel
+files were removed. A broader source release test was intentionally not claimed
+locally because the retained runtime images omit unrelated test-only
+`PyYAML`/`tomli` dependencies; the remote `unit-tests` job is the correct
+dependency-complete authority for that test. No runtime/data-plane resource was
+modified.
+
+**Patch-release provenance and publication (`EXECUTING`, 2026-09-05).**
+`v2.0.12` already exists on `main`; this closure must therefore publish the
+next patch tag `v2.0.13`, never move an existing tag. The tracked source catalog
+is intentionally broader than the sealed active-runtime catalog: the compiler
+removes disabled Spot/dated/VN bindings and adds only admitted execution
+MARK/INDEX bindings. Consequently source route digest
+`e61f3bce...ffd95ffa` and sealed C2 route digest
+`feda8078...f9661a0` are not expected to be byte-equal. This is not drift: the
+immutable `d190...` image loaded the sealed inputs and the selected 60-route C2
+proved that exact output.
+
+Release `v2.0.13` will therefore carry a compact patch certificate rather than
+rewrite or falsely re-run the immutable `v2.0.12` full certificate: inherit its
+299-product Binance/OKX scope and formal five-gate certificate, bind the
+changed Trading-System 60-route sealed receipt, record CI SHA, active/rollback
+image digests, and state all exclusions honestly. Validate JSON/schema/tag
+paths locally, run the normal `dev` CI after the evidence commit, then merge
+`dev -> main`, create immutable annotated tag `v2.0.13` from that merged main
+revision, and let the existing tag release workflow publish the notes and
+certificate. No runtime service, data-plane store, consumer or order path is
+changed by this publication work.
+
+**Patch-release evidence source exit (`PASS LOCAL / REMOTE CI REQUIRED`,
+2026-09-05).** Added the compact, machine-readable `v2.0.13` patch certificate,
+scope evidence and release notes under `upgrade/evidence/releases/v2.0.13/`.
+They bind the predecessor `v2.0.12` certificate SHA
+`0b67916e...e4bc1b2e` and the actual sealed 60-route C2 receipt SHA
+`fb2a952e...cf58618d`; all receipt counts, timing, V1 provenance, active V2
+image, explicit rollback image and V1 boundary are recorded without secrets or
+payloads. `jq` schema parsing and the release workflow's required artifact
+paths are the local gates; normal `dev` CI remains the dependency-complete
+authority before promotion. This documentation-only slice does not change a
+runtime service, data-plane store, consumer route or order path.
+
+**Patch-release CI gate (`PASS`, 2026-09-05).** GitHub Actions CI run
+`33997000791` completed successfully for evidence commit
+`bf2cbf88855b50dbf62f3dc116187199f59d4d41`: contract tests, standalone SDK
+Python 3.10 verification and the full unit/recovery/release suite all passed.
+The verified source now contains no runtime mutation after the sealed C2;
+promotion is limited to a normal `dev -> main` merge and a new immutable
+`v2.0.13` tag. The already-published `v2.0.12` tag remains immutable.

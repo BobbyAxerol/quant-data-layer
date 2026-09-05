@@ -43,6 +43,7 @@ from qdl.runtime.stable_deployment import (
 )
 
 PRESERVED = ("stable.env", "identities")
+CORE_CONFIG_NAMES = ("core.json", "core-002.json", "core-003.json")
 
 # Edge roles persist a checkpoint that pins the catalog and acquisition
 # revisions they were started with, and refuse to restore state when either
@@ -158,6 +159,52 @@ def _load_preserved_authority(runtime_dir: Path) -> tuple[dict[str, object], byt
     return dict(decoded), encoded
 
 
+def _active_core_source_ids(runtime_dir: Path) -> set[str]:
+    """Return every source lineage still emitted by the mounted Rust core.
+
+    A reader/projector catalog may be additive, but it must never lose a
+    source ID that an active core can still publish.  Otherwise the projector
+    correctly rejects valid canonical records as outside its catalog and the
+    cache silently stops advancing.  This preflight is deliberately local and
+    read-only: it does not infer new routes or alter producer ownership.
+    """
+
+    source_ids: set[str] = set()
+    for name in CORE_CONFIG_NAMES:
+        path = runtime_dir / name
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"active {name} is unreadable") from error
+        core = payload.get("core") if isinstance(payload, dict) else None
+        bindings = core.get("bindings") if isinstance(core, dict) else None
+        if not isinstance(bindings, list) or not bindings:
+            raise ValueError(f"active {name} has no core bindings")
+        for binding in bindings:
+            source_id = binding.get("source_id") if isinstance(binding, dict) else None
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError(f"active {name} has an invalid core source ID")
+            source_ids.add(source_id)
+    return source_ids
+
+
+def _validate_active_core_catalog_coverage(
+    runtime_dir: Path, catalog: StableSourceCatalog
+) -> int:
+    """Fail closed when a refreshed reader catalog drops active core lineage."""
+
+    active_source_ids = _active_core_source_ids(runtime_dir)
+    catalog_source_ids = {binding.source_id for binding in catalog.bindings}
+    missing = sorted(active_source_ids - catalog_source_ids)
+    if missing:
+        raise ValueError(
+            "refreshed catalog omits active core source IDs: " + ",".join(missing)
+        )
+    return len(active_source_ids)
+
+
 def refresh(
     *,
     bundle_dir: Path,
@@ -185,6 +232,9 @@ def refresh(
     acquisition = StableAcquisitionPlan.load(acquisition_plan, catalog=catalog)
     promotion_scope = AuthorityPromotionScope.load(
         promotion_scope_path, catalog=catalog
+    )
+    active_core_source_count = _validate_active_core_catalog_coverage(
+        runtime_dir, catalog
     )
     authority_bytes: bytes | None = None
     if preserve_authority:
@@ -261,6 +311,7 @@ def refresh(
         "acquisition_revision": acquisition.revision,
         "promotion_scope_revision": promotion_scope.revision,
         "promotion_binding_count": len(promotion_scope.binding_ids),
+        "active_core_source_count": active_core_source_count,
         "partition_plan_epoch": partition_plan_epoch,
         "requested_rust_image_id": rust_image_id,
         "authority_bytes_preserved": authority_bytes is not None,

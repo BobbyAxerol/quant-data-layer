@@ -10,9 +10,10 @@ from pathlib import Path
 
 from app.providers.binance.rest import BinanceProviderError
 from qdl.adapters.binance.reference import BinanceUsdmReferenceAdapter
+from qdl.adapters.okx.client import OkxRestClient
 from qdl.adapters.okx.history import OkxHistoricalClient
 from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
-from qdl.domain.capabilities import binance_usdm_capabilities
+from qdl.domain.capabilities import binance_usdm_capabilities, okx_global_capabilities
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
     AssetClass,
@@ -27,6 +28,7 @@ from qdl.reference.contracts import (
     ReferenceCoverage,
     ReferenceFetch,
     ReferenceObservation,
+    ReferenceProviderError,
     ReferenceProduct,
     ReferenceRequest,
     ReferenceStatus,
@@ -109,6 +111,43 @@ class FakeOkxRest:
                 "tickSz": "0.1", "lotSz": "0.01", "minSz": "0.01", "ctVal": "0.01", "ctMult": "1", "state": "live",
             }]
         raise AssertionError(f"unexpected OKX endpoint: {path}")
+
+
+class BlockingOkxExactRest:
+    """Deterministic exact-identity responses for concurrent pair tests."""
+
+    def __init__(self, *, duplicate_index: bool = False, omit_base: str | None = None) -> None:
+        self.calls: list[tuple[str, dict[str, str], str]] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.duplicate_index = duplicate_index
+        self.omit_base = omit_base
+
+    async def get(self, path, *, params, bucket, attempts=3):
+        copied = dict(params)
+        self.calls.append((path, copied, bucket))
+        self.started.set()
+        await self.release.wait()
+        if path == "/api/v5/public/mark-price":
+            inst_id = str(copied.get("instId") or "")
+            if copied.get("instType") != "SWAP" or not inst_id:
+                raise AssertionError(f"unexpected mark params: {copied!r}")
+            base = inst_id.removesuffix("-USDT-SWAP")
+            if base == self.omit_base:
+                return []
+            return [{"instId": inst_id, "markPx": "100.25", "ts": "1001"}]
+        if path == "/api/v5/market/index-tickers":
+            index_id = str(copied.get("instId") or "")
+            if not index_id:
+                raise AssertionError(f"unexpected index params: {copied!r}")
+            base = index_id.removesuffix("-USDT")
+            if base == self.omit_base:
+                return []
+            rows = [{"instId": index_id, "idxPx": "100.00", "ts": "1002"}]
+            if self.duplicate_index:
+                rows.append({"instId": index_id, "idxPx": "99.99", "ts": "1002"})
+            return rows
+        raise AssertionError(f"unexpected OKX bulk endpoint: {path}")
 
 
 class BlockingAdapter:
@@ -973,6 +1012,87 @@ class OkxReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("index_id", "BTC-USDT"), prices.observations[1].labels)
         self.assertEqual(metadata.status, ReferenceStatus.OK)
         self.assertIn("price_tick", {item.name for item in metadata.observations[0].fields})
+
+    async def test_mark_index_exact_pairs_run_concurrently_and_preserve_identity_timestamps(self):
+        rest = BlockingOkxExactRest()
+        adapter = OkxSwapReferenceAdapter(rest)
+        capability = okx_global_capabilities("SWAP").require("mark_index_price")
+        requests = tuple(
+            ReferenceRequest(
+                instrument(
+                    venue="OKX", market="SWAP", product_type=ProductType.PERPETUAL,
+                    native_symbol=f"{base}-USDT-SWAP", base=base,
+                    attributes={"instFamily": f"{base}-USDT"},
+                ),
+                ReferenceProduct.MARK_INDEX_PRICE,
+            )
+            for base in ("BTC", "ETH", "SOL", "DOGE", "BNB")
+        )
+        tasks = tuple(
+            asyncio.create_task(
+                adapter.fetch(request, capability=capability, received_at_ns=9_999_000_000)
+            )
+            for request in requests
+        )
+        while len(rest.calls) < 10:
+            await asyncio.sleep(0)
+        rest.release.set()
+        results = await asyncio.gather(*tasks)
+
+        self.assertEqual(len(rest.calls), 10)
+        self.assertEqual(
+            {path for path, _params, _bucket in rest.calls},
+            {"/api/v5/public/mark-price", "/api/v5/market/index-tickers"},
+        )
+        for request, result in zip(requests, results, strict=True):
+            self.assertEqual(
+                [item.observed_at_ns for item in result.observations],
+                [1_001_000_000, 1_002_000_000],
+            )
+            labels = dict(result.observations[1].labels)
+            self.assertEqual(labels["index_id"], f"{request.instrument.base_asset}-USDT")
+
+    async def test_mark_index_exact_pair_fails_closed_for_missing_or_duplicate_index_row(self):
+        capability = okx_global_capabilities("SWAP").require("mark_index_price")
+        request = ReferenceRequest(
+            instrument(
+                venue="OKX", market="SWAP", product_type=ProductType.PERPETUAL,
+                native_symbol="SOL-USDT-SWAP", base="SOL",
+                attributes={"instFamily": "SOL-USDT"},
+            ),
+            ReferenceProduct.MARK_INDEX_PRICE,
+        )
+        for rest in (
+            BlockingOkxExactRest(omit_base="SOL"),
+            BlockingOkxExactRest(duplicate_index=True),
+        ):
+            adapter = OkxSwapReferenceAdapter(rest)
+            task = asyncio.create_task(
+                adapter.fetch(request, capability=capability, received_at_ns=9_999_000_000)
+            )
+            while len(rest.calls) < 2:
+                await asyncio.sleep(0)
+            rest.release.set()
+            with self.assertRaisesRegex(ReferenceProviderError, "lacks one exact instrument row"):
+                await task
+
+    async def test_mark_price_bucket_is_scoped_by_instrument_but_index_uses_documented_market_budget(self):
+        client = OkxRestClient()
+        sol = await client._bucket_for(
+            "/api/v5/public/mark-price", {"instType": "SWAP", "instId": "SOL-USDT-SWAP"}, "public"
+        )
+        sol_again = await client._bucket_for(
+            "/api/v5/public/mark-price", {"instType": "SWAP", "instId": "SOL-USDT-SWAP"}, "public"
+        )
+        eth = await client._bucket_for(
+            "/api/v5/public/mark-price", {"instType": "SWAP", "instId": "ETH-USDT-SWAP"}, "public"
+        )
+        index = await client._bucket_for(
+            "/api/v5/market/index-tickers", {"instId": "SOL-USDT"}, "market"
+        )
+        self.assertIs(sol, sol_again)
+        self.assertIsNot(sol, eth)
+        self.assertIs(index, client._buckets["market"])
 
     async def test_unavailable_okx_products_are_explicit_and_make_no_provider_call(self):
         before = len(self.rest.calls)

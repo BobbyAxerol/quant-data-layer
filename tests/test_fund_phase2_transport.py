@@ -5,6 +5,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from unittest.mock import patch
 
 from qdl.transport import (
     BackpressureRequired,
@@ -320,6 +321,49 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                     stream=first.cursor.stream,
                     partition_key=first.cursor.partition_key,
                 )
+
+    def test_physical_bound_tries_nonblocking_wal_checkpoint_before_rejecting(self):
+        with self.spool() as spool:
+            spool.append(event(1))
+            with patch.object(
+                spool,
+                "storage_bytes",
+                side_effect=(spool.config.max_storage_bytes, 0),
+            ), patch.object(
+                spool, "_checkpoint_wal_passive_locked", return_value=True
+            ) as checkpoint:
+                stored = spool.append(event(2))
+
+            self.assertFalse(stored.duplicate)
+            checkpoint.assert_called_once_with()
+
+    def test_physical_bound_stays_fail_closed_when_wal_checkpoint_cannot_reclaim(self):
+        with self.spool() as spool:
+            spool.append(event(1))
+            with patch.object(
+                spool,
+                "storage_bytes",
+                side_effect=(spool.config.max_storage_bytes,) * 2,
+            ), patch.object(
+                spool, "_checkpoint_wal_passive_locked", return_value=False
+            ) as checkpoint:
+                with self.assertRaisesRegex(
+                    BackpressureRequired, "physical storage bound"
+                ):
+                    spool.append(event(2))
+
+            checkpoint.assert_called_once_with()
+
+    def test_maintenance_checkpoints_only_after_a_committed_append(self):
+        with self.spool() as spool:
+            with patch.object(
+                spool, "_checkpoint_wal_passive_locked", return_value=True
+            ) as checkpoint:
+                stored = spool.append(event(1))
+
+            self.assertFalse(stored.duplicate)
+            checkpoint.assert_called_once_with()
+            self.assertEqual(spool.stats().records, 1)
 
     def test_checkpoint_is_monotonic_and_trim_waits_for_all_active_consumers(self):
         with self.spool() as spool:

@@ -51,6 +51,7 @@ pub fn validate_stream(stream: &str) -> Result<(), String> {
     if !(normalized.ends_with("@trade")
         || normalized.ends_with("@bookTicker")
         || normalized.ends_with("@depth@100ms")
+        || normalized.ends_with("@markPrice@1s")
         || normalized.contains("@kline_"))
     {
         return Err(format!("unsupported Binance USD-M stream: {normalized}"));
@@ -98,6 +99,7 @@ fn native_stream(decoded: &Value) -> Result<String, String> {
     let stream = match decoded.get("e").and_then(Value::as_str) {
         Some("trade") => format!("{symbol}@trade"),
         Some("bookTicker") => format!("{symbol}@bookTicker"),
+        Some("markPriceUpdate") => format!("{symbol}@markPrice@1s"),
         // USD-M diff-depth frames normally carry the documented
         // `depthUpdate` discriminator. Map only the complete structural frame
         // to the explicitly subscribed `@depth@100ms` lane; the generic L2
@@ -266,6 +268,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(depth_update.stream, "btcusdt@depth@100ms");
+        let mark_index = decode_subscribed(
+            r#"{"e":"markPriceUpdate","E":3,"s":"BTCUSDT","p":"1","i":"1"}"#.into(),
+        )
+        .unwrap();
+        assert_eq!(mark_index.stream, "btcusdt@markPrice@1s");
         assert!(decode_subscribed(
             r#"{"e":"depthUpdate","s":"BTCUSDT","U":12,"u":12,"b":[["1","2"]]}"#.into()
         )

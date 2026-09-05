@@ -233,6 +233,28 @@ class StableRuntimeRefreshTests(unittest.TestCase):
                 result["promotion_scope_revision"],
             )
 
+    def test_refuses_catalog_that_drops_an_active_core_source_lineage(self):
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = self._bundle(Path(raw))
+            (bundle / "runtime/core.json").write_text(
+                json.dumps({"core": {"bindings": [{"source_id": "removed-source"}]}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "omits active core source IDs"):
+                self._refresh(bundle, apply=False)
+
+    def test_accepts_catalog_covering_an_active_core_source_lineage(self):
+        with tempfile.TemporaryDirectory() as raw:
+            bundle = self._bundle(Path(raw))
+            catalog = StableSourceCatalog.load(CATALOG_PATH)
+            source_id = catalog.bindings[0].source_id
+            (bundle / "runtime/core.json").write_text(
+                json.dumps({"core": {"bindings": [{"source_id": source_id}]}}),
+                encoding="utf-8",
+            )
+            result = self._refresh(bundle, apply=False)
+            self.assertEqual(result["active_core_source_count"], 1)
+
 
 class StrandedCheckpointTests(unittest.TestCase):
     """A revision bump strands every edge checkpoint that pins the old value.

@@ -102,7 +102,11 @@ def build_v1_fallback_probes(
         and getattr(route, "route") == "V2_PRIMARY"
         and getattr(route, "fallback") == "V1"
     }
-    if not expected or not expected <= set(by_identity):
+    # A selected execution consumer may deliberately permit no V1 fallback at
+    # all. That is a valid fail-closed scope, not a missing fallback receipt.
+    if not expected:
+        return ()
+    if not expected <= set(by_identity):
         raise ValueError("Phase 10.5 V1 fallback products differ from the V2 acceptance scope")
 
     probes: list[V1FallbackProbe] = []

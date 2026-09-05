@@ -36,6 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         product_type: "PERPETUAL".into(),
         native_symbol: "BTCUSDT".into(),
         native_channel: "trade".into(),
+        physical_native_symbol: None,
+        physical_native_channel: None,
         provider_kind: "binance_usdm_trade".into(),
         instrument_uid: "benchmark-btcusdt".into(),
         instrument_id: "BINANCE.USDM.PERPETUAL.BTC-USDT".into(),
@@ -47,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         require_final_bar: false,
         sequence_policy: SequencePolicy::Monotonic,
         l2: None,
+        mark_index: None,
     };
     let mut core = RealtimeCore::new(RealtimeCoreConfig {
         canonical_stream: "benchmark.canonical".into(),

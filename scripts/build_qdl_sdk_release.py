@@ -15,7 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "qdl-sdk"
 NORMALIZED_NAME = "qdl_sdk"
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 DIST_INFO = f"{NORMALIZED_NAME}-{VERSION}.dist-info"
 DEPENDENCIES = (
     "grpcio>=1.70.0,<2.0.0",

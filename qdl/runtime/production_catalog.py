@@ -47,7 +47,13 @@ _BINANCE_STREAM_URL = {
     "SPOT": "wss://stream.binance.com:9443/ws",
 }
 _BOOK_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
-_SUPPORTED_FEEDS = {FeedType.TRADE, FeedType.QUOTE, FeedType.BAR, *_BOOK_FEEDS}
+_SUPPORTED_FEEDS = {
+    FeedType.TRADE,
+    FeedType.QUOTE,
+    FeedType.BAR,
+    FeedType.MARK_INDEX_PRICE,
+    *_BOOK_FEEDS,
+}
 _BINANCE_DEPTH_REST = {
     "USDM": "https://fapi.binance.com/fapi/v1/depth",
     "SPOT": "https://api.binance.com/api/v3/depth",
@@ -72,6 +78,9 @@ class ProductionDemand:
     depth_per_side: int = 0
     max_freshness_ms: int | None = None
     require_live: bool = False
+    # An OKX index ticker is a separate, explicitly declared physical
+    # subscription. Keeping it in demand avoids runtime symbol inference.
+    index_native_symbol: str | None = None
 
     def __post_init__(self) -> None:
         if (self.venue, self.market, self.product_type) not in _SUPPORTED_MARKETS:
@@ -93,9 +102,25 @@ class ProductionDemand:
                 raise ValueError("BOOK demand requires an explicit freshness bound")
             if not self.require_live:
                 raise ValueError("BOOK demand must require a live provider feed")
+        elif self.feed is FeedType.MARK_INDEX_PRICE:
+            if self.interval is not None or self.depth_per_side:
+                raise ValueError("MARK_INDEX demand cannot carry BAR/BOOK fields")
+            if self.max_freshness_ms is None or self.max_freshness_ms <= 0:
+                raise ValueError("MARK_INDEX demand requires an explicit freshness bound")
+            if not self.require_live:
+                raise ValueError("MARK_INDEX demand must require a live provider feed")
+            if self.venue == "OKX" and not (self.index_native_symbol or "").strip():
+                raise ValueError("OKX MARK_INDEX demand requires explicit index symbol")
+            if self.venue != "OKX" and self.index_native_symbol is not None:
+                raise ValueError("non-OKX MARK_INDEX demand cannot carry index symbol")
         elif self.interval is not None:
             raise ValueError("interval is valid only for BAR demand")
-        elif self.depth_per_side or self.max_freshness_ms is not None or self.require_live:
+        elif (
+            self.depth_per_side
+            or self.max_freshness_ms is not None
+            or self.require_live
+            or self.index_native_symbol is not None
+        ):
             raise ValueError("non-BOOK demand cannot carry BOOK acquisition fields")
         if not self.consumer_id.strip() or not self.native_symbol.strip() or not self.source_policy_id.strip():
             raise ValueError("production demand identity/source policy is incomplete")
@@ -179,6 +204,7 @@ class ProductionDemandManifest:
             "feed", "interval", "source_policy_id",
         }
         book_fields = {"depth_per_side", "max_freshness_ms", "require_live"}
+        mark_index_fields = {"max_freshness_ms", "require_live", "index_native_symbol"}
         if not isinstance(raw, dict) or not required <= set(raw):
             raise ValueError("production demand requirement fields are invalid")
         venue = str(raw["venue"]).strip().upper()
@@ -188,7 +214,11 @@ class ProductionDemandManifest:
         source_policy = str(raw["source_policy_id"]).strip()
         feed = FeedType(str(raw["feed"]).strip().upper())
         interval = str(raw["interval"]).strip() if raw["interval"] is not None else None
-        expected = required | book_fields if feed in _BOOK_FEEDS else required
+        expected = (
+            required | book_fields
+            if feed in _BOOK_FEEDS
+            else (required | mark_index_fields if feed is FeedType.MARK_INDEX_PRICE else required)
+        )
         if set(raw) != expected:
             raise ValueError("production demand requirement fields are invalid")
         if feed in _BOOK_FEEDS:
@@ -203,10 +233,27 @@ class ProductionDemandManifest:
                 or not isinstance(require_live, bool)
             ):
                 raise ValueError("BOOK demand acquisition fields have invalid types")
+            index_native_symbol = None
+        elif feed is FeedType.MARK_INDEX_PRICE:
+            depth_per_side = 0
+            max_freshness_ms = raw["max_freshness_ms"]
+            require_live = raw["require_live"]
+            index_native_symbol = raw["index_native_symbol"]
+            if (
+                isinstance(max_freshness_ms, bool)
+                or not isinstance(max_freshness_ms, int)
+                or not isinstance(require_live, bool)
+                or (
+                    index_native_symbol is not None
+                    and not isinstance(index_native_symbol, str)
+                )
+            ):
+                raise ValueError("MARK_INDEX demand acquisition fields have invalid types")
         else:
             depth_per_side = 0
             max_freshness_ms = None
             require_live = False
+            index_native_symbol = None
         return ProductionDemand(
             consumer_id=consumer_id,
             consumer_grade=grade,
@@ -220,6 +267,11 @@ class ProductionDemandManifest:
             depth_per_side=depth_per_side,
             max_freshness_ms=max_freshness_ms,
             require_live=require_live,
+            index_native_symbol=(
+                str(index_native_symbol).strip().upper()
+                if index_native_symbol is not None
+                else None
+            ),
         )
 
 
@@ -546,6 +598,8 @@ class ProductionCatalogBuilder:
             stale_after_ms = 15_000
         elif item.feed is FeedType.QUOTE:
             stale_after_ms = 5_000
+        elif item.feed is FeedType.MARK_INDEX_PRICE:
+            stale_after_ms = int(item.max_freshness_ms or 0)
         elif item.feed in _BOOK_FEEDS:
             # Book freshness is an explicit demand property.  Do not quietly
             # reduce it to a generic trade/BBO threshold.
@@ -590,6 +644,11 @@ class ProductionCatalogBuilder:
                 "stale_after_ms": stale_after_ms,
                 "require_final_bar": item.feed is FeedType.BAR,
                 "continuous_calendar": True,
+                **(
+                    {"freshness_basis": "PROVIDER_CONFIRMATION"}
+                    if item.feed is FeedType.MARK_INDEX_PRICE
+                    else {}
+                ),
             },
             "v1_compatibility": compatibility,
         }
@@ -621,6 +680,13 @@ class ProductionCatalogBuilder:
                     "RUST_NATIVE", f"binance_{family}_book",
                     f"{item.native_symbol.lower()}@depth@100ms", "CONTIGUOUS",
                 )
+            elif item.feed is FeedType.MARK_INDEX_PRICE:
+                if item.market != "USDM":
+                    raise ValueError("Binance MARK_INDEX is certified for USD-M only")
+                mode, kind, channel, sequence = (
+                    "RUST_NATIVE", "binance_usdm_mark_index",
+                    f"{item.native_symbol.lower()}@markPrice@1s", "NONE",
+                )
             else:
                 # The current provider/host certification proves direct Binance
                 # trade and BBO, but not final kline delivery after a valid WS
@@ -644,6 +710,10 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_bbo", "bbo-tbt", "NONE"
             elif item.feed in _BOOK_FEEDS:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_book", "books", "CONTIGUOUS"
+            elif item.feed is FeedType.MARK_INDEX_PRICE:
+                mode, kind, channel, sequence = (
+                    "RUST_NATIVE", "okx_mark_index", "mark-price", "NONE"
+                )
             elif item.feed is FeedType.BAR and item.market == "SWAP":
                 # A bounded real-provider gate proved the shared OKX business
                 # candle lane emits ``confirm=1`` final rows with canonical
@@ -689,6 +759,15 @@ class ProductionCatalogBuilder:
                 # renews its own websocket snapshot on the isolated BOOK lane;
                 # it is never polled as if it were a Binance diff-depth book.
                 "snapshot_refresh_seconds": 30,
+            }
+        if item.feed is FeedType.MARK_INDEX_PRICE:
+            result["mark_index"] = {
+                "provider_protocol": (
+                    "BINANCE_MARK_PRICE"
+                    if item.venue == "BINANCE"
+                    else "OKX_MARK_INDEX"
+                ),
+                "index_native_symbol": item.index_native_symbol,
             }
         return result
 

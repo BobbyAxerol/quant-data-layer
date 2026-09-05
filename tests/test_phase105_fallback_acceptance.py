@@ -122,6 +122,26 @@ class Phase105FallbackAcceptanceTests(unittest.TestCase):
             {"monitoring.multivenue.stable", "alpha.binance.paper.stable"},
         )
 
+    def test_selected_execution_consumer_keeps_foreign_v1_fallback_out_of_scope(self) -> None:
+        """A bounded Trading System C2 may have zero allowed V1 routes."""
+        selected_consumer = "trading-system.paper.stable"
+        selected_products = tuple(
+            item for item in self.scope.products if item.consumer_id == selected_consumer
+        )
+        foreign_v1_product = next(
+            item
+            for item in self.scope.products
+            if item.consumer_id == "alpha.binance.paper.stable"
+            and item.feed.value == "TRADE"
+        )
+        probes = build_v1_fallback_probes(
+            self.release,
+            catalog=self.catalog,
+            products=(*selected_products, foreign_v1_product),
+            consumer_ids=(selected_consumer,),
+        )
+        self.assertEqual(probes, ())
+
     def test_trade_contract_is_checked_without_retaining_payload(self) -> None:
         trade = next(item for item in self.probes if item.feed == "TRADE")
         trade_result = validate_v1_fallback_payload(trade, {

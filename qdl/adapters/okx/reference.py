@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -181,8 +182,27 @@ class OkxSwapReferenceAdapter:
     ) -> ReferenceFetch:
         observations: list[ReferenceObservation] = []
         lineage = []
+        mark_rows: list[dict[str, Any]] | None = None
+        index_rows: list[dict[str, Any]] | None = None
+        if request.mark_index_kind is MarkIndexKind.BOTH:
+            index_id = self._index_id(request)
+            mark_rows, index_rows = await asyncio.gather(
+                self._client.get(
+                    "/api/v5/public/mark-price",
+                    params={
+                        "instType": request.instrument.identity.market,
+                        "instId": request.instrument.native_symbol,
+                    },
+                    bucket="public",
+                ),
+                self._client.get(
+                    "/api/v5/market/index-tickers",
+                    params={"instId": index_id},
+                    bucket="market",
+                ),
+            )
         if request.mark_index_kind in {MarkIndexKind.MARK, MarkIndexKind.BOTH}:
-            rows = await self._client.get(
+            rows = mark_rows if mark_rows is not None else await self._client.get(
                 "/api/v5/public/mark-price",
                 params={
                     "instType": request.instrument.identity.market,
@@ -209,7 +229,7 @@ class OkxSwapReferenceAdapter:
             lineage.append(self._lineage("/api/v5/public/mark-price", capability))
         if request.mark_index_kind in {MarkIndexKind.INDEX, MarkIndexKind.BOTH}:
             index_id = self._index_id(request)
-            rows = await self._client.get(
+            rows = index_rows if index_rows is not None else await self._client.get(
                 "/api/v5/market/index-tickers",
                 params={"instId": index_id},
                 bucket="market",
