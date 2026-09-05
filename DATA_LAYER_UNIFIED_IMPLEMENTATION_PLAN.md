@@ -30224,7 +30224,7 @@ mutated. The feature worktree remains retained because Phase D still uses its
 active source; it is not an archival copy and is eligible for removal only in
 the final exact cleanup inventory.
 
-### Trading consumer certified-scope convergence (2026-09-05, IN PROGRESS)
+### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
 This is completion of the existing consumer charter, not a new phase. Owner
 approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
@@ -30267,6 +30267,42 @@ The certified execution identity has zero automatic V1 fallback products;
 all 60 V2 failures stay typed BLOCKED, with V1 retained for explicit rollback.
 Other consumers' certified fallback routes are unchanged. Exact inspected
 five-role forward/rollback Compose configs validate; runtime acceptance next.
+
+Runtime result: exactly four query/stream readers and `market_data_service`
+recreated; no added/removed container, no binary build. All image digests and
+existing mounts remain unchanged, except the additive read-only consumer
+manifest and replacement TS binding mount. Manifest revision9 is loaded;
+max_streams50/rpm1500 verified. Source commits DL `e712e67`, TS `43c49f2`.
+
+Focused real-consumer evidence PASS: SOL/DOGE/BNB on both venues and both query
+replicas (12/12 combinations), 1200 authentic contiguous closed 1m bars,
+24 typed mark/book reads. Initial probe used a nonexistent identity attribute;
+the probe was corrected to `canonical_identity`, not production code. Every
+one of 60 TS cache records advanced its observation; 50 advanced logical
+watermark (mark refresh has no durable watermark). 360/360 native-identity
+checks passed over six samples/152.401 seconds. Order-path counts unchanged.
+
+Do not overstate health: ready counts were 58/57/58/44/58/58 out of60, despite
+an earlier point-in-time60/60. Stale/eligibility rejection and reconnect occur
+on old and added symbols. Five-minute bounded log: quota/rate-limit/manifest
+errors0; execution-ineligible38 and stale-reference12. Stream active CPU sample
+64.84% of one core under its unchanged75% cap; cgroup showed960 throttled
+periods/5543, which is capacity evidence, not proof of the sole root cause.
+TS reader source also retains exponential supervision delay after successful
+reads and strict execution eligibility in stream projection. These observations
+are not repaired by changing binding or by weakening quality/Risk checks.
+Functional scope is applied; uninterrupted consumer-health closure is NOT
+claimed and no new stable certificate/tag is minted. Existing v2.0.12 provider
+certificate is inherited, not invalidated or silently enlarged. No full C2
+rerun and no new phase. Keep exact immediate rollback available.
+
+Evidence: private TS `revisions/20260905-r9-sixty/acceptance-summary.json`,
+SDK JSONL, cache/health samples, role snapshots and exact forward/rollback
+Compose files. No secrets/raw market payloads are committed. Cleanup: probe
+tmpfs directories and disposable `--rm` test containers removed; no new image
+or build cache was created. Docker inventory unchanged: images12.14GB,
+BuildKit4.164GB/0B reclaimable, 52 running/4 retained operational stopped
+containers. No broad prune, volume/network cleanup or unrelated worktree removal.
 
 ### Phase C — Canonical reader/stream release artifact
 
