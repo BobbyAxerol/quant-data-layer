@@ -37441,3 +37441,76 @@ passed `107/107` with one existing conditional Redis skip:
 connect to a provider, Kafka, Redis, V1, Trading System, alpha or order path.
 The next bounded action is one immutable reader-image build from this source;
 no runtime role has yet changed for this throughput repair.
+
+**Immutable image and bounded runtime packet (`APPROVED / EXECUTING`,
+2026-09-05).** Immutable reader image
+`qdl-v2-python:2.0.12-0d03557`
+(`sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`)
+was built from source commit
+`0d035576dae9c740914fc1ffadcfeddb6f41b8c9`, carries matching OCI revision
+and `2.0.12` release labels, and passed the same isolated non-root,
+read-only, no-network `107/107` regression matrix (`1` existing conditional
+skip) in `28.256s`. The only runtime overlay to be created sets this image and
+`QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=1000` for exactly `projector_v2`,
+`projector_v2_2` and `projector_v2_3`; it is layered after the current sealed
+runtime overrides and contains no secret or copied state. Rollback is those
+same three roles only, using active image
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+with the prior batch value `512`. No query/stream role, Rust core, ingestor,
+BAR edge, Kafka topology/offset, Redis, SQLite deletion, V1, Trading System,
+alpha or order path is in this packet.
+
+**Per-partition projector fairness repair (`APPROVED / EXECUTING`,
+2026-09-05).** The post-recovery `SOL/OKX` stale result is correctly rejected
+at the unchanged `2,000ms` execution threshold. Read-only consumer-group
+evidence instead identifies a shared scheduling defect: each of the three
+existing projector members owns two canonical partitions, while
+`StableProjectorEngine._ready_batch` fills a batch greedily from the lowest
+sorted partition. A retained backlog in that first partition can therefore
+delay current records queued for its co-owned partition even though Rust has
+already accepted the provider frame. This is not a provider, lineage, cache
+freshness, or SLA defect.
+
+**Approved scope and invariants.** Replace only the internal batch selector
+with deterministic round-robin selection over non-empty sorted partitions.
+FIFO order within each Kafka partition, the existing `1..1000` record cap,
+byte cap, downstream durable-stream then Redis projection then Kafka
+checkpoint order, idempotency, gap fencing, and fail-closed stale behavior
+must remain unchanged. No record may be skipped, promoted merely because it
+is newer, or reordered within its partition. No catalog, Rust core, provider
+adapter, Kafka topology/offset, Redis/SQLite deletion, V1, Trading System,
+alpha, signal, sizing or order path is in scope.
+
+**Test, runtime and rollback gate.** Add a deterministic two-partition
+backlog/current regression proving bounded interleaving, per-partition FIFO,
+and no checkpoint when a downstream write fails; retain the existing stale
+execution-reference rejection coverage. Run focused no-network projector,
+transport, mark/index and query matrices, then the immutable-image matrix.
+If source passes, build one reader image and serially recreate only
+`projector_v2`, `projector_v2_2` and `projector_v2_3`, preserving their
+runtime mount and batch `1000`; rollback is the current
+`sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`
+image with the same mount/config. Observe per-partition lag, RSS/OOM and the
+typed `SOL/OKX MARK_INDEX_PRICE` result on both replicas. A fresh value may
+be eligible; an expired value must remain typed ineligible.
+
+**Fairness source gate (`PASS / RUNTIME BUILD PENDING`, 2026-09-05).**
+`StableProjectorEngine` now selects a bounded round-robin prefix across its
+assigned non-empty partitions instead of allowing the lowest partition to
+consume an entire batch. The selector is deterministic, does not mutate the
+queues, and preserves FIFO offsets per partition. New regression coverage
+models one retained co-owned backlog plus a current peer partition and proves
+the selected prefix is `2:0, 3:40, 2:1, 3:41, 2:2`; the established
+downstream-failure regression continues to prove that no Kafka checkpoint is
+made before a failed projection can be retried. MARK/INDEX paired-lineage and
+expiry rejection remain unchanged.
+
+The focused isolated read-only/no-network regression passed `6/6`; the bounded
+full matrix passed `108/108`, with `1` existing conditional Redis integration
+skip, across stable-edge, transport, query-readiness, paired MARK/INDEX,
+V2 query/stream and stable-release suites. `git diff --check` and
+`py_compile` passed. Disposable test containers were removed automatically;
+no provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
+was touched. The next action is one immutable reader-image build, followed by
+the already bounded three-projector serial roll only if the image regression
+also passes.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -1365,6 +1366,56 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             event_id=bytes(envelope.event_id),
             payload=envelope.SerializeToString(deterministic=True),
             accepted_at_ns=accepted_at_ns,
+        )
+
+    def test_projector_round_robins_coowned_partition_backlog_without_reordering(self):
+        def record(partition: int, offset: int) -> KafkaProjectorRecord:
+            return KafkaProjectorRecord(
+                topic="qdl.stable.canonical.phase-b.v2",
+                partition=partition,
+                offset=offset,
+                key=f"fixture/{partition}",
+                event_id=(partition.to_bytes(1) + offset.to_bytes(15, "big")),
+                payload=b"fixture",
+                accepted_at_ns=1,
+            )
+
+        queues = {
+            ("qdl.stable.canonical.phase-b.v2", 2): deque(
+                record(2, offset) for offset in (0, 1, 2)
+            ),
+            ("qdl.stable.canonical.phase-b.v2", 3): deque(
+                record(3, offset) for offset in (40, 41)
+            ),
+        }
+
+        selected = StableProjectorEngine._round_robin_candidates(queues, 5)
+
+        self.assertEqual(
+            [(record.partition, record.offset) for _partition, record in selected],
+            [(2, 0), (3, 40), (2, 1), (3, 41), (2, 2)],
+        )
+        self.assertEqual(
+            [record.offset for partition, record in selected if partition[1] == 2],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [record.offset for partition, record in selected if partition[1] == 3],
+            [40, 41],
+        )
+        self.assertEqual(
+            [
+                record.offset
+                for record in queues[("qdl.stable.canonical.phase-b.v2", 2)]
+            ],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [
+                record.offset
+                for record in queues[("qdl.stable.canonical.phase-b.v2", 3)]
+            ],
+            [40, 41],
         )
 
     async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):

@@ -602,16 +602,13 @@ class StableProjectorEngine:
 
     async def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
         candidates = []
-        for partition in sorted(self._queues):
-            for record in self._queues[partition]:
-                if len(candidates) >= self.max_batch_records:
-                    break
-                envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
-                candidates.append((
-                    partition, record, envelope, bytes(envelope.raw_capture_id)
-                ))
-            if len(candidates) >= self.max_batch_records:
-                break
+        for partition, record in self._round_robin_candidates(
+            self._queues, self.max_batch_records
+        ):
+            envelope = market_data_pb2.EventEnvelope.FromString(record.payload)
+            candidates.append((
+                partition, record, envelope, bytes(envelope.raw_capture_id)
+            ))
 
         existing_by_id = await asyncio.to_thread(
             self.spool.find_events,
@@ -773,6 +770,31 @@ class StableProjectorEngine:
                 derived_mark_index_component=derived_mark_index_component,
             ))
         return tuple(ready)
+
+    @staticmethod
+    def _round_robin_candidates(
+        queues: dict[tuple[str, int], deque[KafkaProjectorRecord]],
+        limit: int,
+    ) -> tuple[tuple[tuple[str, int], KafkaProjectorRecord], ...]:
+        """Select a bounded, fair prefix while preserving each partition's FIFO."""
+
+        if limit <= 0:
+            return ()
+        active = deque(
+            (partition, iter(queues[partition]))
+            for partition in sorted(queues)
+            if queues[partition]
+        )
+        selected = []
+        while active and len(selected) < limit:
+            partition, records = active.popleft()
+            try:
+                record = next(records)
+            except StopIteration:
+                continue
+            selected.append((partition, record))
+            active.append((partition, records))
+        return tuple(selected)
 
     def _find_raw_many(
         self, capture_ids: tuple[bytes, ...]
