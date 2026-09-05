@@ -1487,6 +1487,13 @@ Mọi switch có cooldown/hysteresis để tránh flapping và có audit record.
 
 ## 15. Historical storage and short warmup architecture
 
+Canonical-cache read admission (2026-09-05): provider REST token budgets apply
+only to reads that may call that provider. A backend-declared local-only
+canonical warmup uses bounded concurrency (8), singleflight and request
+deadlines without a vendor token wait. A missing binding or a FRESH_SNAPSHOT
+route that may invoke provider recovery keeps the existing venue quota. This
+does not alter freshness, lineage, finality, replay or public entitlement.
+
 ### 15.1 Historical tiers
 
 ```text

@@ -35979,3 +35979,53 @@ certificate parser; no second image build is needed. Replacement client uses
 the same image, identities, quotas and networks, with the two acceptance scripts
 and offline observation module mounted readonly from the committed source.
 Preserve the first timeout receipt, and use `c2-quiet-bar/` for the replacement.
+
+Dev synchronization: fast-forward pushed through `9766659`. GitHub CI run
+`33944089886` reports Python3.10 SDK PASS, Rust contract step FAIL (exit101),
+general unit step FAIL. Public job metadata is readable; log download returns
+403 without GitHub auth. Reproduce only these failed job classes using bounded
+disposable containers: Python 1GiB/2CPU/network-none, Rust pinned1.82 2GiB/2CPU,
+readonly source, no runtime data mounts. Rust fmt passes; a local first compile
+attempt used noexec tmpfs and was corrected to the disposable writable layer,
+not treated as a repository bug. Main/tag publication remains conditional on
+these failures being resolved. No gate is disabled.
+
+C2 replacement milestone: `C2_OPENING_PASS`, **299/299 products**,
+`877.600s` opening. Full manifest has now passed the opening proof including
+declared fallback; the unchanged 300s observation and closing revalidation
+are running. This is an opening pass, not yet the terminal certificate.
+
+CI reproduction identified one Clippy argument-count error in `process_l2`
+and the obsolete four-key Reference/L2 fixture against the now-five-key
+compatibility contract. Remove only the redundant materialization timestamp
+argument (it is `raw.received_at_ns`) and update the fixture to include the
+existing approved reference identity; do not weaken keyring validation.
+Four other local discovery import errors came from readonly `/app/logs`, not
+repository behavior; use a disposable tmpfs for logs on the next run.
+
+C2 replacement completed the full `300.1008135129814s` observation after
+299/299 opening PASS, but closing `warmup:batch` of 50 products timed out on
+the Trading System primary replica. The compact failure receipt reports all
+sampled DOGE products LIVE/complete/no-gap (BAR, BOOK_DELTA, BOOK_SNAPSHOT,
+QUOTE, TRADE). This is not a new DOGE data gap. Investigate the shared batch
+read path and test that class together; retain the failed receipt, no timeout
+or freshness relaxation and no claim of terminal certification yet.
+
+Batch diagnosis: readonly profiling of 202 current cached crypto products
+took 5.6744s in total (slowest 0.1383s); the shared warmup executor nevertheless
+charges every cached row request against OKX's REST token bucket (5/s), across
+all consumers. Closing queues local reads behind a quota for HTTP calls that
+never happen. Fix the source boundary, not the C2 deadline: a backend-declared
+local-only canonical lane gets bounded concurrency/singleflight/deadlines but
+no provider token wait. Unknown backends and any path that can invoke provider
+fallback retain the existing venue budgets. Test cache-vs-provider selection,
+concurrency, cancellation, retry and unchanged domain quality. Roll only the
+two query replicas after tests; keep the other six roles on `c57658a`.
+
+Verification: the CI fixture/lint correction passes full Python discovery
+(1377 tests, 1370 PASS / 7 environment SKIP, 291.095s), Rust Clippy and
+workspace tests (153 PASS / 1 broker-dependent IGNORE). The additional local
+cache lane passes 75/75 targeted executor/query-routing/identity tests in
+10.992s, including explicit backend opt-in, 100 local reads bounded to eight
+concurrent workers with no provider sleep, and unchanged Binance/OKX rates.
+These suites overlap; counts are not additive. No runtime query change yet.

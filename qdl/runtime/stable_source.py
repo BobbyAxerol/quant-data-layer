@@ -186,6 +186,10 @@ class StableSpoolQueryBackend:
         )
         self._clock_ns = clock_ns
 
+    def warmup_is_local(self, requirement: DataRequirement) -> bool:
+        self.catalog.binding_for(requirement)
+        return True
+
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         binding = self.catalog.binding_for(requirement)
         records = self._records(

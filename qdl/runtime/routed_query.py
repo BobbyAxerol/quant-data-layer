@@ -60,6 +60,15 @@ class RoutedQueryBackend:
             return False
         return self.pass_through.serves(requirement)
 
+    def warmup_is_local(self, requirement: DataRequirement) -> bool:
+        # A fresh-snapshot recovery may call a provider after a cache miss.
+        # It must keep provider admission even when the current cache is full.
+        return self._binding_exists(requirement) and not (
+            requirement.recovery is RecoveryPolicy.FRESH_SNAPSHOT
+            and self.pass_through is not None
+            and self.pass_through.serves(requirement)
+        )
+
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
         if self._binding_exists(requirement):
             result = self.spool.history(requirement)

@@ -408,6 +408,34 @@ class WarmupContractAndPlannerTests(unittest.TestCase):
 
 
 class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_cache_has_bounded_concurrency_without_provider_token_wait(self):
+        sleeps = []
+        running = 0
+        peak = 0
+
+        async def sleep(delay):
+            sleeps.append(delay)
+
+        async def work(value):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0)
+            running -= 1
+            return value
+
+        executor = BoundedWarmupExecutor(sleep=sleep)
+        result = await executor.execute(
+            range(100), work=work, identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE", deadline_ms=lambda _: 2_000,
+        )
+        self.assertEqual([item.value for item in result], list(range(100)))
+        self.assertTrue(all(item.ok and item.attempts == 1 for item in result))
+        self.assertLessEqual(peak, 8)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(executor.provider_policies["OKX"].requests_per_second, 5.0)
+        self.assertEqual(executor.provider_policies["BINANCE"].requests_per_second, 8.0)
+
     async def test_identical_concurrent_work_is_singleflight(self):
         executor = BoundedWarmupExecutor[int, int]()
         started = asyncio.Event()
@@ -1118,6 +1146,30 @@ class SdkBatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_query_service_uses_local_lane_only_on_backend_opt_in(self):
+        class Service(V2QueryService):
+            def __init__(self, local):
+                self.instruments = SimpleNamespace(get=lambda _: SimpleNamespace(
+                    identity=SimpleNamespace(venue="OKX")))
+                self.backend = SimpleNamespace(warmup_is_local=lambda _: local)
+                self.warmup_executor = BoundedWarmupExecutor()
+                self.last_batch_evidence = {}
+
+            def warmup(self, requirement, *, purpose, request_id=None):
+                return "warmup-ok"
+
+        requirement = DataRequirement(
+            instrument_uid=BINANCE_ETH, feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA, source_policy_id="crypto_primary_v2",
+            interval="1m", warmup=WarmupSpecification.for_rows(1),
+        )
+        for local, expected in ((True, "LOCAL_CANONICAL_CACHE"), (False, "OKX")):
+            service = Service(local)
+            self.assertEqual(await service.warmup_async(
+                requirement, purpose=AccessPurpose.INTERNAL_ALPHA), "warmup-ok")
+            self.assertEqual(set(service.warmup_executor._semaphores), {expected})
+            self.assertEqual(set(service.warmup_executor._tokens), set() if local else {"OKX"})
+
     async def test_single_warmup_is_nonblocking_and_reuses_retry_policy(self):
         class Service(V2QueryService):
             def __init__(self):

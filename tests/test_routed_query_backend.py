@@ -134,6 +134,25 @@ class RoutedQueryBackendTests(unittest.TestCase):
     def test_it_satisfies_the_backend_protocol(self):
         self.assertIsInstance(self.backend, MarketDataQueryBackend)
 
+    def test_local_lane_never_includes_provider_fallback(self):
+        for venue in ("BINANCE", "OKX"):
+            binding = next(b for b in self.catalog.bindings
+                           if b.instrument.identity.venue == venue and b.feed is FeedType.BAR)
+            requirement = self._requirement(
+                binding.instrument.instrument_uid,
+                source_policy_id=binding.source_policy_id, interval=binding.interval,
+                recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+            )
+            self.assertTrue(self.backend.warmup_is_local(requirement))
+            from dataclasses import replace
+            self.assertFalse(self.backend.warmup_is_local(
+                replace(requirement, recovery=RecoveryPolicy.FRESH_SNAPSHOT)
+            ))
+        self.assertFalse(self.backend.warmup_is_local(self._requirement(self.unbound_uid)))
+        self.assertTrue(RoutedQueryBackend(self.spool).warmup_is_local(
+            self._requirement(BINANCE_BTC)
+        ))
+
     def test_a_bound_instrument_always_uses_the_authoritative_spool(self):
         # Declaring FRESH_SNAPSHOT must never downgrade a covered consumer.
         requirement = self._requirement(BINANCE_BTC)

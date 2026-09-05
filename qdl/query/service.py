@@ -339,6 +339,9 @@ class V2QueryService:
                 raise
 
         def provider(requirement: DataRequirement) -> str:
+            local = getattr(self.backend, "warmup_is_local", None)
+            if callable(local) and local(requirement):
+                return "LOCAL_CANONICAL_CACHE"
             try:
                 return self.instruments.get(requirement.instrument_uid).identity.venue
             except KeyError:

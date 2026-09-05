@@ -397,7 +397,6 @@ impl RealtimeCore {
                 raw,
                 payload,
                 processing_at_ns,
-                materialized_at_ns,
                 transport_offset,
             ));
         }
@@ -591,9 +590,9 @@ impl RealtimeCore {
         raw: RawProviderEnvelope,
         payload: Value,
         processing_at_ns: i64,
-        materialized_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
+        let materialized_at_ns = raw.received_at_ns;
         let Some(l2) = binding.l2.as_ref() else {
             unreachable!("process_l2 only accepts an L2 binding")
         };
