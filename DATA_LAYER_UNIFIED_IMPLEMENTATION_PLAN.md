@@ -37460,7 +37460,7 @@ with the prior batch value `512`. No query/stream role, Rust core, ingestor,
 BAR edge, Kafka topology/offset, Redis, SQLite deletion, V1, Trading System,
 alpha or order path is in this packet.
 
-**Per-partition projector fairness repair (`APPROVED / EXECUTING`,
+**Per-partition projector fairness repair (`COMPLETE`,
 2026-09-05).** The post-recovery `SOL/OKX` stale result is correctly rejected
 at the unchanged `2,000ms` execution threshold. Read-only consumer-group
 evidence instead identifies a shared scheduling defect: each of the three
@@ -37514,3 +37514,46 @@ no provider, Kafka, Redis, SQLite, V1, Trading System, alpha or order state
 was touched. The next action is one immutable reader-image build, followed by
 the already bounded three-projector serial roll only if the image regression
 also passes.
+
+**Fairness immutable packet (`COMPLETE`, 2026-09-05).** Source
+commit `f37644779eab6d009b6abc4f7776188d8e33b4f9` built the single shared
+reader image `qdl-v2-python:2.0.12-f376447`
+(`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`)
+with matching OCI revision and `2.0.12` release label. Its no-source-mount,
+non-root, read-only, network-disabled regression matrix passed the same
+`108/108` cases with `1` existing conditional Redis skip. The runtime packet
+will layer one image override over the exact active Compose file set and
+serially recreate only `projector_v2`, `projector_v2_2` and `projector_v2_3`.
+Their current runtime mount, `1000` record batch bound, Kafka group/offsets,
+Redis, SQLite, V1, Rust, ingestors, query/stream readers, Trading System,
+alpha and order path remain unchanged. Exact rollback is all three roles back
+to `sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`
+with the same runtime directory and batch `1000`.
+
+**Fairness rollout and SOL/OKX verification (`PASS`, 2026-09-05).** The three
+existing projectors were recreated serially, and only those roles, onto
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`.
+All are `running`, `restart=0`, `OOMKilled=false`; bounded post-roll logs have
+no error/reconnect/backpressure line. Their observed RSS is `88.75MiB`,
+`146MiB` and `156.4MiB` against their unchanged `768MiB` limits. The retained
+canonical group backlog fell to `745,704` records while preserving its Kafka
+offsets and no cache reset; fair batching lets a current co-owned partition
+make progress while historical work drains.
+
+The disposable, mTLS/JWT, V2-only and internal-network probe at
+`/home/bobby/.local/state/qdl-v2/projector-fairness-f376447-20260905T220000Z/sol-okx-mark-probe/acceptance.json`
+read `OKX.SWAP.PERPETUAL.SOL-USDT / MARK_INDEX_PRICE` from both query replicas
+at source ages `39ms` and `70ms`, with receive ages `3ms` and `9ms`,
+`gap_open=false`, zero V1 requests, zero provider connections and zero order
+actions. It retains only content digests and typed timing evidence. The strict
+expiry regression continues to return `STALE` and
+`execution_eligible=false` at `2,001ms`; the production `2,000ms` threshold
+was not changed.
+
+**Closure and cleanup.** This closes the requested SOL/OKX index-SLA defect.
+It does not certify the separate full-scope C2 BAR-plane acceptance while the
+recovering projector group still has historical lag. The active image `d190...`
+and explicit rollback `94c9...` are retained. Every test/probe container used
+`--rm`; no test image, volume, network, cache, V1, Trading System, alpha or
+order state was removed or mutated. Build-cache pruning is intentionally
+deferred because it is shared and requires a separately scoped cleanup packet.
