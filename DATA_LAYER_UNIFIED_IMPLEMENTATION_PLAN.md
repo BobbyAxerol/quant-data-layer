@@ -36798,3 +36798,33 @@ stream replicas. It adds no topology, symbol worker, volume, topic, consumer
 group, credential or route policy; V1, Kafka offsets/topology, Redis, SQLite,
 Trading System, alpha and the order path remain unchanged. The prior Rust and
 Python image/config pairs are retained as named rollback coordinates.
+
+**Producer-revision compatibility correction (2026-09-05, before runtime
+mutation).** `qdl-realtime-core` correctly fences the catalog revision *per
+binding*, not as one global runtime number. Read-only inspection confirmed the
+active core has 182 revision-8 bindings, including separate non-crypto and
+dated-contract producer routes. The generated revision-9 reader catalog is an
+additive superset of the active 140 reader bindings (190 total), but a full
+generic core regeneration would rename/drop unrelated legacy raw source IDs.
+The generic refresh utility fails closed for this topology rather than emitting
+an empty standard core, which is correct.
+
+The safe bounded render retains every existing core/ingestor binding byte-for-
+byte at revision 8 and appends only the fifteen verified revision-9 physical
+MARK/INDEX inputs: five Binance `BOTH`, five OKX `MARK`, and five OKX `INDEX`.
+Thus `binance_bar_edge` and its checkpoint remain untouched: its revision-8
+BAR envelopes continue to match their retained revision-8 core bindings. The
+runtime packet is exactly twelve existing roles:
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `rust_core`, `rust_core_2`,
+`rust_core_3`, `projector_v2`, `projector_v2_2`, `projector_v2_3`,
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive`. It adds no service, container, topic, binding worker,
+credential, consumer group, checkpoint mutation or authority mode.
+
+The render validates zero loss from active reader binding IDs, zero loss from
+active raw core source IDs, five/ten venue-native MARK input counts, exact
+instrument identity and mixed revision fencing before Compose is invoked. A
+failed preflight restores only the exact prior role image/config pair. No
+Kafka-offset reset, Redis flush, SQLite deletion or state-file mutation is
+permitted. The replacement C2 remains one no-order, 300-second observation
+after all twelve roles are healthy.
