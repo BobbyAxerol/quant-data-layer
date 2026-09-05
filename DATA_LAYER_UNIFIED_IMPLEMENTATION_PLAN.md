@@ -30226,7 +30226,7 @@ the final exact cleanup inventory.
 
 ### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
-**Consumer stability completion (IN PROGRESS, owner approved 2026-09-05).**
+**Consumer stability completion (SDK TESTED; TS SUSTAINED HEALTH FAIL, 2026-09-05).**
 Continue this same closure, no new phase or provider certification rerun.
 The installed TS SDK2.0.1 lacks current certified quiet-continuity handling.
 Package current SDK as2.0.2, run focused SDK/contract/package tests, update TS
@@ -30246,6 +30246,20 @@ SDK source digest fbd0f6306268237715b318b75ca50eb8a4dc1fdfe20b7c21b4ae39f09fea2e
 TS integration adds124 passing tests and pins that wheel. No Data Layer image
 build or runtime change. Certification waits for the approved reader-only real60
 observation; previous299 evidence remains inherited, not rerun or overwritten.
+
+Final reader-only runtime packet (approved explicitly by owner) used TS
+2d89e8f/imagef0d12295 with SDK2.0.2. TS127 focused tests and DL42 SDK tests PASS.
+Real20 query-replica/instrument cases PASS (five symbols per venue,2000 closed
+bars,40 book reads);60 cache products and50 durable watermarks progressed.
+Nevertheless300.364s sustained-health acceptance FAIL: after startup58-60
+ready, final59; typed TRADE liveness and stale OKX MARK_INDEX_PRICE remain.
+TS records exact fail evidence and correction boundary in its corresponding
+main-plan section. No new Data Layer certificate/tag/publication: v2.0.12's
+299-product certificate is preserved, not changed to hide this consumer gap.
+V2 Python1c1392bf/Rust36a822c0, V1, Kafka/Redis/SQLite, alpha and order path
+unchanged. Onlymarket_data_service changed in the complete container inventory;
+DB order/session/bracket/journal counts unchanged. Localdev includesSDK commit
+ab9b545; stablemain remainsf8adb61 pending a genuine successful closure.
 
 This is completion of the existing consumer charter, not a new phase. Owner
 approved inheriting the v2.0.12 certificate (299 products, certificate SHA256
