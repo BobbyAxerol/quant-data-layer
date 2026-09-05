@@ -37557,3 +37557,86 @@ and explicit rollback `94c9...` are retained. Every test/probe container used
 `--rm`; no test image, volume, network, cache, V1, Trading System, alpha or
 order state was removed or mutated. Build-cache pruning is intentionally
 deferred because it is shared and requires a separately scoped cleanup packet.
+
+**Consolidated release-closure audit and final C2 boundary (`EXECUTING`,
+2026-09-05).** The eleven originally observed generic reference reconnects are
+not eleven independent symbol defects: their shared provider-lineage,
+local-cache circuit, WAL maintenance, batch-size and co-owned-partition fairness
+causes are covered by `ca8221e`, `247f9de`, `d8cb75b`, `0d03557` and
+`f376447`. Earlier BAR/TRADE/QUOTE/BOOK/cursor/fallback certificates remain
+inherited; they are not being re-run as a substitute for this repair.
+
+Read-only audit after the fairness rollout found all thirteen active V2 roles
+running with no post-roll error, reconnect, stale, gap, OOM or backpressure
+record. The only three historical backpressure lines are timestamped
+`20:15:21Z`, before the fairness roll; the shared stream cache is subsequently
+`READY` at roughly `550k` retained records, `515MiB` logical payload,
+`1.4GiB` SQLite main file and `16MiB` WAL against its unchanged `3GiB`
+physical bound. The three projectors retain their existing Kafka assignments,
+offsets and `1000` record cap; the bounded lag is draining rather than growing
+and observed RSS remains below `160MiB` per `768MiB` limit. No data has been
+reset, accepted stale, or reconstructed from a synthetic source.
+
+**Final action, exact scope and exit.** Wait only for the existing live
+projector group to converge to the established `<=250` record live-lag bound
+on each canonical partition (three consecutive read-only samples), then run
+one disposable C2 for the sealed `trading-system.paper.stable` 60-route scope.
+The client uses the already active immutable `d190...` image, is non-root,
+read-only, `--rm`, and may reach only the two V2 query replicas, the two
+governed stream aliases and the manifest-authorized V1 cached fallback. It has
+no Docker socket, provider credentials, Gateway/Risk/alpha endpoint or order
+capability. It must prove V2 primary warmup, final BAR, strict execution price,
+signed cursor/reconnect, declared fallback policy and zero order/provider-direct
+mutation across the sealed scope. A non-pass remains typed evidence and does
+not trigger another design change automatically. A pass is the release-closure
+certificate input; rollback remains V1 plus the named `94c9...` projector image.
+
+**Final selected-consumer C2 and release-closure evidence (`PASS / CERTIFIED
+FOR RELEASE`, 2026-09-05).** The shared projector group reached the existing
+`<=250` live-lag bound on every canonical partition for three consecutive
+read-only samples: `64/94/36/6/18/63`, `54/15/38/12/37/75`, and
+`72/42/34/12/28/78` for partitions `4/5/0/1/2/3`, respectively. It remained
+healthy afterwards at `31/33/50/15/16/76`; no offset reset, Kafka/Redis/SQLite
+deletion, source rewrite, or stale-data acceptance was used to obtain that
+state.
+
+The one sealed, disposable `trading-system.paper.stable` C2 is retained as
+bounded, payload-free evidence at
+`/home/bobby/.local/state/qdl-v2/projector-fairness-f376447-20260905T220000Z/c2-final-60-20260905T215231Z/acceptance.json`.
+It passed with `60/60` opening and closing product reads, `50` durable products,
+`300.099s` real observation after a `303.580s` quota-paced opening proof, and a
+`3.014s` closing revalidation. Its exact scope covers ten products each of
+`BAR`, `BOOK_DELTA`, `BOOK_SNAPSHOT`, `MARK_INDEX_PRICE`, `QUOTE`, and `TRADE`
+for the sealed Binance/OKX five-liquid paper routes. It proved signed
+cursor/reconnect behavior and V2 read eligibility without a provider-direct
+connection or any order action (`provider_connections=0`, `order_actions=0`,
+`cursor_directory_removed=true`). The selected manifest declares all sixty
+routes fail-closed rather than a per-product V1 read (`blocked_fallback_declared=60`,
+`blocked_v1_requests=0`); V1 remains the separately retained rollback service
+and manifest revision, not a hidden data source in this C2.
+
+The first launcher invocation stopped before network access because the
+temporary non-secret script was mode `0700` while its own hardening bootstrap
+dropped to UID `10001`. It produced no C2 receipt or data-plane mutation. The
+launcher was corrected to executable mode and the empty scoped outputs removed
+before the single real C2 above. The real client was `--rm`, read-only,
+non-root after bootstrap, memory-bounded to `384MiB`, had no Docker socket,
+provider credential, Gateway, Risk, alpha or order capability, and was removed
+on exit.
+
+Post-C2 bounded inspection finds all thirteen V2 runtime roles running,
+projector RSS `91-99MiB/768MiB`, reader/stream RSS `117-168MiB/512MiB`, and no
+new error, reconnect, stale, gap, backpressure or OOM record since the fairness
+rollout. The strict execution-price guard is unchanged: the paired SOL/OKX
+`MARK_INDEX_PRICE` probes remain fresh below `2_000ms`, while the regression at
+`2_001ms` remains typed `STALE` and `execution_eligible=false`.
+
+**Release boundary.** The requested SOL/OKX repair and the sealed 60-route
+V2 data-plane closure are certified. The source branch must now be committed,
+reviewed/merged through `dev` into `main`, and tagged from that merged immutable
+revision; no additional runtime test, topology change, consumer mutation, or
+new gate is required for this closure. Retain active projector image
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`,
+named rollback `sha256:94c9ef02bfc13f99eebabe641d4723ae6ec08fbaabffb3a217248add88b58820`,
+V1, and the bounded receipt. Disposable C2 container cleanup is complete;
+shared build-cache pruning remains outside this release scope.
