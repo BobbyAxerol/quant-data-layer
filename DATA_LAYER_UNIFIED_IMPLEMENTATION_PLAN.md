@@ -37210,3 +37210,45 @@ test remains unchanged. No catalog, provider, freshness SLA, Rust code,
 container topology or V1 route changes are in scope. After source tests, build
 one reader image and roll only the V2 query replicas; then rerun exactly one
 300-second C2 receipt. Rollback is the current reader image/runtime pair.
+
+**SOL/OKX MARK_INDEX SLA repair and re-verification (`PASS`, 2026-09-05).**
+The underlying execution-reference defect is fixed by source commit
+`ca8221e` (paired OKX MARK/INDEX lineage) and remains guarded by its
+provider-neutral regression matrix: a valid same-generation MARK/INDEX pair
+may materialize one logical `MARK_INDEX_PRICE`; a missing, old or prior-
+generation component remains typed ineligible. The execution threshold is
+unchanged at `2,000ms`; no source timestamp, cache freshness policy or stale
+fallback was relaxed.
+
+The adjacent C2 local-cache isolation correction is source commit `247f9de`.
+It keeps a retryable `LOCAL_CANONICAL_CACHE` result typed per requirement
+instead of opening one process-wide circuit. Targeted tests passed `15/15`;
+the bounded no-network suite passed `66/66`; `py_compile` and
+`git diff --check` passed. Immutable reader image
+`qdl-v2-python:2.0.12-247f9de`
+(`sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`)
+rolled only `query_v2_1` and `query_v2_2`. Both became healthy with zero
+restart/OOM; the exact reader rollback remains
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`.
+
+The final isolated mTLS/JWT, V2-only re-verification used the new reader
+image and queried `OKX.SWAP.PERPETUAL.SOL-USDT` `MARK_INDEX_PRICE` through
+both replicas. It passed at `48ms` (`query_v2_1`) and `37ms`
+(`query_v2_2`), with `gap_open=false`, zero V1 requests, zero provider
+connections and zero order actions. The bounded receipt contains no market
+payload:
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/sol-okx-mark-reverify-247f9de-20260905T195300Z/acceptance.json`.
+The disposable `--rm` client left no container. Two earlier harness-only
+attempt directories were removed; the scoped evidence directory moved from
+`2,108 KiB` to `2,076 KiB`. The active reader image, its named rollback image
+and the one passing digest-only receipt are retained; no image/volume/cache
+prune occurred.
+
+**Decision boundary.** This closes the requested SOL/OKX index SLA defect.
+The attempted 60-route C2 BAR warmup now exposes a separate, correctly
+fail-closed materialization issue: `stable-projector-v1` is behind the
+canonical topic while Rust core is at raw-topic tail, so a final BAR can be
+old in the durable cache even though bar-edge ACKs the new provider BAR. This
+is not an index freshness workaround and was not changed in this repair. A
+release C2 certificate remains blocked until that BAR-plane lag is repaired;
+stale BAR and stale price continue to be rejected rather than accepted.
