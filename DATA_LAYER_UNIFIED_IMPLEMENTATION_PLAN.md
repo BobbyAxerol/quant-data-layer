@@ -36938,3 +36938,32 @@ both V2 query replicas. Acceptance requires an authenticated provider
 confirmation and both mark/index components at or below `2_000ms`; an old
 component must remain typed `DATA_STALE`. Only then run the single bounded
 no-order C2 observation using the already validated C2 input.
+
+**Immutable C2 client gate (`APPROVED / EXECUTING`).** Build one Python image
+from source commit `bf2f5c6` and first run a disposable, no-order,
+single-consumer typed preflight through both existing query replicas. The
+client mounts only the sealed C2 input, authority record and temporary
+identity material, reaches V2 query/stream plus the manifest-authorized V1
+fallback endpoint on `executor_network`, and has no Docker socket, provider
+credential, Gateway/Risk, alpha or order capability. It does not replace a
+running reader. On pass, the same immutable client is the only image used for
+the final 300-second C2 run; on failure its compact typed evidence decides the
+next narrow correction.
+
+**Immutable client and stale guard (`PASS`, 2026-09-05).** Immutable client
+`qdl-v2-python:2.0.12-bf2f5c6` resolves to
+`sha256:1a8368dae1c05d1b54baefcfa3cb7d678e7461ddc043fefe097586385e94f8f2` and
+is built from source `bf2f5c675f3ceb739183ed33674c69c502dbfafa`. In isolated,
+network-disabled, read-only containers, Python ran `9/9 PASS` for the strict
+execution MARK snapshot expiry and release-demand contract. The expiry case
+preserves old source lineage but returns `STALE` with
+`execution_eligible=false` once authenticated receipt age exceeds `2_000ms`.
+The Rust builder also passed
+`okx_mark_index_requires_a_current_pair_on_one_generation` with one CPU-bound,
+network-disabled test container: a prior-generation OKX component is
+quarantined rather than paired. The first Rust attempt exposed a no-exec tmpfs
+test harness setting; rerun with an executable isolated tmpfs exited `0` and
+the disposable container was removed. No runtime role, data-plane state, V1,
+Kafka, Redis, SQLite, Trading System, alpha or order path changed. The only
+remaining gate is the one bounded C2 no-order observation using this immutable
+client and the already validated C2-only compatibility input.
