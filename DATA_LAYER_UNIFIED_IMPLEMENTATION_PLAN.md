@@ -37327,3 +37327,117 @@ file size/record count, projector recovery and lag before starting the one
 remaining C2 observation. V1, Kafka topology/offsets, Redis, SQLite deletion,
 Rust, ingestors, query replicas, Trading System, alpha and order paths remain
 excluded.
+
+**Prepared bounded runtime packet (`APPROVED / NOT YET APPLIED`, 2026-09-05).**
+Successor image is `qdl-v2-python:2.0.12-d8cb75b`
+(`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`),
+labelled with source revision `d8cb75b`, release `2.0.12` and non-root
+`qdl:qdl`. Its no-source-mount, no-network regression passed `22/22`. The
+packet is stored outside source at
+`/home/bobby/.local/state/qdl-v2/wal-repair-d8cb75b-20260905T202000Z/` and
+contains only a five-role image override, layered after the active three
+runtime overrides. It uses the exact active `rollout.env` and runtime mount
+already identified by Docker labels; no secret is copied or rendered into the
+packet. The exact rollback for all five roles is the active reader digest
+`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`.
+
+**Packet scope correction (`APPROVED / EXECUTING`, 2026-09-05).** Post-roll
+file-descriptor inspection established that `query_v2_1` and `query_v2_2` also
+hold the shared `canonical-cache.sqlite3`, WAL and SHM files. A five-role roll
+cannot honestly guarantee a full nonblocking checkpoint while either unchanged
+query process may retain an SQLite read snapshot. The bounded packet therefore
+includes exactly these two existing cache readers, for seven roles total:
+`stream_v2_passive`, `stream_v2_active`, `projector_v2`, `projector_v2_2`,
+`projector_v2_3`, `query_v2_1`, `query_v2_2`. It remains one shared reader
+image and one existing topology, not a new service or per-symbol worker.
+Rollback remains exact per current role: stream/projector roles return to
+`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`;
+query roles return to
+`sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`.
+The temporary WAL recovery observed immediately after the first five-role roll
+confirms the cache is writable, but continued WAL growth proves the full
+cache-user closure condition has not yet been met; no C2 or release claim is
+valid until the corrected packet is applied and observed.
+
+**Seven-role cache recovery (`PASS / C2 PENDING`, 2026-09-05).** Compose
+preflight resolved the same immutable reader image
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+for all seven declared cache users. The two previously unchanged query
+replicas were then recreated serially; no service outside the seven-role
+packet was recreated. After one maintenance interval, both query replicas and
+both stream gateways are healthy, every packet role has `restart=0` and
+`OOMKilled=false`, and bounded projector scans contain no
+backpressure/reconnect/error line. The shared main cache is `1.3 GiB`, its WAL
+is `8.3 MiB` (down from roughly `1.4-1.7 GiB` before full cache-user closure),
+and read-only state shows `548,297` retained events / `550,654,388` payload
+bytes with a fresh maintenance timestamp. This is a normal durable checkpoint,
+not a cache reset: no SQLite row, Kafka offset, Redis key, V1 route, Trading
+System, alpha, signal, sizing or order state was changed. The exact rollback
+mapping remains stream/projector -> `sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`
+and query -> `sha256:57525b2c3eccf352831ee8ccdf077c189632d1ecdc205ae3a2ef0234e534fdd2`.
+
+**Remaining bounded gate.** Run exactly one disposable, non-root,
+read-only 300-second C2 against the sealed Trading System paper 60-route
+scope using the existing V2 query pair and governed stream aliases. It mounts
+only the existing sealed C2 configuration/identity inputs and a new
+payload-free evidence directory; it has no Docker socket, provider, Gateway,
+Risk, alpha or order capability. It must prove current final-BAR and
+execution-price eligibility, signed cursor/reconnect and zero order/provider
+connection mutation. Failure retains only compact typed evidence and does not
+retry or alter the runtime; pass is the next release-certification input.
+
+**Shared projector catch-up throughput repair (`APPROVED / EXECUTING`,
+2026-09-05).** The requested `SOL/OKX` `MARK_INDEX_PRICE` SLA repair must not
+relax its unchanged `2,000ms` execution freshness policy: read-only evidence
+shows that the upstream BAR edge continues to ACK current provider-final
+records while the canonical projector group is draining an earlier retained
+backlog. The first post-cache-recovery C2 correctly stopped on a stale
+`OKX.SWAP.PERPETUAL.DOGE-USDT / BAR / 1m` value; both query replicas agreed on
+`complete=true`, `gap_open=false` and an old event age. This is one shared
+materialization-lag condition, not a DOGE/SOL provider, price, lineage or SLA
+defect. At inspection, the six canonical partitions retained approximately
+`2.0M` unprocessed records and were draining at roughly `600 records/s`; old
+provider events were being materialized in order, so accepting them for an
+execution read would be wrong.
+
+**Approved narrow source/runtime scope.** Lift only the stable projector
+record-batch contract from `1..512` to the engine and HTTP-sink's already
+implemented `1..1000` limit, and set the three canonical Compose projector
+roles to `1000`. The existing `2,048` pending-record bound, `32MiB`
+pending-byte bound, `8MiB` projector-batch byte bound, `1MiB` exact HTTP
+request chunk bound, downstream-before-Kafka-checkpoint ordering, idempotency,
+gap fencing and current memory limits remain unchanged. The sink will continue
+to split any large logical batch by exact wire bytes; no request, queue or
+memory bound is widened. This is provider-neutral shared projection capacity,
+not a SOL/DOGE/venue-specific workaround. No freshness threshold, provider
+admission, catalog, Rust core, Kafka topology/offset, Redis, SQLite deletion,
+V1, Trading System, alpha, signal, sizing or order path may change.
+
+**Gates and rollback.** Add deterministic config regressions for `1000`
+accepted and `1001` rejected, then run the focused no-network stable
+projector/transport/query matrices and immutable-image regression. If source
+passes, build one reader image and serially recreate exactly `projector_v2`,
+`projector_v2_2` and `projector_v2_3` with the new image and batch value. The
+rollback is exact: recreate only those three roles using active
+`sha256:8bd10da6a19856ad7a3dd1a8329e99fb67158b6343341a2362cd51d41955121a`
+with `QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=512`. Observe lag slope, cache
+write errors, RSS/OOM and typed `SOL/OKX MARK_INDEX_PRICE` freshness from both
+query replicas. A fresh price may pass; an expired price must remain typed
+ineligible. Only after that evidence is healthy may one new C2 be run.
+
+**Source gate (`PASS / IMMUTABLE BUILD PENDING`, 2026-09-05).** The stable
+runtime validation and the three production projector declarations now agree
+on `1..1000`; the focused boundary test exercises exactly `1000` accepted and
+`1001` rejected while retaining the existing check that pending capacity must
+cover one batch. The engine has already enforced this upper bound and the
+signed sink already performs exact `1MiB` request chunking, so the source
+change introduces no unbounded batch path. `git diff --check` and Python
+compile checks pass. The isolated, non-root, read-only, no-network matrix
+passed `107/107` with one existing conditional Redis skip:
+`test_phaseb_stable_edge`, `test_fund_phase2_transport`,
+`test_phase533_query_readiness`, `test_mark_index_paired_lineage`,
+`test_phase104_v2_query_stream_integration`, and
+`test_phase105_stable_release`. The test container was disposable and did not
+connect to a provider, Kafka, Redis, V1, Trading System, alpha or order path.
+The next bounded action is one immutable reader-image build from this source;
+no runtime role has yet changed for this throughput repair.

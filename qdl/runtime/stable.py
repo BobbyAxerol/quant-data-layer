@@ -260,8 +260,8 @@ class StableRuntimeConfig:
         if self.max_buffer_events > 10_000 or self.max_replay_events > 10_000:
             raise ValueError("stable stream/replay bounds exceed contract maximum")
         if self.role == "projector_v2":
-            if not 1 <= self.projector_max_batch_records <= 512:
-                raise ValueError("stable projector batch bound must be 1..512")
+            if not 1 <= self.projector_max_batch_records <= 1000:
+                raise ValueError("stable projector batch bound must be 1..1000")
             if self.max_pending_records < self.projector_max_batch_records:
                 raise ValueError("stable projector pending records must cover one batch")
             if not 1 <= self.projector_max_batch_bytes <= self.max_pending_bytes:

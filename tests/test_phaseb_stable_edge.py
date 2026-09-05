@@ -2600,7 +2600,7 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values.update({
                 "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
-                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "512",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "1000",
                 "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
@@ -2608,12 +2608,12 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(bounded_projector.max_pending_records, 2048)
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
-            self.assertEqual(bounded_projector.projector_max_batch_records, 512)
+            self.assertEqual(bounded_projector.projector_max_batch_records, 1000)
             self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
-            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "2049"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1001"
             with self.assertRaisesRegex(ValueError, "projector batch bound"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
-            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "512"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1000"
             values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
             with self.assertRaisesRegex(ValueError, "pending records"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
