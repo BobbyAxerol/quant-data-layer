@@ -35934,3 +35934,48 @@ two query, two stream, three projector and one existing BAR edge, image-only,
 retaining each role's current environment/mounts and digest rollback. Restart
 BAR edge last so its newer active generation restores normal publication and
 uses the existing bounded provider bootstrap for deficient windows.
+
+Runtime update (2026-09-05 ~03:48 UTC): committed source `c57658a` built once
+as `qdl-v2-python:2.0.12-c57658a`, image
+`sha256:46a04c1e444fba13536d68f971195ac55c718d2322302a071513e3a9d26950d0`.
+Packaged-image focused tests: 30/30 PASS. Rolled exactly the eight roles above,
+validated unchanged environment/mount/command/CPU/memory per role. Rollback
+snapshots and per-role Compose overrides are under local-state
+`session-liveness-43cdbe3-20260829T162719Z/bounded-history-closure-20260905/`
+(private runtime state, not repository evidence). Old query image is `f6081050`,
+stream/projector `08dd22c3`, BAR edge `bd0163fd`; Rust remains `36a822c0`.
+
+Existing BAR startup recovery published authentic missing closed rows. The
+independent read-only inventory at `1788580149854478302` ns found
+**140/140 complete windows, 0 internal holes, 0 duplicates, 0 sequence-gap
+flags**; recurring OKX final 1m ACKs then continued at 03:49 UTC. No independent
+repair writer, count-loop, new BAR checkpoint, reset, or offset mutation was
+needed. Started one full-manifest replacement C2 using the new image and
+existing four identities. Observation duration begins after opening succeeds;
+receipt remains pending, so release is not declared certified yet.
+
+Replacement C2 result: opening timed out at its existing 900s deadline before
+observation. Error digest `eb98e6b23588672fd212d20dc4bb35294e141036cf8ca241084968c0761cdadc`;
+no new DATA_STALE/gap/provider error was emitted. The traceback is waiting for
+the second stream BAR after acknowledging a first event. Non-execution BARs
+already allow a quiet signed handoff on the first session, but omitted that
+same case after an event-then-reconnect. A long-interval channel need not emit
+a second candle inside the test window. Correct only this C2 branch: require
+signed REPLAYING/LIVE controls and a strict current final-BAR read-back on the
+second replica; classify it as signed cursor reopened with no new event, never
+fabricate replay. Execution BAR semantics remain unchanged. Also teach the
+offline observation builder the existing CURRENT_FINAL_BAR no-cursor receipt,
+with BAR-only/two-session validation. Add bounded opening/closing progress and
+active-product cancellation diagnostics. Test these receipt semantics, then
+run the replacement client with readonly test-source mounts on the same image;
+do not rebuild/recreate any production role for a test-harness-only correction.
+The 300s observation and all freshness/identity/gap/ordering gates stay intact.
+
+Harness correction verified: 86/86 targeted receipt/identity/observation/
+certificate tests PASS in 37.390s using the existing runtime image with readonly
+source and network disabled. A test syntax typo was corrected before this run.
+No production source/config changed in this slice, except the offline
+certificate parser; no second image build is needed. Replacement client uses
+the same image, identities, quotas and networks, with the two acceptance scripts
+and offline observation module mounted readonly from the committed source.
+Preserve the first timeout receipt, and use `c2-quiet-bar/` for the replacement.

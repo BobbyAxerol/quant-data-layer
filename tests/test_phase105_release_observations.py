@@ -175,6 +175,16 @@ class Phase105ReleaseObservationTests(unittest.TestCase):
                 now_ms=self.captured_at_ms + MAX_OBSERVATION_AGE_MS + 1,
             )
 
+    def test_quiet_bar_observation_requires_two_final_bar_sessions(self) -> None:
+        from qdl.certification.phase105_release_observations import _durable_no_cursor_lag
+        value = {"feed": "BAR", "stream_handoff": "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR",
+                 "stream_no_event_sessions": ["CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"]}
+        self.assertEqual(_durable_no_cursor_lag(value, index=0), 0)
+        for fields in ({"feed": "TRADE"}, {"stream_no_event_sessions": []},
+                       {"stream_no_event_sessions": ["CURRENT_FINAL_BAR", "UNKNOWN"]}):
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, "both current sessions"):
+                _durable_no_cursor_lag(dict(value, **fields), index=0)
+
     def test_bundle_accepts_proven_live_durable_handoff_without_cursor(self) -> None:
         acceptance = self.acceptance()
         products = acceptance["products"]

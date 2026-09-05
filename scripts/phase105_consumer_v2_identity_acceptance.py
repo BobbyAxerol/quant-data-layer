@@ -1113,6 +1113,10 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 )
             except C2StatusEvidenceError as error:
                 raise C2ProductAcceptanceError(product, error) from error
+            except asyncio.CancelledError:
+                print(json.dumps({"stage": "C2_ACTIVE_PRODUCT_CANCELLED",
+                                  "identity": product.identity}), file=sys.stderr, flush=True)
+                raise
             except Exception as error:
                 raise RuntimeError(
                     "Phase 10.5 V2 identity receipt failed "
@@ -1228,12 +1232,16 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             certify_ordered(), timeout=args.opening_timeout_seconds
         )
         opening_seconds = time.monotonic() - opening_started
+        print(json.dumps({"stage": "C2_OPENING_PASS", "products": len(initial_results),
+                          "seconds": round(opening_seconds, 3)}), file=sys.stderr, flush=True)
         observation_started = time.monotonic()
         observation_seconds = await _wait_for_minimum_observation(
             started_monotonic=observation_started,
             observation_seconds=args.observation_seconds,
         )
         closing_started = time.monotonic()
+        print(json.dumps({"stage": "C2_OBSERVATION_COMPLETE", "seconds": observation_seconds}),
+              file=sys.stderr, flush=True)
         closing_results = await asyncio.wait_for(
             closing_revalidation_ordered(),
             timeout=args.closing_timeout_seconds,

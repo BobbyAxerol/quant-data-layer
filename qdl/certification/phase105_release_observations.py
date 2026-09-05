@@ -106,6 +106,10 @@ def _durable_no_cursor_lag(raw: Mapping[str, object], *, index: int) -> int:
     """Accept a C2-proven live durable handoff with no new cursor event."""
     handoff = raw.get("stream_handoff")
     sessions = raw.get("stream_no_event_sessions")
+    if handoff == "CURRENT_FINAL_BAR_OBSERVED_NO_CURSOR":
+        if raw.get("feed") != "BAR" or sessions != ["CURRENT_FINAL_BAR", "CURRENT_FINAL_BAR"]:
+            raise ValueError("Phase 10.5 B3 quiet final BAR requires both current sessions")
+        return 0
     if handoff not in _DURABLE_NO_CURSOR_HANDOFFS:
         raise ValueError("Phase 10.5 B3 durable no-cursor handoff is unproven")
     if (

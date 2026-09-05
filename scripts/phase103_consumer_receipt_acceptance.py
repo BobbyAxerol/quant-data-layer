@@ -640,6 +640,7 @@ def _stream_handoff_mode(
             and no_event_sessions[1] in {
                 "FRESH_EXECUTABLE_AFTER_CURSOR",
                 "QUIET_NON_EXECUTABLE_AFTER_CURSOR",
+                "CURRENT_FINAL_BAR_AFTER_CURSOR",
             }
         ):
             return "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT"
@@ -1281,7 +1282,7 @@ async def _stream_resume(
             # monotonic replay across replicas proves cursor continuity; the
             # strict snapshot below proves current executable quality.
             for _ in range(1):
-                if quiet_continuity_observation:
+                if quiet_continuity_observation or quiet_final_bar_handoff:
                     resumed, controls = await _next_data_or_timeout(
                         session,
                         timeout_seconds=min(
@@ -1292,12 +1293,18 @@ async def _stream_resume(
                     )
                     if resumed is None:
                         _require_signed_cursor_controls(controls)
-                        no_event_session = await _classify_no_event_continuity_session(
-                            resumed_client,
-                            product=product,
-                            requirement=requirement,
-                            timeout_seconds=timeout_seconds,
-                        )
+                        if quiet_final_bar_handoff:
+                            no_event_session = await _verify_quiet_final_bar_current(
+                                resumed_client, product=product, requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
+                        else:
+                            no_event_session = await _classify_no_event_continuity_session(
+                                resumed_client,
+                                product=product,
+                                requirement=requirement,
+                                timeout_seconds=timeout_seconds,
+                            )
                         return (
                             None,
                             None,

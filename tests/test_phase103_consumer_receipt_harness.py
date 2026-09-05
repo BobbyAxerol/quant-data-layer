@@ -936,6 +936,39 @@ class Phase103HistoricalBarReplayResumeTests(unittest.IsolatedAsyncioTestCase):
                     timeout_seconds=0.01,
                 )
 
+    async def test_final_bar_event_then_quiet_resume_does_not_wait_for_next_interval(self):
+        product = self._product()
+        requirement = self._requirement()
+        warmup = SimpleNamespace(data=[SimpleNamespace()], watermark_offset=10)
+        first = StreamEvent(11, "signed-11", object())
+        controls = (ControlEvent("REPLAYING", "accepted"), ControlEvent("LIVE", "live"))
+        first_session = self._Session(warmup=warmup, items=(first,))
+        resumed_session = self._Session(warmup=warmup, items=controls, quiet=True)
+        first_client = self._Client(strict_warmup=warmup, session=first_session)
+        resumed_client = self._Client(strict_warmup=warmup, session=resumed_session)
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            patch("scripts.phase103_consumer_receipt_acceptance.sdk_requirement", return_value=requirement),
+            patch("scripts.phase103_consumer_receipt_acceptance._client", side_effect=(first_client, resumed_client)),
+            patch("scripts.phase103_consumer_receipt_acceptance.market_data_view_from_stream", return_value=SimpleNamespace()),
+            patch("scripts.phase103_consumer_receipt_acceptance.validate_product_view"),
+            patch("scripts.phase103_consumer_receipt_acceptance._strict_snapshot_for_c2",
+                  return_value=SimpleNamespace(data=SimpleNamespace())) as current,
+        ):
+            result = await _stream_resume(
+                product, identity=SimpleNamespace(), primary_url="https://primary",
+                secondary_url="https://secondary", grpc_target="stream:8210",
+                state_dir=Path(raw), timeout_seconds=0.01, stream_open_timeout_seconds=0.1,
+            )
+        self.assertEqual(result[:2], (None, None))
+        self.assertEqual(result[3], ("CURSOR_ACKNOWLEDGED", "CURRENT_FINAL_BAR_AFTER_CURSOR"))
+        self.assertEqual(first_session.acknowledged, [first])
+        self.assertEqual(resumed_client.stream_calls, [(requirement, True)])
+        current.assert_awaited_once()
+        self.assertEqual(_stream_handoff_mode(product, acknowledged_offset=None,
+                         resumed_offset=None, no_event_sessions=result[3]),
+                         "SIGNED_CURSOR_REOPENED_NO_NEW_EVENT")
+
     async def test_execution_bar_keeps_the_live_stream_requirement(self):
         product = self._product(grade=Grade.EXECUTION)
         requirement = self._requirement(grade=Grade.EXECUTION)
