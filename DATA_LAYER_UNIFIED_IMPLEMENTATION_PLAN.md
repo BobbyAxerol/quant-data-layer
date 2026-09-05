@@ -37708,3 +37708,11 @@ payloads. `jq` schema parsing and the release workflow's required artifact
 paths are the local gates; normal `dev` CI remains the dependency-complete
 authority before promotion. This documentation-only slice does not change a
 runtime service, data-plane store, consumer route or order path.
+
+**Patch-release CI gate (`PASS`, 2026-09-05).** GitHub Actions CI run
+`33997000791` completed successfully for evidence commit
+`bf2cbf88855b50dbf62f3dc116187199f59d4d41`: contract tests, standalone SDK
+Python 3.10 verification and the full unit/recovery/release suite all passed.
+The verified source now contains no runtime mutation after the sealed C2;
+promotion is limited to a normal `dev -> main` merge and a new immutable
+`v2.0.13` tag. The already-published `v2.0.12` tag remains immutable.
