@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
+import hashlib
+import json
 from types import SimpleNamespace
 import unittest
 
@@ -20,6 +23,65 @@ ROUTE_PATH = ROOT / "config/v2/stable-v2-release-routing.yaml"
 
 
 class Phase105ReleaseObservationTests(unittest.TestCase):
+    def current_reads(self, acceptance):
+        return {
+            "schema": "qdl.release.current-reads.v1", "status": "PASS",
+            "release_route_plan_sha256": self.plan.digest,
+            "acceptance_sha256": hashlib.sha256(json.dumps(acceptance, sort_keys=True,
+                separators=(",", ":")).encode()).hexdigest(),
+            "release_capture": {**acceptance["release_capture"], "captured_at_ms": self.captured_at_ms+1000},
+            "products": deepcopy(acceptance["products"]),
+        }
+
+    def test_current_reads_bind_full_scope_and_do_not_rewrite_original_c2(self):
+        acceptance = self.acceptance()
+        original = deepcopy(acceptance)
+        reads = self.current_reads(acceptance)
+        for item in reads["products"]:
+            for replica in ("primary", "secondary"):
+                item["release_quality"][replica]["source_age_ms"] = 7
+        bundle = build_release_observation_bundle(self.plan, acceptance, current_reads=reads)
+        self.assertEqual(acceptance, original)
+        self.assertEqual(bundle["captured_at_ms"], self.captured_at_ms+1000)
+        self.assertIn("current_reads_sha256", bundle)
+        values = parse_release_observation_bundle(self.plan, bundle, now_ms=self.captured_at_ms+1000)
+        self.assertTrue(all(v.v2_source_age_ms == 7 for v in values if v.route == "V2_PRIMARY"))
+        with self.assertRaisesRegex(ValueError, "stale"):
+            parse_release_observation_bundle(self.plan, bundle,
+                now_ms=self.captured_at_ms+1001+MAX_OBSERVATION_AGE_MS)
+
+    def test_current_read_wrong_c2_scope_identity_or_partial_cannot_certify(self):
+        acceptance = self.acceptance()
+        for case in ("digest", "plan", "partial", "duplicate", "cross_identity", "status", "old"):
+            reads = self.current_reads(acceptance)
+            if case == "digest":
+                reads["acceptance_sha256"] = "0"*64
+            elif case == "plan":
+                reads["release_route_plan_sha256"] = "0"*64
+            elif case == "partial":
+                reads["products"].pop()
+            elif case == "duplicate":
+                reads["products"].append(reads["products"][0])
+            elif case == "cross_identity":
+                reads["products"][0]["instrument_uid"] = "other"
+            elif case == "old":
+                reads["release_capture"]["captured_at_ms"] = self.captured_at_ms-1
+            else:
+                reads["status"] = "FAIL"
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                build_release_observation_bundle(self.plan, acceptance, current_reads=reads)
+
+    def test_closing_quality_supersedes_opening_but_identity_stays_strict(self):
+        acceptance = self.acceptance()
+        product = acceptance["products"][0]
+        product["closing_v2_read"] = deepcopy(product)
+        product["closing_v2_read"]["release_quality"]["primary"]["source_age_ms"] = 99
+        bundle = build_release_observation_bundle(self.plan, acceptance)
+        self.assertEqual(next(v for v in bundle["observations"] if v["route"] == "V2_PRIMARY")["v2_source_age_ms"], 99)
+        product["closing_v2_read"]["instrument_uid"] = "other"
+        with self.assertRaises(ValueError):
+            build_release_observation_bundle(self.plan, acceptance)
+
     def setUp(self) -> None:
         self.plan = StableReleaseRoutePlan.load(ROUTE_PATH, manifest_root=ROOT)
         self.captured_at_ms = 1_000_000

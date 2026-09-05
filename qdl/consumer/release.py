@@ -552,6 +552,11 @@ class ReleaseRouteObservation:
     consumer_lag: int
     cpu_millicores: int
     rss_bytes: int
+    v2_quality_state: str | None = None
+    v2_session_state: str | None = None
+    v2_session_liveness_ms: int | None = None
+    v2_complete: bool | None = None
+    v2_execution_eligible: bool | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -574,9 +579,24 @@ class ReleaseRouteObservation:
             for value in (self.consumer_lag, self.cpu_millicores, self.rss_bytes)
         ):
             raise ValueError("release route resource metrics must be non-negative")
+        typed = (self.v2_quality_state, self.v2_session_state,
+                 self.v2_session_liveness_ms, self.v2_complete, self.v2_execution_eligible)
+        if any(value is not None for value in typed):
+            if (
+                self.v2_quality_state not in {"LIVE", "STALE", "GAPPED", "OFFLINE", "UNAVAILABLE", "MARKET_CLOSED"}
+                or self.v2_session_state not in {"LIVE", "STALE", "DISCONNECTED", "UNKNOWN", "NOT_APPLICABLE"}
+                or not isinstance(self.v2_complete, bool)
+                or not isinstance(self.v2_execution_eligible, bool)
+                or (self.v2_session_liveness_ms is not None and (
+                    isinstance(self.v2_session_liveness_ms, bool)
+                    or not isinstance(self.v2_session_liveness_ms, int)
+                    or self.v2_session_liveness_ms < 0
+                ))
+            ):
+                raise ValueError("release route typed session evidence is invalid")
 
     def public_record(self) -> dict[str, object]:
-        return {
+        result = {
             "consumer_id": self.consumer_id,
             "requirement_key": self.requirement_key,
             "route": self.route,
@@ -590,6 +610,44 @@ class ReleaseRouteObservation:
             "cpu_millicores": self.cpu_millicores,
             "rss_bytes": self.rss_bytes,
         }
+        if self.v2_quality_state is not None:
+            result.update({
+                "v2_quality_state": self.v2_quality_state,
+                "v2_session_state": self.v2_session_state,
+                "v2_session_liveness_ms": self.v2_session_liveness_ms,
+                "v2_complete": self.v2_complete,
+                "v2_execution_eligible": self.v2_execution_eligible,
+            })
+        return result
+
+
+def v2_observation_is_current(requirement, observed: ReleaseRouteObservation) -> bool:
+    """Distinguish current executable prices from a verified quiet event feed."""
+    ages = (observed.v2_source_age_ms, observed.v2_receive_age_ms)
+    if observed.v2_gap_open or any(age is None for age in ages):
+        return False
+    session_live = (
+        observed.v2_quality_state == "LIVE" and observed.v2_complete is True
+        and observed.v2_session_state == "LIVE"
+        and observed.v2_session_liveness_ms is not None
+        and requirement.max_session_liveness_ms is not None
+        and observed.v2_session_liveness_ms <= requirement.max_session_liveness_ms
+    )
+    if observed.v2_quality_state is not None:
+        if observed.v2_quality_state != "LIVE" or observed.v2_complete is not True:
+            return False
+        if observed.v2_session_state not in {"LIVE", "NOT_APPLICABLE"}:
+            return False
+        if requirement.max_session_liveness_ms is not None and not session_live:
+            return False
+    maximum = requirement.max_freshness_ms
+    if maximum is None or all(age <= maximum for age in ages):
+        return True
+    return (
+        requirement.feed.value in {"TRADE", "BOOK_DELTA"}
+        and requirement.effective_event_recency_policy.value == "OBSERVE"
+        and session_live and observed.v2_execution_eligible is False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -681,14 +739,7 @@ def evaluate_release_readiness(
             v1_primary_count += 1
             continue
         if observed.route == _V2_ROUTE:
-            if (
-                observed.v2_gap_open
-                or observed.v2_source_age_ms is None
-                or (
-                    requirement.max_freshness_ms is not None
-                    and observed.v2_source_age_ms > requirement.max_freshness_ms
-                )
-            ):
+            if not v2_observation_is_current(requirement, observed):
                 blocked_count += 1
             else:
                 v2_primary_count += 1

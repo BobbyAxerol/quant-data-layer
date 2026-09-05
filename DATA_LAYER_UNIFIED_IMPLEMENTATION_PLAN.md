@@ -36216,3 +36216,32 @@ It reads both query replicas, respects the existing provider admission lane,
 and makes zero order calls. Both disposable closing-probe clients were removed.
 Use the same final serving image with the exact three tested harness scripts
 mounted read-only for the final replacement C2; no image build or runtime roll.
+
+Final C2 **PASS**:299 opening/closing products,234 durable +65 on-demand,
+opening883.031s, observation300.100s, closing13.401s. Client/cursor removed;
+zero order/provider-direct calls; protected44 services unchanged. Raw receipt
+is `c2-deadline-final/acceptance.json`; it is immutable and must not be replaced.
+
+Offline certificate assembly exposed two evidence-mapping defects, not a
+failed endpoint: the helper passed the normalized three-field V1 summary
+instead of the original complete verified attestation, and the aggregator
+uses opening quality and drops session/eligibility metadata for OBSERVE TRADE.
+Correct the helper input and carry the existing typed session/complete/
+execution-eligibility evidence into release observations. A quiet TRADE or
+BOOK_DELTA may be available only under declared OBSERVE + live bounded session,
+complete/no-gap and non-executable quality; price/BLOCK/PAUSE contracts retain
+their freshness bound. Missing session evidence cannot certify a stale feed.
+Use a separately hashed, current full-scope closing read for freshness, linked
+to the unchanged passing C2 for cursor/reconnect/fallback/300s proof. This is
+offline certificate mapping plus no-order current reads, not another C2,
+runtime change, freshness relaxation or new phase. Preserve failed assembly.
+
+Certificate mapping tests:104/104 release/identity/receipt regressions PASS
+in51.703s; final age-binding subset26/26 PASS in30.842s. Tests cover the10-symbol
+venue matrix for quiet TRADE/BOOK_DELTA, BLOCK/PAUSE/QUOTE/book-price rejection,
+disconnected/expired/missing session, incomplete/gapped data, malformed fields,
+current-read C2 digest/full-scope identity, duplicate/missing products, old or
+expired evidence and immutable original C2. Counts overlap, not additive.
+This code is offline certification only; no serving image is rebuilt/rolled.
+Capture current closing observations using the tested mapping, bind their hash
+to the immutable passing C2, and certify with the original full V1 attestation.
