@@ -684,17 +684,29 @@ class V2QueryService:
             or result.received_at_ns <= 0
         ):
             return False
-        newest_observed_ns = max(
-            (item.observed_at_ns for item in result.observations),
-            default=0,
-        )
-        if newest_observed_ns <= 0:
+        observed_ns = self._reference_freshness_timestamp(result)
+        if observed_ns <= 0:
             return False
         source_age_at_receipt_ms = max(
             0,
-            (result.received_at_ns - newest_observed_ns) // 1_000_000,
+            (result.received_at_ns - observed_ns) // 1_000_000,
         )
         return source_age_at_receipt_ms <= freshness_ms
+
+    @staticmethod
+    def _reference_freshness_timestamp(result: ReferenceBatchResult) -> int:
+        # A snapshot pair is only as current as its oldest component. History
+        # instead measures how recently the series was updated, not its start.
+        select = (
+            min
+            if result.request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and not result.request.is_history
+            else max
+        )
+        return select(
+            (item.observed_at_ns for item in result.observations),
+            default=0,
+        )
 
     def _reference_problem(
         self,
@@ -730,8 +742,8 @@ class V2QueryService:
                         False,
                     )
             if requirement.max_freshness_ms is not None:
-                newest = max(item.observed_at_ns for item in result.observations)
-                freshness_ms = max(0, (self._clock_ns() - newest) // 1_000_000)
+                observed_ns = self._reference_freshness_timestamp(result)
+                freshness_ms = max(0, (self._clock_ns() - observed_ns) // 1_000_000)
                 if freshness_ms > requirement.max_freshness_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,

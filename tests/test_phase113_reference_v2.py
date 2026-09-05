@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
@@ -144,6 +145,29 @@ class StaleThenCurrentReferenceAdapter(FixtureReferenceAdapter):
         if self.calls == 1:
             self.observed_at_ns = NOW_NS
         return fetched
+
+
+class ComponentAgeReferenceAdapter(FixtureReferenceAdapter):
+    """Test-only separate native timestamps for mark and index observations."""
+
+    def __init__(self, ages, recovered_ages=None):
+        super().__init__()
+        self.ages = ages
+        self.recovered_ages = recovered_ages
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        fetched = await super().fetch(
+            request, capability=capability, received_at_ns=received_at_ns
+        )
+        ages = self.recovered_ages if self.calls > 1 and self.recovered_ages else self.ages
+        return replace(fetched, observations=tuple(
+            replace(
+                fetched.observations[0],
+                observed_at_ns=NOW_NS - age * 1_000_000,
+                fields=(decimal_field(name, "100.25", "QUOTE_PRICE"),),
+            )
+            for name, age in zip(("mark_price", "index_price"), ages, strict=True)
+        ))
 
 
 class AdvanceClockAfterInitialBatchExecutor(BoundedWarmupExecutor):
@@ -742,6 +766,64 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.partial)
         self.assertEqual(adapter.calls, 2)
         self.assertEqual(result.results[0].result.observations[0].observed_at_ns, NOW_NS)
+
+    async def test_mark_index_component_freshness_matrix(self):
+        scenarios = (
+            ((100, 2070), (100, 100), 2, None),
+            ((2070, 100), (100, 100), 2, None),
+            ((100, 2070), None, 2, "DATA_STALE"),
+            ((2070, 100), None, 2, "DATA_STALE"),
+            ((2070, 2451), None, 2, "DATA_STALE"),
+            ((100, 100), None, 1, None),
+            ((2000, 2000), None, 1, None),
+            ((100, 2001), None, 2, "DATA_STALE"),
+        )
+        for venue, market in (("BINANCE", "USDM"), ("OKX", "SWAP")):
+            for base in ("BTC", "ETH", "SOL", "DOGE", "BNB"):
+                instrument = record(
+                    venue=venue, market=market, base=base,
+                    symbol=f"{base}USDT" if venue == "BINANCE" else f"{base}-USDT-SWAP",
+                )
+                for ages, recovered, expected_calls, expected_error in scenarios:
+                    with self.subTest(venue=venue, base=base, ages=ages, recovered=recovered):
+                        adapter = ComponentAgeReferenceAdapter(ages, recovered)
+                        registry = InstrumentRegistry()
+                        registry.register(instrument, [])
+                        service = V2QueryService(
+                            instruments=InstrumentQuery(registry),
+                            backend=MemoryMarketDataBackend(),
+                            entitlements=EntitlementPolicy((EntitlementGrant(
+                                source_id=f"{venue}_DIRECT", license_revision="test",
+                                purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION}),
+                                products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+                                valid_from_ns=0,
+                            ),)),
+                            reference_batch=ReferenceBatch(
+                                {(venue, market): adapter}, clock_ns=lambda: NOW_NS,
+                            ),
+                            reference_source_id=lambda _item: f"{venue}_DIRECT",
+                            clock_ns=lambda: NOW_NS,
+                        )
+                        requirement = ReferenceDataRequirement(
+                            instrument_uid=instrument.instrument_uid,
+                            product=ReferenceProduct.MARK_INDEX_PRICE,
+                            consumer_grade=ConsumerGrade.EXECUTION,
+                            source_policy_id="crypto_liquid_v2", limit=1,
+                            page_size=1, max_pages=1, max_freshness_ms=2000,
+                        )
+                        result = await service.reference_data_batch_async(
+                            ReferenceBatchRequirement("test-components", (requirement,)),
+                            purpose=AccessPurpose.INTERNAL_EXECUTION,
+                        )
+                        item = result.results[0]
+                        self.assertEqual(item.problem.code.value if item.problem else None, expected_error)
+                        self.assertEqual(adapter.calls, expected_calls)
+                        self.assertEqual(item.result.request.instrument.instrument_uid, instrument.instrument_uid)
+                        expected_ages = recovered or ages
+                        self.assertEqual(
+                            [row.observed_at_ns for row in item.result.observations],
+                            [NOW_NS - age * 1_000_000 for age in expected_ages],
+                        )
 
     async def test_execution_mark_keeps_stale_provider_value_fail_closed_after_one_refresh(self):
         clock = {"ns": NOW_NS}

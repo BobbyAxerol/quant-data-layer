@@ -30226,6 +30226,36 @@ the final exact cleanup inventory.
 
 ### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
+**Index component freshness correction (2026-09-05, IN PROGRESS).**
+Owner requests a narrow fix for OKX SOL index exceeding the sealed 2000ms SLA.
+Root source defect: query freshness selects the newest MARK_INDEX observation,
+so fresh mark hides stale index and prevents the existing bounded cache-bypass
+refresh. Check the oldest component for snapshot MARK_INDEX only; historical
+reference freshness still uses its newest observation. Preserve native times,
+the SLA, provider admission and exactly one recovery read. No symbol hardcoding,
+new topology or state reset. Governing guide: fund-grade architecture, typed
+execution market context and Declared Crypto Release Closure.
+Tests: mixed-age mark/index, both stale/fresh, exact limit, one failed recovery,
+cache coalescing and history regression across both venues/five symbols. Then
+bounded real query evidence; runtime change, if needed, only query replicas
+with their exact prior image retained. Do not call source PASS runtime-certified.
+Rollback is source revert or the same two query replicas' prior image, never
+Kafka/Redis/SQLite reset. Inherit existing299-product certificate.
+
+Source verification: existing Python image, read-only source/network disabled:
+`python -m unittest -q tests.test_phase113_reference_v2
+tests.test_phase104_reference_batch tests.test_phase104_v2_query_stream_integration`
+PASS50 tests including80 mixed-component subcases. History, cache coalescing,
+bounded recovery and integration regressions retained. Native index HTTP probe
+with stdlib returned403 before data; this is not provider freshness evidence.
+Real verification must use existing authenticated/admitted V2 route.
+Deploy only query_v2_1/query_v2_2; exact rollback for each is
+`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`.
+Use existing immutable parent plus the tested query module; dependencies,
+runtime/mTLS/manifest mounts, provider admission and all other services stay
+unchanged. Observe both query replicas plus existing60-route reader300s; normal
+public reference reads only, no test orders or new consumers/subscriptions.
+
 **Latest owner-approved consumer correction, 2026-09-05:** Trading System
 e8ee8f7 fixed independent provider-session deadlines, monotonic heartbeat
 evidence/reset and stale reference refresh with valid/expired prior snapshots.
