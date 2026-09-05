@@ -37137,3 +37137,53 @@ runtime. Retain current digest `sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51b
 as rollback; no other role is recreated. Runtime acceptance must verify no
 `private Kafka raw lineage differs from canonical capture ID`, projector
 catch-up, fresh SOL/OKX typed read, and continued stale rejection.
+
+**Runtime wiring correction (`EXECUTING`, 2026-09-05).** The first serial
+projector roll reached the updated derived-lineage branch and then received a
+bounded `422 stable event reference fields are incomplete or unknown` from the
+still-old stream canonical-ingest endpoint. No canonical/cache mutation was
+accepted. The marker is intentionally carried in the signed projector-to-stream
+request, so both existing `stream_v2_active` and `stream_v2_passive` must use
+the same tested Python image as the projectors. This is the exact code-owner
+boundary; query replicas do not ingest the marker and need no recreation.
+The packet is therefore corrected to roll five existing reader roles only:
+`stream_v2_passive` -> `stream_v2_active` -> `projector_v2` ->
+`projector_v2_2` -> `projector_v2_3`. It remains a no-topology/no-provider/no-
+authority change; V1, Rust, ingestors, query, Kafka offsets, Redis, SQLite,
+Trading System, alpha and order paths remain excluded. The same old Python
+digest remains the exact rollback for all five roles.
+
+**Paired MARK/INDEX runtime exit (`PASS`, 2026-09-05).** Source commit
+`ca8221e` adds the provider-neutral, explicitly marked paired-lineage validator;
+immutable reader image `qdl-v2-python:2.0.12-ca8221e`
+(`sha256:d711d2b572d6013ed1b9b6a14b1e96c29bfe86fff75ecb7f4a102eaad8753e2d`)
+passed the bounded isolated regression suite (`72/72`, one existing skip,
+`25.634s`). The first projector-only roll correctly exposed the signed
+projector-to-stream ownership boundary: old stream readers rejected the new
+explicit marker with `422` before accepting any canonical/cache write. The
+correction rolled only the two existing stream readers and three projectors,
+in order: `stream_v2_passive`, `stream_v2_active`, `projector_v2`,
+`projector_v2_2`, `projector_v2_3`. Query replicas, V1, Rust, ingestors,
+Kafka offsets/topology, Redis, SQLite, Trading System, alpha and order paths
+were not changed. No catalog, lineage or reference-field rejection appeared in
+the post-roll projector scan.
+
+The signed, mTLS/JWT, no-order runtime probe at
+`/home/bobby/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/sol-okx-mark-runtime-direct-ca8221e-20260905T191439Z/acceptance.json`
+read `OKX.SWAP.PERPETUAL.SOL-USDT` `MARK_INDEX_PRICE` through both query
+replicas. It passed with source ages `40ms` and `44ms` against the unchanged
+`2,000ms` execution SLA, `gap_open=false`, zero V1 requests, zero provider
+connections and zero order actions. The existing derived-lineage regression
+also proves expired data stays typed ineligible; no freshness guard, timestamp
+or source policy was relaxed to obtain this result. The exact rollback for all
+five roles remains
+`sha256:a2ba7af21aca3debb309ae76ef1eba8c02d8bd51bb2b33da4c291c973079999a`
+with the prior reader runtime overlay.
+
+**Scoped cleanup.** The disposable probe container used `--rm`; five failed
+wrapper-only evidence directories and test-generated `__pycache__` paths were
+removed. State-directory disk usage moved from `2.1M` to `2.0M`; source
+`qdl/` from `3.5M` to `2.5M`; `tests/` from `2.7M` to `2.6M`. The sole retained
+receipt is the passing aggregate/digest-only evidence above. Active image
+`d711d2b572d6` and named rollback image `a2ba7af21aca` are retained; no broad
+prune, volume, network, cache or operational data cleanup occurred.
