@@ -317,7 +317,7 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         )
         generated = build_openapi()
         self.assertEqual(package["project"]["version"], "2.0.0")
-        self.assertEqual(qdl_sdk.__version__, "2.0.1")
+        self.assertEqual(qdl_sdk.__version__, "2.0.2")
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         # ``reference:batch`` is a governed V2 public path in the checked-in

@@ -37650,3 +37650,27 @@ or bypass the remote Actions result. `main` and release tags are deliberately
 unchanged until the normal `dev -> main` CI/review release handoff completes.
 That is an external publication boundary, not an unimplemented data-plane or
 runtime gate; the sealed C2 certificate above remains the release evidence.
+
+**SDK release-metadata CI repair (`EXECUTING`, 2026-09-05).** Remote
+`sdk-python310` identified a bounded publication defect after the certified
+runtime work: `scripts/build_qdl_sdk_release.py` is already the authoritative
+SDK `2.0.2` builder, while the public `qdl_sdk.__version__`, README example,
+stable-release assertion and CI wheel filename still say `2.0.1`. Align only
+those public metadata expectations to the builder's declared version; do not
+touch V2 runtime, contracts, manifests, images, Kafka, Redis, SQLite, V1,
+consumer routing or order behavior. Exit requires a reproducible standalone
+wheel/import check and the same Python-3.10 CI job green; the temporary wheel
+artifact is removed after the local check.
+
+**SDK metadata source exit (`PASS LOCAL / REMOTE CI PENDING`, 2026-09-05).**
+Aligned `qdl_sdk.__version__`, the public README artifact name, the stable
+release version assertion, and the Python-3.10 CI wheel/import expectation to
+the builder's already-declared `2.0.2`. An isolated, read-only, network-disabled
+Python-3.10 container built the standalone wheel, installed it only into tmpfs
+with `--no-deps`, and imported `qdl_sdk` as `2.0.2`; its generated manifest and
+wheel names also match `2.0.2`. The disposable container and all tmpfs wheel
+files were removed. A broader source release test was intentionally not claimed
+locally because the retained runtime images omit unrelated test-only
+`PyYAML`/`tomli` dependencies; the remote `unit-tests` job is the correct
+dependency-complete authority for that test. No runtime/data-plane resource was
+modified.
