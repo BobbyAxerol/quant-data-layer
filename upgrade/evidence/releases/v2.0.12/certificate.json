@@ -1,0 +1,56 @@
+{
+  "gates": [
+    {
+      "evidence": "99022ac411eb7f49ceb88b3105996a7a7042284db158a76ec72a23e79d44783e",
+      "gate_id": "release_route_readiness",
+      "status": "PASS"
+    },
+    {
+      "evidence": "a305cd316e4df8d904903baec7198e2033d820838ae89252712af38ab621fd44",
+      "gate_id": "v1_fallback_provenance",
+      "status": "PASS"
+    },
+    {
+      "evidence": "bb163a4e3333429248a7f260538be89692898d7d6be3caf77ed3960b8dc3d5f0",
+      "gate_id": "runtime_handoff",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6aaba9a12080dbde67292b4efac26620c911e8eab91ce27a0c3644490de0e1be",
+      "gate_id": "consumer_v2_primary",
+      "status": "PASS"
+    },
+    {
+      "evidence": "63b59ceed967bdaac0d942eacd958b63454dd3f5d97715295117e846de9b012a",
+      "gate_id": "v1_fallback_return",
+      "status": "PASS"
+    }
+  ],
+  "input_sha256": {
+    "consumer_acceptance": "6aaba9a12080dbde67292b4efac26620c911e8eab91ce27a0c3644490de0e1be",
+    "fallback_drill": "63b59ceed967bdaac0d942eacd958b63454dd3f5d97715295117e846de9b012a",
+    "observations": "7afbfa1488cd00082ff5b8c8e16f77c5c6bfd65644ab0d402373ba53a2dc47af",
+    "runtime_handoff": "bb163a4e3333429248a7f260538be89692898d7d6be3caf77ed3960b8dc3d5f0",
+    "v1_provenance": "a305cd316e4df8d904903baec7198e2033d820838ae89252712af38ab621fd44"
+  },
+  "readiness": {
+    "blocked_count": 0,
+    "budget_violations": [],
+    "fallback_count": 0,
+    "fallback_rate": 0.0,
+    "max_consumer_lag": 11,
+    "max_cpu_millicores": 117,
+    "max_rss_bytes": 215113728,
+    "product_count": 303,
+    "ready": true,
+    "route_plan_sha256": "99022ac411eb7f49ceb88b3105996a7a7042284db158a76ec72a23e79d44783e",
+    "status": "READY",
+    "v1_primary_count": 4,
+    "v2_primary_count": 299
+  },
+  "release_route_plan_sha256": "99022ac411eb7f49ceb88b3105996a7a7042284db158a76ec72a23e79d44783e",
+  "schema": "qdl.phase105.stable-release-certification.v1",
+  "status": "PASS",
+  "v2_python_image": "sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a",
+  "v2_rust_image": "sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65"
+}

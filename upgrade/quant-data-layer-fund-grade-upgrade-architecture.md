@@ -6177,3 +6177,21 @@ and STOP_LIMIT/TAKE_PROFIT_LIMIT were added to the conditional policy before
 closure. No provider, runtime role, manifest, data store or order path was
 mutated. See the main-plan evidence in section 24.2.1 for exact test modules,
 counts and cleanup.
+
+### Declared Crypto Release Closure (2026-09-05)
+
+The grouped route closure in the main plan now has a PASS certificate for the
+declared Binance USD-M / OKX Swap consumer scope. See
+[`v2.0.12 evidence and notes`](evidence/releases/v2.0.12/RELEASE_NOTES.md).
+All299 crypto consumer products are V2_PRIMARY:234 durable and65 on-demand;
+four VN products remain explicit V1 exclusions, not implied V2 certification.
+The actual full-scope C2 includes300.100s observation, signed reconnect/replay,
+allowed V1 fallback-return and blocked-fallback enforcement. Independent
+current reads bind to the immutable C2 by digest and satisfy the same source
+AND receive-age bounds. Certification preserves typed session evidence for
+quiet OBSERVE event feeds; it never treats that evidence as a fresh price.
+Closing batches separate hot feed classes from history to avoid head-of-line
+age inflation without increasing quotas or weakening deadlines. Public V1/V2
+endpoints, Rust authority and protected execution services are unchanged.
+GitHub publication still follows the existing dev -> main release PR and new
+tag workflow; certification does not claim that an unpublished tag exists.

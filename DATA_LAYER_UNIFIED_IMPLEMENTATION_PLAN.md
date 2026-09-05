@@ -35881,7 +35881,7 @@ The provider-admission packet is verified, but certification/release remains
 blocked until the exact remaining BAR route is explicitly repaired and a
 replacement C2 passes; no automatic scope expansion is permitted.
 
-**Grouped endpoint/route closure (`OWNER APPROVED / IN PROGRESS`, 2026-09-05).**
+**Grouped endpoint/route closure (`CERTIFIED / RELEASE PACKAGE READY`, 2026-09-05).**
 The owner requests grouped diagnosis and repair of failing routes, reuse of
 unaffected certification, and completion of the release. This supersedes the
 prior per-DOGE-interval decision boundary for the existing manifest. Follow the
@@ -36268,3 +36268,78 @@ The initial invocation also named a nonexistent extra test module; the exact
 corrected invocation used `tests.test_phase105_identity_acceptance`,
 `tests.test_release_session_observations`, `tests.test_phase105_release_observations`,
 `tests.test_phase105_release_certification`. Container removed; no new image.
+
+**Final exit (2026-09-05 ~07:08 UTC): CERTIFIED.** Feed-isolated current reads
+cover299/299 products. The offline certificate passes all5 existing gates:
+release route readiness, V1 provenance, runtime handoff, V2 consumer acceptance,
+V1 fallback-return. Result:299 V2_PRIMARY,4 explicitly excluded VN V1_PRIMARY,
+0 blocked,0 active fallback,0 resource-budget violations. No SLA was changed.
+Certificate SHA256 `0b67916ef677f7ee099de510a1731948b2eea85e876663ff99cf7d67e4bc1b2e`.
+Public compact evidence and notes live in
+[`upgrade/evidence/releases/v2.0.12/`](upgrade/evidence/releases/v2.0.12/).
+The original full C2 and failed attempts stay immutable in the private evidence
+root; current-read and harness/source digests are recorded separately.
+
+Scope: monitoring4, Trading-System paper adapter60, Binance alpha SDK125,
+OKX alpha SDK110. There are234 durable and65 on-demand consumer products,
+including150 BAR consumer requirements over140 physical final-BAR bindings,
+24 TRADE,20 QUOTE,20 BOOK_SNAPSHOT,20 BOOK_DELTA,20 MARK_INDEX_PRICE and45 other
+reference products. The full C2 proves opening883.031s, observation300.100s,
+closing13.401s; quota pacing is included in opening duration, not endpoint
+latency. Current closing capture uses117 millicores and215113728 bytes RSS;
+full C2 uses69 millicores and256983040 bytes peak RSS. These are client metrics,
+not whole-platform resource claims. Zero order/direct-provider client calls;
+all44 protected services and Rust authority unchanged. Signed cursor/reconnect,
+seven allowed V1 fallbacks and292 forbidden-fallback routes retain their proof.
+
+No further C2, image build or runtime roll is required by this closure.
+Serving Python remains `qdl-v2-python:2.0.12-35a7cd8` / `sha256:1c1392bf...2045a`
+for2 query,2 stream,3 projector and BAR edge; Rust remains
+`qdl-v2-rust:2.0.12-d536098` / `sha256:36a822c0...4dce65`.
+Source corrections after35a7cd8 affect certification/test harness only.
+Runtime config is `phasec36-reference-l2-r14`, outside source under local-state.
+V1 `sha256:dbfb5784...5d65`, Kafka offsets/topology, Redis, SQLite, Trading System,
+alpha and order path were preserved. This certifies declared crypto data-plane
+products on this host, not VN market-hours, broker execution or independent DR.
+
+Publication is separate from certification: reserve new tag `v2.0.12` (do not
+move existing `v2.0.0`). Repo policy requires release PR dev -> main. No such PR
+is open and host has SSH push but no authenticated GitHub API/CLI; owner was
+asked for the release PR through the async channel. Push tested source/package
+to dev, then the tag-triggered release workflow publishes notes/certificate
+after the tag is on main. Do not describe an uncreated tag/release as published.
+
+Approved cleanup retention: keep active35a7cd8 plus the exact immediate rollback
+set, query `cca6355c` (d7c7506) and other Python roles `46a04c1e` (c57658a),
+with private per-role Compose overrides in `final-release-images/`. Retire only
+the superseded, container-unreferenced images `08dd22c3`, `f6081050`, `bd0163fd`;
+their old rollout packets are historical evidence, not the current rollback.
+Keep Rust/V1/Trading-System images and all data/volumes/networks. Broad BuildKit
+prune was not permitted and will not be substituted by an equivalent command.
+
+Cleanup guard stopped before deletion: `bd0163fd` is referenced by the exited
+operational `stable_tls_init` and `stable_state_init` containers. Retain that
+image/container pair as operational references, not disposable smoke. Revised
+deletion set is only08dd22c3/f6081050; no force, no removal of init containers.
+
+Cleanup completed: two image IDs / three tags removed; available disk increased
+from152239054848 to153267318784 bytes (+1028263936 bytes, about0.96GiB).
+All container IDs/image/start/restart tuples are unchanged across cleanup;
+read-only postcheck again confirms44 protected services unchanged and11V2
+roles healthy without OOM/restarts. Disposable C2/current-read clients and
+cursor directories are absent. No volume, network or runtime data was removed.
+BuildKit inventory57 records/5.801GB includes shared retained-layer cache;
+broad prune was intentionally not performed. Earlier scoped builder/scanner
+artifacts and three fully represented temporary worktrees were removed as
+recorded above. Do not delete unrelated operational stopped containers.
+
+Source/release reconciliation: canonical checkout `/home/bobby/data_layer`
+remains clean at1d933960 (`fix/phase54-l2-bootstrap`); runtime uses immutable
+images and external r14 configuration, not that branch's source. Active closure
+checkout is `/home/bobby/.worktrees/data-layer-dev-closure`, branch
+`fix/l2-execution-readiness-closure`; tested source throughf0118d8 is on remote
+dev. Keep it until release/main synchronization. The separate phase-C checkout
+at70ac65b has four genuinely unmerged commits and is deliberately preserved.
+Remote stable main remains9d6dfb9 and existingv2.0.0 remains7ebe1d1; newv2.0.12
+package is certified but not tagged/published before the required release PR.
+This is the remaining publication boundary, not another market-data test gate.
