@@ -30226,6 +30226,32 @@ the final exact cleanup inventory.
 
 ### Trading consumer certified-scope convergence (2026-09-05, SCOPE APPLIED)
 
+**Latest owner-approved consumer correction, 2026-09-05:** Trading System
+e8ee8f7 fixed independent provider-session deadlines, monotonic heartbeat
+evidence/reset and stale reference refresh with valid/expired prior snapshots.
+190 source regressions PASS. Onlyone TS reader image built/deployed:
+bbf00a643aa515e7e27b2c4714ed12dd7da982490826367d7bd6c14e0796dba9.
+Data Layer source/runtime/provider/authority/state unchanged; SDK2.0.2 and
+prior299-product certificate reused. Publication is conditional on acceptance,
+not automatically authorized to relabel a failing runtime gate.
+
+Real300.438s/21-sample acceptance:60 caches/50 durable watermarks progressed,
+1260 identity/complete-no-gap checks and210 final-bar checks PASS; TRADE session
+failure0. Eleven reference refreshes rejected,19 samples60/60 andtwo59/60
+(SOL/OKX MARK_INDEX_PRICE), final60. Sustained60 gate FAIL. Diagnostic ages:
+mark108-179ms,index2070-2451ms against the sealed2000ms limit; configured15000ms
+does not override the stricter binding. Do not widen SLA or forge fresh prices.
+This identifies which field fails but does not yet prove whether delay comes
+from provider cadence or query/provider cache. Source/observation/cleanup are
+recorded in the TS Five-Symbol Consumer Convergence section. No new release
+certificate/tag; v2.0.12 remains stable and its299-product evidence is retained.
+
+Cleanup is limited to the approved TS reader build: temporary alias removed,
+23.02MB disposable input cache reclaimed, activebbf00a64 and rollbackf0d12295
+retained. Docker25 images/13.24GB, BuildKit5.428GB after build/cleanup; no DL
+images, state, volumes or services changed. No new worktree, source/journals
+go todev only while stable release remains blocked by the measured index SLA.
+
 **Consumer stability completion (SDK TESTED; TS SUSTAINED HEALTH FAIL, 2026-09-05).**
 Continue this same closure, no new phase or provider certification rerun.
 The installed TS SDK2.0.1 lacks current certified quiet-continuity handling.
