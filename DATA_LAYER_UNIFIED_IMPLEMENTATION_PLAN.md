@@ -35663,3 +35663,220 @@ publication is allowed under this packet. The next permitted packet must
 explicitly enable/verify the existing Rust admission lane (or remove the
 native BASIS product from the certified consumer manifest through a separate
 decision), then run one fresh complete C2 `300s` receipt.
+
+**Rust provider-admission recovery packet (`APPROVED / EXECUTING`,
+2026-09-05).** The owner approved the remaining narrow runtime action. The
+existing `docker-compose.phase105c-c2.override.yml` is used only for its
+already-reviewed `rust_core` setting
+`QDL_PROVIDER_ADMISSION_ENABLED=true`; it is not applied to any other role.
+Only `qdl_v2_stable_candidate-rust_core-1` is serially recreated because the
+shared admission listener is the single internal lane at `rust_core:8300`.
+The current immutable Rust image (`sha256:36a822c0ef61fb122dbf8fa12221cff27ad6a863976424be1407cd345f4dce65`),
+`core.json`, TLS/Redis/Kafka mounts, policy SHA, secret binding, authority
+revision and all three-core topology remain unchanged. `rust_core_2` and
+`rust_core_3` are not recreated. Rollback is one bounded recreate of
+`rust_core` with the base Compose definition and
+`QDL_PROVIDER_ADMISSION_ENABLED=false`; no Kafka offset/topology, Redis,
+SQLite, V1, ingestor, BAR edge, projector, query/stream, Trading System,
+alpha or order path is touched. Exit requires listener/config verification
+and exactly one fresh complete four-identity C2 no-order receipt for `300s`.
+
+**Rust provider-admission packet evidence (`C2 RETRY REQUIRED / PROVIDER
+RATE-LIMIT BLOCKER`, 2026-09-05).** The approved `rust_core` recreate passed:
+the active immutable image is unchanged, `QDL_PROVIDER_ADMISSION_ENABLED=true`,
+the private listener started with the sealed policy SHA, and all three Rust
+cores remained running with `restart=0` and `OOMKilled=false`; only `rust_core`
+was recreated. The first complete four-identity C2 was then run once and
+failed before its observation window with no acceptance receipt and no order or
+durable-state mutation. Its typed failure was
+`BASIS/SOURCE_UNAVAILABLE` after the Binance native-basis provider lane did not
+complete. Read-only admission state showed `admitted=11`, `deferred=8`,
+`cooldowns=3`, `lease_count=0`; a bounded real provider probe reproduced
+Binance HTTP `418`, provider code `-1003`, with the documented IP-ban response.
+Rust admission therefore performed the intended fail-closed coordination; it
+did not fabricate data or bypass the native provider. The next and only
+permitted runtime action is one fresh complete C2 `300s` after the provider
+ban/cooldown expires. No policy widening, fallback substitution, repeated C2
+storm, or topology change is allowed. Release remains blocked until that
+receipt passes.
+
+**Narrow C2 DOGE 12h continuity repair (`APPROVED / EXECUTING`,
+2026-09-05).** The admission-enabled C2 reached the data plane and stopped
+fail-closed on `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 12h` with
+`OPEN_SEQUENCE_GAP`. Read-only inspection of the active canonical cache found
+700 real provider envelopes for that partition and exactly one missing
+12-hour open between adjacent final bars; the route, identity, interval and
+provider lineage are otherwise correct. The existing
+`scripts/repair_stable_final_bar_history.py` is the approved bounded repair
+path. Its dry-run confirmed `window_rows=700`, `missing_rows=1`, and zero
+production mutations. Apply is limited to
+`binance-usdm-dogeusdt-bar-12h`, `rows=700`, `expected_missing=1`; it may
+publish only that provider-confirmed final BAR through the existing
+raw -> Rust -> Kafka -> projector/cache path. It must not reset Kafka,
+flush Redis, delete SQLite, recreate services, change manifests/policy/SLA,
+touch V1, Trading System, alpha or order state. Exit requires the missing
+open to materialize and both query replicas to report complete, ordered,
+gap-free DOGE 12h warmup. Only then may the one fresh complete four-identity
+C2 `300s` receipt run; any later typed failure remains release-blocking.
+
+**C2 full BAR gap inventory (`C2 RETRY REQUIRED / BOUNDED REPAIR SET`,
+2026-09-05).** After the one-row DOGE 12h repair, the next complete C2
+stopped at `BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 15m`. A read-only scan of
+all `140` governed BAR partitions found `104` partitions with one real
+timestamp discontinuity and no duplicate open; the already repaired Binance
+DOGE 12h partition is clean, leaving `103` partitions to repair. The pattern
+is cross-venue and cross-symbol, concentrated in the historical warmup
+windows (not a single-symbol provider defect). This explains why repairing
+one route and retrying would merely reveal the next route.
+
+The next bounded action is a serial set of invocations of the existing
+`scripts/repair_stable_final_bar_history.py` for exactly those `103` manifest
+bindings, one process at a time, each with `rows=700` and
+`expected_missing=1`. A dry-run attempt that assembled all windows in one
+process was stopped by the disposable client's `512 MiB` limit (`exit=137`);
+it did not restart or mutate any service. Serial execution is therefore an
+explicit memory-safety invariant, not a new architecture or extra worker.
+Each invocation must prepare its window from real Binance/OKX provider
+history, verify the missing-row count before publish, publish only the
+missing final BAR envelope through the existing pipeline, and require zero
+remaining rows. No manifest, SLA, policy, topology, Kafka offset,
+Redis/SQLite reset, V1, Trading System, alpha or order mutation is included.
+After projector catch-up, an inventory must show every one of 140 BAR
+partitions ordered and gap-free; only then is one fresh complete
+four-identity C2 `300s` run permitted.
+
+**C2 BAR continuity recovery evidence (`AUTO-REPAIR CONVERGED / C2 RETRY
+REQUIRED`, 2026-09-05).** The bounded bar-edge restart used the already sealed
+runtime and its existing startup coverage validator. It detected the exact
+cache-rebuild deficit across the governed routes and published `3364` real
+provider final BAR rows for all `140` bindings through the normal raw -> Rust
+-> Kafka -> projector/cache path; the log ended with
+`stable multi-venue BAR bootstrap complete bindings=140 rows=3364`. The edge
+is running with `OOMKilled=false`, `restart=0`, and approximately `168 MiB`
+RSS under its existing `512 MiB` limit. No manifest, policy, topology, V1,
+Trading System, alpha or order path changed.
+
+The earlier read-only inventory process itself exceeded the edge container's
+`512 MiB` cgroup and caused a diagnostic-only `OOMKilled=true` exit; the exact
+same container was started again with its original image, mounts and config,
+and the built-in bounded repair completed. Future verification must therefore
+use a separate read-only disposable verifier, never an in-process scan inside
+the live bar-edge cgroup. Exit remains: projector catch-up, a read-only
+140-partition gap-free check, then one fresh complete four-identity C2
+`300s` receipt.
+
+**C2 3m continuity repair (`APPROVED / EXECUTING`, 2026-09-05).** The
+separate low-memory verifier isolated ten remaining `3m` partitions after the
+bounded bar-edge bootstrap. Each real Binance/OKX provider window returned
+`700/700` contiguous final rows; the durable cache was missing the same three
+opens (`1788486840000`, `1788487020000`, `1788487200000` ms, corresponding to
+`2026-09-04T01:54:00Z`, `01:57:00Z`, and `02:00:00Z`) on exactly these existing
+manifest bindings: Binance `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `DOGEUSDT`,
+`BNBUSDT`, and OKX `BTC-USDT-SWAP`, `ETH-USDT-SWAP`, `SOL-USDT-SWAP`,
+`DOGE-USDT-SWAP`, `BNB-USDT-SWAP`. This is a bounded cache-materialization
+hole, not a provider gap or a new demand binding.
+
+The approved repair is ten serial invocations of the existing
+`repair_stable_final_bar_history.py`, each `rows=700` and
+`expected_missing=3`, publishing only those provider-confirmed rows through
+the normal raw -> Rust -> Kafka -> projector/cache path. The serial invariant
+keeps provider history and Kafka working sets below the existing bar-edge
+`512 MiB` limit. No manifest, provider policy, SLA, Kafka offset/topology,
+Redis/SQLite reset, V1, Trading System, alpha or order mutation is included.
+Each route must report `CONVERGED`, then the disposable verifier must confirm
+all 140 BAR partitions ordered and gap-free before the single complete
+four-identity C2 `300s` receipt is run. A failed route remains fail-closed and
+blocks C2; no count widening or retry storm is permitted.
+
+**C2 3m repair execution note (`PARTIAL / COUNT-FENCED`, 2026-09-05).** The
+first three serial repairs (`binance-usdm-dogeusdt-bar-3m`,
+`okx-swap-doge-usdt-swap-bar-3m`, and `okx-swap-sol-usdt-swap-bar-3m`) each
+published exactly three rows and converged to zero remaining rows. The fourth
+route's pre-approved count changed from three to four while the live window
+advanced, so the CLI correctly refused the stale `expected_missing=3` before
+publishing. The remaining serial repairs therefore use the same
+`prepare_history_repair` result as both the read and write fence: count the
+provider-confirmed missing opens immediately, publish only that exact plan,
+and require zero remaining rows. This is a timing-safe execution of the same
+approved ten-binding repair, not a scope expansion or count widening.
+
+**C2 complete BAR-window inventory (`REPAIR SET EXPANDED WITHIN APPROVED
+CACHE-CONTINUITY SCOPE`, 2026-09-05).** The manifest-derived verifier now
+resolves source partitions by `instrument_uid/source_id` (including the two
+BTC 1m source-id partitions) and confirms `140/140` partitions present. Its
+700-final-open window still finds the same durable materialization defect on
+`60` routes: all five symbols on both Binance and OKX for `5m`, `15m`, `30m`,
+`1h`, `2h`, and `3m`; there are no duplicate opens or missing partitions. The
+provider-backed window is contiguous for these routes, so this remains the
+same approved cache continuity repair, not a new demand or provider contract.
+
+The repair runner will process exactly this derived set serially, computing
+the missing count from each freshly fetched real-provider plan immediately
+before its count-fenced publish. It must not scan or retain all plans at once;
+the live edge stays under its existing memory limit. The 140-partition
+verifier is rerun after projector catch-up, and only a zero-gap result permits
+the one final four-identity C2 `300s` receipt.
+
+**C2 3m repair convergence note (`RETRY SAME SET`, 2026-09-05).** The
+post-retry verifier reduced the remaining defect to the ten `3m` routes only.
+The real provider window exposes the next missing opens in the same historical
+block as earlier rows are materialized; therefore a single fixed count is not
+a valid exit criterion. The ten-route repair repeats with a freshly prepared
+700-row provider window and an exact per-plan missing count until the isolated
+140-route verifier reports zero gaps. No provider, manifest, topology,
+consumer, order or fallback policy is changed.
+
+**C2 5m convergence note (`RETRY BOUNDED / SAME SET`, 2026-09-05).** The
+140-route verifier now has zero gaps for every interval except the ten `5m`
+bindings. They exhibit the same moving-window behavior: each fresh provider
+plan fills the next exact missing opens in one shared historical block. A
+bounded serial loop over only those ten existing bindings will repeat the
+count-fenced repair for a finite number of rounds and stop on the first
+zero-missing round. Any non-convergent route remains release-blocking; no
+unbounded retry, provider fallback or architecture change is allowed.
+
+**C2 verifier guard (`FAIL-CLOSED / NO BROADENING`, 2026-09-05).** An
+in-process diagnostic briefly classified all bindings as bad because it used
+the 700-row BAR window for long intervals whose truthful provider capacity is
+smaller; the existing repair API rejected the first `1w` request before any
+publish. The only extra accepted event from that attempt was the already
+known Binance BNBUSDT `15m` repair row pair. The diagnostic is discarded as
+an acceptance result. The authoritative isolated verifier remains the source
+for the exact 30-route set (`5m`, `15m`, `30m` across five symbols and two
+venues); no weekly/daily or other interval is included in further repair.
+
+**C2 post-projection recheck (`REPAIR RETRY REQUIRED / SAME SCOPE`,
+2026-09-05).** The first 60-route serial pass converged every prepared
+provider window, but the independent cache verifier immediately after
+projector catch-up still found eight `5m` routes with one historical hole plus
+the newest not-yet-materialized close. A fresh real-provider plan for each
+route reports exactly those two missing opens; this is the normal moving
+window race between provider observation and durable projection, not a new
+binding. Re-run only the eight affected existing routes with the same
+count-fenced repair primitive, then repeat the verifier before C2.
+
+**C2 verifier-driven convergence (`APPROVED SAME-SCOPE RECOVERY`,
+2026-09-05).** The post-pass inventory can expose the next layer of one
+shared historical block after an earlier layer is materialized; a static list
+therefore cannot be the exit condition. The final recovery loop is bounded by
+`12` rounds, reads one manifest-derived partition at a time, derives the bad
+set from the durable cache, then calls the existing provider-backed repair
+primitive only for that current bad set. It stops on a zero-gap inventory and
+fails closed on a non-convergent round or timeout. No new source file,
+container, manifest, provider fallback, reset, or consumer/order mutation is
+introduced.
+
+**Rust provider-admission packet and final C2 (`APPROVED / EXECUTING`, 2026-09-05).** The approved runtime packet is limited to verifying the existing Rust admission authority at private `rust_core:8300` and then running one complete four-identity no-order C2 observation for `300s`. Current runtime evidence confirms `QDL_PROVIDER_ADMISSION_ENABLED=true`, policy digest `e4a4330d503e3dd163b6ff7391f5e034a80555a23679ba30bb23ea78ca8053ad`, Redis namespace `qdl:stable:v2:provider-admission:v1`, and both query replicas configured with `QDL_STABLE_PROVIDER_ADMISSION_URL=http://rust_core:8300`; no public or Python policy bypass is permitted. A bounded read-only probe showed the Rust authority admitted/deferred requests and correctly failed closed for Binance HTTP `418` / provider `-1003`; that is evidence of admission behavior, not a certification pass.
+
+Before C2, the existing provider-backed BAR repair primitive may be used serially for only the ten current `15m` bindings (five Binance USD-M and five OKX Swap symbols). The read-only matrix found the same two moving-window observations on each route: one historical missing open and the newest closed open awaiting durable projection. The repair must derive the exact missing count immediately before each publish, publish only real provider-final rows, wait for durable cache convergence, and stop on any count change or non-convergence. It must not reset offsets, flush Redis, delete SQLite, recreate topology, touch V1, Trading System, alpha or order paths. The four C2 identities remain `monitoring.multivenue.stable`, `trading-system.paper.stable`, `alpha.binance.paper.stable`, and `alpha.okx.paper.stable`; C2 must prove V2 warmup, signed cursor/reconnect, allowed V1 fallback, and zero order/state mutation for the sealed manifest. A failed C2 remains a release blocker; no second C2 storm or policy widening is allowed.
+**Rust provider-admission replacement C2 result (`FAIL-CLOSED / NEXT ROUTE
+REQUIRES EXPLICIT SCOPE`, 2026-09-05).** The count-fenced repair for
+`binance-usdm-dogeusdt-bar-15m` published `4` real provider-final rows and
+converged with `0` remaining rows. The one replacement four-identity C2 then
+ran its bounded `300s` observation but stopped at the next sealed route,
+`alpha.binance.paper.stable / BINANCE.USDM.PERPETUAL.DOGE-USDT / BAR / 1h`,
+with `required feed has an unresolved sequence gap`. No order action or V1,
+Kafka offset, Redis, SQLite, topology, manifest or policy mutation occurred.
+The provider-admission packet is verified, but certification/release remains
+blocked until the exact remaining BAR route is explicitly repaired and a
+replacement C2 passes; no automatic scope expansion is permitted.
