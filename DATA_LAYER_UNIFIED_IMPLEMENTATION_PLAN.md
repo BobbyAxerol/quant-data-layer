@@ -37744,3 +37744,22 @@ from `dev`; only this plan and `README.md` changed. No runtime, image,
 provider, data-plane, consumer, Trading System, alpha, or order-path mutation
 occurred, and no disposable build artifact was created. Normal remote CI/review
 remains the final documentation publication gate.
+
+**Post-release source and artifact hygiene (`APPROVED / EXECUTING`,
+2026-09-06).** Approved closure scope is limited to Data Layer source and
+disposable Docker build artifacts. First merge the already-pushed README branch
+into `dev`, then restore the canonical checkout to `dev`. Retain, rather than
+delete, `feat/v2-alpha-reader-release-phase-c` and its worktree because its four
+commits still contain unique projector/runtime changes; retain
+`feat/v2-stable-rust-binance-okx` until its two unique documentation commits are
+explicitly reconciled. Remove only image IDs proven unreferenced by every
+container and not named active/rollback artifacts; retain all active V1/V2,
+Kafka, Redis, bar-edge, Rust, TLS/init and explicit rollback images. Do not
+remove volumes, networks, Kafka offsets/topology, Redis, SQLite, runtime
+configuration, provider data, Trading System, alpha, or order-path state.
+Shared BuildKit cache is global to the host: it is eligible only for an
+explicitly recorded cache-only prune after the source/image retention inventory,
+never through `docker system prune`. Exit requires pre/post disk evidence,
+container/image identity comparison, a runtime health/no-restart check, and a
+single cleanup journal commit; unmerged code remains a documented decision gate,
+not disposable clutter.
