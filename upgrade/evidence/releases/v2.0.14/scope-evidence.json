@@ -1,0 +1,51 @@
+{
+  "schema": "qdl.v2.patch-release-scope-evidence.v1",
+  "status": "PASS",
+  "release": "v2.0.14",
+  "inherits": {
+    "release": "v2.0.13",
+    "certificate_sha256": "05dd99cdf778e89678d5679f19581c9051fcdf074e8e6e07a835cddff3c9c257",
+    "formal_v2_primary_product_count": 299
+  },
+  "delta_acceptance": {
+    "receipt_schema": "qdl.phase-c1.isolated-consumer-acceptance.v1",
+    "receipt_sha256": "e275cd380e7c4562c521fc76473ccd1230d36e8b3da59c33f2ce4e247acd342f",
+    "consumer_id": "trading-system.paper.stable",
+    "consumer_manifest_revision": 9,
+    "case_count": 4,
+    "bar_warmup_product_count": 4,
+    "trade_stream_product_count": 4,
+    "warmup_rows_total": 20,
+    "query_replica_count": 2,
+    "stream_alias_count": 2,
+    "cursor_acknowledged": true,
+    "provider_connections": 0,
+    "order_actions": 0,
+    "cursor_state_removed": true,
+    "secret_values_recorded": false
+  },
+  "runtime": {
+    "projectors": {
+      "image": "sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a",
+      "services": [
+        "projector_v2",
+        "projector_v2_2",
+        "projector_v2_3"
+      ],
+      "restart_count": 0,
+      "oom_killed": false
+    },
+    "rust_core_image": "sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd",
+    "v1_fallback_image": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+    "v2_projector_rollback_image": "sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d"
+  },
+  "exclusions": [
+    "V1 runtime mutation",
+    "Kafka topology or offset mutation",
+    "Redis flush or SQLite deletion",
+    "Rust core, ingestor, bar-edge, query or stream rollout",
+    "Trading System, alpha and order-path mutation",
+    "full 299-product recertification",
+    "VN market-hours V2-primary cutover"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "qdl.v2.patch-release-certificate.v1",
+  "status": "PASS",
+  "release": "v2.0.14",
+  "classification": "single-host bounded projector replay patch and no-order V2 read certification",
+  "predecessor": {
+    "tag": "v2.0.13",
+    "certificate_schema": "qdl.v2.patch-release-certificate.v1",
+    "certificate_sha256": "05dd99cdf778e89678d5679f19581c9051fcdf074e8e6e07a835cddff3c9c257",
+    "inherited_v2_primary_product_count": 299
+  },
+  "delta": {
+    "projector_change": "exact durable canonical replay skips a duplicate sink round trip while preserving idempotent cache rebuild projection",
+    "changed_services": [
+      "projector_v2",
+      "projector_v2_2",
+      "projector_v2_3"
+    ],
+    "acceptance_case_count": 4,
+    "verified_product_reads": 8,
+    "acceptance_products": {
+      "BAR_1m": 4,
+      "TRADE": 4
+    },
+    "products_by_venue": {
+      "BINANCE": 4,
+      "OKX": 4
+    },
+    "receipt_sha256": "e275cd380e7c4562c521fc76473ccd1230d36e8b3da59c33f2ce4e247acd342f",
+    "provider_connections": 0,
+    "order_actions": 0,
+    "cursor_state_removed": true,
+    "secret_values_recorded": false
+  },
+  "provenance": {
+    "image_source_commit": "ccd0c432d1258af1901c78e627b3045dc55a256d",
+    "source_plan_sha256_at_image_build": "7da3c11644c0befa8aaa777a68b024738f461db6352b3eef198a9c226d98cd08",
+    "active_python_projector_image": "sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a",
+    "rollback_python_projector_image": "sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d",
+    "active_rust_core_image": "sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd",
+    "v1_fallback_image": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+    "ci": {
+      "workflow": "CI",
+      "status": "PENDING_REMOTE_DEV"
+    }
+  },
+  "boundaries": [
+    "This patch inherits prior V2 product certification and does not recertify the full 299-product matrix.",
+    "The no-order acceptance proves only V2 query/stream warmup, cursor acknowledgement and reconnect for the four stated BTC/ETH cases.",
+    "It does not certify broker execution, signal or sizing mutation, independent HA/DR, or a VN market-hours cutover.",
+    "V1 remains an explicit service-level rollback; no per-product fallback was invoked by this acceptance."
+  ]
+}

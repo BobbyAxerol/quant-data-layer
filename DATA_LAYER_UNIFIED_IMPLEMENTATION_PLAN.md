@@ -37904,3 +37904,42 @@ skip in an isolated, network-disabled, read-only container. This is source/test
 evidence only; no manifest, V2 reader, Kafka, Redis, SQLite, V1, Trading
 System, alpha, or order path was changed. The active three projectors remain on
 the prior release image until the rebuilt immutable image passes preflight.
+
+**Patch release `v2.0.14` runtime and no-order exit (`PASS LOCAL / REMOTE CI
+PENDING`, 2026-09-06).** Final source commit `ccd0c43` built immutable
+`qdl-v2-python:2.0.14-ccd0c43` at
+`sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a`
+with matching OCI revision and release labels, running as `qdl:qdl`. The three
+approved projectors were serially recreated to that exact image only. Each is
+`running`, `restart=0`, `OOMKilled=false` after catch-up; the retained rollback
+is exactly
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`.
+V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors, BAR edge,
+query/stream services, Trading System, alpha and all order paths stayed intact.
+
+The final no-order client was UID/GID `10001`, read-only, capability-dropped,
+`no-new-privileges`, tmpfs-only for cursor state, and carried only mounted V2
+workload trust/JWT material. It passed all four existing governed cases through
+both query replicas and V2 stream aliases: Binance USD-M BTCUSDT/ETHUSDT and
+OKX Swap BTC-USDT-SWAP/ETH-USDT-SWAP. Each observed five final 1m BAR warmup
+rows with `FULL` coverage, an authoritative TRADE event, durable cursor ACK,
+and a contiguous reconnect/resume. The compact receipt SHA-256 is
+`e275cd380e7c4562c521fc76473ccd1230d36e8b3da59c33f2ce4e247acd342f`; it
+records no secrets, no direct provider client connection and no order action.
+
+The final-image Python suite ran `1416` discovery entries in a strict
+read-only rootfs; four legacy V1 modules failed only because their import-time
+logger needs `/app/logs`. The remaining `1412` entries completed, and the exact
+four affected modules then passed all `14` tests under the same non-root,
+network-disabled image with only `/app/logs` mounted as an owned tmpfs. This is
+a test-harness filesystem precondition, not a source or runtime behavior
+change. Contract/Buf and Rust gates were unchanged by the Python-only C1
+request-shape patch and had already passed before it. Normal remote CI on
+`dev` remains the final full-environment source gate before merge/tag.
+
+Release evidence is tracked at
+[`upgrade/evidence/releases/v2.0.14/`](upgrade/evidence/releases/v2.0.14/).
+The next permitted action is push `dev`, wait for CI success, then perform the
+already-approved `dev -> main` release merge, annotated tag `v2.0.14`, remote
+push and tag workflow publication. Cleanup follows only after active/rollback
+image retention is re-inventoried.
