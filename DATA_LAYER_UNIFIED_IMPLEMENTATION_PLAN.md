@@ -37832,3 +37832,16 @@ behavior is the exact-replay fix from `cbb51617`, now reconciled against current
 projector semantics. No runtime or data-plane resource was mutated during this
 source-only reconciliation. After the closing commit is merged into `dev`, both
 old feature branches and the remaining Phase-C worktree may be removed.
+
+**Stale feature reconciliation branch closure (`COMPLETE`, 2026-09-06).**
+`f3c1ad2` was fast-forwarded to and pushed on `dev`; the temporary integration
+branch was deleted after its merge. The clean Phase-C worktree was then removed,
+and the terminalized local/remote branches
+`feat/v2-alpha-reader-release-phase-c` and
+`feat/v2-stable-rust-binance-okx` were deleted only after the recorded source
+mapping. `git fetch --prune` and `git worktree prune` leave one Data Layer
+worktree: canonical `/home/bobby/data_layer` on `dev`. This closes source and
+worktree hygiene for the V2 reconciliation. `main` remains the immutable
+released `v2.0.13` line until a separate patch-release packet builds an image,
+executes its approved rollout and tags the resulting main revision; this source
+closure does not claim that undeployed projector fix as production-authoritative.
