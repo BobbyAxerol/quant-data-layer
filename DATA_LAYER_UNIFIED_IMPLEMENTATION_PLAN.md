@@ -37952,3 +37952,29 @@ the release certificate's CI provenance from pending to a recorded success. The
 image source remains `ccd0c43`; this journal/evidence-only confirmation changes
 no runtime artifact or service. A final normal CI pass for this metadata commit
 is still required before the approved main merge/tag.
+
+**Patch release `v2.0.14` publication and scoped cleanup (`COMPLETE`,
+2026-09-06).** The final metadata CI run `34017436029` passed all three jobs:
+`sdk-python310`, `contract-tests`, and `unit-tests`. `origin/main` then received
+approved release merge `1a50e4ab0ca55800c97e491c11dc2d3ea973ba1d`, annotated
+tag `v2.0.14` was pushed with the configured BobbyAxerol identity, and tag
+workflow `34017906709` (`Publish Certified Release`) completed successfully.
+The local `dev` branch was fast-forwarded to that same release merge before
+post-release journaling.
+
+Scoped cleanup removed only the disposable Compose project `qdl_v214_ci`, its
+two test containers/networks/volume, and four images proven unreferenced by
+every container: `data-layer:v0.1.0`, preliminary
+`qdl-v2-python:2.0.14-571aca6`, `bufbuild/buf:1.50.0`, and
+`rust:1.82-slim`. Root disk changed from `151G used / 140G available` to
+`149G used / 142G available`; Docker images changed from `32 / 17.68GB` to
+`28 / 15.12GB`. The active V2 projector image
+`sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a`,
+named rollback image
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`,
+V1 fallback, running services, stopped operational evidence containers,
+volumes, networks, Kafka, Redis, SQLite, source, runtime configuration and
+order paths were retained. Global BuildKit cache (`2.938GB`, `2.223GB`
+reclaimable) was intentionally not pruned because it is host-shared and outside
+this narrow cleanup approval. The active projector replicas remain `running`,
+`restart=0`, `OOMKilled=false`.
