@@ -37845,3 +37845,34 @@ worktree hygiene for the V2 reconciliation. `main` remains the immutable
 released `v2.0.13` line until a separate patch-release packet builds an image,
 executes its approved rollout and tags the resulting main revision; this source
 closure does not claim that undeployed projector fix as production-authoritative.
+
+**Patch release `v2.0.14` (`APPROVED / EXECUTING`, 2026-09-06).** The approved
+scope is the already-reviewed exact durable replay fix at `f3c1ad2`, plus its
+release evidence and semantic tag. It follows the stable-release rules in
+[`docs/runbooks/phase105-consumer-cutover-stable-release.md`](docs/runbooks/phase105-consumer-cutover-stable-release.md)
+and the immutable-image/rollback requirements in the fund-grade architecture
+guide. The source remains on canonical `dev` until all gates pass; `main` is
+changed only by the final approved release merge and annotated `v2.0.14` tag.
+
+**Invariants and bounded runtime packet.** Build exactly one immutable Python
+image from the final committed `dev` SHA, label it with `v2.0.14`, and serially
+recreate only `projector_v2`, `projector_v2_2`, and `projector_v2_3`. Their
+current image `sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`
+is the named rollback image and their existing runtime directory, TLS, volumes,
+consumer group, Kafka offsets, state, batch limit and compose overlays are
+preserved. V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors,
+BAR edge, query/stream readers, Trading System, alpha and order paths are
+excluded. A failed preflight, health/catch-up check, replay regression or
+no-order acceptance stops and restores only those three projectors.
+
+**Required gates and decision boundary.** Before mutation: `git diff --check`,
+focused exact-replay and complete stable-projector regressions, source syntax,
+release certificate/schema checks, and the repository CI-equivalent test suite.
+After the bounded roll: prove all three projectors are healthy with zero
+restart/OOM, retain the existing V2/V1 service topology, and run a compact
+payload-free no-order observation against the existing query/stream plane. The
+certificate must record the exact source SHA, active and rollback image digests,
+test results, observation, cleanup and exclusions. Only a passing packet may
+merge `dev -> main`, create/push annotated `v2.0.14`, and let the tag workflow
+publish it. This does not broaden consumer entitlement or recertify unrelated
+market-data routes.
