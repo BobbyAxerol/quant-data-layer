@@ -37943,3 +37943,12 @@ The next permitted action is push `dev`, wait for CI success, then perform the
 already-approved `dev -> main` release merge, annotated tag `v2.0.14`, remote
 push and tag workflow publication. Cleanup follows only after active/rollback
 image retention is re-inventoried.
+
+**Patch release `v2.0.14` remote CI gate (`PASS`, 2026-09-06).** GitHub Actions
+run `34016940611` completed successfully for release-evidence commit
+`f8ce3dcdacc6befc5f7e2aa48b9e416cf5e94177`: `sdk-python310`,
+`contract-tests`, and the full `unit-tests` workflow all passed. This upgrades
+the release certificate's CI provenance from pending to a recorded success. The
+image source remains `ccd0c43`; this journal/evidence-only confirmation changes
+no runtime artifact or service. A final normal CI pass for this metadata commit
+is still required before the approved main merge/tag.

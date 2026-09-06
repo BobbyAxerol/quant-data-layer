@@ -41,7 +41,10 @@
     "v1_fallback_image": "qdl-v1-fallback:v1.2.4-2b0dcf7",
     "ci": {
       "workflow": "CI",
-      "status": "PENDING_REMOTE_DEV"
+      "status": "PASS",
+      "run_id": 34016940611,
+      "head_sha": "f8ce3dcdacc6befc5f7e2aa48b9e416cf5e94177",
+      "conclusion": "success"
     }
   },
   "boundaries": [
