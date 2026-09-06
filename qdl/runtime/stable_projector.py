@@ -94,6 +94,7 @@ class _ReadyCanonical:
     raw_event_id: bytes
     event: DurableEvent
     existing: StoredEvent | None = None
+    already_durable: bool = False
     semantic_duplicate: bool = False
     project_latest: bool = True
     terminal_reason: str | None = None
@@ -282,7 +283,9 @@ class StableProjectorEngine:
             fresh = tuple(
                 item
                 for item in ready
-                if not item.semantic_duplicate and item.terminal_reason is None
+                if not item.already_durable
+                and not item.semantic_duplicate
+                and item.terminal_reason is None
             )
             fresh_stored = (
                 await self.sink.publish_many([item.event for item in fresh])
@@ -294,7 +297,9 @@ class StableProjectorEngine:
             for item in ready:
                 stored = (
                     item.existing
-                    if item.semantic_duplicate or item.terminal_reason is not None
+                    if item.already_durable
+                    or item.semantic_duplicate
+                    or item.terminal_reason is not None
                     else next(stored_iterator)
                 )
                 if stored is None:
@@ -349,9 +354,13 @@ class StableProjectorEngine:
                 self._checkpoint_records, [item.record for item in ready]
             )
             for item in ready:
-                if item.semantic_duplicate or (
-                    item.record.event_id in applied_by_event
-                    and not applied_by_event[item.record.event_id]
+                if (
+                    item.already_durable
+                    or item.semantic_duplicate
+                    or (
+                        item.record.event_id in applied_by_event
+                        and not applied_by_event[item.record.event_id]
+                    )
                 ):
                     self._duplicate_projections += 1
                 self._canonical_committed += 1
@@ -490,6 +499,30 @@ class StableProjectorEngine:
         return True
 
     @staticmethod
+    def _exact_cached_duplicate(
+        existing: StoredEvent,
+        record: KafkaProjectorRecord,
+    ) -> bool:
+        """Recognize an immutable replay before it re-enters the sink.
+
+        A replayed Kafka record may already have been durably accepted before
+        its offset checkpoint became visible. It may skip the sink, while the
+        idempotent projection still repairs an evicted compatibility cache. An
+        event ID may never move partitions.
+        """
+
+        if existing.event.payload != record.payload:
+            return False
+        if (
+            existing.cursor.partition_key != record.key
+            or existing.event.event_id != record.event_id
+        ):
+            raise EventIdCollision(
+                "canonical event ID maps to a different immutable partition"
+            )
+        return True
+
+    @staticmethod
     def _recovery_binding_identity(
         envelope: market_data_pb2.EventEnvelope,
     ) -> tuple:
@@ -616,10 +649,14 @@ class StableProjectorEngine:
             event_ids=tuple(record.event_id for _p, record, _e, _c in candidates),
         )
         semantic_duplicates = {}
+        exact_duplicates = {}
         terminal_recovery_overlaps = {}
         for _partition, record, envelope, _capture_id in candidates:
             existing = existing_by_id.get(record.event_id)
             if existing is None:
+                continue
+            if self._exact_cached_duplicate(existing, record):
+                exact_duplicates[record.event_id] = existing
                 continue
             try:
                 is_duplicate = self._semantic_duplicate(existing, record, envelope)
@@ -766,6 +803,8 @@ class StableProjectorEngine:
                         "kafka_offset": str(record.offset),
                     },
                 ),
+                existing=exact_duplicates.get(record.event_id),
+                already_durable=record.event_id in exact_duplicates,
                 project_latest=project_latest,
                 derived_mark_index_component=derived_mark_index_component,
             ))

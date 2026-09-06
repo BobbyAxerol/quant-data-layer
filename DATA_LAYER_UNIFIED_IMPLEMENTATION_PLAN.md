@@ -37788,3 +37788,47 @@ The active-container identity/start/restart snapshot was byte-identical before
 and after cleanup. Remaining Docker reclaimable space (`3.335GB` images and
 `2.179GB` volumes) is outside this Data Layer packet and requires a separate
 owner-scoped inventory before removal.
+
+**Stale feature reconciliation (`APPROVED / EXECUTING`, 2026-09-06).** Final
+source closure must not merge stale topology wholesale. Patch-id comparison
+proves both commits on `feat/v2-stable-rust-binance-okx` are already represented
+by current `dev`; its historical documentation will be terminalized with the
+commit mapping rather than re-applied. `feat/v2-alpha-reader-release-phase-c`
+contains one still-useful code invariant from `cbb51617`: when a canonical
+Kafka record has exactly the bytes and immutable partition identity already
+durable in the shared spool, the projector must use that stored record,
+skip a second canonical-sink round trip while preserving idempotent projection
+for cache rebuild, then checkpoint the Kafka record. Port only that invariant
+and its exact-replay regression into
+the current projector, preserving newer batch-byte, derived-mark-index,
+terminal-overlap and collision fencing behavior. The three older Phase-C
+documentation commits are historical evidence and will be terminalized rather
+than merged. Tests are the targeted exact-replay regression plus the full
+`tests/test_phaseb_stable_edge.py` suite in the existing immutable Python image,
+network disabled and disposable. No runtime, image, Kafka, Redis, SQLite,
+provider, consumer, Trading System, alpha or order-path mutation is allowed.
+Rollback is a normal source revert before release; worktree/branch deletion is
+allowed only after the retained logic is merged to `dev` and the terminal
+mapping is recorded.
+
+**Stale feature reconciliation source exit (`PASS LOCAL`, 2026-09-06).** The
+exact-replay invariant was ported onto current `dev` without importing the
+stale branch topology: an exact canonical cache hit skips `publish_many` but
+retains raw lineage and idempotent projection so a compatibility cache can be
+rebuilt after Redis loss. The first full regression correctly exposed that an
+over-eager initial port suppressed this rebuild; it was corrected before
+closure. The focused exact-replay test passed (`1 passed, 54 deselected`), and
+the full `tests/test_phaseb_stable_edge.py` suite passed (`54 passed, 1
+skipped`) in a disposable, network-isolated test container with source mounted
+read-only and test dependencies installed only in tmpfs. Syntax compilation and
+`git diff --check` also passed.
+
+`feat/v2-stable-rust-binance-okx` requires no source merge: patch-id evidence
+maps `e8167d4` to already-present `9e35b34` and `559b7ef` to already-present
+`df94a51`. Its branch is therefore terminalized as superseded. The three
+historical documentation commits on `feat/v2-alpha-reader-release-phase-c`
+(`9991ed2`, `2fb9146`, `70ac65b`) are likewise terminalized; its only retained
+behavior is the exact-replay fix from `cbb51617`, now reconciled against current
+projector semantics. No runtime or data-plane resource was mutated during this
+source-only reconciliation. After the closing commit is merged into `dev`, both
+old feature branches and the remaining Phase-C worktree may be removed.
