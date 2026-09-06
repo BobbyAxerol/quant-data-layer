@@ -37763,3 +37763,28 @@ never through `docker system prune`. Exit requires pre/post disk evidence,
 container/image identity comparison, a runtime health/no-restart check, and a
 single cleanup journal commit; unmerged code remains a documented decision gate,
 not disposable clutter.
+
+**Post-release source and artifact hygiene exit (`PASS`, 2026-09-06).** The
+README/documentation branch was fast-forwarded into `dev` at `4a45a0e`, pushed,
+and removed locally and remotely only after ancestry verification. The canonical
+checkout is again `/home/bobby/data_layer` on `dev`. The source inventory
+retains `feat/v2-alpha-reader-release-phase-c` and its 17 MiB worktree: it is
+four commits ahead of `dev` and includes unique `stable_projector.py` and test
+changes. It also retains `feat/v2-stable-rust-binance-okx`, two commits ahead
+of `dev`, pending explicit reconciliation; neither branch was discarded.
+
+The scoped Docker cleanup removed exactly eleven Data Layer images proven to
+have no container reference: nine superseded Python V2 test images, one
+unreferenced Rust test image, and `qdl-rust-builder:mark-index-test`. It
+retained all running V1/V2, Kafka, Redis, bar-edge and Rust images, the stopped
+TLS/init and Spot-role evidence containers, and named projector rollback image
+`sha256:94c9ef02bfc1...b58820`. A cache-only `docker builder prune -af` then
+removed unused shared BuildKit records; no `docker system prune`, volume,
+network, Kafka, Redis, SQLite, runtime-config, provider-data, Trading System,
+alpha, or order-path mutation occurred. Disk changed from `161G used / 130G
+available` to `141G used / 149G available`; Docker images changed from `38 /
+22.95GB` to `27 / 14.45GB`; BuildKit cache changed from `17.41GB` to `0B`.
+The active-container identity/start/restart snapshot was byte-identical before
+and after cleanup. Remaining Docker reclaimable space (`3.335GB` images and
+`2.179GB` volumes) is outside this Data Layer packet and requires a separate
+owner-scoped inventory before removal.
