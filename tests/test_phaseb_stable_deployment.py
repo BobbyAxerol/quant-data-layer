@@ -16,6 +16,7 @@ import yaml
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.adapters.vn import build_dnse_bar_raw_envelope
+from qdl.stream import requirement_from_proto
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 from qdl.runtime.stable_vn_edge import StableDnseVendorEdge
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -23,8 +24,10 @@ from scripts.build_production_core_bundle import main as build_production_core_b
 from scripts.phaseb_prepare_stable_candidate import prepare_candidate
 from scripts.phasec1_isolated_consumer_acceptance import (
     CASES as C39_ACCEPTANCE_CASES,
+    trade_requirement_for_case as c39_trade_requirement_for_case,
     token_claims as c39_token_claims,
 )
+from qdl.consumer import ConsumerManifestLoader
 
 from qdl.runtime.stable_deployment import (
     SHARED_REALTIME_CORE_GROUP_ID,
@@ -169,6 +172,19 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(claims["iat"], 1_800_000_000)
         self.assertEqual(claims["exp"], 1_800_000_300)
         self.assertEqual(claims["environment"], "paper")
+
+    def test_c39_trade_request_matches_quiet_feed_manifest_entitlement(self):
+        manifest = ConsumerManifestLoader.load(
+            ROOT / "consumers/stable/trading-system-paper.yaml"
+        )
+        for case in C39_ACCEPTANCE_CASES:
+            with self.subTest(venue=case.venue, symbol=case.symbol):
+                requirement = requirement_from_proto(
+                    c39_trade_requirement_for_case(case).to_proto()
+                )
+                self.assertTrue(manifest.requirement_allowed(requirement))
+                self.assertEqual(requirement.event_recency_policy.value, "OBSERVE")
+                self.assertEqual(requirement.max_session_liveness_ms, 45_000)
 
     def test_tls_generator_covers_all_published_ingress_aliases(self):
         script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(

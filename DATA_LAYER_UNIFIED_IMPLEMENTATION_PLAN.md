@@ -37876,3 +37876,31 @@ test results, observation, cleanup and exclusions. Only a passing packet may
 merge `dev -> main`, create/push annotated `v2.0.14`, and let the tag workflow
 publish it. This does not broaden consumer entitlement or recertify unrelated
 market-data routes.
+
+**Patch-release no-order harness correction (`APPROVED / EXECUTING`,
+2026-09-06).** The first post-roll immutable no-order client reached the live
+V2 query guard and stopped before any market-data read because its historical
+TRADE request omitted the manifest-owned quiet-feed fields
+`event_recency_policy=OBSERVE` and `max_session_liveness_ms=45000`. Runtime
+`trading-system.paper.stable` revision `9` correctly rejects that request as
+outside its registered entitlement. This is a test-client request-shape defect,
+not a projector, provider, Kafka, Redis, identity, manifest, or data-plane
+failure. Approved correction is limited to deriving the C1 TRADE request with
+those two already-registered fields and adding a regression that compares it to
+the stable Trading System manifest. It changes no runtime role, consumer
+entitlement, source policy, freshness threshold, order capability, or state.
+The release image will be rebuilt once from the resulting committed SHA, the
+same three-projector rollback packet remains valid, and acceptance stays
+read-only/no-order.
+
+**Patch-release no-order harness source gate (`PASS LOCAL`, 2026-09-06).**
+The request now serializes the exact governed quiet-trade entitlement,
+including `OBSERVE`, `45000ms`, and the manifest's `3000ms` freshness value.
+The regression decodes the SDK protobuf through the same server-side converter
+and verifies `requirement_allowed()` for all four Binance USD-M/OKX Swap
+BTC/ETH acceptance cases; `3/3` checks passed. The complete
+`test_phaseb_stable_edge.py` suite then passed `55/55` with one intentional
+skip in an isolated, network-disabled, read-only container. This is source/test
+evidence only; no manifest, V2 reader, Kafka, Redis, SQLite, V1, Trading
+System, alpha, or order path was changed. The active three projectors remain on
+the prior release image until the rebuilt immutable image passes preflight.
