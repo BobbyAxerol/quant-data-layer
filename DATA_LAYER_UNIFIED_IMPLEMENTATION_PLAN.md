@@ -37716,3 +37716,239 @@ Python 3.10 verification and the full unit/recovery/release suite all passed.
 The verified source now contains no runtime mutation after the sealed C2;
 promotion is limited to a normal `dev -> main` merge and a new immutable
 `v2.0.13` tag. The already-published `v2.0.12` tag remains immutable.
+
+**README V2 architecture and benchmark publication (`EXECUTING`, 2026-09-06).**
+Approved scope is documentation only: refresh the public README to distinguish
+the stable V2 Binance USD-M/OKX Swap data plane from V1 compatibility and the
+separately governed VN route; document the provider-edge -> Rust canonical
+core -> Kafka -> durable projection -> V2 query/stream architecture; and
+publish only already-certified benchmark evidence with its measurement scope.
+The README must distinguish request latency, durable event age and final-BAR
+availability; state that reference-data product-specific p99s and raw
+WebSocket-ingest p99 are not yet public SLOs; retain V1 as observable rollback;
+and link readers to the versioned integration guide and release evidence. No
+runtime, provider, manifest, endpoint, image, Kafka, Redis, SQLite, consumer,
+alpha, Trading System or order-path mutation is permitted. Exit requires
+Markdown link/reference validation, `git diff --check`, review of every stated
+number against the frozen journal/receipt, a conventional documentation commit
+on a branch from `dev`, and a push for normal CI/review.
+
+**README V2 architecture and benchmark publication source exit (`PASS LOCAL / CI
+PENDING`, 2026-09-06).** Updated `README.md` with the stable V2 architecture,
+product boundary, V1 rollback/VN boundary, V2 query/stream surface, and a
+scope-bound benchmark snapshot. Verified every published latency figure against
+the frozen evidence journal and release certificates; validated all local
+Markdown targets, both `v2.0.12` and `v2.0.13` certificate JSON files, and
+`git diff --check`. The branch is `docs/v2-architecture-benchmark`, created
+from `dev`; only this plan and `README.md` changed. No runtime, image,
+provider, data-plane, consumer, Trading System, alpha, or order-path mutation
+occurred, and no disposable build artifact was created. Normal remote CI/review
+remains the final documentation publication gate.
+
+**Post-release source and artifact hygiene (`APPROVED / EXECUTING`,
+2026-09-06).** Approved closure scope is limited to Data Layer source and
+disposable Docker build artifacts. First merge the already-pushed README branch
+into `dev`, then restore the canonical checkout to `dev`. Retain, rather than
+delete, `feat/v2-alpha-reader-release-phase-c` and its worktree because its four
+commits still contain unique projector/runtime changes; retain
+`feat/v2-stable-rust-binance-okx` until its two unique documentation commits are
+explicitly reconciled. Remove only image IDs proven unreferenced by every
+container and not named active/rollback artifacts; retain all active V1/V2,
+Kafka, Redis, bar-edge, Rust, TLS/init and explicit rollback images. Do not
+remove volumes, networks, Kafka offsets/topology, Redis, SQLite, runtime
+configuration, provider data, Trading System, alpha, or order-path state.
+Shared BuildKit cache is global to the host: it is eligible only for an
+explicitly recorded cache-only prune after the source/image retention inventory,
+never through `docker system prune`. Exit requires pre/post disk evidence,
+container/image identity comparison, a runtime health/no-restart check, and a
+single cleanup journal commit; unmerged code remains a documented decision gate,
+not disposable clutter.
+
+**Post-release source and artifact hygiene exit (`PASS`, 2026-09-06).** The
+README/documentation branch was fast-forwarded into `dev` at `4a45a0e`, pushed,
+and removed locally and remotely only after ancestry verification. The canonical
+checkout is again `/home/bobby/data_layer` on `dev`. The source inventory
+retains `feat/v2-alpha-reader-release-phase-c` and its 17 MiB worktree: it is
+four commits ahead of `dev` and includes unique `stable_projector.py` and test
+changes. It also retains `feat/v2-stable-rust-binance-okx`, two commits ahead
+of `dev`, pending explicit reconciliation; neither branch was discarded.
+
+The scoped Docker cleanup removed exactly eleven Data Layer images proven to
+have no container reference: nine superseded Python V2 test images, one
+unreferenced Rust test image, and `qdl-rust-builder:mark-index-test`. It
+retained all running V1/V2, Kafka, Redis, bar-edge and Rust images, the stopped
+TLS/init and Spot-role evidence containers, and named projector rollback image
+`sha256:94c9ef02bfc1...b58820`. A cache-only `docker builder prune -af` then
+removed unused shared BuildKit records; no `docker system prune`, volume,
+network, Kafka, Redis, SQLite, runtime-config, provider-data, Trading System,
+alpha, or order-path mutation occurred. Disk changed from `161G used / 130G
+available` to `141G used / 149G available`; Docker images changed from `38 /
+22.95GB` to `27 / 14.45GB`; BuildKit cache changed from `17.41GB` to `0B`.
+The active-container identity/start/restart snapshot was byte-identical before
+and after cleanup. Remaining Docker reclaimable space (`3.335GB` images and
+`2.179GB` volumes) is outside this Data Layer packet and requires a separate
+owner-scoped inventory before removal.
+
+**Stale feature reconciliation (`APPROVED / EXECUTING`, 2026-09-06).** Final
+source closure must not merge stale topology wholesale. Patch-id comparison
+proves both commits on `feat/v2-stable-rust-binance-okx` are already represented
+by current `dev`; its historical documentation will be terminalized with the
+commit mapping rather than re-applied. `feat/v2-alpha-reader-release-phase-c`
+contains one still-useful code invariant from `cbb51617`: when a canonical
+Kafka record has exactly the bytes and immutable partition identity already
+durable in the shared spool, the projector must use that stored record,
+skip a second canonical-sink round trip while preserving idempotent projection
+for cache rebuild, then checkpoint the Kafka record. Port only that invariant
+and its exact-replay regression into
+the current projector, preserving newer batch-byte, derived-mark-index,
+terminal-overlap and collision fencing behavior. The three older Phase-C
+documentation commits are historical evidence and will be terminalized rather
+than merged. Tests are the targeted exact-replay regression plus the full
+`tests/test_phaseb_stable_edge.py` suite in the existing immutable Python image,
+network disabled and disposable. No runtime, image, Kafka, Redis, SQLite,
+provider, consumer, Trading System, alpha or order-path mutation is allowed.
+Rollback is a normal source revert before release; worktree/branch deletion is
+allowed only after the retained logic is merged to `dev` and the terminal
+mapping is recorded.
+
+**Stale feature reconciliation source exit (`PASS LOCAL`, 2026-09-06).** The
+exact-replay invariant was ported onto current `dev` without importing the
+stale branch topology: an exact canonical cache hit skips `publish_many` but
+retains raw lineage and idempotent projection so a compatibility cache can be
+rebuilt after Redis loss. The first full regression correctly exposed that an
+over-eager initial port suppressed this rebuild; it was corrected before
+closure. The focused exact-replay test passed (`1 passed, 54 deselected`), and
+the full `tests/test_phaseb_stable_edge.py` suite passed (`54 passed, 1
+skipped`) in a disposable, network-isolated test container with source mounted
+read-only and test dependencies installed only in tmpfs. Syntax compilation and
+`git diff --check` also passed.
+
+`feat/v2-stable-rust-binance-okx` requires no source merge: patch-id evidence
+maps `e8167d4` to already-present `9e35b34` and `559b7ef` to already-present
+`df94a51`. Its branch is therefore terminalized as superseded. The three
+historical documentation commits on `feat/v2-alpha-reader-release-phase-c`
+(`9991ed2`, `2fb9146`, `70ac65b`) are likewise terminalized; its only retained
+behavior is the exact-replay fix from `cbb51617`, now reconciled against current
+projector semantics. No runtime or data-plane resource was mutated during this
+source-only reconciliation. After the closing commit is merged into `dev`, both
+old feature branches and the remaining Phase-C worktree may be removed.
+
+**Stale feature reconciliation branch closure (`COMPLETE`, 2026-09-06).**
+`f3c1ad2` was fast-forwarded to and pushed on `dev`; the temporary integration
+branch was deleted after its merge. The clean Phase-C worktree was then removed,
+and the terminalized local/remote branches
+`feat/v2-alpha-reader-release-phase-c` and
+`feat/v2-stable-rust-binance-okx` were deleted only after the recorded source
+mapping. `git fetch --prune` and `git worktree prune` leave one Data Layer
+worktree: canonical `/home/bobby/data_layer` on `dev`. This closes source and
+worktree hygiene for the V2 reconciliation. `main` remains the immutable
+released `v2.0.13` line until a separate patch-release packet builds an image,
+executes its approved rollout and tags the resulting main revision; this source
+closure does not claim that undeployed projector fix as production-authoritative.
+
+**Patch release `v2.0.14` (`APPROVED / EXECUTING`, 2026-09-06).** The approved
+scope is the already-reviewed exact durable replay fix at `f3c1ad2`, plus its
+release evidence and semantic tag. It follows the stable-release rules in
+[`docs/runbooks/phase105-consumer-cutover-stable-release.md`](docs/runbooks/phase105-consumer-cutover-stable-release.md)
+and the immutable-image/rollback requirements in the fund-grade architecture
+guide. The source remains on canonical `dev` until all gates pass; `main` is
+changed only by the final approved release merge and annotated `v2.0.14` tag.
+
+**Invariants and bounded runtime packet.** Build exactly one immutable Python
+image from the final committed `dev` SHA, label it with `v2.0.14`, and serially
+recreate only `projector_v2`, `projector_v2_2`, and `projector_v2_3`. Their
+current image `sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`
+is the named rollback image and their existing runtime directory, TLS, volumes,
+consumer group, Kafka offsets, state, batch limit and compose overlays are
+preserved. V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors,
+BAR edge, query/stream readers, Trading System, alpha and order paths are
+excluded. A failed preflight, health/catch-up check, replay regression or
+no-order acceptance stops and restores only those three projectors.
+
+**Required gates and decision boundary.** Before mutation: `git diff --check`,
+focused exact-replay and complete stable-projector regressions, source syntax,
+release certificate/schema checks, and the repository CI-equivalent test suite.
+After the bounded roll: prove all three projectors are healthy with zero
+restart/OOM, retain the existing V2/V1 service topology, and run a compact
+payload-free no-order observation against the existing query/stream plane. The
+certificate must record the exact source SHA, active and rollback image digests,
+test results, observation, cleanup and exclusions. Only a passing packet may
+merge `dev -> main`, create/push annotated `v2.0.14`, and let the tag workflow
+publish it. This does not broaden consumer entitlement or recertify unrelated
+market-data routes.
+
+**Patch-release no-order harness correction (`APPROVED / EXECUTING`,
+2026-09-06).** The first post-roll immutable no-order client reached the live
+V2 query guard and stopped before any market-data read because its historical
+TRADE request omitted the manifest-owned quiet-feed fields
+`event_recency_policy=OBSERVE` and `max_session_liveness_ms=45000`. Runtime
+`trading-system.paper.stable` revision `9` correctly rejects that request as
+outside its registered entitlement. This is a test-client request-shape defect,
+not a projector, provider, Kafka, Redis, identity, manifest, or data-plane
+failure. Approved correction is limited to deriving the C1 TRADE request with
+those two already-registered fields and adding a regression that compares it to
+the stable Trading System manifest. It changes no runtime role, consumer
+entitlement, source policy, freshness threshold, order capability, or state.
+The release image will be rebuilt once from the resulting committed SHA, the
+same three-projector rollback packet remains valid, and acceptance stays
+read-only/no-order.
+
+**Patch-release no-order harness source gate (`PASS LOCAL`, 2026-09-06).**
+The request now serializes the exact governed quiet-trade entitlement,
+including `OBSERVE`, `45000ms`, and the manifest's `3000ms` freshness value.
+The regression decodes the SDK protobuf through the same server-side converter
+and verifies `requirement_allowed()` for all four Binance USD-M/OKX Swap
+BTC/ETH acceptance cases; `3/3` checks passed. The complete
+`test_phaseb_stable_edge.py` suite then passed `55/55` with one intentional
+skip in an isolated, network-disabled, read-only container. This is source/test
+evidence only; no manifest, V2 reader, Kafka, Redis, SQLite, V1, Trading
+System, alpha, or order path was changed. The active three projectors remain on
+the prior release image until the rebuilt immutable image passes preflight.
+
+**Patch release `v2.0.14` runtime and no-order exit (`PASS LOCAL / REMOTE CI
+PENDING`, 2026-09-06).** Final source commit `ccd0c43` built immutable
+`qdl-v2-python:2.0.14-ccd0c43` at
+`sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a`
+with matching OCI revision and release labels, running as `qdl:qdl`. The three
+approved projectors were serially recreated to that exact image only. Each is
+`running`, `restart=0`, `OOMKilled=false` after catch-up; the retained rollback
+is exactly
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`.
+V1, Kafka topology/offsets, Redis, SQLite, Rust core, ingestors, BAR edge,
+query/stream services, Trading System, alpha and all order paths stayed intact.
+
+The final no-order client was UID/GID `10001`, read-only, capability-dropped,
+`no-new-privileges`, tmpfs-only for cursor state, and carried only mounted V2
+workload trust/JWT material. It passed all four existing governed cases through
+both query replicas and V2 stream aliases: Binance USD-M BTCUSDT/ETHUSDT and
+OKX Swap BTC-USDT-SWAP/ETH-USDT-SWAP. Each observed five final 1m BAR warmup
+rows with `FULL` coverage, an authoritative TRADE event, durable cursor ACK,
+and a contiguous reconnect/resume. The compact receipt SHA-256 is
+`e275cd380e7c4562c521fc76473ccd1230d36e8b3da59c33f2ce4e247acd342f`; it
+records no secrets, no direct provider client connection and no order action.
+
+The final-image Python suite ran `1416` discovery entries in a strict
+read-only rootfs; four legacy V1 modules failed only because their import-time
+logger needs `/app/logs`. The remaining `1412` entries completed, and the exact
+four affected modules then passed all `14` tests under the same non-root,
+network-disabled image with only `/app/logs` mounted as an owned tmpfs. This is
+a test-harness filesystem precondition, not a source or runtime behavior
+change. Contract/Buf and Rust gates were unchanged by the Python-only C1
+request-shape patch and had already passed before it. Normal remote CI on
+`dev` remains the final full-environment source gate before merge/tag.
+
+Release evidence is tracked at
+[`upgrade/evidence/releases/v2.0.14/`](upgrade/evidence/releases/v2.0.14/).
+The next permitted action is push `dev`, wait for CI success, then perform the
+already-approved `dev -> main` release merge, annotated tag `v2.0.14`, remote
+push and tag workflow publication. Cleanup follows only after active/rollback
+image retention is re-inventoried.
+
+**Patch release `v2.0.14` remote CI gate (`PASS`, 2026-09-06).** GitHub Actions
+run `34016940611` completed successfully for release-evidence commit
+`f8ce3dcdacc6befc5f7e2aa48b9e416cf5e94177`: `sdk-python310`,
+`contract-tests`, and the full `unit-tests` workflow all passed. This upgrades
+the release certificate's CI provenance from pending to a recorded success. The
+image source remains `ccd0c43`; this journal/evidence-only confirmation changes
+no runtime artifact or service. A final normal CI pass for this metadata commit
+is still required before the approved main merge/tag.

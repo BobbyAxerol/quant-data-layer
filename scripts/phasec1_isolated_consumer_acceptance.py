@@ -128,6 +128,29 @@ def token(
     )
 
 
+def trade_requirement_for_case(case: VenueCase) -> DataRequirement:
+    """Match the governed quiet-trade entitlement exactly.
+
+    Trade event recency is observed while provider-session liveness remains
+    fail-closed.  These fields belong to the manifest, so the acceptance client
+    must not omit or override them.
+    """
+
+    return DataRequirement(
+        case.instrument_uid,
+        Feed.TRADE,
+        Grade.EXECUTION,
+        "crypto_primary_v2",
+        warmup_limit=0,
+        max_freshness_ms=3_000,
+        event_recency_policy=StalePolicy.OBSERVE,
+        max_session_liveness_ms=45_000,
+        stale_policy=StalePolicy.BLOCK,
+        gap_policy=GapPolicy.BLOCK,
+        recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY,
+    )
+
+
 def client(
     *,
     base_url: str,
@@ -311,17 +334,7 @@ async def certify_case(
     if first_rows != second_rows:
         raise AssertionError(f"{case.venue} query replicas diverged")
 
-    trade_requirement = DataRequirement(
-        case.instrument_uid,
-        Feed.TRADE,
-        Grade.EXECUTION,
-        "crypto_primary_v2",
-        warmup_limit=0,
-        max_freshness_ms=15_000,
-        stale_policy=StalePolicy.BLOCK,
-        gap_policy=GapPolicy.BLOCK,
-        recovery=RecoveryPolicy.SNAPSHOT_AND_REPLAY,
-    )
+    trade_requirement = trade_requirement_for_case(case)
     cursor_path = state_dir / f"{case.venue.lower()}-{case.symbol.lower()}-stream.json"
     first_client = client(
         base_url=primary_url,

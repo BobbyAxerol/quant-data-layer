@@ -221,6 +221,19 @@ class _Broker:
         return None
 
 
+class _CountingStableSink:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.publish_many_calls = 0
+
+    async def publish(self, event):
+        return (await self.publish_many((event,)))[0]
+
+    async def publish_many(self, events):
+        self.publish_many_calls += 1
+        return await self.delegate.publish_many(events)
+
+
 def _broker_records(binding, raw, event, *, raw_offset=0, canonical_offset=0):
     raw_topic = "qdl.stable.raw.phase-b.v1"
     canonical_topic = "qdl.stable.canonical.phase-b.v2"
@@ -1291,11 +1304,11 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.spool.close()
         self.temp.cleanup()
 
-    def engine(self, broker, target, raw_topic, canonical_topic):
+    def engine(self, broker, target, raw_topic, canonical_topic, *, sink=None):
         return StableProjectorEngine(
             broker=broker, spool=self.spool, catalog=self.catalog,
             canonical_topic=canonical_topic, raw_topics=(raw_topic,),
-            sink=LocalStableCanonicalSink(self.gateway, self.spool),
+            sink=sink or LocalStableCanonicalSink(self.gateway, self.spool),
             projector=StableCompatibilityProjector(self.catalog), target=target,
             max_pending_records=10, max_pending_bytes=1024 * 1024,
         )
@@ -1805,6 +1818,40 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         await engine.accept(replay)
 
+        self.assertEqual(len(target.publications), publication_count)
+        self.assertEqual(engine.stats.canonical_committed, 2)
+        self.assertEqual(engine.stats.duplicate_projections, 1)
+        self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
+
+    async def test_exact_cached_replay_checkpoints_without_reentering_sink(self):
+        binding, raw, event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        raw_topic, canonical_topic, raw_record, first = _broker_records(
+            binding, raw, event
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        sink = _CountingStableSink(LocalStableCanonicalSink(self.gateway, self.spool))
+        engine = self.engine(
+            broker, target, raw_topic, canonical_topic, sink=sink
+        )
+        await engine.accept_many((raw_record, first))
+        publication_count = len(target.publications)
+        self.assertEqual(sink.publish_many_calls, 1)
+
+        replay = KafkaProjectorRecord(
+            topic=canonical_topic,
+            partition=0,
+            offset=1,
+            key=first.key,
+            event_id=first.event_id,
+            payload=first.payload,
+            accepted_at_ns=first.accepted_at_ns + 1,
+        )
+        await engine.accept(replay)
+
+        self.assertEqual(sink.publish_many_calls, 1)
         self.assertEqual(len(target.publications), publication_count)
         self.assertEqual(engine.stats.canonical_committed, 2)
         self.assertEqual(engine.stats.duplicate_projections, 1)

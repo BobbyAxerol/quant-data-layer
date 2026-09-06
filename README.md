@@ -2,6 +2,13 @@
 
 `data_layer` is the market-data gateway for Bobby's trading stack. It centralizes provider connectivity, historical warmup, live streaming, fallback recovery, and service-to-service data contracts so alpha and execution services do not connect to exchanges directly.
 
+The released V2 data plane is the primary market-data contract for its declared
+Binance USD-M and OKX Swap consumer demand. Python owns provider/API adapters
+and stable public contracts; Rust owns canonical identity, ordering,
+idempotency, L2 state and realtime normalization. V1 remains an explicit,
+observable rollback/compatibility route. VN/DNSE is separately governed and
+remains V1-primary until its market-hours certification is complete.
+
 It currently serves:
 
 - Binance crypto spot and USD-M futures market data.
@@ -16,6 +23,8 @@ It currently serves:
 - [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 - [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 - [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
+- [V2.0.13 release notes](./upgrade/evidence/releases/v2.0.13/RELEASE_NOTES.md)
+- [V2.0.13 machine-readable certificate](./upgrade/evidence/releases/v2.0.13/certificate.json)
 - [Contributing guide](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)
@@ -54,6 +63,11 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 
 ## Features
 
+- **V2 stable data plane** — manifest-authorized, mTLS/JWT V2 query and signed-cursor stream for Binance USD-M and OKX Swap
+- **Rust canonical core** — provider-neutral identity, decimal/unit normalization, event idempotency, sequencing, gap/resync and L2 book state
+- **Durable projection** — Kafka-compatible raw/canonical event planes with bounded SQLite/Redis projection, replay and typed freshness/quality state
+- **Execution-grade context** — final BAR, TRADE, QUOTE, top-100 BOOK_SNAPSHOT/BOOK_DELTA and strict MARK_INDEX_PRICE for declared consumer demand
+- **Reference data** — bounded provider wrappers for funding, OI, long/short, taker flow, mark/index, contract metadata and native/continuous basis
 - **Real-time streaming** — WebSocket multiplexer for Binance (spot & futures trade + kline) and DNSE (VN stock live quotes)
 - **Automatic failover** — DNSE as primary VN source, vnstock REST poller as secondary fallback
 - **Redis Pub/Sub distribution** — single upstream connection shared across many downstream consumers
@@ -64,7 +78,106 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 - **Alpha strategy example** — moving-average crossover strategy included as a reference implementation
 - 🐳 **Docker-first** — full Docker Compose stack with networking, volumes, and log management
 
-## Architecture
+## V2 Stable Architecture
+
+```text
+ Binance USD-M WS/REST                 OKX Swap WS/REST
+          |                                      |
+          +------------ Python venue adapters ---+
+                       retry / pacing / native parsing
+                                      |
+                                      v
+                    Rust canonical realtime core
+      identity + decimals + event IDs + sequence + L2 state + gap/resync
+                                      |
+                       raw Kafka -> canonical Kafka
+                                      |
+                                      v
+                  bounded durable projection layer
+                   SQLite cache + Redis coordination
+                                      |
+                 +--------------------+--------------------+
+                 |                                         |
+                 v                                         v
+         V2 query replicas                         V2 stream replicas
+       mTLS/JWT, typed reads                  signed cursor replay -> LIVE
+                 |                                         |
+                 +--------------------+--------------------+
+                                      v
+                      qdl_sdk -> Trading System / alpha
+
+ V1 FastAPI + Redis Pub/Sub remains an explicit compatibility and rollback path.
+ VN/DNSE remains separately governed on V1 until its own V2 market-hours gate.
+```
+
+The consumer manifest is the authority for venue, canonical instrument,
+native symbol, feed, interval, depth, freshness and fallback policy. A client
+cannot use a provider adapter, another consumer's identity, a direct venue
+connection or a stale/gapped event as a shortcut around that contract.
+
+### V2 Data Products And Intended Use
+
+| Product | Delivery | Intended use |
+|---|---|---|
+| Final `BAR` | Durable query/history and signed stream | Closed-candle signal calculation only |
+| `TRADE`, `QUOTE` | Durable query plus hot signed stream | Current market context and execution monitoring |
+| `BOOK_SNAPSHOT`, `BOOK_DELTA` | Snapshot bootstrap/resync plus ordered delta stream | Limit/post-only price selection and market-impact analysis |
+| `MARK_INDEX_PRICE` | Bounded provider-authentic reference read | Declared trigger/risk reference only; stale values are rejected |
+| Funding, OI, long/short, taker flow, metadata, basis | Bounded `reference:batch` provider reads | Research/feature/diagnostic input under a manifest requirement |
+
+For the released Binance/OKX scope, the full certificate covers `299` consumer
+products: `234` durable and `65` on-demand, including `150` BAR requirements
+over `140` physical final-BAR bindings, `24` TRADE, `20` QUOTE, `20`
+BOOK_SNAPSHOT, `20` BOOK_DELTA, `20` MARK_INDEX_PRICE and `45` other reference
+products. The V2.0.13 patch additionally proves the five-liquid Trading System
+paper scope for BTC, ETH, SOL, DOGE and BNB across both venues.
+
+## Certified V2 Benchmark Snapshot
+
+These figures are real-provider/no-order evidence, not a blanket network SLA.
+Request round-trip is consumer -> V2 query/cache -> consumer; it is distinct
+from provider event age and from final-BAR materialization. The durable price/
+bar query buckets below contain `30` reads each: five liquid symbols, three
+samples, two query replicas, exact identity, `complete=true` and no open gap.
+
+| V2 durable read | p50 | p95 | p99 |
+|---|---:|---:|---:|
+| Binance USD-M `TRADE` | 7.52ms | 22.03ms | 40.52ms |
+| Binance USD-M `QUOTE` | 8.83ms | 38.84ms | 45.03ms |
+| Binance USD-M final `BAR 1m` query | 13.73ms | 55.64ms | 64.61ms |
+| OKX Swap `TRADE` | 6.70ms | 29.02ms | 31.65ms |
+| OKX Swap `QUOTE` | 6.65ms | 31.26ms | 41.43ms |
+| OKX Swap final `BAR 1m` query | 534.35ms | 1182.97ms | 1196.38ms |
+
+- A `warmup:batch` of `10 x 100 = 1,000` final 1m bars completed in
+  `813.88ms` and `952.09ms` on the two replicas. Warm up once, retain a bounded
+  FIFO buffer, then append/deduplicate closed bars; do not poll full history per
+  signal cycle.
+- At a real 1m close, close-to-final-BAR availability was p50 `2.151s`, p95
+  `3.376s`, p99 `4.196s`, max `4.400s`. The active bar edge has a `0.10s`
+  settlement start and `1.0s` bounded retry; the remaining time is provider
+  finality plus durable publication, not an intentional 10-second sleep.
+- `warmup_then_stream` TRADE handoff measured p50 `294.66ms`, p95 `908.86ms`,
+  p99 `994.62ms`; durable event age was p50 `342.57ms`, p95 `406.12ms`, p99
+  `407.23ms`. A quiet but live session is typed `QUIET`, not misclassified as a
+  disconnected provider.
+- The SOL/OKX MARK_INDEX_PRICE repair measured source age `39ms`/`70ms` and
+  receive age `3ms`/`9ms` at the two V2 query replicas. The `2,000ms` execution
+  freshness boundary is strict: `2,001ms` is typed `STALE` and not execution
+  eligible.
+
+`BOOK_SNAPSHOT` and `BOOK_DELTA` are certified for top-100 depth and sequence/
+gap/resync correctness across the five-liquid Binance/OKX books. A separate
+raw WebSocket-ingress p99 and per-reference-metric p99 are not published SLOs
+yet; callers must rely on typed freshness, completeness and gap state rather
+than infer those figures from this benchmark.
+
+See the [implementation journal](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md),
+[V2.0.12 full certificate](./upgrade/evidence/releases/v2.0.12/certificate.json)
+and [V2.0.13 patch certificate](./upgrade/evidence/releases/v2.0.13/certificate.json)
+for scope, provenance and exclusions.
+
+## V1 Compatibility Architecture
 
 ```
                     ┌─────────────────────────────────────────┐
@@ -85,8 +198,8 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 ```
 
 Downstream services (alpha strategies, paper trading engines, execution services) connect to:
-- **Redis Pub/Sub** for real-time streaming
-- **REST API** (`http://data_layer:8100`) for warmup, latest-state recovery, and health checks
+- **V2 (preferred where the manifest admits it):** deployment-provided V2 query/stream endpoints through `qdl_sdk`, mTLS/JWT and signed cursors
+- **V1 compatibility:** Redis Pub/Sub plus REST API (`http://data_layer:8100`) for legacy warmup, latest-state recovery and health checks
 
 ## Tech Stack
 
@@ -96,6 +209,9 @@ Downstream services (alpha strategies, paper trading engines, execution services
 | Cache & Streaming | [Redis](https://redis.io/) 5+ with [hiredis](https://github.com/redis/hiredis) |
 | Data Processing | [Pandas](https://pandas.pydata.org/) + [PyArrow](https://arrow.apache.org/) (Parquet) |
 | Serialization | [orjson](https://github.com/ijl/orjson) |
+| Canonical Realtime Core | Rust (`qdl-core`, `qdl-realtime-core`, `qdl-kafka`) |
+| Durable Event Backbone | Kafka-compatible raw/canonical topics + SQLite/Redis bounded projection |
+| V2 Security | mTLS workload identity + JWT manifests + signed replay cursors |
 | VN Market Data | [vnstock](https://github.com/thinh-vu/vnstock) + DNSE WebSocket |
 | Package Manager | [Poetry](https://python-poetry.org/) |
 | Runtime | Python 3.10+ |
@@ -218,6 +334,26 @@ Expected response:
 ```
 
 ## API Reference
+
+### V2 Stable Query And Stream
+
+V2 is the preferred contract for manifest-admitted Binance USD-M and OKX Swap
+consumers. Use deployment-provided query/stream addresses and `qdl_sdk`; port
+`8100` and the V1 endpoints below are not V2 authority.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/v2/instruments` | Canonical instrument catalog |
+| `GET` | `/v2/market-data/{instrument_uid}/snapshot` | Current typed durable snapshot |
+| `GET` | `/v2/market-data/{instrument_uid}/warmup` | Bounded final-BAR warmup |
+| `GET` | `/v2/market-data/{instrument_uid}/history` | Bounded historical final-BAR read |
+| `POST` | `/v2/market-data/warmup:batch` | Multi-instrument warmup |
+| `POST` | `/v2/market-data/reference:batch` | Manifest-authorized provider reference data |
+| `GET` | `/v2/feeds/{instrument_uid}/status` | Typed freshness, session and gap state |
+| `POST` | `/v2/system/readiness:check` | Requirement-level readiness admission |
+
+The full client, startup/reconnect sequence, stream cursor behavior and V1
+fallback rules are in the [production integration guide](./DATA_LAYER_SERVICE_ACCESS_GUIDE.md).
 
 ### Health
 
