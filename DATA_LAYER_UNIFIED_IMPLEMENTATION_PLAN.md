@@ -38908,3 +38908,79 @@ readers off the writer's file is an architecture change and it is **not**
 justified by the current numbers; it stays recorded here with the measurement
 so a future decision starts from evidence rather than from this entry.
 
+
+### DL-V2 R1 outcome: the delivery path is fixed, the single-writer ceiling is not
+
+<a id="dl-v2-r1-outcome-20260916"></a>
+**Status:** `R1.1_R1.9_LANDED / CAPACITY_CEILING_ESCALATED` (2026-09-16 18:45Z).
+
+**What the code changes achieved, measured.** Throughput through the ingest
+path rose 62%, from 767 records per second consumed to 1,239, and every feed
+the consumer reads came back inside its demanded bound.
+
+| Probe | Before R1 | After R1 |
+| --- | --- | --- |
+| TRADE freshness, Binance BTCUSDT | 355,952 ms | 926 ms |
+| TRADE freshness, OKX BTC-USDT-SWAP | 389,931 ms | 1,099 ms |
+| BOOK_SNAPSHOT, all four probed | rejected `DATA_STALE` | 942-1,205 ms |
+| OKX MARK_INDEX_PRICE | rejected | 575-731 ms |
+| QUOTE | 403-671 ms | 280-533 ms |
+| BAR 1m | 129,795 ms | 8,963-9,545 ms |
+| Projector lag at the time | 161,732 | 322, gate `PASS` |
+| Lease-holder CPU | 69.2% of a core, losing ground | 74.4% of a core doing 62% more |
+
+**What it did not fix, and this is the finding that matters.** Ingest is a
+single process by design: `ActivePassiveGatewayLease` admits exactly one
+writer, and one Python process holds one interpreter lock, so its ceiling is
+roughly one core no matter how much quota it is given. Measured at that
+ceiling it sustains about **1,240 canonical records per second**. During the
+evening session the venues produced **2,749 raw records per second**, against
+the 950 measured this afternoon, and the canonical topic followed at 2,589.
+The projector backlog went from 322 to 2.4 million and kept growing, and the
+consumer fell to 27 of 60 slices ready.
+
+**The shortfall is not new and not caused by R1.** At the very start of this
+phase, before any change, production was 945 per second against 767 consumed:
+a deficit of 178 that had already built the 161,732 backlog which opened this
+investigation. R1 raised the ceiling by 62% and the load rose faster. **The V2
+ingest tier has been running beyond its single-writer capacity for some time;
+the lag was the symptom.**
+
+**Ruled out by measurement, so nobody re-derives them.** Not duplication:
+`rust_core` reports 4, 17 and 9 duplicates against millions processed. Not an
+ingestor reconnect storm: the OKX ingestor renewed snapshots 39 times in 20
+minutes, exactly its 30 second cadence, and the Binance ingestor logged
+nothing. Not CPU starvation anywhere else: with the backlog at its worst the
+projectors sat at 53-63% of quota and the stream at 43% of its 2.00 quota,
+because the limit is the interpreter lock, not the cgroup. Not decode cost:
+12.6 us per event, 1.2% of a core at this rate.
+
+**Two things need an owner decision; neither is safe for an agent to take
+alone.**
+1. **Recovery now.** The standard move is the governed offset reset, the same
+   one `scripts/rebuild_v2_stable_projection_cache.py` performs, to put the
+   projector back at the head so the spool carries current data. It costs a
+   gap in the spool of however far behind it was, which `open_gaps` reports.
+   It was attempted and refused by this session's shared-resource policy, so
+   nothing was reset and no projector was stopped.
+2. **Capacity.** One writer cannot be widened with CPU. The only real lever is
+   to shard the gateway lease so each stream process owns disjoint canonical
+   partitions and both ingest. That changes the single-writer invariant this
+   phase deliberately protected, so it is a phase of its own with its own
+   certification, not an R1 step. The alternative is to reduce canonical
+   volume at the source, which means coalescing a latest-state feed before it
+   becomes a canonical record, and that changes the canonical contract.
+
+**Operational defect found three times while rolling out, and it is real.**
+Recreating the stream containers leaves the projectors unable to reach
+whichever process then holds the lease: the sink's first URL returns 409
+because that container is no longer active, and its pooled connection to the
+other one is dead, so the whole batch fails with
+`statuses=409:stable gateway is not active` and the projector stalls until it
+is restarted. Every rollout in this phase needed a projector restart
+afterwards. `StableHttpCanonicalSink._publish_chunk` should retry a connection
+error once against the same URL before moving on, and a lease handover should
+not require a manual restart of every writer. Recorded here as the next
+correction; not attempted late in a session that had already disturbed the
+runtime enough.
+
