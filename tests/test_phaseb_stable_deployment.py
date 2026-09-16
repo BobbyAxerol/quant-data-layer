@@ -665,7 +665,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(edge.bindings, ())
         self.assertEqual(edge.okx_bindings, ())
         with patch(
-            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            "qdl.runtime.stable_bar_edge.fetch_settled_closed_bar_raw_envelope",
             side_effect=AssertionError("native BAR must not start REST polling"),
         ) as binance_latest, patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",

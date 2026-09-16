@@ -71,6 +71,10 @@ def _edge(*pairs, clock, max_workers: int = 32) -> StableBinanceBarEdge:
     edge.settlement_delay_seconds = 0.10
     edge.final_retry_initial_seconds = 0.10
     edge.final_retry_max_seconds = 1.0
+    edge.final_settlement_confirmations = 2
+    edge.final_settlement_interval_seconds = 1.0
+    edge.final_settlement_max_reads = 8
+    edge.settlement_reads = 0
     edge.max_concurrent_requests = max_workers
     edge.max_catchup_rows = 1000
     edge.clock = clock
@@ -90,9 +94,14 @@ class C419FastFinalBarDeliveryTests(unittest.TestCase):
         old = _Envelope(binding_id=source.binding_id, runtime="BINANCE", open_ms=0)
         target = _Envelope(binding_id=source.binding_id, runtime="BINANCE", open_ms=60_000)
 
+        # The Binance lane reads until the venue repeats the row, so the seam is the
+        # settled read and it answers (envelope, settlement stats).
         with patch(
-            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
-            side_effect=(old, target),
+            "qdl.runtime.stable_bar_edge.fetch_settled_closed_bar_raw_envelope",
+            side_effect=(
+                (old, {"reads": 2, "distinct_rows": 1, "confirmations": 2}),
+                (target, {"reads": 2, "distinct_rows": 1, "confirmations": 2}),
+            ),
         ) as fetch:
             self.assertEqual(edge.run_cycle(), 0)
             self.assertEqual(edge._last_open_ms[source.binding_id], 0)
@@ -107,6 +116,7 @@ class C419FastFinalBarDeliveryTests(unittest.TestCase):
         self.assertEqual([item.kwargs["attempts"] for item in fetch.call_args_list], [1, 1])
         self.assertEqual([item.kwargs["now_ms"] for item in fetch.call_args_list], [120_100, 120_200])
         self.assertEqual(len(edge.publisher.batches), 1)
+        self.assertEqual(edge.settlement_reads, 4)
 
     def test_one_provider_failure_does_not_block_another_due_binding(self):
         now = [120.100]
