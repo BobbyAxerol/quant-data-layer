@@ -571,3 +571,16 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   Proposed fix: publish on either component's update and keep the per-component
   2,000 ms policy. Needs owner approval; the bound must not be widened.
 
+---
+
+## 20. OKX mark/index: no code change (2026-09-16)
+
+- The reducer already emits the pair on either component's update. The envelope
+  deliberately stamps the **oldest** component's confirmation time; changing it
+  would let a stale index look fresh. Withdrawn.
+- OKX publishes index every 613 ms median (max gap 1,078 ms) and mark every
+  231 ms. The pair's age floor is the index's publication rate.
+- The consumed path is the reference batch, measured at 217 ms (Binance) and
+  935 ms (OKX), both execution eligible: **the gate is met where it matters.**
+  The durable-projection tail is a venue-bound characteristic, not a defect.
+

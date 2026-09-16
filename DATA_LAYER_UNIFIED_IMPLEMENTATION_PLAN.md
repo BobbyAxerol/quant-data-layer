@@ -38409,3 +38409,55 @@ owner's approval and its own phase, not a quiet edit. The alternative,
 reducing the roughly 200 ms internal pipeline contribution, buys margin but
 does not remove the venue-cadence term and would not by itself close the tail.
 
+### OKX mark/index: the proposed change is withdrawn after reading the code (2026-09-16)
+
+<a id="dl-v2-okx-markindex-withdrawn-20260916"></a>
+The owner approved the change I proposed in
+[the previous entry](#dl-v2-okx-freshness-rootcause-20260916). Reading
+`rust/qdl-realtime-core/src/lib.rs` before writing it shows the proposal was
+based on an incomplete reading, and implementing it would make the system worse
+in two distinct ways. Stating the correction once, with the evidence.
+
+**1. The pair is already published on either component's update.** Lines
+735-940 keep a `MarkIndexPairState` per target, update whichever component the
+frame carries, and emit a canonical record as soon as both slots are non-empty
+and the frame changed a value. There is no "wait for both to refresh" step to
+remove.
+
+**2. What is pinned is the envelope timestamp, and that is a deliberate
+fail-closed property.** The record stamps
+`received_at_ns = min(mark.received_at_ns, index.received_at_ns)` under the
+comment "a paired execution view is only as fresh as its oldest provider
+confirmation". Both components' own prices, source event times and receive
+times are already carried separately in the record payload. So the reported age
+is the older component's by design; changing it to the newer one would let a
+pair whose index is two seconds stale present itself as fresh, which is exactly
+what the sealed 2,000 ms policy exists to prevent.
+
+**3. Venue cadence, measured at the source.** OKX publishes a new index
+timestamp every `613 ms` median with a `1,078 ms` maximum gap, and a new mark
+timestamp every `231 ms` median, `460 ms` maximum (REST sampling at 150 ms for
+12 s each). The pair's age is therefore the index's age plus the pipeline, and
+the index's own publication rate is the floor. No reducer change moves that
+floor.
+
+**4. The failing path has no consumer.** The only consumer,
+`market_data_service`, does not subscribe to the durable mark/index stream at
+all: both venues' execution views carry
+`source_id=reference_batch:mark_index_price`, `source_role=REFERENCE`, and
+measured now at freshness `217 ms` (Binance) and `935 ms` (OKX), both
+`execution_eligible=true`. The 2,000 ms gate is met on the path that is
+actually used.
+
+**Conclusion and recommendation.** No canonical or reducer change. The
+durable-projection mark/index tail (p99 `1,947 ms`, max `2,110 ms`) is the
+honest consequence of OKX's index publication rate combined with a deliberately
+conservative pair timestamp, on a path no consumer reads. What should change is
+the measurement, not the code: an E07-style gate must evaluate
+`MARK_INDEX_PRICE` on the reference-batch path the consumer uses, and the
+durable-projection figure should be recorded as a venue-bound characteristic
+with its measured floor rather than treated as a latency defect. If the owner
+later wants the durable path inside 2,000 ms as well, the only real lever is a
+faster index source than OKX publishes, which does not exist on its public
+feed.
+
