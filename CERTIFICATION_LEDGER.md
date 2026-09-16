@@ -541,6 +541,9 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
 - `ingestor_binance_spot` and `ingestor_okx_spot` retired: their sealed config
   files do not exist, no consumer demands spot, dead since 2026-09-03.
 - **Open:** the Rust runtime still carries `rustls 0.23.43`.
-  `Dockerfile.qdl-rust-runtime` is now committed so the rebuild is
-  reproducible; the five-role rollout needs owner approval.
+  `Dockerfile.qdl-rust-runtime` is committed, the rebuild is proven
+  (`qdl-v2-rust:2.0.15-c5a5be0`, `sha256:5d1d7f02b904...`, same ten binaries and
+  non-root user as the deployed image) and the packet
+  `rust-rustls-2.0.15-c5a5be0-20260916T0950Z` is prepared. The five-role
+  recreate needs owner approval.
 

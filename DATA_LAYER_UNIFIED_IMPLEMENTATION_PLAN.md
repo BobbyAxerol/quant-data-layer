@@ -38325,3 +38325,15 @@ Rust and Debian bookworm base digests, the same non-root `qdl` 10001:10001).
 Recreating `rust_core` x3 and the two native ingestors onto the rebuilt image
 is a canonical-producer rollout and stays a separate owner-approved packet.
 
+**Rebuild proven, rollout prepared and not applied.**
+`qdl-v2-rust:2.0.15-c5a5be0`
+(`sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1`),
+built from the committed recipe at `dev` `c5a5be0` whose `Cargo.lock` pins
+`rustls 0.23.45`. Verified against the deployed image: the same ten binaries,
+byte-for-byte the same names, the same non-root `qdl` 10001:10001, and both
+service binaries start and print their usage line. Packet
+`~/.local/state/qdl-v2/rust-rustls-2.0.15-c5a5be0-20260916T0950Z/`
+carries `rollout.env`, `rollback.env` (the deployed image, retained) and the
+serial recreate procedure with its per-role verification. It touches the
+canonical producers, so it waits for the owner's explicit go.
+
