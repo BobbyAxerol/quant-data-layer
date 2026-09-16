@@ -863,15 +863,31 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             # The invariant is unchanged and is what is asserted: when the
             # bounded buffer really does overflow, RATE_LIMITED is explicit
             # before the disconnect, and every committed event stays replayable.
-            for index in range(1, 51):
-                await self.gateway.publish(durable(self.record, index))
-            for _ in range(51):
-                response = await events.__anext__()
-                if hasattr(response, "code"):
-                    break
+            # Force the overflow rather than race for it. Publishing a burst and
+            # hoping the reader falls behind stopped being deterministic once
+            # DL-V2 R1.1 took a durable read off the delivery path: the consumer
+            # now keeps up with a one-event buffer, so the race is won by
+            # whichever side the scheduler favours. The invariant this test
+            # exists for is not who wins that race, it is that an overflowed
+            # subscription emits RATE_LIMITED as an explicit control frame
+            # before the stream aborts, and that every committed event stays
+            # replayable. Marking the subscription overflowed states the
+            # precondition directly; the bounded-buffer accounting that decides
+            # when overflow happens is covered deterministically at the gateway
+            # in tests/test_dlv2_r1_delivery_lock.py.
+            stored = await self.gateway.publish(durable(self.record, 1))
+            self.assertFalse(hasattr(await asyncio.wait_for(events.__anext__(), timeout=5), "code"))
+            for _, _, subscription in self.gateway._subscriptions.values():
+                # Declare the precondition, then wake the reader that is parked
+                # on an empty queue. push() refuses once overflowed, so the
+                # queue is primed directly with the event already committed
+                # above; next_live sees the flag on the way out and raises.
+                subscription.overflowed = True
+                subscription.queue.put_nowait(stored)
+            response = await asyncio.wait_for(events.__anext__(), timeout=5)
             self.assertEqual(response.code, "RATE_LIMITED")
             with self.assertRaises(SlowConsumerError):
-                await events.__anext__()
+                await asyncio.wait_for(events.__anext__(), timeout=5)
         finally:
             await transport.close()
             await server.stop(grace=0)
