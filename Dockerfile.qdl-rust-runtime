@@ -1,0 +1,58 @@
+# Committed build recipe for the stable V2 Rust runtime image
+# (`qdl-v2-rust:<release>`), the image that runs the canonical producers:
+# `rust_core` x3 (`qdl-realtime-core`) and the native ingestors
+# (`qdl-native-raw-ingestor`).
+#
+# Until 2026-09-16 this image had no recipe in the repository: it was produced
+# by ad-hoc `qdl-v2-rust-builder:*` images inside session packets, so a
+# security rebuild (RUSTSEC-2026-0285) had no reproducible starting point.
+# This file reproduces the ten binaries the deployed image carries, the same
+# Debian bookworm runtime base, and the same non-root `qdl` 10001:10001 user.
+#
+#   docker build -f Dockerfile.qdl-rust-runtime -t qdl-v2-rust:<version> .
+#
+# The default entrypoint matches the deployed image; every role overrides it
+# in Compose, so changing it here changes nothing at runtime.
+
+FROM rust@sha256:1111c28d995d06a7863ba6cea3b3dcb87bebe65af8ec5517caaf2c8c26f38010 AS builder
+WORKDIR /src
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev \
+        make pkg-config zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY rust ./rust
+COPY generated/rust ./generated/rust
+RUN cargo build --release --locked \
+        -p qdl-kafka \
+            --bin qdl-realtime-core \
+            --bin qdl-native-raw-ingestor \
+            --bin qdl-production-core \
+            --bin qdl-kafka-smoke \
+            --bin qdl-authority-rehearsal \
+            --bin qdl-phase91-canary-rehearsal \
+            --bin qdl-phase92-primary-rehearsal \
+    && cargo build --release --locked \
+        -p qdl-core --bin qdl-parity-replay --bin qdl-binance-shadow \
+    && cargo build --release --locked \
+        -p qdl-venue-core --bin qdl-venue-core-certify
+
+FROM debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 libzstd1 zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 qdl \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin qdl
+COPY --from=builder /src/target/release/qdl-realtime-core /usr/local/bin/qdl-realtime-core
+COPY --from=builder /src/target/release/qdl-native-raw-ingestor /usr/local/bin/qdl-native-raw-ingestor
+COPY --from=builder /src/target/release/qdl-production-core /usr/local/bin/qdl-production-core
+COPY --from=builder /src/target/release/qdl-kafka-smoke /usr/local/bin/qdl-kafka-smoke
+COPY --from=builder /src/target/release/qdl-authority-rehearsal /usr/local/bin/qdl-authority-rehearsal
+COPY --from=builder /src/target/release/qdl-phase91-canary-rehearsal /usr/local/bin/qdl-phase91-canary-rehearsal
+COPY --from=builder /src/target/release/qdl-phase92-primary-rehearsal /usr/local/bin/qdl-phase92-primary-rehearsal
+COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
+COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
+COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]
