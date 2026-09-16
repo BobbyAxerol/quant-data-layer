@@ -193,6 +193,14 @@ class StableRuntimeConfig:
     max_pending_bytes: int = 256 * 1024 * 1024
     projector_max_batch_records: int = 128
     projector_max_batch_bytes: int = 8 * 1024 * 1024
+    # DL-V2 R1.11. How long a drain waits for more records before it commits to
+    # the batch it has. With a backlog this is irrelevant, the batch fills at
+    # once; at the head it is everything, because a 10 ms window collects only a
+    # handful of records and each drain still pays the full fixed cost of an
+    # HTTP round trip, a durable write and a checkpoint. Trading a tenth of a
+    # second of delivery latency for an order of magnitude fewer drains is the
+    # right trade when the consumer's tightest freshness budget is 2,000 ms.
+    projector_batch_wait_seconds: float = 0.10
     # Off unless a deployment turns it on. Declaring catalog metadata for an
     # instrument must never open the pass-through product by itself.
     pass_through_enabled: bool = False
@@ -262,6 +270,8 @@ class StableRuntimeConfig:
         if self.role == "projector_v2":
             if not 1 <= self.projector_max_batch_records <= 1000:
                 raise ValueError("stable projector batch bound must be 1..1000")
+            if not 0 < self.projector_batch_wait_seconds <= 1:
+                raise ValueError("stable projector batch wait must be within 0..1 seconds")
             if self.max_pending_records < self.projector_max_batch_records:
                 raise ValueError("stable projector pending records must cover one batch")
             if not 1 <= self.projector_max_batch_bytes <= self.max_pending_bytes:
@@ -362,6 +372,9 @@ class StableRuntimeConfig:
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
+            projector_batch_wait_seconds=float(
+                env.get("QDL_STABLE_PROJECTOR_BATCH_WAIT_SECONDS", "0.10")
+            ),
             projector_max_batch_records=int(
                 env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS", "128")
             ),
@@ -806,7 +819,7 @@ async def serve_stable_projector() -> None:
             max_pending_bytes=config.max_pending_bytes,
             max_batch_records=config.projector_max_batch_records,
             max_batch_bytes=config.projector_max_batch_bytes,
-            batch_wait_seconds=0.01,
+            batch_wait_seconds=config.projector_batch_wait_seconds,
         )
 
     def on_broker(broker):

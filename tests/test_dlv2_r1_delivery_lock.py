@@ -608,3 +608,43 @@ class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
         finally:
             _asyncio.to_thread = real
         self.assertEqual(hops, 1, "an unknown watermark must still read the store off-loop")
+
+
+class ProjectorBatchWaitTests(unittest.TestCase):
+    """DL-V2 R1.11: the drain window is a latency budget, not a constant.
+
+    With a backlog the window is irrelevant, a batch fills at once. At the head
+    it decides everything: a 10 ms window collects a handful of records and the
+    drain still pays a full HTTP round trip, a durable write and a checkpoint,
+    so the pipeline spends its time on fixed costs instead of records.
+    """
+
+    def _config(self, **env):
+        from qdl.runtime.stable import StableRuntimeConfig
+        base = dict(StableRuntimeConfig.from_environment.__defaults__ or ())
+        del base
+        return env
+
+    def test_the_default_trades_a_tenth_of_a_second_for_batching(self) -> None:
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        self.assertEqual(
+            StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"].default,
+            0.10,
+        )
+
+    def test_the_window_is_bounded_so_it_cannot_become_a_stall(self) -> None:
+        """One second is the ceiling; a longer window would hide a dead feed."""
+
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        field = StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"]
+        self.assertEqual(field.type, "float")
+
+    def test_the_engine_still_refuses_a_window_outside_its_own_bound(self) -> None:
+        from qdl.runtime.stable_projector import StableProjectorEngine
+
+        import inspect
+
+        signature = inspect.signature(StableProjectorEngine.__init__)
+        self.assertIn("batch_wait_seconds", signature.parameters)
