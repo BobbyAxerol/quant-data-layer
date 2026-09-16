@@ -38281,3 +38281,47 @@ across encryption level boundaries (CVSS 3.1
   already missing before today, so packet-named images need an explicit
   retention decision, not a sweep.
 
+### Endpoint closure and retired roles (2026-09-16)
+
+<a id="dl-v2-endpoint-closure-20260916"></a>
+**Why the gateway stayed DEGRADED, and the fix.** Two slices, Binance USD-M
+`BTCUSDT` and `ETHUSDT` `QUOTE`, sat `STALE` with `reconnect_count 45` and an
+age of about 37 minutes, while the same two products answered the V2
+`snapshot` endpoint in `6.5-7.0 ms` with an event age of `469-522 ms`. The Data
+Layer was serving those quotes; the consumer's gRPC stream sessions for exactly
+those two slices were dead and its reconnect loop never recovered them. They
+had survived the 06:39 cache rebuild, during which both stream gateways
+restarted. `market_data_service` was recreated from its own packet with the
+image unchanged (`tradingsystem-image:v1.2.3-f317fe3`): it came back
+**`READY`, 60 demanded V2 slices, 0 unhealthy, `v1_fallback_count` 0**, and the
+gateway reports `READY` with an empty `stale_or_bad_services`.
+
+**Endpoint gate, 20 iterations per hop after the closure:** every V2 query
+endpoint answers inside the certified band, `snapshot` TRADE `7.14-7.68 ms`
+p50, `QUOTE` `6.51-7.22 ms`, `MARK_INDEX_PRICE` (OKX) `6.25-6.98 ms`,
+`feed_status` `6.80-7.37 ms`, `instrument` `3.78 ms`, `BOOK_SNAPSHOT`
+`48-66 ms`, `warmup BAR 1m` `42-48 ms`, `warmup_batch` `199 ms`. **OHLCV 20/20
+exact.** No freshness rejection occurred in this round. V1 fallback answers
+`price` and `price-last` in about `2.5 ms`.
+
+**Retired: the two spot ingestor roles.** `ingestor_binance_spot` and
+`ingestor_okx_spot` had been dead since 2026-09-03 with
+`Os { code: 21, kind: IsADirectory }`. Root cause: their Compose bind mounts
+name `runtime/ingestor-binance-spot.json` and `runtime/ingestor-okx-spot.json`,
+which do not exist in the sealed runtime bundle, so Docker created empty
+directories in their place and the ingestor tried to read a directory as its
+config. The sealed catalog still carries six spot bindings, but no consumer
+demands them: the Trading System binding is 60 perpetual/swap products. The two
+containers and the two stray directories were removed; the compose services
+remain declared and will need their config restored before they can run again.
+
+**Remaining debt named, with its blocker.** The deployed
+`qdl-v2-rust:2.0.12-3f1c50e` still carries `rustls 0.23.43`. The image had **no
+build recipe in the repository**: it was produced by ad-hoc
+`qdl-v2-rust-builder:*` images inside session packets, so a security rebuild
+had no reproducible starting point. `Dockerfile.qdl-rust-runtime` now commits
+that recipe (all ten binaries the deployed image carries, the same pinned
+Rust and Debian bookworm base digests, the same non-root `qdl` 10001:10001).
+Recreating `rust_core` x3 and the two native ingestors onto the rebuilt image
+is a canonical-producer rollout and stays a separate owner-approved packet.
+

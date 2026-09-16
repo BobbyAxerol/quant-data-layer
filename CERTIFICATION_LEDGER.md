@@ -528,3 +528,19 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
 - **Retention rule:** before deleting an image, check rollout packets and
   release certificates, not only running containers.
 
+---
+
+## 17. Endpoint closure (2026-09-16)
+
+- Gateway `READY`, `stale_or_bad_services` empty. `market_data` `READY` with 60
+  demanded V2 slices, 0 unhealthy, 0 V1 fallback, after recreating
+  `market_data_service` from its packet (image unchanged) to rebuild two dead
+  gRPC stream sessions.
+- V2 endpoint latency re-measured at 20 iterations per hop: all inside the
+  certified band. OHLCV 20/20 exact. Do not re-measure without a reason.
+- `ingestor_binance_spot` and `ingestor_okx_spot` retired: their sealed config
+  files do not exist, no consumer demands spot, dead since 2026-09-03.
+- **Open:** the Rust runtime still carries `rustls 0.23.43`.
+  `Dockerfile.qdl-rust-runtime` is now committed so the rebuild is
+  reproducible; the five-role rollout needs owner approval.
+
