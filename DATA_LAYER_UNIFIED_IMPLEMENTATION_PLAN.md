@@ -38105,3 +38105,38 @@ identity semantics the projectors are certified against.
   cache write and is tracked in the Trading System plan (3E S4 journal).**
 - Known limit of the rehearsal figure: 17 min is replay time for the fixed
   900 s window; the runbook's gate, not this tool, owns that window.
+
+### Consumer-side endpoint measurement, 2026-09-16 (`REQUEST_LATENCY_HOLDS / THREE_FINDINGS`)
+
+<a id="dl-v2-consumer-endpoint-measurement-20260916"></a>
+Measured from the Trading System side with its own workload identity through
+the governed SDK (`trading_system/scripts/p18e_data_endpoint_benchmark.py`,
+40 iterations, 4 instruments, disposable container, no runtime change).
+
+- **Request latency still meets the certified snapshot.** `snapshot` TRADE
+  6.82-8.14 ms p50, QUOTE 7.08-7.86 ms p50, against the published 6.65-8.83 ms;
+  `feed_status` 6.8-7.1 ms; `instrument` 4.2 ms; `warmup` 1m x5 bars 34-39 ms;
+  `warmup_batch` x4 152 ms; `BOOK_SNAPSHOT` 48-55 ms. V1 fallback `price`
+  2.65 ms, `price-last` 2.44 ms, `kline` 1.92 ms, `preload/status` 194 ms.
+- **Durable event age at the endpoint** (`quality.freshness_ms`): QUOTE
+  469-926 ms p50, TRADE 728-1492 ms p50, OKX MARK 1.0-1.1 s p50,
+  BOOK_SNAPSHOT 1.1-1.7 s p50. The published reference for this quantity is
+  342 ms on a TRADE handoff, so live figures today are several times larger.
+- **Finding 1.** Binance USD-M `MARK_INDEX_PRICE` for BTCUSDT and ETHUSDT
+  answers `required data is not available` on 40/40 attempts while OKX answers
+  normally; the sealed consumer binding registers those rows.
+- **Finding 2.** OKX `MARK_INDEX_PRICE` (4/40) and `QUOTE` (7/40) return
+  `required data exceeds its freshness policy`: their p95 event age
+  1.76-1.92 s sits just below the sealed 2,000 ms bound, so ordinary jitter
+  crosses it. Fail-closed behaviour is correct; the bound or the cadence is an
+  owner decision.
+- **Finding 3.** **Binance 1m final bars do not equal the venue kline.** Five
+  bars per symbol, all `lifecycle=FINAL` and `revision=0`: `trade_count` is
+  always lower than the venue (2020/2055, 2015/2060, 3365/3534), `volume`
+  short by 0.17-307 bps, `close` off by up to 0.46 bps. OKX 1m bars are exact
+  5/5 including contract and base volume and trade count. The certified OHLCV
+  table covers Binance 15m/1h/1d/1w only; 1m was never certified, and 1m is the
+  interval the alpha runtime materialises. First hypothesis to test: the
+  Binance BAR lane is `PYTHON_REST`, reads the venue kline at close before the
+  venue finishes settling it, and never revises.
+

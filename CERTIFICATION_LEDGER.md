@@ -471,3 +471,17 @@ Pinned at: data layer `4433497` + this journal; images unchanged.
   or the projector image changes.
 - Serving measurement of the same day: Data Layer projection cache 1.2 s median
   behind the venue for trades, prices within 0.42-1.25 bps of the public ticker.
+
+---
+
+## 13. Consumer-side endpoint measurement (2026-09-16)
+
+- Request latency of the V2 query endpoints measured from the Trading System
+  identity **still matches the certified snapshot** (snapshot TRADE/QUOTE
+  6.8-8.1 ms p50). Do not re-measure to confirm.
+- **Not certified, open:** Binance USD-M `MARK_INDEX_PRICE` unavailable
+  (40/40); OKX mark/quote intermittently exceed the sealed 2,000 ms freshness
+  bound; **Binance 1m final bars are short on volume and trade count versus
+  the venue kline while OKX 1m bars are exact**. Details and receipts in
+  `dl-v2-consumer-endpoint-measurement-20260916`.
+
