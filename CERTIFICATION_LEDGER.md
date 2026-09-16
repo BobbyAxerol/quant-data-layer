@@ -664,3 +664,42 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   `dl-v2-r1-delivery-lock-20260916`. Nothing applied; awaiting owner approval.
 - **Pinned at:** stack as running 2026-09-16 15:15Z. Re-measure only after an
   R1 step lands.
+
+---
+
+## 24. DL-V2 R1 landed; the single-writer ceiling is now the binding limit (2026-09-16)
+
+- **Code:** R1.1 took the durable read off the live delivery path, R1.2
+  collapsed replay token advances, R1.3 named the stale reason, R1.8 made a
+  latest-state feed keep the newest record in a bounded buffer, R1.9 signs a
+  known cursor on the loop instead of paying a thread hop. R1.4 on the Trading
+  System side keeps a valid snapshot view instead of tearing the slice down.
+  62 tests across two repositories; the data layer suite is 1,455.
+- **Measured gain:** consumption 767 -> 1,239 records/s. TRADE freshness
+  355,952 ms -> 926 ms, BOOK_SNAPSHOT from rejected to 942-1,205 ms, OKX
+  MARK_INDEX from rejected to 575-731 ms, projector lag 161,732 -> 322 with the
+  500/250 gate passing at the time.
+- **Ceiling:** one writer by `ActivePassiveGatewayLease` plus one interpreter
+  lock per process caps ingest near one core, about 1,240 records/s. Evening
+  load reached 2,749 raw records/s against 950 in the afternoon, the backlog
+  regrew to 2.6 M and the consumer fell to 27/60 ready. The same deficit
+  existed before any change (945 produced vs 767 consumed).
+- **Ruled out with numbers:** duplication (4/17/9 against millions), ingestor
+  reconnect storms (39 renewals in 20 min, exactly the 30 s cadence), CPU
+  starvation (projectors 53-63% of quota, stream 43% of a 2.00 quota), decode
+  cost (12.6 us/event, 1.2% of a core).
+- **Open, owner decision:** the governed offset reset to restore service now
+  (attempted, refused by this session's shared-resource policy, nothing was
+  reset); and whether to shard the gateway lease so both stream processes
+  ingest disjoint partitions, which changes the single-writer invariant.
+- **Open, next correction:** recreating a stream container stalls every
+  projector on a dead pooled connection plus a 409 from the no-longer-active
+  peer. Each rollout in this phase needed a projector restart.
+- **CPU and retention:** ceilings are now per service with the measurement on
+  each, declared total 12.25 -> 14.35 on a 16-core host, eight services reduced.
+  Canonical Kafka retention 24 h -> 6 h with the reason recorded; raw stays 24 h
+  because it cannot be refetched and canonical is derived from it.
+- **Pinned at:** `qdl-v2-python:2.0.16-e87ef8d` on both stream processes and
+  `2.0.16-190217b` on both query readers; projectors, ingestors, rust cores,
+  kafka and redis unchanged. Rollback images in
+  `~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z/README.md`.
