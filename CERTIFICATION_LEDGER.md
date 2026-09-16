@@ -547,3 +547,14 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   `rust-rustls-2.0.15-c5a5be0-20260916T0950Z` is prepared. The five-role
   recreate needs owner approval.
 
+---
+
+## 18. Rust runtime patched and evidence ownership fixed (2026-09-16)
+
+- All five Rust roles run `qdl-v2-rust:2.0.15-c5a5be0` (`rustls 0.23.45`);
+  RUSTSEC-2026-0285 closed in runtime. Canonical topic advanced 132,736 records
+  through the rollout, projector lag 155/500.
+- P18 evidence files normalised to the evidence owner; every declared receipt
+  verifies by SHA-256 and the E01 matrix verifier is **PASS with zero
+  findings**.
+

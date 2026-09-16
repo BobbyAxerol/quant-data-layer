@@ -38337,3 +38337,32 @@ carries `rollout.env`, `rollback.env` (the deployed image, retained) and the
 serial recreate procedure with its per-role verification. It touches the
 canonical producers, so it waits for the owner's explicit go.
 
+### Rust runtime on the patched image, and evidence ownership (2026-09-16)
+
+<a id="dl-v2-rust-rollout-and-evidence-ownership-20260916"></a>
+**Rust rollout applied (owner-approved).** All five canonical-producer roles
+recreated serially onto `qdl-v2-rust:2.0.15-c5a5be0`
+(`sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1`,
+built from the committed `Dockerfile.qdl-rust-runtime`, `rustls 0.23.45`):
+`rust_core`, `rust_core_2`, `rust_core_3`, `ingestor_binance_usdm`,
+`ingestor_okx_swap`. Each was verified before the next: `running`, restart
+count `0`, zero error or panic lines, and its own progress counters advancing
+from a fresh generation. Post-state: the canonical topic advanced `132,736`
+records during and after the rollout, projector lag `155` total with max
+partition `45` (gate 500/250), Trading System `market_data` `READY` with 0
+unhealthy slices and 0 V1 fallback, gateway `READY`. **RUSTSEC-2026-0285 is now
+closed in source and in runtime.** Rollback remains the packet's
+`rollback.env`.
+
+**Evidence ownership normalised (S35.10).** The 5 P18.3B and 4 inherited
+receipts were root-owned mode `0600` from container runs that executed as
+root, so the repository user could not read them and the E01 matrix verifier
+reported `RECEIPT_UNREADABLE`. `chown` to the evidence owner over the 148
+root-owned files in `p183-shared-9037e32/evidence`, mode left at `0600`.
+Content was not touched, and the proof is that **every receipt now verifies by
+SHA-256 against the digest its index declared**: the E01 verifier with
+`--evidence-root` reports **`PASS`, zero findings**, 3B 5/5 receipts verified
+and 3C 1/1 verified. The chosen option is ownership normalisation rather than
+re-running certification as root, because it preserves the receipts and their
+digests.
+
