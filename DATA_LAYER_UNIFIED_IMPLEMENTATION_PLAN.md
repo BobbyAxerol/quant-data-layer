@@ -38140,3 +38140,59 @@ the governed SDK (`trading_system/scripts/p18e_data_endpoint_benchmark.py`,
   Binance BAR lane is `PYTHON_REST`, reads the venue kline at close before the
   venue finishes settling it, and never revises.
 
+### Binance final-BAR settlement fix (`SOURCE PASS / RUNTIME DEPLOYED / VERIFICATION PENDING`, 2026-09-16)
+
+<a id="dl-v2-binance-bar-settlement-20260916"></a>
+**Defect.** Every durable Binance final BAR could be permanently short.
+Measured from the consumer side: five consecutive 1m bars per symbol, all
+`lifecycle=FINAL` and `revision=0`, with `trade_count` always lower than the
+venue kline (2020/2055, 2015/2060, 3365/3534), `volume` short by 0.17-307 bps
+and `close` off by up to 0.46 bps. OKX 1m bars matched the venue exactly 5/5.
+
+**Root cause, measured not assumed (2026-09-16 07:31 UTC).** Polling
+`GET /fapi/v1/klines` for one freshly closed 1m bar returns different answers
+from different Binance replicas: trade counts `3155 -> 3232 -> 3263 -> 3155 ->
+3232 -> 3263 -> 3155 -> 3263` cycling for about five seconds after the close,
+then all replicas converge on `3263`. `StableBinanceBarEdge` read once at
+close + `settlement_delay_seconds` (`0.10 s`) and never revised, so whichever
+partial answer it drew became the durable bar for ever. The certified OHLCV
+table covers Binance 15m/1h/1d/1w and OKX 1h/1d/2d/3d/1w; Binance 1m was never
+in it, and 1m is the interval the alpha runtime materialises.
+
+**Fix (commit `e8eee3e`).** `fetch_settled_closed_bar_raw_envelope` reads the
+same target bar until `confirmations` consecutive reads return an identical
+row, then publishes exactly that row. It never merges or invents a value, and
+it fails closed when the venue does not settle inside the read budget, leaving
+the existing retry and the coverage validator to own the outcome. Defaults
+`confirmations=2`, `confirm_interval_seconds=1.0`, `max_reads=8`; all three are
+validated and configurable (`QDL_STABLE_BAR_SETTLEMENT_CONFIRMATIONS`,
+`_CONFIRM_INTERVAL_SECONDS`, `_MAX_READS`). OKX keeps its single read because
+its `confirm=1` candles are final on arrival. Cost, stated plainly: the final
+1m bar now lands about 5-6 s after close instead of about 2 s; the consumer
+contract allows 180 s (`DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS`), so it is
+headroom, not a regression, but the published "close-to-final-BAR availability
+p50 2.151 s" figure no longer describes Binance.
+
+**Tests.** `tests/test_binance_final_bar_settlement.py` (9): a repeated row
+publishes after two agreeing reads; disagreeing replicas are read until they
+converge; the published frame is exactly a row the venue returned; a venue that
+never settles fails closed without publishing; `confirmations=1` preserves the
+old single-read behaviour; invalid parameters are refused; an open bar is an
+explicit error; plus the edge wiring and OKX untouched. Two existing tests that
+pinned the old seam (`test_c419_fast_final_bar_delivery`,
+`test_phaseb_stable_deployment`) are updated to the new one. Bar/edge suites
+**154 passed**; full discovery **1436 tests** with the same four pre-existing
+import errors that `dev` has (verified on a pristine `dev` worktree: identical
+four).
+
+**Runtime.** Immutable `qdl-v2-python:2.0.15-e8eee3e`
+(`sha256:55f445dac3dd…`, OCI revision `e8eee3e6264c…`) built from exactly that
+commit. Only `binance_bar_edge` was recreated, through packet
+`~/.local/state/qdl-v2/binance-bar-settlement-e8eee3e-20260916T0800Z/`
+(`rollout.env` / `rollback.env`, both mode 0600, and one override that owns the
+image selector); rollback is the same command with `rollback.env`, which pins
+the previous image and `confirmations=1`. Post-start: `running`, restart count
+`0`, bootstrap of all 140 bindings complete, closed-BAR ACKs resumed, memory
+113 MiB of 512, zero error or traceback lines. Kafka topology, Redis, SQLite,
+every other role, V1, Trading System and alpha were untouched.
+
