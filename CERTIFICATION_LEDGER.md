@@ -429,3 +429,27 @@ Removed the two disposable C39 test images and nine exact temporary paths. No
 broad prune or volume deletion occurred; final/rollback images, V1, stable
 state and the checkpoint backup remain. Final packet SHA is
 `352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.
+
+---
+
+## 11. V2 stable stack host-reboot recovery and restart policy (2026-09-16)
+
+Pinned at: data layer `d4c9763`, images unchanged (`qdl-v2-python:2.0.14-ccd0c43`
+`sha256:3e062a3ba38d…`, `qdl-v2-rust:2.0.12-3f1c50e` `sha256:407a67131ca6…`).
+
+- The 2026-09-15 04:31Z reboot stopped all of `qdl_v2_stable_candidate`
+  (`restart: "no"` on every service). Recovery started the **existing**
+  containers (never `compose up`, whose base file for eleven roles lives in a
+  removed worktree) and ran the governed cache rebuild in the runbook's exact
+  scope. PASS: cache 912 MB, Redis 548 keys, projector lag 104/6 partitions,
+  restart count 0 on every role.
+- 17 runtime containers are now `unless-stopped` at runtime and in
+  `docker-compose.v2-stable.yml`; `stable_admin`/`stable_state_init`/
+  `stable_tls_init` stay `"no"`. `tests/test_phaseb_stable_deployment.py`
+  pins both sets, 28/28 pass in `qdl-v2-python:2.0.14-ccd0c43`.
+- **Not certified: unattended reboot.** `stable_redis` is still ephemeral by
+  design, so the projectors will restart into `ProjectionCacheMismatch` after
+  the next reboot until someone runs the governed rebuild. Do not read
+  "restart policy fixed" as "survives reboot".
+- Trading System `market_data_service` consumes V2 again: `V2_PRIMARY`,
+  60 demanded slices, 0 unhealthy, `v1_fallback_count=0`.

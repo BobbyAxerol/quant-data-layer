@@ -38013,9 +38013,26 @@ existing container with its stored config and image digest.
   The runbook itself is not usable here because it drives `compose up` with at
   most one override, which would recreate the projectors on the env's older
   image; the same steps are executed against the existing containers.
-- Owner approved the cache delete on 2026-09-16; the agent session's policy
-  gate refused the delete command three times, so the owner runs that one
-  command; the remaining steps follow in this journal.
+- Owner approved and ran the governed rebuild on 2026-09-16 (the agent
+  session's policy gate refuses cache deletion and production recreates).
+  **Result: PASS.** Rebuilt `canonical-cache.sqlite3` 912 MB, `stable_redis`
+  548 keys, projector group `stable-projector-v1` bounded at total lag 104
+  across 6 partitions (max partition 31, gate is <=500/<=250). All three
+  projectors, both streams, both queries and `binance_bar_edge` running with
+  restart count `0` and zero error/traceback/mismatch lines in their first
+  30 minutes. Queries and streams report healthy; V2 ingress aliases
+  `qdl-v2-query`, `qdl-v2-stream-a/b` resolve on `executor_network` again.
+- Post-state measured by `p18e_post_reboot_verifier.py`
+  (receipt `p18e-s5-post-reboot-2026-09-16.json`, sha256 `84e87b2ec009b6c7…`):
+  findings 54 -> 19. Cleared: all 19 `RESTART_POLICY_NOT_DECLARED`, 17 of 19
+  `SERVICE_NOT_RUNNING`, and the `GATE_FAILED` on required BBO/mark/index.
+  Data Layer V2 is `PARTIAL` (17/19 runtime services; the two spot ingestors
+  have been dead with exit `1` since 2026-09-03 and are outside the certified
+  running set). Remaining: 9 `CONFIG_FILES_MISSING` (the removed
+  `data-layer-dev-closure` worktree), 3 gates the gateway payload cannot
+  observe, and the time-to-ready/dependency findings, which are artefacts of
+  a manual same-day recreate rather than a reboot: that measurement is only
+  meaningful on the first reading after a boot.
 
 **Restart policy.** `docker update --restart unless-stopped` applied to the 17
 runtime containers (kafka x3, stable_redis, query x2, stream x2, projector x3,
