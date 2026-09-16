@@ -37,7 +37,7 @@ x-kafka-env: &kafka-env
 
 x-kafka: &kafka
   image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
-  restart: "no"
+  restart: unless-stopped
   security_opt: [no-new-privileges:true]
   networks: [stable_internal]
   # Kafka Zstd JNI loads a native library from java.io.tmpdir.
@@ -99,7 +99,7 @@ x-stable-env: &stable-env
 x-python: &python
   image: ${QDL_STABLE_PYTHON_IMAGE:?set immutable QDL_STABLE_PYTHON_IMAGE}
   user: "10001:10001"
-  restart: "no"
+  restart: unless-stopped
   read_only: true
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
@@ -116,7 +116,7 @@ x-python: &python
 x-rust: &rust
   image: ${QDL_STABLE_RUST_IMAGE:?set immutable QDL_STABLE_RUST_IMAGE}
   user: "10001:10001"
-  restart: "no"
+  restart: unless-stopped
   stop_grace_period: 45s
   read_only: true
   security_opt: [no-new-privileges:true]
@@ -151,7 +151,7 @@ services:
   stable_authority_db:
     image: postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     profiles: [stable-authority]
-    restart: "no"
+    restart: unless-stopped
     security_opt: [no-new-privileges:true]
     networks: [stable_internal]
     environment:
@@ -178,7 +178,7 @@ services:
   stable_redis:
     image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
     command: [redis-server, --appendonly, "no", --save, "", --maxmemory, 128mb, --maxmemory-policy, noeviction]
-    restart: "no"
+    restart: unless-stopped
     user: "999:1000"
     read_only: true
     security_opt: [no-new-privileges:true]

@@ -1,0 +1,27 @@
+# Recover the V2 stable projection cache after a host boot. Install:
+#   sudo cp deploy/systemd/qdl-v2-stable-boot-recovery.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable qdl-v2-stable-boot-recovery.service
+# The unit only acts when scripts/v2_stable_boot_recovery.py observes the
+# post-boot state (empty stable_redis next to a non-empty spool); a healthy
+# stack is left untouched. Receipts: ~bobby/.local/state/qdl-v2/boot-recovery/.
+[Unit]
+Description=QDL V2 stable projection cache recovery after host boot
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=bobby
+Group=bobby
+Environment=HOME=/home/bobby
+WorkingDirectory=/home/bobby/data_layer
+ExecStart=/usr/bin/python3 -B /home/bobby/data_layer/scripts/v2_stable_boot_recovery.py --apply --confirm REBUILD_QDL_V2_STABLE_PROJECTION_CACHE --wait-infra-seconds 600 --timeout-seconds 1200
+TimeoutStartSec=2400
+Restart=on-failure
+RestartSec=120
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target

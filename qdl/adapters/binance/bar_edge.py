@@ -260,6 +260,99 @@ def fetch_closed_bar_history_raw_envelopes(
     )
 
 
+def fetch_settled_closed_bar_raw_envelope(
+    binding: BinanceBarRawBinding,
+    *,
+    now_ms: int | None = None,
+    attempts: int = 1,
+    fetcher: Callable = fetch_klines,
+    sleep: Callable[[float], None] = time.sleep,
+    test_provenance: bool = False,
+    confirmations: int = 2,
+    confirm_interval_seconds: float = 1.0,
+    max_reads: int = 10,
+    min_settle_seconds: float = 6.0,
+    clock: Callable[[], float] = time.time,
+) -> tuple[raw_provider_pb2.RawProviderEnvelope, dict[str, int]]:
+    """Read one closed Binance bar and publish it only once the venue has settled it.
+
+    Measured 2026-09-16: after a 1m close, ``GET /fapi/v1/klines`` answers from
+    several replicas that disagree about the same closed bar (observed trade
+    counts 3155 / 3232 / 3263 cycling for roughly five seconds) before they all
+    converge on the complete bar. A single read at close + 0.10 s therefore
+    captures a partial bar, and the lane never revises it, so the durable bar
+    stays short on volume and trade count for ever.
+
+    This reads the same target bar repeatedly and accepts it only once **both**
+    hold: the bar is at least ``min_settle_seconds`` old (the replicas were
+    still cycling at 4.8 s and had converged by 5.1 s in the measurement), and
+    ``confirmations`` consecutive reads returned an identical row. Consecutive
+    agreement alone is not enough: two reads a second apart can land on the
+    same lagging replica, which is exactly how the first rollout still
+    published three short ETHUSDT bars.
+
+    It never invents or merges values: the published row is exactly one the
+    venue returned. If the venue does not settle within ``max_reads`` it
+    raises, and the caller's existing retry and coverage repair own the
+    outcome.
+    """
+    if confirmations < 1:
+        raise ValueError("Binance settled-bar confirmations must be at least 1")
+    if max_reads < confirmations:
+        raise ValueError("Binance settled-bar max reads must allow the confirmations")
+    if confirm_interval_seconds < 0:
+        raise ValueError("Binance settled-bar confirm interval must not be negative")
+    if not 0.0 <= min_settle_seconds <= 30.0:
+        raise ValueError("Binance settled-bar minimum settle age must be between 0 and 30 seconds")
+    observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    interval_ms = _interval_ms(binding.interval)
+    agreed: list | None = None
+    streak = 0
+    distinct = 0
+    for index in range(max_reads):
+        if index:
+            sleep(confirm_interval_seconds)
+        rows = _fetch_rows(
+            binding,
+            end_time_ms=observed_ms,
+            limit=3,
+            attempts=attempts,
+            fetcher=fetcher,
+            sleep=sleep,
+        )
+        closed = _closed_rows(rows, observed_ms=observed_ms, interval_ms=interval_ms)
+        if not closed:
+            raise RuntimeError("Binance returned no closed bar before the observation time")
+        row = closed[-1]
+        if agreed is not None and row == agreed:
+            streak += 1
+        else:
+            agreed = row
+            streak = 1
+            distinct += 1
+        close_ms = int(row[0]) + interval_ms
+        settled_for = clock() - close_ms / 1000
+        if streak >= confirmations and settled_for >= min_settle_seconds:
+            envelope = _capture_row(
+                binding,
+                row,
+                origin="VENUE_NATIVE",
+                received_at_ns=time.time_ns(),
+                test_provenance=test_provenance,
+            )
+            return envelope, {
+                "reads": index + 1,
+                "distinct_rows": distinct,
+                "confirmations": streak,
+                "settled_for_ms": int(settled_for * 1000),
+            }
+    raise RuntimeError(
+        "Binance closed bar did not settle within the confirmation budget: "
+        f"symbol={binding.native_symbol} interval={binding.interval} reads={max_reads} "
+        f"distinct_rows={distinct} min_settle_seconds={min_settle_seconds}"
+    )
+
+
 def fetch_latest_closed_bar_raw_envelope(
     binding: BinanceBarRawBinding,
     *,

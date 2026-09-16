@@ -21,6 +21,7 @@ from qdl.adapters.binance import (
     BinanceBarRawBinding,
     fetch_closed_bar_history_raw_envelopes as fetch_binance_history,
     fetch_latest_closed_bar_raw_envelope,
+    fetch_settled_closed_bar_raw_envelope,
 )
 from qdl.adapters.okx.bar_edge import (
     OkxBarRawBinding,
@@ -163,6 +164,10 @@ class StableBinanceBarEdge:
         settlement_delay_seconds: float = 0.10,
         final_retry_initial_seconds: float = 0.10,
         final_retry_max_seconds: float = 1.0,
+        final_settlement_confirmations: int = 2,
+        final_settlement_interval_seconds: float = 1.0,
+        final_settlement_max_reads: int = 10,
+        final_settlement_min_age_seconds: float = 6.0,
         max_concurrent_requests: int = 32,
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
@@ -181,6 +186,14 @@ class StableBinanceBarEdge:
             )
         if not 0.01 <= settlement_delay_seconds <= 2.0:
             raise ValueError("stable BAR initial poll delay must be between 0.01 and 2 seconds")
+        if not 1 <= final_settlement_confirmations <= 5:
+            raise ValueError("stable BAR settled confirmations must be between 1 and 5")
+        if not 0.0 <= final_settlement_interval_seconds <= 5.0:
+            raise ValueError("stable BAR settled confirm interval must be between 0 and 5 seconds")
+        if not final_settlement_confirmations <= final_settlement_max_reads <= 20:
+            raise ValueError("stable BAR settled max reads must cover the confirmations and stay under 20")
+        if not 0.0 <= final_settlement_min_age_seconds <= 30.0:
+            raise ValueError("stable BAR settled minimum age must be between 0 and 30 seconds")
         if not 0.01 <= final_retry_initial_seconds <= final_retry_max_seconds <= 5.0:
             raise ValueError("stable BAR retry bounds are invalid")
         if not 1 <= max_concurrent_requests <= 64:
@@ -194,6 +207,11 @@ class StableBinanceBarEdge:
         self.settlement_delay_seconds = settlement_delay_seconds
         self.final_retry_initial_seconds = final_retry_initial_seconds
         self.final_retry_max_seconds = final_retry_max_seconds
+        self.final_settlement_confirmations = final_settlement_confirmations
+        self.final_settlement_interval_seconds = final_settlement_interval_seconds
+        self.final_settlement_max_reads = final_settlement_max_reads
+        self.final_settlement_min_age_seconds = final_settlement_min_age_seconds
+        self.settlement_reads = 0
         self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
         self.repair_only = repair_only
@@ -1202,12 +1220,20 @@ class StableBinanceBarEdge:
     ):
         """Read one provider-final BAR without hiding scheduler retry timing."""
         if acquisition.runtime == "BINANCE":
-            return fetch_latest_closed_bar_raw_envelope(
+            # Binance kline replicas disagree about a freshly closed bar for a few
+            # seconds; publish only a row the venue repeated (see the adapter).
+            envelope, settlement = fetch_settled_closed_bar_raw_envelope(
                 self._binance_binding(source),
                 now_ms=observed_ms,
                 attempts=1,
                 test_provenance=False,
+                confirmations=self.final_settlement_confirmations,
+                confirm_interval_seconds=self.final_settlement_interval_seconds,
+                max_reads=self.final_settlement_max_reads,
+                min_settle_seconds=self.final_settlement_min_age_seconds,
             )
+            self.settlement_reads += int(settlement["reads"])
+            return envelope
         if acquisition.runtime == "OKX":
             return asyncio.run(fetch_okx_latest(
                 self._okx_binding(source),
@@ -1411,6 +1437,18 @@ def build_from_environment(
         ),
         final_retry_max_seconds=float(
             os.environ.get("QDL_STABLE_BAR_RETRY_MAX_SECONDS", "1.0")
+        ),
+        final_settlement_confirmations=int(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_CONFIRMATIONS", "2")
+        ),
+        final_settlement_interval_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_CONFIRM_INTERVAL_SECONDS", "1.0")
+        ),
+        final_settlement_max_reads=int(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_MAX_READS", "10")
+        ),
+        final_settlement_min_age_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_MIN_AGE_SECONDS", "6.0")
         ),
         max_concurrent_requests=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")

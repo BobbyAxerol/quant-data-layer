@@ -429,3 +429,89 @@ Removed the two disposable C39 test images and nine exact temporary paths. No
 broad prune or volume deletion occurred; final/rollback images, V1, stable
 state and the checkpoint backup remain. Final packet SHA is
 `352a1d5f345e3253620bc38d54ef387c2961650c6a3557325f2ae2cdc908c9bb`.
+
+---
+
+## 11. V2 stable stack host-reboot recovery and restart policy (2026-09-16)
+
+Pinned at: data layer `d4c9763`, images unchanged (`qdl-v2-python:2.0.14-ccd0c43`
+`sha256:3e062a3ba38d…`, `qdl-v2-rust:2.0.12-3f1c50e` `sha256:407a67131ca6…`).
+
+- The 2026-09-15 04:31Z reboot stopped all of `qdl_v2_stable_candidate`
+  (`restart: "no"` on every service). Recovery started the **existing**
+  containers (never `compose up`, whose base file for eleven roles lives in a
+  removed worktree) and ran the governed cache rebuild in the runbook's exact
+  scope. PASS: cache 912 MB, Redis 548 keys, projector lag 104/6 partitions,
+  restart count 0 on every role.
+- 17 runtime containers are now `unless-stopped` at runtime and in
+  `docker-compose.v2-stable.yml`; `stable_admin`/`stable_state_init`/
+  `stable_tls_init` stay `"no"`. `tests/test_phaseb_stable_deployment.py`
+  pins both sets, 28/28 pass in `qdl-v2-python:2.0.14-ccd0c43`.
+- **Not certified: unattended reboot.** `stable_redis` is still ephemeral by
+  design, so the projectors will restart into `ProjectionCacheMismatch` after
+  the next reboot until someone runs the governed rebuild. Do not read
+  "restart policy fixed" as "survives reboot".
+- Trading System `market_data_service` consumes V2 again: `V2_PRIMARY`,
+  60 demanded slices, 0 unhealthy, `v1_fallback_count=0`.
+
+---
+
+## 12. V2 stable boot recovery unit and crash rehearsal (2026-09-16)
+
+Pinned at: data layer `4433497` + this journal; images unchanged.
+
+- `qdl-v2-stable-boot-recovery.service` enabled; `scripts/v2_stable_boot_recovery.py`
+  rehearsed end-to-end on the running stack (`--simulate-crash`): PASS in 17 min 44 s,
+  receipt `boot-recovery-20260916T065640Z.json` sha256 `6af808c74b3adefd…`.
+  **Certified: unattended recovery from the post-boot state.** Not certified: an
+  actual host reboot (owner chose not to reboot); the unit's `After=docker.service`
+  ordering is asserted by systemd, not observed.
+- Do not re-run the rehearsal to "check": it deletes the spool and costs a
+  15-20 min replay plus the 1m warmup dip. Re-run only if the runbook, the tool
+  or the projector image changes.
+- Serving measurement of the same day: Data Layer projection cache 1.2 s median
+  behind the venue for trades, prices within 0.42-1.25 bps of the public ticker.
+
+---
+
+## 13. Consumer-side endpoint measurement (2026-09-16)
+
+- Request latency of the V2 query endpoints measured from the Trading System
+  identity **still matches the certified snapshot** (snapshot TRADE/QUOTE
+  6.8-8.1 ms p50). Do not re-measure to confirm.
+- **Not certified, open:** Binance USD-M `MARK_INDEX_PRICE` unavailable
+  (40/40); OKX mark/quote intermittently exceed the sealed 2,000 ms freshness
+  bound; **Binance 1m final bars are short on volume and trade count versus
+  the venue kline while OKX 1m bars are exact**. Details and receipts in
+  `dl-v2-consumer-endpoint-measurement-20260916`.
+
+---
+
+## 14. Binance final-BAR settlement (2026-09-16)
+
+Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
+(`sha256:b3f908cb17cf…`), `binance_bar_edge` only.
+
+- **Certified:** Binance and OKX 1m final bars now equal the venue's own REST
+  kline, **20/20 exact** across BTCUSDT, ETHUSDT, BTC-USDT-SWAP and
+  ETH-USDT-SWAP on open/high/low/close/volume/base volume/trade count. Before
+  the fix Binance was 0/10.
+- Cause: Binance kline replicas disagree about a freshly closed bar for about
+  five seconds; the edge read once at close + 0.10 s and never revised.
+- Fix: read the same bar until two consecutive reads agree **and** the bar is
+  at least 6 s old, then publish exactly that venue row; fail closed otherwise.
+- Cost: the final 1m bar now lands 6.7-8.2 s after close instead of about 2 s.
+  The published "close-to-final-BAR availability p50 2.151 s" figure no longer
+  describes Binance and must be re-measured before it is quoted again.
+- OKX is unchanged (single read; its `confirm=1` candles are final on arrival).
+
+---
+
+## 15. RUSTSEC-2026-0285 (2026-09-16)
+
+- `rustls` pinned `=0.23.45` (was `=0.23.43`). Rust gate green in pinned
+  `rust:1.82-slim`: fmt, clippy `-D warnings`, `cargo test --workspace --locked`
+  **81 passed**, `cargo-deny 0.20.2` advisories/bans/licenses/sources ok.
+- **Open:** the deployed `qdl-v2-rust:2.0.12-3f1c50e` still contains the
+  affected `rustls 0.23.43`. Source is fixed; the runtime is not.
+

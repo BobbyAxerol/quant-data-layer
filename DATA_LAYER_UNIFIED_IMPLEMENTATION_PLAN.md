@@ -37952,3 +37952,302 @@ the release certificate's CI provenance from pending to a recorded success. The
 image source remains `ccd0c43`; this journal/evidence-only confirmation changes
 no runtime artifact or service. A final normal CI pass for this metadata commit
 is still required before the approved main merge/tag.
+
+**Patch release `v2.0.14` publication and scoped cleanup (`COMPLETE`,
+2026-09-06).** The final metadata CI run `34017436029` passed all three jobs:
+`sdk-python310`, `contract-tests`, and `unit-tests`. `origin/main` then received
+approved release merge `1a50e4ab0ca55800c97e491c11dc2d3ea973ba1d`, annotated
+tag `v2.0.14` was pushed with the configured BobbyAxerol identity, and tag
+workflow `34017906709` (`Publish Certified Release`) completed successfully.
+The local `dev` branch was fast-forwarded to that same release merge before
+post-release journaling.
+
+Scoped cleanup removed only the disposable Compose project `qdl_v214_ci`, its
+two test containers/networks/volume, and four images proven unreferenced by
+every container: `data-layer:v0.1.0`, preliminary
+`qdl-v2-python:2.0.14-571aca6`, `bufbuild/buf:1.50.0`, and
+`rust:1.82-slim`. Root disk changed from `151G used / 140G available` to
+`149G used / 142G available`; Docker images changed from `32 / 17.68GB` to
+`28 / 15.12GB`. The active V2 projector image
+`sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a`,
+named rollback image
+`sha256:d190d7696f4ebe5c34f2b83bf690ac0027e2c356ca548952cf58b5a3293b134d`,
+V1 fallback, running services, stopped operational evidence containers,
+volumes, networks, Kafka, Redis, SQLite, source, runtime configuration and
+order paths were retained. Global BuildKit cache (`2.938GB`, `2.223GB`
+reclaimable) was intentionally not pruned because it is host-shared and outside
+this narrow cleanup approval. The active projector replicas remain `running`,
+`restart=0`, `OOMKilled=false`.
+
+### Host-reboot recovery and restart policy (`IN PROGRESS / OWNER STEP PENDING`, 2026-09-16)
+
+<a id="dl-v2-reboot-recovery-20260916"></a>
+**Incident.** Host reboot 2026-09-15 04:31Z stopped every `qdl_v2_stable_candidate`
+container (all 28 declared services carried `restart: "no"`: 8 literals plus
+the `x-kafka`/`x-python`/`x-rust` anchors). Nothing restarted it; Trading
+System `market_data_service` stayed in `V2_PRIMARY` and logged one reconnect
+per slice every 30 s for 15 h while the gateway reported only a generic
+`DEGRADED`. Measured by `trading_system/scripts/p18e_post_reboot_verifier.py`
+(receipt `p18e-s5-post-reboot-2026-09-15.json`).
+
+**Recovery, governed scope only, no recreate.** The containers were created
+from `docker-compose.v2-stable.yml` plus 1-8 sealed overrides under
+`~/.local/state/qdl-v2/` (projectors on `qdl-v2-python:2.0.14-ccd0c43`), and
+the base file of eleven of them lives in the removed
+`.worktrees/data-layer-dev-closure`; a `compose up` would therefore recreate
+roles with a different config, so every start is `docker start` of the
+existing container with its stored config and image digest.
+- Started and healthy: `kafka1/2/3`, `stable_redis`; started, restart 0,
+  canonical end offsets advancing: `rust_core`, `rust_core_2`, `rust_core_3`,
+  `ingestor_binance_usdm`, `ingestor_okx_swap`. Not started: the two spot
+  ingestors (exited `1` since 2026-09-03, not part of the certified running
+  set), init one-shots, profile-gated authority roles.
+- Guard measured, not assumed: `projector_v2` started alone exits `1` with
+  `ProjectionCacheMismatch: stable Redis cache identity is missing for a
+  non-empty spool` (ephemeral `stable_redis` lost its identity at reboot;
+  spool `canonical-cache.sqlite3` is 1.6 GB). Recovery is the existing
+  governed runbook scope of `scripts/rebuild_v2_stable_projection_cache.py`:
+  delete the three canonical cache files, `FLUSHDB` `stable_redis`, reset
+  `stable-projector-v1` on `md.canonical.v2` to `now-900s`, then start
+  stream -> projector -> `binance_bar_edge` -> query with the bounded-lag gate.
+  The runbook itself is not usable here because it drives `compose up` with at
+  most one override, which would recreate the projectors on the env's older
+  image; the same steps are executed against the existing containers.
+- Owner approved and ran the governed rebuild on 2026-09-16 (the agent
+  session's policy gate refuses cache deletion and production recreates).
+  **Result: PASS.** Rebuilt `canonical-cache.sqlite3` 912 MB, `stable_redis`
+  548 keys, projector group `stable-projector-v1` bounded at total lag 104
+  across 6 partitions (max partition 31, gate is <=500/<=250). All three
+  projectors, both streams, both queries and `binance_bar_edge` running with
+  restart count `0` and zero error/traceback/mismatch lines in their first
+  30 minutes. Queries and streams report healthy; V2 ingress aliases
+  `qdl-v2-query`, `qdl-v2-stream-a/b` resolve on `executor_network` again.
+- Post-state measured by `p18e_post_reboot_verifier.py`
+  (receipt `p18e-s5-post-reboot-2026-09-16.json`, sha256 `84e87b2ec009b6c7…`):
+  findings 54 -> 19. Cleared: all 19 `RESTART_POLICY_NOT_DECLARED`, 17 of 19
+  `SERVICE_NOT_RUNNING`, and the `GATE_FAILED` on required BBO/mark/index.
+  Data Layer V2 is `PARTIAL` (17/19 runtime services; the two spot ingestors
+  have been dead with exit `1` since 2026-09-03 and are outside the certified
+  running set). Remaining: 9 `CONFIG_FILES_MISSING` (the removed
+  `data-layer-dev-closure` worktree), 3 gates the gateway payload cannot
+  observe, and the time-to-ready/dependency findings, which are artefacts of
+  a manual same-day recreate rather than a reboot: that measurement is only
+  meaningful on the first reading after a boot.
+
+**Restart policy.** `docker update --restart unless-stopped` applied to the 17
+runtime containers (kafka x3, stable_redis, query x2, stream x2, projector x3,
+rust_core x3, ingestor usdm/okx_swap, binance_bar_edge). Source now matches:
+`docker-compose.v2-stable.yml` anchors `x-kafka`/`x-python`/`x-rust`,
+`stable_authority_db` and `stable_redis` are `unless-stopped`;
+`stable_admin`, `stable_state_init`, `stable_tls_init` stay `"no"` (one-shot).
+`tests/test_phaseb_stable_deployment.py` pins both sets; 28/28 passed in
+`qdl-v2-python:2.0.14-ccd0c43`, source mounted read-only, network disabled.
+Known limit, stated plainly: `stable_redis` is still ephemeral by design, so
+after the next reboot the projectors will restart into the same fail-closed
+guard until the governed cache rebuild runs. Making V2 survive a reboot
+unattended needs either a persistent stable Redis identity or a boot-time
+governed rebuild unit; that is an owner design decision, not done here.
+
+**Cleanup (owner-approved).** Removed: six fully exited Trading System P18
+test namespaces (41 containers, 5 volumes, 4 networks), four closed p183
+rollback containers, 38 unused P18 gate/builder images, 60 anonymous and 9
+orphaned named volumes, and unused build cache (44.3 GB). Docker images
+40.7 GB -> 19.0 GB, build cache 50.6 GB -> 6.8 GB, volumes 78.5 GB -> 73.9 GB.
+Kept: every running container, `qdl_v2_stable_candidate` volumes including
+`stable_authority_db`, cargo/target caches, the v2.0.14 image and its named
+rollback, all Trading System release images.
+
+### V2 stable: boot recovery unit, crash rehearsal and serving measurement (`PASS`, 2026-09-16)
+
+<a id="dl-v2-boot-recovery-unit-20260916"></a>
+**Owner decision.** Option B of the reboot question: keep `stable_redis`
+ephemeral (certified design) and automate the governed cache rebuild at boot.
+Option A (persistent Redis) rejected because it changes the projection cache
+identity semantics the projectors are certified against.
+
+- `scripts/v2_stable_boot_recovery.py` (commit `4433497`): decides from
+  observation only (`WAIT_INFRA | HEALTHY | RECOVER | START_ONLY | MANUAL`),
+  imports every constant and gate from `rebuild_v2_stable_projection_cache.py`
+  (cache files, group, 900 s window, 500/250 lag gate, 3 samples, 1,000,000
+  replay budget), drives the existing containers with `docker` (never Compose:
+  their sealed overrides cannot be reproduced), applies only with the runbook
+  token, writes a 0600 receipt per run, `--simulate-crash` reproduces the
+  post-boot state for rehearsal. 11 unit tests with a scripted fake docker,
+  run in `qdl-v2-python:2.0.14-ccd0c43` read-only.
+- `deploy/systemd/qdl-v2-stable-boot-recovery.service` installed and enabled
+  (`After=docker.service`, `User=bobby`, oneshot, waits up to 600 s for the
+  Kafka quorum and Redis, 1200 s recovery budget, `Restart=on-failure` x3).
+  Dry check as the unit runs it: `HEALTHY` (no action on a healthy stack).
+- **Crash rehearsal (owner-approved, the host was not rebooted):** receipt
+  `~/.local/state/qdl-v2/boot-recovery/boot-recovery-20260916T065640Z.json`
+  sha256 `6af808c74b3adefd…`. Timeline: cache users stopped and Redis
+  restarted (tmpfs wiped) 06:38:55; cache files deleted, FLUSHDB, group reset
+  to `06:24:02` (376,121 replay records / 6 partitions) by 06:39:11; streams
+  healthy 06:39:27; projectors + bar edge started 06:39:28; lag bounded
+  (total 145, max partition 63, 3 samples) 06:56:21; projectors ready;
+  queries healthy 06:56:39; Redis 532 keys. **Total 17 min 44 s**, of which
+  17 min was projector replay of the 900 s window under live load (projector
+  CPU 12-51% of one core, memory 85-147 MiB of 768). Post-assessment
+  `HEALTHY`. Trading System `market_data_service` reported
+  `DATA_LAYER_V2_OUTAGE` 36 times through the monitor during the window and
+  reconnected all 60 slices afterwards; V1 fallback count stayed 0.
+- **Serving measurement (read-only, `p18e_market_plane_probe`, 300 s, 60
+  rounds, 70 views, receipt `p18e-market-plane-probe-2026-09-16.json` in the
+  Trading System evidence dir):** V2 views reach the Trading System cache
+  within 1.8 s (quote p50), 0.5 s (mark/index), 1.1 s (book snapshot) of the
+  venue event; prices equal the venue's public ticker within 0.42 bps
+  (Binance) / 1.25 bps (OKX) at median, 4.8 bps max. The Data Layer's own
+  projection cache holds the latest BTCUSDT trade 1.2 s (median) / 2.7 s
+  (max) after the venue; the Trading System's V2 view of the same trade is
+  9.5 s / 16.4 s old. **Verdict for this repo: the Data Layer serves
+  correct, timely data; the trade/book-delta staleness the Trading System
+  sees originates between the V2 stream gateway and `market_data_service`'s
+  cache write and is tracked in the Trading System plan (3E S4 journal).**
+- Known limit of the rehearsal figure: 17 min is replay time for the fixed
+  900 s window; the runbook's gate, not this tool, owns that window.
+
+### Consumer-side endpoint measurement, 2026-09-16 (`REQUEST_LATENCY_HOLDS / THREE_FINDINGS`)
+
+<a id="dl-v2-consumer-endpoint-measurement-20260916"></a>
+Measured from the Trading System side with its own workload identity through
+the governed SDK (`trading_system/scripts/p18e_data_endpoint_benchmark.py`,
+40 iterations, 4 instruments, disposable container, no runtime change).
+
+- **Request latency still meets the certified snapshot.** `snapshot` TRADE
+  6.82-8.14 ms p50, QUOTE 7.08-7.86 ms p50, against the published 6.65-8.83 ms;
+  `feed_status` 6.8-7.1 ms; `instrument` 4.2 ms; `warmup` 1m x5 bars 34-39 ms;
+  `warmup_batch` x4 152 ms; `BOOK_SNAPSHOT` 48-55 ms. V1 fallback `price`
+  2.65 ms, `price-last` 2.44 ms, `kline` 1.92 ms, `preload/status` 194 ms.
+- **Durable event age at the endpoint** (`quality.freshness_ms`): QUOTE
+  469-926 ms p50, TRADE 728-1492 ms p50, OKX MARK 1.0-1.1 s p50,
+  BOOK_SNAPSHOT 1.1-1.7 s p50. The published reference for this quantity is
+  342 ms on a TRADE handoff, so live figures today are several times larger.
+- **Finding 1.** Binance USD-M `MARK_INDEX_PRICE` for BTCUSDT and ETHUSDT
+  answers `required data is not available` on 40/40 attempts while OKX answers
+  normally; the sealed consumer binding registers those rows.
+- **Finding 2.** OKX `MARK_INDEX_PRICE` (4/40) and `QUOTE` (7/40) return
+  `required data exceeds its freshness policy`: their p95 event age
+  1.76-1.92 s sits just below the sealed 2,000 ms bound, so ordinary jitter
+  crosses it. Fail-closed behaviour is correct; the bound or the cadence is an
+  owner decision.
+- **Finding 3.** **Binance 1m final bars do not equal the venue kline.** Five
+  bars per symbol, all `lifecycle=FINAL` and `revision=0`: `trade_count` is
+  always lower than the venue (2020/2055, 2015/2060, 3365/3534), `volume`
+  short by 0.17-307 bps, `close` off by up to 0.46 bps. OKX 1m bars are exact
+  5/5 including contract and base volume and trade count. The certified OHLCV
+  table covers Binance 15m/1h/1d/1w only; 1m was never certified, and 1m is the
+  interval the alpha runtime materialises. First hypothesis to test: the
+  Binance BAR lane is `PYTHON_REST`, reads the venue kline at close before the
+  venue finishes settling it, and never revises.
+
+### Binance final-BAR settlement fix (`SOURCE PASS / RUNTIME DEPLOYED / VERIFICATION PENDING`, 2026-09-16)
+
+<a id="dl-v2-binance-bar-settlement-20260916"></a>
+**Defect.** Every durable Binance final BAR could be permanently short.
+Measured from the consumer side: five consecutive 1m bars per symbol, all
+`lifecycle=FINAL` and `revision=0`, with `trade_count` always lower than the
+venue kline (2020/2055, 2015/2060, 3365/3534), `volume` short by 0.17-307 bps
+and `close` off by up to 0.46 bps. OKX 1m bars matched the venue exactly 5/5.
+
+**Root cause, measured not assumed (2026-09-16 07:31 UTC).** Polling
+`GET /fapi/v1/klines` for one freshly closed 1m bar returns different answers
+from different Binance replicas: trade counts `3155 -> 3232 -> 3263 -> 3155 ->
+3232 -> 3263 -> 3155 -> 3263` cycling for about five seconds after the close,
+then all replicas converge on `3263`. `StableBinanceBarEdge` read once at
+close + `settlement_delay_seconds` (`0.10 s`) and never revised, so whichever
+partial answer it drew became the durable bar for ever. The certified OHLCV
+table covers Binance 15m/1h/1d/1w and OKX 1h/1d/2d/3d/1w; Binance 1m was never
+in it, and 1m is the interval the alpha runtime materialises.
+
+**Fix (commit `e8eee3e`).** `fetch_settled_closed_bar_raw_envelope` reads the
+same target bar until `confirmations` consecutive reads return an identical
+row, then publishes exactly that row. It never merges or invents a value, and
+it fails closed when the venue does not settle inside the read budget, leaving
+the existing retry and the coverage validator to own the outcome. Defaults
+`confirmations=2`, `confirm_interval_seconds=1.0`, `max_reads=8`; all three are
+validated and configurable (`QDL_STABLE_BAR_SETTLEMENT_CONFIRMATIONS`,
+`_CONFIRM_INTERVAL_SECONDS`, `_MAX_READS`). OKX keeps its single read because
+its `confirm=1` candles are final on arrival. Cost, stated plainly: the final
+1m bar now lands about 5-6 s after close instead of about 2 s; the consumer
+contract allows 180 s (`DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS`), so it is
+headroom, not a regression, but the published "close-to-final-BAR availability
+p50 2.151 s" figure no longer describes Binance.
+
+**Tests.** `tests/test_binance_final_bar_settlement.py` (9): a repeated row
+publishes after two agreeing reads; disagreeing replicas are read until they
+converge; the published frame is exactly a row the venue returned; a venue that
+never settles fails closed without publishing; `confirmations=1` preserves the
+old single-read behaviour; invalid parameters are refused; an open bar is an
+explicit error; plus the edge wiring and OKX untouched. Two existing tests that
+pinned the old seam (`test_c419_fast_final_bar_delivery`,
+`test_phaseb_stable_deployment`) are updated to the new one. Bar/edge suites
+**154 passed**; full discovery **1436 tests** with the same four pre-existing
+import errors that `dev` has (verified on a pristine `dev` worktree: identical
+four).
+
+**Correction after the first rollout (`5130f6f`).** Two consecutive agreeing
+reads were not sufficient: a second apart, both reads can land on the same
+lagging replica. The first rollout improved BTCUSDT to 4/5 exact but still
+published three short ETHUSDT bars and one short BTCUSDT bar. The read now
+also requires the bar to be at least `min_settle_seconds` old, measured from
+its own close time, before an agreeing pair is accepted. Default `6.0 s` with
+a 10-read budget (`QDL_STABLE_BAR_SETTLEMENT_MIN_AGE_SECONDS`), set from the
+measurement: replicas were still cycling at 4.8 s and had converged by 5.1 s.
+A regression test reproduces the lagging-replica case that slipped through.
+Bar/edge suites **156 passed**.
+
+**Runtime.** Immutable `qdl-v2-python:2.0.15-e8eee3e`
+(`sha256:55f445dac3dd…`, OCI revision `e8eee3e6264c…`) built from exactly that
+commit. Only `binance_bar_edge` was recreated, through packet
+`~/.local/state/qdl-v2/binance-bar-settlement-e8eee3e-20260916T0800Z/`
+(`rollout.env` / `rollback.env`, both mode 0600, and one override that owns the
+image selector); rollback is the same command with `rollback.env`, which pins
+the previous image and `confirmations=1`. The packet was then re-pointed at
+`qdl-v2-python:2.0.15-5130f6f` (`sha256:b3f908cb17cf…`) for the correction and
+the edge recreated a second time.
+
+**Verification (PASS).** Twenty minutes after the corrected rollout, five
+consecutive 1m final bars for each of Binance BTCUSDT/ETHUSDT and OKX
+BTC-USDT-SWAP/ETH-USDT-SWAP were compared field by field against the venues'
+own public REST klines: **20/20 exact** on open, high, low, close, volume,
+base volume and trade count (receipt
+`p18e-bar-settlement-verify2-2026-09-16.json` in the Trading System evidence
+directory; the run before the correction is `p18e-bar-settlement-verify-…`
+with 10/20). Measured publish offset after close: `+6.7 s` to `+8.2 s`,
+against about `+2 s` before; `DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS` is
+`180000`, so the consumer contract is unaffected. Post-start: `running`, restart count
+`0`, bootstrap of all 140 bindings complete, closed-BAR ACKs resumed, memory
+113 MiB of 512, zero error or traceback lines. Kafka topology, Redis, SQLite,
+every other role, V1, Trading System and alpha were untouched.
+
+### RUSTSEC-2026-0285: rustls 0.23.43 -> 0.23.45 (`PASS`, 2026-09-16)
+
+<a id="dl-rustls-advisory-2026-0285"></a>
+The `dev` push of the Binance final-BAR fix turned CI red on the
+`contract-tests` job, step "Check Rust dependency, license and advisory
+policy". None of the nine pushed commits touched Rust, `Cargo.*` or
+`deny.toml`; the cause is external. Cross-checking every one of the 188 locked
+crates against the public vulnerability database found exactly one advisory:
+**RUSTSEC-2026-0285, published 2026-09-14**, eight days after the last green
+run. `rustls` is affected from `0.23.13` and fixed in `0.23.45`; the workspace
+pinned `=0.23.43`. Summary: TLS 1.3 handshake messages incorrectly accepted
+across encryption level boundaries (CVSS 3.1
+`AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N`).
+
+- Change: the workspace pin becomes `=0.23.45` and `Cargo.lock` is updated with
+  `cargo update -p rustls --precise 0.23.45`; 95 other dependencies unchanged.
+  `rustls` reaches the mesh through `qdl-core`, `qdl-kafka`, `reqwest`,
+  `tokio-rustls`, `hyper-rustls`, `quinn` and `tokio-tungstenite`.
+- Gate run locally in the pinned `rust:1.82-slim` with the CI package set, the
+  source mounted read-only and cargo home/target in disposable volumes:
+  `cargo fmt --all -- --check` **PASS**;
+  `cargo clippy --workspace --all-targets --locked -- -D warnings` **PASS, no
+  warning**; `cargo test --workspace --locked` **81 passed / 0 failed** across
+  13 targets; `cargo-deny 0.20.2 check` (the exact CI version and digest)
+  **advisories ok, bans ok, licenses ok, sources ok**.
+- Runtime note: the running Rust roles (`rust_core` x3,
+  `ingestor_binance_usdm`, `ingestor_okx_swap`) still run
+  `qdl-v2-rust:2.0.12-3f1c50e`, which carries `rustls 0.23.43`. Rebuilding that
+  image and recreating those five roles is a separate scoped runtime packet and
+  is **not** done here.
+

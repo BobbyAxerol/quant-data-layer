@@ -665,7 +665,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(edge.bindings, ())
         self.assertEqual(edge.okx_bindings, ())
         with patch(
-            "qdl.runtime.stable_bar_edge.fetch_latest_closed_bar_raw_envelope",
+            "qdl.runtime.stable_bar_edge.fetch_settled_closed_bar_raw_envelope",
             side_effect=AssertionError("native BAR must not start REST polling"),
         ) as binance_latest, patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_latest",
@@ -1400,6 +1400,15 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertEqual(services[name]["user"], "10001:10001")
                 self.assertTrue(services[name]["read_only"])
                 self.assertIn("ALL", services[name]["cap_drop"])
+                # Runtime roles must come back on their own after a host reboot
+                # (2026-09-15 incident: the whole stack stayed down for 15 h).
+                self.assertEqual(services[name]["restart"], "unless-stopped")
+        for name in ("kafka1", "kafka2", "kafka3", "stable_redis", "rust_core",
+                     "ingestor_binance_usdm", "ingestor_okx_swap", "binance_bar_edge"):
+            with self.subTest(service=name):
+                self.assertEqual(services[name]["restart"], "unless-stopped")
+        for name in ("stable_state_init", "stable_tls_init", "stable_admin"):
+            with self.subTest(service=name):
                 self.assertEqual(services[name]["restart"], "no")
         ingress_aliases = {
             "query_v2_1": "qdl-v2-query",
