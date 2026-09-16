@@ -38185,13 +38185,37 @@ pinned the old seam (`test_c419_fast_final_bar_delivery`,
 import errors that `dev` has (verified on a pristine `dev` worktree: identical
 four).
 
+**Correction after the first rollout (`5130f6f`).** Two consecutive agreeing
+reads were not sufficient: a second apart, both reads can land on the same
+lagging replica. The first rollout improved BTCUSDT to 4/5 exact but still
+published three short ETHUSDT bars and one short BTCUSDT bar. The read now
+also requires the bar to be at least `min_settle_seconds` old, measured from
+its own close time, before an agreeing pair is accepted. Default `6.0 s` with
+a 10-read budget (`QDL_STABLE_BAR_SETTLEMENT_MIN_AGE_SECONDS`), set from the
+measurement: replicas were still cycling at 4.8 s and had converged by 5.1 s.
+A regression test reproduces the lagging-replica case that slipped through.
+Bar/edge suites **156 passed**.
+
 **Runtime.** Immutable `qdl-v2-python:2.0.15-e8eee3e`
 (`sha256:55f445dac3dd…`, OCI revision `e8eee3e6264c…`) built from exactly that
 commit. Only `binance_bar_edge` was recreated, through packet
 `~/.local/state/qdl-v2/binance-bar-settlement-e8eee3e-20260916T0800Z/`
 (`rollout.env` / `rollback.env`, both mode 0600, and one override that owns the
 image selector); rollback is the same command with `rollback.env`, which pins
-the previous image and `confirmations=1`. Post-start: `running`, restart count
+the previous image and `confirmations=1`. The packet was then re-pointed at
+`qdl-v2-python:2.0.15-5130f6f` (`sha256:b3f908cb17cf…`) for the correction and
+the edge recreated a second time.
+
+**Verification (PASS).** Twenty minutes after the corrected rollout, five
+consecutive 1m final bars for each of Binance BTCUSDT/ETHUSDT and OKX
+BTC-USDT-SWAP/ETH-USDT-SWAP were compared field by field against the venues'
+own public REST klines: **20/20 exact** on open, high, low, close, volume,
+base volume and trade count (receipt
+`p18e-bar-settlement-verify2-2026-09-16.json` in the Trading System evidence
+directory; the run before the correction is `p18e-bar-settlement-verify-…`
+with 10/20). Measured publish offset after close: `+6.7 s` to `+8.2 s`,
+against about `+2 s` before; `DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS` is
+`180000`, so the consumer contract is unaffected. Post-start: `running`, restart count
 `0`, bootstrap of all 140 bindings complete, closed-BAR ACKs resumed, memory
 113 MiB of 512, zero error or traceback lines. Kafka topology, Redis, SQLite,
 every other role, V1, Trading System and alpha were untouched.

@@ -485,3 +485,23 @@ Pinned at: data layer `4433497` + this journal; images unchanged.
   the venue kline while OKX 1m bars are exact**. Details and receipts in
   `dl-v2-consumer-endpoint-measurement-20260916`.
 
+---
+
+## 14. Binance final-BAR settlement (2026-09-16)
+
+Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
+(`sha256:b3f908cb17cf…`), `binance_bar_edge` only.
+
+- **Certified:** Binance and OKX 1m final bars now equal the venue's own REST
+  kline, **20/20 exact** across BTCUSDT, ETHUSDT, BTC-USDT-SWAP and
+  ETH-USDT-SWAP on open/high/low/close/volume/base volume/trade count. Before
+  the fix Binance was 0/10.
+- Cause: Binance kline replicas disagree about a freshly closed bar for about
+  five seconds; the edge read once at close + 0.10 s and never revised.
+- Fix: read the same bar until two consecutive reads agree **and** the bar is
+  at least 6 s old, then publish exactly that venue row; fail closed otherwise.
+- Cost: the final 1m bar now lands 6.7-8.2 s after close instead of about 2 s.
+  The published "close-to-final-BAR availability p50 2.151 s" figure no longer
+  describes Binance and must be re-measured before it is quoted again.
+- OKX is unchanged (single read; its `confirm=1` candles are final on arrival).
+
