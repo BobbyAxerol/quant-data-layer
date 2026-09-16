@@ -15,6 +15,16 @@ from qdl.transport import (
 )
 
 
+# DL-V2 R1.8. How many records a latest-state subscription may hold. A deep
+# buffer is not just unnecessary for a feed whose contract is "the newest
+# value", it is actively harmful: a thousand queued quotes are seconds of
+# waiting, and a consumer that also demands a two second event age will reject
+# every one of them on the way out and receive nothing. Eight records is tens
+# of milliseconds on the busiest instrument, so a record cannot age out while
+# it waits. Lossless feeds are untouched and keep the buffer they asked for.
+LATEST_STATE_BUFFER_EVENTS = 8
+
+
 class SlowConsumer(RuntimeError):
     """The consumer must reconnect and replay from its last confirmed token."""
 
@@ -55,7 +65,12 @@ class StreamSubscription:
         self.consumer_id = consumer_id
         self.token = token
         self.initial = initial
-        self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=max_buffer_events)
+        depth = (
+            min(max_buffer_events, LATEST_STATE_BUFFER_EVENTS)
+            if coalesce
+            else max_buffer_events
+        )
+        self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=depth)
         self.lease_epoch = lease_epoch
         self._accepts = accepts or (lambda _stored: True)
         # DL-V2 R1.8. A latest-state feed keeps the newest record when the

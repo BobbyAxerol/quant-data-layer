@@ -23,7 +23,11 @@ import unittest
 from pathlib import Path
 
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
-from qdl.stream.gateway import DurableStreamGateway, SlowConsumer
+from qdl.stream.gateway import (
+    LATEST_STATE_BUFFER_EVENTS,
+    DurableStreamGateway,
+    SlowConsumer,
+)
 from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 STREAM = "md.canonical.v2.trade"
@@ -518,3 +522,34 @@ class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(lossless, LATEST_STATE_FEEDS)
         for latest in (FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.MARK_INDEX_PRICE):
             self.assertIn(latest, LATEST_STATE_FEEDS)
+
+    async def test_a_latest_state_buffer_is_bounded_however_deep_the_request(self) -> None:
+        """A deep buffer is the harm, not the remedy.
+
+        A consumer asking for a thousand slots on a quote feed is asking to
+        queue seconds of data, and if it also demands a two second event age it
+        will reject everything it dequeues. The server keeps the contract
+        instead: hold a handful of the newest records.
+        """
+
+        subscription = await self._subscribe(coalesce=True, buffer=1000)
+        self.assertEqual(
+            subscription.queue.maxsize, LATEST_STATE_BUFFER_EVENTS,
+            "a latest-state subscription must not hold a deep backlog",
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 501)])
+        self.assertFalse(subscription.overflowed)
+        delivered = [
+            (await subscription.next_live()).stored.cursor.offset
+            for _ in range(LATEST_STATE_BUFFER_EVENTS)
+        ]
+        self.assertEqual(delivered[-1], 500, "the newest record must be delivered")
+        self.assertEqual(delivered, sorted(delivered))
+
+    async def test_a_lossless_subscription_keeps_the_depth_it_asked_for(self) -> None:
+        subscription = await self._subscribe(coalesce=False, buffer=1000)
+        self.assertEqual(subscription.queue.maxsize, 1000)
+
+    async def test_a_small_latest_state_request_is_not_enlarged(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=2)
+        self.assertEqual(subscription.queue.maxsize, 2)
