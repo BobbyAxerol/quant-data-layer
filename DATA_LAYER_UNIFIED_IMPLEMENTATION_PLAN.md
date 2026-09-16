@@ -38337,3 +38337,127 @@ carries `rollout.env`, `rollback.env` (the deployed image, retained) and the
 serial recreate procedure with its per-role verification. It touches the
 canonical producers, so it waits for the owner's explicit go.
 
+### Rust runtime on the patched image, and evidence ownership (2026-09-16)
+
+<a id="dl-v2-rust-rollout-and-evidence-ownership-20260916"></a>
+**Rust rollout applied (owner-approved).** All five canonical-producer roles
+recreated serially onto `qdl-v2-rust:2.0.15-c5a5be0`
+(`sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1`,
+built from the committed `Dockerfile.qdl-rust-runtime`, `rustls 0.23.45`):
+`rust_core`, `rust_core_2`, `rust_core_3`, `ingestor_binance_usdm`,
+`ingestor_okx_swap`. Each was verified before the next: `running`, restart
+count `0`, zero error or panic lines, and its own progress counters advancing
+from a fresh generation. Post-state: the canonical topic advanced `132,736`
+records during and after the rollout, projector lag `155` total with max
+partition `45` (gate 500/250), Trading System `market_data` `READY` with 0
+unhealthy slices and 0 V1 fallback, gateway `READY`. **RUSTSEC-2026-0285 is now
+closed in source and in runtime.** Rollback remains the packet's
+`rollback.env`.
+
+**Evidence ownership normalised (S35.10).** The 5 P18.3B and 4 inherited
+receipts were root-owned mode `0600` from container runs that executed as
+root, so the repository user could not read them and the E01 matrix verifier
+reported `RECEIPT_UNREADABLE`. `chown` to the evidence owner over the 148
+root-owned files in `p183-shared-9037e32/evidence`, mode left at `0600`.
+Content was not touched, and the proof is that **every receipt now verifies by
+SHA-256 against the digest its index declared**: the E01 verifier with
+`--evidence-root` reports **`PASS`, zero findings**, 3B 5/5 receipts verified
+and 3C 1/1 verified. The chosen option is ownership normalisation rather than
+re-running certification as root, because it preserves the receipts and their
+digests.
+
+### OKX freshness: root cause measured, not a threshold question (2026-09-16)
+
+<a id="dl-v2-okx-freshness-rootcause-20260916"></a>
+Owner's instruction was explicit: find the cause and meet the gate, do not widen
+it. A 240-second capture, 451 samples per slice, splitting the age with the
+view's own `observed_at_ns` and `received_at_ns`:
+
+| slice | p50 | p95 | p99 | max | ingest p95 | over 1500 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| BINANCE QUOTE | 464 ms | 782 ms | 958 ms | 1366 ms | 27 ms | 0 / 451 |
+| OKX QUOTE | 435 ms | 785 ms | 939 ms | 1343 ms | 31 ms | 0 / 451 |
+| OKX MARK_INDEX_PRICE | 830 ms | 1535 ms | 1947 ms | 2110 ms | 132 ms | 26 / 421 |
+
+**QUOTE is not a problem.** Neither venue produced a single sample over
+1500 ms in 902 samples; both sit comfortably inside the 2,000 ms gate. The
+earlier 7/40 rejections came from one instrument in a 40-sample run and do not
+survive a larger sample.
+
+**OKX mark/index is the real one, and the age is not transport.** Ingest,
+venue event to Data Layer received, is 35-132 ms. Every tail sample is almost
+entirely waiting: `total 1511 = ingest 35 + waiting 1476`, `1651 = 76 + 1574`,
+with `event_recency_state=LIVE` throughout. So nothing is stalled or degraded;
+the newest mark/index row is simply old because no newer one exists.
+
+**Cause.** The canonical `MARK_INDEX_PRICE` record pairs two OKX channels with
+different cadences: `mark-price` (5 bindings) and `index-tickers` (5 bindings),
+the latter pushing roughly once per second. A paired record can only be as
+fresh as its slower component, so the effective refresh is slower than either
+channel: the measured mean age of 830 ms implies a refresh interval of about
+1.7 s, which puts the p99 at 1.95 s and the max at 2.11 s, right at and over
+the sealed 2,000 ms bound.
+
+**Fix that meets the gate without touching the bound (proposed, not applied).**
+Publish the pair whenever **either** component updates, carrying the other
+component's last value with its own timestamp, and keep the existing policy
+that both components must individually be at or below 2,000 ms. The pair then
+refreshes at the faster channel's cadence while the index's own freshness is
+still enforced, so a stale index still fails closed. This is a canonical
+record and reducer change with certification consequences, so it needs the
+owner's approval and its own phase, not a quiet edit. The alternative,
+reducing the roughly 200 ms internal pipeline contribution, buys margin but
+does not remove the venue-cadence term and would not by itself close the tail.
+
+### OKX mark/index: the proposed change is withdrawn after reading the code (2026-09-16)
+
+<a id="dl-v2-okx-markindex-withdrawn-20260916"></a>
+The owner approved the change I proposed in
+[the previous entry](#dl-v2-okx-freshness-rootcause-20260916). Reading
+`rust/qdl-realtime-core/src/lib.rs` before writing it shows the proposal was
+based on an incomplete reading, and implementing it would make the system worse
+in two distinct ways. Stating the correction once, with the evidence.
+
+**1. The pair is already published on either component's update.** Lines
+735-940 keep a `MarkIndexPairState` per target, update whichever component the
+frame carries, and emit a canonical record as soon as both slots are non-empty
+and the frame changed a value. There is no "wait for both to refresh" step to
+remove.
+
+**2. What is pinned is the envelope timestamp, and that is a deliberate
+fail-closed property.** The record stamps
+`received_at_ns = min(mark.received_at_ns, index.received_at_ns)` under the
+comment "a paired execution view is only as fresh as its oldest provider
+confirmation". Both components' own prices, source event times and receive
+times are already carried separately in the record payload. So the reported age
+is the older component's by design; changing it to the newer one would let a
+pair whose index is two seconds stale present itself as fresh, which is exactly
+what the sealed 2,000 ms policy exists to prevent.
+
+**3. Venue cadence, measured at the source.** OKX publishes a new index
+timestamp every `613 ms` median with a `1,078 ms` maximum gap, and a new mark
+timestamp every `231 ms` median, `460 ms` maximum (REST sampling at 150 ms for
+12 s each). The pair's age is therefore the index's age plus the pipeline, and
+the index's own publication rate is the floor. No reducer change moves that
+floor.
+
+**4. The failing path has no consumer.** The only consumer,
+`market_data_service`, does not subscribe to the durable mark/index stream at
+all: both venues' execution views carry
+`source_id=reference_batch:mark_index_price`, `source_role=REFERENCE`, and
+measured now at freshness `217 ms` (Binance) and `935 ms` (OKX), both
+`execution_eligible=true`. The 2,000 ms gate is met on the path that is
+actually used.
+
+**Conclusion and recommendation.** No canonical or reducer change. The
+durable-projection mark/index tail (p99 `1,947 ms`, max `2,110 ms`) is the
+honest consequence of OKX's index publication rate combined with a deliberately
+conservative pair timestamp, on a path no consumer reads. What should change is
+the measurement, not the code: an E07-style gate must evaluate
+`MARK_INDEX_PRICE` on the reference-batch path the consumer uses, and the
+durable-projection figure should be recorded as a venue-bound characteristic
+with its measured floor rather than treated as a latency defect. If the owner
+later wants the durable path inside 2,000 ms as well, the only real lever is a
+faster index source than OKX publishes, which does not exist on its public
+feed.
+

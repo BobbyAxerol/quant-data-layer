@@ -547,3 +547,40 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   `rust-rustls-2.0.15-c5a5be0-20260916T0950Z` is prepared. The five-role
   recreate needs owner approval.
 
+---
+
+## 18. Rust runtime patched and evidence ownership fixed (2026-09-16)
+
+- All five Rust roles run `qdl-v2-rust:2.0.15-c5a5be0` (`rustls 0.23.45`);
+  RUSTSEC-2026-0285 closed in runtime. Canonical topic advanced 132,736 records
+  through the rollout, projector lag 155/500.
+- P18 evidence files normalised to the evidence owner; every declared receipt
+  verifies by SHA-256 and the E01 matrix verifier is **PASS with zero
+  findings**.
+
+---
+
+## 19. Freshness measurement, 451 samples per slice (2026-09-16)
+
+- QUOTE meets the 2,000 ms gate on both venues: p95 782-785 ms, max 1366 ms,
+  **0 of 902 samples** over 1500 ms. The earlier rejection count does not
+  survive a larger sample. Do not re-measure without a reason.
+- **Open:** OKX `MARK_INDEX_PRICE` p99 1947 ms, max 2110 ms, 26 of 421 samples
+  over 1500 ms. Ingest is 35-132 ms; the age is the wait for a newer paired
+  record. Cause is pairing `mark-price` with once-per-second `index-tickers`.
+  Proposed fix: publish on either component's update and keep the per-component
+  2,000 ms policy. Needs owner approval; the bound must not be widened.
+
+---
+
+## 20. OKX mark/index: no code change (2026-09-16)
+
+- The reducer already emits the pair on either component's update. The envelope
+  deliberately stamps the **oldest** component's confirmation time; changing it
+  would let a stale index look fresh. Withdrawn.
+- OKX publishes index every 613 ms median (max gap 1,078 ms) and mark every
+  231 ms. The pair's age floor is the index's publication rate.
+- The consumed path is the reference batch, measured at 217 ms (Binance) and
+  935 ms (OKX), both execution eligible: **the gate is met where it matters.**
+  The durable-projection tail is a venue-bound characteristic, not a defect.
+
