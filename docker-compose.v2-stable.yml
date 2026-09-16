@@ -85,7 +85,17 @@ x-stable-env: &stable-env
   QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON}
   QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
   QDL_STABLE_CURSOR_TTL_SECONDS: "3600"
-  QDL_STABLE_MAX_REQUEST_BYTES: "1048576"
+  # DL-V2 R1.10 (2026-09-16). The projector builds batches of up to 1,000
+  # canonical records, which is about 1.55 MB on the wire once each record
+  # carries its raw envelope base64 encoded. At a 1 MiB bound every batch was
+  # split into two sequential HTTP round trips to the one process that holds
+  # the writer lease. Measured at the time: nothing in the stack was near its
+  # CPU ceiling (projectors 50%, stream 70% of a core) while throughput sat at
+  # 1,066 records per second, so the pipeline was bound by round-trip latency,
+  # not by compute, and halving the number of round trips is the lever that
+  # actually moves it. 4 MiB carries a full batch in one request; the stream
+  # holds 512 MiB against at most three concurrent posters.
+  QDL_STABLE_MAX_REQUEST_BYTES: "4194304"
   # Reference batches may use a bounded provider deadline up to 60 seconds.
   # Keep the stable query boundary above that while retaining concurrency caps.
   QDL_STABLE_REQUEST_DEADLINE_SECONDS: "90"
