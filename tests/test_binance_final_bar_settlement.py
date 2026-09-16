@@ -60,11 +60,20 @@ class BinanceFinalBarSettlementTests(unittest.TestCase):
     def setUp(self):
         self.slept: list[float] = []
 
-    def _fetch(self, sequence, **kwargs):
+    def _fetch(self, sequence, *, start_age: float = 0.1, **kwargs):
+        """Drive the read loop with a clock that advances by the sleeps taken."""
         venue = _Venue(sequence)
+        close_s = (OPEN_MS + INTERVAL_MS) / 1000
+        elapsed = [start_age]
+
+        def sleep(seconds: float) -> None:
+            self.slept.append(seconds)
+            elapsed[0] += seconds
+
+        kwargs.setdefault("min_settle_seconds", 0.0)
         envelope, settlement = fetch_settled_closed_bar_raw_envelope(
             _binding(), now_ms=OBSERVED_MS, fetcher=venue,
-            sleep=self.slept.append, **kwargs,
+            sleep=sleep, clock=lambda: close_s + elapsed[0], **kwargs,
         )
         return envelope, settlement, venue
 
@@ -72,7 +81,10 @@ class BinanceFinalBarSettlementTests(unittest.TestCase):
         settled = _row(3263, "121.527")
         _envelope, settlement, venue = self._fetch([[settled], [settled]])
         self.assertEqual(venue.reads, 2)
-        self.assertEqual(settlement, {"reads": 2, "distinct_rows": 1, "confirmations": 2})
+        self.assertEqual(
+            {k: settlement[k] for k in ("reads", "distinct_rows", "confirmations")},
+            {"reads": 2, "distinct_rows": 1, "confirmations": 2},
+        )
         self.assertEqual(self.slept, [1.0])
 
     def test_disagreeing_replicas_are_read_until_they_converge(self):
@@ -104,8 +116,29 @@ class BinanceFinalBarSettlementTests(unittest.TestCase):
         self.assertEqual(settlement["reads"], 1)
         self.assertEqual(self.slept, [])
 
+    def test_a_bar_younger_than_the_settle_age_is_not_accepted_even_when_reads_agree(self):
+        """Two reads a second apart can land on the same lagging replica; the first
+        rollout published three short ETHUSDT bars exactly that way."""
+        lagging, settled = _row(2256, "1934.618"), _row(2388, "2138.566")
+        # agreeing lagging reads while young, then the converged row once old enough
+        sequence = [[lagging], [lagging], [lagging], [lagging], [lagging], [lagging], [settled], [settled]]
+        _envelope, settlement, venue = self._fetch(sequence, min_settle_seconds=6.0, confirm_interval_seconds=1.0)
+        self.assertGreaterEqual(settlement["settled_for_ms"], 6000)
+        self.assertEqual(venue.reads, 8)
+        frame = _envelope.raw_frame_bytes.decode("utf-8") if hasattr(_envelope, "raw_frame_bytes") else ""
+        self.assertIn("2138.566", frame)
+        self.assertNotIn("1934.618", frame)
+
+    def test_settle_age_is_measured_from_the_bar_close_not_the_first_read(self):
+        settled = _row(3263, "121.527")
+        _envelope, settlement, venue = self._fetch(
+            [[settled]] * 10, min_settle_seconds=4.0, confirm_interval_seconds=1.0, start_age=3.5,
+        )
+        self.assertEqual(venue.reads, 2)  # 3.5 s old at the first read, 4.5 s at the second
+        self.assertGreaterEqual(settlement["settled_for_ms"], 4000)
+
     def test_invalid_settlement_parameters_are_refused(self):
-        for kwargs in ({"confirmations": 0}, {"confirmations": 3, "max_reads": 2}, {"confirm_interval_seconds": -1.0}):
+        for kwargs in ({"confirmations": 0}, {"confirmations": 3, "max_reads": 2}, {"confirm_interval_seconds": -1.0}, {"min_settle_seconds": 31.0}):
             with self.subTest(**kwargs):
                 with self.assertRaises(ValueError):
                     self._fetch([[_row(1, "1.0")]], **kwargs)
@@ -122,7 +155,7 @@ class EdgeWiringTests(unittest.TestCase):
         from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
         import inspect
         signature = inspect.signature(StableBinanceBarEdge.__init__)
-        for name, default in (("final_settlement_confirmations", 2), ("final_settlement_interval_seconds", 1.0), ("final_settlement_max_reads", 8)):
+        for name, default in (("final_settlement_confirmations", 2), ("final_settlement_interval_seconds", 1.0), ("final_settlement_max_reads", 10), ("final_settlement_min_age_seconds", 6.0)):
             self.assertIn(name, signature.parameters)
             self.assertEqual(signature.parameters[name].default, default)
         source = inspect.getsource(StableBinanceBarEdge.__init__)

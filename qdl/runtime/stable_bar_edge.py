@@ -166,7 +166,8 @@ class StableBinanceBarEdge:
         final_retry_max_seconds: float = 1.0,
         final_settlement_confirmations: int = 2,
         final_settlement_interval_seconds: float = 1.0,
-        final_settlement_max_reads: int = 8,
+        final_settlement_max_reads: int = 10,
+        final_settlement_min_age_seconds: float = 6.0,
         max_concurrent_requests: int = 32,
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
@@ -191,6 +192,8 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR settled confirm interval must be between 0 and 5 seconds")
         if not final_settlement_confirmations <= final_settlement_max_reads <= 20:
             raise ValueError("stable BAR settled max reads must cover the confirmations and stay under 20")
+        if not 0.0 <= final_settlement_min_age_seconds <= 30.0:
+            raise ValueError("stable BAR settled minimum age must be between 0 and 30 seconds")
         if not 0.01 <= final_retry_initial_seconds <= final_retry_max_seconds <= 5.0:
             raise ValueError("stable BAR retry bounds are invalid")
         if not 1 <= max_concurrent_requests <= 64:
@@ -207,6 +210,7 @@ class StableBinanceBarEdge:
         self.final_settlement_confirmations = final_settlement_confirmations
         self.final_settlement_interval_seconds = final_settlement_interval_seconds
         self.final_settlement_max_reads = final_settlement_max_reads
+        self.final_settlement_min_age_seconds = final_settlement_min_age_seconds
         self.settlement_reads = 0
         self.max_concurrent_requests = max_concurrent_requests
         self.state_path = Path(state_path) if state_path is not None else None
@@ -1226,6 +1230,7 @@ class StableBinanceBarEdge:
                 confirmations=self.final_settlement_confirmations,
                 confirm_interval_seconds=self.final_settlement_interval_seconds,
                 max_reads=self.final_settlement_max_reads,
+                min_settle_seconds=self.final_settlement_min_age_seconds,
             )
             self.settlement_reads += int(settlement["reads"])
             return envelope
@@ -1440,7 +1445,10 @@ def build_from_environment(
             os.environ.get("QDL_STABLE_BAR_SETTLEMENT_CONFIRM_INTERVAL_SECONDS", "1.0")
         ),
         final_settlement_max_reads=int(
-            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_MAX_READS", "8")
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_MAX_READS", "10")
+        ),
+        final_settlement_min_age_seconds=float(
+            os.environ.get("QDL_STABLE_BAR_SETTLEMENT_MIN_AGE_SECONDS", "6.0")
         ),
         max_concurrent_requests=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")

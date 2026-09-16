@@ -73,7 +73,8 @@ def _edge(*pairs, clock, max_workers: int = 32) -> StableBinanceBarEdge:
     edge.final_retry_max_seconds = 1.0
     edge.final_settlement_confirmations = 2
     edge.final_settlement_interval_seconds = 1.0
-    edge.final_settlement_max_reads = 8
+    edge.final_settlement_max_reads = 10
+    edge.final_settlement_min_age_seconds = 6.0
     edge.settlement_reads = 0
     edge.max_concurrent_requests = max_workers
     edge.max_catchup_rows = 1000
@@ -99,8 +100,8 @@ class C419FastFinalBarDeliveryTests(unittest.TestCase):
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_settled_closed_bar_raw_envelope",
             side_effect=(
-                (old, {"reads": 2, "distinct_rows": 1, "confirmations": 2}),
-                (target, {"reads": 2, "distinct_rows": 1, "confirmations": 2}),
+                (old, {"reads": 2, "distinct_rows": 1, "confirmations": 2, "settled_for_ms": 6100}),
+                (target, {"reads": 2, "distinct_rows": 1, "confirmations": 2, "settled_for_ms": 6100}),
             ),
         ) as fetch:
             self.assertEqual(edge.run_cycle(), 0)

@@ -270,7 +270,9 @@ def fetch_settled_closed_bar_raw_envelope(
     test_provenance: bool = False,
     confirmations: int = 2,
     confirm_interval_seconds: float = 1.0,
-    max_reads: int = 8,
+    max_reads: int = 10,
+    min_settle_seconds: float = 6.0,
+    clock: Callable[[], float] = time.time,
 ) -> tuple[raw_provider_pb2.RawProviderEnvelope, dict[str, int]]:
     """Read one closed Binance bar and publish it only once the venue has settled it.
 
@@ -281,11 +283,18 @@ def fetch_settled_closed_bar_raw_envelope(
     captures a partial bar, and the lane never revises it, so the durable bar
     stays short on volume and trade count for ever.
 
-    This reads the same target bar repeatedly and accepts it only after
-    ``confirmations`` consecutive reads return an identical row. It never
-    invents or merges values: the published row is exactly one the venue
-    returned. If the venue does not settle within ``max_reads`` it raises, and
-    the caller's existing retry and coverage repair own the outcome.
+    This reads the same target bar repeatedly and accepts it only once **both**
+    hold: the bar is at least ``min_settle_seconds`` old (the replicas were
+    still cycling at 4.8 s and had converged by 5.1 s in the measurement), and
+    ``confirmations`` consecutive reads returned an identical row. Consecutive
+    agreement alone is not enough: two reads a second apart can land on the
+    same lagging replica, which is exactly how the first rollout still
+    published three short ETHUSDT bars.
+
+    It never invents or merges values: the published row is exactly one the
+    venue returned. If the venue does not settle within ``max_reads`` it
+    raises, and the caller's existing retry and coverage repair own the
+    outcome.
     """
     if confirmations < 1:
         raise ValueError("Binance settled-bar confirmations must be at least 1")
@@ -293,6 +302,8 @@ def fetch_settled_closed_bar_raw_envelope(
         raise ValueError("Binance settled-bar max reads must allow the confirmations")
     if confirm_interval_seconds < 0:
         raise ValueError("Binance settled-bar confirm interval must not be negative")
+    if not 0.0 <= min_settle_seconds <= 30.0:
+        raise ValueError("Binance settled-bar minimum settle age must be between 0 and 30 seconds")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     interval_ms = _interval_ms(binding.interval)
     agreed: list | None = None
@@ -319,7 +330,9 @@ def fetch_settled_closed_bar_raw_envelope(
             agreed = row
             streak = 1
             distinct += 1
-        if streak >= confirmations:
+        close_ms = int(row[0]) + interval_ms
+        settled_for = clock() - close_ms / 1000
+        if streak >= confirmations and settled_for >= min_settle_seconds:
             envelope = _capture_row(
                 binding,
                 row,
@@ -327,10 +340,16 @@ def fetch_settled_closed_bar_raw_envelope(
                 received_at_ns=time.time_ns(),
                 test_provenance=test_provenance,
             )
-            return envelope, {"reads": index + 1, "distinct_rows": distinct, "confirmations": streak}
+            return envelope, {
+                "reads": index + 1,
+                "distinct_rows": distinct,
+                "confirmations": streak,
+                "settled_for_ms": int(settled_for * 1000),
+            }
     raise RuntimeError(
         "Binance closed bar did not settle within the confirmation budget: "
-        f"symbol={binding.native_symbol} interval={binding.interval} reads={max_reads} distinct_rows={distinct}"
+        f"symbol={binding.native_symbol} interval={binding.interval} reads={max_reads} "
+        f"distinct_rows={distinct} min_settle_seconds={min_settle_seconds}"
     )
 
 
