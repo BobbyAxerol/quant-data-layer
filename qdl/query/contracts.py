@@ -296,6 +296,21 @@ class BatchRequirement:
                 raise ValueError("execution-grade batch must require all items")
 
 
+# DL-V2 R1.3. `fresh` folds three independent predicates into one boolean, so
+# a DATA_STALE rejection could not say which one failed and every
+# investigation had to re-derive it from the runtime. The reason is additive:
+# the code, the retryability and the leading sentence are unchanged, and a
+# caller that supplies nothing gets exactly the message it got before.
+STALE_REASON_EVENT_AGE = "EVENT_AGE"
+STALE_REASON_SESSION_STATE = "SESSION_STATE"
+STALE_REASON_SESSION_LIVENESS = "SESSION_LIVENESS"
+STALE_REASONS = frozenset({
+    STALE_REASON_EVENT_AGE,
+    STALE_REASON_SESSION_STATE,
+    STALE_REASON_SESSION_LIVENESS,
+})
+
+
 def evaluate_requirement(
     requirement: DataRequirement,
     *,
@@ -305,8 +320,16 @@ def evaluate_requirement(
     fresh: bool,
     authoritative: bool,
     gap_open: bool,
+    stale_reason: str | None = None,
 ) -> QueryProblem | None:
-    """Return the first stable fail-closed problem for a requirement."""
+    """Return the first stable fail-closed problem for a requirement.
+
+    ``stale_reason`` names which freshness predicate failed when ``fresh`` is
+    false. It never changes whether a requirement is admitted.
+    """
+
+    if stale_reason is not None and stale_reason not in STALE_REASONS:
+        raise ValueError("stale reason is outside the declared vocabulary")
 
     if not entitled:
         return QueryProblem(
@@ -335,7 +358,8 @@ def evaluate_requirement(
     if not fresh and requirement.stale_policy in {StalePolicy.BLOCK, StalePolicy.PAUSE}:
         return QueryProblem(
             CanonicalErrorCode.DATA_STALE,
-            "required data exceeds its freshness policy",
+            "required data exceeds its freshness policy"
+            + (f" ({stale_reason})" if stale_reason else ""),
             True,
         )
     if requirement.require_full_coverage and coverage is not CoverageStatus.FULL:

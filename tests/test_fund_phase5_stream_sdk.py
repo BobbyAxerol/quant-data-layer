@@ -855,15 +855,20 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         try:
             self.assertEqual((await events.__anext__()).code, "REPLAYING")
             self.assertEqual((await events.__anext__()).code, "LIVE")
-            await self.gateway.publish(durable(self.record, 1))
-            await self.gateway.publish(durable(self.record, 2))
-            # With async durable I/O the transport may have accepted the first
-            # valid event before backpressure is observed. The invariant is
-            # that RATE_LIMITED is explicit and every committed event remains
-            # replayable, not that scheduler timing hides the first event.
-            response = await events.__anext__()
-            if not hasattr(response, "code"):
+            # Publish a burst larger than any amount that can be in flight for a
+            # one-event buffer. Two events no longer force an overflow: DL-V2
+            # R1.1 removed a durable read from the delivery path, so a consumer
+            # that used to fall behind on two events can now keep up, and a test
+            # that depended on it being slow would pass or fail on scheduling.
+            # The invariant is unchanged and is what is asserted: when the
+            # bounded buffer really does overflow, RATE_LIMITED is explicit
+            # before the disconnect, and every committed event stays replayable.
+            for index in range(1, 51):
+                await self.gateway.publish(durable(self.record, index))
+            for _ in range(51):
                 response = await events.__anext__()
+                if hasattr(response, "code"):
+                    break
             self.assertEqual(response.code, "RATE_LIMITED")
             with self.assertRaises(SlowConsumerError):
                 await events.__anext__()

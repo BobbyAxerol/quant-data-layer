@@ -250,14 +250,27 @@ class GrpcMarketDataService:
                     high_watermark=high,
                 ),
             ))
+            # Replay advances the resume token past every physical record it
+            # sees, matched or not, so a resumed consumer never re-reads a run
+            # it already skipped. Signing a cursor per record costs a durable
+            # read, so an unmatched run is collapsed: the token is advanced once
+            # at the end of the run instead of once per record. The delivered
+            # records keep their own per-record tokens, so nothing a consumer
+            # resumes from changes.
+            pending_skip = None
             for stored in subscription.initial:
-                matches = subscription.accepts(stored)
-                record = await subscription.record(stored)
-                if not matches:
+                if not subscription.accepts(stored):
+                    pending_skip = stored
                     continue
+                if pending_skip is not None:
+                    await subscription.record(pending_skip)
+                    pending_skip = None
+                record = await subscription.record(stored)
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )
+            if pending_skip is not None:
+                await subscription.record(pending_skip)
             yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
                 resume_token=subscription.token,
                 control=query_pb2.StreamControl(

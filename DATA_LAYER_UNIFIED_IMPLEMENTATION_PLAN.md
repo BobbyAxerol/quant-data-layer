@@ -38756,3 +38756,75 @@ previous `retention.ms`.
 recorded with the numbers that forced them, never a threshold.
 **Journal / Done:** `NOT_RUN`; R1.0 baseline, each step's commit and before/
 after numbers, and the R1.5 decision are recorded here.
+
+**R1.0 baseline captured (2026-09-16 15:26Z), read-only.** The five exit
+numbers, taken before any change:
+
+| Measurement | Value |
+| --- | --- |
+| `stream_v2_active` main asyncio loop | 33.3% of a core |
+| 55 worker threads combined | 35.9% of a core |
+| Projector lag, total | 161,732 against a 500 gate |
+| Worst partition | p4 at 84,691 and growing |
+| Consumer | `DEGRADED`, 18/60 unhealthy, 26 execution-ready |
+| Slice disconnects, 10 min | 237 (122 BOOK_SNAPSHOT, 93 BOOK_DELTA, 22 MARK_INDEX) |
+| `stream_v2_active` CPU vs quota | 103% |
+| Disk / WAL | 56% used, 129 GB free; WAL 29.5 MB against a 1.19 GB cache |
+
+**R1.1 landed (source).** `GapFreeHandoff.issue` takes an optional
+`known_high_watermark`; `DurableStreamGateway` keeps a per-partition watermark
+learned from committed appends, tagged with the writer-lease epoch, updated
+inside `publish_many` under the partition lock it already holds. Delivering a
+record this process committed no longer enters the spool lock.
+**The safety argument, each part tested:** the offsets come from
+`append_many` after its `COMMIT`, so they are durable, not predicted; the cache
+only ever moves forward, because a duplicate append reports the offset of the
+record that already existed; an entry from another lease epoch is discarded and
+a fence clears the map, because after a fence this process is not the writer;
+acknowledging a cursor above what this writer committed falls back to the
+durable read; and `issue` still compares the watermark, so supplying the value
+cannot widen what may be signed. `tests/test_dlv2_r1_delivery_lock.py` holds
+these as 12 cases including interleaved publish/deliver rounds and concurrent
+publishers across two partitions.
+
+**R1.2 landed (source).** `subscribe` advances the resume token once per
+unmatched run instead of once per record, and once per matched record as
+before. A 400-record unmatched replay costs a fixed handful of durable reads
+rather than 400. Five cases pin the properties that matter: the token still
+ends past every record replay consumed, matched records are delivered exactly
+once, the token never moves backwards across mixed runs, and a resumed
+subscriber never sees a delivered record twice.
+
+**R1.3 landed (source).** `evaluate_requirement` takes an optional
+`stale_reason` from a closed vocabulary, `EVENT_AGE`, `SESSION_STATE`,
+`SESSION_LIVENESS`, and appends it to the `DATA_STALE` detail.
+`qdl/query/service.py` splits its one folded boolean into `_freshness_verdict`,
+which returns the verdict and the cause; the admission rule is unchanged and a
+caller that supplies no reason gets the previous message byte for byte.
+`tests/test_dlv2_r1_stale_reason.py` covers each cause, the precedence between
+them, the undeclared-reason refusal, and one boundary worth recording: the
+contract refuses `OBSERVE` recency without an explicit provider session SLA, so
+the six-minute-old TRADE feed is not unguarded, it trades age blocking for
+session-liveness blocking.
+
+**One regression, found and fixed inside the phase.**
+`test_grpc_emits_backpressure_control_before_slow_consumer_disconnect` failed
+3 of 3 runs with the change and passed 3 of 3 without it. Instrumenting the
+subscription showed why, and it is not a defect: the test published two events
+into a one-event buffer and depended on the consumer being too slow to drain
+them. R1.1 removed a durable read from the delivery path, so the consumer now
+keeps up and the buffer no longer overflows. The test now publishes a burst
+larger than anything that can be in flight, so the overflow is deterministic,
+and asserts the invariant it always meant to: when the bounded buffer really
+does overflow, `RATE_LIMITED` is explicit before the disconnect.
+
+**R1.4 landed (source, Trading System).**
+`services/market_data/data_layer_bridge.py` gains `_is_retained_view_eligible`
+and a `DataLayerError` branch in `_run_v2_snapshot_feed`. A rejected refresh
+keeps a prior view that is still inside the requirement's own freshness bound,
+without rewriting the cache, renewing its TTL or marking health ready, exactly
+as the `MARK_INDEX_PRICE` branch beside it already did. It fails closed on
+every axis: no prior view, an expired prior view, a non-retryable problem, a
+code outside `{DATA_STALE}`, or an unbounded freshness policy all still
+disconnect, and so does any transport error.
+

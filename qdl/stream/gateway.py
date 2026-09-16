@@ -151,6 +151,14 @@ class DurableStreamGateway:
         self._partition_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._next_id = 1
         self._subscriptions: dict[int, tuple[str, str, StreamSubscription]] = {}
+        # Durable high watermark per partition, learned from committed appends
+        # in this process only, tagged with the writer-lease epoch that produced
+        # it. Delivering a live record then costs no second read of the durable
+        # store, which is the lock the ingest append holds through its fsync.
+        # An entry from another epoch is never used: after a fence this process
+        # is no longer the writer, so its knowledge is stale by definition and
+        # the store is read instead.
+        self._watermarks: dict[tuple[str, str], tuple[int | None, int]] = {}
 
     async def open(
         self,
@@ -267,6 +275,16 @@ class DurableStreamGateway:
                 )
                 for event, result in zip(values, results, strict=True)
             )
+            # The store committed before returning these offsets, so each one is
+            # durable. Only ever move a partition's watermark forward: a
+            # duplicate append reports the offset of the record that already
+            # existed, which can be behind the current watermark.
+            for result in results:
+                key = (result.cursor.stream, result.cursor.partition_key)
+                epoch, offset = self._watermarks.get(key, (lease_epoch, -1))
+                if epoch != lease_epoch:
+                    offset = -1
+                self._watermarks[key] = (lease_epoch, max(offset, result.cursor.offset))
             async with self._subscriptions_lock:
                 subscriptions = tuple(self._subscriptions.values())
             for event, stored in zip(values, stored_values, strict=True):
@@ -282,6 +300,10 @@ class DurableStreamGateway:
             self._subscriptions.pop(subscription_id, None)
 
     async def fence_all(self) -> None:
+        # Losing the lease means another process may now append, so every
+        # remembered watermark is stale. Dropping them returns the gateway to
+        # reading the durable store.
+        self._watermarks.clear()
         async with self._subscriptions_lock:
             subscriptions = tuple(self._subscriptions.values())
             self._subscriptions.clear()
@@ -334,14 +356,39 @@ class DurableStreamGateway:
         self.assert_active(lease_epoch)
         return records
 
+    def known_high_watermark(self, stream: str, partition_key: str, lease_epoch: int | None) -> int | None:
+        """Return this writer's committed watermark, or None if it cannot know.
+
+        None is the safe answer and means the durable store is read. An entry
+        recorded under a different lease epoch is discarded rather than trusted,
+        because after a fence another process owns the writer role.
+        """
+
+        entry = self._watermarks.get((stream, partition_key))
+        if entry is None:
+            return None
+        epoch, offset = entry
+        if epoch != lease_epoch or offset < 0:
+            return None
+        return offset
+
     async def advance_token(self, *, token: str, consumer_id: str, cursor):
         lease_epoch = self.assert_active()
+        known = self.known_high_watermark(
+            cursor.stream, cursor.partition_key, lease_epoch
+        )
+        if known is not None and cursor.offset > known:
+            # The caller is acknowledging a record this process did not commit,
+            # so its knowledge is incomplete. Fall back to the durable read
+            # rather than sign a cursor the store may not back.
+            known = None
         grant = await asyncio.to_thread(
             self.handoff.advance_token,
             token=token,
             consumer_id=consumer_id,
             cursor=cursor,
             ttl_seconds=self.cursor_ttl_seconds,
+            known_high_watermark=known,
         )
         self.assert_active(lease_epoch)
         return grant
