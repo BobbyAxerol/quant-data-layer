@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
-from qdl.stream.gateway import DurableStreamGateway
+from qdl.stream.gateway import DurableStreamGateway, SlowConsumer
 from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
 
 STREAM = "md.canonical.v2.trade"
@@ -396,3 +396,125 @@ class ReplayTokenAdvanceTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
+    """DL-V2 R1.8: a busy latest-state feed must not starve itself.
+
+    A bounded FIFO buffer plus a strict event-age predicate livelocks: records
+    are fresh when queued, age past the consumer's own bound while they wait,
+    and are then all rejected on the way out, so the consumer receives nothing
+    and never reports an error either. It was observed starving exactly the
+    busiest instruments while a quiet one was fine.
+
+    `qdl/ingestion/contracts.py:delivery_policy` already declares every
+    non-lossless feed LATEST_STATE, so keeping the newest record is the stated
+    contract. These tests hold both halves: latest-state feeds coalesce, and
+    lossless feeds still refuse to lose anything.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.spool = CountingSpool(SpoolConfig(
+            path=Path(self.temp.name) / "coalesce.sqlite3", min_free_disk_bytes=0,
+        ))
+        self.addCleanup(self.spool.close)
+        self.codec = SignedHandoffCursorCodec({"k": b"x" * 32}, active_key_id="k")
+        self.handoff = GapFreeHandoff(self.spool, self.codec)
+        self.gateway = DurableStreamGateway(handoff=self.handoff, sink=self.spool)
+
+    def token(self) -> str:
+        return self.handoff.issue(
+            consumer_id="alpha", snapshot_id="snap",
+            snapshot_watermark=self.handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        ).token
+
+    async def _subscribe(self, *, coalesce: bool, buffer: int = 4):
+        return await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=buffer, coalesce=coalesce,
+        )
+
+    async def test_a_lossless_feed_still_declares_the_consumer_slow(self) -> None:
+        """The property that must not regress: a trade is never dropped."""
+
+        subscription = await self._subscribe(coalesce=False, buffer=4)
+        await self.gateway.publish_many([event(i) for i in range(1, 21)])
+        self.assertTrue(subscription.overflowed)
+        self.assertEqual(subscription.coalesced, 0)
+        with self.assertRaises(SlowConsumer):
+            await subscription.next_live()
+
+    async def test_a_latest_state_feed_keeps_the_newest_instead_of_overflowing(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=4)
+        await self.gateway.publish_many([event(i) for i in range(1, 21)])
+        self.assertFalse(
+            subscription.overflowed,
+            "a latest-state consumer that keeps up with the newest record is not slow",
+        )
+        self.assertGreater(subscription.coalesced, 0)
+        delivered = [(await subscription.next_live()).stored.cursor.offset for _ in range(4)]
+        self.assertEqual(
+            delivered, [17, 18, 19, 20],
+            "the buffer must hold the newest records, not the oldest",
+        )
+
+    async def test_the_delivered_records_stay_in_order(self) -> None:
+        """Coalescing drops, it never reorders."""
+
+        subscription = await self._subscribe(coalesce=True, buffer=3)
+        for index in range(1, 31):
+            await self.gateway.publish_many([event(index)])
+        seen = [(await subscription.next_live()).stored.cursor.offset for _ in range(3)]
+        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(seen[-1], 30, "the newest record must survive")
+
+    async def test_the_resume_token_never_moves_backwards_while_coalescing(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=3)
+        await self.gateway.publish_many([event(i) for i in range(1, 16)])
+        last = 0
+        for _ in range(3):
+            record = await subscription.next_live()
+            offset = self.handoff.resolve_scope(
+                token=record.resume_token, consumer_id="alpha"
+            ).watermark_offset
+            self.assertGreaterEqual(offset, last)
+            last = offset
+
+    async def test_a_dropped_record_is_never_resurrected_by_replay(self) -> None:
+        """Dropping must be final, or a latest-state feed replays stale prices."""
+
+        subscription = await self._subscribe(coalesce=True, buffer=2)
+        await self.gateway.publish_many([event(i) for i in range(1, 11)])
+        record = await subscription.next_live()
+        resumed = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=record.resume_token, max_buffer_events=10, coalesce=True,
+        )
+        replayed = [s.cursor.offset for s in resumed.initial]
+        self.assertTrue(
+            all(offset > record.stored.cursor.offset for offset in replayed),
+            "replay must resume after the delivered record, not before it",
+        )
+
+    async def test_coalescing_never_applies_when_the_buffer_is_not_full(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=10)
+        await self.gateway.publish_many([event(i) for i in range(1, 6)])
+        self.assertEqual(subscription.coalesced, 0)
+        delivered = [(await subscription.next_live()).stored.cursor.offset for _ in range(5)]
+        self.assertEqual(delivered, [1, 2, 3, 4, 5], "nothing is dropped while there is room")
+
+    def test_the_feed_split_matches_the_declared_delivery_policy(self) -> None:
+        """A wrong entry here would silently drop economic events."""
+
+        from qdl.query import FeedType
+        from qdl.stream.grpc_service import LATEST_STATE_FEEDS
+
+        for lossless in (FeedType.TRADE, FeedType.BAR, FeedType.BOOK_DELTA):
+            self.assertNotIn(lossless, LATEST_STATE_FEEDS)
+        for latest in (FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.MARK_INDEX_PRICE):
+            self.assertIn(latest, LATEST_STATE_FEEDS)

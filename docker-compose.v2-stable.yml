@@ -30,6 +30,18 @@ x-kafka-env: &kafka-env
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
   KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
   KAFKA_NUM_PARTITIONS: 6
+  # DL-V2 R1.6 retention policy (2026-09-16). This broker default applies to
+  # md.raw.realtime.v2 and is deliberately the longer of the two: raw provider
+  # bytes cannot be refetched from a venue, and canonical records are derived
+  # from them, so raw is the only copy that can re-derive a reducer fix.
+  #
+  # md.canonical.v2 carries its own retention.ms of 6 h, set on the topic. The
+  # longest catch-up the design actually honours from Kafka is the projector
+  # rebuild replay of 900 s (scripts/rebuild_v2_stable_projection_cache.py);
+  # consumers never read Kafka at all, they read the 24 h SQLite spool and are
+  # bounded further by a 1 h cursor TTL. Six hours is that 900 s window with a
+  # 24x margin plus room for a projector outage. Measured before the change:
+  # 55.6 GB canonical and 40.1 GB raw across three replicas.
   KAFKA_LOG_RETENTION_MS: 86400000
   KAFKA_LOG_SEGMENT_BYTES: 16777216
   KAFKA_LOG_DIRS: /var/lib/kafka/data
@@ -134,16 +146,22 @@ x-rust-env: &rust-env
 services:
   kafka1:
     <<: *kafka
+    # DL-V2 R1.5 measured allocation: 50% of its 0.75 ceiling with bursts to 69% across the quorum.
+    cpus: 1.00
     hostname: kafka1
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
   kafka2:
     <<: *kafka
+    # DL-V2 R1.5 measured allocation: 69% of its 0.75 ceiling.
+    cpus: 1.00
     hostname: kafka2
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
   kafka3:
     <<: *kafka
+    # DL-V2 R1.5 measured allocation: 66% of its 0.75 ceiling.
+    cpus: 1.00
     hostname: kafka3
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
@@ -248,6 +266,8 @@ services:
 
   query_v2_1:
     <<: *python
+    # DL-V2 R1.5 measured allocation: 22% of its 0.75 ceiling.
+    cpus: 0.50
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -273,6 +293,8 @@ services:
 
   query_v2_2:
     <<: *python
+    # DL-V2 R1.5 measured allocation: 1% measured, kept equal to query_v2_1 because the shared qdl-v2-query alias can send either reader all of the traffic.
+    cpus: 0.50
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -297,6 +319,11 @@ services:
 
   stream_v2_active:
     <<: *python
+    # DL-V2 R1.5 measured allocation. This process held the writer lease at 78%
+    # of a 0.75 ceiling while the rest of the stack sat under half of theirs.
+    # The active/passive lease admits exactly one ingesting writer, so the path
+    # cannot be widened by adding peers; the ceiling is the only lever.
+    cpus: 2.00
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
       stable_internal: {aliases: [qdl-v2-stream-a]}
@@ -318,7 +345,10 @@ services:
     healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/stream/ca.crt'); c.load_cert_chain('/stable-certs/stream/server.crt','/stable-certs/stream/server.key'); urllib.request.urlopen('https://localhost:8200/health/dependencies',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
   stream_v2_passive:
+    # Sized with the active peer: a standby that cannot take over at the same
+    # capacity is not a standby. An idle ceiling reserves nothing.
     <<: *python
+    cpus: 2.00
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
       stable_internal: {aliases: [qdl-v2-stream-b]}
@@ -341,6 +371,8 @@ services:
 
   projector_v2:
     <<: *python
+    # DL-V2 R1.5 measured allocation: 15% of its 0.75 ceiling; it owns the two lightest partitions.
+    cpus: 0.50
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
@@ -481,6 +513,8 @@ services:
 
   rust_core:
     <<: *rust
+    # DL-V2 R1.5 measured allocation: 12% of its 0.75 ceiling.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core.json]
     environment:
@@ -523,6 +557,8 @@ services:
 
   rust_core_3:
     <<: *rust
+    # DL-V2 R1.5 measured allocation: 10% of its 0.75 ceiling.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-003.json]
     environment:
@@ -608,6 +644,8 @@ services:
 
   ingestor_binance_usdm:
     <<: *rust
+    # DL-V2 R1.5 measured allocation: 20% of its 0.75 ceiling.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -625,6 +663,9 @@ services:
       kafka3: {condition: service_healthy}
   ingestor_binance_spot:
     <<: *rust
+    # DL-V2 R1.5: declared but not started for G1 (spot is external-only
+    # scope in the frozen capability inventory); sized with its running peers.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -642,6 +683,8 @@ services:
       kafka3: {condition: service_healthy}
   ingestor_okx_swap:
     <<: *rust
+    # DL-V2 R1.5 measured allocation: 15% of its 0.75 ceiling.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -659,6 +702,9 @@ services:
       kafka3: {condition: service_healthy}
   ingestor_okx_spot:
     <<: *rust
+    # DL-V2 R1.5: declared but not started for G1 (spot is external-only
+    # scope in the frozen capability inventory); sized with its running peers.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -677,6 +723,8 @@ services:
 
   binance_bar_edge:
     <<: *python
+    # DL-V2 R1.5 measured allocation: 3% measured; it bursts once per bar close, not continuously.
+    cpus: 0.35
     command: [python, -m, app.entrypoints.binance_bar_v2_stable]
     networks: [stable_internal, stable_egress]
     environment:

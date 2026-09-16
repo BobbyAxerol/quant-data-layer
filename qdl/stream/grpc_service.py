@@ -11,6 +11,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
     DataRequirement,
+    FeedType,
     QueryServiceError,
     StalePolicy,
     V2QueryService,
@@ -152,6 +153,29 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
     return DataRequirement.from_mapping(mapping)
 
 
+# DL-V2 R1.8. Which demanded feeds are latest-state, so a full bounded buffer
+# keeps the newest record rather than the oldest. This mirrors
+# `qdl/ingestion/contracts.py:delivery_policy`, which already declares every
+# non-lossless feed LATEST_STATE; it is written out explicitly here because the
+# stream layer carries the query FeedType, not the ingestion one, and a wrong
+# entry would silently drop records from a feed that must not lose any.
+#
+# Never add TRADE, BAR or BOOK_DELTA: a trade is an economic event, a final bar
+# is a settled fact, and a book delta is only meaningful in sequence.
+LATEST_STATE_FEEDS = frozenset({
+    FeedType.QUOTE,
+    FeedType.BOOK_SNAPSHOT,
+    FeedType.MARK_INDEX_PRICE,
+    FeedType.TICKER,
+    FeedType.FUNDING_RATE,
+    FeedType.OPEN_INTEREST,
+    FeedType.BASIS,
+    FeedType.LONG_SHORT_RATIO,
+    FeedType.TAKER_FLOW,
+    FeedType.CONTRACT_METADATA,
+})
+
+
 class GrpcMarketDataService:
     def __init__(
         self,
@@ -237,6 +261,7 @@ class GrpcMarketDataService:
                 max_consumer_streams=request_access.access.manifest.quotas.max_streams,
                 replay_limit=self.gateway.max_replay_events,
                 accepts=lambda stored: self._matches_requirement(stored, requirement),
+                coalesce=requirement.feed in LATEST_STATE_FEEDS,
             )
             high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key

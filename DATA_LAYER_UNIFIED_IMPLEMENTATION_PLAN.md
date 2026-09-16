@@ -38828,3 +38828,83 @@ every axis: no prior view, an expired prior view, a non-retryable problem, a
 code outside `{DATA_STALE}`, or an unbounded freshness policy all still
 disconnect, and so does any transport error.
 
+
+**R1.5 first measurement, and the allocation it justified (2026-09-16 16:40Z).**
+The stream image carrying R1.1-R1.3 was rolled out passive first, then active,
+so a lease holder existed throughout. The effect was immediate and large.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Projector lag, total | 161,732 | 322, gate `PASS` |
+| Worst partition | 84,691 and growing | 87 |
+| Lease holder CPU | 69.2% of a core, falling behind | 59.1% of a core, keeping pace |
+| Slice disconnects, 10 min | 237 | 0 for QUOTE and BOOK_DELTA |
+| TRADE freshness, Binance | 355,952 ms | 926 ms |
+| TRADE freshness, OKX | 389,931 ms | 1,099 ms |
+| BOOK_SNAPSHOT | rejected `DATA_STALE` | 942-1,205 ms |
+| OKX MARK_INDEX_PRICE | rejected | 575-731 ms |
+| BAR 1m | 129,795 ms | 8,963-9,545 ms |
+| WAL | 29.5 MB and growing | 14.9 MB |
+
+**Only then was CPU reallocated, and only where a 60-second measurement showed
+it was needed.** Every service had carried the same 0.75 ceiling regardless of
+role. Measured against their own quotas: `stream_v2_active` 78%, kafka2 69%,
+kafka3 66%, everything else at or below 53%, with six services under 20%. The
+one service at its ceiling is also the one that **cannot** be scaled out, since
+`ActivePassiveGatewayLease` admits exactly one ingesting writer, so the ceiling
+is the only lever there. It went to 2.00 and its standby with it, because a
+standby that cannot take over at the same capacity is not a standby. Kafka went
+to 1.00 each. Eight over-provisioned services came **down**: the readers,
+projector_v2, two rust cores, both ingestors and the bar edge. Declared total
+moves 12.25 to 14.35 on a 16-core host, concentrated where it was measured.
+Written into `docker-compose.v2-stable.yml` with the reason on each service,
+then applied live with `docker update`, which changes a cgroup limit without
+recreating a container or touching cache identity. After the change
+`stream_v2_active` sits at 31% of its new ceiling.
+
+**R1.8, raised by the measurement and fixed inside the phase: a latest-state
+feed could starve itself.** With everything else healthy, seven QUOTE slices
+stayed `STALE` or `DISCONNECTED` for 400 to 1,650 seconds while the Data Layer
+served quotes at 280-533 ms, and they logged nothing at all: no error, no
+disconnect, no recovery. The pattern named the cause. The starved instruments
+were BTCUSDT, ETHUSDT, SOLUSDT and the OKX majors; the quiet DOGE quote was
+fine. A bounded FIFO buffer plus a strict event-age predicate livelocks on a
+busy feed: `StreamSubscription.push` accepts a record that is fresh when
+queued, the record ages past the consumer's own 2,000 ms bound while it waits
+behind hundreds of others, `next_live` then rejects it and loops, and the
+consumer receives nothing while never seeing an error either.
+
+`qdl/ingestion/contracts.py:delivery_policy` already declares every
+non-lossless feed `LATEST_STATE`, and `LOSSLESS_FEEDS` is exactly trade and
+book. The queue did not implement that: it was FIFO for everything. Now a
+latest-state subscription whose buffer is full drops the **oldest** queued
+record and keeps the newest, which is the declared contract rather than a
+relaxation of it. `LATEST_STATE_FEEDS` is written out explicitly in
+`qdl/stream/grpc_service.py` and never contains `TRADE`, `BAR` or
+`BOOK_DELTA`: a trade is an economic event, a final bar is a settled fact, and
+a book delta is only meaningful in sequence. Seven tests hold both halves,
+including that a lossless feed still declares the consumer slow, that delivered
+records stay in order, that the resume token never moves backwards, and that a
+dropped record is never resurrected by replay.
+
+**R1.6 retention, decided and applied.** Both topics ran on the broker default
+of 24 h with no recorded reason, 97.85 GB across three replicas. The longest
+catch-up the design honours from Kafka is the projector rebuild replay of
+900 s; consumers never read Kafka at all, they read the 24 h SQLite spool and
+are bounded further by a 1 h cursor TTL. Canonical is now 6 h, set on the topic:
+that is the 900 s window with a 24x margin plus room for a projector outage.
+Raw stays at 24 h deliberately and the reason is in the compose file: raw
+provider bytes cannot be refetched from a venue and canonical is derived from
+them, so raw is the only copy that can re-derive a reducer fix. Expected steady
+state is roughly 14 GB canonical against 55.6 GB before.
+
+**R1.7 reader separation, measured and deferred with its evidence.** Seven
+processes hold `shared/canonical-cache.sqlite3` open, three file descriptors
+each: both streams, both readers and all three projectors. Six of them are
+readers that pin the WAL, which is why `wal_checkpoint(PASSIVE)` could not
+truncate it. With the writer no longer saturated the WAL has already halved to
+14.9 MB on its own, so the pressure that made this urgent is gone. Moving the
+readers off the writer's file is an architecture change and it is **not**
+justified by the current numbers; it stays recorded here with the measurement
+so a future decision starts from evidence rather than from this entry.
+

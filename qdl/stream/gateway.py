@@ -48,6 +48,7 @@ class StreamSubscription:
         max_buffer_events: int,
         lease_epoch: int | None,
         accepts: Callable[[StoredEvent], bool] | None,
+        coalesce: bool = False,
     ) -> None:
         self._gateway = gateway
         self.subscription_id = subscription_id
@@ -57,16 +58,44 @@ class StreamSubscription:
         self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=max_buffer_events)
         self.lease_epoch = lease_epoch
         self._accepts = accepts or (lambda _stored: True)
+        # DL-V2 R1.8. A latest-state feed keeps the newest record when the
+        # bounded buffer is full, instead of keeping the oldest and declaring
+        # the consumer slow. See `push` for why that matters.
+        self._coalesce = bool(coalesce)
         self.overflowed = False
         self.closed = False
         self._in_flight = 0
+        self.coalesced = 0
 
     def push(self, stored: StoredEvent) -> None:
         if self.closed or self.overflowed or not self._accepts(stored):
             return
         if self.queue.qsize() + self._in_flight >= self.queue.maxsize:
-            self.overflowed = True
-            return
+            if not self._coalesce:
+                self.overflowed = True
+                return
+            # DL-V2 R1.8. A latest-state feed, a bounded FIFO buffer and a
+            # strict event-age predicate combine into a livelock that starves
+            # exactly the busiest instruments: the queue fills with records
+            # that are still fresh when queued, every one of them ages past the
+            # consumer's own freshness bound while it waits, and the reader
+            # then rejects all of them and receives nothing. Observed on
+            # BTCUSDT and ETH-USDT-SWAP quotes, which went 449 s and 1,648 s
+            # without a delivered batch while a quiet DOGE quote was fine.
+            #
+            # `qdl/ingestion/contracts.py:delivery_policy` already says a
+            # non-lossless feed is LATEST_STATE, so keeping the newest record
+            # is the declared contract, not a relaxation of it. Trades, book
+            # deltas and final bars are lossless and never take this path.
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+                self.coalesced += 1
+            except asyncio.QueueEmpty:
+                # Every slot is in flight rather than queued; there is nothing
+                # to drop, so fall back to the bounded-buffer signal.
+                self.overflowed = True
+                return
         try:
             self.queue.put_nowait(stored)
         except asyncio.QueueFull:
@@ -171,6 +200,7 @@ class DurableStreamGateway:
         max_consumer_streams: int | None = None,
         replay_limit: int = 10_000,
         accepts: Callable[[StoredEvent], bool] | None = None,
+        coalesce: bool = False,
     ) -> StreamSubscription:
         lease_epoch = self.assert_active()
         if not 1 <= replay_limit <= self.max_replay_events:
@@ -230,6 +260,7 @@ class DurableStreamGateway:
                     max_buffer_events=buffer_size,
                     lease_epoch=lease_epoch,
                     accepts=accepts,
+                    coalesce=coalesce,
                 )
                 self._subscriptions[subscription_id] = (
                     stream, partition_key, subscription
