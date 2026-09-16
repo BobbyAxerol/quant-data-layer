@@ -38220,3 +38220,34 @@ against about `+2 s` before; `DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS` is
 113 MiB of 512, zero error or traceback lines. Kafka topology, Redis, SQLite,
 every other role, V1, Trading System and alpha were untouched.
 
+### RUSTSEC-2026-0285: rustls 0.23.43 -> 0.23.45 (`PASS`, 2026-09-16)
+
+<a id="dl-rustls-advisory-2026-0285"></a>
+The `dev` push of the Binance final-BAR fix turned CI red on the
+`contract-tests` job, step "Check Rust dependency, license and advisory
+policy". None of the nine pushed commits touched Rust, `Cargo.*` or
+`deny.toml`; the cause is external. Cross-checking every one of the 188 locked
+crates against the public vulnerability database found exactly one advisory:
+**RUSTSEC-2026-0285, published 2026-09-14**, eight days after the last green
+run. `rustls` is affected from `0.23.13` and fixed in `0.23.45`; the workspace
+pinned `=0.23.43`. Summary: TLS 1.3 handshake messages incorrectly accepted
+across encryption level boundaries (CVSS 3.1
+`AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N`).
+
+- Change: the workspace pin becomes `=0.23.45` and `Cargo.lock` is updated with
+  `cargo update -p rustls --precise 0.23.45`; 95 other dependencies unchanged.
+  `rustls` reaches the mesh through `qdl-core`, `qdl-kafka`, `reqwest`,
+  `tokio-rustls`, `hyper-rustls`, `quinn` and `tokio-tungstenite`.
+- Gate run locally in the pinned `rust:1.82-slim` with the CI package set, the
+  source mounted read-only and cargo home/target in disposable volumes:
+  `cargo fmt --all -- --check` **PASS**;
+  `cargo clippy --workspace --all-targets --locked -- -D warnings` **PASS, no
+  warning**; `cargo test --workspace --locked` **81 passed / 0 failed** across
+  13 targets; `cargo-deny 0.20.2 check` (the exact CI version and digest)
+  **advisories ok, bans ok, licenses ok, sources ok**.
+- Runtime note: the running Rust roles (`rust_core` x3,
+  `ingestor_binance_usdm`, `ingestor_okx_swap`) still run
+  `qdl-v2-rust:2.0.12-3f1c50e`, which carries `rustls 0.23.43`. Rebuilding that
+  image and recreating those five roles is a separate scoped runtime packet and
+  is **not** done here.
+

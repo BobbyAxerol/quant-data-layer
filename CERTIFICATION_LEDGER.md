@@ -505,3 +505,13 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   describes Binance and must be re-measured before it is quoted again.
 - OKX is unchanged (single read; its `confirm=1` candles are final on arrival).
 
+---
+
+## 15. RUSTSEC-2026-0285 (2026-09-16)
+
+- `rustls` pinned `=0.23.45` (was `=0.23.43`). Rust gate green in pinned
+  `rust:1.82-slim`: fmt, clippy `-D warnings`, `cargo test --workspace --locked`
+  **81 passed**, `cargo-deny 0.20.2` advisories/bans/licenses/sources ok.
+- **Open:** the deployed `qdl-v2-rust:2.0.12-3f1c50e` still contains the
+  affected `rustls 0.23.43`. Source is fixed; the runtime is not.
+
