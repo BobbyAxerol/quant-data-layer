@@ -553,3 +553,58 @@ class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_small_latest_state_request_is_not_enlarged(self) -> None:
         subscription = await self._subscribe(coalesce=True, buffer=2)
         self.assertEqual(subscription.queue.maxsize, 2)
+
+    async def test_signing_a_known_cursor_does_not_leave_the_event_loop(self) -> None:
+        """R1.9: the thread hop existed for the I/O that R1.1 removed.
+
+        With the watermark known the call is pure signing work, so paying a
+        thread handoff to avoid blocking on nothing is what caps the process.
+        One interpreter lock means extra CPU quota cannot widen a single
+        stream, so loop time is the scarce resource.
+        """
+
+        import asyncio as _asyncio
+
+        subscription = await self._subscribe(coalesce=False, buffer=16)
+        await self.gateway.publish_many([event(1), event(2)])
+        hops = 0
+        real = _asyncio.to_thread
+
+        async def counting(fn, /, *args, **kwargs):
+            nonlocal hops
+            hops += 1
+            return await real(fn, *args, **kwargs)
+
+        _asyncio.to_thread = counting
+        try:
+            await subscription.next_live()
+            await subscription.next_live()
+        finally:
+            _asyncio.to_thread = real
+        self.assertEqual(hops, 0, "a known watermark must be signed on the loop")
+
+    async def test_an_unknown_cursor_still_goes_to_a_thread(self) -> None:
+        """The store read must never move onto the loop."""
+
+        import asyncio as _asyncio
+
+        self.gateway._watermarks.clear()
+        hops = 0
+        real = _asyncio.to_thread
+
+        async def counting(fn, /, *args, **kwargs):
+            nonlocal hops
+            hops += 1
+            return await real(fn, *args, **kwargs)
+
+        await self.gateway.publish_many([event(1)])
+        token = self.token()
+        self.gateway._watermarks.clear()
+        _asyncio.to_thread = counting
+        try:
+            await self.gateway.advance_token(
+                token=token, consumer_id="alpha", cursor=Cursor(STREAM, PARTITION, 1)
+            )
+        finally:
+            _asyncio.to_thread = real
+        self.assertEqual(hops, 1, "an unknown watermark must still read the store off-loop")

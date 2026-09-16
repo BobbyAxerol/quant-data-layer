@@ -428,14 +428,32 @@ class DurableStreamGateway:
             # so its knowledge is incomplete. Fall back to the durable read
             # rather than sign a cursor the store may not back.
             known = None
-        grant = await asyncio.to_thread(
-            self.handoff.advance_token,
-            token=token,
-            consumer_id=consumer_id,
-            cursor=cursor,
-            ttl_seconds=self.cursor_ttl_seconds,
-            known_high_watermark=known,
-        )
+        if known is None:
+            # The durable store still has to be read, so keep it off the loop.
+            grant = await asyncio.to_thread(
+                self.handoff.advance_token,
+                token=token,
+                consumer_id=consumer_id,
+                cursor=cursor,
+                ttl_seconds=self.cursor_ttl_seconds,
+                known_high_watermark=None,
+            )
+        else:
+            # DL-V2 R1.9. With the watermark already known this call is pure
+            # signing work: decode, compare, encode, measured at 44 us. The
+            # thread hop exists to keep blocking I/O off the event loop, and
+            # there is no longer any I/O here, so it costs a 112 us handoff to
+            # avoid nothing. At over a thousand delivered records a second that
+            # scheduling overhead was most of the loop's time, and the loop is
+            # what caps this process, since one interpreter lock means extra
+            # CPU quota cannot widen it.
+            grant = self.handoff.advance_token(
+                token=token,
+                consumer_id=consumer_id,
+                cursor=cursor,
+                ttl_seconds=self.cursor_ttl_seconds,
+                known_high_watermark=known,
+            )
         self.assert_active(lease_epoch)
         return grant
 
