@@ -1,0 +1,113 @@
+{
+ "schema": "qdl.v2.patch-release-certificate.v1",
+ "status": "PASS",
+ "release": "v2.0.15",
+ "classification": "Binance final-BAR settlement correction, host-boot recovery and one dependency advisory",
+ "predecessor": {
+  "tag": "v2.0.14",
+  "certificate_schema": "qdl.v2.patch-release-certificate.v1",
+  "certificate_sha256": "e0af23d06759ae0b26aa164b33dcb959b3513f24e5961ed906d25e541dff2c1f",
+  "inherited_v2_primary_product_count": 299
+ },
+ "delta": {
+  "bar_edge_change": "a freshly closed Binance bar is read until two consecutive reads return an identical row and the bar is at least six seconds old; exactly that venue row is published and nothing is merged or invented",
+  "defect": "Binance kline replicas disagree about a closed bar for about five seconds; the edge read once at close + 0.10s and never revised, so a durable bar could stay short on volume and trade count for ever",
+  "changed_services": [
+   "binance_bar_edge"
+  ],
+  "venue_comparison": {
+   "method": "field-by-field against the venues' own public REST klines for the same close times",
+   "before": {
+    "binance_exact": 0,
+    "binance_compared": 10,
+    "okx_exact": 10,
+    "okx_compared": 10
+   },
+   "after_round_1": {
+    "exact": 20,
+    "compared": 20,
+    "receipt_sha256": "413efaaa41fdc3dcc8c155d3844faf24fea1dac63368fa5cc3dd8a85a44c7b22"
+   },
+   "after_round_2": {
+    "exact": 20,
+    "compared": 20,
+    "receipt_sha256": "64f4a8dce0262559f804b17ae9870c36a3ba336e6f6119a895e5dfad252f8570"
+   },
+   "fields": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "base_volume",
+    "trade_count"
+   ],
+   "instruments": [
+    "BINANCE:BTCUSDT",
+    "BINANCE:ETHUSDT",
+    "OKX:BTC-USDT-SWAP",
+    "OKX:ETH-USDT-SWAP"
+   ]
+  },
+  "final_bar_publish_offset_seconds": {
+   "before": 2.0,
+   "after_min": 6.7,
+   "after_max": 8.2,
+   "consumer_contract_seconds": 180
+  },
+  "dependency_advisory": {
+   "id": "RUSTSEC-2026-0285",
+   "crate": "rustls",
+   "from": "0.23.43",
+   "to": "0.23.45",
+   "published": "2026-09-14"
+  },
+  "host_boot_recovery": {
+   "unit": "qdl-v2-stable-boot-recovery.service",
+   "rehearsal_seconds": 1064,
+   "rehearsal_status": "PASS"
+  },
+  "provider_connections": "read-only venue REST comparison only",
+  "order_actions": 0,
+  "secret_values_recorded": false
+ },
+ "provenance": {
+  "image_source_commit": "5130f6fdfb1c2087b9b6a25b7a4e1aaaea12e29a",
+  "source_plan_sha256_at_image_build": "73c72af8a9c12a4fbf8c3c2b32556fef3d825d7af221bf4417eb55a8ff051dfc",
+  "active_python_bar_edge_image": "sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea",
+  "rollback_python_bar_edge_image": "sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a",
+  "active_python_projector_image": "sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a",
+  "active_rust_core_image": "sha256:407a67131ca6567f803950aefd56c547306a20bec6992a42c44ae1719beccabd",
+  "v1_fallback_image": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+  "rust_gate": {
+   "toolchain": "1.82.0",
+   "fmt": "PASS",
+   "clippy_deny_warnings": "PASS",
+   "cargo_test": {
+    "passed": 81,
+    "failed": 0,
+    "targets": 13
+   },
+   "cargo_deny": "advisories ok, bans ok, licenses ok, sources ok"
+  },
+  "python_suite": {
+   "discovered": 1436,
+   "pre_existing_import_errors": 4,
+   "note": "the same four errors occur on a pristine dev worktree"
+  },
+  "ci": {
+   "workflow": "CI",
+   "status": "PASS",
+   "run_id": 35077114929,
+   "head_sha": "0fcdea5",
+   "conclusion": "success"
+  }
+ },
+ "boundaries": [
+  "This patch inherits the v2.0.14 certificate and does not recertify the full product matrix.",
+  "The venue comparison covers the 1m interval for four instruments; other intervals inherit the existing OHLCV certification.",
+  "The published close-to-final-BAR availability figure of p50 2.151s no longer describes Binance and must be re-measured before it is quoted.",
+  "The deployed qdl-v2-rust:2.0.12-3f1c50e still contains rustls 0.23.43; the source is fixed and the Rust runtime rollout is a separate packet.",
+  "Only binance_bar_edge was recreated. V1, Kafka topology, Redis, SQLite, every other role, Trading System and alpha were untouched."
+ ]
+}
