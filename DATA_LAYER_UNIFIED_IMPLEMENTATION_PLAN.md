@@ -38534,3 +38534,100 @@ not a quiet edit. **Until it is applied, the correct description of the system
 is that OKX execution mark/index on the reference-batch path breaches the
 sealed 2,000 ms gate roughly 24 times per hour per instrument, and Trading
 System reports it as designed.**
+
+### The V2 stack is CPU-throttled at one service, and that is why everything is stale (2026-09-16)
+
+<a id="dl-v2-stream-ingest-cpu-throttle-20260916"></a>
+The OKX index entry above described one defect on the reference-batch path. It
+was not the main one. Measuring the whole consumer surface instead of one feed
+shows a systemic staleness whose cause is a single CPU quota.
+
+**What the consumer sees.** `market_data_service` heartbeat, read from
+`service_heartbeats`: `demanded_v2_slices 60`, `unhealthy_v2_slices 27`,
+`execution_ready_v2_slices 19`, 13 slices `QUIET` with
+`event_recency_state STALE`, `reference_refresh_stale_rejections 673`, service
+status `DEGRADED`. In 90 minutes of its log: 1,099 slice disconnects, 933 of
+them `required data exceeds its freshness policy`.
+
+**What the Data Layer actually serves**, measured with
+`scripts/p18e_data_endpoint_benchmark.py --iterations 5` (well inside the
+shared budget) against the live query endpoint:
+
+| probe | reported freshness | demanded |
+| --- | --- | --- |
+| QUOTE BINANCE BTCUSDT | p50 573 ms | 2,000 ms |
+| QUOTE OKX BTC-USDT-SWAP | p50 403 ms | 2,000 ms |
+| TRADE BINANCE BTCUSDT | **p50 355,952 ms** | 3,000 ms, policy OBSERVE |
+| TRADE OKX BTC-USDT-SWAP | **p50 389,931 ms** | 3,000 ms, policy OBSERVE |
+| BAR 1m BINANCE ETHUSDT | 129,795 ms | 180,000 ms |
+| BOOK_SNAPSHOT, all four probed | rejected `DATA_STALE` | 60,000 ms |
+| MARK_INDEX_PRICE BINANCE | rejected `DATA_NOT_READY` | 15,000 ms |
+
+TRADE being six minutes old is not visible as a failure only because its
+`event_recency_policy` is `OBSERVE`. The policy is hiding a real gap.
+
+**Cause, traced hop by hop.** Ingestors, `rust_core` and `binance_bar_edge` are
+all healthy and producing; `rust_core` has processed over a million canonical
+records this generation. The loss is at the projector. Kafka consumer-group
+lag for `stable-projector-v1`, measured over one minute:
+
+| partition | produced/s | consumed/s | deficit/s | lag | minutes behind |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 99.0 | 99.7 | -0.7 | 22 | 0.0 |
+| 1 | 73.6 | 73.7 | -0.1 | 12 | 0.0 |
+| 2 | 100.5 | 42.2 | +58.2 | 7,971 | 1.3 |
+| 3 | 281.6 | 258.7 | +22.9 | 30,800 | 1.8 |
+| 4 | 160.3 | 163.7 | -3.4 | 59,043 | **6.1** |
+| 5 | 230.2 | 129.5 | +100.8 | 47,680 | **3.5** |
+| total | 945.2 | 767.6 | **+177.6** | ~145,000 | |
+
+The documented gate is 500 total and 250 per partition. The stack is at roughly
+290 times that gate. The spool the query service reads is therefore minutes
+behind, `quality.freshness_ms` is minutes, and `evaluate_requirement` returns
+`DATA_STALE` exactly as designed. Nothing is broken in the freshness logic; the
+data really is that old.
+
+**Why the projectors cannot keep up, and it is not the projectors.**
+`StableHttpCanonicalSink._publish_chunk` (`qdl/runtime/stable_ingest.py:383`)
+iterates `self.urls` in order and stops at the first success, so the URL list
+`["https://stream_v2_active:8200","https://stream_v2_passive:8200"]` is
+failover, not load sharing. Every canonical batch from all three projectors is
+posted to one process. Measured CPU against each container's own quota:
+
+| service | quota | used | share of quota |
+| --- | ---: | ---: | ---: |
+| **stream_v2_active** | 0.75 | 78.25% | **104%** |
+| stream_v2_passive | 0.75 | 0.17% | 0% |
+| kafka2 / kafka3 | 0.75 | ~55% | 73% |
+| projector_v2_2 / _3 | 0.75 | ~33% | 43% |
+| everything else | 0.75 | <25% | <35% |
+
+`stream_v2_active` is pinned **at** its 0.75-CPU limit while its identical
+standby sits idle, and the projectors wait on it at 43% of their own quota. The
+host has 16 cores and a load average of 12, so the capacity exists; it is the
+per-container limit that does not. **This is a resource-allocation defect, not
+a freshness-threshold question, and no threshold should be touched to hide it.**
+
+**Fix, in order, smallest blast radius first.**
+1. Raise the quota on the throttled service only:
+   `docker update --cpus=2.5 qdl_v2_stable_candidate-stream_v2_active-1`. This
+   changes a cgroup limit on a running container. It does not recreate the
+   container, does not touch the projection cache identity, writes no data, and
+   is reversed by the same command with `--cpus=0.75`. Every container's
+   current `NanoCpus`/`Memory` is captured before the change.
+2. Re-measure the lag. The backlog of ~145,000 must drain, not merely stop
+   growing. If the projectors then reach their own 0.75 limit, raise theirs the
+   same way; Kafka at 73% of quota is the next candidate.
+3. Only then consider using both stream endpoints. It is deliberately **not**
+   step one: both processes already hold the same
+   `shared/canonical-cache.sqlite3` open in WAL mode, and SQLite permits one
+   writer at a time, so splitting the load could trade a CPU bottleneck for a
+   write-lock bottleneck. That needs its own measurement, not an assumption.
+4. Persist whatever limits are chosen. These containers were created from a
+   compose file in a worktree that has since been removed, so a `docker update`
+   survives restarts but not a recreate.
+
+**Status.** Step 1 was prepared and its rollback recorded, but the command was
+refused by this session's permission policy as a shared-resource modification.
+It is therefore **not applied**; the stack is still throttled and still stale,
+and the owner has to run it or approve it. Everything above is measurement.

@@ -613,3 +613,30 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   re-certification required; `v2.0.15` is released.
 - **Pinned at:** `market_data_service` running image of 2026-09-16, OKX public
   REST and WS measured 2026-09-16. Re-measure only if OKX changes the endpoint.
+
+---
+
+## 22. V2 staleness is one CPU quota, not one feed (2026-09-16)
+
+- **Entry 21 found a real defect but not the main one.** Measuring all feeds
+  instead of mark/index: TRADE p50 **356 s** on Binance and **390 s** on OKX,
+  BOOK_SNAPSHOT rejected `DATA_STALE` on every probed instrument, Binance
+  MARK_INDEX_PRICE `DATA_NOT_READY`, BAR 1m 130 s. QUOTE alone is healthy at
+  p50 403-573 ms. Consumer: 27 of 60 slices unhealthy, `DEGRADED`.
+- **Projector lag** on `stable-projector-v1`: ~145,000 total against a
+  documented gate of 500 total / 250 per partition; partition 4 is 6.1 minutes
+  behind. Production 945 msg/s, consumption 768 msg/s, deficit 178 msg/s.
+- **Root cause:** `stream_v2_active` runs at **104% of its 0.75-CPU quota**
+  while the identical `stream_v2_passive` sits at 0.17%, because
+  `qdl/runtime/stable_ingest.py:383` treats the two ingest URLs as ordered
+  failover rather than load sharing. All three projectors post through the one
+  throttled process and wait at 43% of their own quota. Host has 16 cores.
+- **Fix not applied:** `docker update --cpus=2.5` on that one container, live,
+  no recreate, no cache identity change, reversible with `--cpus=0.75`. The
+  command was refused by the agent session's shared-resource permission policy.
+  Owner action required. Both-endpoint load sharing is deliberately deferred:
+  the two stream processes share one WAL SQLite database, which allows one
+  writer at a time.
+- **Pinned at:** stack `qdl_v2_stable_candidate` as running 2026-09-16 14:05Z;
+  every container's `NanoCpus`/`Memory` captured for rollback. Re-measure lag
+  after any quota change; the backlog must drain, not merely stop growing.
