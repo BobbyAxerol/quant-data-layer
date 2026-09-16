@@ -584,3 +584,32 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   935 ms (OKX), both execution eligible: **the gate is met where it matters.**
   The durable-projection tail is a venue-bound characteristic, not a defect.
 
+
+---
+
+## 21. OKX index freshness: entry 20 corrected (2026-09-16)
+
+- **Entry 20 is wrong on two points.** The reference-batch path *is* breaching
+  the sealed 2,000 ms gate in production, and OKX's index publication rate is
+  *not* the floor. Measured, not inferred.
+- **Production, one hour of `market_data_service` logs:** 118 `MARK_INDEX_PRICE`
+  slice disconnects, 117 OKX; `index_price` age p50 2255 ms, max 2973 ms, while
+  `mark_price` at the same instants is p50 36 ms. Service state `DEGRADED`,
+  reconnect count 294 on DOGE-USDT-SWAP. The consumer reports the Data Layer's
+  own typed `DATA_STALE` problem; it applies no rule of its own.
+- **Cause, measured against OKX from this host with no Data Layer in the path:**
+  `/api/v5/market/index-tickers` returns rows stamped p50 901 ms and **max
+  2511 ms** behind the clock, while `/api/v5/public/mark-price` returns 31 ms.
+  The REST index endpoint serves a stale cached row. The 935 ms figure in
+  entry 20 was a median that hid this tail.
+- **The venue is fine.** `wss://ws.okx.com:8443/ws/v5/public` `index-tickers`,
+  470 frames in 60 s: `ts` lag p50 81 ms, **max 354 ms**, push interval p50
+  256 ms. The "613 ms publication rate" in entry 20 was the REST row's change
+  rate, not the venue's index rate.
+- **Fix, not applied:** serve the reference batch's OKX `INDEX` component from
+  the `index-tickers` binding the deployment already subscribes to
+  (`qdl/runtime/stable_deployment.py:195`), REST only as fallback; the
+  per-component 2,000 ms policy stays sealed. Owner approval and reference-batch
+  re-certification required; `v2.0.15` is released.
+- **Pinned at:** `market_data_service` running image of 2026-09-16, OKX public
+  REST and WS measured 2026-09-16. Re-measure only if OKX changes the endpoint.

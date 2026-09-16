@@ -38461,3 +38461,76 @@ later wants the durable path inside 2,000 ms as well, the only real lever is a
 faster index source than OKX publishes, which does not exist on its public
 feed.
 
+
+### OKX index freshness: the floor was the REST endpoint, not the venue (2026-09-16)
+
+<a id="dl-v2-okx-index-rest-vs-ws-20260916"></a>
+**Correcting the two previous entries.** In
+[the root-cause entry](#dl-v2-okx-freshness-rootcause-20260916) I named OKX's
+index publication rate as the floor, and in
+[the withdrawal](#dl-v2-okx-markindex-withdrawn-20260916) I wrote that the
+failing path has no consumer. Both were measured on the wrong thing. The
+failing path does have a consumer, it is failing in production right now, and
+the venue is not the floor.
+
+**What production shows.** `market_data_service` reports `DEGRADED` with 7 to
+10 of 60 V2 slices unhealthy, continuously. Over one hour of its logs:
+
+| quantity | value |
+| --- | --- |
+| `MARK_INDEX_PRICE` slice disconnects | 118 in 60 min, 117 of them OKX |
+| affected instruments | DOGE 60, SOL 25, BNB 20, ETH 9, BTC 3 |
+| `index_price` age at rejection | min 2002 ms, p50 2255 ms, p95 2706 ms, max 2973 ms |
+| `mark_price` age at the same instants | p50 36 ms, p95 57 ms, max 108 ms |
+| OKX `MARK_INDEX_PRICE` reconnect count | 294 and climbing on DOGE-USDT-SWAP |
+
+The consumer is not applying a rule of its own here.
+`adapters/market_data/data_layer_v2.py:_partial_mark_index_stale_error`
+reconstructs the age from the **Data Layer's own typed `DATA_STALE` problem**,
+so this is the sealed 2,000 ms execution policy rejecting the item, reported
+faithfully downstream. Mark is fresh at every rejection; only the index is old.
+
+**Where the age comes from.** `qdl/adapters/okx/reference.py:189-252` serves the
+reference batch by calling two REST endpoints in parallel and stamping each
+observation with the venue's own `ts` from the row. Measured from this host
+against OKX directly, no Data Layer in the path, 36 samples per endpoint over
+three instruments:
+
+| venue endpoint | min | p50 | p95 | max |
+| --- | --- | --- | --- | --- |
+| `/api/v5/public/mark-price` `ts` behind local clock | 29 ms | 31 ms | 34 ms | 51 ms |
+| `/api/v5/market/index-tickers` `ts` behind local clock | 147 ms | 901 ms | 1453 ms | **2511 ms** |
+
+Two requests issued together; one comes back stamped 31 ms ago and the other up
+to 2.5 seconds ago. **OKX's REST index endpoint serves a stale cached row.**
+Adding pipeline transport to that 2511 ms reproduces the 2973 ms seen in
+production.
+
+**The venue is not the floor: its WebSocket carries the same index live.** Same
+instruments, 60-second capture on `wss://ws.okx.com:8443/ws/v5/public`, 470
+index frames and 897 mark frames:
+
+| channel | `ts` lag p50 | `ts` lag p95 | `ts` lag max | push interval p50 |
+| --- | --- | --- | --- | --- |
+| `index-tickers` (WS) | 81 ms | 131 ms | **354 ms** | 256 ms |
+| `mark-price` (WS) | 38 ms | 41 ms | 228 ms | 201 ms |
+
+So the earlier figure, "index publishes every 613 ms, that is the floor", was
+the rate at which the **REST** row changes. The venue's actual index stream is
+inside 354 ms at its worst, seven times fresher than the REST endpoint's worst
+case and far inside the 2,000 ms gate.
+
+**Recommendation, and why it is not applied here.** The stable deployment
+already subscribes to that WebSocket channel: `qdl/runtime/stable_deployment.py:195`
+binds `index-tickers` as `okx_index_price`, so the fresh value is already
+inside the system and already canonical. The fix is to serve the reference
+batch's OKX `INDEX` component from that streamed binding and fall back to REST
+only when no streamed value exists, leaving the per-component 2,000 ms policy
+exactly as sealed. No threshold moves, no reducer timestamp changes, and a
+genuinely stale index still fails closed. This is a change to a certified
+canonical reference path in a released Data Layer (`v2.0.15`), so it needs the
+owner's approval, its own phase and a re-certification of the reference batch,
+not a quiet edit. **Until it is applied, the correct description of the system
+is that OKX execution mark/index on the reference-batch path breaches the
+sealed 2,000 ms gate roughly 24 times per hour per instrument, and Trading
+System reports it as designed.**
