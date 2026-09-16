@@ -453,3 +453,21 @@ Pinned at: data layer `d4c9763`, images unchanged (`qdl-v2-python:2.0.14-ccd0c43
   "restart policy fixed" as "survives reboot".
 - Trading System `market_data_service` consumes V2 again: `V2_PRIMARY`,
   60 demanded slices, 0 unhealthy, `v1_fallback_count=0`.
+
+---
+
+## 12. V2 stable boot recovery unit and crash rehearsal (2026-09-16)
+
+Pinned at: data layer `4433497` + this journal; images unchanged.
+
+- `qdl-v2-stable-boot-recovery.service` enabled; `scripts/v2_stable_boot_recovery.py`
+  rehearsed end-to-end on the running stack (`--simulate-crash`): PASS in 17 min 44 s,
+  receipt `boot-recovery-20260916T065640Z.json` sha256 `6af808c74b3adefd…`.
+  **Certified: unattended recovery from the post-boot state.** Not certified: an
+  actual host reboot (owner chose not to reboot); the unit's `After=docker.service`
+  ordering is asserted by systemd, not observed.
+- Do not re-run the rehearsal to "check": it deletes the spool and costs a
+  15-20 min replay plus the 1m warmup dip. Re-run only if the runbook, the tool
+  or the projector image changes.
+- Serving measurement of the same day: Data Layer projection cache 1.2 s median
+  behind the venue for trades, prices within 0.42-1.25 bps of the public ticker.

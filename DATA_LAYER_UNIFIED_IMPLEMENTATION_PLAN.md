@@ -38056,3 +38056,52 @@ orphaned named volumes, and unused build cache (44.3 GB). Docker images
 Kept: every running container, `qdl_v2_stable_candidate` volumes including
 `stable_authority_db`, cargo/target caches, the v2.0.14 image and its named
 rollback, all Trading System release images.
+
+### V2 stable: boot recovery unit, crash rehearsal and serving measurement (`PASS`, 2026-09-16)
+
+<a id="dl-v2-boot-recovery-unit-20260916"></a>
+**Owner decision.** Option B of the reboot question: keep `stable_redis`
+ephemeral (certified design) and automate the governed cache rebuild at boot.
+Option A (persistent Redis) rejected because it changes the projection cache
+identity semantics the projectors are certified against.
+
+- `scripts/v2_stable_boot_recovery.py` (commit `4433497`): decides from
+  observation only (`WAIT_INFRA | HEALTHY | RECOVER | START_ONLY | MANUAL`),
+  imports every constant and gate from `rebuild_v2_stable_projection_cache.py`
+  (cache files, group, 900 s window, 500/250 lag gate, 3 samples, 1,000,000
+  replay budget), drives the existing containers with `docker` (never Compose:
+  their sealed overrides cannot be reproduced), applies only with the runbook
+  token, writes a 0600 receipt per run, `--simulate-crash` reproduces the
+  post-boot state for rehearsal. 11 unit tests with a scripted fake docker,
+  run in `qdl-v2-python:2.0.14-ccd0c43` read-only.
+- `deploy/systemd/qdl-v2-stable-boot-recovery.service` installed and enabled
+  (`After=docker.service`, `User=bobby`, oneshot, waits up to 600 s for the
+  Kafka quorum and Redis, 1200 s recovery budget, `Restart=on-failure` x3).
+  Dry check as the unit runs it: `HEALTHY` (no action on a healthy stack).
+- **Crash rehearsal (owner-approved, the host was not rebooted):** receipt
+  `~/.local/state/qdl-v2/boot-recovery/boot-recovery-20260916T065640Z.json`
+  sha256 `6af808c74b3adefd…`. Timeline: cache users stopped and Redis
+  restarted (tmpfs wiped) 06:38:55; cache files deleted, FLUSHDB, group reset
+  to `06:24:02` (376,121 replay records / 6 partitions) by 06:39:11; streams
+  healthy 06:39:27; projectors + bar edge started 06:39:28; lag bounded
+  (total 145, max partition 63, 3 samples) 06:56:21; projectors ready;
+  queries healthy 06:56:39; Redis 532 keys. **Total 17 min 44 s**, of which
+  17 min was projector replay of the 900 s window under live load (projector
+  CPU 12-51% of one core, memory 85-147 MiB of 768). Post-assessment
+  `HEALTHY`. Trading System `market_data_service` reported
+  `DATA_LAYER_V2_OUTAGE` 36 times through the monitor during the window and
+  reconnected all 60 slices afterwards; V1 fallback count stayed 0.
+- **Serving measurement (read-only, `p18e_market_plane_probe`, 300 s, 60
+  rounds, 70 views, receipt `p18e-market-plane-probe-2026-09-16.json` in the
+  Trading System evidence dir):** V2 views reach the Trading System cache
+  within 1.8 s (quote p50), 0.5 s (mark/index), 1.1 s (book snapshot) of the
+  venue event; prices equal the venue's public ticker within 0.42 bps
+  (Binance) / 1.25 bps (OKX) at median, 4.8 bps max. The Data Layer's own
+  projection cache holds the latest BTCUSDT trade 1.2 s (median) / 2.7 s
+  (max) after the venue; the Trading System's V2 view of the same trade is
+  9.5 s / 16.4 s old. **Verdict for this repo: the Data Layer serves
+  correct, timely data; the trade/book-delta staleness the Trading System
+  sees originates between the V2 stream gateway and `market_data_service`'s
+  cache write and is tracked in the Trading System plan (3E S4 journal).**
+- Known limit of the rehearsal figure: 17 min is replay time for the fixed
+  900 s window; the runbook's gate, not this tool, owns that window.
