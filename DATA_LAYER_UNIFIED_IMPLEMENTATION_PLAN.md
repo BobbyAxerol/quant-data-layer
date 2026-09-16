@@ -38631,3 +38631,128 @@ a freshness-threshold question, and no threshold should be touched to hide it.**
 refused by this session's permission policy as a shared-resource modification.
 It is therefore **not applied**; the stack is still throttled and still stale,
 and the owner has to run it or approve it. Everything above is measurement.
+
+### DL-V2 R1 - Delivery lock decoupling and consumer starvation repair
+
+<a id="dl-v2-r1-delivery-lock-20260916"></a>
+**Status:** `PLANNED / AWAITING_OWNER_APPROVAL` (written 2026-09-16, Fable).
+**Goal:** the certified V2 consumer gets fresh data again without widening a
+single freshness threshold and without adding CPU before the measured cause is
+removed. Everything in the two entries above stays on record; this phase
+corrects one attribution and names the cause with code lines.
+**Guide:** `qdl/stream/gateway.py`, `qdl/stream/grpc_service.py`,
+`qdl/replay/handoff.py`, `qdl/transport/sqlite_spool.py`,
+`qdl/runtime/lease.py`, `qdl/query/service.py`; consumer side
+`trading_system/services/market_data/data_layer_bridge.py`.
+**Implementation ownership:** stream gateway and cursor handoff (R1.1, R1.2),
+query problem codes (R1.3), Trading System market-data bridge (R1.4,
+cross-repo), retention policy (R1.6, owner decision).
+
+**Measured state at planning time (2026-09-16 15:15Z).** Consumer `DEGRADED`,
+60 demanded slices, 23 unhealthy, 22 execution-ready, 322 slice disconnects in
+the last 10 minutes and rising, `reference_refresh_stale_rejections` 821.
+Projector lag 202,163 total, partition 4 at 96,772, against a documented gate
+of 500. **The consumer is not getting enough data and the gap is widening.**
+
+**Correction of the entry above.** `stream_v2_active` pinned at its 0.75-CPU
+quota is a symptom, not the cause. Measured per-thread over 30 s: the asyncio
+loop uses 33.1% of a core and 55 worker threads use 36.3%; ingest decode and
+parse cost 12.6 us per event, 1.2% of a core at 945 events/s; the delivery-side
+re-parse in `_matches_requirement` runs once per event, not once per
+subscription, because `gateway.py:276` matches on `(stream, partition_key)`
+first. The earlier "60x parse" claim and its header-based fix are withdrawn.
+Loop latency on a warm connection: active p50 2.2 ms, p95 59.4 ms, max
+73.7 ms; passive p95 2.3 ms. Not saturated, but stalling.
+
+**Cause, with lines.** Every record delivered to a subscriber passes
+`StreamSubscription.record()` -> `DurableStreamGateway.advance_token()`
+(`gateway.py:337`) -> `asyncio.to_thread(handoff.advance_token)` ->
+`CursorHandoff.issue()` (`qdl/replay/handoff.py`) ->
+`SQLiteDurableSpool.high_watermark()`, one `SELECT` taken **under the spool
+`RLock`** (`sqlite_spool.py:116`). The same lock is held by `append_many` for
+the whole ingest batch including the `synchronous=FULL` fsync, and by
+`find_events`. At ~945 delivered records per second this is ~945 thread hops
+and ~945 lock acquisitions per second competing with every ingest append in the
+one process that holds the writer lease. The projectors wait on that lock, not
+on CPU. On reconnect, `grpc_service.py:254-256` calls `record()` for every
+replayed record before checking `matches`, so unmatched replay costs the same.
+With the consumer reconnecting 322 times per 10 minutes and replaying up to
+`QDL_STABLE_MAX_REPLAY_EVENTS=5000` from a real cursor, the load feeds itself.
+
+**Must implement, in order. Each step is one commit with its own measurement.**
+
+- **R1.0 Baseline capture, read-only, before any change.** Record, with the
+  commands: per-thread CPU split of `stream_v2_active` over 30 s; `/health/live`
+  p50/p95/max on a warm connection for active and passive; projector lag per
+  partition twice, 60 s apart; consumer heartbeat counters; slice disconnects
+  per 10 minutes by feed and code. These five are the phase's exit numbers.
+- **R1.1 Live delivery must not query the spool per record.** A live record has
+  just been appended by `publish_many` under the partition lock, so its cursor
+  is at or below the durable watermark by construction. Maintain a per-partition
+  watermark cache in the gateway, updated inside `publish_many` under the
+  existing partition lock; `advance_token` for live records reads that cache
+  and never enters the spool lock. `issue()` for `resolve_scope` and for replay
+  keeps its spool check unchanged. **Invariant, tested as a property:** no token
+  is ever issued with an offset above the durable watermark, across interleaved
+  appends, advances and a simulated writer fence. Negative test: a cache that
+  is ahead of the spool must be refused, never trusted.
+- **R1.2 Replay advances tokens only where it delivers.** In `subscribe()`, call
+  `record()` only for matched records. The resume token must still move past
+  unmatched physical records, exactly as `next_live` already does at
+  `gateway.py:105-108`: token stays monotonic; a grant is issued on each
+  matched record and on the last record of every unmatched run. **Test:** a
+  consumer resuming after any replay never misses a matched record and never
+  receives one twice; a replay of 5,000 unmatched records issues one grant.
+- **R1.3 Distinguish why data is stale.** `qdl/query/service.py:866` folds
+  event age, provider session state and session liveness into one `fresh`
+  boolean and one message, "required data exceeds its freshness policy". Add a
+  bounded `reason` to the `DATA_STALE` problem naming which predicate failed
+  (`EVENT_AGE`, `SESSION_STATE`, `SESSION_LIVENESS`). Contract-additive; no
+  code or threshold changes. Without this, R1.4 cannot be tuned honestly and
+  the next investigation guesses again.
+- **R1.4 Consumer stops amplifying, Trading System side.**
+  `_run_v2_snapshot_feed` tears the slice down on any `DataLayerError` and
+  backs off to 30 s; 200 of 322 recent disconnects are `BOOK_SNAPSHOT
+  DATA_STALE`. The `MARK_INDEX_PRICE` branch beside it already does the right
+  thing: keep the last independently valid view, do not rewrite the cache, retry
+  on cadence. Apply the same rule to `BOOK_SNAPSHOT`. Recorded in the Trading
+  System plan under the 3E handover as its own slice; landed only after R1.3
+  so the retained-view decision can key on the reason code.
+- **R1.5 Re-measure and decide.** Repeat R1.0. Exit requires: projector lag
+  under the 500/250 gate and **draining, not merely flat**, across three
+  samples 60 s apart; consumer `READY` with 0 unhealthy slices for 30 minutes;
+  disconnects per 10 minutes below 5; `stream_v2_active` below 60% of its
+  quota. Only if it is still above quota after R1.1-R1.4 does a CPU change
+  enter, and then it is written into `docker-compose.v2-stable.yml` with the
+  measurement that justified it, not applied with `docker update` alone.
+- **R1.6 Retention policy, owner decision, documentation and topic config.**
+  Both topics sit at the broker default of 24 h (`docker-compose.v2-stable.yml:33`),
+  97.85 GB across three replicas, with no recorded reason; the rebuild runbook
+  replays 900 s and warmup reads the spool. Decide per topic: canonical covers
+  the longest consumer catch-up the design honours plus margin; raw stays
+  longer because canonical is derived from it and raw cannot be refetched from
+  the venue. Write `retention.ms` per topic with the reason in the compose
+  file. Not a blocker for R1.1-R1.5; disk is at 55% with 132 GB free.
+- **R1.7 Reader separation, design only.** Seven processes open
+  `shared/canonical-cache.sqlite3`; six readers pin the WAL so
+  `wal_checkpoint(PASSIVE)` cannot truncate it (29.5 MB and growing). After
+  R1.5, decide whether query and projector reads move off the writer's file.
+  Architecture change; its own phase.
+
+**Not in this phase.** No freshness threshold moves. No change to the
+active/passive lease or the single-writer invariant (`lease.py:186`). No
+partition-key change: it would alter ordering guarantees and needs
+certification. No reducer or canonical record change. No consumer manifest
+revision bump.
+
+**Test / exit gate:** R1.5 numbers met; unit and property tests for R1.1 and
+R1.2 green in the isolated image; R1.3 covered by contract tests; consumer
+bridge tests for R1.4 green in the Trading System gate image.
+**Rollback:** each of R1.1-R1.4 ships as one image digest for its service
+with the previous digest recorded; rollback is recreate on the previous
+digest, no data migration, no cache identity change. R1.6 rollback is the
+previous `retention.ms`.
+**Debt:** if R1.5 still fails, the next lever is R1.7 or a CPU change, both
+recorded with the numbers that forced them, never a threshold.
+**Journal / Done:** `NOT_RUN`; R1.0 baseline, each step's commit and before/
+after numbers, and the R1.5 decision are recorded here.

@@ -640,3 +640,27 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
 - **Pinned at:** stack `qdl_v2_stable_candidate` as running 2026-09-16 14:05Z;
   every container's `NanoCpus`/`Memory` captured for rollback. Re-measure lag
   after any quota change; the backlog must drain, not merely stop growing.
+
+---
+
+## 23. Entry 22 corrected: the throttle is a symptom, the spool lock is the cause (2026-09-16)
+
+- **Withdrawn from earlier reasoning:** the "60x re-parse per subscription"
+  claim (fan-out matches `(stream, partition_key)` first, `gateway.py:276`;
+  the parse runs ~once per event, ~0.1% CPU) and the header-at-append fix built
+  on it. The CPU quota raise is not step one either: the process is at
+  33.1% loop + 36.3% across 55 worker threads, and the worker share is SQLite.
+- **Cause:** every delivered record calls `advance_token` ->
+  `handoff.issue()` -> `spool.high_watermark()` under the spool `RLock`
+  (`sqlite_spool.py:116`), the lock `append_many` holds through its fsync. At
+  ~945 records/s the delivery path serialises against ingest inside the one
+  writer-lease process; replay on reconnect (322 per 10 min) pays the same per
+  unmatched record (`grpc_service.py:254`).
+- **Measured now:** consumer `DEGRADED`, 23/60 unhealthy, 22 execution-ready;
+  projector lag 202,163 (p4 96,772); active loop p95 59.4 ms vs passive
+  2.3 ms; ingest decode 12.6 us/event (1.2% CPU); 522 B per canonical record;
+  Kafka 97.85 GB at the 24 h broker default with no recorded reason.
+- **Plan:** DL-V2 R1 in the unified plan, anchor
+  `dl-v2-r1-delivery-lock-20260916`. Nothing applied; awaiting owner approval.
+- **Pinned at:** stack as running 2026-09-16 15:15Z. Re-measure only after an
+  R1 step lands.
