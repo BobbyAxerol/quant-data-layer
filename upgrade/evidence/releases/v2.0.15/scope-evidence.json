@@ -1,0 +1,41 @@
+{
+ "schema": "qdl.v2.patch-release-scope-evidence.v1",
+ "status": "PASS",
+ "release": "v2.0.15",
+ "inherits": {
+  "release": "v2.0.14",
+  "certificate_sha256": "e0af23d06759ae0b26aa164b33dcb959b3513f24e5961ed906d25e541dff2c1f",
+  "formal_v2_primary_product_count": 299
+ },
+ "delta_acceptance": {
+  "method": "read-only comparison of V2 durable final bars against the venues' own public REST klines",
+  "rounds": 2,
+  "bars_per_round": 20,
+  "exact_per_round": 20,
+  "receipt_sha256": [
+   "413efaaa41fdc3dcc8c155d3844faf24fea1dac63368fa5cc3dd8a85a44c7b22",
+   "64f4a8dce0262559f804b17ae9870c36a3ba336e6f6119a895e5dfad252f8570"
+  ],
+  "instruments": [
+   "BINANCE:BTCUSDT",
+   "BINANCE:ETHUSDT",
+   "OKX:BTC-USDT-SWAP",
+   "OKX:ETH-USDT-SWAP"
+  ],
+  "interval": "1m",
+  "lifecycle_observed": "FINAL"
+ },
+ "runtime": {
+  "recreated_services": [
+   "binance_bar_edge"
+  ],
+  "restart_count_after": 0,
+  "packet": "~/.local/state/qdl-v2/binance-bar-settlement-e8eee3e-20260916T0800Z",
+  "rollback": "the same compose command with rollback.env"
+ },
+ "exclusions": [
+  "No Rust image rebuild or Rust role recreate.",
+  "No Kafka, Redis, SQLite, V1, Trading System or alpha change.",
+  "No order action and no provider credential use."
+ ]
+}
