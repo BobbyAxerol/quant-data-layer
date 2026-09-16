@@ -37978,3 +37978,64 @@ order paths were retained. Global BuildKit cache (`2.938GB`, `2.223GB`
 reclaimable) was intentionally not pruned because it is host-shared and outside
 this narrow cleanup approval. The active projector replicas remain `running`,
 `restart=0`, `OOMKilled=false`.
+
+### Host-reboot recovery and restart policy (`IN PROGRESS / OWNER STEP PENDING`, 2026-09-16)
+
+<a id="dl-v2-reboot-recovery-20260916"></a>
+**Incident.** Host reboot 2026-09-15 04:31Z stopped every `qdl_v2_stable_candidate`
+container (all 28 declared services carried `restart: "no"`: 8 literals plus
+the `x-kafka`/`x-python`/`x-rust` anchors). Nothing restarted it; Trading
+System `market_data_service` stayed in `V2_PRIMARY` and logged one reconnect
+per slice every 30 s for 15 h while the gateway reported only a generic
+`DEGRADED`. Measured by `trading_system/scripts/p18e_post_reboot_verifier.py`
+(receipt `p18e-s5-post-reboot-2026-09-15.json`).
+
+**Recovery, governed scope only, no recreate.** The containers were created
+from `docker-compose.v2-stable.yml` plus 1-8 sealed overrides under
+`~/.local/state/qdl-v2/` (projectors on `qdl-v2-python:2.0.14-ccd0c43`), and
+the base file of eleven of them lives in the removed
+`.worktrees/data-layer-dev-closure`; a `compose up` would therefore recreate
+roles with a different config, so every start is `docker start` of the
+existing container with its stored config and image digest.
+- Started and healthy: `kafka1/2/3`, `stable_redis`; started, restart 0,
+  canonical end offsets advancing: `rust_core`, `rust_core_2`, `rust_core_3`,
+  `ingestor_binance_usdm`, `ingestor_okx_swap`. Not started: the two spot
+  ingestors (exited `1` since 2026-09-03, not part of the certified running
+  set), init one-shots, profile-gated authority roles.
+- Guard measured, not assumed: `projector_v2` started alone exits `1` with
+  `ProjectionCacheMismatch: stable Redis cache identity is missing for a
+  non-empty spool` (ephemeral `stable_redis` lost its identity at reboot;
+  spool `canonical-cache.sqlite3` is 1.6 GB). Recovery is the existing
+  governed runbook scope of `scripts/rebuild_v2_stable_projection_cache.py`:
+  delete the three canonical cache files, `FLUSHDB` `stable_redis`, reset
+  `stable-projector-v1` on `md.canonical.v2` to `now-900s`, then start
+  stream -> projector -> `binance_bar_edge` -> query with the bounded-lag gate.
+  The runbook itself is not usable here because it drives `compose up` with at
+  most one override, which would recreate the projectors on the env's older
+  image; the same steps are executed against the existing containers.
+- Owner approved the cache delete on 2026-09-16; the agent session's policy
+  gate refused the delete command three times, so the owner runs that one
+  command; the remaining steps follow in this journal.
+
+**Restart policy.** `docker update --restart unless-stopped` applied to the 17
+runtime containers (kafka x3, stable_redis, query x2, stream x2, projector x3,
+rust_core x3, ingestor usdm/okx_swap, binance_bar_edge). Source now matches:
+`docker-compose.v2-stable.yml` anchors `x-kafka`/`x-python`/`x-rust`,
+`stable_authority_db` and `stable_redis` are `unless-stopped`;
+`stable_admin`, `stable_state_init`, `stable_tls_init` stay `"no"` (one-shot).
+`tests/test_phaseb_stable_deployment.py` pins both sets; 28/28 passed in
+`qdl-v2-python:2.0.14-ccd0c43`, source mounted read-only, network disabled.
+Known limit, stated plainly: `stable_redis` is still ephemeral by design, so
+after the next reboot the projectors will restart into the same fail-closed
+guard until the governed cache rebuild runs. Making V2 survive a reboot
+unattended needs either a persistent stable Redis identity or a boot-time
+governed rebuild unit; that is an owner design decision, not done here.
+
+**Cleanup (owner-approved).** Removed: six fully exited Trading System P18
+test namespaces (41 containers, 5 volumes, 4 networks), four closed p183
+rollback containers, 38 unused P18 gate/builder images, 60 anonymous and 9
+orphaned named volumes, and unused build cache (44.3 GB). Docker images
+40.7 GB -> 19.0 GB, build cache 50.6 GB -> 6.8 GB, volumes 78.5 GB -> 73.9 GB.
+Kept: every running container, `qdl_v2_stable_candidate` volumes including
+`stable_authority_db`, cargo/target caches, the v2.0.14 image and its named
+rollback, all Trading System release images.
