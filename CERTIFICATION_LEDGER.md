@@ -558,3 +558,16 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   verifies by SHA-256 and the E01 matrix verifier is **PASS with zero
   findings**.
 
+---
+
+## 19. Freshness measurement, 451 samples per slice (2026-09-16)
+
+- QUOTE meets the 2,000 ms gate on both venues: p95 782-785 ms, max 1366 ms,
+  **0 of 902 samples** over 1500 ms. The earlier rejection count does not
+  survive a larger sample. Do not re-measure without a reason.
+- **Open:** OKX `MARK_INDEX_PRICE` p99 1947 ms, max 2110 ms, 26 of 421 samples
+  over 1500 ms. Ingest is 35-132 ms; the age is the wait for a newer paired
+  record. Cause is pairing `mark-price` with once-per-second `index-tickers`.
+  Proposed fix: publish on either component's update and keep the per-component
+  2,000 ms policy. Needs owner approval; the bound must not be widened.
+

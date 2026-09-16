@@ -38366,3 +38366,46 @@ and 3C 1/1 verified. The chosen option is ownership normalisation rather than
 re-running certification as root, because it preserves the receipts and their
 digests.
 
+### OKX freshness: root cause measured, not a threshold question (2026-09-16)
+
+<a id="dl-v2-okx-freshness-rootcause-20260916"></a>
+Owner's instruction was explicit: find the cause and meet the gate, do not widen
+it. A 240-second capture, 451 samples per slice, splitting the age with the
+view's own `observed_at_ns` and `received_at_ns`:
+
+| slice | p50 | p95 | p99 | max | ingest p95 | over 1500 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| BINANCE QUOTE | 464 ms | 782 ms | 958 ms | 1366 ms | 27 ms | 0 / 451 |
+| OKX QUOTE | 435 ms | 785 ms | 939 ms | 1343 ms | 31 ms | 0 / 451 |
+| OKX MARK_INDEX_PRICE | 830 ms | 1535 ms | 1947 ms | 2110 ms | 132 ms | 26 / 421 |
+
+**QUOTE is not a problem.** Neither venue produced a single sample over
+1500 ms in 902 samples; both sit comfortably inside the 2,000 ms gate. The
+earlier 7/40 rejections came from one instrument in a 40-sample run and do not
+survive a larger sample.
+
+**OKX mark/index is the real one, and the age is not transport.** Ingest,
+venue event to Data Layer received, is 35-132 ms. Every tail sample is almost
+entirely waiting: `total 1511 = ingest 35 + waiting 1476`, `1651 = 76 + 1574`,
+with `event_recency_state=LIVE` throughout. So nothing is stalled or degraded;
+the newest mark/index row is simply old because no newer one exists.
+
+**Cause.** The canonical `MARK_INDEX_PRICE` record pairs two OKX channels with
+different cadences: `mark-price` (5 bindings) and `index-tickers` (5 bindings),
+the latter pushing roughly once per second. A paired record can only be as
+fresh as its slower component, so the effective refresh is slower than either
+channel: the measured mean age of 830 ms implies a refresh interval of about
+1.7 s, which puts the p99 at 1.95 s and the max at 2.11 s, right at and over
+the sealed 2,000 ms bound.
+
+**Fix that meets the gate without touching the bound (proposed, not applied).**
+Publish the pair whenever **either** component updates, carrying the other
+component's last value with its own timestamp, and keep the existing policy
+that both components must individually be at or below 2,000 ms. The pair then
+refreshes at the faster channel's cadence while the index's own freshness is
+still enforced, so a stale index still fails closed. This is a canonical
+record and reducer change with certification consequences, so it needs the
+owner's approval and its own phase, not a quiet edit. The alternative,
+reducing the roughly 200 ms internal pipeline contribution, buys margin but
+does not remove the venue-cadence term and would not by itself close the tail.
+
