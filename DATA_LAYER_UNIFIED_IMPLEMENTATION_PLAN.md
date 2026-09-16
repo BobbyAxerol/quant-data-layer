@@ -38251,3 +38251,33 @@ across encryption level boundaries (CVSS 3.1
   image and recreating those five roles is a separate scoped runtime packet and
   is **not** done here.
 
+### v2.0.15 published, and one cleanup mistake corrected (2026-09-16)
+
+<a id="dl-v2015-published-and-rollback-correction"></a>
+- `dev` `de71fcb` -> `main` `653fdb6`, tag `v2.0.15` (`a4c5ec3`), release
+  **Quant Data Layer v2.0.15** published with `certificate.json` attached.
+  The first `v2.0.15` tag was refused by the Publish Certified Release
+  workflow because `upgrade/evidence/releases/v2.0.15/` did not exist. The
+  gate was right; that tag carried no release and was deleted, the evidence
+  was written, CI run `35078347388` passed on `dev`, and the tag was created
+  again on the corrected `main`.
+- **Mistake, corrected.** During the post-release Docker cleanup I removed
+  `qdl-v2-python:2.0.12-35a7cd8`
+  (`sha256:1c1392bf636dc40c67cc73a2e5ea5e8d17f4e53ca4ecb8c62ac387be4262045a`)
+  because no container referenced it. It was, however, the rollback image this
+  release's own packet and certificate name for `binance_bar_edge`. The image
+  content is gone and a rebuild would not reproduce the digest.
+  The packet rollback now pins `qdl-v2-python:2.0.14-ccd0c43`
+  (`sha256:3e062a3ba38d52d31718162bd21cd52a246e414ee117eae56481da00b8db7b4a`),
+  which is retained, is what the three projectors run, and was verified to
+  carry the pre-fix single-read bar edge. Rolling back therefore reverts the
+  settlement change and moves the edge from 2.0.12 to the newer certified
+  2.0.14. `binance-bar-settlement-e8eee3e-20260916T0800Z/ROLLBACK-CORRECTION.md`
+  records the same. The published certificate stays immutable and this entry
+  is its correction.
+  **Rule learned:** an image is only unused when no container *and no rollout
+  packet or certificate* names it. "No container references it" is not enough.
+  Of the 60 images named across all historical packets on this host, 52 were
+  already missing before today, so packet-named images need an explicit
+  retention decision, not a sweep.
+

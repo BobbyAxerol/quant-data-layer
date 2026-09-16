@@ -515,3 +515,16 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
 - **Open:** the deployed `qdl-v2-rust:2.0.12-3f1c50e` still contains the
   affected `rustls 0.23.43`. Source is fixed; the runtime is not.
 
+---
+
+## 16. v2.0.15 published; rollback image correction (2026-09-16)
+
+- Release **v2.0.15** published from `main` `653fdb6`, tag `a4c5ec3`, CI
+  `35078347388` green.
+- The bar-edge rollback named in that certificate
+  (`sha256:1c1392bf…`, `qdl-v2-python:2.0.12-35a7cd8`) was deleted by my
+  cleanup and is unrecoverable. The packet now pins the retained
+  `qdl-v2-python:2.0.14-ccd0c43`, verified to carry the pre-fix bar edge.
+- **Retention rule:** before deleting an image, check rollout packets and
+  release certificates, not only running containers.
+
