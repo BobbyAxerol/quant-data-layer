@@ -23,6 +23,9 @@ from qdl.transport.contracts import (
 )
 
 
+JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class SpoolConfig:
     path: Path
@@ -142,7 +145,7 @@ class SQLiteDurableSpool:
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.execute("PRAGMA busy_timeout=30000")
         self._connection.execute("PRAGMA wal_autocheckpoint=1000")
-        self._connection.execute("PRAGMA journal_size_limit=67108864")
+        self._connection.execute(f"PRAGMA journal_size_limit={JOURNAL_SIZE_LIMIT_BYTES}")
 
     def _migrate(self) -> None:
         self._connection.executescript(
@@ -407,8 +410,15 @@ class SQLiteDurableSpool:
                     # PASSIVE never blocks readers or discards a committed event.
                     # It gives SQLite a bounded opportunity to recycle the WAL
                     # after retention work before the physical cache bound becomes
-                    # a false backpressure signal.
-                    self._checkpoint_wal_passive_locked()
+                    # a false backpressure signal. PASSIVE recycles the WAL but
+                    # never shrinks the file, so a WAL that has already outgrown
+                    # its declared journal_size_limit is reclaimed instead: that
+                    # file, not the retained rows, is what reached the physical
+                    # bound and froze every writer on 2026-09-17.
+                    if self._wal_bytes() > JOURNAL_SIZE_LIMIT_BYTES:
+                        self._checkpoint_wal_truncate_locked()
+                    else:
+                        self._checkpoint_wal_passive_locked()
                 return results
             except BaseException:
                 if self._connection.in_transaction:
@@ -854,6 +864,11 @@ class SQLiteDurableSpool:
             # bound remains fail-closed below.
             self._checkpoint_wal_passive_locked()
         if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
+            # PASSIVE could not shrink the file. TRUNCATE can, and a bounded
+            # pause while readers drain is strictly better than failing every
+            # writer closed until an operator intervenes.
+            self._checkpoint_wal_truncate_locked()
+        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
             raise BackpressureRequired("bridge physical storage bound would be violated")
 
     def _checkpoint_wal_passive_locked(self) -> bool:
@@ -872,6 +887,27 @@ class SQLiteDurableSpool:
             return False
         busy, log_frames, checkpointed_frames = (int(value) for value in row)
         return busy == 0 and log_frames == checkpointed_frames
+
+    def _checkpoint_wal_truncate_locked(self) -> bool:
+        """Reclaim the WAL file itself, bounded by this connection's busy timeout.
+
+        TRUNCATE waits for readers, so it can return busy under load; the caller
+        must treat failure as "no space reclaimed" and keep its own bound
+        fail-closed. It never discards a committed event.
+        """
+
+        try:
+            row = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        except sqlite3.DatabaseError:
+            return False
+        if row is None or len(row) != 3:
+            return False
+        busy, log_frames, checkpointed_frames = (int(value) for value in row)
+        return busy == 0 and log_frames == checkpointed_frames
+
+    def _wal_bytes(self) -> int:
+        path = Path(f"{self.config.path}-wal")
+        return path.stat().st_size if path.exists() else 0
 
     def _logical_usage_locked(self) -> tuple[int, int]:
         row = self._connection.execute(
