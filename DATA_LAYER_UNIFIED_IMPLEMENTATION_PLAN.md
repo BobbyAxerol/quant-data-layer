@@ -39064,3 +39064,818 @@ records one measured steady-state reading taken with it.
 - The single-writer capacity ceiling. One writer cannot be widened with CPU;
   sharding the gateway lease changes the invariant this phase protected and is a
   phase of its own.
+
+---
+
+<a id="dl-v2-r119-resource-rebalance-20260917"></a>
+### R1.19 — the CPU was misallocated, not insufficient (2026-09-17)
+
+Measured after v2.0.16 shipped. `cpu.stat` on every role, 60-second deltas:
+
+| role | throttled periods | CPU denied / 60 s | quota |
+|---|---|---|---|
+| query_v2_1 | 28.5% | 3.27 s | 0.50 |
+| query_v2_2 | 25.3% | **15.51 s** | 0.50 |
+| rust_core_2 | 24.9% | 3.60 s | 0.75 |
+| binance_bar_edge | 17.6% | 1.10 s | 0.35 |
+| kafka2 / kafka3 | 15.8% / 12.1% | 1.78 / 1.07 s | 1.00 |
+| **stream_v2_active** | **0.0%** | 0.00 s | **2.00** |
+| **stream_v2_passive** | **0.0%** | 0.00 s | **2.00** |
+
+The two stream processes held 4.00 cores between them and were never throttled,
+while the service that answers consumer queries was denied a quarter of a core's
+worth of runnable time every minute. That denial was the p95 latency tail.
+
+**Applied live with `docker update --cpus`, no container recreated.** The quota
+is a cgroup attribute; changing it needs no restart and reverses in one command.
+Compose carries the same numbers so a future recreate keeps them.
+
+stream_v2_active/passive `2.00 -> 1.25`, query_v2_1/2 `0.50 -> 1.00`,
+rust_core_2 `0.75 -> 1.00`, kafka2/3 `1.00 -> 1.25`,
+binance_bar_edge `0.35 -> 0.75`, stable_redis `0.25 -> 0.50`.
+Declared total `13.35 -> 14.25` on a 16-core host the stack uses 4.4 cores of.
+
+**Result, same benchmark, 20 iterations, 33 minutes apart:**
+
+- Request latency p95 summed over 29 V2 endpoints: `6,767 ms -> 2,527 ms`, **-63%**.
+- QUOTE p95 `81-101 ms -> 9.6-28 ms`; TRADE p95 `87-105 ms -> 10-40 ms`;
+  BOOK_SNAPSHOT p95 `210-289 ms -> 84-110 ms`; batched warmup p95
+  `1,589 ms -> 418 ms`; instrument lookup p95 `71.5 ms -> 5.2 ms`.
+- Throttle after: query_v2_1 `2.0%`, query_v2_2 `4.5%`, rust_core_2 `2.0%`,
+  kafka2 `1.2%`, kafka3 `1.1%`. stream_v2_active rose `0.0% -> 4.4%`, harmless.
+- **The three `EVENT_AGE` rejections disappeared.** Only the pre-existing Binance
+  `MARK_INDEX_PRICE` `DATA_NOT_READY` remains.
+- Event age unchanged or better; OHLCV still 20/20 exact.
+
+`binance_bar_edge` stayed at 17.7% after `0.35 -> 0.50`, so it went to `0.75`,
+which halved it to `9.4%`. Stopped there: it reads every closed-bar binding in
+one burst each minute, so the residue is the shape of the burst, not a shortage,
+and the `exhausted retries` warning has not recurred since. `stable_redis`
+`0.25 -> 0.50` took it from `5.0%` to `0.0%`.
+
+**Second pass, and a regression I caused.** Taking the stream ceiling down was
+wrong. The benchmark measures the *snapshot* path through the query readers, and
+that improved 63%. The consumer's slice health measures the *streaming
+subscription* through the stream gateway, and that got worse:
+
+| consumer unhealthy slices | samples | p50 | max | mean | distribution |
+|---|---|---|---|---|---|
+| before any change (31 min) | 33 | 0 | 3 | **0.27** | 0×28, 1×3, 3×2 |
+| at stream `cpus: 1.25` | 8 | 2 | 7 | **2.00** | 0×2, 1×2, 2×2, 3×1, 7×1 |
+| after reverting to `cpus: 2.00` | 12 | 0 | 2 | **0.33** | 0×9, 1×2, 2×1 |
+
+The revert is confirmed: the mean is back to the baseline it started from, the
+7-slice spike has not recurred, and the residue is single thin-symbol slices on
+low-rate feeds (`BNB-USDT-SWAP` and `DOGE-USDT-SWAP` `MARK_INDEX_PRICE`), not
+the `QUOTE` cluster that the lower ceiling produced.
+
+Every one of them was a `QUOTE` slice, and `QUOTE` is a `LATEST_STATE` feed
+delivered through the gateway. `stream_v2_active` throttle went `0.0% -> 4.5%`
+at the lower ceiling. `v1_fallback_count` and `v2_error_count` stayed at 0
+throughout, so nothing failed, but the margin narrowed.
+
+**Reverted `stream_v2_active` and `stream_v2_passive` to `cpus: 2.00`.** The
+query gain came from query, kafka and rust_core_2 getting *more*, not from
+stream getting less; there was no reason to take it except tidiness, and
+tidiness is not worth a narrower margin on the single-writer delivery path.
+Declared total settles at `15.75` on a 16-core host the stack uses 4.4 of.
+
+### R1.20 — raw tick retention 24 h -> 8 h (2026-09-17)
+
+Owner decision. The stated purpose of raw was to re-derive canonical after a
+reducer fix; a reducer defect is found and fixed within hours, not within a day,
+and bars are refetchable from venue REST anyway. Applied as a dynamic topic
+config on `md.raw.realtime.v2`, `retention.ms=28800000`. No restart, reverses in
+one command.
+
+- raw per broker `16.92 GiB -> 5.13 GiB`; Kafka per broker `23.56 -> 11.76 GiB`.
+- Host filesystem `52% -> 39%`, used `150 GB -> 112 GB`, free `141 -> 178 GB`.
+- **The warmup contract is untouched.** The SQLite spool that serves consumer
+  warmup keeps its 24 h; `replay_retention_seconds` in `qdl/runtime/stable.py`
+  was not changed. Canonical stays at 6 h — already under 8 h, and raising it
+  would have added disk for nothing.
+
+### R1.21 — container log rotation
+
+`json-file` with an empty config grows without a bound: 439 MB on the host, the
+three brokers writing 86-95 MB each in 33.4 h. Compose now carries an
+`x-logging` anchor with `max-size 50m` / `max-file 3`, wired into the `kafka`,
+`python` and `rust` anchors and into `stable_redis`, so all 17 running roles are
+covered. **It takes effect at the next recreate.** The existing logs were
+truncated in place, `439 MB -> 160 MB`, which needs no restart.
+
+**Open:** the rotation is declared but not yet active on the running containers.
+It applies free at the next image rollout. A rolling recreate of kafka1/2/3
+alone would activate it for 95% of the volume today and is tolerated by
+`ReplicationFactor 3` / `min.insync.replicas 2`; not done, because restarting a
+stack certified an hour earlier needs a better reason than 190 MB a day against
+178 GB free.
+
+---
+
+<a id="dl-v2-r122-age-20260917"></a>
+### R1.22 — age, measured stage by stage (2026-09-17)
+
+The owner's target moved from p95 to **event age**, so the first job was to find
+out where age actually comes from rather than assume.
+
+**The serving path is free.** Across fourteen realtime endpoints the data
+layer's own reported freshness and the consumer's independently computed durable
+age agree within **3-4 ms**. Whatever the age is, it is already baked into the
+record before anything serves it.
+
+**Stage measurements**, lag divided by that stage's own consumption rate:
+
+| stage | weighted delay |
+|---|---|
+| rust_core, raw -> canonical | **0.89 s** (see the correction in R1.23) |
+| projector, canonical -> spool (before) | 0.46 s |
+| projector, canonical -> spool (after R1.22) | **0.22 s** |
+| query, spool -> consumer | 0.003 s |
+
+#### What was changed
+
+`QDL_STABLE_PROJECTOR_BATCH_WAIT_SECONDS` `0.10 -> 0.02`. The projector waits to
+accumulate a batch before paying one HTTP round trip to the gateway, one durable
+write and one checkpoint. Fitting two operating points to
+`cycle = (wait + fixed) / (1 - p x rate)` gave `fixed ~ 0.16 s` and
+`p ~ 3.2 ms/record`, so the wait is the only free term.
+
+Result, measured cleanly at steady state: weighted queue delay
+**0.46 s -> 0.22 s, a 52% reduction, at a load 27% higher** (493 vs 387 rec/s).
+Lag total 177 -> 108.
+
+**The five-fold increase in drains cost nothing.** Projector throttle went
+*down*, 4.0% -> 1.7% and 4.3% -> 1.8%, because a smaller batch makes each drain
+cheaper; CPU 10-24% of quota, RAM 81-88 MiB. `stream_v2_active`, which receives
+every one of those round trips, throttles 0.0%.
+
+#### What it did not do
+
+Consumer-visible age moved from 12,205 ms to 11,488 ms summed over fourteen
+endpoints, **-6%**, which is inside the run-to-run noise of two 20-iteration
+samples an hour apart. Per endpoint it went both ways: TRADE OKX `-28%`,
+BOOK_SNAPSHOT OKX `+30%`.
+
+That is the honest reading, and it follows from the stage table: halving a 0.46 s
+queue removes about 0.12 s of average wait from a pipeline whose largest term is
+the 0.89 s rust_core stage. **The projector was not the dominant term.** The
+change is kept because the queue improvement is real, measured at higher load,
+and costs less CPU than before, not because the age number moved.
+
+#### The next lever, with its measurement already taken
+
+`rust_core`, the raw-to-canonical stage, carries a **0.89 s** weighted delay
+against the projector's 0.22 s, on six partitions of `md.raw.realtime.v2` at
+306 rec/s. It is not CPU-starved: after R1.19 its throttle is 2.0% and it runs
+0.10-0.45 cores. That points at a batching or flush interval in the Rust core,
+the same shape of cost the projector had. Deliberately not opened in this
+session rather than started and left half-done.
+
+#### R1.18 landed
+
+`parse_canonical_progress` and `steady_state_lag_seconds` in
+`scripts/rebuild_v2_stable_projection_cache.py`, with 35 tests in
+`tests/test_dlv2_r118_steady_state_lag.py` including the existing runbook tests,
+which still pass untouched. The convergence gate keeps its exact behaviour and
+both it and `parse_canonical_lag` now carry a docstring saying what they are for
+and what they are not for. The new measure refuses to answer - returns None
+rather than a number - for a stalled projector, a group reset, a rebalance
+mid-interval, or a non-positive interval.
+
+#### Log rotation activated where it matters
+
+`max-size 50m` / `max-file 3` is now live on the three projectors and the three
+Kafka brokers, which are about 95% of the stack's log volume. Each broker was
+recreated on its own, waiting for all 154 partitions back to ISR 3 and for the
+projector backlog to drain before the next. The remaining eleven roles write
+1-2 MB each and pick the config up at their next recreate.
+
+**First measured broker restart on this stack.** Each recreate cost a projector
+backlog of 3,458-20,200 records that drained in about three minutes, and the
+consumer degraded to a worst of 34 of 60 slices ready before returning to 60/60
+about five minutes after the last broker. `v1_fallback_count` and
+`v2_error_count` stayed 0 throughout: it degraded, it never failed over.
+
+#### A trap that would have destroyed the release
+
+The compose override chain recorded in the container labels is **incomplete**.
+It omits the R1 stream and query image overrides, so `docker compose up -d`
+against the recorded chain resolves `stream_v2_active`, `stream_v2_passive`,
+`query_v2_1` and `query_v2_2` to `sha256:8bd10da6...`, which is 2.0.12, and
+moves `binance_bar_edge`. Verified before use and caught there. Every recreate
+in this slice went through
+`~/.local/state/qdl-v2/dlv2-r122-projector-age-20260917T062751Z/projector-age.override.yml`,
+which pins all 17 roles to the digest they were already running; 0 of 17 drifted
+before or after.
+
+---
+
+<a id="dl-v2-r123-config-generation-drift-20260917"></a>
+### R1.23 — two landmines from one root: config generations that drifted apart (2026-09-17)
+
+Everything in this section came out of recreating containers that had not been
+restarted in weeks. Nothing here is a new defect; it is old drift becoming
+visible the first time the processes were asked to read their configuration
+again.
+
+#### What was tried and withdrawn: rust_core batch_size
+
+`batch_size` 256 -> 64 on the realtime cores, on the theory that a fixed batch
+size makes delay inversely proportional to arrival rate. The baseline supported
+it: core-001 carried the highest rate (167 rec/s) at the lowest delay (0.21 s)
+while core-002 carried 125 rec/s at 0.49 s.
+
+A single-core A/B looked decisive: the changed core went `0.38 -> 0.20 s`, -47%,
+while both control cores got *worse*. **It did not reproduce on rollout.** With
+all three cores at 64, a five-minute, twelve-sample measurement put the stage at
+**0.41 s against a 0.34 s baseline**, four partitions worse and one better.
+
+Reverted to 256. The change is unproven and costs four times the Kafka
+transactions. **The lesson is about method, not about batching:** in 90-second
+windows the variance of this signal exceeds the effect, and controls moving the
+other way inside one short window prove nothing. Three separate conclusions in
+this session were drawn from windows that short and two of them were wrong.
+
+The `0.89 s` figure quoted for this stage in R1.22 and ledger entry 27 came from
+the same error - it was sampled minutes after the projector recreate while the
+system was still settling. The clean baseline is **0.34 s**, about 1.5x the
+projector, not 4x.
+
+#### Landmine one: an orphaned bar-edge checkpoint
+
+Recreating `binance_bar_edge` for log rotation put it in a crash loop:
+
+    RuntimeError: stable BAR checkpoint catalog_revision differs from runtime authority
+
+Its checkpoint carried `catalog_revision 7` and `acquisition_revision 14`. The
+image produces 8/16 and every packet on this host produces 9/17. **No
+configuration on this machine produces 7/14 any more.** The container had been
+up 21 hours and had simply never re-read its configuration; `docker start` after
+a reboot would have hit exactly the same wall, so the `unless-stopped` policy and
+the boot-recovery unit were both sitting on it.
+
+Recovered by pointing `QDL_STABLE_BAR_STATE_PATH` at a path for the revision the
+edge actually runs, leaving the r14 checkpoint on disk untouched and backed up in
+`dlv2-baredge-checkpoint-backup-20260917T075010Z/`. Packet:
+`dlv2-baredge-r16-20260917T075353Z/`.
+
+**The cost, which was mine to foresee and I did not.** A fresh checkpoint means a
+full bootstrap. I checked that the bootstrap is bounded - `_bootstrap_rows_for`
+is `min(warmup_rows, durable_bar_history_capacity_rows(interval))` and
+`QDL_STABLE_BAR_WARMUP_ROWS` is 10000 - and stopped there, without multiplying by
+**140 bindings**. It republished about a million records in five minutes.
+
+Projector backlog reached **601,622**. `TRADE` age went to **250-310 seconds**,
+and `QUOTE`, `BOOK_SNAPSHOT`, `MARK_INDEX_PRICE`, warmup and history were all
+rejected on freshness. The consumer fell to 24 of 60 ready. It never failed over:
+`v1_fallback_count` and `v2_error_count` stayed **0** for the whole 22 minutes.
+
+The projectors were throttled **67-92%** at their 0.50/0.75 ceilings, which is
+exactly what `services/monitor/cgroup_throttle.py` was written for that morning.
+Raised live to 2.00 each: drain went `114 -> 900 records/s` and the backlog
+cleared in 15 minutes. At 2.00 they settled at 0.9 of a core with 0.0% throttle,
+because one Python process is one core, so they were returned to **1.00**, not to
+the 0.50/0.75 they started at. Today showed 0.50 has no burst headroom.
+
+#### Landmine two, still open: nobody owns OKX realtime bars
+
+After the recovery, `OKX BAR` stopped arriving while OKX `TRADE` kept flowing.
+Measured in the spool: Binance `bar-1m` newest record 27 s old, OKX `bar-1m`
+newest **1000 s** old and ageing.
+
+| evidence | value |
+|---|---|
+| OKX `bar-1m` bindings in the acquisition catalog | `mode: RUST_NATIVE` x5 |
+| bar edge realtime loop | takes `PYTHON_REST` bindings only, so it correctly skips them |
+| rust core runtime config | 197 bindings, **0 bar bindings**, `instrument_catalog_revision: 8` |
+| `ingestor_okx_swap` feeds | `BOOK, QUOTE, TRADE, MARK_INDEX` - no BAR |
+
+The catalog says the Rust path owns OKX bars; the Rust path has no bar bindings.
+**No component publishes them.** They worked until today only because the old bar
+edge container was still running the orphaned revision 14 catalog, in which those
+bindings must have been `PYTHON_REST`.
+
+This is the same root as landmine one: two configuration generations that drifted
+apart, held together only by a process that had not restarted.
+
+**Not fixed, and deliberately not guessed at.** Three options, all needing an
+owner decision:
+
+1. Move OKX bar bindings back to `PYTHON_REST` in the acquisition catalog so the
+   bar edge owns them. The catalog is baked into the image, so this is a rebuild
+   and a recreate, and it touches the image v2.0.16 was certified on.
+2. Add bar bindings to the rust core runtime config. Requires understanding how
+   the Rust core derives bars; not read, so not claimed to be feasible.
+3. Record it and schedule it; Binance bars keep working, OKX bars stay missing.
+
+#### State at the end of this slice
+
+Healthy: `QUOTE` 381-436 ms, `TRADE` 319-839 ms, `BOOK_SNAPSHOT` 767-1265 ms,
+OKX `MARK_INDEX_PRICE` 590-753 ms, Binance `BAR1m` 27 s, projector lag ~180,
+`v1_fallback_count` 0, `v2_error_count` 0, disk 34%, no image changed anywhere.
+
+Open: OKX bars on every interval; the consumer therefore tops out near 51-55 of
+60 with five OKX `BAR` slices unhealthy.
+
+#### Also in this slice
+
+- Log rotation now active on **14 of 17** roles. `stream_v2_active/passive` were
+  left out because recreating them stalls the projectors, for 1-2 MB of log, and
+  `stable_redis` was left out because recreating it destroys the projection cache
+  identity by design.
+- `/sys/fs/cgroup` mounted read-only into the Trading System monitor in compose
+  so `cgroup_throttle.py` can see other containers. **Not recreated** - the owner
+  sequenced the Trading System after the data layer, and that service's compose
+  entry says `tradingsystem-image:latest`, which is its own drift trap.
+- VN/DNSE could not be tested. `openapi.dnse.com.vn` (103.151.242.24) refuses
+  TCP 443 from this host, from a container, with and without the proxy, while
+  `api.dnse.com.vn` and `services.entrade.com.vn` (103.151.242.89) answer. Not a
+  credential problem: the keys are in `.env` and the FPT/VN30F1M bindings are in
+  the catalog. Whether DNSE retired the endpoint or the address is blocked cannot
+  be determined from here.
+
+---
+
+<a id="dl-v2-r124-native-bar-owner-20260917"></a>
+### R1.24 — the OKX bar owner, and why a regeneration is a migration (2026-09-17)
+
+The owner corrected the direction and was right: **V2 is Rust-primary**, so the
+acquisition catalog marking OKX bars `RUST_NATIVE` is the design moving forward,
+not a defect. Moving them back to `PYTHON_REST` would have restored the old
+behaviour by walking away from the architecture. That recommendation is
+withdrawn.
+
+A second correction of my own: I claimed the Rust core has no bar derivation.
+That was inferred from an empty runtime config, not from the code. Rust does
+carry bars - `qdl-realtime-core`, `qdl-core/src/canonical.rs`, the native raw
+ingestor - and the catalog history says so explicitly:
+`acf2660 feat(data): admit native bars and alpha reference data` and
+`36878f1 feat(v2): materialize active native bar intervals`.
+
+#### What the designed generator actually produces
+
+`scripts/phase103_prepare_shared_primary_packet.py` is the tool for this: it
+loads the catalog and acquisition plan and writes the whole Rust runtime bundle,
+review-only, touching no runtime. Run against the current catalog it emits
+`REVIEW_REQUIRED`, `crypto_binding_count 196`, `production_mutations 0`.
+
+| config | running now | generated from the current catalog |
+|---|---|---|
+| `ingestor-okx-swap.json` | 29 bindings: BOOK 9, QUOTE 5, TRADE 5, **MARK_INDEX 10** | 89: BOOK 9, **BAR 70**, QUOTE 5, TRADE 5, **MARK_INDEX 0** |
+| `ingestor-binance-usdm.json` | 24: BOOK 9, QUOTE 5, TRADE 5, **MARK_INDEX 5** | 19: BOOK 9, QUOTE 5, TRADE 5, **MARK_INDEX 0** |
+| `core.json` | 197 bindings | 182 |
+
+**So a regeneration fixes OKX bars and removes MARK_INDEX from both ingestors.**
+OKX `MARK_INDEX_PRICE` is currently healthy at 590-753 ms and is served by those
+very bindings. Applying the new bundle would trade one outage for another, so it
+was not applied.
+
+#### What the current generation actually is
+
+Not a broken config - a **migration that was started and never finished**:
+
+* OKX BAR moved from the Python bar edge to the native ingestor.
+* `MARK_INDEX_PRICE` moved from the ingestor's realtime Kafka path to the
+  reference path. `qdl/certification/phase103_consumer_acceptance.py:255` says it
+  plainly: reference products are bounded provider reads, not Kafka data, and
+  `MARK_INDEX_PRICE` can hold both a query capability and a realtime cache
+  binding. `QDL_STABLE_REFERENCE_DATA_ENABLED` is already `true` on query and
+  stream.
+
+The running stack is a **mixture of two generations**: it keeps the old ingestor
+MARK_INDEX bindings, which is why OKX mark works, and lacks the new native BAR
+bindings, which is why OKX bars died the moment the bar edge re-read its
+catalog. Nothing was wrong until a process restarted; then the halves separated.
+
+This is the same root as R1.23, one layer up: not a stranded checkpoint but a
+stranded *runtime bundle*.
+
+#### The migration, with its gates
+
+Not attempted in this session. It is a coordinated cutover with one real
+unknown, and it follows an outage this session already caused.
+
+1. **Prove the reference path serves `MARK_INDEX_PRICE` before removing the
+   ingestor bindings.** This is the unknown. The path is enabled and the code
+   exists; whether it is populated for these instruments is untested. Gate: OKX
+   and Binance `MARK_INDEX_PRICE` answer from the reference path with the
+   ingestor bindings still in place.
+2. If it does not, stop: the migration is incomplete upstream and the catalog
+   needs a decision, not a config swap.
+3. Apply the generated bundle to the two ingestors and the three cores together,
+   from one packet, with every image pinned to its running digest.
+   Gate: OKX `bar-1m` newest spool record under 120 s, Binance unchanged,
+   `MARK_INDEX_PRICE` still answering on both venues, OHLCV 20/20.
+4. Binance `MARK_INDEX_PRICE` is expected to start working in the same step and
+   for the same reason: `qdl/canonical/reference.py:152-159` requires both
+   `mark_price` and `index_price`, and the running ingestor binds only the mark
+   leg - 5 bindings against OKX's 10. The reference path supplies pairs.
+5. **Run `scripts/verify_runtime_generations.py` before and after.** It reports
+   the OKX bar gap today and must report clean afterwards.
+
+#### Landed in this slice
+
+- **R1.24 sink retry.** `StableHttpCanonicalSink._publish_chunk` retries once
+  against the same URL on a transport error before moving on. A dead pooled
+  connection to a gateway that restarted is not evidence the gateway is gone;
+  moving straight to the other URL lands on the passive peer, which answers 409,
+  and the batch fails with both. That is the defect that made every stream
+  rollout in R1 need a manual projector restart. A 409, a 503, a bad status and
+  a contract violation are all still handled exactly as before and are never
+  retried. 9 tests.
+- **`scripts/verify_runtime_generations.py`** with 19 tests: five read-only
+  checks that turn this whole class of drift from an accident into an
+  observation. Against the live stack, 54 checks, 2 failed, 0 skipped, no false
+  positives. Both failures are real, and one was previously unknown:
+  `stable_redis` records a compose file from a deleted worktree, so it cannot be
+  recreated from its own chain at all.
+- **The drift this session created, closed.** The three projectors were raised
+  live to 1.00 to clear the backlog while Compose still said 0.50/0.75.
+
+<a id="dl-v2-r125-program-20260917"></a>
+### R1.25 — six-item program to v2.0.17 (owner-approved batch, 2026-09-17)
+
+One ordered program. Each item states what is already proven, the exact step, the
+gate that says it worked, and how to undo it. Items 2 and 3 ship in one Rust
+image build; nothing else touches Rust.
+
+#### Item 0 — release the gateway and remove the spool's physical ceiling
+
+**Proven.** `stream_v2_active` has refused every canonical write since
+10:09:06Z with `bridge physical storage bound would be violated`, from
+`qdl/transport/sqlite_spool.py:846-857`. Measured at 10:25Z: main file
+2,252,414,976 B + WAL 966,902,232 B + shm 1,900,544 B = 3,221,217,752 B against
+`max_storage_bytes` 3,221,225,472 B (`qdl/runtime/stable.py:496`) — 7,720 bytes
+of headroom. `_preflight_disk` attempts a PASSIVE checkpoint first; PASSIVE
+cannot reclaim a WAL while the two query readers hold it, so the bound stays
+violated and the spool fails closed, exactly as designed. Downstream: each
+projector logs ~24 `503 stable canonical cache capacity temporarily unavailable`
+per five minutes, consumer 25/60 ready, `execution_ready 10`. Brokers are not
+involved (k1=5/k2=1/k3=0 restarts, `oom_kill=0` since 09:51Z).
+
+**Step.** (a) `PRAGMA wal_checkpoint(TRUNCATE)` on the spool from a throwaway
+container (`--rm`, `qdl-v2-python:2.0.16-df4b8aa`, spool volume, `--network
+none`); this is the same call `SqliteSpool.close()` already makes and changes no
+logical retention. (b) If a reader pins the WAL, restart `query_v2_1` then
+`query_v2_2` one at a time and repeat (a). (c) Projectors reconnect on their own
+through `supervise_stable_projector`. (d) Then separate the physical ceiling
+from WAL growth: raise `max_storage_bytes` to match the real disk budget and
+force a periodic TRUNCATE checkpoint instead of relying on PASSIVE at the
+boundary — the current design makes a transient WAL a permanent outage.
+
+**Gate.** WAL ≤ 128 MB thirty minutes later; zero `physical storage bound` lines;
+consumer 60/60 ready for thirty continuous minutes; `EVENT_AGE` rejections 0.
+
+**Rollback.** (a)-(c) have none to undo. (d) is a code change and reverts with
+the image.
+
+#### Item 1 — push what is already written
+
+Two commits are unpushed (`d7a5413`, `b872bc6`) and three changes are
+uncommitted: the R1.24 sink retry in `qdl/runtime/stable_ingest.py` with its 9
+tests, this plan, and the compose file's Kafka `mem_limit` (1536m/2048m, already
+applied live) plus `kafka1 cpus: 1.25`.
+
+**Gate.** Full python suite clean in the isolated image; CI green on `dev`;
+ledger entry recorded.
+
+#### Item 2 — OKX native bars (the one that must be finished)
+
+**Proven, in order.**
+
+1. *Raw is correct.* All 70 candle channels publish. 40,000 frames captured
+   10:38:51-10:40:47Z and 60,000 per partition from 09:15Z: every candle frame
+   carries `okx-business-001`, both `confirm=0` and `confirm=1` rows are present,
+   and `candle1m` closes arrive one per symbol per minute.
+2. *The core rejects every closed bar.* `md.quarantine.stable.v1` holds 845
+   candle records from 09:16:00Z to 11:00Z, and 222 more from 11:30Z to 12:01Z.
+   Every one decodes to `reason=5 StaleGeneration`, `safe_summary="connection
+   generation is stale"` — the single site at
+   `rust/qdl-realtime-core/src/lib.rs:688-692`, reached from
+   `SequenceDecision::StaleSession` in
+   `rust/qdl-venue-core/src/ordering.rs:126-128`. Provisional bars are
+   `filtered` as designed; the first *closed* bar of every key was already
+   quarantined, so no OKX bar has ever reached `md.canonical.v2`.
+3. *It is not configuration.* The core config inside the container
+   (`md5 38ae0543…`, identical to the host packet) declares each candle binding
+   with `require_final_bar: true`, `sequence_policy: NONE`, catalog revision 8
+   matching the raw envelopes, and a unique `source_id` per interval. Across all
+   197 bindings there are no duplicate binding keys and no duplicate ordering
+   keys except the five OKX mark/index pairs, which never touch the ordering
+   tracker.
+4. *It is not a stale session either.* The BAR lane's generation counter moved
+   22 → 23 at 11:29Z on its own reconnect. The brand-new session is quarantined
+   identically (`gen=23 … connection generation is stale`), which forces
+   `stage.generation >= 24`. The BAR lane has only ever held 22 and 23, so the
+   generation fencing those bars belongs to a different lane.
+   `partition_feed_lanes` (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:243`)
+   gives every feed its own socket and its own counter; the OKX lanes currently
+   sit at BOOK 53,986, QUOTE 82, TRADE 70, MARK_INDEX 37, BAR 23. Those numbers
+   are not comparable with each other, and `observe_staged` compares them as
+   bare integers before it ever looks at the session id.
+
+**Step 2.1 — one discriminating experiment, 30 seconds.** Restart a single core
+(`rust_core_3`). Its ordering map is process-local and rebuilt per transport
+generation, so a restart empties it.
+*If closed OKX bars start publishing from its partitions within two minutes*,
+the fence is holding a generation the tracker accumulated, and restarting all
+three cores restores OKX bars immediately, before any code change.
+*If they do not*, the rejection is produced deterministically within the first
+minute, and the next step captures the exact frame that writes the key.
+Either outcome is definitive and neither is reversible-by-accident: a core
+restart is a routine operation for this stack (16/17 roles were proven
+restartable this session, `unless-stopped`, three cores share the group).
+
+**Step 2.2 — the fix.** The generation fence exists to reject late frames from a
+superseded connection of the *same* lane. It must not fence a feed whose
+`sequence_policy` is `NONE` and whose events are content-identified: an OKX bar
+is identified by `{open_time_ms}:{confirm}`, is already de-duplicated by
+`seen_ids`, and is already filtered to closed bars by `require_final_bar`, so a
+late duplicate is harmless while a false stale is a total outage of the feed.
+The change is to scope the fence — by policy, and by lane rather than by bare
+integer — with unit tests that (a) reproduce a low generation arriving on a key
+that holds a high one and require the bar to publish, and (b) keep the existing
+L2/trade continuity tests red-line intact (`Contiguous`/`Monotonic` must still
+reject a superseded generation). Step 2.1's outcome decides whether the ingestor
+routing also needs a fix.
+
+**Step 2.3 — ship it.** Build the Rust builder image from the committed
+`Dockerfile.qdl-rust-runtime`, run `cargo test` for `qdl-realtime-core` and
+`qdl-venue-core` as the baseline, then build and record the new runtime digest
+and roll the three cores from one packet, keeping the current digest
+(`sha256:5d1d7f02b904…`) as rollback.
+
+**Gate.** Fifteen minutes after rollout: ≥5 OKX `bar-1m` per minute in
+`md.canonical.v2`; zero `StaleGeneration` quarantines for candle channels;
+newest OKX `bar-1m` spool record under 90 s; `verify_runtime_generations.py`
+reports no drift and its `bar-owner` check passes.
+
+**Rollback.** Re-pin the three cores to the previous digest from the same
+packet. Raw, ingestor and catalog are untouched by this item.
+
+#### Item 3 — Binance `MARK_INDEX_PRICE` (ships with item 2's build)
+
+**Proven.** Both sides of the contract are already correct: the ingestor binds
+`<symbol>@markPrice@1s` as `LATEST_STATE` for five symbols, and the core expects
+exactly those channels with `mark_index: {component: BOTH}` and the same
+`source_id`. `native_stream` maps `markPriceUpdate` to `<symbol>@markPrice@1s`
+(`rust/qdl-core/src/binance.rs:102`). The MARK_INDEX lane is shard 004, `LIVE`,
+generation 11, with no reconnect since 07:44Z. Yet `md.raw.realtime.v2` contains
+zero `markPrice` keys while `bookTicker` — also `LATEST_STATE`, same lane
+family — is present for all five symbols. So the delivery class is not the
+problem and the subscription is declared; the loss is between the socket and the
+publisher, or the venue is not sending on that subscription.
+
+**Step.** Separate those two with a throwaway probe that opens the same endpoint
+and sends the same subscribe payload for one symbol, then compare against the
+lane's own accepted/coalesced counters. Fix whichever side it lands on, with a
+unit test, and ship in item 2's build.
+
+**Gate.** `markPrice` keys present in raw; `mark_index_price` canonical records
+for Binance; consumer `MARK_INDEX` slices healthy for Binance as they already
+are for OKX.
+
+#### Item 4 — consumer and broker stability
+
+Carries three items that are already measured and one rule that was paid for.
+Compose keeps the Kafka `mem_limit` raised live this session (1536m, kafka2
+2048m) after kernel memcg OOM killed brokers at 768m. Log rotation reaches the
+remaining roles (`stream_v2_active`, `stream_v2_passive`) so all 17 are bounded.
+The runbook records the rule that caused that outage: **never run Kafka CLI JVMs
+via `docker exec` inside a broker container** — each probe added ~280 MB to the
+broker's own cgroup; use a throwaway probe container on the stack network with
+the admin properties mounted read-only. QUOTE flicker is re-measured only after
+item 0, because the stalled gateway is a sufficient explanation for it and
+measuring before would attribute it twice.
+
+**Gate.** 24 h with no OOM kill and no broker restart; QUOTE unhealthy slices 0
+across 60 continuous minutes; all 17 roles report a bounded log driver.
+
+#### Item 5 — close the drift and pay back the tool
+
+`stable_redis` still records a compose chain from a deleted worktree and cannot
+be recreated from it; it needs a packet that repoints the chain. The verifier's
+`bar-owner` check runs a `GROUP BY` over the whole spool — those scans are part
+of what grew this WAL to 922 MB — and must be rewritten as indexed lookups. The
+verifier also gains a spool-ceiling check, so item 0's failure mode becomes an
+observation instead of an outage.
+
+**Gate.** `verify_runtime_generations.py` 54/54 pass, under 20 s, with no
+measurable WAL growth attributable to the run.
+
+#### Item 6 — release v2.0.17
+
+`upgrade/evidence/releases/v2.0.17/` with `certificate.json`, `RELEASE_NOTES.md`
+and `scope-evidence.json`; ledger entry; merge `dev` → `main`, tag, workflow
+publishes. The Rust gate runs for real this time — `rust_gate` cannot be
+inherited because items 2 and 3 change Rust.
+
+**Order.** 0 → 1 → (2 + 3 in one build) → 4 → 5 → 6.
+
+**Two builds, two rollouts.** The program contains exactly two image builds and
+two rolling recreates, and they must not be interleaved.
+
+- *Python image*: carries item 0(d)'s spool ceiling and item 1's already-written
+  sink retry. Recreate order is passive gateway first, fail the lease over,
+  then active, then the three projectors, then the two query roles and the bar
+  edge. Item 4's log rotation for `stream_v2_active`/`stream_v2_passive` rides
+  the same recreate, which is why it is not a separate outage: the sink retry
+  landing in that same image is what removes the manual projector restart that
+  every R1 stream rollout needed.
+- *Rust image*: carries items 2 and 3. Only the three cores and, if item 3 lands
+  on the ingestor side, the two ingestors are recreated. Rollback for both is
+  the recorded previous digest, re-pinned from the same packet.
+
+**What this program does not cover.** DNSE VN v2 stays paused by the owner
+(`openapi.dnse.com.vn:443` was unreachable while other DNSE hosts answered, and
+the session window closed); it is recorded as out of scope in
+`scope-evidence.json` rather than silently omitted. The eleven compose services
+that are not running are not running by design. Trading system work stays
+deferred until the data layer release is closed.
+
+<a id="dl-v2-r125-landed-20260917"></a>
+#### R1.25 — what the program found and what landed
+
+**The BAR gate was wrong and is now measured, not guessed.** The consumer
+contract for a 1m bar is `max_freshness_ms = 180000`, and the canonical
+envelope timestamps a bar by its *open* time, so "age of the newest record" can
+never read below 60 s for a 1m bar and a three-minute tolerance says nothing
+about delivery. The honest instrument is publish time minus **close** time for
+final bars only, per venue and interval, taken off `md.canonical.v2`:
+
+| venue | interval | p50 | p95 | path |
+|---|---|---|---|---|
+| OKX | 1m | 0.78 s | 1.47 s | Rust native WebSocket, `confirm=1` |
+| BINANCE | 1m | 7.04 s | 7.38 s | Python REST bar edge |
+
+**Binance's seven seconds are the venue, not the design.** The bar edge holds a
+closed bar for `final_settlement_min_age_seconds = 6.0` and confirms it twice a
+second apart. Measured against the exchange on 2026-09-17: a closed BTCUSDT 1m
+kline was still changing **5.04 s** after its close boundary, ETHUSDT **3.96 s**.
+The 6 s is therefore evidence, not a guess, and cutting it would publish bars
+that the venue then revises.
+
+**The native Binance bar lane is not available on this host, and neither is
+mark/index.** Binance USD-M acknowledges a subscription for `@kline_1m` and
+`@markPrice@1s` (`{"result":null}`) and then sends nothing: 80 s, zero frames,
+on the same socket where `btcusdt@trade` delivered 353 frames in 12 s. Four
+subscription shapes were tried for mark price - `/ws` SUBSCRIBE at 1 s and 3 s,
+the direct `/ws/<stream>` path, and the combined-stream URL - all zero. This is
+exactly the condition `production_catalog.py` already records for klines
+("proves direct Binance trade and BBO, but not final kline delivery after a
+valid WS ACK"), and it holds for mark price too. Our configuration is correct on
+both sides: the ingestor binds `<symbol>@markPrice@1s` with a logical target and
+the core expects the same channel at the same catalog revision. So Binance
+MARK_INDEX_PRICE cannot be repaired by the WebSocket path at all; it needs the
+reference/REST pair path, which is a catalog migration and stays out of
+v2.0.17. The Binance BAR lane stays on provider REST for the same reason.
+
+**The projector, not the disk, was the throughput ceiling.** With the gateway
+stalled for two hours the backlog reached 3.8M events and did not drain,
+because consumption had converged on production at 759 events/s. Nothing was
+saturated: projectors at 0.49 of a 2.00 CPU ceiling, no throttling, and a
+benchmark on the spool's own volume under its own pragmas gave 40,280 rows/s at
+`synchronous=FULL` and 158,951 at NORMAL. The cost was one thread hop per
+record, because the projector asked Kafka for one record at a time and
+assembled the batch itself inside a 25 ms window.
+
+**The OKX bar fence, proven by the system itself.** A single core restart
+published OKX bars again for exactly that core's partitions, which established
+the fence was holding accumulated in-memory state rather than rejecting the
+frames deterministically. The ingestor then reconnected its business lane on its
+own at 11:29Z, moving it from generation 22 to 23, and the brand new session was
+quarantined identically - which is what proved the generation holding those keys
+never belonged to the bar lane. `partition_feed_lanes` gives each feed class its
+own socket and its own counter; the OKX lanes stood at BOOK 53,986, QUOTE 82,
+TRADE 70, MARK_INDEX 37 and BAR 23 while the fence compared them as bare
+integers. After the repair and a live ingestor reconnect onto a new generation,
+all five symbols publish across every interval.
+
+#### Landed in this slice
+
+- `fix(core)` connection generations compare within one provider lane; an
+  unparsable session id keeps the original comparison, so nothing an unknown
+  producer sends becomes newly acceptable. 5 tests in `qdl-venue-core` (42
+  pass), 2 in `qdl-realtime-core` (38 pass).
+- `perf(projector)` one bounded batch per broker call; brokers that only offer
+  the single-record poll keep the original fill loop. 8 tests.
+- `fix(spool)` the WAL is reclaimed when it outgrows the `journal_size_limit`
+  this connection already declares, and the physical bound reclaims before it
+  refuses a write. 6 new tests plus the existing contract test moved from two
+  steps to three.
+- `fix(projector)` the canonical sink retries a dead pooled connection once
+  before failing over to the passive peer. 9 tests.
+- `fix(runtime)` Compose records the broker memory bound that was raised live
+  after the kernel memcg killed brokers at 768m.
+
+#### Still open after this slice
+
+- Binance `MARK_INDEX_PRICE` and any native Binance BAR lane: blocked on the
+  venue, recorded above, deferred to v2.0.18 as a catalog migration.
+- `stable_redis` still records a compose chain from a deleted worktree.
+- `verify_runtime_generations.py` still scans the spool with `GROUP BY` for its
+  bar-owner check.
+
+<a id="dl-v2-r125-drain-20260917"></a>
+#### R1.25 — draining the stall's backlog, and what it exposed
+
+The two-hour gateway stall left 3.8M canonical events unwritten. Draining them
+exposed two things the stack had never been pushed hard enough to show.
+
+**The physical bound was tighter than the retention policy.** `max_records`
+allows 1,841,712 rows - 183 physical partitions at a 10,064-record window - and
+the live cache held 1,301,097 rows in 1,114 MB of payload inside a 2,312 MB
+file. Refilling the backlog would have reached roughly 93% of a 3 GiB ceiling
+before retention trimmed anything, so the repair would have walked back into the
+outage it was repairing. The bound is now 6 GiB, derived from the rows the
+policy permits rather than chosen; the min-free-disk reserve is what protects
+the 296 GB host.
+
+**A replica that finishes cannot help the ones that have not.** With six
+partitions, three replicas and the default range assignment, the partition pairs
+are fixed: `{p0,p1}`, `{p2,p3}`, `{p4,p5}`. Measured mid-drain: projector-1 had
+drained p0 and p1 to 43 and 26 records and sat at 0.13 of a CPU while
+projector-2 carried 833k and projector-3 carried 1.29M. Two thirds of the
+available parallelism, and the drain is gated by whichever replica holds the
+worst pair. This is not a defect to fix inside the release, but it is the reason
+a backlog takes as long as it does, and a cooperative or round-robin assignment
+is the change that would let a finished replica take work.
+
+**What the batch fetch did and did not buy.** Total consumption went from
+759 events/s to roughly 1,000/s - the thread hop per record was real, but it was
+not the dominant cost. The remaining ceiling is the projector's own event loop:
+protobuf decode plus projection build runs on a single thread per replica, so
+the replicas sit near half a core each and more CPU cannot be spent. Recorded
+here rather than fixed, because the honest next step is a measurement of where
+that CPU goes, not another guess.
+
+
+<a id="dl-v2-r126-v2018-20260917"></a>
+### R1.26 — what v2.0.18 inherits, with the measurement each item already has
+
+Three items leave v2.0.17 with their evidence already gathered. None is a guess.
+
+**1. QUOTE streaming delivers no batch.** The data is fresh and the request path
+answers: delivery lag p50 0.20-0.25 s, durable cache age 0.7-1.4 s, snapshot read
+7.5 ms, all inside a 2,000 ms tolerance. What fails is the subscription: the
+consumer opens a gRPC stream and raises `SilentSliceError` after 60 s without a
+batch (`services/market_data/data_layer_bridge.py:457`). Ten endpoints. The lead
+worth following first: QUOTE and MARK_INDEX_PRICE are the two `LATEST_STATE`
+families and the only two failing, while all three `LOSSLESS` families are
+silent - and v2.0.16's R1.8 changed exactly the latest-state buffer. The first
+step is a reproduction that opens one QUOTE subscription and observes the
+gateway side, not a patch.
+
+**2. BAR warmup reads a whole window to return five bars.** Request latency
+117-156 ms at v2.0.16 against 390-475 ms now, and the cause is measured:
+`read_tail` materialises a Cursor, a decoded header mapping and a dataclass per
+row - 1 row 0.0 ms, 1,000 rows 17.9 ms, 10,064 rows **199.8 ms** - while
+`stable_source.history` must inspect the whole retained window for any BAR
+requirement, because a history repair legitimately appends older bars after live
+ones. The windows are full now where they were not before.
+
+The shortcut was tried and it failed: reading the window as plain rows and
+resolving only the survivors through `find_events` passed 1,563 tests and then
+broke every BAR warmup in production with `warmup batch item failed inside the
+bounded executor`. It is reverted. The real fix is for the spool to know a bar's
+market time without decoding it - a column and an index on the durable write
+path, with a migration - and it needs a test that runs inside the executor the
+query path actually uses, because a test double and a spy did not catch a total
+outage of the endpoint.
+
+**3. `stable_redis` cannot be recreated from its own chain.** The runbook accepts
+one compose override against a thirteen-file chain and deletes the durable spool.
+Consolidating those thirteen overrides into one file is the prerequisite, and it
+is worth doing for its own sake: that chain is the origin of the
+config-generation drift class in ledger entry 28.
+
+**Also carried:** OKX `MARK_INDEX_PRICE` sits at the edge of its tolerance
+because the venue's index leg updates every 2.1-2.7 s against a 2,000 ms limit -
+a contract question, not a defect; Binance `MARK_INDEX_PRICE` and any native
+Binance BAR lane need the reference/REST pair path, because the venue answers the
+subscription and sends nothing; and with six partitions, three replicas and range
+assignment a drained replica cannot take work from a loaded one.
+
+
+<a id="dl-v2-r125-ci-gate-20260917"></a>
+### R1.25 addendum — the CI Rust gate, run whole
+
+Pushing the release head showed CI red, and red for the five pushes before it.
+The failing step is `contract-tests` step 10, whose command has three clauses:
+`cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked
+-- -D warnings && cargo test --workspace --locked`. Only the third was ever run
+by hand here, and `fmt` is the first, so CI had been failing before reaching
+clippy or a test since `1acf87a` — the commit that replaced synthetic session ids
+with production-shaped ones and pushed six `tracker.observe` calls past rustfmt's
+width limit.
+
+`cargo fmt --all` fixes it (`053ea9b`, whitespace only, no token changed), and
+the whole command then passes in the same `rust:1.82` image CI uses: fmt ok,
+clippy ok under `-D warnings` with zero warnings, 165 workspace tests passed and
+1 ignored. `certificate.json` now records the command, the toolchain and all
+three results instead of the test count alone; `CERTIFICATION_LEDGER.md` entry 33
+records why a subset was reported under the gate's name.
+
+The deployed Rust image stays `qdl-v2-rust:2.0.17-1acf87a`: the only Rust change
+after it is test formatting, so no rebuild and no redeploy.

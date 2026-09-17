@@ -1,0 +1,338 @@
+{
+  "schema": "qdl.v2.patch-release-certificate.v1",
+  "status": "PASS",
+  "release": "v2.0.17",
+  "classification": "Realtime delivery-path corrections: OKX native bars reach the canonical stream, the durable spool stops failing writes closed inside its own retention policy, and the projector stops paying a thread hop per record.",
+  "predecessor": {
+    "tag": "v2.0.16",
+    "certificate_schema": "qdl.v2.patch-release-certificate.v1",
+    "certificate_sha256": "f6cec442786edb97e80d05736a57dfe0ba4405e937e4bdc41ca5ceeb491ac17b",
+    "inherited_v2_primary_product_count": 299
+  },
+  "delta": {
+    "defect": "Three independent defects. (1) No OKX bar ever reached md.canonical.v2: the bar edge publishes REST bootstrap and repair rows carrying a nanosecond timestamp where a connection generation belongs, and one such row on a bar partition fences every native candle behind it for the life of the core process - the ingestor's generation 25 can never exceed 1.79e18. (2) The durable spool failed every canonical write closed for two hours at a 3 GiB physical bound while still inside its own row policy, because PASSIVE checkpoints recycle a WAL without shrinking the file. (3) The 3.8M event backlog that followed could not drain: consumption had converged on production at 759 events/s with projectors at 0.49 of a 2.00 CPU ceiling and the volume able to absorb 40,280 rows/s.",
+    "changed_services": [
+      "rust_core",
+      "rust_core_2",
+      "rust_core_3",
+      "ingestor_binance_usdm",
+      "ingestor_okx_swap",
+      "stream_v2_active",
+      "stream_v2_passive",
+      "projector_v2",
+      "projector_v2_2",
+      "projector_v2_3",
+      "query_v2_1",
+      "query_v2_2",
+      "binance_bar_edge"
+    ],
+    "slices": {
+      "R1.25.1": "a producer the ordering fence cannot identify may not fence the live ingestor; generations are only comparable inside one identified lane",
+      "R1.25.2": "a stale-generation rejection logs both sides of the comparison, so the next occurrence is evidence rather than a hypothesis",
+      "R1.25.3": "the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop",
+      "R1.25.4": "the spool reclaims a WAL that outgrew its declared journal_size_limit, and reclaims again before the physical bound refuses a write",
+      "R1.25.5": "the physical bound is sized from the rows retention permits",
+      "R1.25.6": "the canonical sink retries a dead pooled connection once before failing over",
+      "R1.25.7": "Compose records the broker memory bound raised live after kernel memcg kills at 768m",
+      "R1.25.8": "the drift verifier seeks the spool by key instead of scanning it, and watches the physical bound",
+      "R1.25.9": "an endpoint report that separates delivery lag, durable-cache age and the contract, per instrument, with the sample count each number was taken over"
+    },
+    "okx_bar_repair": {
+      "root_cause": {
+        "evidence": {
+          "partition_key": "\u2026/okx_bar/okx-swap-bnb-usdt-swap-bar-1m-primary-v2",
+          "frame_session": "okx-business-001-25-\u2026",
+          "frame_generation": 25,
+          "tracked_session": "qdl-v2-stable-okx-rest-r1-g1789653808007759187",
+          "tracked_generation": 1789653808007759187
+        },
+        "reading": "the tracked generation is a nanosecond timestamp, not a connection counter; it decodes to 2026-09-17T14:03:28Z, the minute the bar edge was recreated in this session's rollout and bootstrapped its history, and the quarantines began at 14:20. The first outage has the same shape: the bar edge was given a new state path at 07:53 and the candles died at 09:16",
+        "how_it_was_found": "two hypotheses fitted the partial evidence and neither survived contact with it. The rejection was made self-describing instead: it now names the tracked session and generation it compared against"
+      },
+      "quarantined_before": {
+        "records": 1183,
+        "reason": "StaleGeneration",
+        "windows": [
+          "2026-09-17T09:16:00Z..12:01:01Z",
+          "2026-09-17T14:20:01Z..15:28Z"
+        ],
+        "spool_newest_bar_1m_age_seconds": 7158
+      },
+      "after": {
+        "measured_at": "2026-09-17T15:31:14Z..15:39:15Z",
+        "final_bars_per_instrument": 8,
+        "instruments_publishing": 10,
+        "okx_bar_source_session": "okx-business-001-26-\u2026 (native ingestor)",
+        "binance_bar_source_session": "qdl-v2-stable-binance-rest-r1-\u2026 (bar edge, by design)",
+        "stale_generation_log_lines_after_rollout": 0,
+        "note": "the bar edge's REST rows and the native ingestor's frames now coexist on one partition"
+      },
+      "history_repair": {
+        "tool": "scripts/repair_stable_final_bar_history.py",
+        "rows_published": 1106,
+        "missing_before": {
+          "okx": 1014,
+          "binance": 60,
+          "residue_after_first_pass": 32
+        },
+        "missing_after": 0,
+        "note": "the first pass itself re-poisoned every OKX bar partition, which is how the root cause became visible: REST repair rows are exactly what the fence was losing to"
+      }
+    },
+    "spool_bound_repair": {
+      "at_failure": {
+        "main_bytes": 2252414976,
+        "wal_bytes": 966902232,
+        "shm_bytes": 1900544,
+        "bound_bytes": 3221225472,
+        "headroom_bytes": 7720,
+        "stalled_from": "2026-09-17T10:09:06Z"
+      },
+      "reclaim": {
+        "method": "PRAGMA wal_checkpoint(TRUNCATE)",
+        "seconds": 0.08,
+        "reclaimed_bytes": 966902232,
+        "readers_blocking": 0
+      },
+      "new_bound_bytes": 6442450944,
+      "derivation": "183 physical partitions x a 10,064-record window = 1,841,712 rows; the live cache held 1,301,097 rows in 1,114 MB of payload inside a 2,312 MB file, so the policy needs roughly 3.3 GB on disk before the WAL",
+      "after": {
+        "total_mb": 2378,
+        "bound_mb": 6144,
+        "used_ratio": 0.39,
+        "wal_mb": 64
+      }
+    },
+    "projector_throughput": {
+      "before_events_per_second": 759,
+      "after_events_per_second": 1029,
+      "volume_capability_rows_per_second": {
+        "synchronous_full": 40280,
+        "synchronous_normal": 158951
+      },
+      "note": "the thread hop per record was real but not dominant; the remaining ceiling is the projector's single event-loop thread, recorded as an open measurement rather than a guess"
+    },
+    "venue_constraints_retested": {
+      "binance_usdm_markprice_ws": {
+        "ack": "{\"result\":null}",
+        "frames_in_80s": 0,
+        "shapes_tried": 4
+      },
+      "binance_usdm_kline_ws": {
+        "ack": "{\"result\":null}",
+        "frames_in_80s": 0
+      },
+      "control_same_socket": {
+        "stream": "btcusdt@trade",
+        "frames_in_12s": 353
+      },
+      "binance_rest_kline_settlement_seconds": {
+        "BTCUSDT": 5.04,
+        "ETHUSDT": 3.96
+      },
+      "consequence": "Binance MARK_INDEX_PRICE and any native Binance BAR lane cannot be repaired from the WebSocket path; the bar edge's six-second settlement is evidence, not caution"
+    },
+    "backlog_recovery": {
+      "created_by": "the two-hour spool stall on 2026-09-17",
+      "peak_events": 3804327,
+      "at_2026_09_17T14_22Z": 1967356,
+      "average_drain_events_per_second": 129,
+      "replay_is_mostly_discarded": "the spool keeps 10,064 records per partition, which is 1.7-2.8 minutes for a busy feed and seven days for BAR 1m: 21 minutes of replay moved the row count by 236, from 1,301,097 to 1,301,333",
+      "consumer_recovery": [
+        {
+          "at": "2026-09-17T12:19Z",
+          "unhealthy_slices": 39
+        },
+        {
+          "at": "2026-09-17T14:05Z",
+          "unhealthy_slices": 36
+        },
+        {
+          "at": "2026-09-17T14:22Z",
+          "unhealthy_slices": 30
+        },
+        {
+          "at": "2026-09-17T14:29Z",
+          "unhealthy_slices": 27,
+          "fully_recovered_feeds": [
+            "BINANCE TRADE",
+            "OKX TRADE"
+          ]
+        }
+      ]
+    },
+    "runtime_hygiene": {
+      "drift_after_rollout": {
+        "at": "2026-09-17T14:31Z",
+        "checks": 55,
+        "failed": 1,
+        "skipped": 0,
+        "roles": 17,
+        "note": "thirteen roles recreated in this rollout introduced no new drift",
+        "failing": "chain stable_redis - the container records a compose file from a deleted worktree"
+      },
+      "log_rotation": {
+        "before": "11 of 17 roles",
+        "after": "16 of 17 roles",
+        "driver": "json-file max-size 50m max-file 3",
+        "excluded": "stable_redis, deliberately: recreating it destroys the projection cache identity and needs the rebuild runbook, which is not run while a backlog is draining"
+      },
+      "broker_stability": {
+        "limit_before": "768m",
+        "limit_after": "1536m (kafka2 2048m)",
+        "kernel_oom_kills_since_raise": 0,
+        "restarts_since_raise": 0,
+        "root_cause": "Kafka CLI JVMs exec'd into broker cgroups added ~280 MB each; probes now run in a throwaway container on the stack network"
+      }
+    },
+    "maturity": {
+      "R1.25.1_lane_fence": "production-authoritative - the repair is running on all three cores and was re-proven after the ingestor reconnected its bar lane onto a new generation; bar delivery measured on two independent windows",
+      "R1.25.2_batch_fetch": "production-authoritative - deployed on all three projectors, throughput measured before and after",
+      "R1.25.3_wal_reclaim": "production-authoritative - the WAL has held at its journal_size_limit since the rollout and the verifier reports the bound",
+      "R1.25.4_physical_bound": "production-authoritative - live at 2,378 MB of 6,144 MB",
+      "R1.25.6_broker_memory": "production-authoritative - recorded in Compose to match the live limits",
+      "R1.25.7_verifier": "production-authoritative - 55 checks against the running stack",
+      "R1.25.6_sink_retry": "production-authoritative - the active gateway was recreated on its own at 15:50:19Z with the projectors untouched: all three kept their original start time and restart count 0, logged no reconnect failure, and the projector group stayed at lag 279 with bar partitions 33 s fresh on both venues. That is the case the retry was written for, and it is the first time a projector has survived a gateway recreate without a manual restart"
+    },
+    "request_latency_vs_predecessor": {
+      "method": "scripts/p18e_data_endpoint_benchmark.py, the benchmark v2.0.16 certified on, same consumer identity, 8 iterations, run twice",
+      "unchanged": {
+        "snapshot_reads_ms": {
+          "v2_0_16": "6.4-7.5",
+          "now": "6.7-9.2"
+        },
+        "instrument_lookup_ms": {
+          "v2_0_16": 4.1,
+          "now": "4.3-5.2"
+        }
+      },
+      "improved": {
+        "book_snapshot_ms": {
+          "v2_0_16": "73-78",
+          "now": "36-50"
+        }
+      },
+      "regressed": {
+        "bar_warmup_ms": {
+          "v2_0_16": "117-156",
+          "now": "390-475"
+        },
+        "bar_warmup_batch_ms": {
+          "v2_0_16": 649,
+          "now": 1850
+        },
+        "cause": "stable_source.history reads the entire retained window for any BAR requirement, because a history repair legitimately appends older bars after live ones and the market tail cannot be taken from the append tail. read_tail materialises a Cursor, a decoded header mapping and a dataclass per row: 1 row 0.0 ms, 1,000 rows 17.9 ms, 10,064 rows 199.8 ms. The windows were far from full when v2.0.16 was measured and OKX bars did not exist at all; they are full now, partly because this session repaired 1,106 bars into them",
+        "not_caused_by_this_release": true,
+        "attempted_and_reverted": "reading the window as plain rows and resolving only the survivors passed 1,563 tests and then failed every BAR warmup in production with 'warmup batch item failed inside the bounded executor'. Reverted; warmup verified working again at 390-475 ms. The suite not catching it is recorded as a coverage gap: the bounded-read contract is pinned by a test double and a spy, neither of which runs inside the executor the real query path uses",
+        "real_fix": "the spool must know a bar's market time without decoding it - a column and an index on the durable write path, with a migration. Designed slice for v2.0.18, not improvised here"
+      },
+      "durable_event_age_ms": {
+        "quote": {
+          "v2_0_16": "437-700",
+          "now": "577-780"
+        },
+        "trade": {
+          "v2_0_16": "804-1711",
+          "now": "728-1575"
+        },
+        "book_snapshot": {
+          "v2_0_16": "1186-1361",
+          "now": "1174-1482"
+        },
+        "okx_mark_index": {
+          "v2_0_16": "785-892",
+          "now": "977-1305"
+        }
+      }
+    },
+    "runtime_at_certification": {
+      "at": "2026-09-17T16:47Z",
+      "consumer_slices_healthy": "49/60",
+      "consumer_slices_outside_policy": {
+        "QUOTE": 6,
+        "OKX MARK_INDEX_PRICE": 4,
+        "OKX BOOK_DELTA": 1,
+        "note": "all pre-existing and named in scope-evidence; their data is fresh and the request path answers, the stream subscription is what fails"
+      },
+      "projector_backlog": 540,
+      "spool": {
+        "used_mb": 2400,
+        "bound_mb": 6144,
+        "ratio": 0.39,
+        "wal_mb": 64
+      },
+      "bar_owner": {
+        "binance": "70 partitions, newest 40s",
+        "okx": "70 partitions, newest 47s"
+      },
+      "stale_generation_rejections": 0,
+      "bar_1m_endpoints_publishing": "10/10"
+    }
+  },
+  "provenance": {
+    "image_source_commit": "ff34867ca714f0e59394ef18eab93f0fa946199e",
+    "source_plan_sha256_at_image_build": "748af9a6550e8e77a2851a58338155ade752f9d5ae3c2fbd73eb67fca26e2f8d",
+    "active_python_image": "qdl-v2-python:2.0.17-5c01cb6",
+    "active_python_image_digest": "sha256:97d2f593f0a6522bccc35e6efbbedeca99c9c2c9ad09b1bbde2821bc5574cec0",
+    "active_rust_image": "qdl-v2-rust:2.0.17-1acf87a",
+    "active_rust_image_digest": "sha256:4aa578fc0be79041eda3649b8263e14e4252208947642bc172268ae05b545dea",
+    "rollback_python_image_digest": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+    "rollback_rust_image_digest": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
+    "rollout_packet": "~/.local/state/qdl-v2/dlv2-r125-rollout-20260917T125950Z/r125-rollout.override.yml",
+    "python_suite": {
+      "tests": 1563,
+      "result": "OK",
+      "skipped": 7,
+      "isolated": true,
+      "image": "qdl-v2-python:2.0.17-5c01cb6"
+    },
+    "rust_gate": {
+      "inherited": false,
+      "command": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
+      "toolchain": "rust:1.82-slim, rustc 1.82.0",
+      "fmt": "ok",
+      "clippy": "ok, -D warnings, zero warnings",
+      "workspace_tests": {
+        "passed": 165,
+        "failed": 0,
+        "ignored": 1
+      },
+      "qdl_venue_core": {
+        "tests": 43,
+        "result": "ok"
+      },
+      "qdl_realtime_core": {
+        "tests": 36,
+        "result": "ok",
+        "ignored": 1
+      },
+      "correction": "the first reading of this gate ran cargo test alone. CI runs all three clauses and had been red on dev since 1acf87a - six runs, every one at the fmt clause, because production-shaped session ids in the tests crossed rustfmt's width limit. Fixed by 053ea9b; the gate above is the full three-clause command"
+    },
+    "endpoint_report": {
+      "text": "endpoint-report.txt",
+      "json": "endpoint-report.json",
+      "declared_endpoints": 61,
+      "window": "2026-09-17T15:43:02Z..15:59Z",
+      "generated_by": "scripts/report_stable_endpoints.py"
+    },
+    "active_rust_image_source_delta": "built from 1acf87a; the only rust change between that commit and the tag is 053ea9b, rustfmt line wrapping inside the ordering tests - no token changed, so the deployed binary is the certified one"
+  },
+  "boundaries": {
+    "out_of_scope": [
+      "Binance MARK_INDEX_PRICE: venue does not deliver the WebSocket stream on this host; needs the reference/REST pair path, a catalog migration",
+      "native Binance BAR lane: same venue condition, so provider REST remains the outer edge",
+      "DNSE VN v2: paused by the owner; openapi.dnse.com.vn:443 unreachable while other DNSE hosts answer"
+    ],
+    "known_open": [
+      {
+        "item": "stable_redis records a compose chain from a deleted worktree and cannot be recreated from its own chain",
+        "why_not_in_this_release": "the documented remedy is scripts/rebuild_v2_stable_projection_cache.py, and as written it accepts exactly one compose override while the running chain has thirteen, so it would recreate every service from the bare compose file and discard every image pin including this release. It also deletes the durable spool outright - 2.3 GB holding seven days of bar history and the 1,106 rows repaired in this session - and replays only 900 s afterwards",
+        "correct_sequence": "consolidate the thirteen overrides into one file, point QDL_STABLE_COMPOSE_OVERRIDE at it, run the runbook, then repair bar history again. Sixty to ninety minutes with the cache empty in the middle, which is a maintenance window and not a release step"
+      },
+      {
+        "item": "with six partitions, three replicas and range assignment, a drained replica cannot take work from a loaded one",
+        "evidence": "mid-drain: projector-1 idle on 43 and 26 records at 0.13 CPU while projector-3 carried 1.29M"
+      }
+    ]
+  }
+}

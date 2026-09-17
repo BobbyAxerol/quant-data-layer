@@ -124,6 +124,14 @@ def require_authorization(*, apply: bool, confirm: str | None) -> None:
 
 
 def parse_canonical_lag(output: str) -> tuple[int, int, int]:
+    """Total lag, partition count and worst partition, for the convergence gate.
+
+    This feeds `lag_sample_acceptable`, which decides when a replay has drained.
+    It deliberately reports record counts: the question it answers is "has the
+    rebuild finished", and a count is the right unit for that. It is *not* the
+    right unit for "is the projector healthy" - see `parse_canonical_progress`.
+    """
+
     lags: dict[int, int] = {}
     for line in output.splitlines():
         fields = line.split()
@@ -142,6 +150,73 @@ def parse_canonical_lag(output: str) -> tuple[int, int, int]:
     if not lags:
         raise RuntimeError("canonical projector lag output has no partitions")
     return sum(lags.values()), len(lags), max(lags.values())
+
+
+
+def parse_canonical_progress(output: str) -> tuple[int, int, int]:
+    """Consumed offset, total lag and partition count, for the steady-state read.
+
+    Separate from `parse_canonical_lag` on purpose: the convergence gate must
+    keep its exact current behaviour, so this adds the consumed offset it needs
+    rather than changing what that function returns.
+    """
+
+    consumed: dict[int, int] = {}
+    lags: dict[int, int] = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or CANONICAL_TOPIC not in fields:
+            continue
+        topic_index = fields.index(CANONICAL_TOPIC)
+        if topic_index + 4 >= len(fields):
+            continue
+        partition = fields[topic_index + 1]
+        current = fields[topic_index + 2]
+        lag = fields[topic_index + 4]
+        if not partition.isdigit() or not lag.lstrip("-").isdigit():
+            continue
+        if not current.lstrip("-").isdigit():
+            continue
+        partition_id = int(partition)
+        if partition_id in lags:
+            raise RuntimeError("canonical projector lag output repeats a partition")
+        consumed[partition_id] = int(current)
+        lags[partition_id] = max(0, int(lag))
+    if not lags:
+        raise RuntimeError("canonical projector lag output has no partitions")
+    return sum(consumed.values()), sum(lags.values()), len(lags)
+
+
+def steady_state_lag_seconds(
+    first: tuple[int, int, int],
+    second: tuple[int, int, int],
+    elapsed_seconds: float,
+) -> float | None:
+    """How many seconds of work the projector is behind, or None if unknown.
+
+    Takes two `parse_canonical_progress` readings and the wall clock between
+    them. The rate is what the projector actually consumed over that interval,
+    so the answer is "at the speed it is currently going, this is how long the
+    standing queue represents".
+
+    Returns None rather than a number when the answer would be invented: a
+    non-positive interval, a consumed offset that went backwards because the
+    group was reset or rebalanced, or a rate of zero. A stalled projector is not
+    "infinitely behind", it is a different alarm, and reporting a made-up figure
+    here is how the record-count gate came to be trusted in the first place.
+    """
+
+    if elapsed_seconds <= 0:
+        return None
+    consumed_before, _, partitions_before = first
+    consumed_after, lag_after, partitions_after = second
+    if partitions_before != partitions_after:
+        return None
+    consumed = consumed_after - consumed_before
+    if consumed <= 0:
+        return None
+    rate = consumed / elapsed_seconds
+    return lag_after / rate
 
 
 def _run(
@@ -372,6 +447,22 @@ def lag_sample_acceptable(
     partitions: int,
     max_partition_lag: int,
 ) -> bool:
+    """Convergence gate for the rebuild runbook. Not a steady-state health gate.
+
+    MAX_ACCEPTED_LAG and MAX_ACCEPTED_PARTITION_LAG are record counts, and
+    `_wait_bounded_lag` requires REQUIRED_BOUNDED_LAG_SAMPLES consecutive
+    acceptable samples. Together that proves a replay drained, which is what the
+    rebuild needs to know, and the 17m44s boot-recovery rehearsal depends on it.
+
+    Do not reuse it to ask whether a running projector is healthy. Measured
+    2026-09-17 at 373 records a second, a 500-record bound is 1.3 seconds of
+    work, so an instantaneous sample of a queue that is keeping up perfectly
+    crosses it whenever it breathes: 5 of 30 samples reported a failure while
+    the consumer stayed ready and never fell back. For that question use
+    `steady_state_lag_seconds`, which asks how far behind the projector is in
+    time rather than in records.
+    """
+
     return (
         partitions == EXPECTED_CANONICAL_PARTITIONS
         and 0 <= total_lag <= MAX_ACCEPTED_LAG

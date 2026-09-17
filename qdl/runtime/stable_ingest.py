@@ -398,49 +398,64 @@ class StableHttpCanonicalSink:
         rejections: list[str] = []
         assert self.client is not None
         for url in self.urls:
-            try:
-                response = await self.client.post(
-                    f"{url.rstrip('/')}/internal/v2/canonical/events",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-QDL-Stable-Signature": _signature(self.secret, body),
-                    },
-                )
-                if response.status_code in {409, 503}:
-                    rejections.append(
-                        f"{response.status_code}:{_bounded_rejection_detail(response)}"
+            # A pooled connection to a gateway that has restarted fails on its
+            # first use and succeeds on a fresh one. Without the retry the loop
+            # moves to the other URL, which answers 409 because it is not the
+            # active writer, and the whole batch fails with both. That is the
+            # recreate-stalls-every-projector defect: each stream rollout in R1
+            # needed a manual projector restart afterwards.
+            attempts = 0
+            while True:
+                attempts += 1
+                try:
+                    response = await self.client.post(
+                        f"{url.rstrip('/')}/internal/v2/canonical/events",
+                        content=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-QDL-Stable-Signature": _signature(self.secret, body),
+                        },
                     )
-                    continue
-                response.raise_for_status()
-                result = response.json()
-                acknowledgements = result.get("results", ())
-                if (
-                    result.get("schema") != _RESULT_SCHEMA
-                    or len(acknowledgements) != len(values)
-                    or [item.get("event_id") for item in acknowledgements]
-                    != [event.event_id.hex() for event in values]
-                ):
-                    raise ValueError("stable ingest ACK contract is invalid")
-                stored_by_id = await asyncio.to_thread(
-                    self.spool.find_events,
-                    stream=values[0].stream,
-                    event_ids=[event.event_id for event in values],
-                )
-                stored_values = []
-                for event, acknowledgement in zip(
-                    values, acknowledgements, strict=True
-                ):
-                    stored = stored_by_id.get(event.event_id)
+                    if response.status_code in {409, 503}:
+                        rejections.append(
+                            f"{response.status_code}:{_bounded_rejection_detail(response)}"
+                        )
+                        break
+                    response.raise_for_status()
+                    result = response.json()
+                    acknowledgements = result.get("results", ())
                     if (
-                        stored is None
-                        or stored.cursor.offset != int(acknowledgement["offset"])
+                        result.get("schema") != _RESULT_SCHEMA
+                        or len(acknowledgements) != len(values)
+                        or [item.get("event_id") for item in acknowledgements]
+                        != [event.event_id.hex() for event in values]
                     ):
-                        raise ValueError("stable ingest ACK differs from shared cache")
-                    stored_values.append(stored)
-                return tuple(stored_values)
-            except (httpx.HTTPError, ValueError, TypeError) as error:
-                last_error = error
+                        raise ValueError("stable ingest ACK contract is invalid")
+                    stored_by_id = await asyncio.to_thread(
+                        self.spool.find_events,
+                        stream=values[0].stream,
+                        event_ids=[event.event_id for event in values],
+                    )
+                    stored_values = []
+                    for event, acknowledgement in zip(
+                        values, acknowledgements, strict=True
+                    ):
+                        stored = stored_by_id.get(event.event_id)
+                        if (
+                            stored is None
+                            or stored.cursor.offset != int(acknowledgement["offset"])
+                        ):
+                            raise ValueError("stable ingest ACK differs from shared cache")
+                        stored_values.append(stored)
+                    return tuple(stored_values)
+                except httpx.TransportError as error:
+                    last_error = error
+                    if attempts == 1:
+                        continue
+                    break
+                except (httpx.HTTPError, ValueError, TypeError) as error:
+                    last_error = error
+                    break
         if isinstance(last_error, httpx.HTTPStatusError):
             raise RuntimeError(
                 "stable canonical ingest rejected "

@@ -493,7 +493,15 @@ def build_stable_spool(
         path=config.durable_state_dir / "canonical-cache.sqlite3",
         max_records=capacity.max_records,
         max_payload_bytes=2 * 1024 * 1024 * 1024,
-        max_storage_bytes=3 * 1024 * 1024 * 1024,
+        # The physical bound must not be tighter than what the logical bound
+        # above already permits, or the spool fails writes closed while still
+        # inside its own retention policy - which is what happened on
+        # 2026-09-17. Measured on the live cache: 1,301,097 rows occupied
+        # 1,114 MB of payload in a 2,312 MB file, so the 1,841,712 rows
+        # max_records allows need roughly 3.3 GB on disk before the WAL. Six
+        # GiB carries that with headroom on a 296 GB volume; the min-free-disk
+        # reserve below is what protects the host.
+        max_storage_bytes=6 * 1024 * 1024 * 1024,
         max_partitions=100_000,
         max_consumer_checkpoints=100_000,
         min_free_disk_bytes=512 * 1024 * 1024,

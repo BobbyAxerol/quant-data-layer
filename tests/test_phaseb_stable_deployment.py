@@ -1356,7 +1356,11 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_DEFAULT_REPLICATION_FACTOR"], 3
         )
-        self.assertEqual(compose["x-kafka"]["mem_limit"], "768m")
+        # R1.25: the kernel memcg killed brokers at 768m on 2026-09-17 while
+        # Docker reported oom_killed=false, because PID 1 is the entrypoint
+        # script and the JVM under it took the kill. The bound is the measured
+        # working set plus headroom, not the original guess.
+        self.assertEqual(compose["x-kafka"]["mem_limit"], "1536m")
         self.assertEqual(
             compose["x-kafka-env"]["KAFKA_HEAP_OPTS"], "-Xms256m -Xmx256m"
         )

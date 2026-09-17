@@ -164,7 +164,7 @@ class StableProjectorEngine:
         self._raw_committed = 0
         self._canonical_committed = 0
         self._duplicate_projections = 0
-        self._deferred_record: KafkaProjectorRecord | None = None
+        self._deferred_records: deque[KafkaProjectorRecord] = deque()
 
     async def accept(self, record: KafkaProjectorRecord) -> None:
         await self.accept_many((record,))
@@ -226,33 +226,36 @@ class StableProjectorEngine:
         await self._drain_ready()
 
     async def run_once(self, timeout_seconds: float = 1.0) -> bool:
-        record = self._deferred_record
-        self._deferred_record = None
-        if record is None:
-            record = await asyncio.to_thread(self.broker.poll, timeout_seconds)
-        if record is None:
-            # Another projector replica may have persisted the correlated raw
-            # envelope into the shared cache. Retry bounded local partitions so
-            # cross-replica raw/canonical ordering cannot stall indefinitely.
-            await self._drain_ready()
-            return False
-        records = [record]
-        batch_bytes = len(record.payload)
-        deadline = asyncio.get_running_loop().time() + self.batch_wait_seconds
-        while len(records) < self.max_batch_records:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
+        records: list[KafkaProjectorRecord] = []
+        batch_bytes = 0
+        while self._deferred_records and len(records) < self.max_batch_records:
+            item = self._deferred_records[0]
+            if records and batch_bytes + len(item.payload) > self.max_batch_bytes:
                 break
-            item = await asyncio.to_thread(self.broker.poll, remaining)
-            if item is None:
-                break
-            if batch_bytes + len(item.payload) > self.max_batch_bytes:
-                # Kafka has already delivered this record. Keep it in-order for
-                # the next bounded drain instead of overfilling a Python batch.
-                self._deferred_record = item
-                break
-            records.append(item)
+            records.append(self._deferred_records.popleft())
             batch_bytes += len(item.payload)
+        if not records:
+            fetched = await poll_projector_records(
+                self.broker,
+                max_records=self.max_batch_records,
+                timeout_seconds=timeout_seconds,
+                batch_wait_seconds=self.batch_wait_seconds,
+            )
+            if not fetched:
+                # Another projector replica may have persisted the correlated raw
+                # envelope into the shared cache. Retry bounded local partitions so
+                # cross-replica raw/canonical ordering cannot stall indefinitely.
+                await self._drain_ready()
+                return False
+            for index, item in enumerate(fetched):
+                if records and batch_bytes + len(item.payload) > self.max_batch_bytes:
+                    # Kafka has already delivered these records. Keep them
+                    # in-order for the next bounded drain instead of overfilling
+                    # a Python batch.
+                    self._deferred_records.extend(fetched[index:])
+                    break
+                records.append(item)
+                batch_bytes += len(item.payload)
         await self.accept_many(records)
         return True
 
@@ -915,6 +918,46 @@ class StableProjectorEngine:
             pending_canonical=self._pending_records,
             pending_bytes=self._pending_bytes,
         )
+
+
+async def poll_projector_records(
+    broker: ProjectorBroker,
+    *,
+    max_records: int,
+    timeout_seconds: float,
+    batch_wait_seconds: float,
+) -> list[KafkaProjectorRecord]:
+    """Fetch one bounded batch, in one broker call where the broker offers it.
+
+    librdkafka hands back a whole fetch batch in a single call. Asking for one
+    record at a time costs a thread hop per record, which caps a replica at a
+    few hundred events a second no matter how much disk or CPU is idle - the
+    ceiling that turned a two-hour gateway stall into a backlog that could not
+    drain. The batch call waits for the first record exactly as the single poll
+    did, so steady-state age is unchanged; only the records already queued
+    behind it become free to take. A broker without the batch call keeps the
+    original bounded fill loop.
+    """
+
+    if max_records < 1 or timeout_seconds <= 0 or batch_wait_seconds <= 0:
+        raise ValueError("stable projector poll bounds must be positive")
+    poll_batch = getattr(broker, "poll_batch", None)
+    if poll_batch is not None:
+        return list(await asyncio.to_thread(poll_batch, max_records, timeout_seconds))
+    record = await asyncio.to_thread(broker.poll, timeout_seconds)
+    if record is None:
+        return []
+    records = [record]
+    deadline = asyncio.get_running_loop().time() + batch_wait_seconds
+    while len(records) < max_records:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        item = await asyncio.to_thread(broker.poll, remaining)
+        if item is None:
+            break
+        records.append(item)
+    return records
 
 
 async def supervise_stable_projector(

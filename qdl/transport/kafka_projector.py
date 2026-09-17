@@ -46,6 +46,9 @@ class KafkaProjectorRecord:
 
 class ProjectorBroker(Protocol):
     def poll(self, timeout_seconds: float) -> KafkaProjectorRecord | None: ...
+    # poll_batch is the bounded fast path. It is deliberately optional: a broker
+    # that only implements poll stays correct, just one thread hop per record.
+    # qdl.runtime.stable_projector.poll_projector_records picks whichever exists.
     def checkpoint(self, record: KafkaProjectorRecord) -> None: ...
     def checkpoint_many(
         self, records: tuple[KafkaProjectorRecord, ...] | list[KafkaProjectorRecord]
@@ -226,6 +229,36 @@ class ConfluentProjectorBroker:
         self._apply_canonical_flow_control()
         if message is None:
             return None
+        return self._decode(message)
+
+    def poll_batch(
+        self, max_records: int, timeout_seconds: float
+    ) -> list[KafkaProjectorRecord]:
+        """Return up to max_records already-fetched messages in one call.
+
+        librdkafka waits for the first record exactly as poll() does and then
+        takes whatever is already queued behind it, so this costs one thread hop
+        per batch instead of one per record without adding any wait. The same
+        commit-error and flow-control boundaries apply, in the same order.
+        """
+
+        if self._closed:
+            raise RuntimeError("Kafka stable projector consumer is closed")
+        if timeout_seconds <= 0:
+            raise ValueError("Kafka poll timeout must be positive")
+        if max_records < 1:
+            raise ValueError("Kafka poll batch bound must be positive")
+        self._raise_commit_error()
+        self._apply_canonical_flow_control()
+        elapsed_ms = (time.monotonic() - self._last_checkpoint_flush) * 1000
+        if self._pending_offsets and elapsed_ms >= self.config.checkpoint_interval_ms:
+            self._flush_checkpoints(asynchronous=True)
+        messages = self._consumer.consume(max_records, timeout_seconds)
+        self._raise_commit_error()
+        self._apply_canonical_flow_control()
+        return [self._decode(message) for message in messages]
+
+    def _decode(self, message) -> KafkaProjectorRecord:
         if message.error():
             raise KafkaException(message.error())
         headers = dict(message.headers() or ())

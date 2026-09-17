@@ -340,19 +340,25 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
     def test_physical_bound_stays_fail_closed_when_wal_checkpoint_cannot_reclaim(self):
         with self.spool() as spool:
             spool.append(event(1))
+            # R1.25: PASSIVE recycles a WAL but never shrinks the file, so the
+            # bound now attempts a TRUNCATE reclaim before it refuses a write.
+            # It still fails closed when neither can reclaim anything.
             with patch.object(
                 spool,
                 "storage_bytes",
-                side_effect=(spool.config.max_storage_bytes,) * 2,
+                side_effect=(spool.config.max_storage_bytes,) * 3,
             ), patch.object(
                 spool, "_checkpoint_wal_passive_locked", return_value=False
-            ) as checkpoint:
+            ) as checkpoint, patch.object(
+                spool, "_checkpoint_wal_truncate_locked", return_value=False
+            ) as truncate:
                 with self.assertRaisesRegex(
                     BackpressureRequired, "physical storage bound"
                 ):
                     spool.append(event(2))
 
             checkpoint.assert_called_once_with()
+            truncate.assert_called_once_with()
 
     def test_maintenance_checkpoints_only_after_a_committed_append(self):
         with self.spool() as spool:
