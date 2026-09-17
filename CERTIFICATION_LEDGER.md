@@ -1180,3 +1180,17 @@ is the owner's call, not mine.
 
 Same class as entries 32 and 33: the check ran, and it was not checking the
 thing. Here the check was a human copy of a value that later moved.
+
+**Closed the same day.** The owner deleted the release; the tag was deleted on
+the remote and re-cut at `658b6e8`, the corrected head of `main`. The asset now
+published under `v2.0.17` is byte-identical to the certificate in the repository
+(`sha256:0eaf55d3f06c3fcd0a68ce3b0518868efedbdc31842380cf888efef3529d3583`,
+19,408 bytes) and names `sha256:42fe008a` and `sha256:b05d4446` - the two images
+the containers are running. The superseded builds `2.0.17-436171f` and
+`2.0.17-d9adee3` were then removed by digest; their identity survives in
+`digest_correction.previous_values` and their source survives in Git.
+
+One practical note for the next time evidence has to be read back from a
+release: the browser download URL returns 404 through this host's proxy, because
+it redirects to `objects.githubusercontent.com`. The asset endpoint with
+`--noproxy '*'` and `Accept: application/octet-stream` returns it.
