@@ -404,8 +404,12 @@ services:
 
   projector_v2:
     <<: *python
-    # DL-V2 R1.5 measured allocation: 15% of its 0.75 ceiling; it owns the two lightest partitions.
-    cpus: 0.50
+    # DL-V2 R1.5 measured 15% of a 0.75 ceiling on the two lightest partitions,
+    # which is why this was cut to 0.50. R1.23 shows why an average is the wrong
+    # instrument: during the 2026-09-17 bootstrap replay this was throttled 92%
+    # of its periods. One Python process is one core, so 1.00 is the honest
+    # ceiling and the average stays well under it.
+    cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
@@ -445,6 +449,10 @@ services:
 
   projector_v2_2:
     <<: *python
+    # R1.23: the 0.75 anchor default left no burst headroom; throttled 67-92%
+    # during the 2026-09-17 bootstrap replay. One Python process is one core,
+    # so 1.00 is the honest ceiling.
+    cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
@@ -482,6 +490,10 @@ services:
 
   projector_v2_3:
     <<: *python
+    # R1.23: the 0.75 anchor default left no burst headroom; throttled 67-92%
+    # during the 2026-09-17 bootstrap replay. One Python process is one core,
+    # so 1.00 is the honest ceiling.
+    cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
     environment:
