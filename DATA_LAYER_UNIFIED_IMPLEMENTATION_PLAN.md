@@ -39879,3 +39879,26 @@ records why a subset was reported under the gate's name.
 
 The deployed Rust image stays `qdl-v2-rust:2.0.17-1acf87a`: the only Rust change
 after it is test formatting, so no rebuild and no redeploy.
+
+
+<a id="dl-v2-r126-cert-drift-20260917"></a>
+### R1.26 item 4 — the certificate should be checked against what runs
+
+Ledger entry 34: two of the four image digests in the v2.0.17 certificate
+pointed at superseded builds — the rust digest at `2.0.17-d9adee3`, the first
+lane fix whose conservative fallback *was* the defect. The tags beside them were
+correct, the running stack was correct, and nothing in the pipeline compared the
+two. A rollback driven by that block would have deployed the build that caused
+the outage.
+
+This is the same shape `verify_runtime_generations.py` already exists to catch:
+a recorded generation of configuration that no longer matches the process
+holding it. The check belongs beside the others — read the digests and tags a
+release certificate declares, read what the containers actually run, and fail
+when they disagree. It needs no new service and no new file: one more check in
+the verifier, runnable before a tag is pushed rather than after.
+
+Until it exists, every digest written into a certificate is taken from
+`docker image inspect` together with the image's own
+`org.opencontainers.image.revision` label, so tag, digest and commit check each
+other by construction.
