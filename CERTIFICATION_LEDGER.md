@@ -772,3 +772,61 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   start), authorised by the owner for a pre-production stack. Canonical records
   between the old committed offset and latest were not projected; raw still
   holds them and canonical retention is 6 h.
+
+---
+
+## 26. Post-v2.0.16 resource rebalance: -63% p95, -38 GB disk (2026-09-17)
+
+- **The CPU was misallocated, not short.** `cpu.stat` 60-second deltas: the two
+  stream processes held 4.00 cores at **0.0%** throttle while `query_v2_2` was
+  denied **15.51 CPU-seconds every 60 seconds** at a 0.50 ceiling, `query_v2_1`
+  28.5%, `rust_core_2` 24.9%, kafka2/3 15.8%/12.1%. That denial was the p95 tail.
+- **Applied live with `docker update --cpus`, zero containers recreated**, and
+  mirrored into `docker-compose.v2-stable.yml`. stream ×2 `2.00 -> 1.25`,
+  query ×2 `0.50 -> 1.00`, rust_core_2 `0.75 -> 1.00`, kafka2/3 `1.00 -> 1.25`,
+  binance_bar_edge `0.35 -> 0.75`, stable_redis `0.25 -> 0.50`. Declared total
+  `13.35 -> 14.25`; measured use stays about 4.4 of 16 cores.
+- **Measured gain**, same benchmark, 20 iterations, 33 minutes apart: request
+  latency p95 summed over 29 V2 endpoints `6,767 -> 2,527 ms`, **-63%**. QUOTE
+  p95 `81-101 -> 9.6-28 ms`, TRADE p95 `87-105 -> 10-40 ms`, BOOK_SNAPSHOT p95
+  `210-289 -> 84-110 ms`, batched warmup p95 `1,589 -> 418 ms`, instrument
+  lookup p95 `71.5 -> 5.2 ms`. Throttle after: query 2.0%/4.5%, rust_core_2
+  2.0%, kafka2/3 1.2%/1.1%. **All three `EVENT_AGE` rejections disappeared.**
+  Event age unchanged or better, OHLCV still 20/20 exact, consumer back to
+  `V2_PRIMARY` 60/60 ready, 0 unhealthy, 0 fallback.
+- **Raw tick retention 24 h -> 8 h** (owner decision): dynamic topic config
+  `retention.ms=28800000` on `md.raw.realtime.v2`, no restart. Raw per broker
+  `16.92 -> 5.13 GiB`, Kafka per broker `23.56 -> 11.76 GiB`, host filesystem
+  `52% -> 39%`, free `141 -> 178 GB`. **Warmup contract untouched:** the SQLite
+  spool keeps 24 h, canonical keeps 6 h.
+- **Images pruned** by digest with an `until=24h` filter: `22.22 -> 16.31 GB`,
+  2.07 GB reclaimed. Container logs truncated in place `439 -> 160 MB`.
+- **Log rotation declared but not yet active.** `x-logging` (`max-size 50m`,
+  `max-file 3`) is wired into the kafka, python and rust anchors and into
+  `stable_redis`, covering all 17 running roles; it applies at the next
+  recreate. Deliberately not activated today by restarting a stack certified an
+  hour earlier.
+- **A regression I caused and reverted.** Lowering the stream ceiling to 1.25
+  was wrong. The benchmark measures the snapshot path through the query readers;
+  the consumer's slice health measures the streaming subscription through the
+  gateway. The consumer's unhealthy-slice mean went `0.27 -> 2.0` (max `3 -> 7`),
+  every one a `QUOTE` slice, which is a `LATEST_STATE` feed on that path, while
+  `stream_v2_active` throttle went `0.0% -> 4.5%`. `v1_fallback_count` and
+  `v2_error_count` stayed 0 the whole time, so nothing failed, but the margin
+  narrowed. Both stream processes are back at `cpus: 2.00`; declared total
+  `15.75`. The query gain came from query/kafka/rust getting more, not from
+  stream getting less. **Revert confirmed over 12 samples:** mean back to
+  `0.33` against the `0.27` baseline, max `2`, nine of twelve samples clean,
+  and the residue is single thin-symbol `MARK_INDEX_PRICE` slices rather than
+  the `QUOTE` cluster.
+- **Second pass on the two that did not respond:** `binance_bar_edge`
+  `0.50 -> 0.75` halved it to 9.4% and the `exhausted retries` warning has not
+  recurred; `stable_redis` `0.25 -> 0.50` took it to 0.0%.
+- **Corrects an earlier guess of mine:** projector partition assignment is
+  **even**, two partitions each. The CPU spread across the three projectors is
+  traffic per partition key, not a rebalancing fault.
+- **Withdrawn:** the suggestion to drop Kafka `ReplicationFactor` 3 -> 2. After
+  the 8 h retention cut the prize is about 11 GiB, not worth trading
+  `min.insync.replicas=2` for.
+- **Pinned at:** `qdl-v2-python:2.0.16-df4b8aa`, `qdl-v2-rust:2.0.15-c5a5be0`,
+  `qdl-v2-python:2.0.15-5130f6f` on the bar edge. No image changed.

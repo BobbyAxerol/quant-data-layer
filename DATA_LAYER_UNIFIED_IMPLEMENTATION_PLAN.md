@@ -39064,3 +39064,109 @@ records one measured steady-state reading taken with it.
 - The single-writer capacity ceiling. One writer cannot be widened with CPU;
   sharding the gateway lease changes the invariant this phase protected and is a
   phase of its own.
+
+---
+
+<a id="dl-v2-r119-resource-rebalance-20260917"></a>
+### R1.19 — the CPU was misallocated, not insufficient (2026-09-17)
+
+Measured after v2.0.16 shipped. `cpu.stat` on every role, 60-second deltas:
+
+| role | throttled periods | CPU denied / 60 s | quota |
+|---|---|---|---|
+| query_v2_1 | 28.5% | 3.27 s | 0.50 |
+| query_v2_2 | 25.3% | **15.51 s** | 0.50 |
+| rust_core_2 | 24.9% | 3.60 s | 0.75 |
+| binance_bar_edge | 17.6% | 1.10 s | 0.35 |
+| kafka2 / kafka3 | 15.8% / 12.1% | 1.78 / 1.07 s | 1.00 |
+| **stream_v2_active** | **0.0%** | 0.00 s | **2.00** |
+| **stream_v2_passive** | **0.0%** | 0.00 s | **2.00** |
+
+The two stream processes held 4.00 cores between them and were never throttled,
+while the service that answers consumer queries was denied a quarter of a core's
+worth of runnable time every minute. That denial was the p95 latency tail.
+
+**Applied live with `docker update --cpus`, no container recreated.** The quota
+is a cgroup attribute; changing it needs no restart and reverses in one command.
+Compose carries the same numbers so a future recreate keeps them.
+
+stream_v2_active/passive `2.00 -> 1.25`, query_v2_1/2 `0.50 -> 1.00`,
+rust_core_2 `0.75 -> 1.00`, kafka2/3 `1.00 -> 1.25`,
+binance_bar_edge `0.35 -> 0.75`, stable_redis `0.25 -> 0.50`.
+Declared total `13.35 -> 14.25` on a 16-core host the stack uses 4.4 cores of.
+
+**Result, same benchmark, 20 iterations, 33 minutes apart:**
+
+- Request latency p95 summed over 29 V2 endpoints: `6,767 ms -> 2,527 ms`, **-63%**.
+- QUOTE p95 `81-101 ms -> 9.6-28 ms`; TRADE p95 `87-105 ms -> 10-40 ms`;
+  BOOK_SNAPSHOT p95 `210-289 ms -> 84-110 ms`; batched warmup p95
+  `1,589 ms -> 418 ms`; instrument lookup p95 `71.5 ms -> 5.2 ms`.
+- Throttle after: query_v2_1 `2.0%`, query_v2_2 `4.5%`, rust_core_2 `2.0%`,
+  kafka2 `1.2%`, kafka3 `1.1%`. stream_v2_active rose `0.0% -> 4.4%`, harmless.
+- **The three `EVENT_AGE` rejections disappeared.** Only the pre-existing Binance
+  `MARK_INDEX_PRICE` `DATA_NOT_READY` remains.
+- Event age unchanged or better; OHLCV still 20/20 exact.
+
+`binance_bar_edge` stayed at 17.7% after `0.35 -> 0.50`, so it went to `0.75`,
+which halved it to `9.4%`. Stopped there: it reads every closed-bar binding in
+one burst each minute, so the residue is the shape of the burst, not a shortage,
+and the `exhausted retries` warning has not recurred since. `stable_redis`
+`0.25 -> 0.50` took it from `5.0%` to `0.0%`.
+
+**Second pass, and a regression I caused.** Taking the stream ceiling down was
+wrong. The benchmark measures the *snapshot* path through the query readers, and
+that improved 63%. The consumer's slice health measures the *streaming
+subscription* through the stream gateway, and that got worse:
+
+| consumer unhealthy slices | samples | p50 | max | mean | distribution |
+|---|---|---|---|---|---|
+| before any change (31 min) | 33 | 0 | 3 | **0.27** | 0×28, 1×3, 3×2 |
+| at stream `cpus: 1.25` | 8 | 2 | 7 | **2.00** | 0×2, 1×2, 2×2, 3×1, 7×1 |
+| after reverting to `cpus: 2.00` | 12 | 0 | 2 | **0.33** | 0×9, 1×2, 2×1 |
+
+The revert is confirmed: the mean is back to the baseline it started from, the
+7-slice spike has not recurred, and the residue is single thin-symbol slices on
+low-rate feeds (`BNB-USDT-SWAP` and `DOGE-USDT-SWAP` `MARK_INDEX_PRICE`), not
+the `QUOTE` cluster that the lower ceiling produced.
+
+Every one of them was a `QUOTE` slice, and `QUOTE` is a `LATEST_STATE` feed
+delivered through the gateway. `stream_v2_active` throttle went `0.0% -> 4.5%`
+at the lower ceiling. `v1_fallback_count` and `v2_error_count` stayed at 0
+throughout, so nothing failed, but the margin narrowed.
+
+**Reverted `stream_v2_active` and `stream_v2_passive` to `cpus: 2.00`.** The
+query gain came from query, kafka and rust_core_2 getting *more*, not from
+stream getting less; there was no reason to take it except tidiness, and
+tidiness is not worth a narrower margin on the single-writer delivery path.
+Declared total settles at `15.75` on a 16-core host the stack uses 4.4 of.
+
+### R1.20 — raw tick retention 24 h -> 8 h (2026-09-17)
+
+Owner decision. The stated purpose of raw was to re-derive canonical after a
+reducer fix; a reducer defect is found and fixed within hours, not within a day,
+and bars are refetchable from venue REST anyway. Applied as a dynamic topic
+config on `md.raw.realtime.v2`, `retention.ms=28800000`. No restart, reverses in
+one command.
+
+- raw per broker `16.92 GiB -> 5.13 GiB`; Kafka per broker `23.56 -> 11.76 GiB`.
+- Host filesystem `52% -> 39%`, used `150 GB -> 112 GB`, free `141 -> 178 GB`.
+- **The warmup contract is untouched.** The SQLite spool that serves consumer
+  warmup keeps its 24 h; `replay_retention_seconds` in `qdl/runtime/stable.py`
+  was not changed. Canonical stays at 6 h — already under 8 h, and raising it
+  would have added disk for nothing.
+
+### R1.21 — container log rotation
+
+`json-file` with an empty config grows without a bound: 439 MB on the host, the
+three brokers writing 86-95 MB each in 33.4 h. Compose now carries an
+`x-logging` anchor with `max-size 50m` / `max-file 3`, wired into the `kafka`,
+`python` and `rust` anchors and into `stable_redis`, so all 17 running roles are
+covered. **It takes effect at the next recreate.** The existing logs were
+truncated in place, `439 MB -> 160 MB`, which needs no restart.
+
+**Open:** the rotation is declared but not yet active on the running containers.
+It applies free at the next image rollout. A rolling recreate of kafka1/2/3
+alone would activate it for 95% of the volume today and is tolerated by
+`ReplicationFactor 3` / `min.insync.replicas 2`; not done, because restarting a
+stack certified an hour earlier needs a better reason than 190 MB a day against
+178 GB free.

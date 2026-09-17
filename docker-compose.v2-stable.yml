@@ -1,5 +1,15 @@
 name: qdl_v2_stable_candidate
 
+# Container logs had no rotation: json-file with an empty config grows without a
+# bound. Measured 2026-09-17, the three brokers wrote 86-95 MB each in 33.4 h,
+# about 190 MB a day for the stack, against 429 MB already on the host. 50 MB x 3
+# caps every role at 150 MB and keeps roughly a day of broker log.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 x-kafka-env: &kafka-env
   CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
   KAFKA_PROCESS_ROLES: broker,controller
@@ -48,6 +58,7 @@ x-kafka-env: &kafka-env
   KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
 
 x-kafka: &kafka
+  logging: *logging
   image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
   restart: unless-stopped
   security_opt: [no-new-privileges:true]
@@ -119,6 +130,7 @@ x-stable-env: &stable-env
   QDL_DATA_JWT_MAX_LIFETIME_SECONDS: "900"
 
 x-python: &python
+  logging: *logging
   image: ${QDL_STABLE_PYTHON_IMAGE:?set immutable QDL_STABLE_PYTHON_IMAGE}
   user: "10001:10001"
   restart: unless-stopped
@@ -136,6 +148,7 @@ x-python: &python
   cpus: 0.75
 
 x-rust: &rust
+  logging: *logging
   image: ${QDL_STABLE_RUST_IMAGE:?set immutable QDL_STABLE_RUST_IMAGE}
   user: "10001:10001"
   restart: unless-stopped
@@ -164,14 +177,14 @@ services:
   kafka2:
     <<: *kafka
     # DL-V2 R1.5 measured allocation: 69% of its 0.75 ceiling.
-    cpus: 1.00
+    cpus: 1.25
     hostname: kafka2
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
   kafka3:
     <<: *kafka
     # DL-V2 R1.5 measured allocation: 66% of its 0.75 ceiling.
-    cpus: 1.00
+    cpus: 1.25
     hostname: kafka3
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
@@ -204,6 +217,7 @@ services:
     cpus: 0.50
 
   stable_redis:
+    logging: *logging
     image: redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8
     command: [redis-server, --appendonly, "no", --save, "", --maxmemory, 128mb, --maxmemory-policy, noeviction]
     restart: unless-stopped
@@ -215,7 +229,8 @@ services:
     tmpfs: ["/data:rw,nosuid,nodev,noexec,uid=999,gid=1000,mode=0700,size=160m"]
     healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 30}
     mem_limit: 160m
-    cpus: 0.25
+    # R1.19 second pass: throttled 5.2% and losing 2.93 CPU-s per 90 s at 0.25.
+    cpus: 0.50
 
   stable_admin:
     image: apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
@@ -277,7 +292,7 @@ services:
   query_v2_1:
     <<: *python
     # DL-V2 R1.5 measured allocation: 22% of its 0.75 ceiling.
-    cpus: 0.50
+    cpus: 1.00
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -304,7 +319,7 @@ services:
   query_v2_2:
     <<: *python
     # DL-V2 R1.5 measured allocation: 1% measured, kept equal to query_v2_1 because the shared qdl-v2-query alias can send either reader all of the traffic.
-    cpus: 0.50
+    cpus: 1.00
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -333,6 +348,10 @@ services:
     # of a 0.75 ceiling while the rest of the stack sat under half of theirs.
     # The active/passive lease admits exactly one ingesting writer, so the path
     # cannot be widened by adding peers; the ceiling is the only lever.
+    # R1.19 second pass reverted this to 2.00: at 1.25 the process throttled
+    # 4.5% of periods and the consumer's unhealthy-slice mean went 0.27 -> 2.0.
+    # The query gain came from query/kafka/rust getting more, not from stream
+    # getting less, so the headroom goes back.
     cpus: 2.00
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
@@ -358,6 +377,10 @@ services:
     # Sized with the active peer: a standby that cannot take over at the same
     # capacity is not a standby. An idle ceiling reserves nothing.
     <<: *python
+    # R1.19 second pass reverted this to 2.00: at 1.25 the process throttled
+    # 4.5% of periods and the consumer's unhealthy-slice mean went 0.27 -> 2.0.
+    # The query gain came from query/kafka/rust getting more, not from stream
+    # getting less, so the headroom goes back.
     cpus: 2.00
     command: [python, -m, app.entrypoints.stream_v2_stable]
     networks:
@@ -551,6 +574,9 @@ services:
 
   rust_core_2:
     <<: *rust
+    # DL-V2 R1.19: it carried 0.45 cores p50 against the 0.75 anchor default and
+    # was throttled on 24.9% of its periods. This is the busiest of the three.
+    cpus: 1.00
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-002.json]
     environment:
@@ -734,7 +760,8 @@ services:
   binance_bar_edge:
     <<: *python
     # DL-V2 R1.5 measured allocation: 3% measured; it bursts once per bar close, not continuously.
-    cpus: 0.35
+    # R1.19 second pass: still throttled 17.7% at 0.50. It reads every closed-bar binding in one burst each minute, so the ceiling has to fit the burst, not the average.
+    cpus: 0.75
     command: [python, -m, app.entrypoints.binance_bar_v2_stable]
     networks: [stable_internal, stable_egress]
     environment:
