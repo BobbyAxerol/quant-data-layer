@@ -840,7 +840,11 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   age agree within **3-4 ms**. The age is baked in before anything serves it.
 - **Stage delays**, lag over that stage's own rate: `rust_core` raw->canonical
   **0.89 s**, projector canonical->spool **0.46 s**, query spool->consumer
-  0.003 s. **`rust_core` is four times the projector and is the dominant term.**
+  0.003 s. **`rust_core` is the dominant term.**
+  **Corrected in entry 28:** the 0.89 s reading was taken minutes after the
+  projector recreate while the system was still settling. A clean baseline an
+  hour later put the same stage at **0.34 s**, so it is about 1.5x the
+  projector, not 4x. The ordering holds; the multiple does not.
 - **R1.22:** `QDL_STABLE_PROJECTOR_BATCH_WAIT_SECONDS` `0.10 -> 0.02`. Projector
   queue delay **0.46 -> 0.22 s, -52%, at a load 27% higher** (493 vs 387 rec/s);
   lag 177 -> 108. The fivefold rise in drains cost nothing: projector throttle
@@ -887,3 +891,59 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
 - **Next lever, already measured:** `rust_core` at 0.89 s is not CPU-starved
   (2.0% throttle, 0.10-0.45 cores), so the cost is a batching or flush interval
   in the Rust core. Not opened in this session rather than left half-done.
+
+---
+
+## 28. Config-generation drift, exposed by restarting what had never restarted (2026-09-17)
+
+- **Root cause, one for both incidents:** containers that had run for weeks were
+  holding configuration generations that no longer exist on disk. Nothing here
+  is a new defect; it is old drift becoming visible the first time each process
+  was asked to read its configuration again. **16 of 17 roles are now proven
+  restartable**, one at a time, with observed recovery.
+- **Corrects entry 27:** the `rust_core` stage is **0.34 s**, not 0.89 s. The
+  higher figure was sampled minutes after the projector recreate while the
+  system was still settling. It is about 1.5x the projector, not 4x.
+- **Withdrawn:** `rust_core` `batch_size` 256 -> 64. A single-core A/B showed
+  `0.38 -> 0.20 s` (-47%) with both controls worse, which looked decisive and
+  **did not reproduce**: with all three cores changed, twelve samples over five
+  minutes gave **0.41 s against a 0.34 s baseline**. Reverted. Unproven, and it
+  costs four times the Kafka transactions. The method lesson: in 90-second
+  windows the variance of this signal exceeds the effect, and controls moving
+  the other way inside one short window prove nothing.
+- **Incident, 22 minutes, caused by this session.** Recreating
+  `binance_bar_edge` for log rotation exposed a checkpoint at
+  `catalog_revision 7 / acquisition_revision 14` that no configuration on this
+  host still produces (image 8/16, packets 9/17). Recovered onto a fresh state
+  path, old checkpoint preserved and backed up. **The bootstrap cost was mine to
+  foresee and I did not:** I verified the 10,000-row cap per binding and did not
+  multiply by 140 bindings. About a million records in five minutes, projector
+  backlog **601,622**, `TRADE` age **250-310 s**, every other feed rejected on
+  freshness, consumer down to 24 of 60. **`v1_fallback_count` and
+  `v2_error_count` stayed 0 throughout: it degraded, it never failed over.**
+- **The throttle watchdog written that morning paid for itself immediately.**
+  The projectors were throttled **67-92%** at 0.50/0.75 while `docker stats`
+  showed 50-75% and looked like headroom. Raised live to 2.00: drain
+  `114 -> 900 rec/s`, backlog cleared in 15 minutes. They settled at 0.9 of a
+  core with 0.0% throttle, so they were returned to **1.00**, not to 0.50/0.75.
+- **Open defect, not guessed at: no component publishes OKX realtime bars.** The
+  acquisition catalog marks OKX `bar-1m` `RUST_NATIVE`; the bar edge's realtime
+  loop takes `PYTHON_REST` only and correctly skips them; the rust core config
+  has 197 bindings and **zero bar bindings**; `ingestor_okx_swap` carries no BAR
+  feed. Measured: Binance `bar-1m` 27 s old, OKX `bar-1m` 1000 s and ageing.
+  They worked until today only because the old bar edge was still running the
+  orphaned revision 14 catalog. Three options are written up in the plan; all
+  need an owner decision, and option 1 touches the image v2.0.16 was certified
+  on.
+- **Log rotation:** active on 14 of 17 roles. `stream_v2_active/passive`
+  excluded (recreate stalls the projectors, for 1-2 MB of log) and
+  `stable_redis` excluded (recreate destroys the projection cache identity by
+  design).
+- **VN/DNSE not testable from this host:** `openapi.dnse.com.vn` refuses TCP 443
+  from container and host, with and without proxy, while `api.dnse.com.vn` and
+  `services.entrade.com.vn` answer. Credentials and FPT/VN30F1M bindings are
+  present; the endpoint is unreachable.
+- **State:** `QUOTE` 381-436 ms, `TRADE` 319-839 ms, `BOOK_SNAPSHOT`
+  767-1265 ms, OKX `MARK_INDEX_PRICE` 590-753 ms, Binance `BAR1m` 27 s,
+  projector lag ~180, disk 34%, **no image changed anywhere in this session**.
+  Consumer tops out near 51-55 of 60 until the OKX bar owner is decided.

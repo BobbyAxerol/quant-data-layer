@@ -39188,7 +39188,7 @@ record before anything serves it.
 
 | stage | weighted delay |
 |---|---|
-| rust_core, raw -> canonical | **0.89 s** |
+| rust_core, raw -> canonical | **0.89 s** (see the correction in R1.23) |
 | projector, canonical -> spool (before) | 0.46 s |
 | projector, canonical -> spool (after R1.22) | **0.22 s** |
 | query, spool -> consumer | 0.003 s |
@@ -39268,3 +39268,129 @@ in this slice went through
 `~/.local/state/qdl-v2/dlv2-r122-projector-age-20260917T062751Z/projector-age.override.yml`,
 which pins all 17 roles to the digest they were already running; 0 of 17 drifted
 before or after.
+
+---
+
+<a id="dl-v2-r123-config-generation-drift-20260917"></a>
+### R1.23 — two landmines from one root: config generations that drifted apart (2026-09-17)
+
+Everything in this section came out of recreating containers that had not been
+restarted in weeks. Nothing here is a new defect; it is old drift becoming
+visible the first time the processes were asked to read their configuration
+again.
+
+#### What was tried and withdrawn: rust_core batch_size
+
+`batch_size` 256 -> 64 on the realtime cores, on the theory that a fixed batch
+size makes delay inversely proportional to arrival rate. The baseline supported
+it: core-001 carried the highest rate (167 rec/s) at the lowest delay (0.21 s)
+while core-002 carried 125 rec/s at 0.49 s.
+
+A single-core A/B looked decisive: the changed core went `0.38 -> 0.20 s`, -47%,
+while both control cores got *worse*. **It did not reproduce on rollout.** With
+all three cores at 64, a five-minute, twelve-sample measurement put the stage at
+**0.41 s against a 0.34 s baseline**, four partitions worse and one better.
+
+Reverted to 256. The change is unproven and costs four times the Kafka
+transactions. **The lesson is about method, not about batching:** in 90-second
+windows the variance of this signal exceeds the effect, and controls moving the
+other way inside one short window prove nothing. Three separate conclusions in
+this session were drawn from windows that short and two of them were wrong.
+
+The `0.89 s` figure quoted for this stage in R1.22 and ledger entry 27 came from
+the same error - it was sampled minutes after the projector recreate while the
+system was still settling. The clean baseline is **0.34 s**, about 1.5x the
+projector, not 4x.
+
+#### Landmine one: an orphaned bar-edge checkpoint
+
+Recreating `binance_bar_edge` for log rotation put it in a crash loop:
+
+    RuntimeError: stable BAR checkpoint catalog_revision differs from runtime authority
+
+Its checkpoint carried `catalog_revision 7` and `acquisition_revision 14`. The
+image produces 8/16 and every packet on this host produces 9/17. **No
+configuration on this machine produces 7/14 any more.** The container had been
+up 21 hours and had simply never re-read its configuration; `docker start` after
+a reboot would have hit exactly the same wall, so the `unless-stopped` policy and
+the boot-recovery unit were both sitting on it.
+
+Recovered by pointing `QDL_STABLE_BAR_STATE_PATH` at a path for the revision the
+edge actually runs, leaving the r14 checkpoint on disk untouched and backed up in
+`dlv2-baredge-checkpoint-backup-20260917T075010Z/`. Packet:
+`dlv2-baredge-r16-20260917T075353Z/`.
+
+**The cost, which was mine to foresee and I did not.** A fresh checkpoint means a
+full bootstrap. I checked that the bootstrap is bounded - `_bootstrap_rows_for`
+is `min(warmup_rows, durable_bar_history_capacity_rows(interval))` and
+`QDL_STABLE_BAR_WARMUP_ROWS` is 10000 - and stopped there, without multiplying by
+**140 bindings**. It republished about a million records in five minutes.
+
+Projector backlog reached **601,622**. `TRADE` age went to **250-310 seconds**,
+and `QUOTE`, `BOOK_SNAPSHOT`, `MARK_INDEX_PRICE`, warmup and history were all
+rejected on freshness. The consumer fell to 24 of 60 ready. It never failed over:
+`v1_fallback_count` and `v2_error_count` stayed **0** for the whole 22 minutes.
+
+The projectors were throttled **67-92%** at their 0.50/0.75 ceilings, which is
+exactly what `services/monitor/cgroup_throttle.py` was written for that morning.
+Raised live to 2.00 each: drain went `114 -> 900 records/s` and the backlog
+cleared in 15 minutes. At 2.00 they settled at 0.9 of a core with 0.0% throttle,
+because one Python process is one core, so they were returned to **1.00**, not to
+the 0.50/0.75 they started at. Today showed 0.50 has no burst headroom.
+
+#### Landmine two, still open: nobody owns OKX realtime bars
+
+After the recovery, `OKX BAR` stopped arriving while OKX `TRADE` kept flowing.
+Measured in the spool: Binance `bar-1m` newest record 27 s old, OKX `bar-1m`
+newest **1000 s** old and ageing.
+
+| evidence | value |
+|---|---|
+| OKX `bar-1m` bindings in the acquisition catalog | `mode: RUST_NATIVE` x5 |
+| bar edge realtime loop | takes `PYTHON_REST` bindings only, so it correctly skips them |
+| rust core runtime config | 197 bindings, **0 bar bindings**, `instrument_catalog_revision: 8` |
+| `ingestor_okx_swap` feeds | `BOOK, QUOTE, TRADE, MARK_INDEX` - no BAR |
+
+The catalog says the Rust path owns OKX bars; the Rust path has no bar bindings.
+**No component publishes them.** They worked until today only because the old bar
+edge container was still running the orphaned revision 14 catalog, in which those
+bindings must have been `PYTHON_REST`.
+
+This is the same root as landmine one: two configuration generations that drifted
+apart, held together only by a process that had not restarted.
+
+**Not fixed, and deliberately not guessed at.** Three options, all needing an
+owner decision:
+
+1. Move OKX bar bindings back to `PYTHON_REST` in the acquisition catalog so the
+   bar edge owns them. The catalog is baked into the image, so this is a rebuild
+   and a recreate, and it touches the image v2.0.16 was certified on.
+2. Add bar bindings to the rust core runtime config. Requires understanding how
+   the Rust core derives bars; not read, so not claimed to be feasible.
+3. Record it and schedule it; Binance bars keep working, OKX bars stay missing.
+
+#### State at the end of this slice
+
+Healthy: `QUOTE` 381-436 ms, `TRADE` 319-839 ms, `BOOK_SNAPSHOT` 767-1265 ms,
+OKX `MARK_INDEX_PRICE` 590-753 ms, Binance `BAR1m` 27 s, projector lag ~180,
+`v1_fallback_count` 0, `v2_error_count` 0, disk 34%, no image changed anywhere.
+
+Open: OKX bars on every interval; the consumer therefore tops out near 51-55 of
+60 with five OKX `BAR` slices unhealthy.
+
+#### Also in this slice
+
+- Log rotation now active on **14 of 17** roles. `stream_v2_active/passive` were
+  left out because recreating them stalls the projectors, for 1-2 MB of log, and
+  `stable_redis` was left out because recreating it destroys the projection cache
+  identity by design.
+- `/sys/fs/cgroup` mounted read-only into the Trading System monitor in compose
+  so `cgroup_throttle.py` can see other containers. **Not recreated** - the owner
+  sequenced the Trading System after the data layer, and that service's compose
+  entry says `tradingsystem-image:latest`, which is its own drift trap.
+- VN/DNSE could not be tested. `openapi.dnse.com.vn` (103.151.242.24) refuses
+  TCP 443 from this host, from a container, with and without the proxy, while
+  `api.dnse.com.vn` and `services.entrade.com.vn` (103.151.242.89) answer. Not a
+  credential problem: the keys are in `.env` and the FPT/VN30F1M bindings are in
+  the catalog. Whether DNSE retired the endpoint or the address is blocked cannot
+  be determined from here.
