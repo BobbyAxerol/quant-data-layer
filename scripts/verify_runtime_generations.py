@@ -42,6 +42,11 @@ from typing import Any, Iterable, Sequence
 PROJECT = "qdl_v2_stable_candidate"
 COMPOSE_FILE = "docker-compose.v2-stable.yml"
 
+# Mirrors qdl.runtime.stable.build_stable_spool and qdl.transport.sqlite_spool;
+# this script runs against a container and must not import the package.
+SPOOL_MAX_STORAGE_BYTES = 3 * 1024 * 1024 * 1024
+JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+
 OK = "OK"
 FAIL = "FAIL"
 SKIP = "SKIP"
@@ -277,15 +282,22 @@ def check_bar_owners(report: Report, role: str = "query_v2_1", stale_seconds: in
     healthy, the ingestor is healthy, and the data simply stops.
     """
 
+    # Enumerate the BAR partitions from `partitions`, which holds one small row
+    # per key, then seek each key's newest record through the events primary key
+    # (stream, partition_key, logical_offset). The obvious query - MAX() with a
+    # GROUP BY over `events` - scans the whole 2 GB table instead, holds a read
+    # transaction open for minutes, and pins the WAL while it runs. That is part
+    # of what grew the WAL to 922 MB before the 2026-09-17 stall.
     script = "\n".join((
         "import sqlite3, time, collections, json",
         "c = sqlite3.connect('file:/var/lib/qdl-stable/shared/canonical-cache.sqlite3?mode=ro', uri=True)",
-        "c.execute('PRAGMA temp_store=MEMORY')",
         "now = time.time() * 1e9",
-        "q = \"select partition_key, max(committed_at_ns) from events where partition_key like '%/bar/%' group by partition_key\"",
-        "rows = [(k, (now - m) / 1e9) for k, m in c.execute(q) if m]",
+        "keys = c.execute(\"select stream, partition_key from partitions where partition_key like '%/bar/%'\").fetchall()",
+        "seek = 'select committed_at_ns from events where stream = ? and partition_key = ? order by logical_offset desc limit 1'",
         "g = collections.defaultdict(list)",
-        "for k, a in rows: g[k.split('/')[-1].split('-')[0]].append(a)",
+        "for stream, key in keys:",
+        "    row = c.execute(seek, (stream, key)).fetchone()",
+        "    if row and row[0]: g[key.split('/')[-1].split('-')[0]].append((now - row[0]) / 1e9)",
         "print(json.dumps({k: [len(v), min(v), max(v)] for k, v in g.items()}))",
     ))
     try:
@@ -310,6 +322,44 @@ def check_bar_owners(report: Report, role: str = "query_v2_1", stale_seconds: in
             )
 
 
+def check_spool_headroom(report: Report, role: str = "query_v2_1", warn_ratio: float = 0.85) -> None:
+    """How close the durable spool is to the physical bound that fails writes closed.
+
+    On 2026-09-17 the spool reached that bound with 7,720 bytes to spare and
+    every canonical write failed for two hours. Nothing in the stack said so
+    first: the gateway was healthy, the projectors were healthy, and the only
+    signal was a backpressure line in one log. The three files and the bound are
+    both cheap to read, so the approach is observable before it is an outage.
+    """
+
+    script = "\n".join((
+        "import json, os",
+        "p = '/var/lib/qdl-stable/shared/canonical-cache.sqlite3'",
+        "s = [os.path.getsize(f) if os.path.exists(f) else 0 for f in (p, p + '-wal', p + '-shm')]",
+        "print(json.dumps(s))",
+    ))
+    try:
+        main_bytes, wal_bytes, shm_bytes = json.loads(_exec(role, "python3", "-c", script).strip())
+    except (RuntimeError, ValueError, json.JSONDecodeError) as error:
+        report.add("spool-headroom", "spool", SKIP, f"cannot stat the spool: {str(error)[:70]}")
+        return
+    total = main_bytes + wal_bytes + shm_bytes
+    used = total / SPOOL_MAX_STORAGE_BYTES
+    detail = (
+        f"{total / 1048576:.0f} MB of {SPOOL_MAX_STORAGE_BYTES / 1048576:.0f} MB "
+        f"({used:.0%}), WAL {wal_bytes / 1048576:.0f} MB"
+    )
+    if used >= warn_ratio:
+        report.add("spool-headroom", "spool", FAIL, f"{detail}; writes fail closed at the bound")
+    elif wal_bytes > JOURNAL_SIZE_LIMIT_BYTES * 4:
+        report.add(
+            "spool-headroom", "spool", FAIL,
+            f"{detail}; the WAL is past four times its declared journal_size_limit",
+        )
+    else:
+        report.add("spool-headroom", "spool", OK, detail)
+
+
 def load_compose(path: str) -> dict[str, Any]:
     import yaml
 
@@ -328,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit findings as JSON")
     parser.add_argument(
         "--only", action="append",
-        help="run only these checks (cpu, image, chain, bar-checkpoint, bar-owner)",
+        help="run only these checks (cpu, image, chain, bar-checkpoint, bar-owner, "
+             "spool-headroom)",
     )
     args = parser.parse_args(argv)
 
@@ -343,7 +394,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     compose = load_compose(args.compose)
-    wanted = set(args.only or ["cpu", "image", "chain", "bar-checkpoint", "bar-owner"])
+    wanted = set(args.only or [
+        "cpu", "image", "chain", "bar-checkpoint", "bar-owner", "spool-headroom",
+    ])
     if "cpu" in wanted:
         check_cpu_ceilings(report, compose, roles)
     if "image" in wanted:
@@ -352,6 +405,8 @@ def main(argv: list[str] | None = None) -> int:
         check_compose_chain(report, roles, args.env_file)
     if "bar-checkpoint" in wanted:
         check_bar_edge_checkpoint(report)
+    if "spool-headroom" in wanted:
+        check_spool_headroom(report)
     if "bar-owner" in wanted:
         check_bar_owners(report)
 

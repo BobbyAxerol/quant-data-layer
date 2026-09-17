@@ -39693,3 +39693,86 @@ the session window closed); it is recorded as out of scope in
 `scope-evidence.json` rather than silently omitted. The eleven compose services
 that are not running are not running by design. Trading system work stays
 deferred until the data layer release is closed.
+
+<a id="dl-v2-r125-landed-20260917"></a>
+#### R1.25 — what the program found and what landed
+
+**The BAR gate was wrong and is now measured, not guessed.** The consumer
+contract for a 1m bar is `max_freshness_ms = 180000`, and the canonical
+envelope timestamps a bar by its *open* time, so "age of the newest record" can
+never read below 60 s for a 1m bar and a three-minute tolerance says nothing
+about delivery. The honest instrument is publish time minus **close** time for
+final bars only, per venue and interval, taken off `md.canonical.v2`:
+
+| venue | interval | p50 | p95 | path |
+|---|---|---|---|---|
+| OKX | 1m | 0.78 s | 1.47 s | Rust native WebSocket, `confirm=1` |
+| BINANCE | 1m | 7.04 s | 7.38 s | Python REST bar edge |
+
+**Binance's seven seconds are the venue, not the design.** The bar edge holds a
+closed bar for `final_settlement_min_age_seconds = 6.0` and confirms it twice a
+second apart. Measured against the exchange on 2026-09-17: a closed BTCUSDT 1m
+kline was still changing **5.04 s** after its close boundary, ETHUSDT **3.96 s**.
+The 6 s is therefore evidence, not a guess, and cutting it would publish bars
+that the venue then revises.
+
+**The native Binance bar lane is not available on this host, and neither is
+mark/index.** Binance USD-M acknowledges a subscription for `@kline_1m` and
+`@markPrice@1s` (`{"result":null}`) and then sends nothing: 80 s, zero frames,
+on the same socket where `btcusdt@trade` delivered 353 frames in 12 s. Four
+subscription shapes were tried for mark price - `/ws` SUBSCRIBE at 1 s and 3 s,
+the direct `/ws/<stream>` path, and the combined-stream URL - all zero. This is
+exactly the condition `production_catalog.py` already records for klines
+("proves direct Binance trade and BBO, but not final kline delivery after a
+valid WS ACK"), and it holds for mark price too. Our configuration is correct on
+both sides: the ingestor binds `<symbol>@markPrice@1s` with a logical target and
+the core expects the same channel at the same catalog revision. So Binance
+MARK_INDEX_PRICE cannot be repaired by the WebSocket path at all; it needs the
+reference/REST pair path, which is a catalog migration and stays out of
+v2.0.17. The Binance BAR lane stays on provider REST for the same reason.
+
+**The projector, not the disk, was the throughput ceiling.** With the gateway
+stalled for two hours the backlog reached 3.8M events and did not drain,
+because consumption had converged on production at 759 events/s. Nothing was
+saturated: projectors at 0.49 of a 2.00 CPU ceiling, no throttling, and a
+benchmark on the spool's own volume under its own pragmas gave 40,280 rows/s at
+`synchronous=FULL` and 158,951 at NORMAL. The cost was one thread hop per
+record, because the projector asked Kafka for one record at a time and
+assembled the batch itself inside a 25 ms window.
+
+**The OKX bar fence, proven by the system itself.** A single core restart
+published OKX bars again for exactly that core's partitions, which established
+the fence was holding accumulated in-memory state rather than rejecting the
+frames deterministically. The ingestor then reconnected its business lane on its
+own at 11:29Z, moving it from generation 22 to 23, and the brand new session was
+quarantined identically - which is what proved the generation holding those keys
+never belonged to the bar lane. `partition_feed_lanes` gives each feed class its
+own socket and its own counter; the OKX lanes stood at BOOK 53,986, QUOTE 82,
+TRADE 70, MARK_INDEX 37 and BAR 23 while the fence compared them as bare
+integers. After the repair and a live ingestor reconnect onto a new generation,
+all five symbols publish across every interval.
+
+#### Landed in this slice
+
+- `fix(core)` connection generations compare within one provider lane; an
+  unparsable session id keeps the original comparison, so nothing an unknown
+  producer sends becomes newly acceptable. 5 tests in `qdl-venue-core` (42
+  pass), 2 in `qdl-realtime-core` (38 pass).
+- `perf(projector)` one bounded batch per broker call; brokers that only offer
+  the single-record poll keep the original fill loop. 8 tests.
+- `fix(spool)` the WAL is reclaimed when it outgrows the `journal_size_limit`
+  this connection already declares, and the physical bound reclaims before it
+  refuses a write. 6 new tests plus the existing contract test moved from two
+  steps to three.
+- `fix(projector)` the canonical sink retries a dead pooled connection once
+  before failing over to the passive peer. 9 tests.
+- `fix(runtime)` Compose records the broker memory bound that was raised live
+  after the kernel memcg killed brokers at 768m.
+
+#### Still open after this slice
+
+- Binance `MARK_INDEX_PRICE` and any native Binance BAR lane: blocked on the
+  venue, recorded above, deferred to v2.0.18 as a catalog migration.
+- `stable_redis` still records a compose chain from a deleted worktree.
+- `verify_runtime_generations.py` still scans the spool with `GROUP BY` for its
+  bar-owner check.

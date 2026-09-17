@@ -192,6 +192,72 @@ class BarOwnerTests(unittest.TestCase):
         self.assertEqual(r.failed, 0)
 
 
+class SpoolHeadroomTests(unittest.TestCase):
+    """The bound that failed every canonical write closed on 2026-09-17."""
+
+    def test_a_spool_near_the_physical_bound_fails(self) -> None:
+        r = report()
+        payload = json.dumps([2252414976, 966902232, 1900544])
+        with mock.patch.object(verify, "_exec", return_value=payload):
+            verify.check_spool_headroom(r)
+        finding = r.findings[0]
+        self.assertEqual(finding.status, verify.FAIL)
+        self.assertIn("fail closed", finding.detail)
+
+    def test_a_spool_with_headroom_passes(self) -> None:
+        r = report()
+        payload = json.dumps([2252414976, 33554432, 1900544])
+        with mock.patch.object(verify, "_exec", return_value=payload):
+            verify.check_spool_headroom(r)
+        self.assertEqual(r.findings[0].status, verify.OK)
+        self.assertEqual(r.failed, 0)
+
+    def test_a_wal_far_past_its_declared_limit_fails_before_the_bound_does(self) -> None:
+        # The WAL is the part that ran away; catching it early is the point.
+        r = report()
+        payload = json.dumps([104857600, verify.JOURNAL_SIZE_LIMIT_BYTES * 5, 1048576])
+        with mock.patch.object(verify, "_exec", return_value=payload):
+            verify.check_spool_headroom(r)
+        finding = r.findings[0]
+        self.assertEqual(finding.status, verify.FAIL)
+        self.assertIn("journal_size_limit", finding.detail)
+
+    def test_an_unreadable_spool_is_skipped_not_passed(self) -> None:
+        r = report()
+        with mock.patch.object(verify, "_exec", side_effect=RuntimeError("no such role")):
+            verify.check_spool_headroom(r)
+        self.assertEqual(r.findings[0].status, verify.SKIP)
+        self.assertEqual(r.failed, 0)
+
+    def test_the_warn_ratio_is_configurable(self) -> None:
+        r = report()
+        payload = json.dumps([1610612736, 0, 0])          # exactly half the bound
+        with mock.patch.object(verify, "_exec", return_value=payload):
+            verify.check_spool_headroom(r, warn_ratio=0.4)
+        self.assertEqual(r.findings[0].status, verify.FAIL)
+
+
+class BarOwnerQueryShapeTests(unittest.TestCase):
+    """The check must not scan the spool to answer a liveness question."""
+
+    def test_the_probe_seeks_by_key_instead_of_grouping_the_table(self) -> None:
+        r = report()
+        captured = {}
+
+        def fake_exec(role, *command):
+            captured["script"] = command[-1]
+            return json.dumps({"okx": [70, 14.0, 900.0]})
+
+        with mock.patch.object(verify, "_exec", side_effect=fake_exec):
+            verify.check_bar_owners(r)
+        script = captured["script"]
+        self.assertIn("from partitions", script)
+        self.assertIn("order by logical_offset desc limit 1", script)
+        self.assertNotIn("group by", script.lower())
+        self.assertNotIn("max(committed_at_ns)", script.lower())
+        self.assertEqual(r.failed, 0)
+
+
 class ReportTests(unittest.TestCase):
     def test_skips_never_fail_the_run(self) -> None:
         r = report()
