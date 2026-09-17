@@ -2471,6 +2471,82 @@ mod tests {
     }
 
     #[test]
+    fn a_second_provider_lane_is_not_fenced_by_another_lane_generation() {
+        // 2026-09-17: OKX candles arrive on the ingestor's business socket,
+        // whose connection generation was 23, while the same instrument's book
+        // socket had reconnected 53,986 times. The ordering fence compared the
+        // two counters as bare integers, so every closed candle was quarantined
+        // StaleGeneration and OKX bars never reached the canonical stream.
+        let binding = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            "BTC-USDT-SWAP",
+            "candle1m",
+            "okx_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        let frame = |open_ms: i64| {
+            format!(
+                r#"{{"arg":{{"channel":"candle1m","instId":"BTC-USDT-SWAP"}},"data":[["{open_ms}","61200.00","61240.00","61190.00","61234.10","12.500","12.500","765200.00","1"]]}}"#
+            )
+            .into_bytes()
+        };
+        let mut core = core(binding.clone(), true);
+
+        let mut public_lane = raw(&binding, &frame(1_786_352_340_000), 53_986);
+        public_lane.source_session_id = "okx-public-001-53986-1789646281539900904".into();
+        assert_eq!(core.process(public_lane, 10).unwrap().canonical.len(), 1);
+
+        let mut business_lane = raw(&binding, &frame(1_786_352_400_000), 23);
+        business_lane.source_session_id = "okx-business-001-23-1789644569811393373".into();
+        let published = core.process(business_lane, 11).unwrap();
+        assert!(published.quarantines.is_empty());
+        assert_eq!(published.canonical.len(), 1);
+
+        // The next closed candle of that same lane keeps publishing.
+        let mut business_next = raw(&binding, &frame(1_786_352_460_000), 23);
+        business_next.source_session_id = "okx-business-001-23-1789644569811393373".into();
+        assert_eq!(core.process(business_next, 12).unwrap().canonical.len(), 1);
+    }
+
+    #[test]
+    fn a_superseded_generation_of_the_same_lane_is_still_quarantined() {
+        let binding = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            "BTC-USDT-SWAP",
+            "candle1m",
+            "okx_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        let frame = |open_ms: i64| {
+            format!(
+                r#"{{"arg":{{"channel":"candle1m","instId":"BTC-USDT-SWAP"}},"data":[["{open_ms}","61200.00","61240.00","61190.00","61234.10","12.500","12.500","765200.00","1"]]}}"#
+            )
+            .into_bytes()
+        };
+        let mut core = core(binding.clone(), true);
+
+        let mut current = raw(&binding, &frame(1_786_352_340_000), 24);
+        current.source_session_id = "okx-business-001-24-1789644569811393373".into();
+        assert_eq!(core.process(current, 10).unwrap().canonical.len(), 1);
+
+        let mut superseded = raw(&binding, &frame(1_786_352_400_000), 23);
+        superseded.source_session_id = "okx-business-001-23-1789644560000000000".into();
+        let result = core.process(superseded, 11).unwrap();
+        assert_eq!(result.canonical.len(), 0);
+        assert_eq!(result.quarantines.len(), 1);
+        let decoded = QuarantineRecord::decode(result.quarantines[0].payload.as_slice()).unwrap();
+        assert_eq!(decoded.reason, 5);
+    }
+
+    #[test]
     fn final_only_okx_bar_filters_provisional_and_publishes_confirmed() {
         let binding = binding((
             "OKX_DIRECT",
