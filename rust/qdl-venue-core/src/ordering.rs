@@ -377,34 +377,76 @@ mod tests {
     fn duplicate_gap_out_of_order_and_session_reset_are_distinct() {
         let mut tracker = OrderingTracker::new(8);
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                10,
+                vec![1]
+            ),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                11,
+                vec![2]
+            ),
             SequenceDecision::Accepted
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                11,
+                vec![2]
+            ),
             SequenceDecision::Duplicate
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 13, vec![3]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                13,
+                vec![3]
+            ),
             SequenceDecision::Gap {
                 expected: 12,
                 actual: 13
             }
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 9, vec![4]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                9,
+                vec![4]
+            ),
             SequenceDecision::OutOfOrder
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-2-1700000000000000001", 2, 1, vec![5]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-2-1700000000000000001",
+                2,
+                1,
+                vec![5]
+            ),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 14, vec![6]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                14,
+                vec![6]
+            ),
             SequenceDecision::StaleSession
         );
     }
@@ -412,19 +454,45 @@ mod tests {
     fn monotonic_allows_native_leaps_but_contiguous_detects_them() {
         let mut monotonic = OrderingTracker::new(8);
         assert_eq!(
-            monotonic
-                .observe_with_policy("trade", "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Monotonic,),
+            monotonic.observe_with_policy(
+                "trade",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                10,
+                vec![1],
+                SequencePolicy::Monotonic,
+            ),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            monotonic
-                .observe_with_policy("trade", "qdl-test-lane-001-1-1700000000000000000", 1, 15, vec![2], SequencePolicy::Monotonic,),
+            monotonic.observe_with_policy(
+                "trade",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                15,
+                vec![2],
+                SequencePolicy::Monotonic,
+            ),
             SequenceDecision::Accepted
         );
         let mut none = OrderingTracker::new(8);
-        none.observe_with_policy("bar", "qdl-test-lane-001-1-1700000000000000000", 1, 60, vec![1], SequencePolicy::None);
+        none.observe_with_policy(
+            "bar",
+            "qdl-test-lane-001-1-1700000000000000000",
+            1,
+            60,
+            vec![1],
+            SequencePolicy::None,
+        );
         assert_eq!(
-            none.observe_with_policy("bar", "qdl-test-lane-001-1-1700000000000000000", 1, 1, vec![2], SequencePolicy::None),
+            none.observe_with_policy(
+                "bar",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                1,
+                vec![2],
+                SequencePolicy::None
+            ),
             SequenceDecision::Accepted
         );
     }
@@ -458,7 +526,14 @@ mod tests {
 
         let mut retry = tracker.stage("btc");
         assert_eq!(
-            tracker.observe_staged(&mut retry, "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Contiguous,),
+            tracker.observe_staged(
+                &mut retry,
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                10,
+                vec![1],
+                SequencePolicy::Contiguous,
+            ),
             SequenceDecision::SessionStarted
         );
     }
@@ -468,32 +543,71 @@ mod tests {
         let mut tracker = OrderingTracker::new(8);
         let mut stage = tracker.stage("btc");
         assert_eq!(
-            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Contiguous,),
+            tracker.observe_staged(
+                &mut stage,
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                10,
+                vec![1],
+                SequencePolicy::Contiguous,
+            ),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2], SequencePolicy::Contiguous,),
+            tracker.observe_staged(
+                &mut stage,
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                11,
+                vec![2],
+                SequencePolicy::Contiguous,
+            ),
             SequenceDecision::Accepted
         );
         assert_eq!(
-            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2], SequencePolicy::Contiguous,),
+            tracker.observe_staged(
+                &mut stage,
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                11,
+                vec![2],
+                SequencePolicy::Contiguous,
+            ),
             SequenceDecision::Duplicate
         );
         tracker.commit_stage(stage);
 
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                11,
+                vec![2]
+            ),
             SequenceDecision::Duplicate
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 13, vec![3]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                13,
+                vec![3]
+            ),
             SequenceDecision::Gap {
                 expected: 12,
                 actual: 13,
             }
         );
         assert_eq!(
-            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 12, vec![4]),
+            tracker.observe(
+                "btc",
+                "qdl-test-lane-001-1-1700000000000000000",
+                1,
+                12,
+                vec![4]
+            ),
             SequenceDecision::Accepted
         );
     }
