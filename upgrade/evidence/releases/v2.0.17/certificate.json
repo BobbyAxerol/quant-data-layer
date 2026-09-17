@@ -167,6 +167,30 @@
           ]
         }
       ]
+    },
+    "runtime_hygiene": {
+      "drift_after_rollout": {
+        "at": "2026-09-17T14:31Z",
+        "checks": 55,
+        "failed": 1,
+        "skipped": 0,
+        "roles": 17,
+        "note": "thirteen roles recreated in this rollout introduced no new drift",
+        "failing": "chain stable_redis - the container records a compose file from a deleted worktree"
+      },
+      "log_rotation": {
+        "before": "11 of 17 roles",
+        "after": "16 of 17 roles",
+        "driver": "json-file max-size 50m max-file 3",
+        "excluded": "stable_redis, deliberately: recreating it destroys the projection cache identity and needs the rebuild runbook, which is not run while a backlog is draining"
+      },
+      "broker_stability": {
+        "limit_before": "768m",
+        "limit_after": "1536m (kafka2 2048m)",
+        "kernel_oom_kills_since_raise": 0,
+        "restarts_since_raise": 0,
+        "root_cause": "Kafka CLI JVMs exec'd into broker cgroups added ~280 MB each; probes now run in a throwaway container on the stack network"
+      }
     }
   },
   "provenance": {
