@@ -125,6 +125,18 @@ impl OrderingTracker {
         decision
     }
 
+    /// What the tracker currently believes about this partition.
+    ///
+    /// A stale-generation rejection is unreadable without the other side of the
+    /// comparison: on 2026-09-17 the question "stale against what?" could not be
+    /// answered from the quarantine record, the raw stream or the logs.
+    pub fn observed_session(&self, partition_key: &str) -> (String, u64) {
+        self.partitions
+            .get(partition_key)
+            .map(|state| (state.session_id.clone(), state.generation))
+            .unwrap_or_default()
+    }
+
     pub fn stage(&self, partition_key: &str) -> OrderingStage {
         let (session_id, generation, last_sequence) = self
             .partitions

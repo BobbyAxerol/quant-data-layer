@@ -686,6 +686,22 @@ impl RealtimeCore {
                     break;
                 }
                 SequenceDecision::StaleSession => {
+                    // Name the other side of the comparison. Without it a stale
+                    // rejection is unfalsifiable from outside the process: the
+                    // quarantine record carries the frame, and nothing carries
+                    // what the frame was judged against.
+                    let (tracked_session, tracked_generation) =
+                        self.ordering.observed_session(&partition_key);
+                    eprintln!(
+                        "{{\"event\":\"qdl_realtime_core_stale_generation\",\"partition_key\":\"{}\",\
+                         \"frame_session\":\"{}\",\"frame_generation\":{},\
+                         \"tracked_session\":\"{}\",\"tracked_generation\":{}}}",
+                        partition_key,
+                        raw.source_session_id,
+                        raw.connection_generation,
+                        tracked_session,
+                        tracked_generation,
+                    );
                     failure = Some((
                         QuarantineReason::StaleGeneration,
                         "connection generation is stale",
