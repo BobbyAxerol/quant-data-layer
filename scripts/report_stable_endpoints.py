@@ -42,6 +42,15 @@ import sys
 from pathlib import Path
 
 DEFAULT_MANIFEST = "consumers/stable/trading-system-paper.yaml"
+DEFAULT_SPOOL = "/var/lib/qdl-stable/shared/canonical-cache.sqlite3"
+
+# The spool names a partition <instrument_uid>/<kind>/<source_id>; both book
+# feeds share one physical book partition.
+SPOOL_KIND = {
+    "TRADE": "trade", "QUOTE": "quote", "BAR": "bar",
+    "MARK_INDEX_PRICE": "mark_index_price",
+    "BOOK_SNAPSHOT": "book", "BOOK_DELTA": "book",
+}
 
 # Capability fields the manifest may carry, in the order a reader wants them.
 CAPABILITY_FIELDS = (
@@ -109,6 +118,54 @@ def measure(capture: Path) -> dict[tuple[str, str, str, str], list[float]]:
     return samples
 
 
+def spool_ages(spool: Path) -> dict[tuple[str, str, str], float]:
+    """Age in seconds of the newest event per (instrument_uid, kind, interval).
+
+    Read-only, and seeks each partition through the events primary key rather
+    than scanning: a GROUP BY over this table holds a read transaction open for
+    minutes and pins the WAL, which is part of what preceded the 2026-09-17
+    stall. Age is taken from the venue's clock - a bar's close time, every other
+    feed's source event time - so it is comparable with the delivery numbers.
+    """
+
+    import sqlite3
+    import time
+
+    from qdl.marketdata.v2 import market_data_pb2
+
+    connection = sqlite3.connect(f"file:{spool}?mode=ro", uri=True, timeout=30)
+    connection.execute("PRAGMA busy_timeout=20000")
+    now_ns = time.time() * 1e9
+    newest: dict[tuple[str, str, str], float] = {}
+    seek = ("select payload from events where stream = ? and partition_key = ? "
+            "order by logical_offset desc limit 1")
+    for stream, key in connection.execute("select stream, partition_key from partitions"):
+        uid, _, rest = key.partition("/")
+        kind, _, source_id = rest.partition("/")
+        row = connection.execute(seek, (stream, key)).fetchone()
+        if not row:
+            continue
+        envelope = market_data_pb2.EventEnvelope()
+        try:
+            envelope.ParseFromString(row[0])
+        except Exception:                                   # noqa: BLE001 - cache edge
+            continue
+        payload = envelope.WhichOneof("payload")
+        if payload == "bar":
+            reference_ns = envelope.bar.close_time_ns
+            interval = envelope.bar.interval
+        else:
+            reference_ns = envelope.source_event_time_ns
+            interval = "-"
+        if reference_ns <= 0:
+            continue
+        age = (now_ns - reference_ns) / 1e9
+        entry = (uid, kind, interval)
+        newest[entry] = min(age, newest.get(entry, age))
+    connection.close()
+    return newest
+
+
 def percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
@@ -120,12 +177,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--catalog", type=Path, required=True,
                         help="a deployed core.json, for instrument_uid -> venue/symbol")
     parser.add_argument("--capture", type=Path, required=True)
+    parser.add_argument("--spool", type=Path, default=None,
+                        help=f"durable spool to read ages from, usually {DEFAULT_SPOOL}")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     requirements = load_requirements(args.manifest)
     instruments = load_instruments(args.catalog)
     samples = measure(args.capture)
+    ages = spool_ages(args.spool) if args.spool else {}
 
     rows = []
     for requirement in requirements:
@@ -142,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
             "delivery_p50_s": round(statistics.median(observed), 3) if observed else None,
             "delivery_p95_s": round(percentile(observed, 0.95), 3) if observed else None,
             "delivery_max_s": round(max(observed), 3) if observed else None,
+            "spool_newest_age_s": (
+                round(ages[(requirement["instrument_uid"], SPOOL_KIND.get(feed, "?"), interval)], 1)
+                if (requirement["instrument_uid"], SPOOL_KIND.get(feed, "?"), interval) in ages
+                else None
+            ),
             "measured_against": "bar close time" if feed == "BAR" else "source event time",
             "capabilities": {
                 field: requirement[field]
@@ -156,15 +221,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{len(rows)} endpoint được khai báo trong {args.manifest.name}\n")
     header = (f"{'venue':8s} {'symbol':16s} {'feed':17s} {'iv':4s} "
-              f"{'policy':>9s} {'p50':>8s} {'p95':>8s} {'max':>8s} {'n':>6s}  đo theo")
+              f"{'policy':>9s} {'p50':>8s} {'p95':>8s} {'max':>8s} {'n':>6s} "
+              f"{'spool_age':>10s}  đo theo")
     print(header)
     print("-" * len(header))
+    def column(value: float | None, width: int = 8, digits: int = 3) -> str:
+        return f"{value:{width}.{digits}f}" if value is not None else f"{'-':>{width}s}"
+
     for row in rows:
-        fmt = lambda v: f"{v:8.3f}" if v is not None else f"{'-':>8s}"
         print(f"{row['venue']:8s} {row['symbol']:16s} {row['feed']:17s} "
               f"{row['interval']:4s} {row['contract_max_freshness_ms']:9d} "
-              f"{fmt(row['delivery_p50_s'])} {fmt(row['delivery_p95_s'])} "
-              f"{fmt(row['delivery_max_s'])} {row['measured_samples']:6d}  "
+              f"{column(row['delivery_p50_s'])} {column(row['delivery_p95_s'])} "
+              f"{column(row['delivery_max_s'])} {row['measured_samples']:6d} "
+              f"{column(row['spool_newest_age_s'], width=10, digits=1)}  "
               f"{row['measured_against']}")
 
     # Capabilities are declared per feed, not per instrument, so printing them
