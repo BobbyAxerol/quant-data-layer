@@ -83,6 +83,12 @@
           "bar_1m_p50_seconds": 8.06,
           "bar_1m_p95_seconds": 8.85,
           "path": "provider REST bar edge, venue-constrained"
+        },
+        "reaches_the_spool": {
+          "at": "2026-09-17T14:33Z",
+          "okx_bar_1m_partitions_present": 4,
+          "newest_bar_close_age_seconds": 1669.6,
+          "note": "OKX bars now reach the durable spool, which they never did before this release; their age there tracks the projector backlog and shrinks with it. Binance bars are fresh at 49.6s because the bar edge posts to the gateway directly rather than through Kafka"
         }
       }
     },
@@ -191,6 +197,15 @@
         "restarts_since_raise": 0,
         "root_cause": "Kafka CLI JVMs exec'd into broker cgroups added ~280 MB each; probes now run in a throwaway container on the stack network"
       }
+    },
+    "maturity": {
+      "R1.25.1_lane_fence": "production-authoritative - the repair is running on all three cores and was re-proven after the ingestor reconnected its bar lane onto a new generation; bar delivery measured on two independent windows",
+      "R1.25.2_batch_fetch": "production-authoritative - deployed on all three projectors, throughput measured before and after",
+      "R1.25.3_wal_reclaim": "production-authoritative - the WAL has held at its journal_size_limit since the rollout and the verifier reports the bound",
+      "R1.25.4_physical_bound": "production-authoritative - live at 2,378 MB of 6,144 MB",
+      "R1.25.5_sink_retry": "tested locally and deployed, not yet live-proven: both rollouts recreated the projectors immediately after the gateway, so no projector has had to survive a gateway recreate on its own. 9 unit tests cover the transport-error, 409, 503 and contract-violation paths",
+      "R1.25.6_broker_memory": "production-authoritative - recorded in Compose to match the live limits",
+      "R1.25.7_verifier": "production-authoritative - 55 checks against the running stack"
     }
   },
   "provenance": {
