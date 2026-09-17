@@ -1049,3 +1049,26 @@ ingestors recreated from `dlv2-r125-rollout-20260917T125950Z`.
   That is the clearest statement of the defect available: the sanctioned repair
   path and the native path could not coexist. 1,106 rows are now back and the
   gap is zero.
+
+## 31. Two open items closed and one priced honestly (2026-09-17)
+
+- **The sink retry is proven, not just tested.** `stream_v2_active` was
+  recreated on its own at 15:50:19Z with the projectors untouched. All three
+  kept their original start time and restart count 0, logged no reconnect
+  failure, and the group stayed at lag 279 with bar partitions 33 s fresh on
+  both venues. Every R1 stream rollout before this one needed a manual projector
+  restart; this is the first that did not.
+- **`stable_redis` was deferred for the wrong stated reason, and the real one is
+  worse.** The reason given was that a backlog was draining. That had already
+  stopped being true. The actual cost, read from the runbook rather than
+  remembered: `rebuild_v2_stable_projection_cache.py` accepts exactly one
+  compose override (`scripts/rebuild_v2_stable_projection_cache.py:57-71`) while
+  the running chain has thirteen and the env file declares none, so it would
+  recreate every service from the bare compose file and discard every image pin
+  including this release; and it deletes the durable spool outright
+  (`:49-53`) - 2.3 GB holding seven days of bar history and the 1,106 rows
+  repaired an hour earlier - replaying only 900 s afterwards. The correct
+  sequence is to consolidate the thirteen overrides into one file first. That is
+  a maintenance window, not a release step, and consolidating them is worth doing
+  properly because this chain is the origin of the whole config-generation drift
+  class in entry 28.

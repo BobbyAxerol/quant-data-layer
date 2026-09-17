@@ -190,9 +190,9 @@
       "R1.25.2_batch_fetch": "production-authoritative - deployed on all three projectors, throughput measured before and after",
       "R1.25.3_wal_reclaim": "production-authoritative - the WAL has held at its journal_size_limit since the rollout and the verifier reports the bound",
       "R1.25.4_physical_bound": "production-authoritative - live at 2,378 MB of 6,144 MB",
-      "R1.25.5_sink_retry": "tested locally and deployed, not yet live-proven: both rollouts recreated the projectors immediately after the gateway, so no projector has had to survive a gateway recreate on its own. 9 unit tests cover the transport-error, 409, 503 and contract-violation paths",
       "R1.25.6_broker_memory": "production-authoritative - recorded in Compose to match the live limits",
-      "R1.25.7_verifier": "production-authoritative - 55 checks against the running stack"
+      "R1.25.7_verifier": "production-authoritative - 55 checks against the running stack",
+      "R1.25.6_sink_retry": "production-authoritative - the active gateway was recreated on its own at 15:50:19Z with the projectors untouched: all three kept their original start time and restart count 0, logged no reconnect failure, and the projector group stayed at lag 279 with bar partitions 33 s fresh on both venues. That is the case the retry was written for, and it is the first time a projector has survived a gateway recreate without a manual restart"
     }
   },
   "provenance": {
@@ -206,20 +206,20 @@
     "rollback_rust_image_digest": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
     "rollout_packet": "~/.local/state/qdl-v2/dlv2-r125-rollout-20260917T125950Z/r125-rollout.override.yml",
     "python_suite": {
-      "tests": 1556,
+      "tests": 1563,
       "result": "OK",
       "skipped": 7,
-      "image": "qdl-v2-python:2.0.17-ce1d774",
+      "image": "qdl-v2-python:2.0.17-436171f",
       "isolated": true
     },
     "rust_gate": {
       "inherited": false,
       "qdl_venue_core": {
-        "tests": 42,
+        "tests": 43,
         "result": "ok"
       },
       "qdl_realtime_core": {
-        "tests": 38,
+        "tests": 36,
         "result": "ok",
         "ignored": 1
       }
@@ -232,8 +232,15 @@
       "DNSE VN v2: paused by the owner; openapi.dnse.com.vn:443 unreachable while other DNSE hosts answer"
     ],
     "known_open": [
-      "stable_redis records a compose chain from a deleted worktree and cannot be recreated from its own chain; repair needs a redis recreate plus the projection cache rebuild runbook",
-      "with six partitions, three replicas and range assignment, a drained replica cannot take work from a loaded one"
+      {
+        "item": "stable_redis records a compose chain from a deleted worktree and cannot be recreated from its own chain",
+        "why_not_in_this_release": "the documented remedy is scripts/rebuild_v2_stable_projection_cache.py, and as written it accepts exactly one compose override while the running chain has thirteen, so it would recreate every service from the bare compose file and discard every image pin including this release. It also deletes the durable spool outright - 2.3 GB holding seven days of bar history and the 1,106 rows repaired in this session - and replays only 900 s afterwards",
+        "correct_sequence": "consolidate the thirteen overrides into one file, point QDL_STABLE_COMPOSE_OVERRIDE at it, run the runbook, then repair bar history again. Sixty to ninety minutes with the cache empty in the middle, which is a maintenance window and not a release step"
+      },
+      {
+        "item": "with six partitions, three replicas and range assignment, a drained replica cannot take work from a loaded one",
+        "evidence": "mid-drain: projector-1 idle on 43 and 26 records at 0.13 CPU while projector-3 carried 1.29M"
+      }
     ]
   }
 }
