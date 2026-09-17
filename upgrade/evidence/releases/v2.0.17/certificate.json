@@ -1,0 +1,161 @@
+{
+  "schema": "qdl.v2.patch-release-certificate.v1",
+  "status": "PENDING_RUNTIME_ACCEPTANCE",
+  "release": "v2.0.17",
+  "classification": "Realtime delivery-path corrections: OKX native bars reach the canonical stream, the durable spool stops failing writes closed inside its own retention policy, and the projector stops paying a thread hop per record.",
+  "predecessor": {
+    "tag": "v2.0.16",
+    "certificate_schema": "qdl.v2.patch-release-certificate.v1",
+    "certificate_sha256": "f6cec442786edb97e80d05736a57dfe0ba4405e937e4bdc41ca5ceeb491ac17b",
+    "inherited_v2_primary_product_count": 299
+  },
+  "delta": {
+    "defect": "Three independent defects. (1) Every closed OKX candle was quarantined StaleGeneration and no OKX bar ever reached md.canonical.v2: the ingestor runs one socket per feed class with its own connection generation counter, and the ordering fence compared counters from different lanes as bare integers before it looked at the session. (2) The durable spool failed every canonical write closed for two hours at a 3 GiB physical bound while still inside its own row policy, because PASSIVE checkpoints recycle a WAL without shrinking the file. (3) The 3.8M event backlog that followed could not drain: consumption had converged on production at 759 events/s with projectors at 0.49 of a 2.00 CPU ceiling and the volume able to absorb 40,280 rows/s.",
+    "changed_services": [
+      "rust_core",
+      "rust_core_2",
+      "rust_core_3",
+      "ingestor_binance_usdm",
+      "ingestor_okx_swap",
+      "stream_v2_active",
+      "stream_v2_passive",
+      "projector_v2",
+      "projector_v2_2",
+      "projector_v2_3",
+      "query_v2_1",
+      "query_v2_2",
+      "binance_bar_edge"
+    ],
+    "slices": {
+      "R1.25.1": "connection generations are compared within one provider lane; an unparsable session id keeps the original comparison",
+      "R1.25.2": "the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop",
+      "R1.25.3": "the spool reclaims a WAL that outgrew its declared journal_size_limit, and reclaims again before the physical bound refuses a write",
+      "R1.25.4": "the physical bound is sized from the rows retention permits",
+      "R1.25.5": "the canonical sink retries a dead pooled connection once before failing over",
+      "R1.25.6": "Compose records the broker memory bound raised live after kernel memcg kills at 768m",
+      "R1.25.7": "the drift verifier seeks the spool by key instead of scanning it, and watches the physical bound"
+    },
+    "okx_bar_repair": {
+      "quarantined_before": {
+        "records": 1067,
+        "reason": "StaleGeneration",
+        "safe_summary": "connection generation is stale",
+        "window": "2026-09-17T09:16:00Z..12:01:01Z",
+        "instruments": 5,
+        "spool_newest_bar_1m_age_seconds": 7158
+      },
+      "lane_generations_at_diagnosis": {
+        "okx_book": 53986,
+        "okx_quote": 82,
+        "okx_trade": 70,
+        "okx_mark_index": 37,
+        "okx_bar": 23
+      },
+      "proof_the_fence_was_cross_lane": "the bar lane reconnected on its own at 11:29Z from generation 22 to 23 and the brand-new session was quarantined identically",
+      "after": {
+        "measured_at": "2026-09-17T13:26:08Z..13:30:44Z",
+        "method": "publish time minus bar close time on md.canonical.v2, final bars only",
+        "okx_bar_1m_p50_seconds": 1.19,
+        "okx_bar_1m_p95_seconds": 1.67,
+        "okx_bar_15m_p50_seconds": 0.87,
+        "okx_bar_30m_p50_seconds": 1.12,
+        "instruments_publishing": 5,
+        "candle_stale_generation_quarantines_since_repair": 0
+      }
+    },
+    "spool_bound_repair": {
+      "at_failure": {
+        "main_bytes": 2252414976,
+        "wal_bytes": 966902232,
+        "shm_bytes": 1900544,
+        "bound_bytes": 3221225472,
+        "headroom_bytes": 7720,
+        "stalled_from": "2026-09-17T10:09:06Z"
+      },
+      "reclaim": {
+        "method": "PRAGMA wal_checkpoint(TRUNCATE)",
+        "seconds": 0.08,
+        "reclaimed_bytes": 966902232,
+        "readers_blocking": 0
+      },
+      "new_bound_bytes": 6442450944,
+      "derivation": "183 physical partitions x a 10,064-record window = 1,841,712 rows; the live cache held 1,301,097 rows in 1,114 MB of payload inside a 2,312 MB file, so the policy needs roughly 3.3 GB on disk before the WAL",
+      "after": {
+        "total_mb": 2378,
+        "bound_mb": 6144,
+        "used_ratio": 0.39,
+        "wal_mb": 64
+      }
+    },
+    "projector_throughput": {
+      "before_events_per_second": 759,
+      "after_events_per_second": 1029,
+      "volume_capability_rows_per_second": {
+        "synchronous_full": 40280,
+        "synchronous_normal": 158951
+      },
+      "note": "the thread hop per record was real but not dominant; the remaining ceiling is the projector's single event-loop thread, recorded as an open measurement rather than a guess"
+    },
+    "venue_constraints_retested": {
+      "binance_usdm_markprice_ws": {
+        "ack": "{\"result\":null}",
+        "frames_in_80s": 0,
+        "shapes_tried": 4
+      },
+      "binance_usdm_kline_ws": {
+        "ack": "{\"result\":null}",
+        "frames_in_80s": 0
+      },
+      "control_same_socket": {
+        "stream": "btcusdt@trade",
+        "frames_in_12s": 353
+      },
+      "binance_rest_kline_settlement_seconds": {
+        "BTCUSDT": 5.04,
+        "ETHUSDT": 3.96
+      },
+      "consequence": "Binance MARK_INDEX_PRICE and any native Binance BAR lane cannot be repaired from the WebSocket path; the bar edge's six-second settlement is evidence, not caution"
+    }
+  },
+  "provenance": {
+    "image_source_commit": "ff34867ca714f0e59394ef18eab93f0fa946199e",
+    "source_plan_sha256_at_image_build": "748af9a6550e8e77a2851a58338155ade752f9d5ae3c2fbd73eb67fca26e2f8d",
+    "active_python_image": "qdl-v2-python:2.0.17-436171f",
+    "active_python_image_digest": "sha256:97d2f593f0a6522bccc35e6efbbedeca99c9c2c9ad09b1bbde2821bc5574cec0",
+    "active_rust_image": "qdl-v2-rust:2.0.17-d9adee3",
+    "active_rust_image_digest": "sha256:4aa578fc0be79041eda3649b8263e14e4252208947642bc172268ae05b545dea",
+    "rollback_python_image_digest": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+    "rollback_rust_image_digest": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
+    "rollout_packet": "~/.local/state/qdl-v2/dlv2-r125-rollout-20260917T125950Z/r125-rollout.override.yml",
+    "python_suite": {
+      "tests": 1556,
+      "result": "OK",
+      "skipped": 7,
+      "image": "qdl-v2-python:2.0.17-ce1d774",
+      "isolated": true
+    },
+    "rust_gate": {
+      "inherited": false,
+      "qdl_venue_core": {
+        "tests": 42,
+        "result": "ok"
+      },
+      "qdl_realtime_core": {
+        "tests": 38,
+        "result": "ok",
+        "ignored": 1
+      }
+    }
+  },
+  "boundaries": {
+    "out_of_scope": [
+      "Binance MARK_INDEX_PRICE: venue does not deliver the WebSocket stream on this host; needs the reference/REST pair path, a catalog migration",
+      "native Binance BAR lane: same venue condition, so provider REST remains the outer edge",
+      "DNSE VN v2: paused by the owner; openapi.dnse.com.vn:443 unreachable while other DNSE hosts answer"
+    ],
+    "known_open": [
+      "stable_redis records a compose chain from a deleted worktree and cannot be recreated from its own chain; repair needs a redis recreate plus the projection cache rebuild runbook",
+      "with six partitions, three replicas and range assignment, a drained replica cannot take work from a loaded one"
+    ]
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "schema": "qdl.v2.patch-release-scope-evidence.v1",
+  "status": "PENDING_RUNTIME_ACCEPTANCE",
+  "release": "v2.0.17",
+  "inherits": {
+    "release": "v2.0.16",
+    "certificate_sha256": "f6cec442786edb97e80d05736a57dfe0ba4405e937e4bdc41ca5ceeb491ac17b",
+    "formal_v2_primary_product_count": 299
+  },
+  "delta_acceptance": {
+    "method": "measured against the running stack before and after each change: the quarantine stream for the OKX fence, publish-minus-close on md.canonical.v2 for bar delivery, the consumer group for backlog, and a benchmark on the spool's own volume for the write ceiling",
+    "bar_delivery": {
+      "definition": "publish time minus bar close time on md.canonical.v2, final bars only. The consumer contract max_freshness_ms=180000 is a tolerance, and the canonical envelope timestamps a bar by its open time, so neither says anything about delivery",
+      "okx_before": {
+        "bar_1m_spool_age_seconds": 7158,
+        "canonical_records": 0
+      },
+      "okx_after": {
+        "p50_seconds": 1.19,
+        "p95_seconds": 1.67,
+        "instruments": 5,
+        "intervals_observed": [
+          "1m",
+          "3m",
+          "15m",
+          "30m"
+        ]
+      },
+      "binance": {
+        "p50_seconds": 7.04,
+        "p95_seconds": 7.38,
+        "path": "provider REST bar edge",
+        "why": "a closed Binance 1m kline was still changing 5.04s (BTCUSDT) and 3.96s (ETHUSDT) after its close boundary"
+      }
+    },
+    "okx_quarantine": {
+      "before": {
+        "records": 1067,
+        "reason": "StaleGeneration",
+        "window": "09:16:00Z..12:01:01Z"
+      },
+      "after": {
+        "candle_stale_generation_records": 0,
+        "observed_from": "2026-09-17T12:25:01Z"
+      }
+    },
+    "spool_bound": {
+      "before": {
+        "total_bytes": 3221217752,
+        "bound_bytes": 3221225472,
+        "headroom_bytes": 7720,
+        "writes": "failed closed"
+      },
+      "after": {
+        "total_mb": 2378,
+        "bound_mb": 6144,
+        "wal_mb": 64,
+        "verifier_check": "spool-headroom OK"
+      }
+    },
+    "drift_verifier": {
+      "checks": 55,
+      "failed": 1,
+      "skipped": 0,
+      "roles": 17,
+      "failing_check": "chain stable_redis (deleted worktree)"
+    },
+    "python_suite": {
+      "tests": 1556,
+      "result": "OK",
+      "skipped": 7,
+      "isolated": true
+    },
+    "rust_gate": {
+      "inherited": false,
+      "qdl_venue_core": 42,
+      "qdl_realtime_core": 38
+    }
+  },
+  "venue_boundaries_retested_2026_09_17": {
+    "binance_usdm_markprice_ws_frames_in_80s": 0,
+    "binance_usdm_kline_ws_frames_in_80s": 0,
+    "binance_usdm_trade_ws_frames_in_12s": 353,
+    "subscription_shapes_tried_for_markprice": [
+      "/ws SUBSCRIBE btcusdt@markPrice@1s",
+      "/ws SUBSCRIBE btcusdt@markPrice",
+      "/ws/btcusdt@markPrice@1s direct path",
+      "/stream?streams=btcusdt@markPrice@1s"
+    ],
+    "conclusion": "venue-side on this host, not configuration: the ingestor binds <symbol>@markPrice@1s with a logical target and the core expects the same channel at the same catalog revision"
+  },
+  "out_of_scope": [
+    "Binance MARK_INDEX_PRICE (venue does not deliver the stream; needs the reference/REST pair path)",
+    "native Binance BAR lane (same venue condition)",
+    "DNSE VN v2 (paused by the owner; openapi.dnse.com.vn:443 unreachable)"
+  ]
+}

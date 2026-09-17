@@ -947,3 +947,62 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   767-1265 ms, OKX `MARK_INDEX_PRICE` 590-753 ms, Binance `BAR1m` 27 s,
   projector lag ~180, disk 34%, **no image changed anywhere in this session**.
   Consumer tops out near 51-55 of 60 until the OKX bar owner is decided.
+
+## 29. R1.25: three defects, and two answers that close work instead of opening it (2026-09-17)
+
+**Pinned at:** `dev` `ff34867`, `qdl-v2-python:2.0.17-436171f`
+(`sha256:97d2f593f0a6…`), `qdl-v2-rust:2.0.17-d9adee3`
+(`sha256:4aa578fc0be7…`), 13 of 17 roles recreated from
+`dlv2-r125-rollout-20260917T125950Z`.
+
+- **OKX native bars never reached the canonical stream, and the reason was a
+  cross-lane comparison.** 1,067 quarantine records, every one
+  `StaleGeneration` "connection generation is stale", while raw carried all 70
+  candle channels and provisional candles were filtered correctly. The ingestor
+  runs one socket per feed class, each with its own generation counter: OKX
+  stood at BOOK 53,986, QUOTE 82, TRADE 70, MARK_INDEX 37 and **BAR 23**. The
+  ordering fence compared those as bare integers before it looked at the
+  session. The system proved it itself - the bar lane reconnected at 11:29Z from
+  generation 22 to 23 and the brand-new session was fenced identically. Repaired
+  by scoping the fence to one lane; an unparsable session id keeps the original
+  comparison, so nothing an unknown producer sends becomes newly acceptable.
+  After the repair and a live ingestor reconnect: OKX `bar-1m` **p50 1.19 s,
+  p95 1.67 s**, all five instruments, zero candle quarantines.
+- **The spool failed every write closed while inside its own retention policy.**
+  2,252,414,976 + 966,902,232 + 1,900,544 bytes against a 3 GiB bound: **7,720
+  bytes of headroom**, two hours of `503` to every projector. The WAL frames
+  were already checkpointed - PASSIVE recycles a WAL but never shrinks the file
+  - and one TRUNCATE reclaimed all 922 MB **in 0.08 s with no reader blocking
+  it**. The bound was also tighter than `max_records` permits: 183 partitions ×
+  a 10,064-record window = 1,841,712 rows, and the live cache held 1,301,097
+  rows in 1,114 MB of payload inside a 2,312 MB file. Bound now 6 GiB, derived;
+  WAL reclaimed at its own `journal_size_limit`. Live: 2,378 MB of 6,144 MB,
+  WAL 64 MB.
+- **The backlog could not drain, and the disk was not why.** Consumption had
+  converged on production at **759 events/s** with projectors at 0.49 of a 2.00
+  ceiling, no throttling, and the spool's own volume benchmarking **40,280
+  rows/s** at `synchronous=FULL`. The projector asked Kafka for one record at a
+  time and paid a thread hop for each. Batched: **1,029 events/s**. Honest
+  limit: the thread hop was real but not dominant, and the remaining ceiling is
+  the projector's single event-loop thread. Recorded, not guessed at.
+- **Binance mark price and native klines are a venue condition on this host, not
+  our configuration.** Binance USD-M answers `{"result":null}` to a subscribe
+  for `@markPrice@1s` and `@kline_1m` and then sends **nothing** - 80 s, zero
+  frames - on the same socket where `btcusdt@trade` delivered 353 frames in
+  12 s. Four subscription shapes tried for mark price, all zero. This is the
+  condition `production_catalog.py` already recorded for klines; it holds for
+  mark price too. Neither can be repaired from the WebSocket path.
+- **Binance's seven-second bars are evidence, not caution.** A closed BTCUSDT 1m
+  kline was still changing **5.04 s** after its close boundary, ETHUSDT
+  **3.96 s**. The bar edge's 6 s settlement plus two confirmations is exactly
+  sized for that. Cutting it would publish bars the venue then revises.
+- **The BAR gate was wrong and is now measured.** `max_freshness_ms = 180000` is
+  a tolerance, and the canonical envelope timestamps a bar by its *open* time,
+  so "age of the newest record" can never read below 60 s for a 1m bar. The
+  instrument is publish time minus **close** time, final bars only.
+- **Still open:** `stable_redis` records a compose chain from a deleted
+  worktree; repairing it needs a redis recreate plus the projection cache
+  rebuild runbook, which is not something to run while a backlog is draining.
+  With six partitions, three replicas and range assignment, a drained replica
+  cannot take work from a loaded one - measured mid-drain at projector-1 idle on
+  43 and 26 records while projector-3 carried 1.29M.
