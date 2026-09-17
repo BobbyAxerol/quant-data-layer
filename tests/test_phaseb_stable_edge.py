@@ -713,13 +713,6 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertEqual(len(rows), STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW)
 
         class PhysicalTailSpool:
-            """Serves the window as plain rows and materialises only survivors.
-
-            The query backend reads a retained window to order it by market time
-            and keeps a handful, so it asks for rows and resolves the ones it
-            keeps by event id rather than materialising every row it discards.
-            """
-
             def __init__(self, values):
                 self.values = values
                 self.limits = []
@@ -727,21 +720,6 @@ class StableQueryContractTests(unittest.TestCase):
             def read_tail(self, *, stream, partition_key, limit):
                 self.limits.append((stream, partition_key, limit))
                 return tuple(self.values[-limit:])
-
-            def read_tail_index(self, *, stream, partition_key, limit):
-                self.limits.append((stream, partition_key, limit))
-                return [
-                    (stored.cursor.offset, stored.event.event_id, stored.event.payload)
-                    for stored in self.values[-limit:]
-                ]
-
-            def find_events(self, *, stream, event_ids):
-                wanted = set(event_ids)
-                return {
-                    stored.event.event_id: stored
-                    for stored in self.values
-                    if stored.event.event_id in wanted
-                }
 
         spool = PhysicalTailSpool(rows)
         backend = StableSpoolQueryBackend(
@@ -876,16 +854,14 @@ class StableQueryContractTests(unittest.TestCase):
                 trade_event.source_event_time_ns, bar_event.bar.close_time_ns
             ) + 1_000_000,
         )
-        # The bound is what this pins, not the method that carries it: a latest
-        # read asks for one row, a BAR read asks for the retained window.
         observed_limits = []
-        read_tail_index = self.spool.read_tail_index
+        read_tail = self.spool.read_tail
 
-        def tracked_read_tail_index(**kwargs):
+        def tracked_read_tail(**kwargs):
             observed_limits.append(kwargs["limit"])
-            return read_tail_index(**kwargs)
+            return read_tail(**kwargs)
 
-        self.spool.read_tail_index = tracked_read_tail_index
+        self.spool.read_tail = tracked_read_tail
         self.assertIsNotNone(backend.latest(_requirement(trade)))
         self.assertIsNotNone(backend.history(_requirement(trade, warmup=1)))
         self.assertIsNotNone(backend.latest(_requirement(bar)))

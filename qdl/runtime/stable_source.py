@@ -407,23 +407,14 @@ class StableSpoolQueryBackend:
                 STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
                 max(limit, limit * 512),
             )
-        # A BAR read inspects the whole retained window - 10,064 rows - to order
-        # it by market time, because a history repair legitimately appends older
-        # bars after live ones, and a shared book partition is filtered here for
-        # the same reason. Both discard almost everything they read, so the
-        # window is read as plain rows and only the survivors are materialised.
-        # Measured on the live cache, one 1m partition: materialising the whole
-        # window costs 199.8 ms, the plain read plus one decode per row costs
-        # 63 ms, and both return the same five bars.
-        rows = self.spool.read_tail_index(
+        rows = self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
             limit=physical_limit,
         )
-        selected: list[tuple[int, int, bytes]] = []
-        is_bar = binding.feed is FeedType.BAR
-        for offset, event_id, payload in rows:
-            envelope = market_data_pb2.EventEnvelope.FromString(payload)
+        selected = []
+        for row in rows:
+            envelope = market_data_pb2.EventEnvelope.FromString(row.event.payload)
             # BOOK_SNAPSHOT and BOOK_DELTA intentionally share a durable
             # partition.  Keep the public logical feed exact at the query
             # boundary so a snapshot read can never return a delta (or vice
@@ -432,24 +423,18 @@ class StableSpoolQueryBackend:
                 envelope.WhichOneof("payload") == binding.feed.value.lower()
                 and canonical_payload_interval(envelope) == binding.interval
             ):
-                selected.append((envelope.bar.open_time_ns if is_bar else 0, offset, event_id))
-        if is_bar:
-            selected.sort(key=lambda item: (item[0], item[1]))
+                selected.append(row)
+        if binding.feed is FeedType.BAR:
+            selected.sort(key=lambda item: (
+                market_data_pb2.EventEnvelope.FromString(
+                    item.event.payload
+                ).bar.open_time_ns,
+                item.cursor.offset,
+            ))
         # ``read_tail`` is chronological. Keep only the requested logical
         # tail after filtering the shared physical book partition so callers
         # retain the same bounded/latest semantics as every other feed.
-        tail = selected[-limit:]
-        if not tail:
-            return ()
-        resolved = self.spool.find_events(
-            stream=binding.canonical_stream,
-            event_ids=tuple(event_id for _open, _offset, event_id in tail),
-        )
-        return tuple(
-            resolved[event_id]
-            for _open, _offset, event_id in tail
-            if event_id in resolved
-        )
+        return tuple(selected[-limit:])
 
     def _items(
         self,
