@@ -39809,3 +39809,50 @@ protobuf decode plus projection build runs on a single thread per replica, so
 the replicas sit near half a core each and more CPU cannot be spent. Recorded
 here rather than fixed, because the honest next step is a measurement of where
 that CPU goes, not another guess.
+
+
+<a id="dl-v2-r126-v2018-20260917"></a>
+### R1.26 — what v2.0.18 inherits, with the measurement each item already has
+
+Three items leave v2.0.17 with their evidence already gathered. None is a guess.
+
+**1. QUOTE streaming delivers no batch.** The data is fresh and the request path
+answers: delivery lag p50 0.20-0.25 s, durable cache age 0.7-1.4 s, snapshot read
+7.5 ms, all inside a 2,000 ms tolerance. What fails is the subscription: the
+consumer opens a gRPC stream and raises `SilentSliceError` after 60 s without a
+batch (`services/market_data/data_layer_bridge.py:457`). Ten endpoints. The lead
+worth following first: QUOTE and MARK_INDEX_PRICE are the two `LATEST_STATE`
+families and the only two failing, while all three `LOSSLESS` families are
+silent - and v2.0.16's R1.8 changed exactly the latest-state buffer. The first
+step is a reproduction that opens one QUOTE subscription and observes the
+gateway side, not a patch.
+
+**2. BAR warmup reads a whole window to return five bars.** Request latency
+117-156 ms at v2.0.16 against 390-475 ms now, and the cause is measured:
+`read_tail` materialises a Cursor, a decoded header mapping and a dataclass per
+row - 1 row 0.0 ms, 1,000 rows 17.9 ms, 10,064 rows **199.8 ms** - while
+`stable_source.history` must inspect the whole retained window for any BAR
+requirement, because a history repair legitimately appends older bars after live
+ones. The windows are full now where they were not before.
+
+The shortcut was tried and it failed: reading the window as plain rows and
+resolving only the survivors through `find_events` passed 1,563 tests and then
+broke every BAR warmup in production with `warmup batch item failed inside the
+bounded executor`. It is reverted. The real fix is for the spool to know a bar's
+market time without decoding it - a column and an index on the durable write
+path, with a migration - and it needs a test that runs inside the executor the
+query path actually uses, because a test double and a spy did not catch a total
+outage of the endpoint.
+
+**3. `stable_redis` cannot be recreated from its own chain.** The runbook accepts
+one compose override against a thirteen-file chain and deletes the durable spool.
+Consolidating those thirteen overrides into one file is the prerequisite, and it
+is worth doing for its own sake: that chain is the origin of the
+config-generation drift class in ledger entry 28.
+
+**Also carried:** OKX `MARK_INDEX_PRICE` sits at the edge of its tolerance
+because the venue's index leg updates every 2.1-2.7 s against a 2,000 ms limit -
+a contract question, not a defect; Binance `MARK_INDEX_PRICE` and any native
+Binance BAR lane need the reference/REST pair path, because the venue answers the
+subscription and sends nothing; and with six partitions, three replicas and range
+assignment a drained replica cannot take work from a loaded one.
