@@ -487,6 +487,39 @@ class SQLiteDurableSpool:
             ).fetchall()
         return [self._stored_event(row) for row in reversed(rows)]
 
+    def read_tail_index(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        limit: int = 100,
+    ) -> list[tuple[int, bytes, bytes]]:
+        """Return (logical_offset, event_id, payload) for a bounded window.
+
+        `read_tail` materialises a StoredEvent per row - a Cursor, a decoded
+        header mapping, a dataclass - which costs far more than the rows
+        themselves: measured on the live cache, 10,064 rows take 199.8 ms that
+        way and scale linearly (1,000 rows, 17.9 ms). A caller that has to
+        inspect a whole retained window only to select a handful from it - a BAR
+        history read orders the window by market time - pays that for every row
+        it discards. This returns the three fields such a caller needs and lets
+        it materialise only what it keeps, through `find_events`.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        if limit <= 0 or limit > max_tail_rows:
+            raise ValueError(f"limit must be between 1 and {max_tail_rows}")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT logical_offset, event_id, payload FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC LIMIT ?
+                """,
+                (stream, partition_key, limit),
+            ).fetchall()
+        return [(int(row[0]), bytes(row[1]), bytes(row[2])) for row in reversed(rows)]
+
     def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
         with self._lock:
             row = self._connection.execute(
