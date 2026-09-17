@@ -74,7 +74,13 @@ x-kafka: &kafka
     start_period: 20s
   # Coordinator recovery exceeded 512 MiB despite a 256 MiB JVM heap. Keep
   # native/direct-buffer headroom bounded without enlarging the Java heap.
-  mem_limit: 768m
+  # R1.25 (2026-09-17): at 768 MiB the kernel memcg OOM-killer killed kafka1's
+  # JVM twice in 70 s once raw ingest reached ~930 rec/s (anon-rss 391 MB, the
+  # rest page cache and mmap'd segment indexes, which the memcg charges). Docker
+  # showed oom_killed=false because PID 1 is the entrypoint script, so the
+  # crash loop was invisible to every health check. 1536 MiB is 2x the
+  # measured working set at 2x the morning's load; the heap stays 256 MiB.
+  mem_limit: 1536m
   cpus: 0.75
 
 x-stable-env: &stable-env
@@ -170,7 +176,9 @@ services:
   kafka1:
     <<: *kafka
     # DL-V2 R1.5 measured allocation: 50% of its 0.75 ceiling with bursts to 69% across the quorum.
-    cpus: 1.00
+    # R1.25: 1.00 left kafka1 at 97% of a core and 18.6% throttled while its
+    # peers ran 1.25; parity with kafka2/kafka3.
+    cpus: 1.25
     hostname: kafka1
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
