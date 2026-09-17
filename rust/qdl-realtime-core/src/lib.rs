@@ -1617,7 +1617,10 @@ mod tests {
             native_symbol: binding.native_symbol.clone(),
             native_channel: binding.native_channel.clone(),
             subscription_id: "subscription-1".into(),
-            source_session_id: format!("session-{generation}"),
+            // Production shape: <runtime>-<shard>-<generation>-<nanos>. A test
+            // identity that does not carry it exercises a comparison the
+            // running system never makes.
+            source_session_id: format!("qdl-test-lane-001-{generation}-1700000000000000000"),
             connection_generation: generation,
             lease_epoch: 7,
             authority_revision: 1,

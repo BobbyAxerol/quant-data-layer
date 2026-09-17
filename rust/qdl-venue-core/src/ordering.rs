@@ -64,16 +64,24 @@ fn session_lane(session_id: &str) -> Option<&str> {
 /// Whether two sessions' generation counters are comparable at all.
 ///
 /// Fencing a lower generation is how a superseded connection's late frames are
-/// rejected, and every reconnect of one lane does produce a higher number. Two
-/// *different* lanes carry unrelated counters: OKX's business bar lane was on
-/// generation 23 while its public book lane was on 53,986, and comparing those
-/// as bare integers quarantined every closed candle for hours on 2026-09-17.
-/// Only a positively identified different lane lifts the fence; anything this
-/// cannot parse keeps the original comparison.
+/// rejected, and every reconnect of one lane does produce a higher number. That
+/// only means anything inside one lane. Two examples from 2026-09-17, both of
+/// which quarantined every closed OKX candle for hours: the business bar lane
+/// sat on generation 23 while the public book lane was on 53,986, and the bar
+/// edge writes REST repair rows under `qdl-v2-stable-okx-rest-r1-g<nanos>` with
+/// a *nanosecond timestamp* where a connection counter belongs - 1.79e18 against
+/// the ingestor's 25.
+///
+/// So an identity this cannot parse is not a lane that might match: it is a
+/// different producer whose numbering means something else entirely, and
+/// comparing the two is meaningless rather than conservative. Only two
+/// positively identified identities in the same lane can fence each other, and
+/// a superseded connection always carries one, because the ingestor is what
+/// writes them.
 fn same_session_lane(session_id: &str, stage_session_id: &str) -> bool {
     match (session_lane(session_id), session_lane(stage_session_id)) {
         (Some(lane), Some(stage_lane)) => lane == stage_lane,
-        _ => true,
+        _ => false,
     }
 }
 
@@ -244,13 +252,47 @@ mod tests {
     }
 
     #[test]
-    fn an_unparsable_session_identity_keeps_the_original_fence() {
+    fn an_unidentifiable_producer_cannot_fence_anything() {
         assert_eq!(super::session_lane("session-7"), None);
         assert_eq!(super::session_lane(""), None);
         assert_eq!(super::session_lane("okx-business-001-x-123"), None);
-        // Neither side is identifiable, so the bare generation comparison stands.
-        assert!(super::same_session_lane("session-7", "session-9"));
-        assert!(super::same_session_lane("", ""));
+        assert_eq!(
+            super::session_lane("qdl-v2-stable-okx-rest-r1-g1789653808007759187"),
+            None
+        );
+        assert!(!super::same_session_lane("session-7", "session-9"));
+        assert!(!super::same_session_lane("", ""));
+    }
+
+    #[test]
+    fn a_rest_repair_writer_does_not_fence_the_live_ingestor() {
+        // The bar edge publishes REST repair rows with a nanosecond timestamp
+        // where a connection generation belongs. One of those on a bar key used
+        // to fence every subsequent native candle - 25 against 1.79e18 - for as
+        // long as the core process lived.
+        let mut tracker = OrderingTracker::new(8);
+        assert_eq!(
+            tracker.observe_with_policy(
+                "btc/okx_bar/okx-swap-btcusdt-bar-1m",
+                "qdl-v2-stable-okx-rest-r1-g1789653808007759187",
+                1_789_653_808_007_759_187,
+                1,
+                vec![1],
+                SequencePolicy::None,
+            ),
+            SequenceDecision::SessionStarted
+        );
+        assert_eq!(
+            tracker.observe_with_policy(
+                "btc/okx_bar/okx-swap-btcusdt-bar-1m",
+                "okx-business-001-25-1789651475122920508",
+                25,
+                2,
+                vec![2],
+                SequencePolicy::None,
+            ),
+            SequenceDecision::SessionStarted
+        );
     }
 
     #[test]
@@ -335,34 +377,34 @@ mod tests {
     fn duplicate_gap_out_of_order_and_session_reset_are_distinct() {
         let mut tracker = OrderingTracker::new(8);
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 10, vec![1]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1]),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 11, vec![2]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
             SequenceDecision::Accepted
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 11, vec![2]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
             SequenceDecision::Duplicate
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 13, vec![3]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 13, vec![3]),
             SequenceDecision::Gap {
                 expected: 12,
                 actual: 13
             }
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 9, vec![4]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 9, vec![4]),
             SequenceDecision::OutOfOrder
         );
         assert_eq!(
-            tracker.observe("btc", "s2", 2, 1, vec![5]),
+            tracker.observe("btc", "qdl-test-lane-001-2-1700000000000000001", 2, 1, vec![5]),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 14, vec![6]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 14, vec![6]),
             SequenceDecision::StaleSession
         );
     }
@@ -371,18 +413,18 @@ mod tests {
         let mut monotonic = OrderingTracker::new(8);
         assert_eq!(
             monotonic
-                .observe_with_policy("trade", "s1", 1, 10, vec![1], SequencePolicy::Monotonic,),
+                .observe_with_policy("trade", "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Monotonic,),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
             monotonic
-                .observe_with_policy("trade", "s1", 1, 15, vec![2], SequencePolicy::Monotonic,),
+                .observe_with_policy("trade", "qdl-test-lane-001-1-1700000000000000000", 1, 15, vec![2], SequencePolicy::Monotonic,),
             SequenceDecision::Accepted
         );
         let mut none = OrderingTracker::new(8);
-        none.observe_with_policy("bar", "s1", 1, 60, vec![1], SequencePolicy::None);
+        none.observe_with_policy("bar", "qdl-test-lane-001-1-1700000000000000000", 1, 60, vec![1], SequencePolicy::None);
         assert_eq!(
-            none.observe_with_policy("bar", "s1", 1, 1, vec![2], SequencePolicy::None),
+            none.observe_with_policy("bar", "qdl-test-lane-001-1-1700000000000000000", 1, 1, vec![2], SequencePolicy::None),
             SequenceDecision::Accepted
         );
     }
@@ -394,7 +436,7 @@ mod tests {
         assert_eq!(
             tracker.observe_staged(
                 &mut discarded,
-                "s1",
+                "qdl-test-lane-001-1-1700000000000000000",
                 1,
                 10,
                 vec![1],
@@ -405,7 +447,7 @@ mod tests {
         assert_eq!(
             tracker.observe_staged(
                 &mut discarded,
-                "s1",
+                "qdl-test-lane-001-1-1700000000000000000",
                 1,
                 11,
                 vec![2],
@@ -416,7 +458,7 @@ mod tests {
 
         let mut retry = tracker.stage("btc");
         assert_eq!(
-            tracker.observe_staged(&mut retry, "s1", 1, 10, vec![1], SequencePolicy::Contiguous,),
+            tracker.observe_staged(&mut retry, "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Contiguous,),
             SequenceDecision::SessionStarted
         );
     }
@@ -426,32 +468,32 @@ mod tests {
         let mut tracker = OrderingTracker::new(8);
         let mut stage = tracker.stage("btc");
         assert_eq!(
-            tracker.observe_staged(&mut stage, "s1", 1, 10, vec![1], SequencePolicy::Contiguous,),
+            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 10, vec![1], SequencePolicy::Contiguous,),
             SequenceDecision::SessionStarted
         );
         assert_eq!(
-            tracker.observe_staged(&mut stage, "s1", 1, 11, vec![2], SequencePolicy::Contiguous,),
+            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2], SequencePolicy::Contiguous,),
             SequenceDecision::Accepted
         );
         assert_eq!(
-            tracker.observe_staged(&mut stage, "s1", 1, 11, vec![2], SequencePolicy::Contiguous,),
+            tracker.observe_staged(&mut stage, "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2], SequencePolicy::Contiguous,),
             SequenceDecision::Duplicate
         );
         tracker.commit_stage(stage);
 
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 11, vec![2]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 11, vec![2]),
             SequenceDecision::Duplicate
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 13, vec![3]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 13, vec![3]),
             SequenceDecision::Gap {
                 expected: 12,
                 actual: 13,
             }
         );
         assert_eq!(
-            tracker.observe("btc", "s1", 1, 12, vec![4]),
+            tracker.observe("btc", "qdl-test-lane-001-1-1700000000000000000", 1, 12, vec![4]),
             SequenceDecision::Accepted
         );
     }
