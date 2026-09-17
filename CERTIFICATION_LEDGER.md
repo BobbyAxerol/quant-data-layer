@@ -1006,3 +1006,46 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   With six partitions, three replicas and range assignment, a drained replica
   cannot take work from a loaded one - measured mid-drain at projector-1 idle on
   43 and 26 records while projector-3 carried 1.29M.
+
+## 30. Entry 29 corrected: the OKX fence was losing to the bar edge, not to another connection (2026-09-17)
+
+**Pinned at:** `dev` `1acf87a`, `qdl-v2-rust:2.0.17-1acf87a`, three cores and two
+ingestors recreated from `dlv2-r125-rollout-20260917T125950Z`.
+
+- **What entry 29 got wrong.** It named cross-lane connection generations as the
+  cause. That repair is real and its tests hold, but it was not the cause: after
+  it shipped, three of five OKX instruments published and ETH and SOL kept being
+  quarantined on live frames carrying the single business session's generation
+  25, while neither the raw nor the canonical stream contained any OKX
+  generation above 25 at all. The configurations of the failing and the working
+  instruments were identical.
+- **How the real cause was found.** Not by a third hypothesis. The rejection was
+  made self-describing - it now logs the tracked session and generation it
+  compared against - and answered on the first occurrence:
+  `tracked_session qdl-v2-stable-okx-rest-r1-g1789653808007759187`,
+  `tracked_generation 1789653808007759187`.
+- **The cause.** The bar edge publishes REST bootstrap and repair rows carrying a
+  **nanosecond timestamp** where a connection generation belongs. One such row on
+  a bar partition fences every native candle behind it for the life of the core
+  process: 25 never exceeds 1.79e18. The timestamp decodes to **14:03:28Z**, the
+  minute the bar edge was recreated in this session's rollout and bootstrapped
+  its history; quarantines began at 14:20. The 09:16 outage has the same shape -
+  the bar edge was given a new state path at 07:53.
+- **Why the first repair let it through.** When it could not parse an identity it
+  kept the bare comparison and called that conservative. It is the opposite: an
+  unparsable identity is a different producer whose numbering means something
+  else, so comparing the two is meaningless rather than careful. Only two
+  positively identified identities in the same lane may fence each other.
+- **Why the suite never caught it.** The test helpers built session identities
+  (`s1`, `session-1`) the running system never emits, so the tests exercised a
+  comparison production never makes. They now use the production shape; two
+  tests went red on the correct behaviour and were fixed rather than the code.
+- **Proof.** After rollout: 10 of 10 `bar-1m` endpoints publishing, 8 closed bars
+  each over eight minutes, OKX from `okx-business-001-26` and Binance from the
+  bar edge on the same partitions, **zero** stale-generation rejections across
+  all three cores, consumer unhealthy slices 40 → 8 of 60.
+- **The repair that proved it.** Republishing 1,074 missing bars through the
+  documented repair tool re-poisoned every OKX bar partition within minutes.
+  That is the clearest statement of the defect available: the sanctioned repair
+  path and the native path could not coexist. 1,106 rows are now back and the
+  gap is zero.

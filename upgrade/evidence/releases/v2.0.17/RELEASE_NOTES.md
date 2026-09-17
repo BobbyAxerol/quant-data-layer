@@ -10,20 +10,33 @@ each proven against the running stack before it was changed.
 ### What was wrong
 
 **OKX bars never reached the canonical stream.** Every closed candle was
-quarantined `StaleGeneration` - 845 records between 09:16Z and 11:00Z on
-2026-09-17, then 222 more from a session that had only just opened - while
-provisional candles were filtered correctly and the raw stream carried all 70
-candle channels from all five instruments. The spool's newest OKX `bar-1m`
+quarantined `StaleGeneration` - 1,183 records across two windows on 2026-09-17 -
+while provisional candles were filtered correctly and the raw stream carried all
+70 candle channels from all five instruments. The spool's newest OKX `bar-1m`
 record was 7,158 s old.
 
-The ingestor opens one socket per feed class and each keeps its own connection
-generation counter (`partition_feed_lanes`). OKX bars are the first feed to
-arrive on a second lane: the business socket stood at generation 23 while the
-same instruments' public book socket had reconnected 53,986 times. The ordering
-fence compared those counters as bare integers *before* it looked at the
-session, so the lower number read as superseded and stayed that way. The proof
-is that the lane reconnected on its own at 11:29Z, and the brand-new session at
-generation 23 was fenced exactly like the old one at 22.
+The cause was not another connection. It was the bar edge:
+
+```
+partition_key      …/okx_bar/okx-swap-bnb-usdt-swap-bar-1m-primary-v2
+frame_session      okx-business-001-25-…          frame_generation   25
+tracked_session    qdl-v2-stable-okx-rest-r1-g1789653808007759187
+tracked_generation 1789653808007759187
+```
+
+The bar edge publishes REST bootstrap and repair rows carrying a **nanosecond
+timestamp** where a connection generation belongs. One such row on a bar
+partition fences every native candle behind it for the life of the core
+process, because 25 will never exceed 1.79e18. That timestamp decodes to
+14:03:28Z, the minute the bar edge was recreated in this session's rollout and
+bootstrapped its history; the quarantines began at 14:20. The first outage has
+the same shape - the bar edge was given a new state path at 07:53 and the
+candles died at 09:16.
+
+Two hypotheses fitted the partial evidence before this one and neither survived
+contact with it, so the rejection was made self-describing rather than guessed
+at a third time: a stale-generation rejection now names the tracked session and
+generation it compared against. That diagnostic is part of this release.
 
 **The spool failed every write closed while inside its own retention policy.**
 From 10:09:06Z the gateway answered `bridge physical storage bound would be
@@ -45,13 +58,21 @@ record at a time and paid a thread hop for each.
 
 | Slice | Change |
 |---|---|
-| R1.25.1 | connection generations are compared within one provider lane; an unparsable session id keeps the original comparison |
-| R1.25.2 | the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop |
-| R1.25.3 | the spool reclaims a WAL that outgrew its declared `journal_size_limit`, and reclaims again before the physical bound refuses a write |
-| R1.25.4 | the physical bound is sized from the rows retention permits, not chosen |
-| R1.25.5 | the canonical sink retries a dead pooled connection once before failing over to the passive peer |
-| R1.25.6 | Compose records the broker memory bound raised live after the kernel memcg killed brokers at 768m |
-| R1.25.7 | the drift verifier seeks the spool by key instead of scanning it, and watches the bound that failed writes closed |
+| R1.25.1 | a producer the ordering fence cannot identify may not fence the live ingestor; generations are only comparable inside one identified lane |
+| R1.25.2 | a stale-generation rejection logs both sides of the comparison |
+| R1.25.3 | the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop |
+| R1.25.4 | the spool reclaims a WAL that outgrew its declared `journal_size_limit`, and reclaims again before the physical bound refuses a write |
+| R1.25.5 | the physical bound is sized from the rows retention permits, not chosen |
+| R1.25.6 | the canonical sink retries a dead pooled connection once before failing over to the passive peer |
+| R1.25.7 | Compose records the broker memory bound raised live after the kernel memcg killed brokers at 768m |
+| R1.25.8 | the drift verifier seeks the spool by key instead of scanning it, and watches the bound that failed writes closed |
+| R1.25.9 | an endpoint report that separates delivery lag, durable-cache age and the contract, per instrument, with the sample count behind every number |
+
+The test helpers built synthetic session identities (`s1`, `session-1`) that the
+running system never emits, which is why the suite stayed green while production
+did not. They now use the production shape, and 1,106 missing bars were
+republished through `scripts/repair_stable_final_bar_history.py` - 1,014 of them
+OKX history the fence had been swallowing since 09:16Z.
 
 ### What this release does not change
 

@@ -10,7 +10,7 @@
     "inherited_v2_primary_product_count": 299
   },
   "delta": {
-    "defect": "Three independent defects. (1) Every closed OKX candle was quarantined StaleGeneration and no OKX bar ever reached md.canonical.v2: the ingestor runs one socket per feed class with its own connection generation counter, and the ordering fence compared counters from different lanes as bare integers before it looked at the session. (2) The durable spool failed every canonical write closed for two hours at a 3 GiB physical bound while still inside its own row policy, because PASSIVE checkpoints recycle a WAL without shrinking the file. (3) The 3.8M event backlog that followed could not drain: consumption had converged on production at 759 events/s with projectors at 0.49 of a 2.00 CPU ceiling and the volume able to absorb 40,280 rows/s.",
+    "defect": "Three independent defects. (1) No OKX bar ever reached md.canonical.v2: the bar edge publishes REST bootstrap and repair rows carrying a nanosecond timestamp where a connection generation belongs, and one such row on a bar partition fences every native candle behind it for the life of the core process - the ingestor's generation 25 can never exceed 1.79e18. (2) The durable spool failed every canonical write closed for two hours at a 3 GiB physical bound while still inside its own row policy, because PASSIVE checkpoints recycle a WAL without shrinking the file. (3) The 3.8M event backlog that followed could not drain: consumption had converged on production at 759 events/s with projectors at 0.49 of a 2.00 CPU ceiling and the volume able to absorb 40,280 rows/s.",
     "changed_services": [
       "rust_core",
       "rust_core_2",
@@ -27,69 +27,56 @@
       "binance_bar_edge"
     ],
     "slices": {
-      "R1.25.1": "connection generations are compared within one provider lane; an unparsable session id keeps the original comparison",
-      "R1.25.2": "the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop",
-      "R1.25.3": "the spool reclaims a WAL that outgrew its declared journal_size_limit, and reclaims again before the physical bound refuses a write",
-      "R1.25.4": "the physical bound is sized from the rows retention permits",
-      "R1.25.5": "the canonical sink retries a dead pooled connection once before failing over",
-      "R1.25.6": "Compose records the broker memory bound raised live after kernel memcg kills at 768m",
-      "R1.25.7": "the drift verifier seeks the spool by key instead of scanning it, and watches the physical bound"
+      "R1.25.1": "a producer the ordering fence cannot identify may not fence the live ingestor; generations are only comparable inside one identified lane",
+      "R1.25.2": "a stale-generation rejection logs both sides of the comparison, so the next occurrence is evidence rather than a hypothesis",
+      "R1.25.3": "the projector fetches a bounded batch in one broker call; brokers without it keep the original fill loop",
+      "R1.25.4": "the spool reclaims a WAL that outgrew its declared journal_size_limit, and reclaims again before the physical bound refuses a write",
+      "R1.25.5": "the physical bound is sized from the rows retention permits",
+      "R1.25.6": "the canonical sink retries a dead pooled connection once before failing over",
+      "R1.25.7": "Compose records the broker memory bound raised live after kernel memcg kills at 768m",
+      "R1.25.8": "the drift verifier seeks the spool by key instead of scanning it, and watches the physical bound",
+      "R1.25.9": "an endpoint report that separates delivery lag, durable-cache age and the contract, per instrument, with the sample count each number was taken over"
     },
     "okx_bar_repair": {
+      "root_cause": {
+        "evidence": {
+          "partition_key": "\u2026/okx_bar/okx-swap-bnb-usdt-swap-bar-1m-primary-v2",
+          "frame_session": "okx-business-001-25-\u2026",
+          "frame_generation": 25,
+          "tracked_session": "qdl-v2-stable-okx-rest-r1-g1789653808007759187",
+          "tracked_generation": 1789653808007759187
+        },
+        "reading": "the tracked generation is a nanosecond timestamp, not a connection counter; it decodes to 2026-09-17T14:03:28Z, the minute the bar edge was recreated in this session's rollout and bootstrapped its history, and the quarantines began at 14:20. The first outage has the same shape: the bar edge was given a new state path at 07:53 and the candles died at 09:16",
+        "how_it_was_found": "two hypotheses fitted the partial evidence and neither survived contact with it. The rejection was made self-describing instead: it now names the tracked session and generation it compared against"
+      },
       "quarantined_before": {
-        "records": 1067,
+        "records": 1183,
         "reason": "StaleGeneration",
-        "safe_summary": "connection generation is stale",
-        "window": "2026-09-17T09:16:00Z..12:01:01Z",
-        "instruments": 5,
+        "windows": [
+          "2026-09-17T09:16:00Z..12:01:01Z",
+          "2026-09-17T14:20:01Z..15:28Z"
+        ],
         "spool_newest_bar_1m_age_seconds": 7158
       },
-      "lane_generations_at_diagnosis": {
-        "okx_book": 53986,
-        "okx_quote": 82,
-        "okx_trade": 70,
-        "okx_mark_index": 37,
-        "okx_bar": 23
-      },
-      "proof_the_fence_was_cross_lane": "the bar lane reconnected on its own at 11:29Z from generation 22 to 23 and the brand-new session was quarantined identically",
       "after": {
-        "measured_at": "2026-09-17T13:26:08Z..13:30:44Z",
-        "method": "publish time minus bar close time on md.canonical.v2, final bars only",
-        "okx_bar_1m_p50_seconds": 1.19,
-        "okx_bar_1m_p95_seconds": 1.67,
-        "okx_bar_15m_p50_seconds": 0.87,
-        "okx_bar_30m_p50_seconds": 1.12,
-        "instruments_publishing": 5,
-        "candle_stale_generation_quarantines_since_repair": 0,
-        "measured_twice": [
-          {
-            "window": "2026-09-17T13:26:08Z..13:30:44Z",
-            "canonical_records": 150000,
-            "final_bars": 90,
-            "okx_bar_1m_p50_seconds": 1.19,
-            "okx_bar_1m_p95_seconds": 1.67
-          },
-          {
-            "window": "2026-09-17T14:22:45Z..14:27:31Z",
-            "canonical_records": 220000,
-            "final_bars": 70,
-            "okx_bar_1m_p50_seconds": 1.01,
-            "okx_bar_1m_p95_seconds": 1.56,
-            "okx_bar_3m_p50_seconds": 0.86,
-            "okx_bar_5m_p50_seconds": 1.29
-          }
-        ],
-        "binance_same_windows": {
-          "bar_1m_p50_seconds": 8.06,
-          "bar_1m_p95_seconds": 8.85,
-          "path": "provider REST bar edge, venue-constrained"
+        "measured_at": "2026-09-17T15:31:14Z..15:39:15Z",
+        "final_bars_per_instrument": 8,
+        "instruments_publishing": 10,
+        "okx_bar_source_session": "okx-business-001-26-\u2026 (native ingestor)",
+        "binance_bar_source_session": "qdl-v2-stable-binance-rest-r1-\u2026 (bar edge, by design)",
+        "stale_generation_log_lines_after_rollout": 0,
+        "note": "the bar edge's REST rows and the native ingestor's frames now coexist on one partition"
+      },
+      "history_repair": {
+        "tool": "scripts/repair_stable_final_bar_history.py",
+        "rows_published": 1106,
+        "missing_before": {
+          "okx": 1014,
+          "binance": 60,
+          "residue_after_first_pass": 32
         },
-        "reaches_the_spool": {
-          "at": "2026-09-17T14:33Z",
-          "okx_bar_1m_partitions_present": 4,
-          "newest_bar_close_age_seconds": 1669.6,
-          "note": "OKX bars now reach the durable spool, which they never did before this release; their age there tracks the projector backlog and shrinks with it. Binance bars are fresh at 49.6s because the bar edge posts to the gateway directly rather than through Kafka"
-        }
+        "missing_after": 0,
+        "note": "the first pass itself re-poisoned every OKX bar partition, which is how the root cause became visible: REST repair rows are exactly what the fence was losing to"
       }
     },
     "spool_bound_repair": {
