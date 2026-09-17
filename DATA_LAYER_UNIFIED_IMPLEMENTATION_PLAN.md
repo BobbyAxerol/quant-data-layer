@@ -39776,3 +39776,36 @@ all five symbols publish across every interval.
 - `stable_redis` still records a compose chain from a deleted worktree.
 - `verify_runtime_generations.py` still scans the spool with `GROUP BY` for its
   bar-owner check.
+
+<a id="dl-v2-r125-drain-20260917"></a>
+#### R1.25 — draining the stall's backlog, and what it exposed
+
+The two-hour gateway stall left 3.8M canonical events unwritten. Draining them
+exposed two things the stack had never been pushed hard enough to show.
+
+**The physical bound was tighter than the retention policy.** `max_records`
+allows 1,841,712 rows - 183 physical partitions at a 10,064-record window - and
+the live cache held 1,301,097 rows in 1,114 MB of payload inside a 2,312 MB
+file. Refilling the backlog would have reached roughly 93% of a 3 GiB ceiling
+before retention trimmed anything, so the repair would have walked back into the
+outage it was repairing. The bound is now 6 GiB, derived from the rows the
+policy permits rather than chosen; the min-free-disk reserve is what protects
+the 296 GB host.
+
+**A replica that finishes cannot help the ones that have not.** With six
+partitions, three replicas and the default range assignment, the partition pairs
+are fixed: `{p0,p1}`, `{p2,p3}`, `{p4,p5}`. Measured mid-drain: projector-1 had
+drained p0 and p1 to 43 and 26 records and sat at 0.13 of a CPU while
+projector-2 carried 833k and projector-3 carried 1.29M. Two thirds of the
+available parallelism, and the drain is gated by whichever replica holds the
+worst pair. This is not a defect to fix inside the release, but it is the reason
+a backlog takes as long as it does, and a cooperative or round-robin assignment
+is the change that would let a finished replica take work.
+
+**What the batch fetch did and did not buy.** Total consumption went from
+759 events/s to roughly 1,000/s - the thread hop per record was real, but it was
+not the dominant cost. The remaining ceiling is the projector's own event loop:
+protobuf decode plus projection build runs on a single thread per replica, so
+the replicas sit near half a core each and more CPU cannot be spent. Recorded
+here rather than fixed, because the honest next step is a measurement of where
+that CPU goes, not another guess.
