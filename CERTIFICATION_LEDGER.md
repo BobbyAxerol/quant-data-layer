@@ -830,3 +830,60 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   `min.insync.replicas=2` for.
 - **Pinned at:** `qdl-v2-python:2.0.16-df4b8aa`, `qdl-v2-rust:2.0.15-c5a5be0`,
   `qdl-v2-python:2.0.15-5130f6f` on the bar edge. No image changed.
+
+---
+
+## 27. Age measured stage by stage; the projector was not the dominant term (2026-09-17)
+
+- **The serving path is free.** Across fourteen realtime endpoints the data
+  layer's reported freshness and the consumer's independently computed durable
+  age agree within **3-4 ms**. The age is baked in before anything serves it.
+- **Stage delays**, lag over that stage's own rate: `rust_core` raw->canonical
+  **0.89 s**, projector canonical->spool **0.46 s**, query spool->consumer
+  0.003 s. **`rust_core` is four times the projector and is the dominant term.**
+- **R1.22:** `QDL_STABLE_PROJECTOR_BATCH_WAIT_SECONDS` `0.10 -> 0.02`. Projector
+  queue delay **0.46 -> 0.22 s, -52%, at a load 27% higher** (493 vs 387 rec/s);
+  lag 177 -> 108. The fivefold rise in drains cost nothing: projector throttle
+  went *down* 4.0% -> 1.7% and 4.3% -> 1.8%, and `stream_v2_active`, which takes
+  every round trip, throttles 0.0%.
+- **Attributed honestly:** that change alone moved consumer-visible age
+  12,205 -> 11,488 ms, **-6%, inside the noise** of two 20-iteration samples an
+  hour apart. It is kept for the measured queue improvement at lower CPU cost,
+  not for the age number.
+- **Whole session, 05:04 -> 06:53:** event age p50 summed over fourteen
+  endpoints **12,943 -> 10,460 ms, -19%**, improving on 13 of 14; request p50
+  `3,269 -> 1,353 ms`; request p95 `6,767 -> 2,265 ms`; rejections 5/78 -> 2/80,
+  the two remaining being the known Binance `MARK_INDEX_PRICE`; OHLCV 20/20.
+  **Limit of this figure:** it bundles the CPU rebalance, the batch wait and the
+  broker recreates across two hours of differing market conditions. The
+  direction is consistent on 13 of 14 endpoints; the attribution is not
+  separable beyond the isolated -6% above.
+- **R1.18 landed:** `parse_canonical_progress` and `steady_state_lag_seconds`
+  with 19 new tests; the convergence gate and its existing tests are untouched,
+  and both readers now carry docstrings saying what they are and are not for.
+  The new measure returns None rather than a number for a stalled projector, a
+  group reset, a mid-interval rebalance or a non-positive interval.
+- **Log rotation live on 6 of 17 roles** - three projectors, three brokers,
+  about 95% of log volume. **First measured broker restart on this stack:** each
+  recreate left a projector backlog of 3,458-20,200 that drained in about three
+  minutes, ISR returned to 3 on all 154 partitions, and the consumer fell to a
+  worst of 34/60 ready before returning to 60/60 about five minutes after the
+  last broker. `v1_fallback_count` and `v2_error_count` stayed 0: it degraded,
+  it never failed over.
+- **Trap caught before it fired.** The compose override chain recorded in the
+  container labels is **incomplete** - it omits the R1 stream and query image
+  overrides, so `up -d` against it resolves stream and query to
+  `sha256:8bd10da6...` (2.0.12) and moves the bar edge. Every recreate went
+  through a packet pinning all 17 roles to their running digest; 0 of 17
+  drifted, before or after.
+- **Disk:** `150 -> 96 GB`, `52% -> 34%`, free 194 GB. Build cache
+  `13.52 -> 4.85 GB`, six orphaned volumes removed.
+- **Suite:** 1,514 tests, 0 failures, 7 skipped, 405 s in
+  `qdl-v2-python:2.0.16-df4b8aa`.
+- **Pinned at:** no image changed. All seven python roles
+  `qdl-v2-python:2.0.16-df4b8aa`, bar edge `2.0.15-5130f6f`, rust
+  `qdl-v2-rust:2.0.15-c5a5be0`, brokers `apache/kafka@sha256:9516fb76`.
+  Rollback packet `~/.local/state/qdl-v2/dlv2-r122-projector-age-20260917T062751Z/`.
+- **Next lever, already measured:** `rust_core` at 0.89 s is not CPU-starved
+  (2.0% throttle, 0.10-0.45 cores), so the cost is a batching or flush interval
+  in the Rust core. Not opened in this session rather than left half-done.

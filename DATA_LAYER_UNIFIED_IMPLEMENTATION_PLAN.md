@@ -39170,3 +39170,101 @@ alone would activate it for 95% of the volume today and is tolerated by
 `ReplicationFactor 3` / `min.insync.replicas 2`; not done, because restarting a
 stack certified an hour earlier needs a better reason than 190 MB a day against
 178 GB free.
+
+---
+
+<a id="dl-v2-r122-age-20260917"></a>
+### R1.22 — age, measured stage by stage (2026-09-17)
+
+The owner's target moved from p95 to **event age**, so the first job was to find
+out where age actually comes from rather than assume.
+
+**The serving path is free.** Across fourteen realtime endpoints the data
+layer's own reported freshness and the consumer's independently computed durable
+age agree within **3-4 ms**. Whatever the age is, it is already baked into the
+record before anything serves it.
+
+**Stage measurements**, lag divided by that stage's own consumption rate:
+
+| stage | weighted delay |
+|---|---|
+| rust_core, raw -> canonical | **0.89 s** |
+| projector, canonical -> spool (before) | 0.46 s |
+| projector, canonical -> spool (after R1.22) | **0.22 s** |
+| query, spool -> consumer | 0.003 s |
+
+#### What was changed
+
+`QDL_STABLE_PROJECTOR_BATCH_WAIT_SECONDS` `0.10 -> 0.02`. The projector waits to
+accumulate a batch before paying one HTTP round trip to the gateway, one durable
+write and one checkpoint. Fitting two operating points to
+`cycle = (wait + fixed) / (1 - p x rate)` gave `fixed ~ 0.16 s` and
+`p ~ 3.2 ms/record`, so the wait is the only free term.
+
+Result, measured cleanly at steady state: weighted queue delay
+**0.46 s -> 0.22 s, a 52% reduction, at a load 27% higher** (493 vs 387 rec/s).
+Lag total 177 -> 108.
+
+**The five-fold increase in drains cost nothing.** Projector throttle went
+*down*, 4.0% -> 1.7% and 4.3% -> 1.8%, because a smaller batch makes each drain
+cheaper; CPU 10-24% of quota, RAM 81-88 MiB. `stream_v2_active`, which receives
+every one of those round trips, throttles 0.0%.
+
+#### What it did not do
+
+Consumer-visible age moved from 12,205 ms to 11,488 ms summed over fourteen
+endpoints, **-6%**, which is inside the run-to-run noise of two 20-iteration
+samples an hour apart. Per endpoint it went both ways: TRADE OKX `-28%`,
+BOOK_SNAPSHOT OKX `+30%`.
+
+That is the honest reading, and it follows from the stage table: halving a 0.46 s
+queue removes about 0.12 s of average wait from a pipeline whose largest term is
+the 0.89 s rust_core stage. **The projector was not the dominant term.** The
+change is kept because the queue improvement is real, measured at higher load,
+and costs less CPU than before, not because the age number moved.
+
+#### The next lever, with its measurement already taken
+
+`rust_core`, the raw-to-canonical stage, carries a **0.89 s** weighted delay
+against the projector's 0.22 s, on six partitions of `md.raw.realtime.v2` at
+306 rec/s. It is not CPU-starved: after R1.19 its throttle is 2.0% and it runs
+0.10-0.45 cores. That points at a batching or flush interval in the Rust core,
+the same shape of cost the projector had. Deliberately not opened in this
+session rather than started and left half-done.
+
+#### R1.18 landed
+
+`parse_canonical_progress` and `steady_state_lag_seconds` in
+`scripts/rebuild_v2_stable_projection_cache.py`, with 35 tests in
+`tests/test_dlv2_r118_steady_state_lag.py` including the existing runbook tests,
+which still pass untouched. The convergence gate keeps its exact behaviour and
+both it and `parse_canonical_lag` now carry a docstring saying what they are for
+and what they are not for. The new measure refuses to answer - returns None
+rather than a number - for a stalled projector, a group reset, a rebalance
+mid-interval, or a non-positive interval.
+
+#### Log rotation activated where it matters
+
+`max-size 50m` / `max-file 3` is now live on the three projectors and the three
+Kafka brokers, which are about 95% of the stack's log volume. Each broker was
+recreated on its own, waiting for all 154 partitions back to ISR 3 and for the
+projector backlog to drain before the next. The remaining eleven roles write
+1-2 MB each and pick the config up at their next recreate.
+
+**First measured broker restart on this stack.** Each recreate cost a projector
+backlog of 3,458-20,200 records that drained in about three minutes, and the
+consumer degraded to a worst of 34 of 60 slices ready before returning to 60/60
+about five minutes after the last broker. `v1_fallback_count` and
+`v2_error_count` stayed 0 throughout: it degraded, it never failed over.
+
+#### A trap that would have destroyed the release
+
+The compose override chain recorded in the container labels is **incomplete**.
+It omits the R1 stream and query image overrides, so `docker compose up -d`
+against the recorded chain resolves `stream_v2_active`, `stream_v2_passive`,
+`query_v2_1` and `query_v2_2` to `sha256:8bd10da6...`, which is 2.0.12, and
+moves `binance_bar_edge`. Verified before use and caught there. Every recreate
+in this slice went through
+`~/.local/state/qdl-v2/dlv2-r122-projector-age-20260917T062751Z/projector-age.override.yml`,
+which pins all 17 roles to the digest they were already running; 0 of 17 drifted
+before or after.
