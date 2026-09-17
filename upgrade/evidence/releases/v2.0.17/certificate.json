@@ -60,7 +60,30 @@
         "okx_bar_15m_p50_seconds": 0.87,
         "okx_bar_30m_p50_seconds": 1.12,
         "instruments_publishing": 5,
-        "candle_stale_generation_quarantines_since_repair": 0
+        "candle_stale_generation_quarantines_since_repair": 0,
+        "measured_twice": [
+          {
+            "window": "2026-09-17T13:26:08Z..13:30:44Z",
+            "canonical_records": 150000,
+            "final_bars": 90,
+            "okx_bar_1m_p50_seconds": 1.19,
+            "okx_bar_1m_p95_seconds": 1.67
+          },
+          {
+            "window": "2026-09-17T14:22:45Z..14:27:31Z",
+            "canonical_records": 220000,
+            "final_bars": 70,
+            "okx_bar_1m_p50_seconds": 1.01,
+            "okx_bar_1m_p95_seconds": 1.56,
+            "okx_bar_3m_p50_seconds": 0.86,
+            "okx_bar_5m_p50_seconds": 1.29
+          }
+        ],
+        "binance_same_windows": {
+          "bar_1m_p50_seconds": 8.06,
+          "bar_1m_p95_seconds": 8.85,
+          "path": "provider REST bar edge, venue-constrained"
+        }
       }
     },
     "spool_bound_repair": {
@@ -115,6 +138,35 @@
         "ETHUSDT": 3.96
       },
       "consequence": "Binance MARK_INDEX_PRICE and any native Binance BAR lane cannot be repaired from the WebSocket path; the bar edge's six-second settlement is evidence, not caution"
+    },
+    "backlog_recovery": {
+      "created_by": "the two-hour spool stall on 2026-09-17",
+      "peak_events": 3804327,
+      "at_2026_09_17T14_22Z": 1967356,
+      "average_drain_events_per_second": 129,
+      "replay_is_mostly_discarded": "the spool keeps 10,064 records per partition, which is 1.7-2.8 minutes for a busy feed and seven days for BAR 1m: 21 minutes of replay moved the row count by 236, from 1,301,097 to 1,301,333",
+      "consumer_recovery": [
+        {
+          "at": "2026-09-17T12:19Z",
+          "unhealthy_slices": 39
+        },
+        {
+          "at": "2026-09-17T14:05Z",
+          "unhealthy_slices": 36
+        },
+        {
+          "at": "2026-09-17T14:22Z",
+          "unhealthy_slices": 30
+        },
+        {
+          "at": "2026-09-17T14:29Z",
+          "unhealthy_slices": 27,
+          "fully_recovered_feeds": [
+            "BINANCE TRADE",
+            "OKX TRADE"
+          ]
+        }
+      ]
     }
   },
   "provenance": {
