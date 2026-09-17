@@ -703,3 +703,66 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   `2.0.16-190217b` on both query readers; projectors, ingestors, rust cores,
   kafka and redis unchanged. Rollback images in
   `~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z/README.md`.
+
+---
+
+## 25. v2.0.16: the delivery path, not capacity (2026-09-17)
+
+- **Release:** `v2.0.16`, certificate `upgrade/evidence/releases/v2.0.16/`,
+  predecessor `v2.0.15` (`be1b94fe...c761ffe`). Seven python roles recreated on
+  `qdl-v2-python:2.0.16-df4b8aa`
+  (`sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26`),
+  built from `df4b8aa8f24e9b6f7dfec5da9c5121cd0fd07b98`, `restarts=0`.
+  Rollback `qdl-v2-python:2.0.15-5130f6f`
+  (`sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea`),
+  packet `~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z`.
+- **Unchanged and pinned:** `binance_bar_edge` on `2.0.15-5130f6f`; the five Rust
+  roles on `qdl-v2-rust:2.0.15-c5a5be0`
+  (`sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1`),
+  which already closes RUSTSEC-2026-0285 in runtime; V1 fallback
+  `qdl-v1-fallback:v1.2.4-2b0dcf7`
+  (`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`);
+  consumer `tradingsystem-image:v1.2.5-75df46e`.
+- **Post-recovery measurement, 2026-09-17T04:11:44Z**, eight iterations through
+  the real data plane: `QUOTE` p50 437-700 ms, `TRADE` p50 804-1,711 ms,
+  `BOOK_SNAPSHOT` p50 1,186-1,361 ms, OKX `MARK_INDEX_PRICE` p50 785-892 ms,
+  all against a 2,000 ms policy that `TRADE` was missing by 355,952 ms before.
+  OHLCV 20/20 exact, all `FINAL`. Request latency p50: snapshots 6.5-7.2 ms,
+  book 76.6 ms, 1m warmup 119 ms, batched warmup 649 ms.
+- **31-minute window, 30 samples:** consumer `V2_PRIMARY` with `fb=0` on every
+  sample, 60 slices demanded, `READY` on 26 of 30, worst sample 3 of 60 slices
+  transiently unhealthy, execution-ready slices p50 45.
+- **The backlog question, answered with numbers.** 24 consumer-group snapshots
+  over 356 s: produced 132,880 records, consumed 132,894 — the projector
+  consumed 14 *more* than were produced, both at 373 rec/s. There is no
+  backlog. Lag oscillates 138-1,273 records and the spikes wander across
+  partitions 2-5, which is a queue breathing, not a stuck partition.
+- **The gate was the wrong gate.** `MAX_ACCEPTED_LAG = 500` /
+  `MAX_ACCEPTED_PARTITION_LAG = 250` in
+  `scripts/rebuild_v2_stable_projection_cache.py:31` is the **convergence** gate
+  of the cache-rebuild runbook: three consecutive acceptable samples prove a
+  replay drained. At 373 rec/s, 500 records is **1.3 seconds of work**, so an
+  instantaneous sample of a healthy queue crosses it — 5 of 30 window samples
+  did, while the consumer stayed ready and never fell back. Reusing it as a
+  steady-state health gate was my error, not a defect in the runbook. Steady
+  state is the produced-versus-consumed rate plus lag in seconds of work:
+  p50 1.02 s, p95 1.58 s, max 2.19 s.
+  **Do not loosen the runbook constant** — it is correct for convergence and the
+  17m44s boot-recovery rehearsal (entry 12) depends on it.
+- **Entry 24 corrected:** the declared CPU total after the R1 ceilings is
+  **13.35**, not 14.35, summed over the 17 roles this stack runs on a 16-core
+  host (12.25 before). Eight services were reduced, five raised: kafka1/2/3
+  `0.75 -> 1.00` and both stream processes `0.75 -> 2.00`.
+- **Open, next slice:** express steady-state projector health in seconds of work
+  rather than an instantaneous record count, and stop quoting the runbook
+  constant as a health gate.
+- **Still open, untouched:** Binance `MARK_INDEX_PRICE` answers
+  `DATA_NOT_READY`; 1 of 16 OKX `MARK_INDEX_PRICE` samples rejected on
+  `EVENT_AGE` (entry 21 cause unchanged); recreating a stream container still
+  stalls the projectors on a dead pooled connection plus a 409 from the
+  no-longer-active peer.
+- **Governed recovery:** the backlog of 3,002,343 was cleared by a consumer-group
+  offset reset to latest on `stable-projector-v1` (stop projectors, reset,
+  start), authorised by the owner for a pre-production stack. Canonical records
+  between the old committed offset and latest were not projected; raw still
+  holds them and canonical retention is 6 h.

@@ -38984,3 +38984,83 @@ not require a manual restart of every writer. Recorded here as the next
 correction; not attempted late in a session that had already disturbed the
 runtime enough.
 
+
+---
+
+<a id="dl-v2-r1-release-v2016-20260917"></a>
+### DL-V2 R1 closed and released as v2.0.16 (2026-09-17)
+
+**Landed.** R1.1, R1.2, R1.3, R1.8, R1.9, R1.11 and R1.12 are in
+`df4b8aa8f24e9b6f7dfec5da9c5121cd0fd07b98`. Seven python roles run
+`qdl-v2-python:2.0.16-df4b8aa`
+(`sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26`),
+`restarts=0`. Rollback is `qdl-v2-python:2.0.15-5130f6f`
+(`sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea`) via
+the three override files in
+`~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z`.
+
+**The goal of this phase is met.** Every consumer feed that was stale or
+rejected now serves inside its policy, measured through the real data plane with
+the production binding: `QUOTE` p50 437-700 ms, `TRADE` p50 804-1,711 ms
+(was 355,952 ms), `BOOK_SNAPSHOT` p50 1,186-1,361 ms (was rejected), OKX
+`MARK_INDEX_PRICE` p50 785-892 ms (was rejected). OHLCV 20/20 exact. The
+consumer held `V2_PRIMARY` with zero V1 fallback across a 31-minute,
+30-sample window.
+
+**The backlog was never a backlog.** 24 consumer-group snapshots over 356 s:
+produced 132,880 records, consumed 132,894, both 373 rec/s. The projector
+drained 14 records of standing queue over the window. What looked like a
+recurring failure was the wrong gate applied to the right system — see the
+next slice.
+
+#### R1.18 — express projector health in seconds of work, not records
+
+`MAX_ACCEPTED_LAG = 500` and `MAX_ACCEPTED_PARTITION_LAG = 250` at
+`scripts/rebuild_v2_stable_projection_cache.py:31-32` are the **convergence**
+gate of the cache-rebuild runbook. `_wait_bounded_lag` polls every 2 s and
+requires `REQUIRED_BOUNDED_LAG_SAMPLES = 3` consecutive acceptable samples;
+that is a correct proof that a replay drained, and the 17m44s boot-recovery
+rehearsal in ledger entry 12 depends on it. **Do not loosen those constants.**
+
+The error was reusing the same bound as a steady-state health check. At
+373 rec/s, 500 records is 1.3 seconds of work, so a healthy queue crosses it
+whenever it breathes: 5 of 30 samples in the certification window reported
+`gate=FAIL` while the consumer stayed `READY` and never fell back.
+
+Steps, in order:
+
+1. Add a steady-state reader beside `parse_canonical_lag` that returns the
+   summed current offset as well as the lag, so two readings a known interval
+   apart give a consumption rate. Do not change `parse_canonical_lag` itself;
+   the runbook's convergence path must keep its exact current behaviour.
+2. Derive `lag_seconds = total_lag / consumed_per_second` and make that the
+   steady-state figure. Guard the zero-rate case: if nothing was consumed
+   between the two readings, the answer is "unknown", not "infinite".
+3. Express the health bound in seconds of work with a number tied to the
+   consumer's freshness policy, not to a record count. The realtime policy is
+   2,000 ms; a projector more than a few seconds of work behind is the thing
+   worth alerting on.
+4. Unit-test the derivation directly: a fixed pair of offset readings, a fixed
+   interval, an asserted `lag_seconds`; a zero-rate reading that returns
+   unknown; a reading whose partition count is wrong, which must still fail.
+5. Leave the runbook's own `lag_sample_acceptable` and `_wait_bounded_lag`
+   untouched, and add a docstring line to each saying what they are for, so the
+   next reader does not repeat this mistake.
+
+**Gate for R1.18:** the new derivation is unit-tested, the runbook's convergence
+behaviour is unchanged (its existing tests still pass untouched), and the plan
+records one measured steady-state reading taken with it.
+
+#### Still open after this release
+
+- Binance `MARK_INDEX_PRICE` answers `DATA_NOT_READY`. Pre-existing and
+  untouched by R1.
+- 1 of 16 OKX `MARK_INDEX_PRICE` samples rejected on `EVENT_AGE`; the
+  mark-price/index-tickers pairing from ledger entry 21 is still the cause.
+- `StableHttpCanonicalSink._publish_chunk` should retry a connection error once
+  against the same URL before moving on, and a lease handover should not require
+  a manual restart of every projector. Recorded at
+  [dl-v2-r1-outcome-20260916](#dl-v2-r1-outcome-20260916); unchanged.
+- The single-writer capacity ceiling. One writer cannot be widened with CPU;
+  sharding the gateway lease changes the invariant this phase protected and is a
+  phase of its own.

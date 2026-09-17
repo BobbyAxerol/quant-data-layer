@@ -1,0 +1,96 @@
+{
+ "schema": "qdl.v2.patch-release-scope-evidence.v1",
+ "status": "PASS",
+ "release": "v2.0.16",
+ "inherits": {
+  "release": "v2.0.15",
+  "certificate_sha256": "be1b94fe4645b2764f748b54cb1939f79bab1cbddd8bf06a0fa2b4162c761ffe",
+  "formal_v2_primary_product_count": 299
+ },
+ "delta_acceptance": {
+  "method": "consumer-side measurement through the real gRPC and HTTP data plane with the production consumer binding, plus consumer-group offset sampling for the projector",
+  "endpoint_benchmark": {
+   "at": "2026-09-17T04:11:44Z",
+   "iterations": 8,
+   "consumer_id": "trading-system.paper.stable",
+   "consumer_image": "tradingsystem-image:v1.2.5-75df46e",
+   "endpoints_measured": 34,
+   "feeds_inside_policy": [
+    "TRADE",
+    "QUOTE",
+    "BOOK_SNAPSHOT",
+    "OKX MARK_INDEX_PRICE",
+    "BAR 1m warmup",
+    "BAR 1m history",
+    "feed_status",
+    "instrument lookup"
+   ],
+   "feeds_outside_policy": [
+    "BINANCE MARK_INDEX_PRICE (DATA_NOT_READY, pre-existing)"
+   ]
+  },
+  "ohlcv_correctness": {
+   "compared": 20,
+   "exact": 20,
+   "lifecycle": "FINAL",
+   "interval": "1m",
+   "instruments": [
+    "BINANCE:BTCUSDT",
+    "BINANCE:ETHUSDT",
+    "OKX:BTC-USDT-SWAP",
+    "OKX:ETH-USDT-SWAP"
+   ]
+  },
+  "projector_steady_state": {
+   "at": "2026-09-17T04:11:43Z..04:17:39Z",
+   "snapshots": 24,
+   "span_seconds": 356,
+   "produced_records": 132880,
+   "consumed_records": 132894,
+   "records_per_second": 373,
+   "lag_seconds_of_work_p95": 1.58
+  },
+  "certification_window": {
+   "at": "2026-09-17T03:44:04Z..04:15:43Z",
+   "samples": 30,
+   "consumer_ready_samples": 26,
+   "v1_fallback_count": 0
+  },
+  "tests_added": {
+   "data_layer": [
+    "tests/test_dlv2_r1_delivery_lock.py (35)",
+    "tests/test_dlv2_r1_stale_reason.py (13)"
+   ],
+   "suite_total": 1495
+  }
+ },
+ "runtime": {
+  "recreated_services": [
+   "stream_v2_active",
+   "stream_v2_passive",
+   "query_v2_1",
+   "query_v2_2",
+   "projector_v2",
+   "projector_v2_2",
+   "projector_v2_3"
+  ],
+  "active_image": "qdl-v2-python:2.0.16-df4b8aa",
+  "active_image_digest": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+  "restart_count_after": 0,
+  "packet": "~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z",
+  "rollback": "point the three override files back at qdl-v2-python:2.0.15-5130f6f (sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea) and re-run the same compose command; the image is already on the host because binance_bar_edge runs it",
+  "governed_recovery_performed": {
+   "what": "a governed consumer-group offset reset to latest on stable-projector-v1 after the backlog reached 3,002,343 records",
+   "sequence": "stop the three projectors, reset offsets to latest, start the three projectors",
+   "authorised_by": "the owner, for a pre-production stack",
+   "data_lost": "canonical records between the old committed offset and latest were not projected into the durable cache; the raw topic still holds them and the canonical topic retention is 6 hours"
+  }
+ },
+ "exclusions": [
+  "No Rust source change and no Rust image rebuild; the running qdl-v2-rust:2.0.15-c5a5be0 already carries rustls 0.23.45.",
+  "binance_bar_edge was not recreated and stays on qdl-v2-python:2.0.15-5130f6f.",
+  "No Kafka topology, Redis, SQLite, V1 or alpha change.",
+  "No trading_system release; the companion R1.4 consumer change is carried by tradingsystem-image:v1.2.5-75df46e and is certified separately.",
+  "No order action and no provider credential use; the only venue traffic was read-only public REST for the OHLCV comparison."
+ ]
+}

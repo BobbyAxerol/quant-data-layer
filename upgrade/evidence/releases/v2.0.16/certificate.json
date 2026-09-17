@@ -1,0 +1,239 @@
+{
+ "schema": "qdl.v2.patch-release-certificate.v1",
+ "status": "PASS",
+ "release": "v2.0.16",
+ "classification": "Realtime delivery-path corrections that return every V2 consumer feed to its freshness policy, plus per-service CPU ceilings, canonical Kafka retention and the Rust runtime rollout that v2.0.15 deferred",
+ "predecessor": {
+  "tag": "v2.0.15",
+  "certificate_schema": "qdl.v2.patch-release-certificate.v1",
+  "certificate_sha256": "be1b94fe4645b2764f748b54cb1939f79bab1cbddd8bf06a0fa2b4162c761ffe",
+  "inherited_v2_primary_product_count": 299
+ },
+ "delta": {
+  "defect": "Every realtime V2 feed was being served stale or rejected. The stream gateway held one spool lock across a durable read on the live delivery path, so a subscription's delivery rate was bounded by disk; a latest-state feed queued a FIFO of superseded records and could not reach the newest one; a replay token was re-signed on a worker thread per record; and DATA_STALE never said which predicate failed, so the consumer could not tell a slow feed from a dead session. Measured TRADE freshness was 355,952 ms against a 2,000 ms policy and the projector backlog reached 3,002,343 records.",
+  "changed_services": [
+   "stream_v2_active",
+   "stream_v2_passive",
+   "query_v2_1",
+   "query_v2_2",
+   "projector_v2",
+   "projector_v2_2",
+   "projector_v2_3"
+  ],
+  "slices": {
+   "R1.1": "the delivery path reads a cached high watermark instead of taking the spool lock for a durable read",
+   "R1.2": "the replay loop collapses token advances over unmatched runs instead of signing one per record",
+   "R1.3": "DATA_STALE names its predicate: EVENT_AGE, SESSION_STATE or SESSION_LIVENESS",
+   "R1.8": "a latest-state feed keeps the newest record in a bounded buffer and drops the superseded ones instead of queueing a FIFO the reader can never drain",
+   "R1.9": "a cursor whose watermark is already known is signed on the loop instead of paying a thread hop",
+   "R1.11": "the projector drain window is a configurable budget, not a hard-coded 10 ms constant",
+   "R1.12": "a subscription that overflows reports backpressure to the consumer instead of discarding records in silence"
+  },
+  "companion_change": {
+   "repository": "trading_system",
+   "slice": "R1.4",
+   "summary": "the consumer keeps a valid snapshot view inside its freshness bound instead of tearing the slice down on a retryable DATA_STALE, and bounds a silent subscription",
+   "released_by_this_tag": false,
+   "consumer_image_used_for_measurement": "tradingsystem-image:v1.2.5-75df46e"
+  },
+  "measured_freshness_ms": {
+   "method": "consumer-side benchmark through the real gRPC and HTTP data plane, 8 iterations, 2026-09-17T04:11:44Z, after the offset recovery and on the release image",
+   "receipt": "durable event age at the moment each endpoint served it",
+   "trade": {
+    "binance_btcusdt_p50": 1711,
+    "binance_ethusdt_p50": 804,
+    "okx_btc_swap_p50": 996,
+    "okx_eth_swap_p50": 808,
+    "policy_ms": 2000
+   },
+   "quote": {
+    "binance_btcusdt_p50": 481,
+    "binance_ethusdt_p50": 437,
+    "okx_btc_swap_p50": 456,
+    "okx_eth_swap_p50": 700,
+    "policy_ms": 2000
+   },
+   "book_snapshot": {
+    "binance_btcusdt_p50": 1255,
+    "binance_ethusdt_p50": 1361,
+    "okx_btc_swap_p50": 1307,
+    "okx_eth_swap_p50": 1186
+   },
+   "okx_mark_index": {
+    "btc_swap_p50": 785,
+    "eth_swap_p50": 892,
+    "rejected_samples": 1,
+    "total_samples": 16
+   },
+   "before": {
+    "trade_ms": 355952,
+    "book_snapshot": "rejected",
+    "okx_mark_index": "rejected"
+   }
+  },
+  "request_latency_ms_p50": {
+   "snapshot_trade": 7.1,
+   "snapshot_quote": 6.9,
+   "snapshot_book": 76.6,
+   "snapshot_okx_mark_index": 6.5,
+   "feed_status": 6.9,
+   "instrument_lookup": 4.1,
+   "warmup_bar_1m": 119.4,
+   "warmup_batch_bar_1m": 649.2
+  },
+  "ohlcv_correctness": {
+   "compared": 20,
+   "exact": 20,
+   "lifecycle": "FINAL",
+   "instruments": [
+    "BINANCE:BTCUSDT",
+    "BINANCE:ETHUSDT",
+    "OKX:BTC-USDT-SWAP",
+    "OKX:ETH-USDT-SWAP"
+   ],
+   "interval": "1m"
+  },
+  "projector_throughput": {
+   "method": "consumer-group offsets for stable-projector-v1 on md.canonical.v2, 24 snapshots over 356 s at 2026-09-17T04:11:43Z-04:17:39Z",
+   "produced_records": 132880,
+   "consumed_records": 132894,
+   "produced_records_per_second": 373,
+   "consumed_records_per_second": 373,
+   "net": "consumed 14 records more than produced; the standing queue drained slightly over the window",
+   "lag_records_p50": 380,
+   "lag_records_p95": 590,
+   "lag_records_max": 817,
+   "lag_seconds_of_work_p50": 1.02,
+   "lag_seconds_of_work_p95": 1.58,
+   "lag_seconds_of_work_max": 2.19,
+   "backlog_before_recovery": 3002343,
+   "conclusion": "there is no backlog; the projector consumes at the rate the ingestors produce"
+  },
+  "certification_window": {
+   "method": "one sampler per minute reading the projector consumer-group lag and the market_data service heartbeat, two overlapping runs merged by timestamp",
+   "window_utc": "2026-09-17T03:44:04Z..04:15:43Z",
+   "duration_minutes": 31,
+   "samples": 30,
+   "consumer_mode_throughout": "V2_PRIMARY",
+   "consumer_v1_fallback_count": 0,
+   "consumer_demanded_slices": 60,
+   "consumer_ready_samples": "26/30",
+   "longest_consecutive_ready_samples": 8,
+   "consumer_unhealthy_slices_p50": 0,
+   "consumer_unhealthy_slices_max": 3,
+   "execution_ready_slices_p50": 45,
+   "recovery_lag_gate_pass": "25/30",
+   "recovery_lag_gate_bound": "500 total and 250 per partition, instantaneous sample",
+   "lag_total_p50": 300,
+   "lag_total_p95": 1171,
+   "lag_total_max": 1273,
+   "lag_worst_partition_p95": 422,
+   "lag_worst_partition_max": 980,
+   "statement": "the consumer was not READY on every one of the thirty samples; it was READY on 26, never fell back to V1, and the worst sample had 3 of 60 slices transiently unhealthy"
+  },
+  "resource_ceilings": {
+   "method": "per-service cpus in docker-compose.v2-stable.yml with the measurement that justified each one; totals summed over the 17 roles this stack actually runs",
+   "declared_total_cpus_before": 12.25,
+   "declared_total_cpus_after": 13.35,
+   "host_cores": 16,
+   "services_reduced": 8,
+   "reduced": {
+    "binance_bar_edge": "0.75 -> 0.35",
+    "ingestor_binance_usdm": "0.75 -> 0.50",
+    "ingestor_okx_swap": "0.75 -> 0.50",
+    "projector_v2": "0.75 -> 0.50",
+    "query_v2_1": "0.75 -> 0.50",
+    "query_v2_2": "0.75 -> 0.50",
+    "rust_core": "0.75 -> 0.50",
+    "rust_core_3": "0.75 -> 0.50"
+   },
+   "raised": {
+    "kafka1": "0.75 -> 1.00",
+    "kafka2": "0.75 -> 1.00",
+    "kafka3": "0.75 -> 1.00",
+    "stream_v2_active": "0.75 -> 2.00",
+    "stream_v2_passive": "0.75 -> 2.00"
+   },
+   "corrects": "CERTIFICATION_LEDGER.md entry 24 states 14.35; the resolved sum over the running roles is 13.35",
+   "kafka_canonical_retention_hours_before": 24,
+   "kafka_canonical_retention_hours_after": 6,
+   "raw_retention_hours": 24,
+   "raw_retention_reason": "raw cannot be refetched; canonical is derived from it"
+  },
+  "rust_runtime_rollout": {
+   "status": "ALREADY_DEPLOYED, recorded here because v2.0.15 left it as an open boundary",
+   "closes": "the v2.0.15 boundary that left qdl-v2-rust:2.0.12-3f1c50e on rustls 0.23.43",
+   "performed_at": "2026-09-16, CERTIFICATION_LEDGER.md entry 18",
+   "recreated_by_this_release": false,
+   "image": "qdl-v2-rust:2.0.15-c5a5be0",
+   "image_digest": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
+   "advisory": "RUSTSEC-2026-0285",
+   "rustls": "0.23.45",
+   "roles": [
+    "rust_core",
+    "rust_core_2",
+    "rust_core_3",
+    "ingestor_binance_usdm",
+    "ingestor_okx_swap"
+   ]
+  },
+  "provider_connections": "read-only venue REST comparison for the OHLCV check only",
+  "order_actions": 0,
+  "secret_values_recorded": false
+ },
+ "provenance": {
+  "image_source_commit": "df4b8aa8f24e9b6f7dfec5da9c5121cd0fd07b98",
+  "source_plan_sha256_at_image_build": "06f70af6687a41ffb5d84f5d647b20cc3e1c919fd525e155ca3bb07cf57b3671",
+  "active_python_image": "qdl-v2-python:2.0.16-df4b8aa",
+  "active_python_image_digest": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+  "active_python_stream_image": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+  "active_python_query_image": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+  "active_python_projector_image": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
+  "rollback_python_stream_image": "sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea",
+  "rollback_python_query_image": "sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea",
+  "rollback_python_projector_image": "sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea",
+  "rollback_packet": "~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z/README.md",
+  "unchanged_python_bar_edge_image": "sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea",
+  "unchanged_rust_image": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
+  "v1_fallback_image": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+  "v1_fallback_image_digest": "sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65",
+  "restart_count_after_rollout": 0,
+  "rust_gate": {
+   "status": "INHERITED",
+   "inherited_from": "the qdl-v2-rust:2.0.15-c5a5be0 build recorded in CERTIFICATION_LEDGER.md entry 18",
+   "source_unchanged_since": "c5a5be0",
+   "verification": "git diff --stat c5a5be0..df4b8aa -- '*.rs' Cargo.toml Cargo.lock rust is empty",
+   "toolchain": "1.82.0",
+   "fmt": "PASS",
+   "clippy_deny_warnings": "PASS",
+   "cargo_test": {
+    "passed": 81,
+    "failed": 0,
+    "targets": 13
+   },
+   "cargo_deny": "advisories ok, bans ok, licenses ok, sources ok"
+  },
+  "python_suite": {
+   "status": "PASS",
+   "ran": 1495,
+   "failures": 0,
+   "errors": 0,
+   "skipped": 7,
+   "seconds": 421.3,
+   "image": "qdl-v2-python:2.0.16-df4b8aa",
+   "command": "docker run --rm --network none --user $(id -u) -e HOME=/tmp -e PYTHONPATH=/workspace --tmpfs /workspace/logs:mode=1777 --tmpfs /app/logs:mode=1777 -v $PWD:/workspace:ro -w /workspace qdl-v2-python:2.0.16-df4b8aa python3 -B -m unittest discover -s tests -t .",
+   "note": "network disabled, source mounted read-only, both log directories on tmpfs. Without the /app/logs tmpfs three modules fail to import on a PermissionError writing /app/logs/app.log and discovery reports 1486 tests with errors; that is the environment, not the tests. The v2.0.15 certificate's four pre-existing import errors have the same cause."
+  },
+  "ci": {}
+ },
+ "boundaries": [
+  "This patch inherits the v2.0.15 certificate and does not recertify the full product matrix.",
+  "Binance MARK_INDEX_PRICE still answers DATA_NOT_READY. It is pre-existing, was not touched by this release, and has its own open slice.",
+  "One of sixteen OKX MARK_INDEX_PRICE samples was rejected on EVENT_AGE. The pairing of mark-price with once-per-second index-tickers remains the cause recorded in ledger entry 21.",
+  "The 500-total/250-per-partition lag bound is the convergence gate of the projection-cache rebuild runbook (scripts/rebuild_v2_stable_projection_cache.py:31), not a steady-state health gate. At 373 records per second a 500-record bound is 1.3 seconds of work, so an instantaneous sample of a healthy queue crosses it; 5 of 30 window samples did while the consumer stayed ready and never fell back to V1. Steady-state health is the produced-versus-consumed rate and the seconds-of-work figures recorded above. The runbook constant is correct for its own purpose and was deliberately left alone; correcting its use as a health gate is a scheduled slice.",
+  "binance_bar_edge stays on qdl-v2-python:2.0.15-5130f6f. It does not use the stream delivery path and was deliberately left on the certified BAR settlement build.",
+  "The OKX last closed 1m bar is served about 60 seconds behind the Binance one (96.6 s versus 36.1 s age at measurement). Both are inside the 180 s consumer contract; the difference is the OKX calendar-bar boundary and is not a regression.",
+  "The companion consumer change R1.4 lives in the trading_system repository and is not released by this tag.",
+  "This release recreated only the seven python roles listed in delta.changed_services. V1, the Kafka topology, Redis, SQLite, binance_bar_edge, the ingestors, the rust cores and alpha were not recreated by it; the rust roles already ran qdl-v2-rust:2.0.15-c5a5be0 from the 2026-09-16 rollout."
+ ]
+}
