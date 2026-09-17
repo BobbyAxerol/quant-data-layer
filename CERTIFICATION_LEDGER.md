@@ -1072,3 +1072,41 @@ ingestors recreated from `dlv2-r125-rollout-20260917T125950Z`.
   a maintenance window, not a release step, and consolidating them is worth doing
   properly because this chain is the origin of the whole config-generation drift
   class in entry 28.
+
+## 32. A warmup optimisation, measured three ways, and reverted (2026-09-17)
+
+The owner compared this session's numbers against v2.0.16 and asked why they had
+become seconds. Two of the three quantities involved were different quantities,
+and one regression was real.
+
+- **Same quantity, same benchmark, run twice.** Snapshot reads 6.4-7.5 ms then,
+  6.7-9.2 ms now. Instrument lookup 4.1 then, 4.3-5.2 now. `BOOK_SNAPSHOT`
+  73-78 ms then, **44-50 ms** now. Durable event age: QUOTE 437-700 then,
+  577-780 now; TRADE 804-1,711 then, 728-1,575 now. Nothing there moved by more
+  than noise, and one endpoint class halved.
+- **The real regression: BAR warmup, 117-156 ms → 364-428 ms.** Not caused by
+  this release. `stable_source.history` reads the entire retained window for any
+  BAR requirement, because a history repair legitimately appends older bars after
+  live ones and the market tail cannot be taken from the append tail. At 04:11Z
+  those windows were far from full and OKX bars did not exist at all; they are
+  full now, partly because this session repaired 1,106 bars into them.
+- **Where the time goes, measured rather than reasoned.** `read_tail` on one 1m
+  partition: 1 row 0.0 ms, 1,000 rows 17.9 ms, **10,064 rows 199.8 ms** - the
+  cost is materialising a Cursor, a decoded header mapping and a dataclass per
+  row, almost all discarded. Decode and sort inside `_records` cost 41.4 ms more.
+- **Three variants, and the numbers chose.** Decoding each payload twice, 41.4 ms.
+  Carrying the decoded envelope to avoid the second decode - the first idea -
+  **52.1 ms, worse**, because ten thousand live protobuf objects cost more than
+  the decode they save. Carrying only the open time as an integer, **26.5 ms**.
+  All three returned identical rows.
+- **The attempt that broke it.** Reading the window as plain rows and resolving
+  only the survivors through `find_events` passed 137 tests and then failed every
+  BAR warmup in production with `warmup batch item failed inside the bounded
+  executor`. Reverted within minutes; warmup verified working again at
+  390-475 ms. The suite did not catch it, which is the finding worth keeping: the
+  bounded-read contract is pinned by a test double and a spy, and neither
+  exercises the executor the real query path runs inside.
+- **What the real fix needs.** The spool must know a bar's market time without
+  decoding it - a column and an index on the durable write path, with a
+  migration. That is a designed slice, not something to improvise while a
+  release is waiting, and today is the second time that lesson was paid for.
