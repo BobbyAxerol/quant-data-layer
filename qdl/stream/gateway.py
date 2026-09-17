@@ -81,6 +81,7 @@ class StreamSubscription:
         self.closed = False
         self._in_flight = 0
         self.coalesced = 0
+        self.filtered_since_delivery = 0
 
     def push(self, stored: StoredEvent) -> None:
         if self.closed or self.overflowed or not self._accepts(stored):
@@ -149,7 +150,24 @@ class StreamSubscription:
             # wait for the next eligible record instead of leaking stale data.
             if not self._accepts(stored):
                 self.mark_delivered()
+                # DL-V2 R1.13. Discarding is right; discarding in silence is
+                # not. A subscriber whose records keep ageing out between being
+                # queued and being read is, by the only definition that matters
+                # here, not keeping up with the freshness it asked for. Before
+                # this it simply received nothing, with no error to reconnect
+                # on, and the slice stayed stale until something restarted it.
+                # Once a whole buffer's worth has been discarded without a
+                # single delivery, say so with the signal the protocol already
+                # has, so the consumer reconnects and resumes from a fresh
+                # cursor instead of waiting on a stream that will never speak.
+                self.filtered_since_delivery += 1
+                if self.filtered_since_delivery > self.queue.maxsize:
+                    raise SlowConsumer(
+                        "records aged out of the bounded buffer before delivery; "
+                        "replay from the last confirmed token is required"
+                    )
                 continue
+            self.filtered_since_delivery = 0
             return record
 
     def mark_delivered(self) -> None:

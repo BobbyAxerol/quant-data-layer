@@ -648,3 +648,49 @@ class ProjectorBatchWaitTests(unittest.TestCase):
 
         signature = inspect.signature(StableProjectorEngine.__init__)
         self.assertIn("batch_wait_seconds", signature.parameters)
+
+    async def test_records_ageing_out_before_delivery_report_backpressure(self) -> None:
+        """DL-V2 R1.13: discarding is right, discarding in silence is not.
+
+        A subscriber whose records keep ageing out between being queued and
+        being read is not keeping up with the freshness it asked for. Before
+        this it received nothing at all, with no error to reconnect on, and the
+        slice stayed stale until something restarted the whole consumer.
+        """
+
+        rejects_everything = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=4,
+            accepts=lambda _stored: True,
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 11)])
+        # Flip the predicate after the records are queued, which is exactly the
+        # shape of a record that was fresh when pushed and stale when read.
+        rejects_everything._accepts = lambda _stored: False
+        with self.assertRaises(SlowConsumer):
+            await rejects_everything.next_live()
+
+    async def test_one_late_record_does_not_trip_backpressure(self) -> None:
+        """A single aged record is ordinary; a buffer's worth of them is not."""
+
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=4,
+            accepts=lambda stored: stored.cursor.offset != 1,
+        )
+        await self.gateway.publish_many([event(1), event(2)])
+        record = await subscription.next_live()
+        self.assertEqual(record.stored.cursor.offset, 2)
+        self.assertEqual(subscription.filtered_since_delivery, 0)
+
+    async def test_the_filtered_counter_resets_on_every_delivery(self) -> None:
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=8,
+            accepts=lambda stored: stored.cursor.offset % 2 == 0,
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 9)])
+        for expected in (2, 4, 6, 8):
+            record = await subscription.next_live()
+            self.assertEqual(record.stored.cursor.offset, expected)
+            self.assertEqual(subscription.filtered_since_delivery, 0)
