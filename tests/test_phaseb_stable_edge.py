@@ -1518,10 +1518,10 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         engine.accept_many = accept_many
         self.assertTrue(await engine.run_once(timeout_seconds=0.01))
         self.assertEqual(accepted, [(first,)])
-        self.assertIs(engine._deferred_record, second)
+        self.assertEqual(list(engine._deferred_records), [second])
         self.assertTrue(await engine.run_once(timeout_seconds=0.01))
         self.assertEqual(accepted, [(first,), (second,)])
-        self.assertIsNone(engine._deferred_record)
+        self.assertEqual(list(engine._deferred_records), [])
 
     async def test_canonical_before_raw_waits_and_checkpoints_after_all_downstreams(self):
         binding, raw, event = _stable_pair(
