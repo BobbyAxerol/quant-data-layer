@@ -244,6 +244,29 @@
           "now": "977-1305"
         }
       }
+    },
+    "runtime_at_certification": {
+      "at": "2026-09-17T16:47Z",
+      "consumer_slices_healthy": "49/60",
+      "consumer_slices_outside_policy": {
+        "QUOTE": 6,
+        "OKX MARK_INDEX_PRICE": 4,
+        "OKX BOOK_DELTA": 1,
+        "note": "all pre-existing and named in scope-evidence; their data is fresh and the request path answers, the stream subscription is what fails"
+      },
+      "projector_backlog": 540,
+      "spool": {
+        "used_mb": 2400,
+        "bound_mb": 6144,
+        "ratio": 0.39,
+        "wal_mb": 64
+      },
+      "bar_owner": {
+        "binance": "70 partitions, newest 40s",
+        "okx": "70 partitions, newest 47s"
+      },
+      "stale_generation_rejections": 0,
+      "bar_1m_endpoints_publishing": "10/10"
     }
   },
   "provenance": {
