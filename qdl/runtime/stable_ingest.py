@@ -230,10 +230,18 @@ def install_stable_canonical_ingest(
             )
             if stored is None
         ]
-        duplicates = await asyncio.to_thread(
-            spool.find_events,
-            stream=catalog.canonical_stream,
-            event_ids=duplicate_ids,
+        # DL-V2 R1.5. In steady state every event in a batch is new, so this
+        # list is empty and the lookup returns nothing. Taking the spool lock
+        # and a thread hop to learn that, once per ingest request, competes with
+        # the append that holds the same lock through its fsync.
+        duplicates = (
+            await asyncio.to_thread(
+                spool.find_events,
+                stream=catalog.canonical_stream,
+                event_ids=duplicate_ids,
+            )
+            if duplicate_ids
+            else {}
         )
         results = []
         for (binding, envelope, event), stored in zip(

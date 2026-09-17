@@ -38461,3 +38461,606 @@ later wants the durable path inside 2,000 ms as well, the only real lever is a
 faster index source than OKX publishes, which does not exist on its public
 feed.
 
+
+### OKX index freshness: the floor was the REST endpoint, not the venue (2026-09-16)
+
+<a id="dl-v2-okx-index-rest-vs-ws-20260916"></a>
+**Correcting the two previous entries.** In
+[the root-cause entry](#dl-v2-okx-freshness-rootcause-20260916) I named OKX's
+index publication rate as the floor, and in
+[the withdrawal](#dl-v2-okx-markindex-withdrawn-20260916) I wrote that the
+failing path has no consumer. Both were measured on the wrong thing. The
+failing path does have a consumer, it is failing in production right now, and
+the venue is not the floor.
+
+**What production shows.** `market_data_service` reports `DEGRADED` with 7 to
+10 of 60 V2 slices unhealthy, continuously. Over one hour of its logs:
+
+| quantity | value |
+| --- | --- |
+| `MARK_INDEX_PRICE` slice disconnects | 118 in 60 min, 117 of them OKX |
+| affected instruments | DOGE 60, SOL 25, BNB 20, ETH 9, BTC 3 |
+| `index_price` age at rejection | min 2002 ms, p50 2255 ms, p95 2706 ms, max 2973 ms |
+| `mark_price` age at the same instants | p50 36 ms, p95 57 ms, max 108 ms |
+| OKX `MARK_INDEX_PRICE` reconnect count | 294 and climbing on DOGE-USDT-SWAP |
+
+The consumer is not applying a rule of its own here.
+`adapters/market_data/data_layer_v2.py:_partial_mark_index_stale_error`
+reconstructs the age from the **Data Layer's own typed `DATA_STALE` problem**,
+so this is the sealed 2,000 ms execution policy rejecting the item, reported
+faithfully downstream. Mark is fresh at every rejection; only the index is old.
+
+**Where the age comes from.** `qdl/adapters/okx/reference.py:189-252` serves the
+reference batch by calling two REST endpoints in parallel and stamping each
+observation with the venue's own `ts` from the row. Measured from this host
+against OKX directly, no Data Layer in the path, 36 samples per endpoint over
+three instruments:
+
+| venue endpoint | min | p50 | p95 | max |
+| --- | --- | --- | --- | --- |
+| `/api/v5/public/mark-price` `ts` behind local clock | 29 ms | 31 ms | 34 ms | 51 ms |
+| `/api/v5/market/index-tickers` `ts` behind local clock | 147 ms | 901 ms | 1453 ms | **2511 ms** |
+
+Two requests issued together; one comes back stamped 31 ms ago and the other up
+to 2.5 seconds ago. **OKX's REST index endpoint serves a stale cached row.**
+Adding pipeline transport to that 2511 ms reproduces the 2973 ms seen in
+production.
+
+**The venue is not the floor: its WebSocket carries the same index live.** Same
+instruments, 60-second capture on `wss://ws.okx.com:8443/ws/v5/public`, 470
+index frames and 897 mark frames:
+
+| channel | `ts` lag p50 | `ts` lag p95 | `ts` lag max | push interval p50 |
+| --- | --- | --- | --- | --- |
+| `index-tickers` (WS) | 81 ms | 131 ms | **354 ms** | 256 ms |
+| `mark-price` (WS) | 38 ms | 41 ms | 228 ms | 201 ms |
+
+So the earlier figure, "index publishes every 613 ms, that is the floor", was
+the rate at which the **REST** row changes. The venue's actual index stream is
+inside 354 ms at its worst, seven times fresher than the REST endpoint's worst
+case and far inside the 2,000 ms gate.
+
+**Recommendation, and why it is not applied here.** The stable deployment
+already subscribes to that WebSocket channel: `qdl/runtime/stable_deployment.py:195`
+binds `index-tickers` as `okx_index_price`, so the fresh value is already
+inside the system and already canonical. The fix is to serve the reference
+batch's OKX `INDEX` component from that streamed binding and fall back to REST
+only when no streamed value exists, leaving the per-component 2,000 ms policy
+exactly as sealed. No threshold moves, no reducer timestamp changes, and a
+genuinely stale index still fails closed. This is a change to a certified
+canonical reference path in a released Data Layer (`v2.0.15`), so it needs the
+owner's approval, its own phase and a re-certification of the reference batch,
+not a quiet edit. **Until it is applied, the correct description of the system
+is that OKX execution mark/index on the reference-batch path breaches the
+sealed 2,000 ms gate roughly 24 times per hour per instrument, and Trading
+System reports it as designed.**
+
+### The V2 stack is CPU-throttled at one service, and that is why everything is stale (2026-09-16)
+
+<a id="dl-v2-stream-ingest-cpu-throttle-20260916"></a>
+The OKX index entry above described one defect on the reference-batch path. It
+was not the main one. Measuring the whole consumer surface instead of one feed
+shows a systemic staleness whose cause is a single CPU quota.
+
+**What the consumer sees.** `market_data_service` heartbeat, read from
+`service_heartbeats`: `demanded_v2_slices 60`, `unhealthy_v2_slices 27`,
+`execution_ready_v2_slices 19`, 13 slices `QUIET` with
+`event_recency_state STALE`, `reference_refresh_stale_rejections 673`, service
+status `DEGRADED`. In 90 minutes of its log: 1,099 slice disconnects, 933 of
+them `required data exceeds its freshness policy`.
+
+**What the Data Layer actually serves**, measured with
+`scripts/p18e_data_endpoint_benchmark.py --iterations 5` (well inside the
+shared budget) against the live query endpoint:
+
+| probe | reported freshness | demanded |
+| --- | --- | --- |
+| QUOTE BINANCE BTCUSDT | p50 573 ms | 2,000 ms |
+| QUOTE OKX BTC-USDT-SWAP | p50 403 ms | 2,000 ms |
+| TRADE BINANCE BTCUSDT | **p50 355,952 ms** | 3,000 ms, policy OBSERVE |
+| TRADE OKX BTC-USDT-SWAP | **p50 389,931 ms** | 3,000 ms, policy OBSERVE |
+| BAR 1m BINANCE ETHUSDT | 129,795 ms | 180,000 ms |
+| BOOK_SNAPSHOT, all four probed | rejected `DATA_STALE` | 60,000 ms |
+| MARK_INDEX_PRICE BINANCE | rejected `DATA_NOT_READY` | 15,000 ms |
+
+TRADE being six minutes old is not visible as a failure only because its
+`event_recency_policy` is `OBSERVE`. The policy is hiding a real gap.
+
+**Cause, traced hop by hop.** Ingestors, `rust_core` and `binance_bar_edge` are
+all healthy and producing; `rust_core` has processed over a million canonical
+records this generation. The loss is at the projector. Kafka consumer-group
+lag for `stable-projector-v1`, measured over one minute:
+
+| partition | produced/s | consumed/s | deficit/s | lag | minutes behind |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 99.0 | 99.7 | -0.7 | 22 | 0.0 |
+| 1 | 73.6 | 73.7 | -0.1 | 12 | 0.0 |
+| 2 | 100.5 | 42.2 | +58.2 | 7,971 | 1.3 |
+| 3 | 281.6 | 258.7 | +22.9 | 30,800 | 1.8 |
+| 4 | 160.3 | 163.7 | -3.4 | 59,043 | **6.1** |
+| 5 | 230.2 | 129.5 | +100.8 | 47,680 | **3.5** |
+| total | 945.2 | 767.6 | **+177.6** | ~145,000 | |
+
+The documented gate is 500 total and 250 per partition. The stack is at roughly
+290 times that gate. The spool the query service reads is therefore minutes
+behind, `quality.freshness_ms` is minutes, and `evaluate_requirement` returns
+`DATA_STALE` exactly as designed. Nothing is broken in the freshness logic; the
+data really is that old.
+
+**Why the projectors cannot keep up, and it is not the projectors.**
+`StableHttpCanonicalSink._publish_chunk` (`qdl/runtime/stable_ingest.py:383`)
+iterates `self.urls` in order and stops at the first success, so the URL list
+`["https://stream_v2_active:8200","https://stream_v2_passive:8200"]` is
+failover, not load sharing. Every canonical batch from all three projectors is
+posted to one process. Measured CPU against each container's own quota:
+
+| service | quota | used | share of quota |
+| --- | ---: | ---: | ---: |
+| **stream_v2_active** | 0.75 | 78.25% | **104%** |
+| stream_v2_passive | 0.75 | 0.17% | 0% |
+| kafka2 / kafka3 | 0.75 | ~55% | 73% |
+| projector_v2_2 / _3 | 0.75 | ~33% | 43% |
+| everything else | 0.75 | <25% | <35% |
+
+`stream_v2_active` is pinned **at** its 0.75-CPU limit while its identical
+standby sits idle, and the projectors wait on it at 43% of their own quota. The
+host has 16 cores and a load average of 12, so the capacity exists; it is the
+per-container limit that does not. **This is a resource-allocation defect, not
+a freshness-threshold question, and no threshold should be touched to hide it.**
+
+**Fix, in order, smallest blast radius first.**
+1. Raise the quota on the throttled service only:
+   `docker update --cpus=2.5 qdl_v2_stable_candidate-stream_v2_active-1`. This
+   changes a cgroup limit on a running container. It does not recreate the
+   container, does not touch the projection cache identity, writes no data, and
+   is reversed by the same command with `--cpus=0.75`. Every container's
+   current `NanoCpus`/`Memory` is captured before the change.
+2. Re-measure the lag. The backlog of ~145,000 must drain, not merely stop
+   growing. If the projectors then reach their own 0.75 limit, raise theirs the
+   same way; Kafka at 73% of quota is the next candidate.
+3. Only then consider using both stream endpoints. It is deliberately **not**
+   step one: both processes already hold the same
+   `shared/canonical-cache.sqlite3` open in WAL mode, and SQLite permits one
+   writer at a time, so splitting the load could trade a CPU bottleneck for a
+   write-lock bottleneck. That needs its own measurement, not an assumption.
+4. Persist whatever limits are chosen. These containers were created from a
+   compose file in a worktree that has since been removed, so a `docker update`
+   survives restarts but not a recreate.
+
+**Status.** Step 1 was prepared and its rollback recorded, but the command was
+refused by this session's permission policy as a shared-resource modification.
+It is therefore **not applied**; the stack is still throttled and still stale,
+and the owner has to run it or approve it. Everything above is measurement.
+
+### DL-V2 R1 - Delivery lock decoupling and consumer starvation repair
+
+<a id="dl-v2-r1-delivery-lock-20260916"></a>
+**Status:** `PLANNED / AWAITING_OWNER_APPROVAL` (written 2026-09-16, Fable).
+**Goal:** the certified V2 consumer gets fresh data again without widening a
+single freshness threshold and without adding CPU before the measured cause is
+removed. Everything in the two entries above stays on record; this phase
+corrects one attribution and names the cause with code lines.
+**Guide:** `qdl/stream/gateway.py`, `qdl/stream/grpc_service.py`,
+`qdl/replay/handoff.py`, `qdl/transport/sqlite_spool.py`,
+`qdl/runtime/lease.py`, `qdl/query/service.py`; consumer side
+`trading_system/services/market_data/data_layer_bridge.py`.
+**Implementation ownership:** stream gateway and cursor handoff (R1.1, R1.2),
+query problem codes (R1.3), Trading System market-data bridge (R1.4,
+cross-repo), retention policy (R1.6, owner decision).
+
+**Measured state at planning time (2026-09-16 15:15Z).** Consumer `DEGRADED`,
+60 demanded slices, 23 unhealthy, 22 execution-ready, 322 slice disconnects in
+the last 10 minutes and rising, `reference_refresh_stale_rejections` 821.
+Projector lag 202,163 total, partition 4 at 96,772, against a documented gate
+of 500. **The consumer is not getting enough data and the gap is widening.**
+
+**Correction of the entry above.** `stream_v2_active` pinned at its 0.75-CPU
+quota is a symptom, not the cause. Measured per-thread over 30 s: the asyncio
+loop uses 33.1% of a core and 55 worker threads use 36.3%; ingest decode and
+parse cost 12.6 us per event, 1.2% of a core at 945 events/s; the delivery-side
+re-parse in `_matches_requirement` runs once per event, not once per
+subscription, because `gateway.py:276` matches on `(stream, partition_key)`
+first. The earlier "60x parse" claim and its header-based fix are withdrawn.
+Loop latency on a warm connection: active p50 2.2 ms, p95 59.4 ms, max
+73.7 ms; passive p95 2.3 ms. Not saturated, but stalling.
+
+**Cause, with lines.** Every record delivered to a subscriber passes
+`StreamSubscription.record()` -> `DurableStreamGateway.advance_token()`
+(`gateway.py:337`) -> `asyncio.to_thread(handoff.advance_token)` ->
+`CursorHandoff.issue()` (`qdl/replay/handoff.py`) ->
+`SQLiteDurableSpool.high_watermark()`, one `SELECT` taken **under the spool
+`RLock`** (`sqlite_spool.py:116`). The same lock is held by `append_many` for
+the whole ingest batch including the `synchronous=FULL` fsync, and by
+`find_events`. At ~945 delivered records per second this is ~945 thread hops
+and ~945 lock acquisitions per second competing with every ingest append in the
+one process that holds the writer lease. The projectors wait on that lock, not
+on CPU. On reconnect, `grpc_service.py:254-256` calls `record()` for every
+replayed record before checking `matches`, so unmatched replay costs the same.
+With the consumer reconnecting 322 times per 10 minutes and replaying up to
+`QDL_STABLE_MAX_REPLAY_EVENTS=5000` from a real cursor, the load feeds itself.
+
+**Must implement, in order. Each step is one commit with its own measurement.**
+
+- **R1.0 Baseline capture, read-only, before any change.** Record, with the
+  commands: per-thread CPU split of `stream_v2_active` over 30 s; `/health/live`
+  p50/p95/max on a warm connection for active and passive; projector lag per
+  partition twice, 60 s apart; consumer heartbeat counters; slice disconnects
+  per 10 minutes by feed and code. These five are the phase's exit numbers.
+- **R1.1 Live delivery must not query the spool per record.** A live record has
+  just been appended by `publish_many` under the partition lock, so its cursor
+  is at or below the durable watermark by construction. Maintain a per-partition
+  watermark cache in the gateway, updated inside `publish_many` under the
+  existing partition lock; `advance_token` for live records reads that cache
+  and never enters the spool lock. `issue()` for `resolve_scope` and for replay
+  keeps its spool check unchanged. **Invariant, tested as a property:** no token
+  is ever issued with an offset above the durable watermark, across interleaved
+  appends, advances and a simulated writer fence. Negative test: a cache that
+  is ahead of the spool must be refused, never trusted.
+- **R1.2 Replay advances tokens only where it delivers.** In `subscribe()`, call
+  `record()` only for matched records. The resume token must still move past
+  unmatched physical records, exactly as `next_live` already does at
+  `gateway.py:105-108`: token stays monotonic; a grant is issued on each
+  matched record and on the last record of every unmatched run. **Test:** a
+  consumer resuming after any replay never misses a matched record and never
+  receives one twice; a replay of 5,000 unmatched records issues one grant.
+- **R1.3 Distinguish why data is stale.** `qdl/query/service.py:866` folds
+  event age, provider session state and session liveness into one `fresh`
+  boolean and one message, "required data exceeds its freshness policy". Add a
+  bounded `reason` to the `DATA_STALE` problem naming which predicate failed
+  (`EVENT_AGE`, `SESSION_STATE`, `SESSION_LIVENESS`). Contract-additive; no
+  code or threshold changes. Without this, R1.4 cannot be tuned honestly and
+  the next investigation guesses again.
+- **R1.4 Consumer stops amplifying, Trading System side.**
+  `_run_v2_snapshot_feed` tears the slice down on any `DataLayerError` and
+  backs off to 30 s; 200 of 322 recent disconnects are `BOOK_SNAPSHOT
+  DATA_STALE`. The `MARK_INDEX_PRICE` branch beside it already does the right
+  thing: keep the last independently valid view, do not rewrite the cache, retry
+  on cadence. Apply the same rule to `BOOK_SNAPSHOT`. Recorded in the Trading
+  System plan under the 3E handover as its own slice; landed only after R1.3
+  so the retained-view decision can key on the reason code.
+- **R1.5 Re-measure and decide.** Repeat R1.0. Exit requires: projector lag
+  under the 500/250 gate and **draining, not merely flat**, across three
+  samples 60 s apart; consumer `READY` with 0 unhealthy slices for 30 minutes;
+  disconnects per 10 minutes below 5; `stream_v2_active` below 60% of its
+  quota. Only if it is still above quota after R1.1-R1.4 does a CPU change
+  enter, and then it is written into `docker-compose.v2-stable.yml` with the
+  measurement that justified it, not applied with `docker update` alone.
+- **R1.6 Retention policy, owner decision, documentation and topic config.**
+  Both topics sit at the broker default of 24 h (`docker-compose.v2-stable.yml:33`),
+  97.85 GB across three replicas, with no recorded reason; the rebuild runbook
+  replays 900 s and warmup reads the spool. Decide per topic: canonical covers
+  the longest consumer catch-up the design honours plus margin; raw stays
+  longer because canonical is derived from it and raw cannot be refetched from
+  the venue. Write `retention.ms` per topic with the reason in the compose
+  file. Not a blocker for R1.1-R1.5; disk is at 55% with 132 GB free.
+- **R1.7 Reader separation, design only.** Seven processes open
+  `shared/canonical-cache.sqlite3`; six readers pin the WAL so
+  `wal_checkpoint(PASSIVE)` cannot truncate it (29.5 MB and growing). After
+  R1.5, decide whether query and projector reads move off the writer's file.
+  Architecture change; its own phase.
+
+**Not in this phase.** No freshness threshold moves. No change to the
+active/passive lease or the single-writer invariant (`lease.py:186`). No
+partition-key change: it would alter ordering guarantees and needs
+certification. No reducer or canonical record change. No consumer manifest
+revision bump.
+
+**Test / exit gate:** R1.5 numbers met; unit and property tests for R1.1 and
+R1.2 green in the isolated image; R1.3 covered by contract tests; consumer
+bridge tests for R1.4 green in the Trading System gate image.
+**Rollback:** each of R1.1-R1.4 ships as one image digest for its service
+with the previous digest recorded; rollback is recreate on the previous
+digest, no data migration, no cache identity change. R1.6 rollback is the
+previous `retention.ms`.
+**Debt:** if R1.5 still fails, the next lever is R1.7 or a CPU change, both
+recorded with the numbers that forced them, never a threshold.
+**Journal / Done:** `NOT_RUN`; R1.0 baseline, each step's commit and before/
+after numbers, and the R1.5 decision are recorded here.
+
+**R1.0 baseline captured (2026-09-16 15:26Z), read-only.** The five exit
+numbers, taken before any change:
+
+| Measurement | Value |
+| --- | --- |
+| `stream_v2_active` main asyncio loop | 33.3% of a core |
+| 55 worker threads combined | 35.9% of a core |
+| Projector lag, total | 161,732 against a 500 gate |
+| Worst partition | p4 at 84,691 and growing |
+| Consumer | `DEGRADED`, 18/60 unhealthy, 26 execution-ready |
+| Slice disconnects, 10 min | 237 (122 BOOK_SNAPSHOT, 93 BOOK_DELTA, 22 MARK_INDEX) |
+| `stream_v2_active` CPU vs quota | 103% |
+| Disk / WAL | 56% used, 129 GB free; WAL 29.5 MB against a 1.19 GB cache |
+
+**R1.1 landed (source).** `GapFreeHandoff.issue` takes an optional
+`known_high_watermark`; `DurableStreamGateway` keeps a per-partition watermark
+learned from committed appends, tagged with the writer-lease epoch, updated
+inside `publish_many` under the partition lock it already holds. Delivering a
+record this process committed no longer enters the spool lock.
+**The safety argument, each part tested:** the offsets come from
+`append_many` after its `COMMIT`, so they are durable, not predicted; the cache
+only ever moves forward, because a duplicate append reports the offset of the
+record that already existed; an entry from another lease epoch is discarded and
+a fence clears the map, because after a fence this process is not the writer;
+acknowledging a cursor above what this writer committed falls back to the
+durable read; and `issue` still compares the watermark, so supplying the value
+cannot widen what may be signed. `tests/test_dlv2_r1_delivery_lock.py` holds
+these as 12 cases including interleaved publish/deliver rounds and concurrent
+publishers across two partitions.
+
+**R1.2 landed (source).** `subscribe` advances the resume token once per
+unmatched run instead of once per record, and once per matched record as
+before. A 400-record unmatched replay costs a fixed handful of durable reads
+rather than 400. Five cases pin the properties that matter: the token still
+ends past every record replay consumed, matched records are delivered exactly
+once, the token never moves backwards across mixed runs, and a resumed
+subscriber never sees a delivered record twice.
+
+**R1.3 landed (source).** `evaluate_requirement` takes an optional
+`stale_reason` from a closed vocabulary, `EVENT_AGE`, `SESSION_STATE`,
+`SESSION_LIVENESS`, and appends it to the `DATA_STALE` detail.
+`qdl/query/service.py` splits its one folded boolean into `_freshness_verdict`,
+which returns the verdict and the cause; the admission rule is unchanged and a
+caller that supplies no reason gets the previous message byte for byte.
+`tests/test_dlv2_r1_stale_reason.py` covers each cause, the precedence between
+them, the undeclared-reason refusal, and one boundary worth recording: the
+contract refuses `OBSERVE` recency without an explicit provider session SLA, so
+the six-minute-old TRADE feed is not unguarded, it trades age blocking for
+session-liveness blocking.
+
+**One regression, found and fixed inside the phase.**
+`test_grpc_emits_backpressure_control_before_slow_consumer_disconnect` failed
+3 of 3 runs with the change and passed 3 of 3 without it. Instrumenting the
+subscription showed why, and it is not a defect: the test published two events
+into a one-event buffer and depended on the consumer being too slow to drain
+them. R1.1 removed a durable read from the delivery path, so the consumer now
+keeps up and the buffer no longer overflows. The test now publishes a burst
+larger than anything that can be in flight, so the overflow is deterministic,
+and asserts the invariant it always meant to: when the bounded buffer really
+does overflow, `RATE_LIMITED` is explicit before the disconnect.
+
+**R1.4 landed (source, Trading System).**
+`services/market_data/data_layer_bridge.py` gains `_is_retained_view_eligible`
+and a `DataLayerError` branch in `_run_v2_snapshot_feed`. A rejected refresh
+keeps a prior view that is still inside the requirement's own freshness bound,
+without rewriting the cache, renewing its TTL or marking health ready, exactly
+as the `MARK_INDEX_PRICE` branch beside it already did. It fails closed on
+every axis: no prior view, an expired prior view, a non-retryable problem, a
+code outside `{DATA_STALE}`, or an unbounded freshness policy all still
+disconnect, and so does any transport error.
+
+
+**R1.5 first measurement, and the allocation it justified (2026-09-16 16:40Z).**
+The stream image carrying R1.1-R1.3 was rolled out passive first, then active,
+so a lease holder existed throughout. The effect was immediate and large.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Projector lag, total | 161,732 | 322, gate `PASS` |
+| Worst partition | 84,691 and growing | 87 |
+| Lease holder CPU | 69.2% of a core, falling behind | 59.1% of a core, keeping pace |
+| Slice disconnects, 10 min | 237 | 0 for QUOTE and BOOK_DELTA |
+| TRADE freshness, Binance | 355,952 ms | 926 ms |
+| TRADE freshness, OKX | 389,931 ms | 1,099 ms |
+| BOOK_SNAPSHOT | rejected `DATA_STALE` | 942-1,205 ms |
+| OKX MARK_INDEX_PRICE | rejected | 575-731 ms |
+| BAR 1m | 129,795 ms | 8,963-9,545 ms |
+| WAL | 29.5 MB and growing | 14.9 MB |
+
+**Only then was CPU reallocated, and only where a 60-second measurement showed
+it was needed.** Every service had carried the same 0.75 ceiling regardless of
+role. Measured against their own quotas: `stream_v2_active` 78%, kafka2 69%,
+kafka3 66%, everything else at or below 53%, with six services under 20%. The
+one service at its ceiling is also the one that **cannot** be scaled out, since
+`ActivePassiveGatewayLease` admits exactly one ingesting writer, so the ceiling
+is the only lever there. It went to 2.00 and its standby with it, because a
+standby that cannot take over at the same capacity is not a standby. Kafka went
+to 1.00 each. Eight over-provisioned services came **down**: the readers,
+projector_v2, two rust cores, both ingestors and the bar edge. Declared total
+moves 12.25 to 14.35 on a 16-core host, concentrated where it was measured.
+Written into `docker-compose.v2-stable.yml` with the reason on each service,
+then applied live with `docker update`, which changes a cgroup limit without
+recreating a container or touching cache identity. After the change
+`stream_v2_active` sits at 31% of its new ceiling.
+
+**R1.8, raised by the measurement and fixed inside the phase: a latest-state
+feed could starve itself.** With everything else healthy, seven QUOTE slices
+stayed `STALE` or `DISCONNECTED` for 400 to 1,650 seconds while the Data Layer
+served quotes at 280-533 ms, and they logged nothing at all: no error, no
+disconnect, no recovery. The pattern named the cause. The starved instruments
+were BTCUSDT, ETHUSDT, SOLUSDT and the OKX majors; the quiet DOGE quote was
+fine. A bounded FIFO buffer plus a strict event-age predicate livelocks on a
+busy feed: `StreamSubscription.push` accepts a record that is fresh when
+queued, the record ages past the consumer's own 2,000 ms bound while it waits
+behind hundreds of others, `next_live` then rejects it and loops, and the
+consumer receives nothing while never seeing an error either.
+
+`qdl/ingestion/contracts.py:delivery_policy` already declares every
+non-lossless feed `LATEST_STATE`, and `LOSSLESS_FEEDS` is exactly trade and
+book. The queue did not implement that: it was FIFO for everything. Now a
+latest-state subscription whose buffer is full drops the **oldest** queued
+record and keeps the newest, which is the declared contract rather than a
+relaxation of it. `LATEST_STATE_FEEDS` is written out explicitly in
+`qdl/stream/grpc_service.py` and never contains `TRADE`, `BAR` or
+`BOOK_DELTA`: a trade is an economic event, a final bar is a settled fact, and
+a book delta is only meaningful in sequence. Seven tests hold both halves,
+including that a lossless feed still declares the consumer slow, that delivered
+records stay in order, that the resume token never moves backwards, and that a
+dropped record is never resurrected by replay.
+
+**R1.6 retention, decided and applied.** Both topics ran on the broker default
+of 24 h with no recorded reason, 97.85 GB across three replicas. The longest
+catch-up the design honours from Kafka is the projector rebuild replay of
+900 s; consumers never read Kafka at all, they read the 24 h SQLite spool and
+are bounded further by a 1 h cursor TTL. Canonical is now 6 h, set on the topic:
+that is the 900 s window with a 24x margin plus room for a projector outage.
+Raw stays at 24 h deliberately and the reason is in the compose file: raw
+provider bytes cannot be refetched from a venue and canonical is derived from
+them, so raw is the only copy that can re-derive a reducer fix. Expected steady
+state is roughly 14 GB canonical against 55.6 GB before.
+
+**R1.7 reader separation, measured and deferred with its evidence.** Seven
+processes hold `shared/canonical-cache.sqlite3` open, three file descriptors
+each: both streams, both readers and all three projectors. Six of them are
+readers that pin the WAL, which is why `wal_checkpoint(PASSIVE)` could not
+truncate it. With the writer no longer saturated the WAL has already halved to
+14.9 MB on its own, so the pressure that made this urgent is gone. Moving the
+readers off the writer's file is an architecture change and it is **not**
+justified by the current numbers; it stays recorded here with the measurement
+so a future decision starts from evidence rather than from this entry.
+
+
+### DL-V2 R1 outcome: the delivery path is fixed, the single-writer ceiling is not
+
+<a id="dl-v2-r1-outcome-20260916"></a>
+**Status:** `R1.1_R1.9_LANDED / CAPACITY_CEILING_ESCALATED` (2026-09-16 18:45Z).
+
+**What the code changes achieved, measured.** Throughput through the ingest
+path rose 62%, from 767 records per second consumed to 1,239, and every feed
+the consumer reads came back inside its demanded bound.
+
+| Probe | Before R1 | After R1 |
+| --- | --- | --- |
+| TRADE freshness, Binance BTCUSDT | 355,952 ms | 926 ms |
+| TRADE freshness, OKX BTC-USDT-SWAP | 389,931 ms | 1,099 ms |
+| BOOK_SNAPSHOT, all four probed | rejected `DATA_STALE` | 942-1,205 ms |
+| OKX MARK_INDEX_PRICE | rejected | 575-731 ms |
+| QUOTE | 403-671 ms | 280-533 ms |
+| BAR 1m | 129,795 ms | 8,963-9,545 ms |
+| Projector lag at the time | 161,732 | 322, gate `PASS` |
+| Lease-holder CPU | 69.2% of a core, losing ground | 74.4% of a core doing 62% more |
+
+**What it did not fix, and this is the finding that matters.** Ingest is a
+single process by design: `ActivePassiveGatewayLease` admits exactly one
+writer, and one Python process holds one interpreter lock, so its ceiling is
+roughly one core no matter how much quota it is given. Measured at that
+ceiling it sustains about **1,240 canonical records per second**. During the
+evening session the venues produced **2,749 raw records per second**, against
+the 950 measured this afternoon, and the canonical topic followed at 2,589.
+The projector backlog went from 322 to 2.4 million and kept growing, and the
+consumer fell to 27 of 60 slices ready.
+
+**The shortfall is not new and not caused by R1.** At the very start of this
+phase, before any change, production was 945 per second against 767 consumed:
+a deficit of 178 that had already built the 161,732 backlog which opened this
+investigation. R1 raised the ceiling by 62% and the load rose faster. **The V2
+ingest tier has been running beyond its single-writer capacity for some time;
+the lag was the symptom.**
+
+**Ruled out by measurement, so nobody re-derives them.** Not duplication:
+`rust_core` reports 4, 17 and 9 duplicates against millions processed. Not an
+ingestor reconnect storm: the OKX ingestor renewed snapshots 39 times in 20
+minutes, exactly its 30 second cadence, and the Binance ingestor logged
+nothing. Not CPU starvation anywhere else: with the backlog at its worst the
+projectors sat at 53-63% of quota and the stream at 43% of its 2.00 quota,
+because the limit is the interpreter lock, not the cgroup. Not decode cost:
+12.6 us per event, 1.2% of a core at this rate.
+
+**Two things need an owner decision; neither is safe for an agent to take
+alone.**
+1. **Recovery now.** The standard move is the governed offset reset, the same
+   one `scripts/rebuild_v2_stable_projection_cache.py` performs, to put the
+   projector back at the head so the spool carries current data. It costs a
+   gap in the spool of however far behind it was, which `open_gaps` reports.
+   It was attempted and refused by this session's shared-resource policy, so
+   nothing was reset and no projector was stopped.
+2. **Capacity.** One writer cannot be widened with CPU. The only real lever is
+   to shard the gateway lease so each stream process owns disjoint canonical
+   partitions and both ingest. That changes the single-writer invariant this
+   phase deliberately protected, so it is a phase of its own with its own
+   certification, not an R1 step. The alternative is to reduce canonical
+   volume at the source, which means coalescing a latest-state feed before it
+   becomes a canonical record, and that changes the canonical contract.
+
+**Operational defect found three times while rolling out, and it is real.**
+Recreating the stream containers leaves the projectors unable to reach
+whichever process then holds the lease: the sink's first URL returns 409
+because that container is no longer active, and its pooled connection to the
+other one is dead, so the whole batch fails with
+`statuses=409:stable gateway is not active` and the projector stalls until it
+is restarted. Every rollout in this phase needed a projector restart
+afterwards. `StableHttpCanonicalSink._publish_chunk` should retry a connection
+error once against the same URL before moving on, and a lease handover should
+not require a manual restart of every writer. Recorded here as the next
+correction; not attempted late in a session that had already disturbed the
+runtime enough.
+
+
+---
+
+<a id="dl-v2-r1-release-v2016-20260917"></a>
+### DL-V2 R1 closed and released as v2.0.16 (2026-09-17)
+
+**Landed.** R1.1, R1.2, R1.3, R1.8, R1.9, R1.11 and R1.12 are in
+`df4b8aa8f24e9b6f7dfec5da9c5121cd0fd07b98`. Seven python roles run
+`qdl-v2-python:2.0.16-df4b8aa`
+(`sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26`),
+`restarts=0`. Rollback is `qdl-v2-python:2.0.15-5130f6f`
+(`sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea`) via
+the three override files in
+`~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z`.
+
+**The goal of this phase is met.** Every consumer feed that was stale or
+rejected now serves inside its policy, measured through the real data plane with
+the production binding: `QUOTE` p50 437-700 ms, `TRADE` p50 804-1,711 ms
+(was 355,952 ms), `BOOK_SNAPSHOT` p50 1,186-1,361 ms (was rejected), OKX
+`MARK_INDEX_PRICE` p50 785-892 ms (was rejected). OHLCV 20/20 exact. The
+consumer held `V2_PRIMARY` with zero V1 fallback across a 31-minute,
+30-sample window.
+
+**The backlog was never a backlog.** 24 consumer-group snapshots over 356 s:
+produced 132,880 records, consumed 132,894, both 373 rec/s. The projector
+drained 14 records of standing queue over the window. What looked like a
+recurring failure was the wrong gate applied to the right system — see the
+next slice.
+
+#### R1.18 — express projector health in seconds of work, not records
+
+`MAX_ACCEPTED_LAG = 500` and `MAX_ACCEPTED_PARTITION_LAG = 250` at
+`scripts/rebuild_v2_stable_projection_cache.py:31-32` are the **convergence**
+gate of the cache-rebuild runbook. `_wait_bounded_lag` polls every 2 s and
+requires `REQUIRED_BOUNDED_LAG_SAMPLES = 3` consecutive acceptable samples;
+that is a correct proof that a replay drained, and the 17m44s boot-recovery
+rehearsal in ledger entry 12 depends on it. **Do not loosen those constants.**
+
+The error was reusing the same bound as a steady-state health check. At
+373 rec/s, 500 records is 1.3 seconds of work, so a healthy queue crosses it
+whenever it breathes: 5 of 30 samples in the certification window reported
+`gate=FAIL` while the consumer stayed `READY` and never fell back.
+
+Steps, in order:
+
+1. Add a steady-state reader beside `parse_canonical_lag` that returns the
+   summed current offset as well as the lag, so two readings a known interval
+   apart give a consumption rate. Do not change `parse_canonical_lag` itself;
+   the runbook's convergence path must keep its exact current behaviour.
+2. Derive `lag_seconds = total_lag / consumed_per_second` and make that the
+   steady-state figure. Guard the zero-rate case: if nothing was consumed
+   between the two readings, the answer is "unknown", not "infinite".
+3. Express the health bound in seconds of work with a number tied to the
+   consumer's freshness policy, not to a record count. The realtime policy is
+   2,000 ms; a projector more than a few seconds of work behind is the thing
+   worth alerting on.
+4. Unit-test the derivation directly: a fixed pair of offset readings, a fixed
+   interval, an asserted `lag_seconds`; a zero-rate reading that returns
+   unknown; a reading whose partition count is wrong, which must still fail.
+5. Leave the runbook's own `lag_sample_acceptable` and `_wait_bounded_lag`
+   untouched, and add a docstring line to each saying what they are for, so the
+   next reader does not repeat this mistake.
+
+**Gate for R1.18:** the new derivation is unit-tested, the runbook's convergence
+behaviour is unchanged (its existing tests still pass untouched), and the plan
+records one measured steady-state reading taken with it.
+
+#### Still open after this release
+
+- Binance `MARK_INDEX_PRICE` answers `DATA_NOT_READY`. Pre-existing and
+  untouched by R1.
+- 1 of 16 OKX `MARK_INDEX_PRICE` samples rejected on `EVENT_AGE`; the
+  mark-price/index-tickers pairing from ledger entry 21 is still the cause.
+- `StableHttpCanonicalSink._publish_chunk` should retry a connection error once
+  against the same URL before moving on, and a lease handover should not require
+  a manual restart of every projector. Recorded at
+  [dl-v2-r1-outcome-20260916](#dl-v2-r1-outcome-20260916); unchanged.
+- The single-writer capacity ceiling. One writer cannot be widened with CPU;
+  sharding the gateway lease changes the invariant this phase protected and is a
+  phase of its own.

@@ -26,6 +26,10 @@ from qdl.query.contracts import (
     QueryProblem,
     RecoveryPolicy,
     StalePolicy,
+    STALE_REASON_EVENT_AGE,
+    STALE_REASON_SESSION_LIVENESS,
+    STALE_REASON_SESSION_STATE,
+    STALE_REASONS,
     evaluate_requirement,
 )
 from qdl.query.entitlement import (
@@ -98,6 +102,10 @@ __all__ = [
     "RecoveryPolicy",
     "StalePolicy",
     "delivery_mode",
+    "STALE_REASONS",
+    "STALE_REASON_EVENT_AGE",
+    "STALE_REASON_SESSION_LIVENESS",
+    "STALE_REASON_SESSION_STATE",
     "evaluate_requirement",
     "feed_for_reference_product",
     "HistoryResult",

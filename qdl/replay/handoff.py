@@ -250,12 +250,29 @@ class GapFreeHandoff:
         snapshot_id: str,
         snapshot_watermark: Cursor,
         ttl_seconds: int,
+        known_high_watermark: int | None = None,
     ) -> HandoffGrant:
+        """Sign one resumable cursor, never above the durable watermark.
+
+        ``known_high_watermark`` lets a caller that has just committed the very
+        record being acknowledged supply the offset the durable store assigned
+        it, instead of paying a second read. The guarantee is unchanged: the
+        watermark is still compared, and the value is only trustworthy when it
+        comes from a committed append in the same process that holds the writer
+        lease. Every other caller passes nothing and the store is read, so an
+        unknown watermark is a read, never an assumption.
+        """
+
         if not consumer_id.strip() or not snapshot_id.strip() or ttl_seconds <= 0:
             raise ValueError("consumer, snapshot and positive TTL are required")
-        high = self._spool.high_watermark(
-            snapshot_watermark.stream, snapshot_watermark.partition_key
-        )
+        if known_high_watermark is None:
+            high = self._spool.high_watermark(
+                snapshot_watermark.stream, snapshot_watermark.partition_key
+            )
+        else:
+            if type(known_high_watermark) is not int or known_high_watermark < 0:
+                raise ValueError("known high watermark must be a non-negative integer")
+            high = known_high_watermark
         if snapshot_watermark.offset > high:
             raise ValueError("snapshot watermark is ahead of durable live state")
         now_ns = self._clock_ns()
@@ -328,6 +345,7 @@ class GapFreeHandoff:
         consumer_id: str,
         cursor: Cursor,
         ttl_seconds: int,
+        known_high_watermark: int | None = None,
     ) -> HandoffGrant:
         """Issue a resumable signed cursor after one event is safely processed."""
 
@@ -344,6 +362,7 @@ class GapFreeHandoff:
             snapshot_id=payload.snapshot_id,
             snapshot_watermark=cursor,
             ttl_seconds=ttl_seconds,
+            known_high_watermark=known_high_watermark,
         )
 
 

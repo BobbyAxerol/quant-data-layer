@@ -11,6 +11,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
     DataRequirement,
+    FeedType,
     QueryServiceError,
     StalePolicy,
     V2QueryService,
@@ -152,6 +153,29 @@ def requirement_from_proto(value: query_pb2.DataRequirement) -> DataRequirement:
     return DataRequirement.from_mapping(mapping)
 
 
+# DL-V2 R1.8. Which demanded feeds are latest-state, so a full bounded buffer
+# keeps the newest record rather than the oldest. This mirrors
+# `qdl/ingestion/contracts.py:delivery_policy`, which already declares every
+# non-lossless feed LATEST_STATE; it is written out explicitly here because the
+# stream layer carries the query FeedType, not the ingestion one, and a wrong
+# entry would silently drop records from a feed that must not lose any.
+#
+# Never add TRADE, BAR or BOOK_DELTA: a trade is an economic event, a final bar
+# is a settled fact, and a book delta is only meaningful in sequence.
+LATEST_STATE_FEEDS = frozenset({
+    FeedType.QUOTE,
+    FeedType.BOOK_SNAPSHOT,
+    FeedType.MARK_INDEX_PRICE,
+    FeedType.TICKER,
+    FeedType.FUNDING_RATE,
+    FeedType.OPEN_INTEREST,
+    FeedType.BASIS,
+    FeedType.LONG_SHORT_RATIO,
+    FeedType.TAKER_FLOW,
+    FeedType.CONTRACT_METADATA,
+})
+
+
 class GrpcMarketDataService:
     def __init__(
         self,
@@ -237,6 +261,7 @@ class GrpcMarketDataService:
                 max_consumer_streams=request_access.access.manifest.quotas.max_streams,
                 replay_limit=self.gateway.max_replay_events,
                 accepts=lambda stored: self._matches_requirement(stored, requirement),
+                coalesce=requirement.feed in LATEST_STATE_FEEDS,
             )
             high = (await self.gateway.capture_watermark(
                 stream=stream, partition_key=partition_key
@@ -250,14 +275,27 @@ class GrpcMarketDataService:
                     high_watermark=high,
                 ),
             ))
+            # Replay advances the resume token past every physical record it
+            # sees, matched or not, so a resumed consumer never re-reads a run
+            # it already skipped. Signing a cursor per record costs a durable
+            # read, so an unmatched run is collapsed: the token is advanced once
+            # at the end of the run instead of once per record. The delivered
+            # records keep their own per-record tokens, so nothing a consumer
+            # resumes from changes.
+            pending_skip = None
             for stored in subscription.initial:
-                matches = subscription.accepts(stored)
-                record = await subscription.record(stored)
-                if not matches:
+                if not subscription.accepts(stored):
+                    pending_skip = stored
                     continue
+                if pending_skip is not None:
+                    await subscription.record(pending_skip)
+                    pending_skip = None
+                record = await subscription.record(stored)
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )
+            if pending_skip is not None:
+                await subscription.record(pending_skip)
             yield query_pb2.SubscribeResponse(record=query_pb2.StreamRecord(
                 resume_token=subscription.token,
                 control=query_pb2.StreamControl(

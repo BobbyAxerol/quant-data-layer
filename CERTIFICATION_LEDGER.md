@@ -584,3 +584,191 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   935 ms (OKX), both execution eligible: **the gate is met where it matters.**
   The durable-projection tail is a venue-bound characteristic, not a defect.
 
+
+---
+
+## 21. OKX index freshness: entry 20 corrected (2026-09-16)
+
+- **Entry 20 is wrong on two points.** The reference-batch path *is* breaching
+  the sealed 2,000 ms gate in production, and OKX's index publication rate is
+  *not* the floor. Measured, not inferred.
+- **Production, one hour of `market_data_service` logs:** 118 `MARK_INDEX_PRICE`
+  slice disconnects, 117 OKX; `index_price` age p50 2255 ms, max 2973 ms, while
+  `mark_price` at the same instants is p50 36 ms. Service state `DEGRADED`,
+  reconnect count 294 on DOGE-USDT-SWAP. The consumer reports the Data Layer's
+  own typed `DATA_STALE` problem; it applies no rule of its own.
+- **Cause, measured against OKX from this host with no Data Layer in the path:**
+  `/api/v5/market/index-tickers` returns rows stamped p50 901 ms and **max
+  2511 ms** behind the clock, while `/api/v5/public/mark-price` returns 31 ms.
+  The REST index endpoint serves a stale cached row. The 935 ms figure in
+  entry 20 was a median that hid this tail.
+- **The venue is fine.** `wss://ws.okx.com:8443/ws/v5/public` `index-tickers`,
+  470 frames in 60 s: `ts` lag p50 81 ms, **max 354 ms**, push interval p50
+  256 ms. The "613 ms publication rate" in entry 20 was the REST row's change
+  rate, not the venue's index rate.
+- **Fix, not applied:** serve the reference batch's OKX `INDEX` component from
+  the `index-tickers` binding the deployment already subscribes to
+  (`qdl/runtime/stable_deployment.py:195`), REST only as fallback; the
+  per-component 2,000 ms policy stays sealed. Owner approval and reference-batch
+  re-certification required; `v2.0.15` is released.
+- **Pinned at:** `market_data_service` running image of 2026-09-16, OKX public
+  REST and WS measured 2026-09-16. Re-measure only if OKX changes the endpoint.
+
+---
+
+## 22. V2 staleness is one CPU quota, not one feed (2026-09-16)
+
+- **Entry 21 found a real defect but not the main one.** Measuring all feeds
+  instead of mark/index: TRADE p50 **356 s** on Binance and **390 s** on OKX,
+  BOOK_SNAPSHOT rejected `DATA_STALE` on every probed instrument, Binance
+  MARK_INDEX_PRICE `DATA_NOT_READY`, BAR 1m 130 s. QUOTE alone is healthy at
+  p50 403-573 ms. Consumer: 27 of 60 slices unhealthy, `DEGRADED`.
+- **Projector lag** on `stable-projector-v1`: ~145,000 total against a
+  documented gate of 500 total / 250 per partition; partition 4 is 6.1 minutes
+  behind. Production 945 msg/s, consumption 768 msg/s, deficit 178 msg/s.
+- **Root cause:** `stream_v2_active` runs at **104% of its 0.75-CPU quota**
+  while the identical `stream_v2_passive` sits at 0.17%, because
+  `qdl/runtime/stable_ingest.py:383` treats the two ingest URLs as ordered
+  failover rather than load sharing. All three projectors post through the one
+  throttled process and wait at 43% of their own quota. Host has 16 cores.
+- **Fix not applied:** `docker update --cpus=2.5` on that one container, live,
+  no recreate, no cache identity change, reversible with `--cpus=0.75`. The
+  command was refused by the agent session's shared-resource permission policy.
+  Owner action required. Both-endpoint load sharing is deliberately deferred:
+  the two stream processes share one WAL SQLite database, which allows one
+  writer at a time.
+- **Pinned at:** stack `qdl_v2_stable_candidate` as running 2026-09-16 14:05Z;
+  every container's `NanoCpus`/`Memory` captured for rollback. Re-measure lag
+  after any quota change; the backlog must drain, not merely stop growing.
+
+---
+
+## 23. Entry 22 corrected: the throttle is a symptom, the spool lock is the cause (2026-09-16)
+
+- **Withdrawn from earlier reasoning:** the "60x re-parse per subscription"
+  claim (fan-out matches `(stream, partition_key)` first, `gateway.py:276`;
+  the parse runs ~once per event, ~0.1% CPU) and the header-at-append fix built
+  on it. The CPU quota raise is not step one either: the process is at
+  33.1% loop + 36.3% across 55 worker threads, and the worker share is SQLite.
+- **Cause:** every delivered record calls `advance_token` ->
+  `handoff.issue()` -> `spool.high_watermark()` under the spool `RLock`
+  (`sqlite_spool.py:116`), the lock `append_many` holds through its fsync. At
+  ~945 records/s the delivery path serialises against ingest inside the one
+  writer-lease process; replay on reconnect (322 per 10 min) pays the same per
+  unmatched record (`grpc_service.py:254`).
+- **Measured now:** consumer `DEGRADED`, 23/60 unhealthy, 22 execution-ready;
+  projector lag 202,163 (p4 96,772); active loop p95 59.4 ms vs passive
+  2.3 ms; ingest decode 12.6 us/event (1.2% CPU); 522 B per canonical record;
+  Kafka 97.85 GB at the 24 h broker default with no recorded reason.
+- **Plan:** DL-V2 R1 in the unified plan, anchor
+  `dl-v2-r1-delivery-lock-20260916`. Nothing applied; awaiting owner approval.
+- **Pinned at:** stack as running 2026-09-16 15:15Z. Re-measure only after an
+  R1 step lands.
+
+---
+
+## 24. DL-V2 R1 landed; the single-writer ceiling is now the binding limit (2026-09-16)
+
+- **Code:** R1.1 took the durable read off the live delivery path, R1.2
+  collapsed replay token advances, R1.3 named the stale reason, R1.8 made a
+  latest-state feed keep the newest record in a bounded buffer, R1.9 signs a
+  known cursor on the loop instead of paying a thread hop. R1.4 on the Trading
+  System side keeps a valid snapshot view instead of tearing the slice down.
+  62 tests across two repositories; the data layer suite is 1,455.
+- **Measured gain:** consumption 767 -> 1,239 records/s. TRADE freshness
+  355,952 ms -> 926 ms, BOOK_SNAPSHOT from rejected to 942-1,205 ms, OKX
+  MARK_INDEX from rejected to 575-731 ms, projector lag 161,732 -> 322 with the
+  500/250 gate passing at the time.
+- **Ceiling:** one writer by `ActivePassiveGatewayLease` plus one interpreter
+  lock per process caps ingest near one core, about 1,240 records/s. Evening
+  load reached 2,749 raw records/s against 950 in the afternoon, the backlog
+  regrew to 2.6 M and the consumer fell to 27/60 ready. The same deficit
+  existed before any change (945 produced vs 767 consumed).
+- **Ruled out with numbers:** duplication (4/17/9 against millions), ingestor
+  reconnect storms (39 renewals in 20 min, exactly the 30 s cadence), CPU
+  starvation (projectors 53-63% of quota, stream 43% of a 2.00 quota), decode
+  cost (12.6 us/event, 1.2% of a core).
+- **Open, owner decision:** the governed offset reset to restore service now
+  (attempted, refused by this session's shared-resource policy, nothing was
+  reset); and whether to shard the gateway lease so both stream processes
+  ingest disjoint partitions, which changes the single-writer invariant.
+- **Open, next correction:** recreating a stream container stalls every
+  projector on a dead pooled connection plus a 409 from the no-longer-active
+  peer. Each rollout in this phase needed a projector restart.
+- **CPU and retention:** ceilings are now per service with the measurement on
+  each, declared total 12.25 -> 14.35 on a 16-core host, eight services reduced.
+  Canonical Kafka retention 24 h -> 6 h with the reason recorded; raw stays 24 h
+  because it cannot be refetched and canonical is derived from it.
+- **Pinned at:** `qdl-v2-python:2.0.16-e87ef8d` on both stream processes and
+  `2.0.16-190217b` on both query readers; projectors, ingestors, rust cores,
+  kafka and redis unchanged. Rollback images in
+  `~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z/README.md`.
+
+---
+
+## 25. v2.0.16: the delivery path, not capacity (2026-09-17)
+
+- **Release:** `v2.0.16`, certificate `upgrade/evidence/releases/v2.0.16/`,
+  predecessor `v2.0.15` (`be1b94fe...c761ffe`). Seven python roles recreated on
+  `qdl-v2-python:2.0.16-df4b8aa`
+  (`sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26`),
+  built from `df4b8aa8f24e9b6f7dfec5da9c5121cd0fd07b98`, `restarts=0`.
+  Rollback `qdl-v2-python:2.0.15-5130f6f`
+  (`sha256:b3f908cb17cf9363afb9258ef2ae08e4cdfbc0cb26d01b5bd371559ad82b6bea`),
+  packet `~/.local/state/qdl-v2/dlv2-r1-190217b-20260916T163120Z`.
+- **Unchanged and pinned:** `binance_bar_edge` on `2.0.15-5130f6f`; the five Rust
+  roles on `qdl-v2-rust:2.0.15-c5a5be0`
+  (`sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1`),
+  which already closes RUSTSEC-2026-0285 in runtime; V1 fallback
+  `qdl-v1-fallback:v1.2.4-2b0dcf7`
+  (`sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`);
+  consumer `tradingsystem-image:v1.2.5-75df46e`.
+- **Post-recovery measurement, 2026-09-17T04:11:44Z**, eight iterations through
+  the real data plane: `QUOTE` p50 437-700 ms, `TRADE` p50 804-1,711 ms,
+  `BOOK_SNAPSHOT` p50 1,186-1,361 ms, OKX `MARK_INDEX_PRICE` p50 785-892 ms,
+  all against a 2,000 ms policy that `TRADE` was missing by 355,952 ms before.
+  OHLCV 20/20 exact, all `FINAL`. Request latency p50: snapshots 6.5-7.2 ms,
+  book 76.6 ms, 1m warmup 119 ms, batched warmup 649 ms.
+- **31-minute window, 30 samples:** consumer `V2_PRIMARY` with `fb=0` on every
+  sample, 60 slices demanded, `READY` on 26 of 30, worst sample 3 of 60 slices
+  transiently unhealthy, execution-ready slices p50 45.
+- **The backlog question, answered with numbers.** 24 consumer-group snapshots
+  over 356 s: produced 132,880 records, consumed 132,894 — the projector
+  consumed 14 *more* than were produced, both at 373 rec/s. There is no
+  backlog. Lag oscillates 138-1,273 records and the spikes wander across
+  partitions 2-5, which is a queue breathing, not a stuck partition.
+- **The gate was the wrong gate.** `MAX_ACCEPTED_LAG = 500` /
+  `MAX_ACCEPTED_PARTITION_LAG = 250` in
+  `scripts/rebuild_v2_stable_projection_cache.py:31` is the **convergence** gate
+  of the cache-rebuild runbook: three consecutive acceptable samples prove a
+  replay drained. At 373 rec/s, 500 records is **1.3 seconds of work**, so an
+  instantaneous sample of a healthy queue crosses it — 5 of 30 window samples
+  did, while the consumer stayed ready and never fell back. Reusing it as a
+  steady-state health gate was my error, not a defect in the runbook. Steady
+  state is the produced-versus-consumed rate plus lag in seconds of work:
+  p50 1.02 s, p95 1.58 s, max 2.19 s.
+  **Do not loosen the runbook constant** — it is correct for convergence and the
+  17m44s boot-recovery rehearsal (entry 12) depends on it.
+- **Disk, measured after the retention change.** Across the three brokers:
+  canonical `55.6 -> 17.0 GB`, raw `40.1 -> 50.7 GB` (still 24 h, and the
+  realtime volume is higher than when the before figure was taken), total
+  `95.7 -> 67.7 GB`. Host filesystem 52%. Verified live:
+  `retention.ms=21600000` is a `DYNAMIC_TOPIC_CONFIG` on `md.canonical.v2`,
+  raw inherits the 24 h static broker config.
+- **Entry 24 corrected:** the declared CPU total after the R1 ceilings is
+  **13.35**, not 14.35, summed over the 17 roles this stack runs on a 16-core
+  host (12.25 before). Eight services were reduced, five raised: kafka1/2/3
+  `0.75 -> 1.00` and both stream processes `0.75 -> 2.00`.
+- **Open, next slice:** express steady-state projector health in seconds of work
+  rather than an instantaneous record count, and stop quoting the runbook
+  constant as a health gate.
+- **Still open, untouched:** Binance `MARK_INDEX_PRICE` answers
+  `DATA_NOT_READY`; 1 of 16 OKX `MARK_INDEX_PRICE` samples rejected on
+  `EVENT_AGE` (entry 21 cause unchanged); recreating a stream container still
+  stalls the projectors on a dead pooled connection plus a 409 from the
+  no-longer-active peer.
+- **Governed recovery:** the backlog of 3,002,343 was cleared by a consumer-group
+  offset reset to latest on `stable-projector-v1` (stop projectors, reset,
+  start), authorised by the owner for a pre-production stack. Canonical records
+  between the old committed offset and latest were not projected; raw still
+  holds them and canonical retention is 6 h.

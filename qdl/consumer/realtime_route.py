@@ -13,6 +13,7 @@ from qdl._compat import StrEnum
 
 from qdl.consumer.manifest import ConsumerManifest, ConsumerRoute
 from qdl.query import (
+    STALE_REASON_EVENT_AGE,
     CanonicalErrorCode,
     CoverageStatus,
     DataRequirement,
@@ -131,10 +132,14 @@ def evaluate_realtime_health(
                 True,
             ),
         )
+    # DL-V2 R1.3: the realtime route has one freshness input, the source event
+    # age, so its reason is always EVENT_AGE. Naming it keeps the code stable
+    # across both evaluators instead of leaving one of them anonymous.
     fresh = observation.source_age_ms is not None and (
         requirement.max_freshness_ms is None
         or observation.source_age_ms <= requirement.max_freshness_ms
     )
+    stale_reason = None if fresh else STALE_REASON_EVENT_AGE
     available = observation.available and (
         not requirement.require_final_bars or observation.final_bar_available
     )
@@ -146,6 +151,7 @@ def evaluate_realtime_health(
         fresh=fresh,
         authoritative=observation.authoritative,
         gap_open=observation.gap_open,
+        stale_reason=stale_reason,
     )
     return RealtimeSliceHealth(
         available=available,

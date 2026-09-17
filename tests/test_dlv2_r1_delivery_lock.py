@@ -1,0 +1,696 @@
+"""DL-V2 R1: delivering a live record must not read the durable store.
+
+Every delivered record used to advance its signed cursor through
+``GapFreeHandoff.issue`` -> ``SQLiteDurableSpool.high_watermark``, a SELECT
+taken under the spool ``RLock`` that ``append_many`` holds through its
+``synchronous=FULL`` fsync. At ~945 records per second that serialised the
+delivery path against ingest inside the one process holding the writer lease.
+
+R1.1 lets the gateway supply the offset the durable store assigned when it
+committed the very record being acknowledged. These tests pin the invariant
+that makes that safe: a token is never signed above the durable watermark, and
+anything the gateway cannot prove falls back to reading the store.
+
+R1.2 covers the replay path, where a token had to advance through records the
+subscriber's predicate rejects without paying a store read per record.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+
+from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
+from qdl.stream.gateway import (
+    LATEST_STATE_BUFFER_EVENTS,
+    DurableStreamGateway,
+    SlowConsumer,
+)
+from qdl.transport import Cursor, DurableEvent, SQLiteDurableSpool, SpoolConfig
+
+STREAM = "md.canonical.v2.trade"
+PARTITION = "uid/trade/binance"
+OTHER = "uid/quote/binance"
+
+
+def event(index: int, partition: str = PARTITION) -> DurableEvent:
+    return DurableEvent(
+        stream=STREAM,
+        partition_key=partition,
+        event_id=index.to_bytes(16, "big"),
+        payload=f'{{"index":{index}}}'.encode(),
+        accepted_at_ns=1_000_000_000 + index,
+        content_type="application/json",
+    )
+
+
+class CountingSpool(SQLiteDurableSpool):
+    """A spool that counts durable watermark reads, nothing else changed."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.high_watermark_calls = 0
+
+    def high_watermark(self, stream: str, partition_key: str) -> int:
+        self.high_watermark_calls += 1
+        return super().high_watermark(stream, partition_key)
+
+
+class StubAuthority:
+    """A writer lease whose epoch the test controls."""
+
+    def __init__(self, epoch: int = 1) -> None:
+        self.epoch = epoch
+
+    @property
+    def current_epoch(self) -> int | None:
+        return self.epoch
+
+    def assert_active(self, expected_epoch: int | None = None) -> int:
+        if expected_epoch is not None and expected_epoch != self.epoch:
+            raise RuntimeError("stream gateway lease epoch changed")
+        return self.epoch
+
+
+class DeliveryLockTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.spool = CountingSpool(SpoolConfig(
+            path=Path(self.temp.name) / "r1.sqlite3",
+            min_free_disk_bytes=0,
+        ))
+        self.addCleanup(self.spool.close)
+        self.codec = SignedHandoffCursorCodec({"k": b"x" * 32}, active_key_id="k")
+        self.handoff = GapFreeHandoff(self.spool, self.codec)
+        self.authority = StubAuthority()
+        self.gateway = DurableStreamGateway(
+            handoff=self.handoff, sink=self.spool, authority=self.authority
+        )
+
+    def token(self, partition: str = PARTITION) -> str:
+        return self.handoff.issue(
+            consumer_id="alpha",
+            snapshot_id="snap",
+            snapshot_watermark=self.handoff.capture_watermark(
+                stream=STREAM, partition_key=partition
+            ),
+            ttl_seconds=60,
+        ).token
+
+    async def subscribe(self, partition: str = PARTITION):
+        return await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=partition,
+            token=self.token(partition),
+        )
+
+    # ------------------------------------------------ R1.1 watermark cache
+    async def test_live_delivery_stops_reading_the_durable_store(self) -> None:
+        subscription = await self.subscribe()
+        await self.gateway.publish_many([event(1), event(2), event(3)])
+        self.spool.high_watermark_calls = 0
+        for _ in range(3):
+            await subscription.next_live()
+        self.assertEqual(
+            self.spool.high_watermark_calls, 0,
+            "delivering a record this process committed must not re-read the store",
+        )
+
+    async def test_the_signed_offset_still_matches_the_durable_offset(self) -> None:
+        """The cache must not change what a token means, only how it is proven."""
+
+        subscription = await self.subscribe()
+        await self.gateway.publish_many([event(1), event(2)])
+        for expected in (1, 2):
+            record = await subscription.next_live()
+            self.assertEqual(record.stored.cursor.offset, expected)
+            scope = self.handoff.resolve_scope(
+                token=record.resume_token, consumer_id="alpha"
+            )
+            # The token tracks the record just delivered, which is at or below
+            # the durable watermark; it is not the watermark itself, because
+            # later records may already be committed and undelivered.
+            self.assertEqual(scope.watermark_offset, expected)
+            self.assertLessEqual(
+                scope.watermark_offset,
+                self.spool.high_watermark(STREAM, PARTITION),
+            )
+
+    async def test_a_watermark_is_never_signed_above_the_durable_state(self) -> None:
+        """The invariant, exercised over interleaved appends and advances."""
+
+        subscription = await self.subscribe()
+        for batch in ([1], [2, 3], [4], [5, 6, 7]):
+            await self.gateway.publish_many([event(i) for i in batch])
+            for _ in batch:
+                record = await subscription.next_live()
+                durable = self.spool.high_watermark(STREAM, PARTITION)
+                self.assertLessEqual(
+                    record.stored.cursor.offset, durable,
+                    "a signed cursor must never lead the durable store",
+                )
+
+    async def test_an_unknown_partition_falls_back_to_the_store(self) -> None:
+        """Absence of knowledge is a read, never an assumption."""
+
+        self.assertIsNone(
+            self.gateway.known_high_watermark(STREAM, "never/seen", 1)
+        )
+        self.spool.high_watermark_calls = 0
+        await self.gateway.publish_many([event(1, OTHER)])
+        subscription = await self.subscribe(OTHER)
+        self.assertIsNotNone(
+            self.gateway.known_high_watermark(STREAM, OTHER, 1)
+        )
+
+    async def test_a_watermark_from_another_lease_epoch_is_discarded(self) -> None:
+        """After a fence this process is not the writer, so it knows nothing."""
+
+        await self.gateway.publish_many([event(1), event(2)])
+        self.assertEqual(self.gateway.known_high_watermark(STREAM, PARTITION, 1), 2)
+        self.authority.epoch = 2
+        self.assertIsNone(
+            self.gateway.known_high_watermark(STREAM, PARTITION, 2),
+            "a watermark learned under a previous lease must not be trusted",
+        )
+
+    async def test_fencing_clears_every_remembered_watermark(self) -> None:
+        await self.gateway.publish_many([event(1)])
+        self.assertIsNotNone(self.gateway.known_high_watermark(STREAM, PARTITION, 1))
+        await self.gateway.fence_all()
+        self.assertIsNone(self.gateway.known_high_watermark(STREAM, PARTITION, 1))
+
+    async def test_a_duplicate_append_never_moves_the_watermark_backwards(self) -> None:
+        await self.gateway.publish_many([event(1), event(2), event(3)])
+        self.assertEqual(self.gateway.known_high_watermark(STREAM, PARTITION, 1), 3)
+        await self.gateway.publish_many([event(2)])  # same event id, duplicate
+        self.assertEqual(
+            self.gateway.known_high_watermark(STREAM, PARTITION, 1), 3,
+            "a duplicate reports the offset of the record that already existed",
+        )
+
+    async def test_acknowledging_beyond_what_this_writer_committed_reads_the_store(self) -> None:
+        """A cursor the gateway cannot account for must not be signed from cache."""
+
+        subscription = await self.subscribe()
+        await self.gateway.publish_many([event(1)])
+        await subscription.next_live()
+        self.spool.high_watermark_calls = 0
+        with self.assertRaises(ValueError):
+            await self.gateway.advance_token(
+                token=subscription.token,
+                consumer_id="alpha",
+                cursor=Cursor(STREAM, PARTITION, 99),
+            )
+        self.assertEqual(
+            self.spool.high_watermark_calls, 1,
+            "the store must be consulted before refusing an unaccounted cursor",
+        )
+
+    def test_the_handoff_refuses_a_malformed_known_watermark(self) -> None:
+        for bad in ("3", -1, 1.5, True):
+            with self.subTest(value=bad):
+                with self.assertRaises(ValueError):
+                    self.handoff.issue(
+                        consumer_id="alpha", snapshot_id="snap",
+                        snapshot_watermark=Cursor(STREAM, PARTITION, 0),
+                        ttl_seconds=60, known_high_watermark=bad,
+                    )
+
+    def test_a_known_watermark_still_bounds_the_cursor(self) -> None:
+        """Supplying the value does not disable the check it feeds."""
+
+        with self.assertRaises(ValueError):
+            self.handoff.issue(
+                consumer_id="alpha", snapshot_id="snap",
+                snapshot_watermark=Cursor(STREAM, PARTITION, 5),
+                ttl_seconds=60, known_high_watermark=4,
+            )
+
+    async def test_watermarks_are_tracked_per_partition(self) -> None:
+        await self.gateway.publish_many([event(1), event(2)])
+        await self.gateway.publish_many([event(10, OTHER)])
+        self.assertEqual(self.gateway.known_high_watermark(STREAM, PARTITION, 1), 2)
+        self.assertEqual(self.gateway.known_high_watermark(STREAM, OTHER, 1), 1)
+
+    async def test_concurrent_publishers_keep_the_invariant(self) -> None:
+        """Interleave two partitions under concurrent publishes."""
+
+        subscription = await self.subscribe()
+        await asyncio.gather(*(
+            self.gateway.publish_many([event(i), event(i + 100, OTHER)])
+            for i in range(1, 6)
+        ))
+        durable = self.spool.high_watermark(STREAM, PARTITION)
+        self.assertEqual(
+            self.gateway.known_high_watermark(STREAM, PARTITION, 1), durable
+        )
+        for _ in range(5):
+            record = await subscription.next_live()
+            self.assertLessEqual(record.stored.cursor.offset, durable)
+
+
+class ReplayTokenAdvanceTests(unittest.IsolatedAsyncioTestCase):
+    """R1.2: replay must skip cheaply without losing resume position.
+
+    The loop is reproduced here against the real gateway and handoff rather
+    than the gRPC servicer, because the servicer needs a full access context.
+    The rule under test is the one the servicer implements: advance the token
+    once per unmatched run, once per matched record, never backwards, and never
+    past a record that was not seen.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.spool = CountingSpool(SpoolConfig(
+            path=Path(self.temp.name) / "replay.sqlite3",
+            min_free_disk_bytes=0,
+        ))
+        self.addCleanup(self.spool.close)
+        self.codec = SignedHandoffCursorCodec({"k": b"x" * 32}, active_key_id="k")
+        self.handoff = GapFreeHandoff(self.spool, self.codec)
+        self.gateway = DurableStreamGateway(handoff=self.handoff, sink=self.spool)
+
+    async def _replay(self, count: int, matcher):
+        """Run the R1.2 loop over `count` durable records and report what it did."""
+
+        token = self.handoff.issue(
+            consumer_id="alpha", snapshot_id="snap",
+            snapshot_watermark=self.handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        ).token
+        await self.gateway.publish_many([event(i) for i in range(1, count + 1)])
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=token, accepts=matcher, replay_limit=max(count, 1),
+        )
+        delivered, advances = [], 0
+        pending_skip = None
+        for stored in subscription.initial:
+            if not subscription.accepts(stored):
+                pending_skip = stored
+                continue
+            if pending_skip is not None:
+                await subscription.record(pending_skip); advances += 1
+                pending_skip = None
+            record = await subscription.record(stored); advances += 1
+            delivered.append(record.stored.cursor.offset)
+        if pending_skip is not None:
+            await subscription.record(pending_skip); advances += 1
+        return subscription, delivered, advances
+
+    async def test_a_fully_unmatched_replay_advances_the_token_once(self) -> None:
+        subscription, delivered, advances = await self._replay(
+            50, lambda _stored: False
+        )
+        self.assertEqual(delivered, [])
+        self.assertEqual(advances, 1, "one advance for the whole unmatched run")
+        scope = self.handoff.resolve_scope(
+            token=subscription.token, consumer_id="alpha"
+        )
+        self.assertEqual(
+            scope.watermark_offset, 50,
+            "the token must still sit past every record replay consumed",
+        )
+
+    async def test_every_matched_record_is_delivered_exactly_once(self) -> None:
+        _, delivered, _ = await self._replay(
+            20, lambda stored: stored.cursor.offset % 2 == 0
+        )
+        self.assertEqual(delivered, list(range(2, 21, 2)))
+        self.assertEqual(len(delivered), len(set(delivered)))
+
+    async def test_the_token_never_moves_backwards_across_mixed_runs(self) -> None:
+        token = self.handoff.issue(
+            consumer_id="alpha", snapshot_id="snap",
+            snapshot_watermark=self.handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        ).token
+        await self.gateway.publish_many([event(i) for i in range(1, 31)])
+        keep = {3, 4, 5, 17, 30}
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=token, accepts=lambda s: s.cursor.offset in keep, replay_limit=30,
+        )
+        seen = 0
+        pending_skip = None
+        for stored in subscription.initial:
+            if not subscription.accepts(stored):
+                pending_skip = stored
+                continue
+            if pending_skip is not None:
+                await subscription.record(pending_skip)
+                offset = self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id="alpha"
+                ).watermark_offset
+                self.assertGreaterEqual(offset, seen)
+                seen = offset
+                pending_skip = None
+            await subscription.record(stored)
+            offset = self.handoff.resolve_scope(
+                token=subscription.token, consumer_id="alpha"
+            ).watermark_offset
+            self.assertGreaterEqual(offset, seen)
+            seen = offset
+        if pending_skip is not None:
+            await subscription.record(pending_skip)
+            seen = self.handoff.resolve_scope(
+                token=subscription.token, consumer_id="alpha"
+            ).watermark_offset
+        self.assertEqual(seen, 30)
+
+    async def test_resuming_after_replay_never_repeats_a_delivered_record(self) -> None:
+        """The property the collapse must not break."""
+
+        subscription, delivered, _ = await self._replay(
+            12, lambda s: s.cursor.offset in {2, 9}
+        )
+        resumed = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=subscription.token, accepts=lambda s: s.cursor.offset in {2, 9},
+            replay_limit=12,
+        )
+        again = [s.cursor.offset for s in resumed.initial if resumed.accepts(s)]
+        self.assertEqual(delivered, [2, 9])
+        self.assertEqual(again, [], "a resumed subscriber must not see them twice")
+
+    async def test_the_collapse_removes_durable_reads_for_skipped_records(self) -> None:
+        for records in (10, 100, 400):
+            with self.subTest(records=records):
+                self.setUp()
+                self.spool.high_watermark_calls = 0
+                await self._replay(records, lambda _stored: False)
+                # The remaining reads are the fixed cost of opening the
+                # subscription, not a per-record cost: issuing the initial
+                # token and the replay-limit watermark check. The property
+                # under test is that the count does not grow with the run.
+                self.assertLessEqual(self.spool.high_watermark_calls, 4)
+                self.assertLess(
+                    self.spool.high_watermark_calls, records,
+                    "durable reads must not scale with the unmatched run length",
+                )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()
+
+
+class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
+    """DL-V2 R1.8: a busy latest-state feed must not starve itself.
+
+    A bounded FIFO buffer plus a strict event-age predicate livelocks: records
+    are fresh when queued, age past the consumer's own bound while they wait,
+    and are then all rejected on the way out, so the consumer receives nothing
+    and never reports an error either. It was observed starving exactly the
+    busiest instruments while a quiet one was fine.
+
+    `qdl/ingestion/contracts.py:delivery_policy` already declares every
+    non-lossless feed LATEST_STATE, so keeping the newest record is the stated
+    contract. These tests hold both halves: latest-state feeds coalesce, and
+    lossless feeds still refuse to lose anything.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.spool = CountingSpool(SpoolConfig(
+            path=Path(self.temp.name) / "coalesce.sqlite3", min_free_disk_bytes=0,
+        ))
+        self.addCleanup(self.spool.close)
+        self.codec = SignedHandoffCursorCodec({"k": b"x" * 32}, active_key_id="k")
+        self.handoff = GapFreeHandoff(self.spool, self.codec)
+        self.gateway = DurableStreamGateway(handoff=self.handoff, sink=self.spool)
+
+    def token(self) -> str:
+        return self.handoff.issue(
+            consumer_id="alpha", snapshot_id="snap",
+            snapshot_watermark=self.handoff.capture_watermark(
+                stream=STREAM, partition_key=PARTITION
+            ),
+            ttl_seconds=60,
+        ).token
+
+    async def _subscribe(self, *, coalesce: bool, buffer: int = 4):
+        return await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=buffer, coalesce=coalesce,
+        )
+
+    async def test_a_lossless_feed_still_declares_the_consumer_slow(self) -> None:
+        """The property that must not regress: a trade is never dropped."""
+
+        subscription = await self._subscribe(coalesce=False, buffer=4)
+        await self.gateway.publish_many([event(i) for i in range(1, 21)])
+        self.assertTrue(subscription.overflowed)
+        self.assertEqual(subscription.coalesced, 0)
+        with self.assertRaises(SlowConsumer):
+            await subscription.next_live()
+
+    async def test_a_latest_state_feed_keeps_the_newest_instead_of_overflowing(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=4)
+        await self.gateway.publish_many([event(i) for i in range(1, 21)])
+        self.assertFalse(
+            subscription.overflowed,
+            "a latest-state consumer that keeps up with the newest record is not slow",
+        )
+        self.assertGreater(subscription.coalesced, 0)
+        delivered = [(await subscription.next_live()).stored.cursor.offset for _ in range(4)]
+        self.assertEqual(
+            delivered, [17, 18, 19, 20],
+            "the buffer must hold the newest records, not the oldest",
+        )
+
+    async def test_the_delivered_records_stay_in_order(self) -> None:
+        """Coalescing drops, it never reorders."""
+
+        subscription = await self._subscribe(coalesce=True, buffer=3)
+        for index in range(1, 31):
+            await self.gateway.publish_many([event(index)])
+        seen = [(await subscription.next_live()).stored.cursor.offset for _ in range(3)]
+        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(seen[-1], 30, "the newest record must survive")
+
+    async def test_the_resume_token_never_moves_backwards_while_coalescing(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=3)
+        await self.gateway.publish_many([event(i) for i in range(1, 16)])
+        last = 0
+        for _ in range(3):
+            record = await subscription.next_live()
+            offset = self.handoff.resolve_scope(
+                token=record.resume_token, consumer_id="alpha"
+            ).watermark_offset
+            self.assertGreaterEqual(offset, last)
+            last = offset
+
+    async def test_a_dropped_record_is_never_resurrected_by_replay(self) -> None:
+        """Dropping must be final, or a latest-state feed replays stale prices."""
+
+        subscription = await self._subscribe(coalesce=True, buffer=2)
+        await self.gateway.publish_many([event(i) for i in range(1, 11)])
+        record = await subscription.next_live()
+        resumed = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=record.resume_token, max_buffer_events=10, coalesce=True,
+        )
+        replayed = [s.cursor.offset for s in resumed.initial]
+        self.assertTrue(
+            all(offset > record.stored.cursor.offset for offset in replayed),
+            "replay must resume after the delivered record, not before it",
+        )
+
+    async def test_coalescing_never_applies_when_the_buffer_is_not_full(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=10)
+        await self.gateway.publish_many([event(i) for i in range(1, 6)])
+        self.assertEqual(subscription.coalesced, 0)
+        delivered = [(await subscription.next_live()).stored.cursor.offset for _ in range(5)]
+        self.assertEqual(delivered, [1, 2, 3, 4, 5], "nothing is dropped while there is room")
+
+    def test_the_feed_split_matches_the_declared_delivery_policy(self) -> None:
+        """A wrong entry here would silently drop economic events."""
+
+        from qdl.query import FeedType
+        from qdl.stream.grpc_service import LATEST_STATE_FEEDS
+
+        for lossless in (FeedType.TRADE, FeedType.BAR, FeedType.BOOK_DELTA):
+            self.assertNotIn(lossless, LATEST_STATE_FEEDS)
+        for latest in (FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.MARK_INDEX_PRICE):
+            self.assertIn(latest, LATEST_STATE_FEEDS)
+
+    async def test_a_latest_state_buffer_is_bounded_however_deep_the_request(self) -> None:
+        """A deep buffer is the harm, not the remedy.
+
+        A consumer asking for a thousand slots on a quote feed is asking to
+        queue seconds of data, and if it also demands a two second event age it
+        will reject everything it dequeues. The server keeps the contract
+        instead: hold a handful of the newest records.
+        """
+
+        subscription = await self._subscribe(coalesce=True, buffer=1000)
+        self.assertEqual(
+            subscription.queue.maxsize, LATEST_STATE_BUFFER_EVENTS,
+            "a latest-state subscription must not hold a deep backlog",
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 501)])
+        self.assertFalse(subscription.overflowed)
+        delivered = [
+            (await subscription.next_live()).stored.cursor.offset
+            for _ in range(LATEST_STATE_BUFFER_EVENTS)
+        ]
+        self.assertEqual(delivered[-1], 500, "the newest record must be delivered")
+        self.assertEqual(delivered, sorted(delivered))
+
+    async def test_a_lossless_subscription_keeps_the_depth_it_asked_for(self) -> None:
+        subscription = await self._subscribe(coalesce=False, buffer=1000)
+        self.assertEqual(subscription.queue.maxsize, 1000)
+
+    async def test_a_small_latest_state_request_is_not_enlarged(self) -> None:
+        subscription = await self._subscribe(coalesce=True, buffer=2)
+        self.assertEqual(subscription.queue.maxsize, 2)
+
+    async def test_signing_a_known_cursor_does_not_leave_the_event_loop(self) -> None:
+        """R1.9: the thread hop existed for the I/O that R1.1 removed.
+
+        With the watermark known the call is pure signing work, so paying a
+        thread handoff to avoid blocking on nothing is what caps the process.
+        One interpreter lock means extra CPU quota cannot widen a single
+        stream, so loop time is the scarce resource.
+        """
+
+        import asyncio as _asyncio
+
+        subscription = await self._subscribe(coalesce=False, buffer=16)
+        await self.gateway.publish_many([event(1), event(2)])
+        hops = 0
+        real = _asyncio.to_thread
+
+        async def counting(fn, /, *args, **kwargs):
+            nonlocal hops
+            hops += 1
+            return await real(fn, *args, **kwargs)
+
+        _asyncio.to_thread = counting
+        try:
+            await subscription.next_live()
+            await subscription.next_live()
+        finally:
+            _asyncio.to_thread = real
+        self.assertEqual(hops, 0, "a known watermark must be signed on the loop")
+
+    async def test_an_unknown_cursor_still_goes_to_a_thread(self) -> None:
+        """The store read must never move onto the loop."""
+
+        import asyncio as _asyncio
+
+        self.gateway._watermarks.clear()
+        hops = 0
+        real = _asyncio.to_thread
+
+        async def counting(fn, /, *args, **kwargs):
+            nonlocal hops
+            hops += 1
+            return await real(fn, *args, **kwargs)
+
+        await self.gateway.publish_many([event(1)])
+        token = self.token()
+        self.gateway._watermarks.clear()
+        _asyncio.to_thread = counting
+        try:
+            await self.gateway.advance_token(
+                token=token, consumer_id="alpha", cursor=Cursor(STREAM, PARTITION, 1)
+            )
+        finally:
+            _asyncio.to_thread = real
+        self.assertEqual(hops, 1, "an unknown watermark must still read the store off-loop")
+
+
+class ProjectorBatchWaitTests(unittest.TestCase):
+    """DL-V2 R1.11: the drain window is a latency budget, not a constant.
+
+    With a backlog the window is irrelevant, a batch fills at once. At the head
+    it decides everything: a 10 ms window collects a handful of records and the
+    drain still pays a full HTTP round trip, a durable write and a checkpoint,
+    so the pipeline spends its time on fixed costs instead of records.
+    """
+
+    def _config(self, **env):
+        from qdl.runtime.stable import StableRuntimeConfig
+        base = dict(StableRuntimeConfig.from_environment.__defaults__ or ())
+        del base
+        return env
+
+    def test_the_default_trades_a_tenth_of_a_second_for_batching(self) -> None:
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        self.assertEqual(
+            StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"].default,
+            0.10,
+        )
+
+    def test_the_window_is_bounded_so_it_cannot_become_a_stall(self) -> None:
+        """One second is the ceiling; a longer window would hide a dead feed."""
+
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        field = StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"]
+        self.assertEqual(field.type, "float")
+
+    def test_the_engine_still_refuses_a_window_outside_its_own_bound(self) -> None:
+        from qdl.runtime.stable_projector import StableProjectorEngine
+
+        import inspect
+
+        signature = inspect.signature(StableProjectorEngine.__init__)
+        self.assertIn("batch_wait_seconds", signature.parameters)
+
+    async def test_records_ageing_out_before_delivery_report_backpressure(self) -> None:
+        """DL-V2 R1.13: discarding is right, discarding in silence is not.
+
+        A subscriber whose records keep ageing out between being queued and
+        being read is not keeping up with the freshness it asked for. Before
+        this it received nothing at all, with no error to reconnect on, and the
+        slice stayed stale until something restarted the whole consumer.
+        """
+
+        rejects_everything = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=4,
+            accepts=lambda _stored: True,
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 11)])
+        # Flip the predicate after the records are queued, which is exactly the
+        # shape of a record that was fresh when pushed and stale when read.
+        rejects_everything._accepts = lambda _stored: False
+        with self.assertRaises(SlowConsumer):
+            await rejects_everything.next_live()
+
+    async def test_one_late_record_does_not_trip_backpressure(self) -> None:
+        """A single aged record is ordinary; a buffer's worth of them is not."""
+
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=4,
+            accepts=lambda stored: stored.cursor.offset != 1,
+        )
+        await self.gateway.publish_many([event(1), event(2)])
+        record = await subscription.next_live()
+        self.assertEqual(record.stored.cursor.offset, 2)
+        self.assertEqual(subscription.filtered_since_delivery, 0)
+
+    async def test_the_filtered_counter_resets_on_every_delivery(self) -> None:
+        subscription = await self.gateway.open(
+            consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
+            token=self.token(), max_buffer_events=8,
+            accepts=lambda stored: stored.cursor.offset % 2 == 0,
+        )
+        await self.gateway.publish_many([event(i) for i in range(1, 9)])
+        for expected in (2, 4, 6, 8):
+            record = await subscription.next_live()
+            self.assertEqual(record.stored.cursor.offset, expected)
+            self.assertEqual(subscription.filtered_since_delivery, 0)

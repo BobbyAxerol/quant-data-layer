@@ -15,6 +15,16 @@ from qdl.transport import (
 )
 
 
+# DL-V2 R1.8. How many records a latest-state subscription may hold. A deep
+# buffer is not just unnecessary for a feed whose contract is "the newest
+# value", it is actively harmful: a thousand queued quotes are seconds of
+# waiting, and a consumer that also demands a two second event age will reject
+# every one of them on the way out and receive nothing. Eight records is tens
+# of milliseconds on the busiest instrument, so a record cannot age out while
+# it waits. Lossless feeds are untouched and keep the buffer they asked for.
+LATEST_STATE_BUFFER_EVENTS = 8
+
+
 class SlowConsumer(RuntimeError):
     """The consumer must reconnect and replay from its last confirmed token."""
 
@@ -48,25 +58,60 @@ class StreamSubscription:
         max_buffer_events: int,
         lease_epoch: int | None,
         accepts: Callable[[StoredEvent], bool] | None,
+        coalesce: bool = False,
     ) -> None:
         self._gateway = gateway
         self.subscription_id = subscription_id
         self.consumer_id = consumer_id
         self.token = token
         self.initial = initial
-        self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=max_buffer_events)
+        depth = (
+            min(max_buffer_events, LATEST_STATE_BUFFER_EVENTS)
+            if coalesce
+            else max_buffer_events
+        )
+        self.queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=depth)
         self.lease_epoch = lease_epoch
         self._accepts = accepts or (lambda _stored: True)
+        # DL-V2 R1.8. A latest-state feed keeps the newest record when the
+        # bounded buffer is full, instead of keeping the oldest and declaring
+        # the consumer slow. See `push` for why that matters.
+        self._coalesce = bool(coalesce)
         self.overflowed = False
         self.closed = False
         self._in_flight = 0
+        self.coalesced = 0
+        self.filtered_since_delivery = 0
 
     def push(self, stored: StoredEvent) -> None:
         if self.closed or self.overflowed or not self._accepts(stored):
             return
         if self.queue.qsize() + self._in_flight >= self.queue.maxsize:
-            self.overflowed = True
-            return
+            if not self._coalesce:
+                self.overflowed = True
+                return
+            # DL-V2 R1.8. A latest-state feed, a bounded FIFO buffer and a
+            # strict event-age predicate combine into a livelock that starves
+            # exactly the busiest instruments: the queue fills with records
+            # that are still fresh when queued, every one of them ages past the
+            # consumer's own freshness bound while it waits, and the reader
+            # then rejects all of them and receives nothing. Observed on
+            # BTCUSDT and ETH-USDT-SWAP quotes, which went 449 s and 1,648 s
+            # without a delivered batch while a quiet DOGE quote was fine.
+            #
+            # `qdl/ingestion/contracts.py:delivery_policy` already says a
+            # non-lossless feed is LATEST_STATE, so keeping the newest record
+            # is the declared contract, not a relaxation of it. Trades, book
+            # deltas and final bars are lossless and never take this path.
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+                self.coalesced += 1
+            except asyncio.QueueEmpty:
+                # Every slot is in flight rather than queued; there is nothing
+                # to drop, so fall back to the bounded-buffer signal.
+                self.overflowed = True
+                return
         try:
             self.queue.put_nowait(stored)
         except asyncio.QueueFull:
@@ -105,7 +150,24 @@ class StreamSubscription:
             # wait for the next eligible record instead of leaking stale data.
             if not self._accepts(stored):
                 self.mark_delivered()
+                # DL-V2 R1.13. Discarding is right; discarding in silence is
+                # not. A subscriber whose records keep ageing out between being
+                # queued and being read is, by the only definition that matters
+                # here, not keeping up with the freshness it asked for. Before
+                # this it simply received nothing, with no error to reconnect
+                # on, and the slice stayed stale until something restarted it.
+                # Once a whole buffer's worth has been discarded without a
+                # single delivery, say so with the signal the protocol already
+                # has, so the consumer reconnects and resumes from a fresh
+                # cursor instead of waiting on a stream that will never speak.
+                self.filtered_since_delivery += 1
+                if self.filtered_since_delivery > self.queue.maxsize:
+                    raise SlowConsumer(
+                        "records aged out of the bounded buffer before delivery; "
+                        "replay from the last confirmed token is required"
+                    )
                 continue
+            self.filtered_since_delivery = 0
             return record
 
     def mark_delivered(self) -> None:
@@ -151,6 +213,14 @@ class DurableStreamGateway:
         self._partition_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._next_id = 1
         self._subscriptions: dict[int, tuple[str, str, StreamSubscription]] = {}
+        # Durable high watermark per partition, learned from committed appends
+        # in this process only, tagged with the writer-lease epoch that produced
+        # it. Delivering a live record then costs no second read of the durable
+        # store, which is the lock the ingest append holds through its fsync.
+        # An entry from another epoch is never used: after a fence this process
+        # is no longer the writer, so its knowledge is stale by definition and
+        # the store is read instead.
+        self._watermarks: dict[tuple[str, str], tuple[int | None, int]] = {}
 
     async def open(
         self,
@@ -163,6 +233,7 @@ class DurableStreamGateway:
         max_consumer_streams: int | None = None,
         replay_limit: int = 10_000,
         accepts: Callable[[StoredEvent], bool] | None = None,
+        coalesce: bool = False,
     ) -> StreamSubscription:
         lease_epoch = self.assert_active()
         if not 1 <= replay_limit <= self.max_replay_events:
@@ -222,6 +293,7 @@ class DurableStreamGateway:
                     max_buffer_events=buffer_size,
                     lease_epoch=lease_epoch,
                     accepts=accepts,
+                    coalesce=coalesce,
                 )
                 self._subscriptions[subscription_id] = (
                     stream, partition_key, subscription
@@ -267,6 +339,16 @@ class DurableStreamGateway:
                 )
                 for event, result in zip(values, results, strict=True)
             )
+            # The store committed before returning these offsets, so each one is
+            # durable. Only ever move a partition's watermark forward: a
+            # duplicate append reports the offset of the record that already
+            # existed, which can be behind the current watermark.
+            for result in results:
+                key = (result.cursor.stream, result.cursor.partition_key)
+                epoch, offset = self._watermarks.get(key, (lease_epoch, -1))
+                if epoch != lease_epoch:
+                    offset = -1
+                self._watermarks[key] = (lease_epoch, max(offset, result.cursor.offset))
             async with self._subscriptions_lock:
                 subscriptions = tuple(self._subscriptions.values())
             for event, stored in zip(values, stored_values, strict=True):
@@ -282,6 +364,10 @@ class DurableStreamGateway:
             self._subscriptions.pop(subscription_id, None)
 
     async def fence_all(self) -> None:
+        # Losing the lease means another process may now append, so every
+        # remembered watermark is stale. Dropping them returns the gateway to
+        # reading the durable store.
+        self._watermarks.clear()
         async with self._subscriptions_lock:
             subscriptions = tuple(self._subscriptions.values())
             self._subscriptions.clear()
@@ -334,15 +420,58 @@ class DurableStreamGateway:
         self.assert_active(lease_epoch)
         return records
 
+    def known_high_watermark(self, stream: str, partition_key: str, lease_epoch: int | None) -> int | None:
+        """Return this writer's committed watermark, or None if it cannot know.
+
+        None is the safe answer and means the durable store is read. An entry
+        recorded under a different lease epoch is discarded rather than trusted,
+        because after a fence another process owns the writer role.
+        """
+
+        entry = self._watermarks.get((stream, partition_key))
+        if entry is None:
+            return None
+        epoch, offset = entry
+        if epoch != lease_epoch or offset < 0:
+            return None
+        return offset
+
     async def advance_token(self, *, token: str, consumer_id: str, cursor):
         lease_epoch = self.assert_active()
-        grant = await asyncio.to_thread(
-            self.handoff.advance_token,
-            token=token,
-            consumer_id=consumer_id,
-            cursor=cursor,
-            ttl_seconds=self.cursor_ttl_seconds,
+        known = self.known_high_watermark(
+            cursor.stream, cursor.partition_key, lease_epoch
         )
+        if known is not None and cursor.offset > known:
+            # The caller is acknowledging a record this process did not commit,
+            # so its knowledge is incomplete. Fall back to the durable read
+            # rather than sign a cursor the store may not back.
+            known = None
+        if known is None:
+            # The durable store still has to be read, so keep it off the loop.
+            grant = await asyncio.to_thread(
+                self.handoff.advance_token,
+                token=token,
+                consumer_id=consumer_id,
+                cursor=cursor,
+                ttl_seconds=self.cursor_ttl_seconds,
+                known_high_watermark=None,
+            )
+        else:
+            # DL-V2 R1.9. With the watermark already known this call is pure
+            # signing work: decode, compare, encode, measured at 44 us. The
+            # thread hop exists to keep blocking I/O off the event loop, and
+            # there is no longer any I/O here, so it costs a 112 us handoff to
+            # avoid nothing. At over a thousand delivered records a second that
+            # scheduling overhead was most of the loop's time, and the loop is
+            # what caps this process, since one interpreter lock means extra
+            # CPU quota cannot widen it.
+            grant = self.handoff.advance_token(
+                token=token,
+                consumer_id=consumer_id,
+                cursor=cursor,
+                ttl_seconds=self.cursor_ttl_seconds,
+                known_high_watermark=known,
+            )
         self.assert_active(lease_epoch)
         return grant
 

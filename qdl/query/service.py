@@ -20,6 +20,9 @@ from qdl.query.contracts import (
     FeedType,
     QueryProblem,
     StalePolicy,
+    STALE_REASON_EVENT_AGE,
+    STALE_REASON_SESSION_LIVENESS,
+    STALE_REASON_SESSION_STATE,
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
@@ -45,6 +48,38 @@ from qdl.reference.contracts import (
     ReferenceRequest,
     ReferenceStatus,
 )
+
+
+def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
+    """Split the freshness verdict into its three independent causes.
+
+    Folding these into one boolean is what made every DATA_STALE rejection
+    ambiguous: an event that is simply old, a provider session the venue
+    reported as bad, and a session whose liveness exceeded the consumer's
+    bound are different operational faults with different fixes. The admission
+    rule is exactly the one this replaced; only the reason is new.
+    """
+
+    if quality.state == "MARKET_CLOSED":
+        return True, None
+    if quality.state in {"STALE", "OFFLINE", "UNAVAILABLE"}:
+        return False, STALE_REASON_EVENT_AGE
+    if quality.provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}:
+        return False, STALE_REASON_SESSION_STATE
+    if requirement.max_session_liveness_ms is not None and not (
+        quality.provider_session_state == "LIVE"
+        and quality.provider_session_liveness_ms is not None
+        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
+    ):
+        return False, STALE_REASON_SESSION_LIVENESS
+    if (
+        requirement.max_freshness_ms is not None
+        and quality.freshness_ms > requirement.max_freshness_ms
+        and requirement.effective_event_recency_policy
+        in {StalePolicy.BLOCK, StalePolicy.PAUSE}
+    ):
+        return False, STALE_REASON_EVENT_AGE
+    return True, None
 
 
 class QueryServiceError(RuntimeError):
@@ -863,6 +898,7 @@ class V2QueryService:
             product=product,
             at_ns=self._clock_ns(),
         )
+        _fresh, _stale_reason = _freshness_verdict(requirement, quality)
         problem = evaluate_requirement(
             requirement,
             entitled=entitlement.allowed,
@@ -873,29 +909,8 @@ class V2QueryService:
                     and quality.state == "MARKET_CLOSED"
                 )
             ),
-            fresh=(
-                quality.state == "MARKET_CLOSED"
-                or (
-                    quality.state not in {"STALE", "OFFLINE", "UNAVAILABLE"}
-                    and quality.provider_session_state
-                    not in {"STALE", "DISCONNECTED", "UNKNOWN"}
-                    and (
-                        requirement.max_session_liveness_ms is None
-                        or (
-                            quality.provider_session_state == "LIVE"
-                            and quality.provider_session_liveness_ms is not None
-                            and quality.provider_session_liveness_ms
-                            <= requirement.max_session_liveness_ms
-                        )
-                    )
-                    and (
-                        requirement.max_freshness_ms is None
-                        or quality.freshness_ms <= requirement.max_freshness_ms
-                        or requirement.effective_event_recency_policy
-                        not in {StalePolicy.BLOCK, StalePolicy.PAUSE}
-                    )
-                )
-            ),
+            fresh=_fresh,
+            stale_reason=_stale_reason,
             # Source authority and continuity are distinct facts.  Keeping
             # them separate lets execution callers receive OPEN_SEQUENCE_GAP
             # for a real continuity defect instead of a misleading lineage
