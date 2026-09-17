@@ -196,8 +196,11 @@ class SpoolHeadroomTests(unittest.TestCase):
     """The bound that failed every canonical write closed on 2026-09-17."""
 
     def test_a_spool_near_the_physical_bound_fails(self) -> None:
+        # Expressed against the declared bound, not a byte count, so raising the
+        # bound cannot silently turn this check into a pass.
         r = report()
-        payload = json.dumps([2252414976, 966902232, 1900544])
+        main = int(verify.SPOOL_MAX_STORAGE_BYTES * 0.9)
+        payload = json.dumps([main, 16 * 1024 * 1024, 1900544])
         with mock.patch.object(verify, "_exec", return_value=payload):
             verify.check_spool_headroom(r)
         finding = r.findings[0]
@@ -206,7 +209,8 @@ class SpoolHeadroomTests(unittest.TestCase):
 
     def test_a_spool_with_headroom_passes(self) -> None:
         r = report()
-        payload = json.dumps([2252414976, 33554432, 1900544])
+        main = int(verify.SPOOL_MAX_STORAGE_BYTES * 0.4)
+        payload = json.dumps([main, 33554432, 1900544])
         with mock.patch.object(verify, "_exec", return_value=payload):
             verify.check_spool_headroom(r)
         self.assertEqual(r.findings[0].status, verify.OK)
@@ -231,7 +235,7 @@ class SpoolHeadroomTests(unittest.TestCase):
 
     def test_the_warn_ratio_is_configurable(self) -> None:
         r = report()
-        payload = json.dumps([1610612736, 0, 0])          # exactly half the bound
+        payload = json.dumps([verify.SPOOL_MAX_STORAGE_BYTES // 2, 0, 0])
         with mock.patch.object(verify, "_exec", return_value=payload):
             verify.check_spool_headroom(r, warn_ratio=0.4)
         self.assertEqual(r.findings[0].status, verify.FAIL)

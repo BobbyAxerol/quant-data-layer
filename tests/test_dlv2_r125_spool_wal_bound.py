@@ -103,3 +103,26 @@ class SpoolWalBoundTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpoolPhysicalBoundMatchesRetentionTests(unittest.TestCase):
+    """The physical ceiling must not be tighter than the retention it carries.
+
+    On 2026-09-17 the spool failed every write closed at a 3 GiB ceiling while
+    still inside its own row policy: 1,301,097 rows occupied 1,114 MB of payload
+    in a 2,312 MB file, and max_records allows 1,841,712. A bound that refuses
+    writes before retention has trimmed anything is not a safety bound, it is an
+    outage waiting for a backlog.
+    """
+
+    def test_the_physical_bound_carries_the_rows_max_records_allows(self):
+        from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+
+        # Measured on the live cache, payload only, before index and page
+        # overhead roughly doubles it on disk.
+        measured_payload_bytes_per_row = 1114 * 1024 * 1024 / 1_301_097
+        physical_partitions = 183
+        max_records = physical_partitions * STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+        on_disk = max_records * measured_payload_bytes_per_row * 2
+        self.assertGreater(6 * 1024**3, on_disk + JOURNAL_SIZE_LIMIT_BYTES)
+        self.assertLess(3 * 1024**3, on_disk)

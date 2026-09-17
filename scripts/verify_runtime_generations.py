@@ -44,7 +44,7 @@ COMPOSE_FILE = "docker-compose.v2-stable.yml"
 
 # Mirrors qdl.runtime.stable.build_stable_spool and qdl.transport.sqlite_spool;
 # this script runs against a container and must not import the package.
-SPOOL_MAX_STORAGE_BYTES = 3 * 1024 * 1024 * 1024
+SPOOL_MAX_STORAGE_BYTES = 6 * 1024 * 1024 * 1024
 JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 
 OK = "OK"
