@@ -248,8 +248,9 @@ def main(argv: list[str] | None = None) -> int:
     for (feed, interval, policy, capability_json), members in sorted(grouped.items()):
         capabilities = json.loads(capability_json)
         label = feed if interval == "-" else f"{feed} {interval}"
-        print(f"  {label}  ({len(members)} endpoint: {', '.join(members[:3])}"
-              f"{', …' if len(members) > 3 else ''})")
+        print(f"  {label}  ({len(members)} endpoint)")
+        for index in range(0, len(members), 5):
+            print(f"      {', '.join(members[index:index + 5])}")
         print(f"      max_freshness_ms            {policy}")
         for name, value in capabilities.items():
             print(f"      {name:28s}{value}")
