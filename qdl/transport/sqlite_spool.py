@@ -857,18 +857,28 @@ class SQLiteDurableSpool:
         if free - event_bytes < self.config.min_free_disk_bytes:
             raise BackpressureRequired("bridge minimum free-disk reserve would be violated")
         conservative_growth = max(1 * 1024 * 1024, event_bytes * 4)
-        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
-            # A complete checkpoint is safe to attempt outside a transaction and
-            # can reclaim a stale WAL without changing logical retention. If a
-            # reader pins the WAL, PASSIVE returns promptly and the same physical
-            # bound remains fail-closed below.
-            self._checkpoint_wal_passive_locked()
-        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
-            # PASSIVE could not shrink the file. TRUNCATE can, and a bounded
-            # pause while readers drain is strictly better than failing every
-            # writer closed until an operator intervenes.
-            self._checkpoint_wal_truncate_locked()
-        if self.storage_bytes() + conservative_growth > self.config.max_storage_bytes:
+
+        def over_bound() -> bool:
+            return (
+                self.storage_bytes() + conservative_growth
+                > self.config.max_storage_bytes
+            )
+
+        if not over_bound():
+            return
+        # A complete checkpoint is safe to attempt outside a transaction and can
+        # reclaim a stale WAL without changing logical retention. If a reader
+        # pins the WAL, PASSIVE returns promptly.
+        self._checkpoint_wal_passive_locked()
+        if not over_bound():
+            return
+        # PASSIVE recycles a WAL but never shrinks the file, and on 2026-09-17
+        # that file was the whole overrun: 922 MB of already-checkpointed frames
+        # against 7,720 bytes of headroom. TRUNCATE reclaims it, and a bounded
+        # pause while readers drain is strictly better than failing every writer
+        # closed until an operator intervenes.
+        self._checkpoint_wal_truncate_locked()
+        if over_bound():
             raise BackpressureRequired("bridge physical storage bound would be violated")
 
     def _checkpoint_wal_passive_locked(self) -> bool:
