@@ -1,6 +1,6 @@
 {
   "schema": "qdl.v2.patch-release-scope-evidence.v1",
-  "status": "PENDING_RUNTIME_ACCEPTANCE",
+  "status": "PASS",
   "release": "v2.0.17",
   "inherits": {
     "release": "v2.0.16",
@@ -66,15 +66,16 @@
       "failing_check": "chain stable_redis (deleted worktree)"
     },
     "python_suite": {
-      "tests": 1556,
+      "tests": 1563,
       "result": "OK",
       "skipped": 7,
-      "isolated": true
+      "isolated": true,
+      "image": "qdl-v2-python:2.0.17-5c01cb6"
     },
     "rust_gate": {
       "inherited": false,
-      "qdl_venue_core": 42,
-      "qdl_realtime_core": 38
+      "qdl_venue_core": 43,
+      "qdl_realtime_core": 36
     }
   },
   "venue_boundaries_retested_2026_09_17": {
@@ -93,5 +94,47 @@
     "Binance MARK_INDEX_PRICE (venue does not deliver the stream; needs the reference/REST pair path)",
     "native Binance BAR lane (same venue condition)",
     "DNSE VN v2 (paused by the owner; openapi.dnse.com.vn:443 unreachable)"
-  ]
+  ],
+  "feeds_inside_policy": [
+    "BAR 1m OKX - native Rust path, delivery p50 0.77-1.07 s against a 180,000 ms tolerance",
+    "BAR 1m BINANCE - provider REST, delivery p50 7.10-7.18 s, venue-constrained",
+    "TRADE both venues - delivery p50 0.20-0.25 s against 3,000 ms",
+    "BOOK_DELTA both venues - delivery p50 0.18-0.23 s against 2,000 ms",
+    "BOOK_SNAPSHOT both venues - delivery p50 0.18-0.23 s against 60,000 ms"
+  ],
+  "feeds_outside_policy": [
+    {
+      "feed": "QUOTE (10 endpoints)",
+      "measured": "delivery p50 0.20-0.25 s and durable cache age 0.7-1.4 s, both well inside the 2,000 ms tolerance",
+      "symptom": "the consumer reports 'no batch for 60s on an open subscription' and tears the slice down; the data is fresh, the stream delivery is not",
+      "pre_existing": true,
+      "lead": "QUOTE and MARK_INDEX_PRICE are the two LATEST_STATE families and the only two failing; the three LOSSLESS families are silent"
+    },
+    {
+      "feed": "MARK_INDEX_PRICE OKX (5 endpoints)",
+      "measured": "the paired reference is only as fresh as its slower leg: mark_price 35-39 ms against index_price 2,146-2,677 ms, limit 2,000 ms",
+      "symptom": "OKX index-tickers updates less often than the contract tolerates",
+      "pre_existing": true
+    },
+    {
+      "feed": "MARK_INDEX_PRICE BINANCE (5 endpoints)",
+      "measured": "zero frames; the venue acknowledges the subscription and sends nothing",
+      "pre_existing": true
+    },
+    {
+      "feed": "TRADE HNX VN30F1M (1 endpoint)",
+      "measured": "paused by the owner; openapi.dnse.com.vn:443 unreachable",
+      "pre_existing": true
+    }
+  ],
+  "known_regression": {
+    "bar_warmup_request_latency_ms": {
+      "v2_0_16": "117-156",
+      "now": "390-475"
+    },
+    "not_caused_by_this_release": true,
+    "cause": "stable_source.history materialises the whole retained window for any BAR requirement; read_tail costs 199.8 ms for 10,064 rows and the windows are full now where they were not when v2.0.16 was measured",
+    "attempted_and_reverted": "the repair passed 1,563 tests and broke every BAR warmup in production; reverted and verified",
+    "deferred_to": "v2.0.18 - a market-time column and index on the durable write path"
+  }
 }

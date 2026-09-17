@@ -1,0 +1,171 @@
+61 endpoint được khai báo trong trading-system-paper.yaml
+
+venue    symbol           feed              iv      policy      p50      p95      max      n  spool_age  đo theo
+----------------------------------------------------------------------------------------------------------------
+BINANCE  BNBUSDT          BAR               1m      180000    7.098    8.997    8.997     19       26.1  bar close time
+BINANCE  BTCUSDT          BAR               1m      180000    7.111    9.206    9.206     19       26.1  bar close time
+BINANCE  DOGEUSDT         BAR               1m      180000    7.111    9.206    9.206     19       26.1  bar close time
+BINANCE  ETHUSDT          BAR               1m      180000    7.111    9.206    9.206     19       26.1  bar close time
+BINANCE  SOLUSDT          BAR               1m      180000    7.184    9.018    9.018     19       26.1  bar close time
+BINANCE  BNBUSDT          BOOK_DELTA        -         2000    0.182    0.439    1.880  10465        7.1  source event time
+BINANCE  BTCUSDT          BOOK_DELTA        -         2000    0.213    0.502    2.081  11207        2.2  source event time
+BINANCE  DOGEUSDT         BOOK_DELTA        -         2000    0.213    0.505    2.029  10050        7.2  source event time
+BINANCE  ETHUSDT          BOOK_DELTA        -         2000    0.221    0.501    1.999  11193        7.1  source event time
+BINANCE  SOLUSDT          BOOK_DELTA        -         2000    0.219    0.500    1.987  10883        2.3  source event time
+BINANCE  BNBUSDT          BOOK_SNAPSHOT     -        60000    0.185    0.431    0.923   1081        7.1  source event time
+BINANCE  BTCUSDT          BOOK_SNAPSHOT     -        60000    0.209    0.503    1.154   1120        2.2  source event time
+BINANCE  DOGEUSDT         BOOK_SNAPSHOT     -        60000    0.220    0.502    1.463   1081        7.2  source event time
+BINANCE  ETHUSDT          BOOK_SNAPSHOT     -        60000    0.220    0.500    1.416   1119        7.1  source event time
+BINANCE  SOLUSDT          BOOK_SNAPSHOT     -        60000    0.217    0.497    1.986   1089        2.3  source event time
+BINANCE  BNBUSDT          MARK_INDEX_PRICE  -         2000        -        -        -      0          -  source event time
+BINANCE  BTCUSDT          MARK_INDEX_PRICE  -         2000        -        -        -      0          -  source event time
+BINANCE  DOGEUSDT         MARK_INDEX_PRICE  -         2000        -        -        -      0          -  source event time
+BINANCE  ETHUSDT          MARK_INDEX_PRICE  -         2000        -        -        -      0          -  source event time
+BINANCE  SOLUSDT          MARK_INDEX_PRICE  -         2000        -        -        -      0          -  source event time
+BINANCE  BNBUSDT          QUOTE             -         2000    0.244    0.537    1.128  11187        1.0  source event time
+BINANCE  BTCUSDT          QUOTE             -         2000    0.237    0.522    1.074  18918        1.0  source event time
+BINANCE  DOGEUSDT         QUOTE             -         2000    0.241    0.536    1.187  13203        2.2  source event time
+BINANCE  ETHUSDT          QUOTE             -         2000    0.195    0.452    0.956  20930        1.0  source event time
+BINANCE  SOLUSDT          QUOTE             -         2000    0.235    0.526    1.180  17113        2.2  source event time
+BINANCE  BNBUSDT          TRADE             -         3000    0.243    0.537    0.945  13356        2.2  source event time
+BINANCE  BTCUSDT          TRADE             -         3000    0.227    0.522    1.048  54786        2.8  source event time
+BINANCE  DOGEUSDT         TRADE             -         3000    0.250    0.538    1.136  14959        7.1  source event time
+BINANCE  ETHUSDT          TRADE             -         3000    0.228    0.497    0.973  83127        7.3  source event time
+BINANCE  SOLUSDT          TRADE             -         3000    0.204    0.487    0.961  31368        8.3  source event time
+HNX      VN30F1M          TRADE             -        30000        -        -        -      0          -  source event time
+OKX      BNB-USDT-SWAP    BAR               1m      180000    1.067    1.647    1.647     19       26.1  bar close time
+OKX      BTC-USDT-SWAP    BAR               1m      180000    0.908    1.590    1.590     19       26.1  bar close time
+OKX      DOGE-USDT-SWAP   BAR               1m      180000    0.908    1.430    1.430     19       26.1  bar close time
+OKX      ETH-USDT-SWAP    BAR               1m      180000    0.773    1.430    1.430     19       26.1  bar close time
+OKX      SOL-USDT-SWAP    BAR               1m      180000    0.888    1.361    1.361     19       26.1  bar close time
+OKX      BNB-USDT-SWAP    BOOK_DELTA        -         2000    0.230    0.515    1.030   7283        2.3  source event time
+OKX      BTC-USDT-SWAP    BOOK_DELTA        -         2000    0.182    0.434    0.928  11153        7.2  source event time
+OKX      DOGE-USDT-SWAP   BOOK_DELTA        -         2000    0.215    0.510    1.124  10529        2.3  source event time
+OKX      ETH-USDT-SWAP    BOOK_DELTA        -         2000    0.215    0.511    1.125  11208        2.3  source event time
+OKX      SOL-USDT-SWAP    BOOK_DELTA        -         2000    0.217    0.513    1.127  11093        2.3  source event time
+OKX      BNB-USDT-SWAP    BOOK_SNAPSHOT     -        60000    0.232    0.496    0.922   1072        2.3  source event time
+OKX      BTC-USDT-SWAP    BOOK_SNAPSHOT     -        60000    0.181    0.452    0.814   1131        7.2  source event time
+OKX      DOGE-USDT-SWAP   BOOK_SNAPSHOT     -        60000    0.223    0.515    1.106   1131        2.3  source event time
+OKX      ETH-USDT-SWAP    BOOK_SNAPSHOT     -        60000    0.219    0.511    0.821   1131        2.3  source event time
+OKX      SOL-USDT-SWAP    BOOK_SNAPSHOT     -        60000    0.220    0.508    0.926   1131        2.3  source event time
+OKX      BNB-USDT-SWAP    MARK_INDEX_PRICE  -         2000    0.466    1.044    2.317   8601        1.5  source event time
+OKX      BTC-USDT-SWAP    MARK_INDEX_PRICE  -         2000    0.422    0.849    2.157  10141        7.7  source event time
+OKX      DOGE-USDT-SWAP   MARK_INDEX_PRICE  -         2000    0.633    1.607    3.053   7214        2.5  source event time
+OKX      ETH-USDT-SWAP    MARK_INDEX_PRICE  -         2000    0.404    0.912    1.959   9300        7.5  source event time
+OKX      SOL-USDT-SWAP    MARK_INDEX_PRICE  -         2000    0.462    1.140    2.373   8194        7.7  source event time
+OKX      BNB-USDT-SWAP    QUOTE             -         2000    0.253    0.546    1.155   4927        2.4  source event time
+OKX      BTC-USDT-SWAP    QUOTE             -         2000    0.202    0.459    0.958  16993        1.0  source event time
+OKX      DOGE-USDT-SWAP   QUOTE             -         2000    0.217    0.477    0.913   9913        7.5  source event time
+OKX      ETH-USDT-SWAP    QUOTE             -         2000    0.239    0.525    1.081  18081        2.3  source event time
+OKX      SOL-USDT-SWAP    QUOTE             -         2000    0.231    0.520    1.129  14979        2.2  source event time
+OKX      BNB-USDT-SWAP    TRADE             -         3000    0.245    0.550    0.903    225       10.6  source event time
+OKX      BTC-USDT-SWAP    TRADE             -         3000    0.206    0.468    0.918  20292        2.2  source event time
+OKX      DOGE-USDT-SWAP   TRADE             -         3000    0.245    0.550    1.100   1398        7.9  source event time
+OKX      ETH-USDT-SWAP    TRADE             -         3000    0.240    0.540    0.954  24636        1.0  source event time
+OKX      SOL-USDT-SWAP    TRADE             -         3000    0.241    0.543    1.063   3524        7.5  source event time
+
+
+Capability mỗi endpoint (theo hợp đồng consumer)
+
+  BAR 1m  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            180000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      gap_policy                  BLOCK
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          True
+      require_full_coverage       True
+      source_policy_id            crypto_primary_v2
+      stale_policy                BLOCK
+      warmup_limit                1000
+
+  BOOK_DELTA  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            2000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      event_recency_policy        OBSERVE
+      gap_policy                  BLOCK
+      max_session_liveness_ms     45000
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          False
+      require_full_coverage       True
+      source_policy_id            crypto_liquid_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+
+  BOOK_SNAPSHOT  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            60000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      gap_policy                  BLOCK
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          False
+      require_full_coverage       True
+      source_policy_id            crypto_liquid_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+
+  MARK_INDEX_PRICE  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            2000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      gap_policy                  BLOCK
+      recovery                    FRESH_SNAPSHOT
+      require_final_bars          False
+      require_full_coverage       True
+      source_policy_id            crypto_liquid_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+
+  QUOTE  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            2000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      gap_policy                  BLOCK
+      max_session_liveness_ms     45000
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          True
+      require_full_coverage       True
+      source_policy_id            crypto_primary_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+
+  TRADE  (10 endpoint)
+      BINANCE:BNBUSDT, BINANCE:BTCUSDT, BINANCE:DOGEUSDT, BINANCE:ETHUSDT, BINANCE:SOLUSDT
+      OKX:BNB-USDT-SWAP, OKX:BTC-USDT-SWAP, OKX:DOGE-USDT-SWAP, OKX:ETH-USDT-SWAP, OKX:SOL-USDT-SWAP
+      max_freshness_ms            3000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      event_recency_policy        OBSERVE
+      gap_policy                  BLOCK
+      max_session_liveness_ms     45000
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          True
+      require_full_coverage       True
+      source_policy_id            crypto_primary_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+
+  TRADE  (1 endpoint)
+      HNX:VN30F1M
+      max_freshness_ms            30000
+      bar_revision_policy         LATEST
+      consumer_grade              EXECUTION
+      gap_policy                  BLOCK
+      recovery                    SNAPSHOT_AND_REPLAY
+      require_final_bars          True
+      require_full_coverage       True
+      source_policy_id            vn_primary_v2
+      stale_policy                BLOCK
+      warmup_limit                0
+

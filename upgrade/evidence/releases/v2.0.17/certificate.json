@@ -1,6 +1,6 @@
 {
   "schema": "qdl.v2.patch-release-certificate.v1",
-  "status": "PENDING_RUNTIME_ACCEPTANCE",
+  "status": "PASS",
   "release": "v2.0.17",
   "classification": "Realtime delivery-path corrections: OKX native bars reach the canonical stream, the durable spool stops failing writes closed inside its own retention policy, and the projector stops paying a thread hop per record.",
   "predecessor": {
@@ -193,14 +193,65 @@
       "R1.25.6_broker_memory": "production-authoritative - recorded in Compose to match the live limits",
       "R1.25.7_verifier": "production-authoritative - 55 checks against the running stack",
       "R1.25.6_sink_retry": "production-authoritative - the active gateway was recreated on its own at 15:50:19Z with the projectors untouched: all three kept their original start time and restart count 0, logged no reconnect failure, and the projector group stayed at lag 279 with bar partitions 33 s fresh on both venues. That is the case the retry was written for, and it is the first time a projector has survived a gateway recreate without a manual restart"
+    },
+    "request_latency_vs_predecessor": {
+      "method": "scripts/p18e_data_endpoint_benchmark.py, the benchmark v2.0.16 certified on, same consumer identity, 8 iterations, run twice",
+      "unchanged": {
+        "snapshot_reads_ms": {
+          "v2_0_16": "6.4-7.5",
+          "now": "6.7-9.2"
+        },
+        "instrument_lookup_ms": {
+          "v2_0_16": 4.1,
+          "now": "4.3-5.2"
+        }
+      },
+      "improved": {
+        "book_snapshot_ms": {
+          "v2_0_16": "73-78",
+          "now": "36-50"
+        }
+      },
+      "regressed": {
+        "bar_warmup_ms": {
+          "v2_0_16": "117-156",
+          "now": "390-475"
+        },
+        "bar_warmup_batch_ms": {
+          "v2_0_16": 649,
+          "now": 1850
+        },
+        "cause": "stable_source.history reads the entire retained window for any BAR requirement, because a history repair legitimately appends older bars after live ones and the market tail cannot be taken from the append tail. read_tail materialises a Cursor, a decoded header mapping and a dataclass per row: 1 row 0.0 ms, 1,000 rows 17.9 ms, 10,064 rows 199.8 ms. The windows were far from full when v2.0.16 was measured and OKX bars did not exist at all; they are full now, partly because this session repaired 1,106 bars into them",
+        "not_caused_by_this_release": true,
+        "attempted_and_reverted": "reading the window as plain rows and resolving only the survivors passed 1,563 tests and then failed every BAR warmup in production with 'warmup batch item failed inside the bounded executor'. Reverted; warmup verified working again at 390-475 ms. The suite not catching it is recorded as a coverage gap: the bounded-read contract is pinned by a test double and a spy, neither of which runs inside the executor the real query path uses",
+        "real_fix": "the spool must know a bar's market time without decoding it - a column and an index on the durable write path, with a migration. Designed slice for v2.0.18, not improvised here"
+      },
+      "durable_event_age_ms": {
+        "quote": {
+          "v2_0_16": "437-700",
+          "now": "577-780"
+        },
+        "trade": {
+          "v2_0_16": "804-1711",
+          "now": "728-1575"
+        },
+        "book_snapshot": {
+          "v2_0_16": "1186-1361",
+          "now": "1174-1482"
+        },
+        "okx_mark_index": {
+          "v2_0_16": "785-892",
+          "now": "977-1305"
+        }
+      }
     }
   },
   "provenance": {
     "image_source_commit": "ff34867ca714f0e59394ef18eab93f0fa946199e",
     "source_plan_sha256_at_image_build": "748af9a6550e8e77a2851a58338155ade752f9d5ae3c2fbd73eb67fca26e2f8d",
-    "active_python_image": "qdl-v2-python:2.0.17-436171f",
+    "active_python_image": "qdl-v2-python:2.0.17-5c01cb6",
     "active_python_image_digest": "sha256:97d2f593f0a6522bccc35e6efbbedeca99c9c2c9ad09b1bbde2821bc5574cec0",
-    "active_rust_image": "qdl-v2-rust:2.0.17-d9adee3",
+    "active_rust_image": "qdl-v2-rust:2.0.17-1acf87a",
     "active_rust_image_digest": "sha256:4aa578fc0be79041eda3649b8263e14e4252208947642bc172268ae05b545dea",
     "rollback_python_image_digest": "sha256:3c1af2c74d5f2d9981d3ae9c5b098a0ba2f918f49735d5f7bbc3b87a637ede26",
     "rollback_rust_image_digest": "sha256:5d1d7f02b904dc37611febbfea6930a6cf69448544e4d1b065d8624b5528f0d1",
@@ -209,8 +260,8 @@
       "tests": 1563,
       "result": "OK",
       "skipped": 7,
-      "image": "qdl-v2-python:2.0.17-436171f",
-      "isolated": true
+      "isolated": true,
+      "image": "qdl-v2-python:2.0.17-5c01cb6"
     },
     "rust_gate": {
       "inherited": false,
@@ -223,6 +274,13 @@
         "result": "ok",
         "ignored": 1
       }
+    },
+    "endpoint_report": {
+      "text": "endpoint-report.txt",
+      "json": "endpoint-report.json",
+      "declared_endpoints": 61,
+      "window": "2026-09-17T15:43:02Z..15:59Z",
+      "generated_by": "scripts/report_stable_endpoints.py"
     }
   },
   "boundaries": {
