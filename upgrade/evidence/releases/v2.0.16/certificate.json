@@ -129,7 +129,17 @@
    "lag_total_max": 1273,
    "lag_worst_partition_p95": 422,
    "lag_worst_partition_max": 980,
-   "statement": "the consumer was not READY on every one of the thirty samples; it was READY on 26, never fell back to V1, and the worst sample had 3 of 60 slices transiently unhealthy"
+   "statement": "the consumer was not READY on every one of the thirty samples; it was READY on 26, never fell back to V1, and the worst sample had 3 of 60 slices transiently unhealthy",
+   "recovery_lag_gate_consecutive_pass_runs": [
+    3,
+    5,
+    5,
+    8,
+    2,
+    5
+   ],
+   "recovery_lag_gate_longest_consecutive_pass": 8,
+   "acceptance_three_consecutive_samples": "MET six times over; the longest run is 8 consecutive samples ending 04:08:43Z"
   },
   "resource_ceilings": {
    "method": "per-service cpus in docker-compose.v2-stable.yml with the measurement that justified each one; totals summed over the 17 roles this stack actually runs",
@@ -158,7 +168,20 @@
    "kafka_canonical_retention_hours_before": 24,
    "kafka_canonical_retention_hours_after": 6,
    "raw_retention_hours": 24,
-   "raw_retention_reason": "raw cannot be refetched; canonical is derived from it"
+   "raw_retention_reason": "raw cannot be refetched; canonical is derived from it",
+   "kafka_disk": {
+    "method": "du inside each broker, summed per topic across the three replicas, 2026-09-17",
+    "canonical_gb_before": 55.6,
+    "canonical_gb_after": 17.0,
+    "raw_gb_before": 40.1,
+    "raw_gb_after": 50.7,
+    "total_gb_before": 95.7,
+    "total_gb_after": 67.7,
+    "canonical_retention_verified": "retention.ms=21600000 as a DYNAMIC_TOPIC_CONFIG on md.canonical.v2",
+    "raw_retention_verified": "retention.ms=86400000 from the static broker config on md.raw.realtime.v2",
+    "note": "canonical fell by 38.6 GB on the 6 h retention; raw grew because it is still 24 h and the realtime volume is higher than when the before figure was taken",
+    "host_filesystem_used_percent": 52
+   }
   },
   "rust_runtime_rollout": {
    "status": "ALREADY_DEPLOYED, recorded here because v2.0.15 left it as an open boundary",
@@ -224,7 +247,20 @@
    "command": "docker run --rm --network none --user $(id -u) -e HOME=/tmp -e PYTHONPATH=/workspace --tmpfs /workspace/logs:mode=1777 --tmpfs /app/logs:mode=1777 -v $PWD:/workspace:ro -w /workspace qdl-v2-python:2.0.16-df4b8aa python3 -B -m unittest discover -s tests -t .",
    "note": "network disabled, source mounted read-only, both log directories on tmpfs. Without the /app/logs tmpfs three modules fail to import on a PermissionError writing /app/logs/app.log and discovery reports 1486 tests with errors; that is the environment, not the tests. The v2.0.15 certificate's four pre-existing import errors have the same cause."
   },
-  "ci": {}
+  "ci": {
+   "workflow": "CI",
+   "status": "PASS",
+   "run_id": 35182153883,
+   "head_sha": "01ba065",
+   "conclusion": "success",
+   "jobs": {
+    "contract-tests": "success",
+    "sdk-python310": "success",
+    "unit-tests": "success"
+   },
+   "covers": "the release source tree; 01ba065 adds only the evidence files, the ledger entry and the plan journal on top of the image commit df4b8aa",
+   "prior_run_note": "run 35179786566 on df4b8aa failed at the 'Set up Buf' download step. That is infrastructure, not a contract violation: buf format --diff --exit-code, buf lint and buf breaking --against baseline/qdl-v2-phase1.binpb all exit 0 locally in bufbuild/buf:1.50.0, and contract-tests is green on 01ba065 with the identical contracts."
+  }
  },
  "boundaries": [
   "This patch inherits the v2.0.15 certificate and does not recertify the full product matrix.",

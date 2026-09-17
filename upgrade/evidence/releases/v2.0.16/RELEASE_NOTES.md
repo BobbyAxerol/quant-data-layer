@@ -67,18 +67,27 @@ consumed 14 records *more* than were produced: there is no backlog.
 
 Thirty-one minute certification window, thirty samples: the consumer stayed
 `V2_PRIMARY` with **zero** fallback to V1 on every sample, 60 slices demanded,
-`READY` on 26 of 30, worst sample 3 of 60 slices transiently unhealthy.
+`READY` on 26 of 30, worst sample 3 of 60 slices transiently unhealthy. The
+recovery lag gate passed in consecutive runs of 3, 5, 5, 8, 2 and 5 samples, so
+the three-consecutive-sample acceptance is met six times over.
 
 ### Also in this release
 
-- **The Rust runtime rollout v2.0.15 deferred is done.** All five Rust roles run
-  `qdl-v2-rust:2.0.15-c5a5be0` with `rustls 0.23.45`, closing
-  **RUSTSEC-2026-0285** in the runtime and not only in source.
+- **The boundary v2.0.15 left open is closed.** All five Rust roles run
+  `qdl-v2-rust:2.0.15-c5a5be0` with `rustls 0.23.45`, so **RUSTSEC-2026-0285**
+  is closed in the runtime and not only in source. That rollout was performed
+  on 2026-09-16 (ledger entry 18); this release did not recreate those roles,
+  it records the state they are in.
 - **CPU ceilings are per service with the measurement that justified each one.**
   Declared total `12.25 -> 13.35` on a 16-core host, with eight services
   *reduced*.
 - **Canonical Kafka retention `24h -> 6h`.** Canonical is derived and can be
-  rebuilt from raw; raw stays at 24h because it cannot be refetched.
+  rebuilt from raw; raw stays at 24h because it cannot be refetched. Measured
+  across the three replicas: canonical `55.6 GB -> 17.0 GB`, raw
+  `40.1 GB -> 50.7 GB` (it is still 24h and the realtime volume is higher than
+  when the before figure was taken), total `95.7 GB -> 67.7 GB`. The host
+  filesystem is at 52%. Verified live: `retention.ms=21600000` is a dynamic
+  topic config on `md.canonical.v2`.
 
 ## Gates
 
@@ -89,7 +98,10 @@ Thirty-one minute certification window, thirty samples: the consumer stayed
 - Rust gate **inherited**: no `.rs`, `Cargo.toml` or `Cargo.lock` change between
   `c5a5be0` and `df4b8aa`, and the running image is the one that passed
   `fmt`, `clippy -D warnings`, 81 tests across 13 targets and `cargo-deny`.
-- CI on `dev`: `contract-tests`, `sdk-python310`, `unit-tests`.
+- CI run `35182153883` on `dev`: `contract-tests`, `sdk-python310` and
+  `unit-tests` all green. The earlier run on `df4b8aa` failed at the
+  "Set up Buf" download step, which is infrastructure rather than a
+  contract violation.
 - Buf contract checks verified locally in `bufbuild/buf:1.50.0`:
   `format --diff --exit-code`, `lint`, and `breaking --against
   baseline/qdl-v2-phase1.binpb` all exit 0.

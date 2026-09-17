@@ -749,6 +749,12 @@ Pinned at: data layer `5130f6f`, image `qdl-v2-python:2.0.15-5130f6f`
   p50 1.02 s, p95 1.58 s, max 2.19 s.
   **Do not loosen the runbook constant** — it is correct for convergence and the
   17m44s boot-recovery rehearsal (entry 12) depends on it.
+- **Disk, measured after the retention change.** Across the three brokers:
+  canonical `55.6 -> 17.0 GB`, raw `40.1 -> 50.7 GB` (still 24 h, and the
+  realtime volume is higher than when the before figure was taken), total
+  `95.7 -> 67.7 GB`. Host filesystem 52%. Verified live:
+  `retention.ms=21600000` is a `DYNAMIC_TOPIC_CONFIG` on `md.canonical.v2`,
+  raw inherits the 24 h static broker config.
 - **Entry 24 corrected:** the declared CPU total after the R1 ceilings is
   **13.35**, not 14.35, summed over the 17 roles this stack runs on a 16-core
   host (12.25 before). Eight services were reduced, five raised: kafka1/2/3
