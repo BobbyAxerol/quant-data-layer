@@ -288,6 +288,15 @@
     },
     "rust_gate": {
       "inherited": false,
+      "command": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
+      "toolchain": "rust:1.82-slim, rustc 1.82.0",
+      "fmt": "ok",
+      "clippy": "ok, -D warnings, zero warnings",
+      "workspace_tests": {
+        "passed": 165,
+        "failed": 0,
+        "ignored": 1
+      },
       "qdl_venue_core": {
         "tests": 43,
         "result": "ok"
@@ -296,7 +305,8 @@
         "tests": 36,
         "result": "ok",
         "ignored": 1
-      }
+      },
+      "correction": "the first reading of this gate ran cargo test alone. CI runs all three clauses and had been red on dev since 1acf87a - six runs, every one at the fmt clause, because production-shaped session ids in the tests crossed rustfmt's width limit. Fixed by 053ea9b; the gate above is the full three-clause command"
     },
     "endpoint_report": {
       "text": "endpoint-report.txt",
@@ -304,7 +314,8 @@
       "declared_endpoints": 61,
       "window": "2026-09-17T15:43:02Z..15:59Z",
       "generated_by": "scripts/report_stable_endpoints.py"
-    }
+    },
+    "active_rust_image_source_delta": "built from 1acf87a; the only rust change between that commit and the tag is 053ea9b, rustfmt line wrapping inside the ordering tests - no token changed, so the deployed binary is the certified one"
   },
   "boundaries": {
     "out_of_scope": [

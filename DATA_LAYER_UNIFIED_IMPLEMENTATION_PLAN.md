@@ -39856,3 +39856,26 @@ a contract question, not a defect; Binance `MARK_INDEX_PRICE` and any native
 Binance BAR lane need the reference/REST pair path, because the venue answers the
 subscription and sends nothing; and with six partitions, three replicas and range
 assignment a drained replica cannot take work from a loaded one.
+
+
+<a id="dl-v2-r125-ci-gate-20260917"></a>
+### R1.25 addendum — the CI Rust gate, run whole
+
+Pushing the release head showed CI red, and red for the five pushes before it.
+The failing step is `contract-tests` step 10, whose command has three clauses:
+`cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked
+-- -D warnings && cargo test --workspace --locked`. Only the third was ever run
+by hand here, and `fmt` is the first, so CI had been failing before reaching
+clippy or a test since `1acf87a` — the commit that replaced synthetic session ids
+with production-shaped ones and pushed six `tracker.observe` calls past rustfmt's
+width limit.
+
+`cargo fmt --all` fixes it (`053ea9b`, whitespace only, no token changed), and
+the whole command then passes in the same `rust:1.82` image CI uses: fmt ok,
+clippy ok under `-D warnings` with zero warnings, 165 workspace tests passed and
+1 ignored. `certificate.json` now records the command, the toolchain and all
+three results instead of the test count alone; `CERTIFICATION_LEDGER.md` entry 33
+records why a subset was reported under the gate's name.
+
+The deployed Rust image stays `qdl-v2-rust:2.0.17-1acf87a`: the only Rust change
+after it is test formatting, so no rebuild and no redeploy.

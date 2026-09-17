@@ -1110,3 +1110,36 @@ and one regression was real.
   decoding it - a column and an index on the durable write path, with a
   migration. That is a designed slice, not something to improvise while a
   release is waiting, and today is the second time that lesson was paid for.
+
+## 33. The repository's own gate had been red for six runs (2026-09-17)
+
+The release head was pushed and CI came back `failure`. So had the five pushes
+before it. Every one failed at the same place: `contract-tests` step 10,
+`Test Rust generated contracts`.
+
+- **The gate is three clauses, and I had been running one.**
+  `cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked
+  -- -D warnings && cargo test --workspace --locked`. I ran `cargo test`, got
+  43 + 36 green, and wrote `rust_gate` into the certificate as if that were the
+  gate. `fmt` is the *first* clause, so nothing after it ever ran on CI.
+- **What broke it was the fix for the outage.** Replacing synthetic session ids
+  (`s1`, `session-1`) with production-shaped ones
+  (`qdl-test-lane-001-1-1700000000000000000`) pushed six `tracker.observe` calls
+  past rustfmt's width limit. Green locally, red on CI, from `1acf87a` to
+  `f104d7c`.
+- **Why it went unseen for six runs.** I was watching production - quarantine
+  counts, projector lag, spool headroom - and production was the thing at risk.
+  CI was a tab I never opened, and the certificate said the Rust gate had run.
+- **How it was read.** The job-log endpoint needs admin rights on the repo and
+  returned 403, but `/actions/runs/<id>/jobs` gives every step's conclusion
+  without them - enough to name the failing step. Reproduced locally in the same
+  `rust:1.82` image, which printed the exact rustfmt diff.
+- **Closed.** `cargo fmt --all` (`053ea9b`, whitespace only), then the full
+  three-clause command in that image: **FMT OK**, **CLIPPY OK** with
+  `-D warnings` and zero warnings, **165 tests passed, 1 ignored** across the
+  workspace. The certificate's `rust_gate` now records the command, the
+  toolchain, all three results and this correction.
+- **The rule.** A gate is the command CI runs, not the part of it that is
+  convenient to run by hand. Reporting a subset under the gate's name is the
+  same class of error as entry 32's test doubles: the check passed, and it was
+  not checking the thing.
