@@ -1143,3 +1143,40 @@ before it. Every one failed at the same place: `contract-tests` step 10,
   convenient to run by hand. Reporting a subset under the gate's name is the
   same class of error as entry 32's test doubles: the check passed, and it was
   not checking the thing.
+
+## 34. The certificate's own provenance had drifted from the images it certified (2026-09-17)
+
+Clearing build artifacts after the tag was pushed, every digest in
+`certificate.json` was mapped back to a local image id. Two of the four did not
+point where their tag said.
+
+- **`active_rust_image_digest`** read `sha256:4aa578fc`, which is
+  `qdl-v2-rust:2.0.17-d9adee3` - the *first* lane fix, the one whose
+  `_ => true` fallback was the defect. The tag beside it,
+  `qdl-v2-rust:2.0.17-1acf87a`, was correct.
+- **`active_python_image_digest`** read `sha256:97d2f593`, which is
+  `qdl-v2-python:2.0.17-436171f`, an image built before the warmup change was
+  reverted.
+- **`image_source_commit`** read `ff34867`, the commit the certificate was first
+  drafted at, and not a commit either running image was built from.
+- **What actually runs**, read from the containers: five rust roles on
+  `sha256:b05d4446`, eight python roles on `sha256:42fe008a`. The running stack
+  was right the whole time; the paper describing it was not.
+
+The cause is plain: the digests were captured by hand when the certificate was
+drafted, and two rebuilds later - the revert and the second lane fix - nobody
+went back for them. A rollback driven by that block would have deployed the
+build that caused the outage.
+
+Fixed by taking each digest from `docker image inspect` together with the
+image's own `org.opencontainers.image.revision` label, so tag, digest and commit
+check each other, and by recording the previous values inside the certificate
+rather than quietly replacing them.
+
+**The tag was already published when this was found.** The corrected certificate
+is on `main`; the asset attached to the GitHub release still carries the stale
+digests, and replacing it needs the release deleted and the tag re-pushed, which
+is the owner's call, not mine.
+
+Same class as entries 32 and 33: the check ran, and it was not checking the
+thing. Here the check was a human copy of a value that later moved.
