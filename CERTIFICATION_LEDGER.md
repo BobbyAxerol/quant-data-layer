@@ -1194,3 +1194,44 @@ One practical note for the next time evidence has to be read back from a
 release: the browser download URL returns 404 through this host's proxy, because
 it redirects to `objects.githubusercontent.com`. The asset endpoint with
 `--noproxy '*'` and `Accept: application/octet-stream` returns it.
+
+## 35. The routed Binance lane worked; its book lane stopped (2026-09-18)
+
+R1.27 Phase 2. Applied 06:11:13Z, rolled back 06:21:04Z, one role each way.
+
+- **The thing it was built for worked.** Binance mark/index went from **zero**
+  canonical partitions to **five** within a minute, newest record one second
+  old. For five months that plane did not exist, because the ingestor opened
+  the base Binance decommissioned on 2026-04-23 and `/market` channels are
+  acknowledged and then silent.
+- **A feed that had nothing to do with the fix stopped.** Binance `book` froze
+  at the recreate: nine partitions **425 seconds** stale while `quote`, `trade`
+  and `mark_index_price` sat at 0-1 seconds and OKX was fresh throughout. Book
+  feeds Risk's L2 gate, so the rollback was not a judgement call.
+- **The rollback identified the cause and restored the system in one command.**
+  Book returned to **0 seconds** on the pinned image, which rules out the
+  restart: the previous binary resyncs its book and this one does not.
+- **Five hypotheses were closed before rolling back**, so the retry does not
+  re-walk them: the REST snapshot endpoint answered **HTTP 200** from the
+  ingestor's own network; all four lanes were `LIVE` with fresh transport; the
+  cores quarantined nothing; the ingestor logged no error in ten minutes; and
+  `@depth@100ms` classifies to `/public` with the lanes opened as the feed table
+  says. The frames reach the socket and do not become canonical, and **why is
+  still unknown**.
+- **One acceptance item was wrong before the work started.** I wrote that the
+  alpha cache would read Binance mark/index from the canonical plane. It cannot:
+  `adapters/market_data/data_layer_v2.py:752` routes `MARK_INDEX_PRICE` to the
+  reference batch unconditionally, in the consumer, so no data-layer change can
+  move it. The routed lane is the prerequisite for that switch, not the switch.
+
+**The finding worth keeping.** Phase 1 was green three ways - fmt, clippy under
+`-D warnings`, 177 Rust and 1,579 Python tests - and none of it covered the one
+feed whose bootstrap is stateful. Neither suite takes a Binance BOOK lane from
+subscription through the REST snapshot to a verified book. Entry 32 said the
+same thing about a warmup: the check ran, and it was not checking the thing.
+Twice now a unit-green change has been proved wrong only by production.
+
+So the order is fixed before the next attempt: an offline harness that fails
+when the book bridge does not complete, then a diagnostic that makes a book
+which never verifies say so - today it is silent in both processes, exactly the
+condition entry 30 paid for - and only then a second recreate.

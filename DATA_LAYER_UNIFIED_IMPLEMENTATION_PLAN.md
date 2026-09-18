@@ -39907,8 +39907,10 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASE 1 LANDED (source only) / PHASES 2-3 AWAITING OWNER APPROVAL`.**
-Phase 1 was approved and applied on 2026-09-18; no runtime was touched.
+**Status: `PHASE 1 LANDED (source only) / PHASE 2 ATTEMPTED AND ROLLED BACK / PHASE 3 NOT STARTED`.**
+Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
+approved, applied the same day, broke the Binance BOOK lane and was rolled back
+ten minutes later; see the Phase 2 record below.
 
 #### The defect
 
@@ -40148,6 +40150,77 @@ digest and the unrouted base. One role, one command.
 
 **Done when.** All five acceptance items hold for a bounded observation window,
 recorded with the counts, not with a claim.
+
+---
+
+##### Phase 2 attempted and rolled back (`FAILED / PRODUCTION RESTORED`, 2026-09-18)
+
+Applied at 06:11:13Z, rolled back at 06:21:04Z. One role, one command each way.
+
+**What the routed lane proved, and it is not nothing.** Binance mark/index had
+**zero** canonical partitions in the durable spool at baseline and **five**
+within a minute of the recreate, newest record one second old. The four routed
+lanes came up `LIVE` with their own generation counters -
+`binance-public-001/002/003` and `binance-market-001` - and the ingestor logged
+24 bindings, `RUST_PRIMARY`, zero errors and zero warnings for the whole ten
+minutes. The `/market` group delivers exactly as the probe said it would.
+
+**What broke, and why it forced the rollback.** Binance `book` stopped reaching
+canonical at the moment of the recreate. Seven minutes in, the nine Binance book
+partitions were **425 seconds** stale while `quote`, `trade` and
+`mark_index_price` were 0-1 seconds fresh, and OKX was fresh across the board.
+The consumer reported all five Binance `BOOK_DELTA` and all five
+`BOOK_SNAPSHOT` slices unhealthy or quiet. Binance BOOK feeds Risk's L2 gate for
+post-only and impact-sensitive orders, so this is not a cosmetic degradation.
+
+**The rollback is what identified the cause.** Binance `book` returned to **0
+seconds** immediately on the pinned image and sealed bundle, which rules out the
+restart itself: the previous binary resyncs its book after a recreate and this
+one does not. The defect is in the change.
+
+**What was ruled out before rolling back**, so the next attempt does not re-walk
+it:
+
+| hypothesis | evidence against |
+|---|---|
+| the REST depth snapshot is unreachable | `GET /fapi/v1/depth` returned **HTTP 200** with a valid payload from the ingestor's own network, for two symbols |
+| the socket never connected | all four lanes `LIVE` with fresh transport, including `binance-USDM-public-001`, the book lane |
+| the ordering fence rejected the frames | cores held `quarantines=1` and it did not grow; no `stale_generation` line appeared |
+| the ingestor crashed or complained | `restarts=0`, `OOMKilled=false`, zero error or warning lines in ten minutes |
+| the lane split misrouted book | `@depth@100ms` classifies to `/public`, and the public group opened three lanes exactly as the feed-lane table says |
+
+So the frames reach the socket and do not become canonical, and **the cause is
+not yet known**. Guessing further while production carried a stalled book was
+not worth it, which is why the rollback came before the diagnosis.
+
+**The gap this exposes, stated plainly.** The tests added in Phase 1 check the
+route table and the partition split. Nothing in either suite takes a Binance
+BOOK lane from subscription through the REST snapshot to a verified canonical
+book. A change can therefore be unit-green, clippy-clean and still stop the one
+feed whose bootstrap is stateful. This is the same shape as ledger entry 32: the
+check ran, and it was not checking the thing.
+
+**What has to exist before Phase 2 is attempted again**, in this order:
+
+1. A bounded offline harness that drives the book lane end to end against a fake
+   provider - subscribe, buffer deltas, fetch the snapshot, bridge, publish -
+   and fails when the bridge does not complete. Without it the next attempt is
+   another production experiment.
+2. A self-describing diagnostic on the book path, the way
+   `qdl_realtime_core_stale_generation` was added in R1.25: today a book that
+   never verifies says nothing at all, in either process. Ledger entry 30's
+   lesson is that a silent rejection costs more than the defect it hides.
+3. Only then a second recreate, with the same one-role packet.
+
+**Artefacts kept.** Packet `/home/bobby/.local/state/qdl-v2/dlv2-r127-binance-route-20260918T060734Z` holds
+`rollout.env`, `rollback.env`, the override and the transformed bundle; the
+image under investigation is `qdl-v2-rust:2.0.17-a69280b`
+(`sha256:c35c137208e7`). The old `binance-001..004` generation counters were
+left in place deliberately - the rolled-back lanes resume from them.
+
+**Production after the rollback:** 17 roles running, consumer ready 51 of 60,
+`execution_ready` 35, `v1_fallback` 0, `v2_error` 0, Binance book 0 s. That is
+the state it was in before the attempt.
 
 ---
 
