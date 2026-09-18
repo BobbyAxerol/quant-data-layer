@@ -30,7 +30,11 @@ from qdl.ingestion.contracts import Subscription, plan_shards
 _BOOK_FEEDS = frozenset({DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA})
 _PLAN_SCHEMA = "qdl.v2.l2-demand-plan.v1"
 _BINANCE_WS = {
-    "USDM": "wss://fstream.binance.com/ws",
+    # Diff book depth is in Binance's `/public` group. The unrouted base this
+    # once carried was decommissioned on 2026-04-23 and silently limited a
+    # connection to that same group, which is why only the feeds that happened
+    # to be public kept working. See `qdl_core::binance::BinanceRoute`.
+    "USDM": "wss://fstream.binance.com/public/ws",
     "SPOT": "wss://stream.binance.com:9443/ws",
 }
 _BINANCE_REST_DEPTH = {

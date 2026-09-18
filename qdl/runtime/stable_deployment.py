@@ -13,6 +13,34 @@ from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 
 
+def binance_route_for_channel(channel: str) -> str | None:
+    """Which routed Binance base a native channel must be subscribed on.
+
+    Binance split USD-M into `/public`, `/market` and `/private` and
+    decommissioned the unrouted base on 2026-04-23; a connection without a
+    routed path receives the public group only, acknowledging every other
+    subscription and pushing nothing for it.
+
+    The runtime authority for this is ``qdl_core::binance::stream_route``. The
+    two cannot share one implementation across the language boundary, so each
+    end is pinned to its own generator instead of to a hand copy of the other:
+    ``tests/test_dlv2_r127_binance_ws_route.py`` asserts every channel
+    ``production_catalog`` emits for Binance is routed here, and the Rust suite
+    asserts every stream ``validate_stream`` admits is routed there.
+    """
+
+    normalized = channel.strip()
+    if normalized.endswith("@markPrice@1s") or "@kline_" in normalized:
+        return "market"
+    if (
+        normalized.endswith("@trade")
+        or normalized.endswith("@bookTicker")
+        or normalized.endswith("@depth@100ms")
+    ):
+        return "public"
+    return None
+
+
 _MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
 _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
@@ -327,6 +355,11 @@ class StableAcquisitionBinding:
     sequence_policy: str
     websocket_url: str | None
     business_websocket_url: str | None
+    # Binance only. Its USD-M WebSocket is split into `/public`, `/market` and
+    # `/private`; `@markPrice` and `@kline_*` are served from `/market` and push
+    # nothing on a connection that lacks the routed path. OKX expresses the same
+    # idea as `business_websocket_url`, and neither venue may carry the other's.
+    market_websocket_url: str | None = None
     l2: StableL2Acquisition | None = None
     mark_index: StableMarkIndexAcquisition | None = None
     # Program rule 6: an unused feed is disabled by configuration and
@@ -374,6 +407,27 @@ class StableAcquisitionBinding:
             self._require_wss(self.websocket_url)
             if self.runtime == "OKX":
                 self._require_wss(self.business_websocket_url)
+                if self.market_websocket_url is not None:
+                    raise ValueError(
+                        "OKX does not use a Binance /market routed base"
+                    )
+            if self.runtime == "BINANCE":
+                if self.business_websocket_url is not None:
+                    raise ValueError("Binance does not use an OKX business service")
+                self._require_wss(self.market_websocket_url)
+                if source.instrument.identity.market == "USDM":
+                    # Refuse the base Binance decommissioned on 2026-04-23. It
+                    # is accepted by the socket and silently limits the role to
+                    # the `/public` group, so a config that still carries it
+                    # must fail here rather than run with mark price and klines
+                    # missing. Spot publishes no equivalent split.
+                    self._require_routed_binance_url(self.websocket_url, "public")
+                    self._require_routed_binance_url(self.market_websocket_url, "market")
+                if binance_route_for_channel(self.native_channel) is None:
+                    raise ValueError(
+                        "Binance native channel has no routed base: "
+                        f"{self.native_channel}"
+                    )
         elif self.mode == "PYTHON_REST":
             if (
                 source.feed is not FeedType.BAR
@@ -412,6 +466,23 @@ class StableAcquisitionBinding:
         parsed = urlsplit(value or "")
         if parsed.scheme != "wss" or not parsed.hostname:
             raise ValueError("stable native WebSocket URL must use wss")
+
+    @staticmethod
+    def _require_routed_binance_url(value: str | None, segment: str) -> None:
+        """A Binance base must name its route group and end at the control endpoint.
+
+        The ingestor subscribes dynamically, so it needs `/ws` rather than a
+        combined-stream URL, and the routed segment sits immediately before it.
+        This mirrors ``qdl_core::binance::is_routed_control_url``.
+        """
+
+        StableAcquisitionBinding._require_wss(value)
+        parsed = urlsplit(value or "")
+        if parsed.query or parsed.path.rstrip("/") != f"/{segment}/ws":
+            raise ValueError(
+                f"Binance {segment} WebSocket URL must be the routed "
+                f"/{segment}/ws control endpoint"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,6 +526,7 @@ class StableAcquisitionPlan:
             required = {
                 "binding_id", "mode", "runtime", "provider_kind", "native_channel",
                 "sequence_policy", "websocket_url", "business_websocket_url",
+                "market_websocket_url",
             }
             if not isinstance(value, dict) or not required <= set(value) or (
                 set(value) - required - {"enabled", "l2", "mark_index"}
@@ -534,6 +606,10 @@ class StableAcquisitionPlan:
                 business_websocket_url=(
                     str(value["business_websocket_url"])
                     if value["business_websocket_url"] is not None else None
+                ),
+                market_websocket_url=(
+                    str(value["market_websocket_url"])
+                    if value["market_websocket_url"] is not None else None
                 ),
                 l2=l2,
                 mark_index=mark_index,
@@ -886,6 +962,7 @@ class StableAcquisitionPlan:
                 "runtime": runtime,
                 "websocket_url": first.websocket_url,
                 "business_websocket_url": first.business_websocket_url,
+                "market_websocket_url": first.market_websocket_url,
                 "raw_stream": self.raw_topic,
                 "shard_id": f"qdl-v2-stable-{key}",
                 "lease_epoch": 1,

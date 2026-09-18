@@ -13,6 +13,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
+  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
 - binding_id: binance-spot-btcusdt-quote
   mode: RUST_NATIVE
@@ -22,6 +23,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
+  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
 - binding_id: binance-spot-btcusdt-trade
   mode: RUST_NATIVE
@@ -31,6 +33,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
+  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
 - binding_id: binance-usdm-bnbusdt-bar-12h
   mode: PYTHON_REST
@@ -40,6 +43,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-15m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -48,6 +52,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -56,6 +61,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -64,6 +70,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -72,6 +79,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -80,6 +88,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-2h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -88,6 +97,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-30m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -96,6 +106,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-3d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -104,6 +115,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-3m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -112,6 +124,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-4h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -120,6 +133,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-5m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -128,6 +142,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-6h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -136,6 +151,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-8h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -144,14 +160,16 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: bnbusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -164,8 +182,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: bnbusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -178,24 +197,27 @@ bindings:
   provider_kind: binance_usdm_bbo
   native_channel: bnbusdt@bookTicker
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-bnbusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_trade
   native_channel: bnbusdt@trade
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-260925-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: btcusdt_260925@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -207,8 +229,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: btcusdt_260925@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -220,8 +243,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: btcusdt_261225@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -233,8 +257,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: btcusdt_261225@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -248,6 +273,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-15m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -256,6 +282,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -264,6 +291,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -272,6 +300,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -280,6 +309,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -288,6 +318,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-2h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -296,6 +327,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-30m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -304,6 +336,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-3d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -312,6 +345,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-3m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -320,6 +354,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-4h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -328,6 +363,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-5m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -336,6 +372,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-6h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -344,6 +381,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-8h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -352,14 +390,16 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: btcusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -372,8 +412,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: btcusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -386,16 +427,18 @@ bindings:
   provider_kind: binance_usdm_bbo
   native_channel: btcusdt@bookTicker
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_trade
   native_channel: btcusdt@trade
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-dogeusdt-bar-12h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -404,6 +447,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-15m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -412,6 +456,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -420,6 +465,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -428,6 +474,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -436,6 +483,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -444,6 +492,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-2h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -452,6 +501,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-30m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -460,6 +510,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-3d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -468,6 +519,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-3m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -476,6 +528,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-4h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -484,6 +537,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-5m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -492,6 +546,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-6h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -500,6 +555,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-8h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -508,14 +564,16 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: dogeusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -528,8 +586,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: dogeusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -542,24 +601,27 @@ bindings:
   provider_kind: binance_usdm_bbo
   native_channel: dogeusdt@bookTicker
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-dogeusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_trade
   native_channel: dogeusdt@trade
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-260925-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: ethusdt_260925@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -571,8 +633,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: ethusdt_260925@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -584,8 +647,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: ethusdt_261225@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -597,8 +661,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: ethusdt_261225@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -612,6 +677,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-15m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -620,6 +686,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -628,6 +695,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -636,6 +704,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -644,6 +713,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -652,6 +722,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-2h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -660,6 +731,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-30m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -668,6 +740,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-3d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -676,6 +749,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-3m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -684,6 +758,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-4h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -692,6 +767,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-5m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -700,6 +776,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-6h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -708,6 +785,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-8h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -716,14 +794,16 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: ethusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -736,8 +816,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: ethusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -750,16 +831,18 @@ bindings:
   provider_kind: binance_usdm_bbo
   native_channel: ethusdt@bookTicker
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_trade
   native_channel: ethusdt@trade
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-solusdt-bar-12h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -768,6 +851,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-15m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -776,6 +860,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -784,6 +869,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -792,6 +878,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -800,6 +887,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -808,6 +896,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-2h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -816,6 +905,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-30m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -824,6 +914,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-3d
   mode: PYTHON_REST
   runtime: BINANCE
@@ -832,6 +923,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-3m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -840,6 +932,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-4h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -848,6 +941,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-5m
   mode: PYTHON_REST
   runtime: BINANCE
@@ -856,6 +950,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-6h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -864,6 +959,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-8h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -872,14 +968,16 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_book
   native_channel: solusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -892,8 +990,9 @@ bindings:
   provider_kind: binance_usdm_book
   native_channel: solusdt@depth@100ms
   sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
@@ -906,16 +1005,18 @@ bindings:
   provider_kind: binance_usdm_bbo
   native_channel: solusdt@bookTicker
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-solusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
   provider_kind: binance_usdm_trade
   native_channel: solusdt@trade
   sequence_policy: MONOTONIC
-  websocket_url: wss://fstream.binance.com/ws
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: dnse-fpt-bar-1m
   mode: PYTHON_VENDOR_SDK
   runtime: DNSE
@@ -924,6 +1025,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: dnse-fpt-trade
   mode: PYTHON_VENDOR_SDK
   runtime: DNSE
@@ -932,6 +1034,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: dnse-vn30f1m-bar-1m
   mode: PYTHON_VENDOR_SDK
   runtime: DNSE
@@ -940,6 +1043,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: dnse-vn30f1m-trade
   mode: PYTHON_VENDOR_SDK
   runtime: DNSE
@@ -948,6 +1052,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
 - binding_id: okx-futures-btc-usd-261225-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -956,6 +1061,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -969,6 +1075,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -982,6 +1089,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -995,6 +1103,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1008,6 +1117,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1021,6 +1131,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1034,6 +1145,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1047,6 +1159,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1060,6 +1173,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   enabled: false
 - binding_id: okx-spot-btcusdt-quote
   mode: RUST_NATIVE
@@ -1069,6 +1183,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   enabled: false
 - binding_id: okx-spot-btcusdt-trade
   mode: RUST_NATIVE
@@ -1078,6 +1193,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   enabled: false
 - binding_id: okx-swap-bnb-usdt-swap-bar-12h
   mode: RUST_NATIVE
@@ -1087,6 +1203,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-15m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1095,6 +1212,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-1d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1103,6 +1221,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-1h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1111,6 +1230,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1119,6 +1239,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-1w
   mode: RUST_NATIVE
   runtime: OKX
@@ -1127,6 +1248,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-2d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1135,6 +1257,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-2h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1143,6 +1266,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-30m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1151,6 +1275,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-3d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1159,6 +1284,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-3m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1167,6 +1293,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-4h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1175,6 +1302,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-5m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1183,6 +1311,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-6h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1191,6 +1320,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1199,6 +1329,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1213,6 +1344,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1227,6 +1359,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1235,6 +1368,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-12h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1243,6 +1377,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-15m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1251,6 +1386,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-1d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1259,6 +1395,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-1h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1267,6 +1404,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-1w
   mode: RUST_NATIVE
   runtime: OKX
@@ -1275,6 +1413,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-2d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1283,6 +1422,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-2h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1291,6 +1431,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-30m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1299,6 +1440,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-3d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1307,6 +1449,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-3m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1315,6 +1458,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-4h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1323,6 +1467,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-5m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1331,6 +1476,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-bar-6h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1339,6 +1485,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1347,6 +1494,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1361,6 +1509,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1375,6 +1524,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btcusdt-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1383,6 +1533,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-btcusdt-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1391,6 +1542,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-12h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1399,6 +1551,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-15m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1407,6 +1560,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-1d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1415,6 +1569,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-1h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1423,6 +1578,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1431,6 +1587,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-1w
   mode: RUST_NATIVE
   runtime: OKX
@@ -1439,6 +1596,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-2d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1447,6 +1605,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-2h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1455,6 +1614,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-30m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1463,6 +1623,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-3d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1471,6 +1632,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-3m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1479,6 +1641,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-4h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1487,6 +1650,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-5m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1495,6 +1659,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-bar-6h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1503,6 +1668,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1511,6 +1677,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1525,6 +1692,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1539,6 +1707,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1547,6 +1716,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-12h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1555,6 +1725,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-15m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1563,6 +1734,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-1d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1571,6 +1743,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-1h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1579,6 +1752,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1587,6 +1761,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-1w
   mode: RUST_NATIVE
   runtime: OKX
@@ -1595,6 +1770,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-2d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1603,6 +1779,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-2h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1611,6 +1788,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-30m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1619,6 +1797,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-3d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1627,6 +1806,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-3m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1635,6 +1815,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-4h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1643,6 +1824,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-5m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1651,6 +1833,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-bar-6h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1659,6 +1842,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1667,6 +1851,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1681,6 +1866,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1695,6 +1881,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1703,6 +1890,7 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-12h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1711,6 +1899,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-15m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1719,6 +1908,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-1d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1727,6 +1917,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-1h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1735,6 +1926,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1743,6 +1935,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-1w
   mode: RUST_NATIVE
   runtime: OKX
@@ -1751,6 +1944,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-2d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1759,6 +1953,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-2h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1767,6 +1962,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-30m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1775,6 +1971,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-3d
   mode: RUST_NATIVE
   runtime: OKX
@@ -1783,6 +1980,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-3m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1791,6 +1989,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-4h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1799,6 +1998,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-5m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1807,6 +2007,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-bar-6h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1815,6 +2016,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1823,6 +2025,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1837,6 +2040,7 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
@@ -1851,6 +2055,7 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1859,3 +2064,4 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  market_websocket_url: null

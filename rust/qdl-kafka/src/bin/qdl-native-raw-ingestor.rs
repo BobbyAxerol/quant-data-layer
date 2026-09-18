@@ -19,7 +19,9 @@ use qdl_contracts::qdl::provider::v1::{
     CaptureBoundary, RawProviderEnvelope, TransportCompression, TransportProtocol,
 };
 use qdl_core::backoff::BackoffPolicy;
-use qdl_core::binance::{decode_subscribed, validate_stream as validate_binance_stream};
+use qdl_core::binance::{
+    self, decode_subscribed, validate_stream as validate_binance_stream, BinanceRoute,
+};
 use qdl_core::binance_session::{
     parse_subscription_reply as parse_binance_subscription_reply,
     subscription_command as binance_subscription_command,
@@ -207,8 +209,15 @@ impl RawBinding {
 #[serde(deny_unknown_fields)]
 struct IngestorConfig {
     runtime: ProviderRuntime,
+    /// OKX: the `/ws/v5/public` service. Binance: the `/public/ws` routed base.
     websocket_url: String,
+    /// OKX only: the `/ws/v5/business` service that carries candle channels.
     business_websocket_url: Option<String>,
+    /// Binance only: the `/market/ws` routed base. Binance split its USD-M
+    /// WebSocket into `/public`, `/market` and `/private` and decommissioned
+    /// the unrouted form on 2026-04-23; `@markPrice` and `@kline_*` live under
+    /// `/market` and push nothing on a connection that does not carry it.
+    market_websocket_url: Option<String>,
     raw_stream: String,
     shard_id: String,
     lease_epoch: u64,
@@ -269,6 +278,25 @@ fn partition_binance_bindings(
     max_subscriptions: usize,
 ) -> Vec<Vec<RawBinding>> {
     partition_feed_lanes(bindings, max_subscriptions)
+}
+
+/// Binance lanes for one routed base, in the same feed-lane order as before.
+///
+/// Every stream must classify, so a binding whose route is unknown fails the
+/// whole role rather than being dropped into whichever group happens to be
+/// iterated first.
+fn partition_binance_route(
+    bindings: &[RawBinding],
+    route: BinanceRoute,
+    max_subscriptions: usize,
+) -> Result<Vec<Vec<RawBinding>>, String> {
+    let mut selected = Vec::new();
+    for binding in bindings {
+        if binance::stream_route(&binding.native_channel)? == route {
+            selected.push(binding.clone());
+        }
+    }
+    Ok(partition_binance_bindings(&selected, max_subscriptions))
 }
 
 fn partition_okx_bindings(
@@ -333,11 +361,51 @@ impl IngestorConfig {
             if !business.starts_with("wss://") {
                 return Err("OKX business WebSocket URL must use wss".into());
             }
+            if self.market_websocket_url.is_some() {
+                return Err("OKX does not use a Binance /market routed base".into());
+            }
         }
-        if self.runtime == ProviderRuntime::Binance
-            && !self.websocket_url.trim_end_matches('/').ends_with("/ws")
-        {
-            return Err("Binance native WebSocket URL must use the control /ws endpoint".into());
+        if self.runtime == ProviderRuntime::Binance {
+            let market_url = self
+                .market_websocket_url
+                .as_deref()
+                .ok_or("Binance market WebSocket URL is required")?;
+            if self.business_websocket_url.is_some() {
+                return Err("Binance does not use an OKX business service".into());
+            }
+            if self.market_name() == "USDM" {
+                // USD-M is the market Binance split. Refuse the base it
+                // decommissioned on 2026-04-23: the socket accepts it and
+                // silently limits the role to the `/public` group, which is how
+                // every Binance kline and mark price was lost for five months
+                // while the subscription was acknowledged and the connection
+                // looked healthy.
+                if !binance::is_routed_control_url(&self.websocket_url, BinanceRoute::Public) {
+                    return Err(
+                        "Binance USD-M public WebSocket URL must be the routed /public/ws \
+                         control endpoint"
+                            .into(),
+                    );
+                }
+                if !binance::is_routed_control_url(market_url, BinanceRoute::Market) {
+                    return Err(
+                        "Binance USD-M market WebSocket URL must be the routed /market/ws \
+                         control endpoint"
+                            .into(),
+                    );
+                }
+            } else {
+                // Spot publishes no equivalent route split, so it keeps one
+                // control endpoint and both fields name it.
+                if !self.websocket_url.trim_end_matches('/').ends_with("/ws")
+                    || !market_url.starts_with("wss://")
+                    || !market_url.trim_end_matches('/').ends_with("/ws")
+                {
+                    return Err(
+                        "Binance native WebSocket URL must use the control /ws endpoint".into(),
+                    );
+                }
+            }
         }
         let mut keys = std::collections::HashSet::new();
         for binding in &self.bindings {
@@ -1165,19 +1233,35 @@ async fn reserve(accepted: &AtomicU64, max_events: u64) -> bool {
 
 async fn run_binance_connection(
     config: Arc<IngestorConfig>,
+    route: BinanceRoute,
     shard_index: usize,
     shard_bindings: Vec<RawBinding>,
     accepted: Arc<AtomicU64>,
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if shard_bindings.is_empty() {
+        return Ok(());
+    }
     let bindings: HashMap<String, RawBinding> = shard_bindings
         .into_iter()
         .map(|binding| (binding.native_channel.clone(), binding))
         .collect();
     let streams = bindings.keys().cloned().collect::<Vec<_>>();
-    let url = config.websocket_url.clone();
-    let publisher = RawPublisher::new(&config, &format!("binance-{shard_index:03}"))?;
+    // The routed base is part of this lane's identity. Two lanes that shared a
+    // shard name would share a transactional producer, a session-liveness file
+    // and a connection-generation counter; a shared generation counter across
+    // lanes is exactly what quarantined every OKX candle on 2026-09-17.
+    let route_name = route.segment();
+    let lane = format!("binance-{route_name}-{shard_index:03}");
+    let url = match route {
+        BinanceRoute::Public => config.websocket_url.clone(),
+        BinanceRoute::Market => config
+            .market_websocket_url
+            .clone()
+            .ok_or("Binance market WebSocket URL is required")?,
+    };
+    let publisher = RawPublisher::new(&config, &lane)?;
     let snapshot_client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
@@ -1190,7 +1274,7 @@ async fn run_binance_connection(
         jitter_bps: 2_000,
     }
     .validate()?;
-    let generation_path = format!("{}.binance-{shard_index:03}", config.generation_state_path);
+    let generation_path = format!("{}.{lane}", config.generation_state_path);
     let expires = deadline(config.max_runtime_seconds);
     let mut failures = 0_u32;
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
@@ -1233,13 +1317,16 @@ async fn run_binance_connection(
                         _ => {}
                     }
                 }
+                // `<runtime>-<shard>-<generation>-<nanos>`: the ordering fence
+                // reads everything before the generation as the lane, so the
+                // route has to sit inside it for two routed lanes to be
+                // distinguishable producers.
                 let session_id = format!(
-                    "binance-{}-{shard_index:03}-{generation}-{}",
+                    "binance-{}-{route_name}-{shard_index:03}-{generation}-{}",
                     config.market_name(),
                     now_ns()?
                 );
-                let mut liveness =
-                    SessionLivenessWriter::new(&config, &format!("binance-{shard_index:03}"))?;
+                let mut liveness = SessionLivenessWriter::new(&config, &lane)?;
                 liveness.live(&session_id, generation, now_ns()?)?;
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
@@ -1585,18 +1672,27 @@ async fn run_binance(
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let shards =
-        partition_binance_bindings(&config.bindings, config.max_subscriptions_per_connection);
-    let futures = shards.into_iter().enumerate().map(|(index, bindings)| {
-        run_binance_connection(
-            config.clone(),
-            index + 1,
-            bindings,
-            accepted.clone(),
-            coalesced_latest.clone(),
-            stopped.clone(),
-        )
-    });
+    // One socket group per routed base, feed lanes inside each. Shard indices
+    // restart per route because the route is part of the lane identity.
+    let mut futures = Vec::new();
+    for route in [BinanceRoute::Public, BinanceRoute::Market] {
+        let shards = partition_binance_route(
+            &config.bindings,
+            route,
+            config.max_subscriptions_per_connection,
+        )?;
+        for (index, bindings) in shards.into_iter().enumerate() {
+            futures.push(run_binance_connection(
+                config.clone(),
+                route,
+                index + 1,
+                bindings,
+                accepted.clone(),
+                coalesced_latest.clone(),
+                stopped.clone(),
+            ));
+        }
+    }
     try_join_all(futures).await?;
     Ok(())
 }
@@ -2218,10 +2314,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 mod tests {
     use super::{
         authority_mode_name, book_delivery_remaining_ns, book_snapshot_renewal_period,
-        next_connection_generation, partition_binance_bindings, partition_bindings,
-        partition_okx_bindings, pending_binance_frame, pending_okx_frame, AuthorityMode,
-        DeliveryClass, KafkaTransportError, LatestStateBuffer, PendingRawFrame, ProviderRuntime,
-        RawBinding, RawFeed, SessionLivenessWriter,
+        next_connection_generation, partition_binance_bindings, partition_binance_route,
+        partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
+        AuthorityMode, BinanceRoute, DeliveryClass, KafkaTransportError, LatestStateBuffer,
+        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed, SessionLivenessWriter,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2357,6 +2453,86 @@ mod tests {
         assert!(lanes[2].iter().all(|item| item.feed == RawFeed::Trade));
         assert!(lanes[3].iter().all(|item| item.feed == RawFeed::Quote));
         assert_eq!(lanes.into_iter().flatten().count(), values.len());
+    }
+
+    #[test]
+    fn binance_market_group_carries_mark_price_and_klines() {
+        // Binance serves `@markPrice` and `@kline_*` from `/market`. On an
+        // unrouted connection both are acknowledged and then silent, which is
+        // the defect this split exists to make impossible.
+        let values = vec![
+            binding(RawFeed::Book, DeliveryClass::Lossless),
+            binding(RawFeed::Bar, DeliveryClass::Lossless),
+            binding(RawFeed::Trade, DeliveryClass::Lossless),
+            binding(RawFeed::Quote, DeliveryClass::LatestState),
+            binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
+        ];
+        let market = partition_binance_route(&values, BinanceRoute::Market, 100).unwrap();
+        let feeds: Vec<RawFeed> = market.iter().flatten().map(|item| item.feed).collect();
+        assert_eq!(feeds, vec![RawFeed::Bar, RawFeed::MarkIndex]);
+    }
+
+    #[test]
+    fn binance_public_group_carries_book_trade_and_quote() {
+        let values = vec![
+            binding(RawFeed::Book, DeliveryClass::Lossless),
+            binding(RawFeed::Bar, DeliveryClass::Lossless),
+            binding(RawFeed::Trade, DeliveryClass::Lossless),
+            binding(RawFeed::Quote, DeliveryClass::LatestState),
+            binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
+        ];
+        let public = partition_binance_route(&values, BinanceRoute::Public, 100).unwrap();
+        let feeds: Vec<RawFeed> = public.iter().flatten().map(|item| item.feed).collect();
+        assert_eq!(feeds, vec![RawFeed::Book, RawFeed::Trade, RawFeed::Quote]);
+    }
+
+    #[test]
+    fn every_binance_binding_lands_in_exactly_one_routed_group() {
+        let values = vec![
+            binding(RawFeed::Book, DeliveryClass::Lossless),
+            binding(RawFeed::Bar, DeliveryClass::Lossless),
+            binding(RawFeed::Trade, DeliveryClass::Lossless),
+            binding(RawFeed::Quote, DeliveryClass::LatestState),
+            binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
+        ];
+        let public = partition_binance_route(&values, BinanceRoute::Public, 100).unwrap();
+        let market = partition_binance_route(&values, BinanceRoute::Market, 100).unwrap();
+        let routed = public.iter().flatten().count() + market.iter().flatten().count();
+        assert_eq!(routed, values.len());
+        // Feed lanes survive the split: one socket per feed class inside a group.
+        assert_eq!(public.len(), 3);
+        assert_eq!(market.len(), 2);
+    }
+
+    #[test]
+    fn a_binding_with_no_routed_base_fails_the_whole_role() {
+        // Dropping it into whichever group is iterated first is how a channel
+        // ends up subscribed on a socket that will never deliver it.
+        let mut stray = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        stray.native_channel = "btcusdt@forceOrder".into();
+        let values = vec![stray];
+        assert!(partition_binance_route(&values, BinanceRoute::Public, 100).is_err());
+        assert!(partition_binance_route(&values, BinanceRoute::Market, 100).is_err());
+    }
+
+    #[test]
+    fn routed_groups_cannot_share_a_lane_identity() {
+        // Two lanes with the same name would share a transactional producer, a
+        // session-liveness file and a connection-generation counter. A shared
+        // generation counter across lanes is what quarantined every OKX candle
+        // on 2026-09-17.
+        assert_ne!(
+            BinanceRoute::Public.segment(),
+            BinanceRoute::Market.segment()
+        );
+        assert_eq!(
+            format!("binance-{}-001", BinanceRoute::Public.segment()),
+            "binance-public-001"
+        );
+        assert_eq!(
+            format!("binance-{}-001", BinanceRoute::Market.segment()),
+            "binance-market-001"
+        );
     }
 
     #[test]

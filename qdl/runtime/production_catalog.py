@@ -43,7 +43,20 @@ _BINANCE_STREAM_URL = {
     # One venue/market worker uses Binance's documented control endpoint and
     # subscribes the resolved demand dynamically. Symbols never become
     # containers or URL-specific combined-stream shards.
-    "USDM": "wss://fstream.binance.com/ws",
+    #
+    # Binance split USD-M into `/public`, `/market` and `/private` and
+    # decommissioned the unrouted base on 2026-04-23. `@bookTicker`, the depth
+    # streams and raw `@trade` are served here; `@markPrice` and `@kline_*` are
+    # served from `_BINANCE_MARKET_STREAM_URL`. A connection without a routed
+    # path receives the public group only, with the subscription acknowledged
+    # and nothing pushed.
+    "USDM": "wss://fstream.binance.com/public/ws",
+    "SPOT": "wss://stream.binance.com:9443/ws",
+}
+_BINANCE_MARKET_STREAM_URL = {
+    # `@markPrice`, `@kline_*`, `@aggTrade`, tickers, liquidations and contract
+    # info. Spot has no equivalent split, so it reuses its single base.
+    "USDM": "wss://fstream.binance.com/market/ws",
     "SPOT": "wss://stream.binance.com:9443/ws",
 }
 _BOOK_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
@@ -703,6 +716,9 @@ class ProductionCatalogBuilder:
                 _BINANCE_STREAM_URL[item.market] if mode == "RUST_NATIVE" else None
             )
             business = None
+            market_ws = (
+                _BINANCE_MARKET_STREAM_URL[item.market] if mode == "RUST_NATIVE" else None
+            )
         else:
             if item.feed is FeedType.TRADE:
                 mode, kind, channel, sequence = "RUST_NATIVE", "okx_trade", "trades", "MONOTONIC"
@@ -736,6 +752,8 @@ class ProductionCatalogBuilder:
                 )
             websocket = _OKX_PUBLIC_WS if mode == "RUST_NATIVE" else None
             business = "wss://ws.okx.com:8443/ws/v5/business" if mode == "RUST_NATIVE" else None
+            # OKX routes by service, not by Binance's route groups.
+            market_ws = None
         result = {
             "binding_id": binding_id,
             "mode": mode,
@@ -745,6 +763,7 @@ class ProductionCatalogBuilder:
             "sequence_policy": sequence,
             "websocket_url": websocket,
             "business_websocket_url": business,
+            "market_websocket_url": market_ws,
         }
         if item.feed in _BOOK_FEEDS:
             result["l2"] = {

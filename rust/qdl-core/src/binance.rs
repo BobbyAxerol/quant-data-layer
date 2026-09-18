@@ -59,6 +59,70 @@ pub fn validate_stream(stream: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The routed WebSocket base a USD-M stream must be subscribed on.
+///
+/// Binance split `fstream.binance.com` into `/public`, `/market` and `/private`
+/// and decommissioned the unrouted form on 2026-04-23. A connection without a
+/// routed path receives the `/public` group only: channels under `/market`
+/// acknowledge the subscription and then push nothing, which is how this
+/// platform lost every Binance kline and mark price for five months while
+/// `@depth`, `@bookTicker` and `@trade` kept working on the same socket.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BinanceRoute {
+    Public,
+    Market,
+}
+
+impl BinanceRoute {
+    /// The path segment between the host and the control `/ws` endpoint.
+    pub fn segment(self) -> &'static str {
+        match self {
+            BinanceRoute::Public => "public",
+            BinanceRoute::Market => "market",
+        }
+    }
+}
+
+/// Which routed base one demanded stream belongs to.
+///
+/// `@aggTrade`, `@markPrice` and `@kline_*` are `/market` per Binance's change
+/// notice. `@bookTicker` and the depth streams are `/public` per the same
+/// notice. Raw `@trade` appears in neither of the notice's two tables; it was
+/// measured on 2026-09-18 to deliver on an unrouted connection, which is the
+/// `/public` group, and it is classified from that measurement rather than
+/// from the document.
+///
+/// Every stream `validate_stream` accepts must be classifiable here, so a new
+/// stream cannot be admitted without also being routed.
+pub fn stream_route(stream: &str) -> Result<BinanceRoute, String> {
+    let normalized = stream.trim();
+    validate_stream(normalized)?;
+    if normalized.ends_with("@markPrice@1s") || normalized.contains("@kline_") {
+        return Ok(BinanceRoute::Market);
+    }
+    if normalized.ends_with("@trade")
+        || normalized.ends_with("@bookTicker")
+        || normalized.ends_with("@depth@100ms")
+    {
+        return Ok(BinanceRoute::Public);
+    }
+    Err(format!("unrouted Binance USD-M stream: {normalized}"))
+}
+
+/// Whether a configured base URL carries the routed path for `route`.
+///
+/// The ingestor subscribes dynamically, so it needs the control endpoint
+/// (`…/ws`) rather than a combined-stream URL, and the routed segment must sit
+/// immediately before it. `wss://fstream.binance.com/ws` - the decommissioned
+/// form - fails here, which is the point: a config that still carries it is
+/// refused instead of silently degrading to the `/public` group.
+pub fn is_routed_control_url(url: &str, route: BinanceRoute) -> bool {
+    let normalized = url.trim().trim_end_matches('/');
+    normalized.starts_with("wss://")
+        && normalized.ends_with(&format!("/{}/ws", route.segment()))
+        && !normalized.contains('?')
+}
+
 pub fn combined_url(streams: &[String]) -> Result<String, String> {
     if streams.is_empty() {
         return Err("at least one demanded stream is required".into());
@@ -220,8 +284,104 @@ pub fn exchange_info_has_active_symbol(payload: &Value, symbol: &str) -> bool {
 mod tests {
     use super::{
         combined_url, decode_combined, decode_subscribed, exchange_info_has_active_symbol,
+        is_routed_control_url, stream_route, validate_stream, BinanceRoute,
     };
     use serde_json::json;
+
+    /// Every stream the platform may subscribe, so the route table and the
+    /// admission rule cannot drift apart.
+    const ACCEPTED_STREAMS: [&str; 5] = [
+        "btcusdt@trade",
+        "btcusdt@bookTicker",
+        "btcusdt@depth@100ms",
+        "btcusdt@markPrice@1s",
+        "btcusdt@kline_1m",
+    ];
+
+    #[test]
+    fn market_group_streams_route_to_market() {
+        assert_eq!(
+            stream_route("btcusdt@markPrice@1s"),
+            Ok(BinanceRoute::Market)
+        );
+        assert_eq!(stream_route("btcusdt@kline_1m"), Ok(BinanceRoute::Market));
+        assert_eq!(stream_route("ethusdt@kline_15m"), Ok(BinanceRoute::Market));
+    }
+
+    #[test]
+    fn public_group_streams_route_to_public() {
+        assert_eq!(stream_route("btcusdt@trade"), Ok(BinanceRoute::Public));
+        assert_eq!(stream_route("btcusdt@bookTicker"), Ok(BinanceRoute::Public));
+        assert_eq!(
+            stream_route("btcusdt@depth@100ms"),
+            Ok(BinanceRoute::Public)
+        );
+    }
+
+    #[test]
+    fn every_admitted_stream_has_a_route() {
+        for stream in ACCEPTED_STREAMS {
+            assert!(validate_stream(stream).is_ok(), "{stream} must be admitted");
+            assert!(
+                stream_route(stream).is_ok(),
+                "{stream} is admitted but has no routed base"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsupported_stream_has_no_route() {
+        assert!(stream_route("btcusdt@aggTrade").is_err());
+        assert!(stream_route("btcusdt@forceOrder").is_err());
+        assert!(stream_route("").is_err());
+    }
+
+    #[test]
+    fn the_decommissioned_unrouted_base_is_not_a_routed_control_url() {
+        // The exact form this platform ran until 2026-09-18.
+        assert!(!is_routed_control_url(
+            "wss://fstream.binance.com/ws",
+            BinanceRoute::Public
+        ));
+        assert!(!is_routed_control_url(
+            "wss://fstream.binance.com/ws",
+            BinanceRoute::Market
+        ));
+    }
+
+    #[test]
+    fn routed_control_urls_are_recognised_per_group() {
+        assert!(is_routed_control_url(
+            "wss://fstream.binance.com/public/ws",
+            BinanceRoute::Public
+        ));
+        assert!(is_routed_control_url(
+            "wss://fstream.binance.com/market/ws",
+            BinanceRoute::Market
+        ));
+        // A base is never accepted for the other group.
+        assert!(!is_routed_control_url(
+            "wss://fstream.binance.com/public/ws",
+            BinanceRoute::Market
+        ));
+        assert!(!is_routed_control_url(
+            "wss://fstream.binance.com/market/ws",
+            BinanceRoute::Public
+        ));
+    }
+
+    #[test]
+    fn a_combined_stream_url_is_not_a_control_url() {
+        // The ingestor subscribes dynamically and needs the control endpoint.
+        assert!(!is_routed_control_url(
+            "wss://fstream.binance.com/market/stream?streams=btcusdt@kline_1m",
+            BinanceRoute::Market
+        ));
+        assert!(!is_routed_control_url(
+            "https://fstream.binance.com/market/ws",
+            BinanceRoute::Market
+        ));
+    }
 
     #[test]
     fn demanded_streams_are_not_truncated() {

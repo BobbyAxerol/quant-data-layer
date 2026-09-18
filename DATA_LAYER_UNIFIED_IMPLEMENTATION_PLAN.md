@@ -39902,3 +39902,296 @@ Until it exists, every digest written into a certificate is taken from
 `docker image inspect` together with the image's own
 `org.opencontainers.image.revision` label, so tag, digest and commit check each
 other by construction.
+
+
+<a id="dl-v2-r127-binance-ws-route-20260918"></a>
+### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
+
+**Status: `PHASE 1 LANDED (source only) / PHASES 2-3 AWAITING OWNER APPROVAL`.**
+Phase 1 was approved and applied on 2026-09-18; no runtime was touched.
+
+#### The defect
+
+Binance split the USD-M WebSocket into three routed base URLs and decommissioned
+the unrouted form. From Binance's own change notice:
+
+> "After the upgrade, any connections not migrated will ONLY be able to receive
+> data from `wss://fstream.binance.com/public`." Channels under `/market` and
+> `/private` stop pushing data. Legacy URLs remained available until
+> **2026-04-23**, after which they were permanently decommissioned.
+
+The notice's own worked example is our exact symptom: `…/ws/btcusdt@depth`
+keeps working because `@depth` is `/public`; `…/ws/btcusdt@markPrice` does not,
+because `@markPrice` is `/market`.
+
+| group | streams (from the notice) |
+|---|---|
+| `/public` | `@bookTicker`, `!bookTicker`, Partial Book Depth, Diff Book Depth |
+| `/market` | `@aggTrade`, `@markPrice` / `@markPrice@1s`, `!markPrice@arr`, **`@kline_<interval>`**, `@continuousKline_…`, `@miniTicker`, `@ticker`, `@forceOrder`, `@compositeIndex`, `!contractInfo`, `!assetIndex@arr` |
+
+Raw `@trade` appears in neither table; measured here it delivers on an unrouted
+connection, so it behaves as `/public`.
+
+**The deployed ingestor never migrated.** `/runtime/ingestor-binance-usdm.json`
+carries `websocket_url = wss://fstream.binance.com/ws` and opens every Binance
+lane on it. Three of its four feeds survive only because they happen to fall in
+the `/public` group:
+
+| feed | channel | group | today |
+|---|---|---|---|
+| BOOK | `@depth@100ms` | `/public` | delivers |
+| QUOTE | `@bookTicker` | `/public` | delivers |
+| TRADE | `@trade` | `/public` (measured) | delivers |
+| MARK_INDEX | `@markPrice@1s` x5 | **`/market`** | **silent** |
+
+#### Measured, 2026-09-18, one host, one IP, one library
+
+A/B of five connection forms, raw frames counted before any parsing:
+
+| form | raw frames / 70 s | event types |
+|---|---:|---|
+| `/market/ws` + SUBSCRIBE | **1,183** | kline 156, aggTrade 957, markPriceUpdate 70 |
+| `/market/stream?streams=` | **895** | kline 161, aggTrade 664, markPriceUpdate 70 |
+| `/market/ws/btcusdt@kline_1m` | **159** | kline 159 |
+| **`/ws` + SUBSCRIBE (deployed)** | **0** | — |
+| `/public/stream` (bookTicker+depth) | 6,138 | bookTicker 5,895, depthUpdate 243 |
+
+**The routed closed kline is both faster and more correct than the REST path it
+replaced.** Three consecutive closed 1m BTCUSDT klines, each compared field by
+field against `GET /fapi/v1/klines` for the same `open_time` at +0/+3/+6/+10 s:
+
+| open_time | `x=true` arrived | WS trades | REST +0 s | REST +3 s | REST +6 s |
+|---|---|---:|---|---|---|
+| 1789709160000 | **+0.547 s** | 2,103 | 2,073, differs | **identical** | identical |
+| 1789709220000 | **+0.492 s** | 1,515 | 1,512, differs | **identical** | identical |
+| 1789709280000 | **+0.202 s** | 5,421 | 5,228, differs | 5,234, **still differs** | **identical** |
+
+The WebSocket value at +0.2-0.5 s is the value the REST replicas converge to
+3-6 s later. The 6 s settlement guard is not a correctness/latency trade-off; it
+is the cost of reading a closed bar over REST. On the routed lane that cost
+disappears without giving anything up.
+
+#### What this one missing path segment caused
+
+`2026-04-23` legacy decommissioned → the ingestor keeps `/ws` → `kline`,
+`aggTrade`, `markPrice` go silent → `2026-08-18` Phase 9.0-A records
+"connected with `message_count=0`" and attributes it to the **host/provider** →
+`2026-08-24` Binance BAR is moved to `PYTHON_REST` → `2026-09-16` REST replicas
+are found disagreeing for ~5 s after close → `min_settle_seconds = 6.0` is added
+→ today Binance bars publish **6.63 s** after close and Binance
+`MARK_INDEX_PRICE` has **zero canonical events** on all five instruments.
+
+Two defects and 6.6 s of latency from one URL.
+
+#### OKX needs no routing change
+
+OKX's three v5 WebSocket URLs are confirmed in its docs, and the deployed OKX
+ingestor already splits them correctly: `websocket_url = …/ws/v5/public` for
+`trades`, `bbo-tbt`, `books`, `mark-price` and `index-tickers`,
+`business_websocket_url = …/ws/v5/business` for `candle*`. That split is why OKX
+native bars publish 0.77-1.07 s after close while Binance takes 6.63 s. OKX's
+own `confirm` field (`canonical.rs:604`) makes a timer unnecessary there.
+
+Separately and not part of this program: OKX also emits `64008` sixty seconds
+before a service-upgrade disconnect. The supervisor does not act on it today; it
+is recorded here as a known gap, not opened.
+
+#### Why the fix is small
+
+- `qdl-native-raw-ingestor.rs:337-341` requires a Binance URL to end in `/ws`.
+  Both `…/public/ws` and `…/market/ws` satisfy it unchanged.
+- The two-base-URL mechanism already exists, in production, for OKX:
+  `qdl-native-raw-ingestor.rs:2041-2075` partitions bindings by service and
+  opens each group on its own URL. Binance needs the same shape, keyed on route
+  group instead of OKX service.
+- `partition_feed_lanes` already opens one socket per feed class, so the lane
+  boundary the route needs is the boundary that already exists.
+
+Current URL sites, three migrated and three not:
+
+| file | value | correct? |
+|---|---|---|
+| `rust/qdl-core/src/binance.rs:6` | `/public/stream?streams=` | yes, for the public group |
+| `qdl/adapters/binance_usdm.py:27` | `/public/stream?streams=` | yes, for the public group |
+| `app/stream/feed_builder.py:43,63` | `/public/stream?streams=` | yes, for the public group |
+| `config/v2/stable-acquisition-bindings.yaml:153` | `/ws` | **no — this is what runs** |
+| `qdl/runtime/production_catalog.py:46` | `/ws` | **no** |
+| `qdl/runtime/l2_demand.py:33` | `/ws` | **no** |
+
+---
+
+#### Phase 1 — Route the Binance lanes in source. No runtime touched.
+
+**Change.** Give the Binance runtime a route-group base pair, exactly as OKX has
+a service pair: `/public/ws` for `BOOK`, `QUOTE`, `TRADE`, and `/market/ws` for
+`MARK_INDEX` and any future `BAR`. Partition Binance bindings by group before
+opening sockets. The catalog generator and the acquisition bindings emit both.
+
+**Boundaries.** No image is built, no container is recreated, no catalog
+revision is deployed, and no consumer manifest changes. `@trade` keeps `/public`
+because that is where it was measured to work, and a comment records that the
+notice does not tabulate it.
+
+**Gate.** Rust: `cargo fmt --all -- --check`, `cargo clippy --workspace
+--all-targets --locked -- -D warnings`, `cargo test --workspace --locked` — all
+three clauses, per ledger entry 33. Python suite in the isolated runner. New
+tests must cover: a Binance config whose mark/index binding resolves to the
+`/market` base; a public-group binding resolving to `/public`; a config that
+still carries the legacy unrouted base being **refused**, not silently accepted;
+and the OKX path unchanged.
+
+**Done when.** Source PASS with the deployed catalog regenerating to the routed
+pair, diffed against the current bundle so the only delta is the URL split.
+
+##### Phase 1 landed (`SOURCE PASS / RUNTIME UNTOUCHED`, 2026-09-18)
+
+**What the route split looks like in code.** `qdl_core::binance` gained
+`BinanceRoute`, `stream_route` and `is_routed_control_url`. The ingestor gained
+`market_websocket_url`, `partition_binance_route`, and one socket group per
+routed base with feed lanes inside it. `production_catalog` emits the pair,
+`stable_deployment` carries and validates it, and `l2_demand` moves USD-M book
+depth to `/public/ws`.
+
+**The route is part of the lane identity.** A lane is now
+`binance-<route>-<shard>`, so the two groups cannot share a transactional
+producer, a session-liveness file or a connection-generation counter. Numbering
+each group from 1 without that would have collided on `binance-001`, and a
+shared generation counter across lanes is exactly what quarantined every OKX
+candle on 2026-09-17.
+
+**Refusing the old base is the point.** Both the Rust config validator and the
+Python acquisition loader reject `wss://fstream.binance.com/ws` for USD-M
+outright. A config that still carries it fails to load instead of running a
+role that looks healthy with mark price and klines missing. Binance Spot
+publishes no equivalent split, so it keeps one control endpoint and both fields
+name it.
+
+**Two tables, each pinned to its own generator.** The channel-to-route rule
+cannot be one function across the language boundary, so neither side holds a
+hand copy of the other: `tests/test_dlv2_r127_binance_ws_route.py` asserts every
+channel `production_catalog` emits for Binance is routed in Python, and the Rust
+suite asserts every stream `validate_stream` admits is routed in Rust. A new
+stream cannot be admitted on either side without also being routed.
+
+**Gate, all three clauses.** `cargo fmt --all -- --check` **ok**;
+`cargo clippy --workspace --all-targets --locked -- -D warnings` **ok, zero
+warnings**; `cargo test --workspace --locked` **177 passed, 0 failed, 1
+ignored**, up from 165 by exactly the 12 tests added (7 in `qdl-core`, 5 in the
+ingestor). Python suite in the isolated runner: **1,579 tests OK, 7 skipped**,
+up from 1,563 by exactly the 16 added. Nothing was built, recreated or
+deployed.
+
+**Deployed config delta.** `config/v2/stable-acquisition-bindings.yaml`: 28
+USD-M bindings move to `/public/ws` and gain `/market/ws`; all 206 declare
+`market_websocket_url`, null where it does not apply, so a missing field can
+never be read as "not applicable". The diff contains those four values and
+nothing else.
+
+##### What Phase 2 must handle first: the repository config is not the deployed one
+
+Found while applying Phase 1, and it changes Phase 2's shape. The running
+ingestor mounts a sealed bundle, not this repository's config:
+
+| | `config/v2/` in git | sealed bundle in use |
+|---|---|---|
+| revision | **16** | **17** |
+| bindings | 206 | 190 |
+| Binance mark/index bindings | **0** | **5** |
+| only in the bundle | — | 12 (Binance and OKX mark/index, one OKX quote) |
+| only in the repository | 28 (spot, dated futures, DNSE) | — |
+
+The bundle is `~/.local/state/qdl-v2/mark-index-3f1c50e-20260905T165308Z/bundle/`,
+sealed at the 2026-09-05 mark/index rollout. **Editing the repository file alone
+changes nothing in production.** Phase 2 must therefore transform that bundle,
+or regenerate revision 18 from the catalog, and reconcile the two afterwards
+rather than leaving them apart again. This is the R1.23 drift class, and the
+drift verifier does not currently check catalog revisions, which is why it went
+unseen for two weeks.
+
+**One coupling to carry in the Phase 2 packet.** `IngestorConfig` is
+`deny_unknown_fields` and `market_websocket_url` is required, so config and
+image roll together in both directions: the old image refuses the new config and
+the new image refuses the old config. That is deliberate fail-closed behaviour -
+neither half can run against the other and look healthy - and it means the
+packet must carry both, with a rollback that also carries both.
+
+---
+
+#### Phase 2 — Roll one role and prove MARK_INDEX to the consumer.
+
+**Change.** Build the image, recreate **`ingestor_binance_usdm` only**, through
+its own packet with `rollout.env` / `rollback.env`. Nothing else is touched:
+not the cores, not the projectors, not the bar edge, not the query or stream
+replicas, not Kafka, Redis or SQLite.
+
+**Acceptance is end to end, not "the socket has frames".** Ledger entry 33's
+lesson applies: a subset reported under the gate's name is not the gate.
+
+1. `markPriceUpdate` frames arriving on the `/market` lane, counted at the
+   ingestor.
+2. Canonical `MARK_INDEX_PRICE` events for all five Binance instruments,
+   counted from `md.canonical.v2` — today this is **0**.
+3. `cache:market:v2:execution_mark_index_price:BINANCE:USD_M:*` present, with
+   `quality.state LIVE`, `execution_eligible true`, and an age inside the sealed
+   2,000 ms policy — today these rows come from the reference REST batch.
+4. `market_data_service` heartbeat: Binance `MARK_INDEX_PRICE` slices leave the
+   unhealthy list, `execution_ready_v2_slices` rises from its current **37/60**.
+5. The three `/public` feeds keep their current rates: BOOK, QUOTE and TRADE
+   frame counts unchanged within noise.
+
+`markPriceUpdate` carries mark (`p`) and index (`i`) in one frame, so one lane
+serves both components. `T` in that payload is the next funding time and must
+not be read as an observation time.
+
+**Rollback.** The same packet with `rollback.env`, which pins the current image
+digest and the unrouted base. One role, one command.
+
+**Done when.** All five acceptance items hold for a bounded observation window,
+recorded with the counts, not with a claim.
+
+---
+
+#### Phase 3 — Native final BAR on the routed lane; REST demoted to reconciliation.
+
+Opened only after Phase 2 has held. It changes the canonical bar producer, which
+is the highest-blast-radius change in this program.
+
+**Change.** Add the Binance `@kline_<interval>` binding on the `/market` lane and
+publish a final bar when the venue says `x=true`, the way OKX publishes on
+`confirm=1`. The REST edge is not deleted and `min_settle_seconds` is not
+removed from the code: the REST read moves from the live signal path to a
+**reconciliation** lane that fetches the same `open_time` after the measured
+convergence delay, compares field by field, and records a revision when they
+differ.
+
+**Comparison identity is fixed** at venue + product + symbol + interval +
+`open_time`, using explicit `startTime`, never "the last row", because a row's
+position moves at the boundary. Mismatches are reported per field — OHLC, base
+volume, quote volume, trade count, taker volumes — and never merged across
+responses into a bar the venue never returned.
+
+**Expected, from the Phase 0 measurement.** Binance close-to-canonical
+`6.63 s → ~0.5 s`; close-to-alpha-cache `8.2-8.8 s → ~2.2-2.5 s`, which is OKX's
+current range. Nothing in the consumer contract changes:
+`DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS` stays `180000`.
+
+**What must be settled before this phase starts, not during it.** A strategy
+that acted on a WS closed bar which reconciliation later revises must keep the
+revision it saw; decision history is never rewritten to look as though the
+strategy knew a later version. That is a contract question for the consumer,
+and it is the reason this is a separate phase rather than the tail of Phase 2.
+
+**Rollback.** The bar edge is untouched and still holds the REST path with its
+6 s guard, so rollback is the previous acquisition revision plus the previous
+ingestor image.
+
+---
+
+#### Not in this program
+
+QUOTE streaming (8 slices, 606-1,206 reconnects each, open since 2026-09-05),
+the OKX reference batch serving `INDEX` from the already-subscribed
+`index-tickers` binding instead of the stale REST row (diagnosed 2026-09-16,
+still unapplied), `BOOK_SNAPSHOT`'s 30 s refresh against a 60,000 ms bound, and
+the `rust_core` 0.89 s queue from R1.22. Each is named so this program is not
+quietly widened to carry them.
