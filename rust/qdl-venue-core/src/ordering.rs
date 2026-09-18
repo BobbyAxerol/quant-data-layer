@@ -52,7 +52,7 @@ pub struct OrderingStage {
 /// counter - so a number from one lane says nothing about another. Returns
 /// `None` for an id that does not carry the two trailing numeric segments,
 /// which the caller must treat as "cannot prove a different lane".
-fn session_lane(session_id: &str) -> Option<&str> {
+pub fn session_lane(session_id: &str) -> Option<&str> {
     let mut segments = session_id.rsplitn(3, '-');
     let nanos = segments.next()?;
     let generation = segments.next()?;
@@ -62,6 +62,14 @@ fn session_lane(session_id: &str) -> Option<&str> {
 }
 
 /// Whether two sessions' generation counters are comparable at all.
+///
+/// Public because there is more than one generation fence in this workspace.
+/// The L2 book core keeps its own (`qdl_core::l2_book::L2BookCore`), book
+/// frames never reach `OrderingTracker`, and on 2026-09-18 that second fence
+/// silently dropped every Binance book frame when a routed lane restarted its
+/// counter at 1 against a remembered 96. One rule, one implementation: a
+/// caller that needs to know whether two generations are comparable calls
+/// this, and never writes a second parser.
 ///
 /// Fencing a lower generation is how a superseded connection's late frames are
 /// rejected, and every reconnect of one lane does produce a higher number. That
@@ -78,7 +86,7 @@ fn session_lane(session_id: &str) -> Option<&str> {
 /// positively identified identities in the same lane can fence each other, and
 /// a superseded connection always carries one, because the ingestor is what
 /// writes them.
-fn same_session_lane(session_id: &str, stage_session_id: &str) -> bool {
+pub fn same_session_lane(session_id: &str, stage_session_id: &str) -> bool {
     match (session_lane(session_id), session_lane(stage_session_id)) {
         (Some(lane), Some(stage_lane)) => lane == stage_lane,
         _ => false,

@@ -372,6 +372,24 @@ impl L2BookAdapter {
         ))
     }
 
+    /// A new connection lane owns this book from here.
+    ///
+    /// Clears the core and the bootstrap buffer together: a delta buffered
+    /// under the previous lane's generation can never bridge a snapshot taken
+    /// under this one, and `buffer_binance_delta` would silently drop it
+    /// anyway. The caller must have proved the lane changed; see
+    /// `qdl_venue_core::ordering::same_session_lane`.
+    pub fn begin_session(&mut self, generation: u64) -> BookTransition {
+        let outcome = self.core.begin_session(generation);
+        self.buffered_binance_deltas.clear();
+        self.transition(
+            BookTransitionKind::Lifecycle,
+            BookPublication::None,
+            outcome,
+            TransitionMetadata::empty(None),
+        )
+    }
+
     pub fn request_resync(&mut self, generation: u64) -> BookTransition {
         let outcome = self.core.request_resync(generation);
         self.buffered_binance_deltas.clear();
@@ -894,6 +912,171 @@ mod tests {
                 7,
             )
             .is_err());
+    }
+
+    #[test]
+    fn begin_session_restarts_the_book_from_every_status_and_drops_the_buffer() {
+        // The book core cannot tell lanes apart - it never sees a session id -
+        // so a caller that can prove the lane changed says so with this. It has
+        // to work from any state, because the state it has to work from in
+        // production is `Ready` at a higher generation than the new lane will
+        // ever send.
+        //
+        // Every `BookStatus` is covered, and `covered` below is asserted
+        // against the enum so a new variant cannot be added without deciding
+        // what `begin_session` does from it.
+        let mut covered: std::collections::HashSet<BookStatus> = std::collections::HashSet::new();
+        for (label, prepare) in [
+            (
+                "AwaitingSnapshot",
+                Box::new(|_: &mut L2BookAdapter| {}) as Box<dyn Fn(&mut L2BookAdapter)>,
+            ),
+            (
+                "Ready",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    adapter
+                        .apply_binance_rest_snapshot(
+                            &json!({"lastUpdateId":10,"bids":[["100","1"]],"asks":[["101","1"]]}),
+                            96,
+                            1,
+                        )
+                        .unwrap();
+                    adapter
+                        .apply_binance_ws_delta(
+                            &json!({"s":"BTCUSDT","U":11,"u":11,"pu":10,"E":2,"b":[["100","2"]],"a":[]}),
+                            96,
+                        )
+                        .unwrap();
+                }),
+            ),
+            (
+                "Bootstrapping",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    // A REST anchor with no websocket delta to bridge it yet.
+                    adapter
+                        .apply_binance_rest_snapshot(
+                            &json!({"lastUpdateId":20,"bids":[["100","1"]],"asks":[["101","1"]]}),
+                            96,
+                            1,
+                        )
+                        .unwrap();
+                }),
+            ),
+            (
+                "Gapped",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    adapter
+                        .apply_binance_rest_snapshot(
+                            &json!({"lastUpdateId":20,"bids":[["100","1"]],"asks":[["101","1"]]}),
+                            96,
+                            1,
+                        )
+                        .unwrap();
+                    // `pu` skips the anchor, so continuity fails closed.
+                    let gap = adapter
+                        .apply_binance_ws_delta(
+                            &json!({"s":"BTCUSDT","U":22,"u":22,"pu":21,"E":2,"b":[],"a":[]}),
+                            96,
+                        )
+                        .unwrap();
+                    assert_eq!(gap.status, BookStatus::Gapped);
+                }),
+            ),
+            (
+                "Resyncing",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    adapter.request_resync(96);
+                }),
+            ),
+            (
+                "Disconnected",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    adapter.disconnect();
+                }),
+            ),
+            (
+                "buffered deltas awaiting a bootstrap",
+                Box::new(|adapter: &mut L2BookAdapter| {
+                    adapter
+                        .apply_binance_ws_delta(
+                            &json!({"s":"BTCUSDT","U":11,"u":11,"E":1,"b":[],"a":[]}),
+                            96,
+                        )
+                        .unwrap();
+                }),
+            ),
+        ] {
+            let mut adapter = L2BookAdapter::binance_diff_depth(
+                identity("BINANCE_USDM_DIFF_DEPTH", "BTCUSDT", "depth"),
+                "BTCUSDT",
+                2,
+            )
+            .unwrap();
+            prepare(&mut adapter);
+            covered.insert(adapter.core().status());
+
+            let transition = adapter.begin_session(1);
+            assert_eq!(
+                transition.outcome,
+                BookOutcome::ResyncRequested,
+                "from {label}"
+            );
+            assert_eq!(
+                transition.publication,
+                BookPublication::None,
+                "from {label}"
+            );
+            assert_eq!(
+                adapter.core().status(),
+                BookStatus::AwaitingSnapshot,
+                "from {label}"
+            );
+            assert_eq!(
+                adapter.core().generation(),
+                1,
+                "the new lane's counter is adopted whatever it is, from {label}"
+            );
+            assert!(adapter.core().view().is_none(), "from {label}");
+            assert!(
+                adapter.core().last_sequence().is_none(),
+                "nothing from the previous lane survives, from {label}"
+            );
+
+            // The buffer went with it: a delta held under the old lane can
+            // never bridge a snapshot taken under the new one.
+            let snapshot = adapter
+                .apply_binance_rest_snapshot(
+                    &json!({"lastUpdateId":200,"bids":[["100","1"]],"asks":[["101","1"]]}),
+                    1,
+                    3,
+                )
+                .unwrap();
+            // A REST read into an `AwaitingSnapshot` book is a bootstrap
+            // anchor, not a readable book: it stays fail-closed until a
+            // websocket delta bridges the range. What matters here is that it
+            // is accepted at the new lane's own generation rather than refused
+            // as stale, which is what production did for ten minutes.
+            assert_eq!(
+                snapshot.outcome,
+                BookOutcome::BootstrapApplied,
+                "the new lane's snapshot is accepted at its own generation, from {label}"
+            );
+        }
+
+        // Pinned against the enum: a new `BookStatus` cannot be added without
+        // deciding here what `begin_session` does from it.
+        assert_eq!(
+            covered,
+            std::collections::HashSet::from([
+                BookStatus::AwaitingSnapshot,
+                BookStatus::Bootstrapping,
+                BookStatus::Ready,
+                BookStatus::Gapped,
+                BookStatus::Resyncing,
+                BookStatus::Disconnected,
+            ]),
+            "every BookStatus must be exercised"
+        );
     }
 
     #[test]

@@ -718,10 +718,12 @@ mod tests {
             quarantines: vec![],
             duplicates: 0,
             filtered: 0,
+            filtered_outcome: None,
         };
         assert_eq!(decision(&canonical).unwrap(), Phase92Decision::Canonical);
         let ambiguous = ProcessBatch {
             filtered: 1,
+            filtered_outcome: None,
             ..canonical
         };
         assert!(decision(&ambiguous).is_err());

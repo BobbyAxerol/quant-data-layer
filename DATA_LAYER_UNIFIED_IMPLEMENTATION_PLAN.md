@@ -39907,7 +39907,7 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASE 1 LANDED (source only) / PHASE 2 FAILED, ROLLED BACK, ROOT CAUSE FOUND / PHASES 2-3 REDESIGNED, AWAITING OWNER RE-APPROVAL`.**
+**Status: `PHASES 1 AND 2a LANDED (source only) / 2b-2c AND PHASE 3 AWAITING OWNER APPROVAL`.**
 Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
 approved, applied the same day, broke the Binance BOOK lane and was rolled back
 ten minutes later; see the Phase 2 record below.
@@ -40174,6 +40174,76 @@ together.
 **Gate.** All three clauses - fmt, clippy `-D warnings`, `cargo test --workspace
 --locked` - plus the Python suite in the isolated runner. No image, no
 container, no bundle.
+
+###### 2a landed (`SOURCE PASS / RUNTIME UNTOUCHED`, 2026-09-18)
+
+**Gate, all three clauses.** `cargo fmt --all -- --check` **ok**;
+`cargo clippy --workspace --all-targets --locked -- -D warnings` **ok, zero
+warnings**; `cargo test --workspace --locked` **183 passed, 0 failed, 1
+ignored**, up from 177 by exactly the six tests added. Python suite in the
+isolated runner: **1,579 OK, 7 skipped**, unchanged. No image was built, no
+container recreated, no bundle touched.
+
+**The replay test is falsifiable, which is the point.** Entry 32 and entry 35
+were both a unit-green change that production proved wrong, so the new tests
+were checked against the defect rather than only against the fix:
+
+| what was disabled | which test went red |
+|---|---|
+| the whole lane check in `process_l2` | `a_renamed_book_lane_publishes_even_though_its_generation_restarted_lower` |
+| only the byte-equality guard | `an_unparsable_producer_identity_does_not_restart_the_book_on_every_frame` |
+| nothing | all green |
+
+The first is the production failure replayed exactly: lane
+`binance-USDM-001` at generation 96 reaches `Ready`, then
+`binance-USDM-public-book-001` at generation **1** sends a snapshot and deltas
+and must publish. It fails on the code that shipped on 2026-09-18.
+
+**Two defects in the fix itself, both caught by its own tests.**
+
+1. `same_session_lane(x, x)` is `false` for an identity it cannot parse -
+   including against itself - so without the byte-equality guard an opaque
+   producer would restart the book on **every frame** and never reach `Ready`.
+   One silence traded for another.
+2. The shard index still counted across the route, so adding a BAR lane renamed
+   `binance-market-markindex-001` to `-002`. That is precisely what Phase 3
+   does, and a renamed lane must re-bootstrap. The index now counts inside its
+   feed, and `a_lane_name_does_not_move_when_another_feed_joins_its_route`
+   holds it there.
+
+**What is now readable from outside the process**, which it was not on
+2026-09-18: `qdl_realtime_core_l2_session_began` names both sessions and both
+generations when a book restarts; `qdl_realtime_core_l2_frame_refused` names the
+outcome, the frame's session and generation, and the core's generation and
+status for every `IgnoredStaleGeneration`, `SnapshotSourceRejected` and
+`IdentityMismatch`; and `qdl_realtime_core_progress` carries
+`filtered_by_outcome`, so a feed that stops can be seen on the progress line
+alone.
+
+**Unchanged on purpose.** A same-lane lower generation is still refused - that
+is the case the fence exists for, and
+`a_superseded_generation_of_the_same_book_lane_is_still_refused` pins it. OKX
+lane naming is untouched; it is next only when OKX is next rolled.
+
+**One shortfall found by re-reading this gate rather than the diff.** The
+`begin_session` test first covered four of the six `BookStatus` variants and
+this gate names `Gapped` explicitly. `Bootstrapping` and `Gapped` were added,
+and the set of statuses exercised is now asserted against the enum, so a new
+variant cannot be introduced without deciding what `begin_session` does from
+it.
+
+**One proxy, stated rather than implied.** This gate asks that a same-lane
+refusal be "visible in the structured log". The test asserts
+`filtered_outcome == IGNORED_STALE_GENERATION`, which is the machine-readable
+path that feeds `filtered_by_outcome`; it does not capture stderr to assert the
+`eprintln!` itself. The counter is the more durable signal and is what
+monitoring would read, but it is a proxy for the log line and not the same
+assertion.
+
+**2b is safe to roll against the running ingestors, checked rather than
+assumed.** Their session ids change on every reconnect while the lane does not,
+so `same_session_lane` answers true, `begin_session` never fires, and a fixed
+core beside an unfixed ingestor behaves exactly as today.
 
 ##### 2b — Roll the three cores, serially
 

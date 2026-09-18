@@ -17,7 +17,9 @@ use qdl_core::l2_book::{BookIdentity, BookOutcome};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
-use qdl_venue_core::ordering::{OrderingStage, OrderingTracker, SequenceDecision, SequencePolicy};
+use qdl_venue_core::ordering::{
+    same_session_lane, OrderingStage, OrderingTracker, SequenceDecision, SequencePolicy,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -362,6 +364,12 @@ pub struct ProcessBatch {
     pub quarantines: Vec<DurableRecord>,
     pub duplicates: usize,
     pub filtered: usize,
+    /// Why a frame was filtered rather than published, when it was an L2 book
+    /// outcome. A bare `filtered` count hid a whole feed for ten minutes on
+    /// 2026-09-18: every Binance book frame was answered
+    /// `IgnoredStaleGeneration` and nothing said so. The runtime aggregates
+    /// this into `filtered_by_outcome` on its progress line.
+    pub filtered_outcome: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -388,6 +396,10 @@ pub struct RealtimeCore {
     l2_snapshot_observed_at_ms: BTreeMap<String, i64>,
     mark_index_pairs: BTreeMap<String, MarkIndexPairState>,
     partition_sequences: BTreeMap<String, u64>,
+    /// The provider session that currently owns each L2 book, so a lane change
+    /// can be proved. Book frames never reach `ordering`, which is why this
+    /// exists separately; see `process_l2`.
+    l2_sessions: BTreeMap<String, String>,
     ordering: OrderingTracker,
     seen_ids: HashSet<Vec<u8>>,
     seen_order: VecDeque<Vec<u8>>,
@@ -431,6 +443,7 @@ impl RealtimeCore {
             l2_snapshot_observed_at_ms: BTreeMap::new(),
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
+            l2_sessions: BTreeMap::new(),
             ordering: OrderingTracker::new(4096),
             seen_ids: HashSet::new(),
             seen_order: VecDeque::new(),
@@ -548,6 +561,7 @@ impl RealtimeCore {
             quarantines: vec![],
             duplicates: 0,
             filtered: 0,
+            filtered_outcome: None,
         };
         let mut failure: Option<(QuarantineReason, &'static str)> = None;
         for (row_index, (provider_kind, frame)) in frames.into_iter().enumerate() {
@@ -840,6 +854,7 @@ impl RealtimeCore {
                 quarantines: vec![],
                 duplicates: 0,
                 filtered: 1,
+                filtered_outcome: None,
             };
         }
         let (Some(mark), Some(index)) = (state.mark.as_ref(), state.index.as_ref()) else {
@@ -849,6 +864,7 @@ impl RealtimeCore {
                 quarantines: vec![],
                 duplicates: 0,
                 filtered: 0,
+                filtered_outcome: None,
             };
         };
         let oldest_confirmation_ns = mark.received_at_ns.min(index.received_at_ns);
@@ -944,6 +960,7 @@ impl RealtimeCore {
                 quarantines: vec![],
                 duplicates: 1,
                 filtered: 0,
+                filtered_outcome: None,
             };
         }
         self.partition_sequences
@@ -959,6 +976,7 @@ impl RealtimeCore {
             quarantines: vec![],
             duplicates: 0,
             filtered: 0,
+            filtered_outcome: None,
         }
     }
 
@@ -1009,6 +1027,46 @@ impl RealtimeCore {
             }
         };
         let fixture_payload = payload.clone();
+        // A book frame never reaches `OrderingTracker` - `process_internal`
+        // returns into this function for any binding with `l2` - so the book
+        // core's own generation fence is the only one it meets, and that fence
+        // compares bare integers. Generations are counted per connection lane,
+        // so a number from one lane says nothing about another: on 2026-09-18 a
+        // routed Binance lane opened at generation 1 against a remembered 96 and
+        // every snapshot and delta for the feed was refused, silently, until the
+        // ninety-seventh reconnect would have arrived.
+        //
+        // The lane rule that R1.25 gave the ordering fence is the same rule
+        // here, and it is the same implementation. A session id that is byte
+        // identical is the same connection and changes nothing. A different id
+        // whose lane is provably the same leaves the decision to
+        // `accept_generation`, which is what keeps a superseded connection's
+        // late frames out. Anything else - a different lane, or an identity
+        // neither side can prove - is a different producer whose counter means
+        // something else, and the book restarts rather than refusing forever.
+        let previous_session = self.l2_sessions.get(binding_key).cloned();
+        let lane_changed = previous_session.as_deref().is_some_and(|previous| {
+            previous != raw.source_session_id
+                && !same_session_lane(&raw.source_session_id, previous)
+        });
+        if lane_changed {
+            if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
+                let core_generation = adapter.core().generation();
+                adapter.begin_session(raw.connection_generation);
+                eprintln!(
+                    "{{\"event\":\"qdl_realtime_core_l2_session_began\",\"binding\":\"{}\",\
+                     \"frame_session\":\"{}\",\"frame_generation\":{},\
+                     \"previous_session\":\"{}\",\"previous_generation\":{}}}",
+                    binding_key,
+                    raw.source_session_id,
+                    raw.connection_generation,
+                    previous_session.as_deref().unwrap_or_default(),
+                    core_generation,
+                );
+            }
+        }
+        self.l2_sessions
+            .insert(binding_key.to_owned(), raw.source_session_id.clone());
         let transition = {
             let Some(adapter) = self.l2_adapters.get_mut(binding_key) else {
                 return self.quarantine(
@@ -1045,6 +1103,31 @@ impl RealtimeCore {
                     )
                 }
             };
+            // Three outcomes drop a frame without quarantining it, so nothing
+            // downstream carries evidence that they happened. Until 2026-09-18
+            // they were also unlogged, and a whole feed stopped for ten minutes
+            // while every process involved reported itself healthy. A refusal
+            // that cannot be read from outside the process is the defect it
+            // hides; R1.25 learned this on the ordering fence and it is the
+            // same lesson here.
+            if matches!(
+                transition.outcome,
+                BookOutcome::IgnoredStaleGeneration
+                    | BookOutcome::SnapshotSourceRejected
+                    | BookOutcome::IdentityMismatch
+            ) {
+                eprintln!(
+                    "{{\"event\":\"qdl_realtime_core_l2_frame_refused\",\"binding\":\"{}\",\
+                     \"outcome\":\"{}\",\"frame_session\":\"{}\",\
+                     \"frame_generation\":{},\"core_generation\":{},\"core_status\":\"{}\"}}",
+                    binding_key,
+                    transition.outcome.as_str(),
+                    raw.source_session_id,
+                    raw.connection_generation,
+                    adapter.core().generation(),
+                    adapter.core().status().as_str(),
+                );
+            }
             if matches!(
                 transition.outcome,
                 BookOutcome::SequenceGap
@@ -1130,6 +1213,8 @@ impl RealtimeCore {
                 quarantines: vec![],
                 duplicates: usize::from(transition.outcome == BookOutcome::Duplicate),
                 filtered: usize::from(transition.outcome != BookOutcome::Duplicate),
+                filtered_outcome: (transition.outcome != BookOutcome::Duplicate)
+                    .then_some(transition.outcome.as_str()),
             };
         }
         let partition_key = l2_partition_key(binding);
@@ -1158,6 +1243,7 @@ impl RealtimeCore {
             quarantines: vec![],
             duplicates,
             filtered: 0,
+            filtered_outcome: None,
         }
     }
 
@@ -1254,6 +1340,7 @@ impl RealtimeCore {
             }],
             duplicates: 0,
             filtered: 0,
+            filtered_outcome: None,
         }
     }
 }
@@ -1528,7 +1615,7 @@ fn canonical_record(stream: &str, envelope: EventEnvelope, now_ns: i64) -> Durab
 mod tests {
     use super::{
         CoreBinding, CoreError, L2Binding, L2ProviderProtocol, MarkIndexBinding,
-        MarkIndexComponent, RealtimeCore, RealtimeCoreConfig,
+        MarkIndexComponent, ProcessBatch, RealtimeCore, RealtimeCoreConfig,
     };
     use prost::Message;
     use qdl_contracts::qdl::common::v1::{QuantityUnit, SourceRole};
@@ -1865,6 +1952,188 @@ mod tests {
     ) -> RawProviderEnvelope {
         value.transport_protocol = transport as i32;
         value
+    }
+
+    /// A raw envelope on a named connection lane.
+    ///
+    /// The lane is what makes two generations comparable or not, so a test
+    /// about generations has to be able to say which lane a frame came from.
+    fn raw_on_lane(
+        binding: &CoreBinding,
+        frame: &[u8],
+        generation: u64,
+        lane: &str,
+    ) -> RawProviderEnvelope {
+        let mut value = raw(binding, frame, generation);
+        value.source_session_id = format!("{lane}-{generation}-1700000000000000000");
+        value.capture_id =
+            Sha256::digest([frame, lane.as_bytes(), &generation.to_be_bytes()].concat())[..16]
+                .to_vec();
+        value
+    }
+
+    /// Drive one lane from nothing to a `Ready`, publishing book.
+    fn bring_book_ready(
+        core: &mut RealtimeCore,
+        binding: &CoreBinding,
+        generation: u64,
+        lane: &str,
+        at_ns: i64,
+    ) -> ProcessBatch {
+        core.process(
+            raw_on_lane(
+                binding,
+                br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+                generation,
+                lane,
+            ),
+            at_ns,
+        )
+        .unwrap();
+        core.process(
+            with_transport(
+                raw_on_lane(
+                    binding,
+                    br#"{"lastUpdateId":100,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                    generation,
+                    lane,
+                ),
+                TransportProtocol::Http,
+            ),
+            at_ns + 1,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_renamed_book_lane_publishes_even_though_its_generation_restarted_lower() {
+        // 2026-09-18, replayed exactly. Routing the Binance USD-M lanes renamed
+        // them, so `binance-USDM-001` at generation 96 became
+        // `binance-USDM-public-book-001` at generation 1. The book core's own
+        // fence compares bare integers, book frames never reach
+        // `OrderingTracker`, and every snapshot and delta for the feed was
+        // answered `IgnoredStaleGeneration` - silently - for ten minutes until
+        // the change was rolled back. Generations are only comparable inside one
+        // lane; a different lane is a different producer and the book restarts.
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+
+        let ready = bring_book_ready(&mut core, &binding, 96, "binance-USDM-001", 10);
+        assert_eq!(ready.canonical.len(), 1, "the first lane must reach Ready");
+
+        // The routed lane: a new identity, and a counter that starts again at 1.
+        let buffered = core
+            .process(
+                raw_on_lane(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":199,"u":201,"pu":198,"E":2001,"b":[["60000","5"]],"a":[["60001","4"]]}"#,
+                    1,
+                    "binance-USDM-public-book-001",
+                ),
+                20,
+            )
+            .unwrap();
+        assert!(buffered.canonical.is_empty());
+        assert_ne!(
+            buffered.filtered_outcome,
+            Some("IGNORED_STALE_GENERATION"),
+            "a delta from a different lane is buffered, never refused as stale"
+        );
+
+        let republished = core
+            .process(
+                with_transport(
+                    raw_on_lane(
+                        &binding,
+                        br#"{"lastUpdateId":200,"bids":[["60000","4"]],"asks":[["60001","4"]]}"#,
+                        1,
+                        "binance-USDM-public-book-001",
+                    ),
+                    TransportProtocol::Http,
+                ),
+                21,
+            )
+            .unwrap();
+        assert_eq!(
+            republished.canonical.len(),
+            1,
+            "the renamed lane must rebuild the book, not be refused for ever"
+        );
+        assert_eq!(republished.filtered_outcome, None);
+
+        // And it keeps publishing, so this is a working book and not one frame.
+        let delta = core
+            .process(
+                raw_on_lane(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":202,"u":202,"pu":201,"E":2002,"b":[["60000","6"]],"a":[]}"#,
+                    1,
+                    "binance-USDM-public-book-001",
+                ),
+                22,
+            )
+            .unwrap();
+        assert_eq!(delta.canonical.len(), 1);
+    }
+
+    #[test]
+    fn a_superseded_generation_of_the_same_book_lane_is_still_refused() {
+        // The case the fence exists for, and the one the lane rule must not
+        // weaken: inside one lane a lower counter is a superseded connection,
+        // and its late frames may not overwrite a live book.
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let ready = bring_book_ready(&mut core, &binding, 96, "binance-USDM-001", 10);
+        assert_eq!(ready.canonical.len(), 1);
+
+        let stale = core
+            .process(
+                with_transport(
+                    raw_on_lane(
+                        &binding,
+                        br#"{"lastUpdateId":300,"bids":[["59000","9"]],"asks":[["59001","9"]]}"#,
+                        95,
+                        "binance-USDM-001",
+                    ),
+                    TransportProtocol::Http,
+                ),
+                30,
+            )
+            .unwrap();
+        assert!(stale.canonical.is_empty());
+        assert_eq!(
+            stale.filtered_outcome,
+            Some("IGNORED_STALE_GENERATION"),
+            "a same-lane stale generation stays refused, and now says so"
+        );
+    }
+
+    #[test]
+    fn an_unparsable_producer_identity_does_not_restart_the_book_on_every_frame() {
+        // `same_session_lane` answers false for an identity it cannot parse,
+        // including against itself. Without the byte-equality guard that would
+        // restart the book on every single frame and it would never reach
+        // Ready - trading one silent failure for another.
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let mut buffered = raw(&binding, br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#, 1);
+        buffered.source_session_id = "opaque-producer".into();
+        core.process(buffered, 10).unwrap();
+        let mut snapshot = with_transport(
+            raw(
+                &binding,
+                br#"{"lastUpdateId":100,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                1,
+            ),
+            TransportProtocol::Http,
+        );
+        snapshot.source_session_id = "opaque-producer".into();
+        let ready = core.process(snapshot, 11).unwrap();
+        assert_eq!(
+            ready.canonical.len(),
+            1,
+            "one unchanging identity is one session, however opaque"
+        );
     }
 
     #[test]

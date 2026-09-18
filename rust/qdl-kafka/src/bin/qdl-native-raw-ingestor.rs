@@ -285,18 +285,61 @@ fn partition_binance_bindings(
 /// Every stream must classify, so a binding whose route is unknown fails the
 /// whole role rather than being dropped into whichever group happens to be
 /// iterated first.
+/// The lane-name segment for a feed class.
+///
+/// Lane identity is `binance-<route>-<feed>-<shard>`, and it is deliberately
+/// keyed on the feed rather than on position. Numbering lanes by their order
+/// inside a route means adding a feed renumbers every lane after it, which
+/// changes the identity of a book that did nothing wrong - and a book whose
+/// lane identity changes must re-bootstrap. Phase 3 adds a BAR lane to the
+/// `/market` route; with a positional name that would have moved MARK_INDEX.
+fn feed_lane_name(feed: RawFeed) -> &'static str {
+    match feed {
+        RawFeed::Book => "book",
+        RawFeed::Bar => "bar",
+        RawFeed::Trade => "trade",
+        RawFeed::Quote => "quote",
+        RawFeed::MarkIndex => "markindex",
+    }
+}
+
 fn partition_binance_route(
     bindings: &[RawBinding],
     route: BinanceRoute,
     max_subscriptions: usize,
-) -> Result<Vec<Vec<RawBinding>>, String> {
+) -> Result<Vec<BinanceLane>, String> {
     let mut selected = Vec::new();
     for binding in bindings {
         if binance::stream_route(&binding.native_channel)? == route {
             selected.push(binding.clone());
         }
     }
-    Ok(partition_binance_bindings(&selected, max_subscriptions))
+    let mut lanes: Vec<BinanceLane> = Vec::new();
+    for shard in partition_binance_bindings(&selected, max_subscriptions) {
+        let Some(feed) = shard.first().map(|binding| binding.feed) else {
+            continue;
+        };
+        // The index counts inside the feed, never across the route. A lane
+        // numbered by its position in the route is renamed whenever a
+        // neighbouring feed is added or removed, and a lane whose identity
+        // changes must re-bootstrap its book - so adding BAR to `/market`
+        // would silently restart MARK_INDEX.
+        let shard_index = lanes.iter().filter(|lane| lane.feed == feed).count() + 1;
+        lanes.push(BinanceLane {
+            feed,
+            shard_index,
+            bindings: shard,
+        });
+    }
+    Ok(lanes)
+}
+
+/// One Binance lane: its feed class, its index inside that feed class, and its
+/// bindings. See `partition_binance_route`.
+struct BinanceLane {
+    feed: RawFeed,
+    shard_index: usize,
+    bindings: Vec<RawBinding>,
 }
 
 fn partition_okx_bindings(
@@ -1243,17 +1286,28 @@ async fn run_binance_connection(
     if shard_bindings.is_empty() {
         return Ok(());
     }
+    // The routed base and the feed class are both part of this lane's identity.
+    // Two lanes that shared a name would share a transactional producer, a
+    // session-liveness file and a connection-generation counter; a shared
+    // generation counter across lanes is exactly what quarantined every OKX
+    // candle on 2026-09-17, and a lane whose name moves when a neighbour is
+    // added is what silently restarts a book that nothing asked to change.
+    //
+    // A feed lane holds one feed class by construction, so the first binding
+    // names the whole lane.
+    let route_name = route.segment();
+    let feed_name = feed_lane_name(
+        shard_bindings
+            .first()
+            .map(|binding| binding.feed)
+            .ok_or("Binance lane has no bindings")?,
+    );
     let bindings: HashMap<String, RawBinding> = shard_bindings
         .into_iter()
         .map(|binding| (binding.native_channel.clone(), binding))
         .collect();
     let streams = bindings.keys().cloned().collect::<Vec<_>>();
-    // The routed base is part of this lane's identity. Two lanes that shared a
-    // shard name would share a transactional producer, a session-liveness file
-    // and a connection-generation counter; a shared generation counter across
-    // lanes is exactly what quarantined every OKX candle on 2026-09-17.
-    let route_name = route.segment();
-    let lane = format!("binance-{route_name}-{shard_index:03}");
+    let lane = format!("binance-{route_name}-{feed_name}-{shard_index:03}");
     let url = match route {
         BinanceRoute::Public => config.websocket_url.clone(),
         BinanceRoute::Market => config
@@ -1322,7 +1376,7 @@ async fn run_binance_connection(
                 // route has to sit inside it for two routed lanes to be
                 // distinguishable producers.
                 let session_id = format!(
-                    "binance-{}-{route_name}-{shard_index:03}-{generation}-{}",
+                    "binance-{}-{route_name}-{feed_name}-{shard_index:03}-{generation}-{}",
                     config.market_name(),
                     now_ns()?
                 );
@@ -1672,21 +1726,22 @@ async fn run_binance(
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // One socket group per routed base, feed lanes inside each. Shard indices
-    // restart per route because the route is part of the lane identity.
+    // One socket group per routed base, feed lanes inside each. A lane is named
+    // `binance-<route>-<feed>-<shard>` and the shard counts inside its feed, so
+    // adding or removing a feed never renames a lane that did not change.
     let mut futures = Vec::new();
     for route in [BinanceRoute::Public, BinanceRoute::Market] {
-        let shards = partition_binance_route(
+        let lanes = partition_binance_route(
             &config.bindings,
             route,
             config.max_subscriptions_per_connection,
         )?;
-        for (index, bindings) in shards.into_iter().enumerate() {
+        for lane in lanes {
             futures.push(run_binance_connection(
                 config.clone(),
                 route,
-                index + 1,
-                bindings,
+                lane.shard_index,
+                lane.bindings,
                 accepted.clone(),
                 coalesced_latest.clone(),
                 stopped.clone(),
@@ -2314,10 +2369,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 mod tests {
     use super::{
         authority_mode_name, book_delivery_remaining_ns, book_snapshot_renewal_period,
-        next_connection_generation, partition_binance_bindings, partition_binance_route,
-        partition_bindings, partition_okx_bindings, pending_binance_frame, pending_okx_frame,
-        AuthorityMode, BinanceRoute, DeliveryClass, KafkaTransportError, LatestStateBuffer,
-        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed, SessionLivenessWriter,
+        feed_lane_name, next_connection_generation, partition_binance_bindings,
+        partition_binance_route, partition_bindings, partition_okx_bindings, pending_binance_frame,
+        pending_okx_frame, AuthorityMode, BinanceRoute, DeliveryClass, KafkaTransportError,
+        LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        SessionLivenessWriter,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2468,7 +2524,7 @@ mod tests {
             binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
         ];
         let market = partition_binance_route(&values, BinanceRoute::Market, 100).unwrap();
-        let feeds: Vec<RawFeed> = market.iter().flatten().map(|item| item.feed).collect();
+        let feeds: Vec<RawFeed> = market.iter().map(|lane| lane.feed).collect();
         assert_eq!(feeds, vec![RawFeed::Bar, RawFeed::MarkIndex]);
     }
 
@@ -2482,7 +2538,7 @@ mod tests {
             binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
         ];
         let public = partition_binance_route(&values, BinanceRoute::Public, 100).unwrap();
-        let feeds: Vec<RawFeed> = public.iter().flatten().map(|item| item.feed).collect();
+        let feeds: Vec<RawFeed> = public.iter().map(|lane| lane.feed).collect();
         assert_eq!(feeds, vec![RawFeed::Book, RawFeed::Trade, RawFeed::Quote]);
     }
 
@@ -2497,7 +2553,8 @@ mod tests {
         ];
         let public = partition_binance_route(&values, BinanceRoute::Public, 100).unwrap();
         let market = partition_binance_route(&values, BinanceRoute::Market, 100).unwrap();
-        let routed = public.iter().flatten().count() + market.iter().flatten().count();
+        let routed = public.iter().map(|lane| lane.bindings.len()).sum::<usize>()
+            + market.iter().map(|lane| lane.bindings.len()).sum::<usize>();
         assert_eq!(routed, values.len());
         // Feed lanes survive the split: one socket per feed class inside a group.
         assert_eq!(public.len(), 3);
@@ -2513,6 +2570,88 @@ mod tests {
         let values = vec![stray];
         assert!(partition_binance_route(&values, BinanceRoute::Public, 100).is_err());
         assert!(partition_binance_route(&values, BinanceRoute::Market, 100).is_err());
+    }
+
+    #[test]
+    fn a_lane_name_does_not_move_when_another_feed_joins_its_route() {
+        // A lane whose identity changes must re-bootstrap its book, so a lane
+        // name may never depend on what else happens to share its route.
+        // Numbering by position inside a route looked equivalent and is not:
+        // Phase 3 adds a BAR lane to `/market`, and with a positional name that
+        // would have renamed MARK_INDEX's lane and silently restarted a feed
+        // that nothing had asked to change.
+        let lane = |bindings: &[RawBinding], route: BinanceRoute| -> Vec<String> {
+            partition_binance_route(bindings, route, 100)
+                .unwrap()
+                .iter()
+                .map(|lane| {
+                    format!(
+                        "binance-{}-{}-{:03}",
+                        route.segment(),
+                        feed_lane_name(lane.feed),
+                        lane.shard_index
+                    )
+                })
+                .collect()
+        };
+
+        let before = vec![binding(RawFeed::MarkIndex, DeliveryClass::LatestState)];
+        let after = vec![
+            binding(RawFeed::Bar, DeliveryClass::Lossless),
+            binding(RawFeed::MarkIndex, DeliveryClass::LatestState),
+        ];
+        assert_eq!(
+            lane(&before, BinanceRoute::Market),
+            ["binance-market-markindex-001"]
+        );
+        assert_eq!(
+            lane(&after, BinanceRoute::Market),
+            ["binance-market-bar-001", "binance-market-markindex-001"],
+            "adding BAR must add a lane, never rename one"
+        );
+
+        // The same holds for the public route when a feed is removed.
+        let public_full = vec![
+            binding(RawFeed::Book, DeliveryClass::Lossless),
+            binding(RawFeed::Trade, DeliveryClass::Lossless),
+            binding(RawFeed::Quote, DeliveryClass::LatestState),
+        ];
+        let public_without_trade = vec![
+            binding(RawFeed::Book, DeliveryClass::Lossless),
+            binding(RawFeed::Quote, DeliveryClass::LatestState),
+        ];
+        assert_eq!(
+            lane(&public_full, BinanceRoute::Public),
+            [
+                "binance-public-book-001",
+                "binance-public-trade-001",
+                "binance-public-quote-001"
+            ]
+        );
+        assert_eq!(
+            lane(&public_without_trade, BinanceRoute::Public),
+            ["binance-public-book-001", "binance-public-quote-001"],
+            "removing TRADE must not rename the book or quote lane"
+        );
+    }
+
+    #[test]
+    fn every_feed_class_has_a_distinct_lane_name() {
+        let names: std::collections::HashSet<&'static str> = [
+            RawFeed::Book,
+            RawFeed::Bar,
+            RawFeed::Trade,
+            RawFeed::Quote,
+            RawFeed::MarkIndex,
+        ]
+        .into_iter()
+        .map(feed_lane_name)
+        .collect();
+        assert_eq!(
+            names.len(),
+            5,
+            "two feeds sharing a lane name share a counter"
+        );
     }
 
     #[test]

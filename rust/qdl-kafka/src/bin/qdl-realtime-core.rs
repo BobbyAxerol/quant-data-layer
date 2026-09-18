@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -207,6 +207,11 @@ async fn run_generation(
     let mut quarantines = 0_u64;
     let mut duplicates = 0_u64;
     let mut filtered = 0_u64;
+    // A bare `filtered` total hid an entire feed on 2026-09-18: every Binance
+    // book frame was answered `IgnoredStaleGeneration` and the only visible
+    // symptom was this counter rising slightly. Breaking it down by outcome
+    // makes a feed that stops readable from the progress line alone.
+    let mut filtered_by_outcome: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut ignored_out_of_scope = 0_u64;
     let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
@@ -332,6 +337,9 @@ async fn run_generation(
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
             filtered += result.filtered as u64;
+            if let Some(outcome) = result.filtered_outcome {
+                *filtered_by_outcome.entry(outcome).or_insert(0) += result.filtered as u64;
+            }
             for record in result.canonical {
                 outputs.push(TransactionalKafkaOutput {
                     record,
@@ -373,6 +381,7 @@ async fn run_generation(
                     "quarantines": quarantines,
                     "duplicates": duplicates,
                     "filtered": filtered,
+                    "filtered_by_outcome": filtered_by_outcome,
                     "ignored_out_of_scope": ignored_out_of_scope,
                     "scope_quarantines": scope_quarantines,
                     "batches": batches,

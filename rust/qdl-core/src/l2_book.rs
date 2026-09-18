@@ -376,7 +376,7 @@ pub struct BookDelta {
     pub updates: Vec<BookLevelInput>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BookStatus {
     AwaitingSnapshot,
     /// A REST bootstrap anchor is loaded, but no websocket delta has yet
@@ -640,6 +640,28 @@ impl L2BookCore {
     /// Request a transport-level resubscribe. The adapter supplies the next
     /// provider-valid snapshot: websocket-only for stateful protocols, or a
     /// new REST bootstrap plus websocket bridge for diff-depth protocols.
+    /// Adopt a new connection's generation unconditionally and re-bootstrap.
+    ///
+    /// `accept_generation` compares bare integers, which is only meaningful
+    /// inside one connection lane: a lane counts its own reconnects, so lane B
+    /// at generation 1 says nothing about lane A at generation 96. On
+    /// 2026-09-18 a routed Binance lane opened at 1 against a remembered 96 and
+    /// every snapshot and delta for the whole feed was answered
+    /// `IgnoredStaleGeneration`, silently, until the ninety-seventh reconnect.
+    ///
+    /// The core cannot tell lanes apart and must not try - it sees no session
+    /// id. The caller that can prove the lane changed says so by calling this,
+    /// and the book restarts from `AwaitingSnapshot` with nothing carried over.
+    /// A same-lane stale generation is still refused by `accept_generation`,
+    /// which is the case that fence exists for.
+    pub fn begin_session(&mut self, generation: u64) -> BookOutcome {
+        self.generation = generation;
+        self.clear_book();
+        self.status = BookStatus::AwaitingSnapshot;
+        self.last_error = None;
+        BookOutcome::ResyncRequested
+    }
+
     pub fn request_resync(&mut self, generation: u64) -> BookOutcome {
         if generation < self.generation {
             return BookOutcome::IgnoredStaleGeneration;
