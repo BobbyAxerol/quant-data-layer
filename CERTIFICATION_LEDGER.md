@@ -1367,3 +1367,94 @@ stale" cannot.
 Gate: fmt ok, clippy `-D warnings` ok with zero warnings, `cargo test
 --workspace --locked` **184 passed, 1 ignored**; Python suite **1,579 OK,
 7 skipped**. Nothing was built, recreated or deployed.
+
+---
+
+## 39. Binance USD-M is on the venue's routed base URLs, in production (2026-09-18)
+
+**Pinned at** image `qdl-v2-rust:2.0.17-ee7f1b3`
+(`sha256:a863f7e11c158545f98a4a5f708bc481da013cca393aa2ad1ba2ef9748dc11b9`,
+revision label `ee7f1b3`); runtime config
+`/home/bobby/.local/state/qdl-v2/dlv2-r127-2c-retry-20260918T090834Z/bundle/runtime`,
+which differs from the sealed bundle in exactly two files -
+`ingestor-binance-usdm.json` and `stable-acquisition-bindings.yaml` - both
+carrying only the routed pair `wss://fstream.binance.com/public/ws` and
+`wss://fstream.binance.com/market/ws`. Roles recreated: `rust_core` 09:11:34Z,
+`rust_core_2` 09:15:00Z, `rust_core_3` 09:15:55Z, `ingestor_binance_usdm`
+09:22:05Z. Nothing else in the 17-role stack was touched.
+
+**Certified.** `shadow-certified` is the wrong word here and so is
+`production-ready`: this is **production-authoritative**. The stack it runs in
+is `RUST_PRIMARY` and serves the live consumer, which read it throughout with
+`v1_fallback_count=0` and `v2_error_count=0`.
+
+**What it fixes, as one measurement.** `scripts/verify_stable_feed_partitions.py`
+before and after the ingestor roll:
+
+```
+09:20Z  binance mark_index_price  n=5  stale=5  worst_age=4014s   exit=1
+09:24Z  binance mark_index_price  n=5  stale=0  worst_age=   3s
+        188 partitions, 0 stale, 0 empty                          exit=0
+```
+
+Those five partitions had no producer because `markPrice@1s` is a `/market`
+stream and the ingestor was still dialling the base Binance decommissioned on
+2026-04-23. The data layer had **zero** canonical Binance mark/index events
+before this roll and now has them at a measured 1000 ms cadence.
+
+**Soaked.** The full eight-item acceptance passed at T+2 (09:24Z), T+10 (09:32Z)
+and T+30 (09:52Z): four routed lanes LIVE at `gen=2`; 188 partitions with 0
+stale and 0 empty at all three points; `l2_frame_refused=0` on all three cores;
+all 9 Binance books `READY` with `pending=0` by name, not by counter;
+`execution_ready_v2_slices` 31 -> 35 -> 36. The `QUIET` slices at T+2 were the
+consumer re-establishing after the session generation moved 1 -> 2 and were gone
+by T+10.
+
+**Why the third attempt worked where two failed.** Not luck and not a retry. The
+cores carried the corrected bridge rule (entry 38) before the ingestor produced
+frames under new lane names, and the acceptance was the inverted one: enumerate
+every partition and fail on the worst. Entry 37's attempt passed its own gate
+while a partition was dead; this gate could not have.
+
+**Four quantities, per routed feed, steady state**, from
+`scripts/report_feed_latency_quantities.py` (committed with this change; median
+per partition over a 300 s window, 200 events each, 24 Binance partitions, none
+quiet):
+
+| feed | 1 venue->recv | 2 recv->pub | 3 pub->durable | 4 venue->durable | p95 total | event period |
+|---|---|---|---|---|---|---|
+| book (9) | 26 ms | 0 ms | 396-578 ms | 424-608 ms | 0.79-1.22 s | 102-256 ms |
+| quote (5) | 27 ms | 0 ms | 427-485 ms | 454-512 ms | 0.72-0.81 s | 55-81 ms |
+| trade (5) | 27-28 ms | 0 ms | 496-737 ms | 523-765 ms | 0.58-0.99 s | bursty |
+| mark_index_price (5) | **72-74 ms** | 0 ms | 437-606 ms | 509-685 ms | 0.85-1.57 s | **1000 ms** |
+
+The `/market` edge is ~46 ms further away than `/public`; that is the route, not
+our code. `markPrice@1s` arrives at a measured 1000 ms period, the documented
+cadence. The dominant hop on every feed is `published -> durable`, the
+projector's commit, already measured in R1.22 - routing did not change it.
+
+The same run against OKX, for contrast and because the owner asked for every
+endpoint rather than the one being changed:
+
+| feed | 1 venue->recv | 2 recv->pub | 3 pub->durable | 4 venue->durable | p95 total |
+|---|---|---|---|---|---|
+| book (9) | 28-31 ms | 0 ms | 436-564 ms | 466-594 ms | 0.86-1.21 s |
+| quote (5) | 28 ms | 0 ms | 382-577 ms | 411-605 ms | 0.68-0.97 s |
+| trade (5) | 29 ms | 0 ms | 493-713 ms | 521-742 ms | 0.68-1.77 s |
+| mark_index_price (5) | 45-90 ms | **145 ms** | 449-550 ms | **735-1013 ms** | 1.27-2.11 s |
+
+OKX `MARK_INDEX_PRICE` is the one feed in the stack with a non-zero
+`received -> published` hop: 145 ms of normalisation, which is where its total
+exceeds Binance's despite a comparable wire and commit. Nothing in R1.27 touched
+it and nothing here explains it; it is recorded so it is not rediscovered.
+
+**Open, and not caused by this roll.** The consumer reports three to five
+Binance and three to four OKX `QUOTE` slices `STALE` at `age_seconds` 19-51
+while the spool's own quote partitions read 0 s. Symmetric across both venues,
+present in the 09:20Z measurement taken before the ingestor moved, and OKX was
+not touched by this program. It is a consumer-side `QUOTE` delivery gap and it
+needs its own investigation.
+
+**Rollback** was prepared, proven twice in entries 35 and 37, and not used:
+`--env-file rollback.env` on the same override pins core `432f4b62` and ingestor
+`b05d4446` against the sealed bundle.

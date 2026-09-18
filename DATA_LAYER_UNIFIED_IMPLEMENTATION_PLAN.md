@@ -39905,17 +39905,21 @@ other by construction.
 
 
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
-### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
+### R1.27 — Binance USD-M WebSocket routing: three phases (2026-09-18)
 
-**Status: `PHASES 1, 2a, 2b AND 2d LANDED (source) / 2c READY TO RETRY, AWAITING OWNER APPROVAL / PHASE 3 NOT STARTED`.**
-The book that stalled twice is no longer unexplained: the Binance bridge rule was off by
-one against the venue's documented procedure. Found in captured production frames,
-corrected, and pinned by a regression test built from those frames.
-2b moved the three cores onto the lane-aware book fence on 2026-09-18; no ingestor,
-projector, reader, broker or consumer was touched.
-Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
-approved, applied the same day, broke the Binance BOOK lane and was rolled back
-ten minutes later; see the Phase 2 record below.
+**Status: `PHASE 1 LANDED / PHASE 2 LANDED AND SOAKED IN PRODUCTION / PHASE 3 NOT STARTED, NEEDS ITS OWN APPROVAL`.**
+Binance USD-M now runs on the venue's routed base URLs. The five `MARK_INDEX_PRICE`
+partitions that had been silent since the unrouted base was decommissioned on
+2026-04-23 went from 4014 s stale to 3 s fresh on the roll, and every one of the
+188 partitions in the stack was fresh at T+2, T+10 and T+30. `v1_fallback` and
+`v2_error` stayed 0 throughout; `execution_ready_v2_slices` went 31 to 36.
+Getting there took three attempts at 2c. The first two failed because the book
+core had a second connection-generation fence that was not lane-aware (fixed in
+2a, rolled in 2b) and because the Binance bridge rule was off by one against the
+venue's documented procedure - found in captured production frames, corrected in
+2d, and pinned by a regression test built from those frames. Both failures are
+recorded below in full rather than edited out.
+Phase 3 changes the canonical bar producer and is not open.
 
 #### The defect
 
@@ -40655,6 +40659,107 @@ to fresh as part of the same roll. Items 1 and 3-8 are unchanged, and item 3
 gains `qdl_realtime_core_l2_status_changed`: every Binance book must reach
 `Ready` and stay there, one line per book, rather than being inferred from a
 counter.
+
+##### 2c landed (`ROLLED / SOAKED`, 2026-09-18)
+
+The third attempt. The two that failed are recorded above and are not restated
+here; what changed is that the bridge rule was corrected first (Phase 2d), the
+cores carried that correction before the ingestor moved, and the acceptance was
+inverted so the healthy majority could no longer answer for a dead partition.
+
+**Order.** `qdl-v2-rust:2.0.17-ee7f1b3`
+(`sha256:a863f7e11c158545f98a4a5f708bc481da013cca393aa2ad1ba2ef9748dc11b9`,
+revision label matching the commit). The fix lives in `qdl-core`, which is
+linked into the core binary, so the three cores had to carry it before the
+ingestor produced frames under new lane names:
+
+| role | rolled | result |
+|---|---|---|
+| `rust_core` | 09:11:34Z | `ETHUSDT_261225` reached `READY`, `pending=0` |
+| `rust_core_2` | 09:15:00Z | 15 status lines, no refusal |
+| `rust_core_3` | 09:15:55Z | no refusal; all three on the new image, 0 restarts, `oom=false` |
+| `ingestor_binance_usdm` | 09:22:05Z | four routed lanes LIVE at `gen=2` within 45 s |
+
+Before the ingestor moved, all 18 books across the three cores were `READY` with
+`pending=0` - including `BTCUSDT_260925` and `ETHUSDT_261225`, the two that
+stalled in both earlier attempts. That is the 2b gate, met on the corrected
+cores.
+
+**The defect, in one measurement.** `scripts/verify_stable_feed_partitions.py`
+immediately before the ingestor roll and at T+2 after it:
+
+```
+before  binance mark_index_price   n=5  stale=5  worst_age=4014s
+T+2     binance mark_index_price   n=5  stale=0  worst_age=   3s
+        188 partitions, 0 stale, 0 empty
+```
+
+Those five partitions had been silent because `markPrice@1s` is a `/market`
+stream and the ingestor was still dialling the base Binance decommissioned on
+2026-04-23. Nothing else in the stack changed to make them speak.
+
+**Acceptance, all eight items, at T+2, T+10 and T+30.**
+
+| item | T+2 (09:24Z) | T+10 (09:32Z) | T+30 (09:52Z) |
+|---|---|---|---|
+| 1 four routed lanes LIVE | pass, `gen=2`, transport < 1 s | pass | pass |
+| 2 every partition fresh | 188 / 0 stale / 0 empty | 188 / 0 / 0 | 188 / 0 / 0 |
+| 3 `l2_frame_refused` | 0 on all three cores | 0 | 0 |
+| 3 every Binance book `READY` | 9 of 9, `pending=0` | 9 of 9 | 9 of 9 |
+| 4 Binance mark/index durable | 3 s | 1 s | 1 s |
+| 5 no feed regressed | book/quote/trade 0-2 s | 0 s | 0-2 s |
+| 6 `v1_fallback` | 0 | 0 | 0 |
+| 7 `v2_error` | 0 | 0 | 0 |
+| 8 mark/index in the alpha cache | LIVE, 1.3 s | LIVE, 1.7-2.7 s | LIVE, 1.4-3.4 s |
+
+`execution_ready_v2_slices` went 31 (baseline) -> 31 (T+2, still settling) ->
+35 (T+10) -> 36 (T+30). The `QUIET` slices seen at T+2 were the consumer re-establishing
+after the session generation moved 1 -> 2; they were gone by T+10 (`quiet=0`).
+
+**The four quantities, per routed feed, steady state.** Measured after the soak
+with `scripts/report_feed_latency_quantities.py`, which is committed with this
+change because the owner's standing rule is that no per-endpoint benchmark is
+reported without all four. Median per partition over a 300 s window, 200 events
+per partition, 24 Binance partitions, none quiet:
+
+| feed | 1 venue->recv | 2 recv->pub | 3 pub->durable | 4 venue->durable | p95 total | event period |
+|---|---|---|---|---|---|---|
+| book (9) | 26 ms | 0 ms | 396-578 ms | 424-608 ms | 0.79-1.22 s | 102-256 ms |
+| quote (5) | 27 ms | 0 ms | 427-485 ms | 454-512 ms | 0.72-0.81 s | 55-81 ms |
+| trade (5) | 27-28 ms | 0 ms | 496-737 ms | 523-765 ms | 0.58-0.99 s | bursty |
+| mark_index_price (5) | **72-74 ms** | 0 ms | 437-606 ms | 509-685 ms | 0.85-1.57 s | **1000 ms** |
+
+Two things in that table are worth keeping. The `/market` lane's wire hop is
+**72-74 ms against `/public`'s 26-27 ms** - a different Binance edge, ~46 ms
+more, which is a property of the route and not of our code. And `markPrice@1s`
+arrives at a measured period of exactly **1000 ms**, which is the documented
+cadence: the lane is not merely connected, it is being served. The hop that
+dominates every feed is `published -> durable`, the projector's commit, already
+measured in R1.22; routing did not change it and was never going to.
+
+An earlier reading taken minutes after the roll put `published -> durable` at
+0.9-1.7 s on `trade`. That was the projector draining the backlog the roll
+created, not steady state; the table above is the 300 s window after the soak.
+
+End-to-end to the alpha cache for `MARK_INDEX_PRICE` stayed 1.3-2.7 s and the
+source stayed `reference_batch:mark_index_price`. That is expected and is not a
+data-layer property: the consumer routes `MARK_INDEX_PRICE` to the reference
+batch unconditionally at
+`trading_system/adapters/market_data/data_layer_v2.py:752`. Before this roll the
+data layer had **no canonical mark/index events at all** for Binance USD-M; it
+now has them at 1 s cadence, and the consumer-side routing is a separate change
+in a separate repo.
+
+**One finding this roll did not cause and did not fix.** The consumer reports
+three to five Binance and three to four OKX `QUOTE` slices `STALE` with
+`age_seconds` 19-51, while the spool's own quote partitions read 0 s. It is
+symmetric across both venues, it was present in the 09:20Z measurement taken
+before the ingestor moved, and OKX was not touched by this program. It is a
+consumer-side delivery gap on `QUOTE`, recorded here and left out of R1.27.
+
+**Rollback, unused.** `--env-file rollback.env` on the same override pins core
+`432f4b62` and ingestor `b05d4446` against the sealed bundle; it was proven twice
+in the two failed attempts and was not needed here.
 
 ---
 
