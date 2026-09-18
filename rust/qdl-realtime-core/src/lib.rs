@@ -1067,6 +1067,10 @@ impl RealtimeCore {
         }
         self.l2_sessions
             .insert(binding_key.to_owned(), raw.source_session_id.clone());
+        let status_before = self
+            .l2_adapters
+            .get(binding_key)
+            .map(|adapter| adapter.core().status());
         let transition = {
             let Some(adapter) = self.l2_adapters.get_mut(binding_key) else {
                 return self.quarantine(
@@ -1126,6 +1130,34 @@ impl RealtimeCore {
                     raw.connection_generation,
                     adapter.core().generation(),
                     adapter.core().status().as_str(),
+                );
+            }
+            // One line per book, per status change. A per-core counter cannot
+            // distinguish one book looping from every book bootstrapping, which
+            // is how a single dead partition hid inside a healthy-looking feed
+            // on 2026-09-18 until the spool was queried partition by partition.
+            if status_before != Some(adapter.core().status()) {
+                eprintln!(
+                    "{{\"event\":\"qdl_realtime_core_l2_status_changed\",\"binding\":\"{}\",\
+                     \"from\":\"{}\",\"to\":\"{}\",\"outcome\":\"{}\",\
+                     \"generation\":{},\"last_sequence\":{},\"snapshot_sequence\":{},\
+                     \"pending_bootstrap_deltas\":{}}}",
+                    binding_key,
+                    status_before.map(|value| value.as_str()).unwrap_or("NONE"),
+                    adapter.core().status().as_str(),
+                    transition.outcome.as_str(),
+                    adapter.core().generation(),
+                    adapter
+                        .core()
+                        .last_sequence()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "null".into()),
+                    adapter
+                        .core()
+                        .snapshot_sequence()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "null".into()),
+                    adapter.pending_bootstrap_deltas(),
                 );
             }
             if matches!(

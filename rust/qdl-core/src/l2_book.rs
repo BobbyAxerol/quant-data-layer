@@ -780,22 +780,46 @@ impl L2BookCore {
                     Some(value) if value <= frame.sequence_end => value,
                     _ => return Continuity::Gap,
                 };
-                if frame.sequence_end <= last {
-                    return Continuity::Duplicate;
-                }
                 if !self.range_bridge_complete {
-                    let expected = match last.checked_add(1) {
-                        Some(value) => value,
-                        None => return Continuity::Gap,
-                    };
-                    if start <= expected && frame.sequence_end >= expected {
-                        Continuity::Apply
-                    } else if start > expected {
-                        Continuity::Gap
-                    } else {
-                        Continuity::OutOfOrder
+                    // Binance's documented bridge, quoted from "How to manage a
+                    // local order book correctly" for USD-M futures:
+                    //
+                    //   Drop any event where `u` is < `lastUpdateId` in the
+                    //   snapshot. The first processed event should have
+                    //   `U` <= `lastUpdateId` AND `u` >= `lastUpdateId`.
+                    //
+                    // Both comparisons are against the anchor itself, not the
+                    // sequence after it. Testing `lastUpdateId + 1` instead
+                    // discards the event that ends exactly on the anchor - the
+                    // one the venue names as the bridge - and then the next
+                    // event begins beyond the anchor and reads as a gap.
+                    //
+                    // 2026-09-18 measured that cost on real frames: for
+                    // `ethusdt_261225`, 2 of 18 REST anchors were bridgeable
+                    // under the off-by-one rule against 8 of 18 under the
+                    // documented one, and the book looped snapshot/gap/resync
+                    // for nine minutes until it was rolled back. In USD-M the
+                    // gaps in `U` between consecutive events are normal - that
+                    // is why the venue added `pu` - so an anchor that falls in
+                    // one of those gaps can never be bridged and the off-by-one
+                    // turns a recoverable miss into a permanent one.
+                    if frame.sequence_end < last {
+                        return Continuity::Duplicate;
+                    }
+                    // No hole between the anchor and this event. That admits
+                    // the venue's own bridge, an event spanning the anchor, and
+                    // also an event that begins exactly one after it, which
+                    // misses nothing either. Anything starting further ahead
+                    // has skipped updates and is a genuine gap.
+                    match last.checked_add(1) {
+                        Some(next) if start <= next => Continuity::Apply,
+                        Some(_) => Continuity::Gap,
+                        None => Continuity::Gap,
                     }
                 } else {
+                    if frame.sequence_end <= last {
+                        return Continuity::Duplicate;
+                    }
                     match frame.previous_sequence {
                         Some(previous) if previous == last => Continuity::Apply,
                         Some(previous) if previous < last => Continuity::OutOfOrder,

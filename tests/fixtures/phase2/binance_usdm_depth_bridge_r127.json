@@ -1,0 +1,25 @@
+{
+  "source": "md.raw.realtime.v2, captured 2026-09-18 from the R1.27 Phase 2c window",
+  "instrument": "ETHUSDT_261225",
+  "channel": "ethusdt_261225@depth@100ms",
+  "lane": "binance-USDM-public-book-001",
+  "note": "The anchor this segment opens with is bridgeable only under Binance's documented rule. Under `lastUpdateId + 1` the event that ends on the anchor is discarded as a duplicate and the book never becomes readable.",
+  "frames": [
+    {
+      "kind": "anchor",
+      "lastUpdateId": 11588170543546
+    },
+    {
+      "kind": "delta",
+      "U": 11588170539452,
+      "u": 11588170543546,
+      "pu": 11588170536772
+    },
+    {
+      "kind": "delta",
+      "U": 11588170558331,
+      "u": 11588170558583,
+      "pu": 11588170543546
+    }
+  ]
+}

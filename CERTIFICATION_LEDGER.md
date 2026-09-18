@@ -1308,3 +1308,62 @@ all work in production under the exact condition that defeated them. What
 remains is narrower and offline-reproducible: after `begin_session` clears the
 bootstrap buffer, one book fails to bridge its snapshot to its deltas while
 eight others succeed.
+
+## 38. The stalled book was an off-by-one against Binance's own procedure (2026-09-18)
+
+R1.27 Phase 2d, source only. Two 2c attempts were diagnosed from aggregate
+counters and both diagnoses were guesses. The third diagnosis is not: the raw
+topic keeps eight hours (R1.20), so the window was still there and **8,184 raw
+frames** were captured - the book that stalled, a healthy peer on the same lane,
+both lanes, deltas and REST anchors.
+
+- **The stream was never broken.** `pu` chaining on the routed lane is 2,047 of
+  2,047 for the stalled book and 4,135 of 4,135 for the peer, zero breaks.
+  Measuring continuity by `U` instead reports ~100% gapped on *both* lanes,
+  including the one where the book was healthy - the measure was wrong, not the
+  data. Holes in `U` are normal in USD-M and are why the venue added `pu`.
+- **The bridge is where it failed.** Of eighteen REST anchors in the window, the
+  shipped rule could bridge **2** for the stalled book and 11 for the peer; the
+  venue's documented rule bridges **8** and 14.
+- **Quoted from Binance, "How to manage a local order book correctly":** drop
+  any event where `u` **<** `lastUpdateId`; the first processed event should
+  have `U` **<=** `lastUpdateId` **AND** `u` **>=** `lastUpdateId`. Our
+  `continuity` compared against `lastUpdateId + 1` on both sides and dropped
+  `u <= lastUpdateId`, so the event ending exactly on the anchor - the one the
+  venue names as the bridge - was discarded as a duplicate and the next event
+  read as a gap. An observed anchor shows it directly: `Y = 11588170543546`
+  with the following event's `u` equal to `Y`.
+- **Why it waited five months to appear.** A book already `Ready` is never
+  re-bootstrapped; the 30 s refresh returns `Keepalive` and this rule is never
+  reached. Phase 2c forced every book to re-bootstrap at once, and the slowest
+  of the nine needed the exact rule to find a bridge.
+
+**Corrected** to "no hole between the anchor and this event": drop when
+`u < lastUpdateId`, apply when `U <= lastUpdateId + 1`. That admits the venue's
+bridge and a perfectly contiguous successor, and nothing else. Only Binance uses
+`RangeBridgeThenPrevious`; OKX is untouched. Three of the captured frames are
+committed as a fixture and replayed by
+`a_captured_binance_anchor_bridges_on_the_event_that_ends_on_it`; restoring the
+off-by-one turns it red, so the production stall now lives in a unit test.
+
+**Two measures changed, because the measure failed twice before the code did.**
+`qdl_realtime_core_l2_status_changed` emits one line per book per status change
+with both statuses, the generation, `last_sequence`, `snapshot_sequence` and the
+pending bootstrap depth - a per-core counter cannot tell one book looping from
+every book bootstrapping. And `scripts/verify_stable_feed_partitions.py`
+enumerates every partition of every feed and fails on the worst rather than the
+newest; run against production it reports 188 partitions and fails on exactly
+the five Binance mark/index partitions the rolled-back 2c left without a
+producer.
+
+**The pattern worth keeping.** Entry 35 was a bare `filtered` counter hiding a
+dead feed. Entry 37 was a feed-level "newest age" hiding a dead partition. Both
+times the fix was to make the measure one level finer and both times the next
+failure hid one level below it. This time the measure was inverted instead:
+enumerate and fail on the worst. A number that answers "is anything fresh" can
+always be satisfied by the healthy majority; only one that answers "is anything
+stale" cannot.
+
+Gate: fmt ok, clippy `-D warnings` ok with zero warnings, `cargo test
+--workspace --locked` **184 passed, 1 ignored**; Python suite **1,579 OK,
+7 skipped**. Nothing was built, recreated or deployed.

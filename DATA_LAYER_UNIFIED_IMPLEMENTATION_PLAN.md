@@ -39907,7 +39907,10 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASES 1, 2a AND 2b LANDED / 2c ATTEMPTED TWICE AND ROLLED BACK, ONE BOOK UNEXPLAINED / PHASE 3 NOT STARTED`.**
+**Status: `PHASES 1, 2a, 2b AND 2d LANDED (source) / 2c READY TO RETRY, AWAITING OWNER APPROVAL / PHASE 3 NOT STARTED`.**
+The book that stalled twice is no longer unexplained: the Binance bridge rule was off by
+one against the venue's documented procedure. Found in captured production frames,
+corrected, and pinned by a regression test built from those frames.
 2b moved the three cores onto the lane-aware book fence on 2026-09-18; no ingestor,
 projector, reader, broker or consumer was touched.
 Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
@@ -40562,6 +40565,96 @@ the book bridge, not in the core image as such.
 0 s, OKX unaffected, consumer `execution_ready` 34 with `v1_fallback` and
 `v2_error` at 0. Binance `mark_index_price` ages again, as it did before, until
 2c lands.
+
+---
+
+#### Phase 2d — The bridge rule the venue documents, and a measure that cannot hide a partition
+
+Source only, 2026-09-18, after the second 2c rollback. No runtime touched.
+
+##### The root cause, from production frames rather than from reasoning
+
+Two 2c attempts were diagnosed from aggregate counters and both diagnoses were
+guesses. `md.raw.realtime.v2` retains eight hours (R1.20), so the window itself
+was still there: **8,184 raw frames** were captured for the book that stalled
+(`ethusdt_261225@depth@100ms`) and a healthy peer on the same lane
+(`btcusdt_260925`), across both the old and the routed lane.
+
+What the frames say:
+
+- **The stream was never broken.** `pu` chaining is perfect on the routed lane -
+  2,047 of 2,047 for the stalled book, 4,135 of 4,135 for the peer, zero breaks.
+  Gaps in `U` between consecutive events are normal in USD-M and are exactly why
+  the venue added `pu`; measuring continuity by `U` reports ~100% "gapped" on
+  both lanes, including the lane where the book was healthy.
+- **The bridge is where it failed.** Counting how many of the eighteen REST
+  anchors in the window any following event could bridge:
+
+| book | anchors | bridgeable under the shipped rule | bridgeable under the venue's rule |
+|---|---:|---:|---:|
+| `ethusdt_261225` (stalled) | 18 | **2** | **8** |
+| `btcusdt_260925` (healthy) | 18 | 11 | 14 |
+
+**Binance's own procedure**, quoted from "How to manage a local order book
+correctly" for USD-M futures:
+
+> Drop any event where `u` is **<** `lastUpdateId` in the snapshot.
+> The first processed event should have `U` **<=** `lastUpdateId` **AND**
+> `u` **>=** `lastUpdateId`.
+
+`l2_book.rs::continuity` compared against `lastUpdateId + 1` on both sides and
+dropped `u <= lastUpdateId`. So the event that ends exactly on the anchor - the
+one the venue names as the bridge - was discarded as a duplicate, and the next
+event began beyond the anchor and read as a gap. The observed anchors show this
+happening directly: `Y = 11588170543546` with the next event `u` equal to `Y`.
+
+**Why it surfaced only now, and only there.** A book already `Ready` is never
+re-bootstrapped - the 30 s REST refresh returns `Keepalive` and the rule is not
+reached. Phase 2c's routed lane forced every book to re-bootstrap, and a book
+whose events are narrow relative to the holes in `U` then needs the venue's
+exact rule to find its bridge. The fast books found one anyway; the slowest of
+the nine did not, and looped snapshot/gap/resync every thirty seconds.
+
+##### The correction
+
+The rule is now "no hole between the anchor and this event": drop when
+`u < lastUpdateId`, apply when `U <= lastUpdateId + 1`, gap otherwise. That
+admits the venue's bridge - an event spanning the anchor - and also an event
+beginning exactly one after it, which misses nothing either. Only Binance uses
+`RangeBridgeThenPrevious`; OKX chains on `PreviousSequence` and is untouched.
+
+`tests/fixtures/phase2/binance_usdm_depth_bridge_r127.json` holds the three real
+frames the correction turns on, and
+`a_captured_binance_anchor_bridges_on_the_event_that_ends_on_it` replays them.
+Restoring the off-by-one turns that test red - `Gapped` instead of `Ready` -
+which is the production stall reproduced in a unit test from production data.
+
+##### The measure that let a dead partition through
+
+`qdl_realtime_core_l2_status_changed` now emits one line per book per status
+change, carrying the binding, both statuses, the outcome, the generation,
+`last_sequence`, `snapshot_sequence` and the pending bootstrap depth. A per-core
+counter cannot tell one book looping from every book bootstrapping; that is how
+the stall stayed invisible for nine minutes.
+
+`scripts/verify_stable_feed_partitions.py` inverts the acceptance: it enumerates
+**every** partition of every feed and fails on the worst, never the best, with a
+bound per feed class and a BAR bound derived from the interval the partition
+carries. Run against production it reports 188 partitions and fails on exactly
+the five Binance `mark_index_price` partitions the rolled-back 2c attempt left
+without a producer - which is a true statement about the system and will clear
+when 2c lands.
+
+##### What this changes in 2c's acceptance
+
+Item 2 is replaced. "Binance book newest age" passed while one of that feed's
+nine partitions was dead; the gate is now
+`scripts/verify_stable_feed_partitions.py` exiting zero, measured at T+2, T+10
+and T+30, with the five Binance mark/index partitions expected to go from stale
+to fresh as part of the same roll. Items 1 and 3-8 are unchanged, and item 3
+gains `qdl_realtime_core_l2_status_changed`: every Binance book must reach
+`Ready` and stay there, one line per book, rather than being inferred from a
+counter.
 
 ---
 

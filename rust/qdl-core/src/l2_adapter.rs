@@ -200,6 +200,16 @@ impl L2BookAdapter {
         self.protocol
     }
 
+    /// How many deltas are held waiting for an anchor to bridge them.
+    ///
+    /// A book that is not becoming readable looks identical from outside to one
+    /// that is bootstrapping normally unless this is visible: on 2026-09-18 a
+    /// single book looped for nine minutes while the only symptom was a
+    /// per-core counter that also rises during a healthy restart.
+    pub fn pending_bootstrap_deltas(&self) -> usize {
+        self.buffered_binance_deltas.len()
+    }
+
     pub fn core(&self) -> &L2BookCore {
         &self.core
     }
@@ -1077,6 +1087,92 @@ mod tests {
             ]),
             "every BookStatus must be exercised"
         );
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "lowercase")]
+    enum BridgeFrame {
+        Anchor {
+            #[serde(rename = "lastUpdateId")]
+            last_update_id: u64,
+        },
+        Delta {
+            #[serde(rename = "U")]
+            first: u64,
+            u: u64,
+            pu: u64,
+        },
+    }
+
+    #[derive(serde::Deserialize)]
+    struct BridgeFixture {
+        instrument: String,
+        frames: Vec<BridgeFrame>,
+    }
+
+    #[test]
+    fn a_captured_binance_anchor_bridges_on_the_event_that_ends_on_it() {
+        // Real frames, taken from `md.raw.realtime.v2` during the R1.27 Phase 2c
+        // window on 2026-09-18. The anchor is bridgeable only by the event whose
+        // `u` equals `lastUpdateId` exactly - the one Binance's own procedure
+        // names as the first event to process, and the one an off-by-one
+        // discards as a duplicate. In production that cost `ethusdt_261225` its
+        // whole book: it looped snapshot, gap, resync every thirty seconds for
+        // nine minutes, and only two of eighteen anchors were bridgeable under
+        // the wrong rule against eight under the right one.
+        let path = format!(
+            "{}/../../tests/fixtures/phase2/binance_usdm_depth_bridge_r127.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let fixture: BridgeFixture = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let symbol = fixture.instrument.as_str();
+        let mut adapter = L2BookAdapter::binance_usdm_diff_depth(
+            identity("BINANCE_USDM_DIFF_DEPTH", symbol, "depth"),
+            symbol,
+            5,
+        )
+        .unwrap();
+        // A routed lane re-bootstraps the book before any of this arrives.
+        adapter.begin_session(1);
+
+        let mut observed = 1_i64;
+        for frame in &fixture.frames {
+            observed += 1;
+            match frame {
+                BridgeFrame::Anchor { last_update_id } => {
+                    adapter
+                        .apply_binance_rest_snapshot(
+                            &json!({
+                                "lastUpdateId": last_update_id,
+                                "bids": [["2400.00", "3"]],
+                                "asks": [["2400.10", "4"]],
+                            }),
+                            1,
+                            observed,
+                        )
+                        .unwrap();
+                }
+                BridgeFrame::Delta { first, u, pu } => {
+                    adapter
+                        .apply_binance_ws_delta(
+                            &json!({
+                                "s": symbol, "U": first, "u": u, "pu": pu,
+                                "E": observed,
+                                "b": [["2400.00", "5"]], "a": [],
+                            }),
+                            1,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+
+        assert_eq!(
+            adapter.core().status(),
+            BookStatus::Ready,
+            "the captured anchor must bridge; this is the production stall"
+        );
+        assert!(adapter.core().view().is_some());
     }
 
     #[test]
