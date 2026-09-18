@@ -1609,3 +1609,48 @@ minutes. A filtered provisional kline now says why it was filtered.
 **Rollback**, unused: `--env-file rollback.env` on the same override pins the
 previous rust and python digests and the sealed R1.27 bundle; the checkpoint
 restores from `.pre-r17`.
+
+---
+
+## 42. The CPU ceiling incident: throttling was admission control (2026-09-18)
+
+**Pinned at** commit `5676656` (the instruments), running cores on
+`qdl-v2-rust:2.0.19-003b5f9`, projectors on `qdl-v2-python:2.0.17-5c01cb6`
+with ceilings raised to 2.0 by `docker update`; compose at the proven baseline.
+
+**Certified** `incident`. Nothing here is a pass.
+
+**What happened.** Every role's CPU ceiling was raised because every role
+showed throttling: kafka2 13.2% of periods, ingestor_okx_swap 5.8% for 5,945 s,
+query_v2_1 5.4% for 1,372 s. Throttling fell as intended. Venue-to-durable
+latency, unmeasured between the two rounds of raises, went from **475 ms to
+17,942 ms** at p50, the cores fell behind the raw topic by 13-21 s, sixteen
+partitions went stale and the consumer dropped from 50 to 31 ready slices.
+`v1_fallback_count` and `v2_error_count` stayed 0 throughout; no endpoint
+stopped and no consumer fell back.
+
+**Why.** On a 16-vcore host at load 12, the tight ceilings were the only
+admission control the stack had. Raising fourteen of them at once let every
+tier burst together; the producers were raised further than the consumers,
+which manufactured a backlog; and the first revert came while that backlog was
+still draining, which put the cores into a lag spiral at 0.50 CPU. The data
+layer's actual draw reached **6.1 vcore against 3.5 for everything else on the
+host** - portal, trading system, alphas combined.
+
+**Recovery, partial.** Cores and projectors were given 2.0 and left there. The
+cores are healthy (`raw_age` min 6-29 ms). One quote partition,
+`binance-usdm-solusdt-quote`, is still **42 minutes behind and losing ground**;
+the projectors are not CPU-bound and log nothing, and the cause is unknown. The
+projector spans that would name it were committed in `5676656` and not
+deployed before the tuning began - the order this revision's own text
+prescribed and its author did not follow.
+
+**Also.** Five preflight containers had been left running without `--rm`,
+spinning on a missing env var for three to seven hours each. Two were removed
+in R1.28 and the removal was reported as complete; three
+(`goofy_heisenberg`, `nervous_moore`, `exciting_kare`) were still running and
+were removed while writing this entry. Four images with no container remain:
+2.9 GB, listed for deletion in the R1.29 guide, Phase 0d.
+
+**Recorded rather than edited out** because the failure is the method, and
+the guide that follows it in the plan is built from these numbers.

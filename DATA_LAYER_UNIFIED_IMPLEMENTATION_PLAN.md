@@ -41230,6 +41230,203 @@ the R1.28 image, which is the rollback.
 
 ---
 
+<a id="dl-v2-r129-method-and-guide-20260918"></a>
+### R1.29 — Method review after the CPU incident, and the execution guide (2026-09-18, written by Fable for Opus)
+
+**Status: `INCIDENT RECORDED / RUNTIME DRAINING / GUIDE ISSUED`.** Nothing in this
+section is executed. It is the plan the next executor follows, step by step,
+and it starts with the state that executor will find.
+
+#### What the runtime is right now (15:08Z)
+
+| fact | value |
+|---|---|
+| partitions | 188, **0 stale, 0 empty** - every endpoint is publishing |
+| `v1_fallback_count` / `v2_error_count` | **0 / 0** - no fallback, no errors |
+| consumer slices | **36 / 60 ready, 21 execution-ready** (proven baseline: 50 / 33) |
+| `binance-usdm-solusdt-quote` | `received -> committed` **~42 min and growing ~50 s per 150 s** |
+| `binance-usdm-dogeusdt-quote` | ~2.5 min behind |
+| three cores | healthy: `raw_age` min 6-29 ms, mean 171-257 ms |
+| three projectors | not CPU-bound (5-99% of a 2.0 ceiling), log nothing, **the stall is here and its cause is not known** |
+| running CPU ceilings | cores **2.0 / 2.0 / 2.0**, projectors **2.0 / 2.0 / 2.0**; all other roles at compose values |
+| compose file | at the proven baseline; **it does not match the running cores and projectors** |
+| data layer actual draw | **6.1 vcore** of a 16-vcore host; everything else on the host - 38 containers, portal, trading system, alphas - draws 3.5 |
+| images | 11 `qdl-v2-*` images, 3.9 GB; four of them referenced by no container |
+| scratchpad | 1.9 GB Rust target, 159 MB cargo cache |
+
+The cores and projectors are left at 2.0 on purpose: at 14:31 they were
+returned to compose values while a backlog was still draining and the cores fell
+into a lag spiral within eight minutes (`raw_age` min 17.8 s). They come back
+down in Phase 0, under a drain criterion, one role at a time.
+
+#### What went wrong, as method - not as bad luck
+
+1. **The proxy was measured and the target was not.** After the first round of
+   ceiling raises, throttling on kafka2 fell from 13.2% to 1.5% and on
+   query_v2_1 from 5.4% to 0.6%, and that was taken as success. Venue-to-durable
+   latency, the number this whole program exists to move, was not measured
+   until after the second round, by which time it had gone from 475 ms to
+   17.9 s. Throttle is a diagnostic. Latency is the result.
+2. **Six variables in flight, then five more.** When it broke there was no way
+   to attribute it, and no way back except all the way back.
+3. **"A ceiling is not a reservation" was true of one role and false of
+   fourteen.** On a host already at load 12 of 16, tight ceilings were the only
+   admission control the stack had. Raising them all at once let every tier
+   burst together, and contention made everything slower - including the roles
+   whose throttling had just been "fixed".
+4. **The producers were sped up and the consumers were not.** Ingestors went
+   0.5 -> 1.0 -> 2.0 while the cores stayed at 0.5. That manufactured the
+   backlog.
+5. **The revert came while the backlog was still draining.** Reverting into a
+   backlog is a second incident, and it was.
+6. **The instrument was written, committed, and not deployed before tuning.**
+   The projector spans (`5676656`) would have said where the solusdt stall is.
+   They still would. The earlier section of this same revision said
+   "instrumentation first, then tune", and that rule was broken by its author
+   within the hour.
+7. **Images were built per small change and the superseded ones were left.**
+   Five preflight containers were run without `--rm` and spun on a missing
+   env var for three to seven hours each; two were removed and the removal was
+   reported as complete while three were still running. That report was false.
+8. **Roles that had passed their gates were touched.** The brokers, the query
+   readers and the bar edge were all serving; the rule that a green binding is
+   not touched was not applied.
+
+#### The rules the executor works under
+
+These are not advice. A step that breaks one is undone before anything else.
+
+- **R1. One variable per window.** A window is ten minutes at minimum. Nothing
+  else changes in it. If a second change seems necessary, the first is either
+  kept or reverted first.
+- **R2. The target metric decides.** Venue-to-durable p50 and p90 per feed
+  (`scripts/report_feed_latency_quantities.py`) and the consumer's
+  `ready_v2_slices` / `execution_ready_v2_slices`. Throttle %, CPU %,
+  `raw_age` and the projector spans are diagnostics: they say where to look,
+  never whether it worked.
+- **R3. Green stays green.** A role whose partitions are fresh and whose slices
+  are ready is not touched unless R2 implicates it by measurement. Today that
+  is every role except the three projectors.
+- **R4. Resource-neutral.** The stack's actual draw budget is **5.0 vcore**
+  steady state, measured as the sum of `docker stats` CPU% over the 17 roles.
+  A ceiling raise on one role is paid for by a cut of the same size on another
+  in the same step, and the ceiling sum (`grep cpus: docker-compose.v2-stable.yml`,
+  baseline **20.75**) is written beside every change.
+- **R5. Images and containers.** Every build records its digest in the step
+  that built it and deletes the image it supersedes in that same step, by
+  digest, unless that image is a running role's one-step rollback. Every probe
+  `docker run` carries `--rm`. Every step ends with `docker ps -a` showing no
+  unnamed container; if it does, the step is not finished.
+- **R6. A revert waits for the drain criterion** (defined in Phase 0). No
+  ceiling is lowered while `raw_age` min on any core exceeds 50 ms or any hot
+  partition's `received -> committed` p50 exceeds 2 s.
+- **R7. Numbers before the next step.** Each step writes its measurements into
+  this section before the following step begins. A step without numbers did
+  not happen.
+
+#### Phase 0 - Stop the bleeding, see the stall, clean up. In this order.
+
+**0a. Deploy the projector spans.** Owner-approved. Build one
+`qdl-v2-python` image at `HEAD` (`5676656` or later), record its digest, roll
+`projector_v2_2`, then `projector_v2_3`, then `projector_v2`, one at a time,
+forty seconds apart. Read `qdl_stable_projector_spans` on all three for ten
+minutes. Expected: `canonical_age_ms` and `durable_append_ms` with min / mean /
+max. The role that owns the solusdt partition will show either a large
+`canonical_age` (it is behind on the topic) or a large `durable_append` (the
+spool write is the wall) or neither (the stall is in the raw/canonical ordering
+wait, which is then the next thing to instrument). Write which it is here. The
+superseded python image for the projectors is `5c01cb6`, which still serves
+query and stream - keep it. Do not touch the bar edge.
+
+**0b. Drain, by the smallest change the spans justify.** Not by CPU unless the
+spans say CPU. Drain criterion, all four for ten consecutive minutes:
+`raw_age` min < 50 ms on all three cores; `received -> committed` p50 < 2 s on
+every hot partition (`scripts/report_feed_latency_quantities.py`, column
+`4 total`); `verify_stable_feed_partitions.py` exits zero; consumer
+`ready_v2_slices` >= 50.
+
+**0c. Step the ceilings back to compose, one role per window.** Order:
+`projector_v2`, `projector_v2_3`, `projector_v2_2`, `rust_core_3`,
+`rust_core_2`, `rust_core`. After each: the drain criterion still holds and the
+target metric has not worsened. If a role fails that, hold it at its current
+ceiling, record the number, and that role's compose value is now disproven -
+raise it in the compose file with the measurement beside it, paid for under R4.
+The likely candidate is `rust_core` at 0.50, which is where the lag spiral began.
+
+**0d. Clean up, by digest.** Images with no container after 0a
+(`docker ps -a -q --filter ancestor=<image>` returns nothing):
+`qdl-v2-python:2.0.15-5130f6f` (`b3f908cb17cf`, 887 MB),
+`qdl-v2-python:2.0.16-df4b8aa` (`3c1af2c74d5f`, 894 MB),
+`qdl-v2-python:2.0.18-3ecf0ac` (`f7780c4e0bda`, 889 MB),
+`qdl-v2-rust:2.0.17-e9cb4b7` (`432f4b62e567`, 198 MB, two rollback generations
+back). Keep `qdl-v2-rust:2.0.17-ee7f1b3` (the ingestor's one-step rollback) and
+`qdl-v2-python:2.0.12-8ba4165` (held by the stack's two init containers, not
+ours). Then `docker builder prune -f` (1.64 GB reclaimable of 15.7 GB) and
+delete the scratchpad `rust-target` (1.9 GB) and `cargo-home`. Record the
+before and after of `docker system df`. Packets under
+`~/.local/state/qdl-v2/dlv2-r12*`: any packet mounted by a running container
+(`docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}'`) is
+never deleted; the rest total 3.4 MB and are not worth the risk of a wrong
+guess - leave them and list them here.
+
+#### Phase 1 - The reference, at baseline, for thirty minutes
+
+With every ceiling at its compose value and the drain criterion held: run
+`scripts/report_feed_latency_quantities.py` three times ten minutes apart,
+`scripts/verify_stable_feed_partitions.py`, the consumer heartbeat, a throttle
+delta per role (`cpu.stat` twice, ten minutes apart), host load, and the
+stack's actual draw. Write all of it here as a table. This is the "before" for
+everything in Phase 2, and it is the number R4's budget is checked against. If
+actual draw exceeds 5.0 vcore at baseline, Phase 2 starts with cuts, not
+raises.
+
+#### Phase 2 - One variable at a time, target-metric driven
+
+Each candidate is one change, one window, one decision, written here. In
+evidence order:
+
+| # | hypothesis | the one change | keep if |
+|---|---|---|---|
+| C1 | whatever 0a showed about the solusdt stall | decided by 0a | p90 on that partition returns to the feed's p90 |
+| C2 | the serial commit (93 ms mean, 12 ms min) makes frames wait; fewer commits per second means less waiting | `batch_wait_ms` 25 -> 50 on **one** core, via its core config | that core's `raw_age` mean falls and venue-to-durable p50 does not rise |
+| C3 | kafka2 at 13.2% throttled slows every produce and fetch | kafka2 alone 1.25 -> 1.50, paid for by a 0.25 cut elsewhere found in Phase 1 | venue-to-durable p50 falls across feeds, load does not rise |
+| C4 | `stream_v2_passive` drew 0.8 vcore in one sample for a role that is passive | measure it for ten minutes first; if it holds above 0.5 vcore, find what it does before touching its 2.0 ceiling | a cut here funds C3 |
+| C5 | the QUOTE livelock is `aged_out_at_read` (queue wait), not `rejected_at_push` (pipeline) | read the gateway counters deployed in 0a; no change | decides whether anything remains after C1-C3 |
+
+The consumer's `max_freshness_ms` bounds are not changed. They are the
+contract; the pipeline meets it or the number says why not.
+
+The overlap-the-commit code change from the earlier R1.29 text is **not** in
+this table. It rewrites a transactional loop; it is considered only if C2
+fails and the projector spans put the remaining time in the core.
+
+#### Phase 3 - Complete the endpoint set, inside the budget
+
+Opened only after Phase 2 has held for twenty-four hours with the budget met.
+Each item is its own step under R1-R7.
+
+1. Binance USD-M intervals still on REST (thirteen): run
+   `scripts/certify_binance_native_bar_admission.py` per interval with
+   `INTERVAL=<x>`; move **only** the intervals that pass, **one interval per
+   step**, each with the R1.28 rollout shape (cores, then ingestor, then bar
+   edge with checkpoint migration). Each interval adds load; R4 applies.
+2. `binance-usdm-*-bar-1w` shows `origin=RECON` while every other interval is
+   `NATIVE`. Find out why before moving 1w.
+3. OKX `mark_index_price` `received -> published` 127-318 ms - the only
+   non-zero hand hop in the stack. Measure, then decide.
+4. The unfinished R1.24 migration: every regeneration removes the MARK_INDEX
+   bindings. Either finish it or make the generator refuse. This is **R1.30**,
+   a separate section, because it is not a speed item and it is the one armed
+   trap left.
+
+#### Phase 4 - Close
+
+Push `dev`. Cut `2.0.19` with a certificate whose digests come from
+`docker image inspect` and whose numbers come from Phase 1 and Phase 2 tables
+here. Ledger entry.
+
+---
+
 #### Not in this program
 
 The consumer's `MARK_INDEX_PRICE` routing to the reference batch
