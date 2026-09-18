@@ -41171,9 +41171,62 @@ one.** Tuning six roles on an unconfirmed hypothesis is what this program keeps
 paying for. The instrumentation above lands first; the next measurement says
 which half the time is in, and only then does a setting change.
 
+#### The first measurement, and what it says
+
+`rust_core` on `qdl-v2-rust:2.0.19-003b5f9`, three consecutive progress lines,
+about 3,000 frames and 100 batches each:
+
+```
+raw_age_ms   min  29.8   mean 165.0   max 603.8   n=3863
+raw_age_ms   min  31.3   mean 137.6   max 434.0   n=2907
+raw_age_ms   min  28.5   mean 139.2   max 479.6   n=3018
+commit_ms    min  11.8   mean  94.8   max 274.7   n=100
+commit_ms    min  12.8   mean  90.0   max 273.6   n=100
+commit_ms    min  12.8   mean  95.4   max 316.5   n=100
+```
+
+Against Binance quote venue-to-durable over the same window, 500 events:
+`p10 298 ms, p50 475 ms, p90 751 ms, max 1127 ms`.
+
+**The budget of the 475 ms, at last with named parts:**
+
+| span | ms | what it is |
+|---|---|---|
+| venue -> ingestor | 27 | the wire |
+| ingestor -> core consume | **140** | raw produce, Kafka, this consume |
+| core transactional commit | **93** | markers on every partition it wrote |
+| canonical -> projector -> durable | ~215 | the remainder |
+
+**And the floors say the ceiling is not physical.** `raw_age` has a minimum of
+**29 ms** against a mean of 140, and `commit` a minimum of **12 ms** against a
+mean of 93. A frame that arrives at the right instant crosses the core in about
+40 ms; the mean is four to five times that. Nothing about the network or the
+brokers changed between those two frames.
+
+**The reason is that the loop is serial.** `qdl-realtime-core.rs` assembles a
+batch, processes it, commits it, and only then begins assembling the next one.
+The commit takes 93 ms on average, and every frame that arrives during it waits
+for the next assembly. At `batch_wait_ms=25` and `batch_size=256` the core is
+committing about 44 records at a time - it is timing out on the wait, not
+filling the batch - so it pays a ~93 ms fixed cost per 44 records and makes
+every one of them wait behind it.
+
+**So the named next change is to overlap the commit with the next assembly**,
+not to tune a Kafka client. `fetch.wait.max.ms` can now be ruled out as the
+cause on this side: a fetch-bound consumer would have a high *minimum*, and the
+minimum is 29 ms. That hypothesis is closed by measurement rather than left
+open.
+
+That change rewrites the ordering of a transactional loop, which is the highest
+blast radius edit in this role, and it is **not** made here. It has its evidence
+now, which is what it did not have an hour ago.
+
 #### Gate
 
-`cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --locked`.
+`cargo fmt`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+`cargo test --workspace --locked`: clean, clean, **186 passed, 0 failed, 1
+ignored**. Rolled on `rust_core` only; `rust_core_2` and `rust_core_3` stay on
+the R1.28 image, which is the rollback.
 
 ---
 
