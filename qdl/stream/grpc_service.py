@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -176,6 +178,14 @@ LATEST_STATE_FEEDS = frozenset({
 })
 
 
+logger = logging.getLogger(__name__)
+
+# One line per this many freshness checks on a feed/interval. Quote runs at
+# roughly 15 records a second per instrument, so this is a line every few
+# minutes per feed rather than per record.
+_FRESHNESS_REPORT_EVERY = 2_000
+
+
 class GrpcMarketDataService:
     def __init__(
         self,
@@ -190,6 +200,9 @@ class GrpcMarketDataService:
         self.query_service = query_service
         self.snapshot_loader = snapshot_loader
         self._clock_ns = clock_ns
+        # R1.29. Freshness outcomes per feed/interval/bound, reset each time
+        # they are reported, so a line describes its own interval.
+        self._freshness: dict[tuple[str, str, int], dict[str, int]] = {}
         self.cursor_scope_validator = (
             cursor_scope_validator or FeedScopedCursorScopeValidator()
         )
@@ -225,10 +238,57 @@ class GrpcMarketDataService:
             if requirement.feed.value == "BAR"
             else int(envelope.source_event_time_ns)
         )
-        return (
-            self._clock_ns() - observed_at_ns
-            <= requirement.max_freshness_ms * 1_000_000
+        age_ns = self._clock_ns() - observed_at_ns
+        bound_ns = requirement.max_freshness_ms * 1_000_000
+        # DL-V2 R1.29. Knowing a record was refused says nothing about what to
+        # change. The distance to the bound does: a feed missing by 40 ms is a
+        # pipeline to tune, a feed missing by seconds is a different fault, and
+        # a feed that never misses proves this predicate is not the reason a
+        # slice looks stale. Summarised per feed and interval so one busy
+        # instrument cannot drown the rest.
+        self._observe_freshness(requirement, age_ns, bound_ns)
+        return age_ns <= bound_ns
+
+    def _observe_freshness(
+        self, requirement: DataRequirement, age_ns: int, bound_ns: int
+    ) -> None:
+        key = (
+            requirement.feed.value,
+            requirement.interval or "-",
+            requirement.max_freshness_ms,
         )
+        summary = self._freshness.get(key)
+        if summary is None:
+            summary = {"checked": 0, "refused": 0, "age_sum_ns": 0, "worst_ns": 0}
+            self._freshness[key] = summary
+        summary["checked"] += 1
+        summary["age_sum_ns"] += age_ns
+        summary["worst_ns"] = max(summary["worst_ns"], age_ns)
+        if age_ns > bound_ns:
+            summary["refused"] += 1
+        if summary["checked"] % _FRESHNESS_REPORT_EVERY:
+            return
+        logger.info(
+            "qdl_stream_freshness %s",
+            json.dumps(
+                {
+                    "event": "qdl_stream_freshness",
+                    "feed": key[0],
+                    "interval": key[1],
+                    "max_freshness_ms": key[2],
+                    "checked": summary["checked"],
+                    "refused": summary["refused"],
+                    "mean_age_ms": round(
+                        summary["age_sum_ns"] / summary["checked"] / 1e6, 1
+                    ),
+                    "worst_age_ms": round(summary["worst_ns"] / 1e6, 1),
+                },
+                sort_keys=True,
+            ),
+        )
+        self._freshness[key] = {
+            "checked": 0, "refused": 0, "age_sum_ns": 0, "worst_ns": 0,
+        }
 
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):
         subscription = None

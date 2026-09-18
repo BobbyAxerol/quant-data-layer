@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Callable, Protocol
@@ -38,6 +40,9 @@ class StreamAuthority(Protocol):
     def current_epoch(self) -> int | None: ...
 
     def assert_active(self, expected_epoch: int | None = None) -> int: ...
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,9 +87,23 @@ class StreamSubscription:
         self._in_flight = 0
         self.coalesced = 0
         self.filtered_since_delivery = 0
+        # DL-V2 R1.29. These existed and nothing read them, which is why a
+        # QUOTE slice reconnecting once every 45 s could only be inferred from
+        # the *consumer's* counter, on the other side of a network boundary.
+        # The two that matter are kept apart on purpose: a record refused when
+        # it arrives was already too old to be worth queueing, and a record
+        # refused when it is read was fresh enough to queue and aged while it
+        # waited. Those are different defects with different fixes, and one
+        # counter cannot tell them apart.
+        self.rejected_at_push = 0
+        self.aged_out_at_read = 0
+        self.delivered = 0
 
     def push(self, stored: StoredEvent) -> None:
-        if self.closed or self.overflowed or not self._accepts(stored):
+        if self.closed or self.overflowed:
+            return
+        if not self._accepts(stored):
+            self.rejected_at_push += 1
             return
         if self.queue.qsize() + self._in_flight >= self.queue.maxsize:
             if not self._coalesce:
@@ -161,14 +180,42 @@ class StreamSubscription:
                 # has, so the consumer reconnects and resumes from a fresh
                 # cursor instead of waiting on a stream that will never speak.
                 self.filtered_since_delivery += 1
+                self.aged_out_at_read += 1
                 if self.filtered_since_delivery > self.queue.maxsize:
+                    self._report("slow_consumer")
                     raise SlowConsumer(
                         "records aged out of the bounded buffer before delivery; "
                         "replay from the last confirmed token is required"
                     )
                 continue
             self.filtered_since_delivery = 0
+            self.delivered += 1
+            if self.delivered % self.queue.maxsize == 0:
+                self._report("progress")
             return record
+
+    def _report(self, reason: str) -> None:
+        """Say what this subscription did with the records it was offered."""
+
+        logger.info(
+            "qdl_stream_subscription %s",
+            json.dumps(
+                {
+                    "event": "qdl_stream_subscription",
+                    "reason": reason,
+                    "subscription_id": self.subscription_id,
+                    "consumer_id": self.consumer_id,
+                    "buffer_depth": self.queue.maxsize,
+                    "queued": self.queue.qsize(),
+                    "delivered": self.delivered,
+                    "rejected_at_push": self.rejected_at_push,
+                    "aged_out_at_read": self.aged_out_at_read,
+                    "coalesced": self.coalesced,
+                    "overflowed": self.overflowed,
+                },
+                sort_keys=True,
+            ),
+        )
 
     def mark_delivered(self) -> None:
         if self._in_flight > 0:
@@ -177,6 +224,7 @@ class StreamSubscription:
     async def close(self) -> None:
         if not self.closed:
             self.closed = True
+            self._report("closed")
             await self._gateway.close(self.subscription_id)
 
 

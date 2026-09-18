@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -84,6 +85,47 @@ class StableProjectorStats:
     pending_bytes: int
 
 
+class _SpanSummary:
+    """One span in nanoseconds, reported in milliseconds and then reset.
+
+    R1.29. The projector was the last opaque stretch of the pipeline: the
+    475 ms from the venue to a durable row had named parts for the wire, the
+    raw hop and the core's commit, and everything after the core was a single
+    number arrived at by subtraction. Min matters as much as mean here - a low
+    minimum with a high mean is queueing, and a high minimum is not.
+    """
+
+    __slots__ = ("count", "total_ns", "min_ns", "max_ns")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def observe(self, span_ns: int) -> None:
+        span_ns = max(0, int(span_ns))
+        if self.count == 0 or span_ns < self.min_ns:
+            self.min_ns = span_ns
+        if span_ns > self.max_ns:
+            self.max_ns = span_ns
+        self.count += 1
+        self.total_ns += span_ns
+
+    def report(self) -> dict | None:
+        if not self.count:
+            return None
+        return {
+            "n": self.count,
+            "min": round(self.min_ns / 1e6, 1),
+            "mean": round(self.total_ns / self.count / 1e6, 1),
+            "max": round(self.max_ns / 1e6, 1),
+        }
+
+    def reset(self) -> None:
+        self.count = 0
+        self.total_ns = 0
+        self.min_ns = 0
+        self.max_ns = 0
+
+
 @dataclass(frozen=True, slots=True)
 class _ReadyCanonical:
     partition: tuple[str, int]
@@ -138,6 +180,12 @@ class StableProjectorEngine:
         self.broker = broker
         self.spool = spool
         self.catalog = catalog
+        # R1.29. The two spans that close the last opaque stretch of the
+        # pipeline; reported together and reset with the line that reports
+        # them, so each line describes its own interval.
+        self._canonical_age_span = _SpanSummary()
+        self._append_span = _SpanSummary()
+        self._spans_reported_at_ns = time.time_ns()
         self.canonical_topic = canonical_topic
         self.raw_topics = raw_topics
         self.sink = sink
@@ -259,6 +307,21 @@ class StableProjectorEngine:
         await self.accept_many(records)
         return True
 
+    def _report_spans(self) -> None:
+        """One line per ten seconds, not per batch."""
+
+        now_ns = time.time_ns()
+        if now_ns - self._spans_reported_at_ns < 10_000_000_000:
+            return
+        self._spans_reported_at_ns = now_ns
+        logger.info(
+            "qdl_stable_projector_spans canonical_age_ms=%s durable_append_ms=%s",
+            self._canonical_age_span.report(),
+            self._append_span.report(),
+        )
+        self._canonical_age_span.reset()
+        self._append_span.reset()
+
     def _raw_event(self, record: KafkaProjectorRecord) -> tuple[bytes, DurableEvent]:
         raw = raw_provider_pb2.RawProviderEnvelope.FromString(record.payload)
         validate_raw_envelope(raw)
@@ -290,11 +353,22 @@ class StableProjectorEngine:
                 and not item.semantic_duplicate
                 and item.terminal_reason is None
             )
+            append_started_ns = time.time_ns()
             fresh_stored = (
                 await self.sink.publish_many([item.event for item in fresh])
                 if fresh
                 else ()
             )
+            if fresh:
+                self._append_span.observe(time.time_ns() - append_started_ns)
+                for item in fresh:
+                    # How old the canonical record already was when this
+                    # projector read it: the core's produce, Kafka, and this
+                    # consume. `accepted_at_ns` is the broker's own stamp.
+                    self._canonical_age_span.observe(
+                        append_started_ns - item.record.accepted_at_ns
+                    )
+                self._report_spans()
             stored_iterator = iter(fresh_stored)
             resolved: list[tuple[_ReadyCanonical, StoredEvent]] = []
             for item in ready:
