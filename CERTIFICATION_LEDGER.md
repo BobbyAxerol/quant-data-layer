@@ -1654,3 +1654,85 @@ were removed while writing this entry. Four images with no container remain:
 
 **Recorded rather than edited out** because the failure is the method, and
 the guide that follows it in the plan is built from these numbers.
+
+---
+
+## 43. R1.29 Phase 0 to Phase 3: the instruments landed, every tuning candidate was rejected (2026-09-18)
+
+**Pinned at** commit of this entry. Running images, each digest from
+`docker image inspect`:
+
+| role | image | digest |
+|---|---|---|
+| `rust_core`, `rust_core_2`, `rust_core_3` | `qdl-v2-rust:2.0.19-003b5f9` | `sha256:b7b9d153f0ed…` |
+| `ingestor_binance_usdm` | `qdl-v2-rust:2.0.18-3ecf0ac` | `sha256:eec638842184…` |
+| `ingestor_okx_swap` | `qdl-v2-rust:2.0.17-1acf87a` | `sha256:b05d44467942…` |
+| `projector_v2`, `_2`, `_3` | `qdl-v2-python:2.0.19-211bf14` | `sha256:1d99cc83f8e0…` |
+| `stream_v2_active`, `_passive` | `qdl-v2-python:2.0.19-40629b7` | `sha256:656e7e043dea…` |
+| `query_v2_1`, `_2` | `qdl-v2-python:2.0.17-5c01cb6` | `sha256:42fe008a1b9f…` |
+| `binance_bar_edge` | `qdl-v2-python:2.0.18-5ea5915` | `sha256:afb053ee14fc…` |
+
+The projectors are one commit behind the streams. `40629b7` differs only in
+`serve_stable_stream`, so their behaviour is identical and R3 left them alone.
+
+**Certified.** The instruments are `production-authoritative`. The tuning is
+`measured and rejected` - nothing from Phase 2 is in the running stack.
+
+**Closing state**, 20:17Z: **188 partitions, 0 stale, 0 empty**;
+`v1_fallback_count` and `v2_error_count` **0**; consumer 49-56 ready and 30-37
+execution-ready across the session; data layer draw **4.64 vcore against a 5.0
+budget**; compose ceiling sum **20.75, the baseline, unchanged**; **no unnamed
+container**; nine `qdl-v2-*` images, every one of them referenced except the
+ingestor's one-step rollback.
+
+**What landed.** Three roles that had never logged now log. The projector and
+the stream had no handler at all - `stable_bar_edge.main` calls
+`logging.basicConfig` and nothing on their paths ever did - so the projector's
+`"generation failed; reconnecting"` and the gateway's subscription counters were
+written into a root logger with nothing attached, for as long as those roles
+have existed. uvicorn took the handler back off the stream after `basicConfig`
+put it on, which the first C5 roll proved and `log_config=None` fixed.
+
+**What that instrument then answered, in one session:**
+
+* The 42-minute `solusdt-quote` stall was consumer lag on the canonical topic,
+  18 and 36 minutes on two projectors, `durable_append` about 1 s. It drained
+  on its own at twice real time and **nothing was changed to make it**.
+* `rust_core` at a 0.50 ceiling is disproven: `raw_age` min 8 ms to **5,755 ms**
+  in twelve minutes, pinned at 51% of its ceiling. Paid for under R4 by
+  `rust_core_2`, which drew 0.09 of a 1.00 ceiling at the same instant - the
+  three cores stopped being equally loaded across R1.24, R1.27 and R1.28.
+* The QUOTE livelock is `rejected_at_push` **254,834** against
+  `aged_out_at_read` **956**, and there is not one `slow_consumer` line: the
+  gateway never ejected a consumer, so those reconnects are the consumer's own.
+  The guide's own hypothesis was the other way round.
+
+**Every tuning candidate was rejected on its own criterion**, which is the
+point of writing the criterion first. C3 cut kafka2's throttling from 16.9% to
+4.2% and still failed - p50 fell on two feeds of four while draw went 5.08 to
+5.63 vcore and load rose. C2 raised the `raw_age` it was meant to lower, and
+the commit improvement that looked like its doing appeared equally on the two
+cores it had not touched.
+
+**Three corrections of this executor's own reports**, recorded rather than
+edited out:
+
+1. A drain check read column 7 (`p95`) where the criterion names column
+   `4 total`, so two windows were called failures and were not.
+2. The incident entry said the compose file was back at baseline. It was not:
+   the revert was a `git checkout` of a file whose raises had been committed,
+   and the ceiling sum was 26.00 until 18:20Z.
+3. R1.28 reported Binance weekly bars at `origin=RECON`. `BarOrigin` is
+   `AGGREGATED 2, BACKFILLED 3, RECONCILED 4`; the value was 3, which is
+   `BACKFILLED` and is correct for a bootstrapped weekly bar. There was never
+   an anomaly.
+
+**Gate.** Python suite **1,598 OK, 7 skipped**, in `qdl-v2-python:2.0.17-5c01cb6`.
+No Rust source changed after `003b5f9`, whose three-clause gate was green at
+186 passed.
+
+**Not done, and why.** Phase 3 item 1 - the thirteen Binance intervals - is
+gated on Phase 2 holding twenty-four hours and waits. Phase 4's push and release
+were refused by this environment's publication control and need the owner.
+R1.30 is opened for the MARK_INDEX regeneration trap, which R1.28 survived only
+because someone diffed by hand.
