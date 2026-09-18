@@ -1235,3 +1235,38 @@ So the order is fixed before the next attempt: an offline harness that fails
 when the book bridge does not complete, then a diagnostic that makes a book
 which never verifies say so - today it is silent in both processes, exactly the
 condition entry 30 paid for - and only then a second recreate.
+
+## 36. The lane-aware book fence is in production, and the counter that would have found it (2026-09-18)
+
+R1.27 Phase 2b. `qdl-v2-rust:2.0.17-e9cb4b7` (`sha256:432f4b62e567`) on
+`rust_core`, `rust_core_2` and `rust_core_3`, recreated one at a time at
+07:41:52Z, 07:45:41Z and 07:48:58Z, each verified before the next.
+
+- **All five gate items held.** Running with `restart 0` and no error line;
+  progress resuming within seconds; quarantines flat at 4/4/0; every Binance and
+  OKX `book`, `quote` and `trade` partition newest **0 s**; consumer
+  `execution_ready` 34 → 36 → 38 → 36, never below where it started, with
+  `v1_fallback` and `v2_error` at 0 throughout.
+- **Backward compatibility was measured, not argued.** Zero
+  `IGNORED_STALE_GENERATION`, zero `l2_frame_refused` and zero
+  `l2_session_began` on all three cores over twenty minutes. The running
+  ingestors change their session id on every reconnect and never their lane, so
+  the new decision path is not reached and today's behaviour is unchanged.
+- **`filtered_by_outcome` paid for itself on its first use.** A core restart now
+  says `BUFFERED_AWAITING_BOOTSTRAP`, `REJECTED_AWAITING_SNAPSHOT`,
+  `BOOTSTRAP_APPLIED`, `KEEPALIVE` - and each froze once the books had their
+  snapshots. Before 2a that was one `filtered` total, which is exactly why a
+  book dying silently and a book bootstrapping normally were indistinguishable
+  on the morning of 2026-09-18.
+
+**Two readings that would be misread without saying so.** Quarantine counters
+are per process: a fresh core starts at zero, so 4/4/0 cannot be compared with
+the old processes' 2/9/5. And Binance `mark_index_price` sits at 5,632 s and
+climbing - those five partitions were created by the failed 2c attempt and have
+had no producer since the rollback; nothing reads them, and they age until 2c
+lands.
+
+**What this entry is not.** It is not evidence that the book fence fix works,
+because nothing has yet changed a lane identity in production. It is evidence
+that the fix is inert when it should be inert, which is the only thing 2b can
+prove and the reason it is a separate phase from 2c.

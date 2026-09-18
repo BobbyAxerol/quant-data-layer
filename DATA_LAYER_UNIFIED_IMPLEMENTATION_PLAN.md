@@ -39907,7 +39907,9 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASES 1 AND 2a LANDED (source only) / 2b-2c AND PHASE 3 AWAITING OWNER APPROVAL`.**
+**Status: `PHASES 1, 2a AND 2b LANDED / 2c AND PHASE 3 AWAITING OWNER APPROVAL`.**
+2b moved the three cores onto the lane-aware book fence on 2026-09-18; no ingestor,
+projector, reader, broker or consumer was touched.
 Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
 approved, applied the same day, broke the Binance BOOK lane and was rolled back
 ten minutes later; see the Phase 2 record below.
@@ -40264,6 +40266,56 @@ Three roles, three independent rollbacks; never all at once.
 
 **Not touched.** Ingestors, projectors, bar edge, query and stream replicas,
 Kafka, Redis, SQLite, any consumer.
+
+###### 2b landed (`PASS`, 2026-09-18)
+
+Image `qdl-v2-rust:2.0.17-e9cb4b7` (`sha256:432f4b62e567`, revision label matching
+the commit), built from the 2a source. Three roles recreated one at a time,
+each verified against the five items before the next was touched:
+`rust_core` 07:41:52Z, `rust_core_2` 07:45:41Z, `rust_core_3` 07:48:58Z.
+
+| item | result |
+|---|---|
+| running, `restart 0`, no error line | all three, zero `error`/`panic` lines |
+| progress lines resuming | all three, within seconds of start |
+| quarantines not growing | flat at **4 / 4 / 0**, per-process counters, unmoved since bootstrap |
+| every feed's newest age in the spool | **0 s** for Binance and OKX `book`, `quote`, `trade`, and OKX `mark_index_price` |
+| consumer `execution_ready` not lower | **34 → 36 → 38 → 36**; never below the 34 it started at, `v1_fallback` and `v2_error` 0 throughout |
+
+**The new counter earned its place on its first use.** `filtered_by_outcome`
+now names what a restart actually does - `BUFFERED_AWAITING_BOOTSTRAP`,
+`REJECTED_AWAITING_SNAPSHOT`, `BOOTSTRAP_APPLIED`, `KEEPALIVE` - and each of
+those froze once the books had their snapshots. Before 2a all of it was one
+`filtered` total, which is precisely why a book that was dying silently and a
+book that was bootstrapping normally looked identical on 2026-09-18.
+
+**Zero `IGNORED_STALE_GENERATION`, zero `l2_frame_refused`, zero
+`l2_session_began` across all three cores over twenty minutes.** That is the
+backward-compatibility claim confirmed by measurement rather than by argument:
+the running ingestors change their session id on every reconnect but never
+their lane, so the new decision path is never reached and the behaviour is what
+it was.
+
+**Quarantine counters are per process, not cumulative.** A fresh core starts its
+own at zero; `rust_core` and `rust_core_2` accumulated four each during book
+bootstrap and stopped, `rust_core_3` never quarantined. Comparing them to the
+old processes' 2/9/5 would be comparing different counters.
+
+**Resources.** CPU 4.5-10.5% and RSS 18-27 MiB of a 256 MiB ceiling, against
+12-28% before. Measured minutes after start, so it is an observation and not a
+claim about steady state.
+
+**One reading that is not a regression, recorded so it is not misread.** Binance
+`mark_index_price` sits at 5,632 s and climbing. Those five partitions were
+created by the 2c attempt and have had no producer since it was rolled back;
+nothing reads them, because the consumer takes mark/index from the reference
+batch. They age until 2c lands.
+
+**Packet.** `/home/bobby/.local/state/qdl-v2/dlv2-r127-2b-cores-20260918T073856Z`
+carries `r127-2b-cores.override.yml`, `rollout.env` and `rollback.env`. Both env
+files pin `QDL_STABLE_RUNTIME_DIR` to the sealed bundle, so the only delta for
+these three roles is the image. Rollback is the same recreate with
+`rollback.env`, per role.
 
 ##### 2c — Roll the ingestor, with the acceptance the first attempt should have had
 
