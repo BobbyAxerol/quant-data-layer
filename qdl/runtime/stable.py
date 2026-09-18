@@ -754,9 +754,11 @@ async def serve_stable_query() -> None:
 async def serve_stable_stream() -> None:
     # R1.29, same gap as the projector: this role emits no `qdl.*` line at all,
     # so the stream gateway's subscription counters and freshness summaries are
-    # written and never seen. Configured here rather than left to uvicorn,
-    # which owns its own loggers and not these. The stream is rolled at R1.29
-    # candidate C5, which is the step that reads these counters.
+    # written and never seen. `basicConfig` alone is not enough here, which the
+    # first C5 roll proved: `uvicorn.Config` applies its own `dictConfig` when
+    # the server starts and takes the handler back off again. `log_config=None`
+    # tells uvicorn to leave logging alone; it already runs with
+    # `access_log=False`, so nothing of uvicorn's own is lost.
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -765,7 +767,7 @@ async def serve_stable_stream() -> None:
     await runtime.start()
     server = uvicorn.Server(uvicorn.Config(
         runtime.health_app, host="0.0.0.0", port=runtime.config.http_port,
-        log_level="info", access_log=False,
+        log_level="info", access_log=False, log_config=None,
         **stable_uvicorn_tls(runtime.config),
     ))
     try:

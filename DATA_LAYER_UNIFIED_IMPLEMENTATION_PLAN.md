@@ -41517,6 +41517,72 @@ everything in Phase 2, and it is the number R4's budget is checked against. If
 actual draw exceeds 5.0 vcore at baseline, Phase 2 starts with cuts, not
 raises.
 
+
+##### Phase 1 result - the reference, 18:32Z to 18:52Z
+
+Every ceiling at its compose value, drain criterion held, three samples ten
+minutes apart. Mean of `4 total` across each feed's partitions, and the worst
+p95 in that feed:
+
+| feed | n | 18:32Z p50 / p95 | 18:42Z | 18:52Z |
+|---|---|---|---|---|
+| book | 18 | 1,026 / 3,440 ms | 1,201 / 4,290 | **728 / 3,089** |
+| mark_index_price | 10 | 1,018 / 3,508 | 1,102 / 4,351 | **870 / 2,785** |
+| quote | 10 | 921 / 3,269 | 1,025 / 4,581 | **599 / 1,579** |
+| trade | 10 | 1,058 / 3,517 | 1,481 / 4,650 | **1,004 / 2,719** |
+
+| | 18:32Z | 18:42Z | 18:52Z |
+|---|---|---|---|
+| `ready_v2_slices` | **58** | 52 | 52 |
+| `execution_ready_v2_slices` | 39 | 34 | 38 |
+| `v1_fallback` / `v2_error` | 0 / 0 | 0 / 0 | 0 / 0 |
+| host load | 11.83 | 12.51 | 9.87 |
+| data layer draw | 5.04 | 5.24 | **4.95** vcore |
+
+`verify_stable_feed_partitions`: **188 partitions, 0 stale, 0 empty.**
+
+**Throttle over the same twenty minutes**, which is a diagnostic and not a
+result:
+
+| role | throttled | stall |
+|---|---|---|
+| `kafka2` | **16.9%** | 73.7 s |
+| `ingestor_binance_usdm` | **14.7%** | 193.6 s |
+| `ingestor_okx_swap` | 11.0% | 168.4 s |
+| `rust_core` | 9.0% | 2.0 s |
+| `kafka3` | 7.1% | 18.9 s |
+| `query_v2_1` / `query_v2_2` | 4.5% / 4.6% | 15.0 / 9.8 s |
+| everything else | under 3.2% | under 2.3 s |
+
+**Draw against the R4 budget.** Mean 5.08 vcore against a budget of 5.00, so
+Phase 2 starts with a cut, as the guide requires. Per-role draw against ceiling,
+measured 18:55Z:
+
+| role | ceiling | draw | of ceiling |
+|---|---|---|---|
+| `kafka2` | 1.25 | 0.86 | 69.2% |
+| `kafka3` | 1.25 | 0.79 | 63.1% |
+| `rust_core` | 1.00 | 0.44 | 44.0% |
+| `kafka1` | 1.25 | 0.41 | 33.2% |
+| **`stream_v2_passive`** | **2.00** | **0.39** | **19.3%** |
+| `stream_v2_active` | 2.00 | 0.35 | 17.3% |
+| `query_v2_2` | 1.00 | 0.29 | 29.2% |
+| the other nine | — | 0.00-0.19 each | under 25% |
+
+##### C1 and C4 are answered by Phase 0 and Phase 1, with no change
+
+**C1 - the solusdt stall.** 0a named it consumer lag on the canonical topic and
+0b let it drain. At Phase 1 the ten quote partitions read a p50 mean of 599 to
+1,025 ms with the worst p95 at 1,579 ms in the third sample.
+`binance-usdm-solusdt-quote` is inside that spread and no longer separable from
+its peers. **Closed, no change made.**
+
+**C4 - `stream_v2_passive`.** The guide set the test: measure it, and only
+investigate if it holds above 0.5 vcore. It draws **0.39 vcore against a 2.00
+ceiling** and throttles 0.2% of periods. It is below the line, so there is
+nothing to investigate - and 1.6 vcore of unused ceiling is the cut that funds
+C3. **Closed; it becomes the payer.**
+
 #### Phase 2 - One variable at a time, target-metric driven
 
 Each candidate is one change, one window, one decision, written here. In
