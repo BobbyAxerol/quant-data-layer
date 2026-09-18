@@ -1536,3 +1536,76 @@ and 0 OKX. The claim was copied into the plan from a docstring on 2026-09-18
 without reading `stable_bar_edge.py` - the failure rule E1 exists to prevent,
 committed while writing that plan. The rule now has a name,
 `recurring_rest_bar_bindings`, and a test on both venues.
+
+---
+
+## 41. Binance USD-M 1m bars are native, in production (2026-09-18)
+
+**Pinned at** `qdl-v2-rust:2.0.18-3ecf0ac`
+(`sha256:eec6388421845ef570cb3878145d0c5e0398fc44cc2a662805298295cfb0976a`) on
+`rust_core`, `rust_core_2`, `rust_core_3` and `ingestor_binance_usdm`;
+`qdl-v2-python:2.0.18-<channel fix>`
+(`sha256:afb053ee14fc663c01e8871619d5043cfc449db2b5d215c1cce09ba75dba6898`) on
+`binance_bar_edge`. Runtime config
+`/home/bobby/.local/state/qdl-v2/dlv2-r128-native-bar-20260918T120904Z/runtime`.
+Rolled 12:17:11Z to 12:26:22Z. Eleven other roles untouched.
+
+**Certified** `production-authoritative`: the stack is `RUST_PRIMARY` and served
+the live consumer throughout with `v1_fallback_count` and `v2_error_count` at 0.
+
+**What changed, measured.** Close-to-canonical for Binance USD-M 1m:
+
+```
+before (REST edge)          6,630 ms
+after  (native /market)     1,107 - 4,852 ms, median ~1,500 ms
+every bar: origin=VENUE_NATIVE, lifecycle=FINAL
+```
+
+**No gap anywhere.** `scripts/verify_stable_feed_partitions.py` at T+4:
+**188 partitions, 0 stale, 0 empty**. That is the point of the order used, and
+it was not the order this plan originally specified.
+
+**The order, and why.** The cores route a raw envelope to a binding by its
+`native_channel`, and a binding has one channel, so the REST and native
+producers cannot both be routable at once. `strict_subscription_scope` is true,
+so a mismatched frame is quarantined rather than ending the consume loop
+(`qdl-realtime-core.rs:326`). That made the cheap failure the REST one: cores
+first, ingestor immediately after, bar edge last. The alternative - bar edge
+first, as the plan said - would have left two to four minutes with no 1m
+producer in V2 at all.
+
+**Two regenerations refused, both the R1.24 trap.** Generating the ingestor
+config from the current catalog **removes the five Binance MARK_INDEX
+bindings**; generating the core configs removes **ten** of them, five per venue.
+Those are the bindings R1.27 brought back to life the same morning. Both were
+applied as targeted transforms instead: the ingestor config gained five BAR
+bindings and kept everything else, the core configs changed five bindings'
+`native_channel` and `provider_kind` and nothing else, verified by diffing the
+result against the running config before it was applied. The R1.24 migration
+that moved MARK_INDEX to the reference path is still unfinished, and every
+regeneration will keep trying to finish it.
+
+**One defect found in production and fixed in the same window.** After the core
+roll, the bar edge was still stamping its REST warmup rows `rest-klines/1m`
+while the cores had moved to `btcusdt@kline_1m`. Every one was quarantined as
+FencingRejected - 1,447 to 3,486 per core - and the 1m warmup repair was
+publishing into nothing. The canonicaliser already accepted both provider shapes
+under one kind; the capture channel had to follow the acquisition mode too. Once
+that shipped the quarantine counters stopped moving.
+
+**Checkpoint migration.** `scripts/migrate_stable_bar_edge_checkpoint.py` carried
+the bar edge across acquisition revision 16 to 17 with all 140 watermarks, the
+connection generation and the canonical cache identity, keeping the previous file
+at `.pre-r17`. The edge restored and did not re-bootstrap its watermarks; it did
+run its ordinary bounded history repair, which is the pre-existing gap between
+`warmup_rows=10000` and the spool's retention, not an effect of the migration.
+
+**Reconciliation**, after the cutover: 20 canonical bars across the five symbols
+compared against Binance REST for the same `open_time`, **0 disagreements**.
+
+**`PROVISIONAL_BAR` is live**: 8,271 to 11,326 per core in the first twenty
+minutes. A filtered provisional kline now says why it was filtered.
+
+**Rollback**, unused: `--env-file rollback.env` on the same override pins the
+previous rust and python digests and the sealed R1.27 bundle; the checkpoint
+restores from `.pre-r17`.
