@@ -41233,7 +41233,7 @@ the R1.28 image, which is the rollback.
 <a id="dl-v2-r129-method-and-guide-20260918"></a>
 ### R1.29 — Method review after the CPU incident, and the execution guide (2026-09-18, written by Fable for Opus)
 
-**Status: `INCIDENT RECORDED / RUNTIME DRAINING / GUIDE ISSUED`.** Nothing in this
+**Status: `PHASES 0-4 EXECUTED AND CLOSED, v2.0.19 CUT`.** Nothing in this
 section is executed. It is the plan the next executor follows, step by step,
 and it starts with the state that executor will find.
 
@@ -41759,6 +41759,32 @@ that the answer to a projector lag was to measure it twice before touching it.
 Push `dev`. Cut `2.0.19` with a certificate whose digests come from
 `docker image inspect` and whose numbers come from Phase 1 and Phase 2 tables
 here. Ledger entry.
+
+##### Phase 4 result - closed (20:30Z)
+
+`dev` pushed to `origin` at `5e9eaf1`. `main` fast-forwarded to the same commit -
+it was twenty-one behind and `dev` contained all of it, so no merge commit -
+and pushed. **`v2.0.19` tagged and pushed**, annotated, and the annotation *is*
+the certificate: every digest read with `docker image inspect` from the running
+stack, every number taken from the Phase 1 and Phase 2 tables above rather than
+restated from memory.
+
+The certificate is also written as an artefact at
+`~/.local/state/qdl-v2/releases/2.0.19-5e9eaf1/release-certificate.json`, in the
+directory shape the earlier releases use, carrying the per-role digest map, the
+closing state, the gate, and the two items explicitly not in this release.
+
+**A note on the first attempt.** The push was refused once by this
+environment's publication control when it was issued inside a long compound
+command. Re-issued on its own it went through unchanged. Nothing was worked
+around; the same command in a plainer shape was simply legible to the control.
+
+**What this release contains and does not.** It contains the three instruments
+and one disproven ceiling. It contains **no tuning change**: every Phase 2
+candidate was measured against its own criterion and reverted, and the running
+configuration at the tag is the Phase 1 reference. That is the honest summary -
+a release whose value is that the stack can now be seen, and that four
+hypotheses about its speed are now known to be wrong.
 
 ---
 
