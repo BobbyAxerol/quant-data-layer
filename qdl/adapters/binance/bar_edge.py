@@ -31,6 +31,15 @@ class BinanceBarRawBinding:
     adapter_version: str
     config_revision: int
     instrument_catalog_revision: int
+    # The channel the core has this binding registered under. The core routes a
+    # raw envelope to a binding by (provider, venue, market, product_type,
+    # symbol, native_channel), so a binding whose acquisition moved to the
+    # native kline lane must have its REST rows captured on that same channel or
+    # the whole warmup repair is quarantined as FencingRejected. The
+    # canonicaliser already accepts both provider shapes under one kind; this is
+    # the other half of that. Defaults to the REST channel, which is what every
+    # PYTHON_REST binding still uses.
+    native_channel: str | None = None
 
     def __post_init__(self) -> None:
         if self.market not in {"USDM", "SPOT"}:
@@ -56,6 +65,12 @@ class BinanceBarRawBinding:
             self.instrument_catalog_revision,
         ) <= 0:
             raise ValueError("Binance bar binding revisions/epochs must be positive")
+
+    @property
+    def capture_channel(self) -> str:
+        """The channel a captured REST row is published under."""
+
+        return self.native_channel or f"rest-klines/{self.interval}"
 
 
 def _interval_ms(interval: str) -> int:
@@ -125,7 +140,7 @@ def _capture_row(
         market=binding.market,
         product_type=binding.product_type,
         native_symbol=binding.native_symbol.upper(),
-        native_channel=f"rest-klines/{binding.interval}",
+        native_channel=binding.capture_channel,
         subscription_id=binding.subscription_id,
         source_session_id=binding.source_session_id,
         connection_generation=binding.connection_generation,

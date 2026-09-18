@@ -298,6 +298,12 @@ class StableBinanceBarEdge:
         # Native websocket BARs stay owned by their Rust acquisition lane.
         self.bindings = recurring_rest_bar_bindings(self.history_bindings)
         self.okx_bindings = recurring_rest_bar_bindings(self.history_okx_bindings)
+        # Keyed by binding id so a capture can ask what channel the core has this
+        # binding registered under; see `_binance_binding`.
+        self._acquisition_by_id = {
+            acquisition.binding_id: acquisition
+            for _source, acquisition in self.history_bindings + self.history_okx_bindings
+        }
         # Demand decides which venues and markets exist, so this edge must not
         # assert a fixed market-family set. It owns every enabled crypto BAR
         # bootstrap and only the explicit REST subset for recurring polling.
@@ -570,7 +576,18 @@ class StableBinanceBarEdge:
         source: StableSourceBinding,
     ) -> BinanceBarRawBinding:
         identity = source.instrument.identity
+        # A binding whose acquisition is RUST_NATIVE is registered in the core
+        # under its websocket channel. The edge still bootstraps and repairs its
+        # history over REST, and those rows must arrive on that same channel or
+        # the core has no binding to route them to.
+        acquisition = self._acquisition_by_id.get(source.binding_id)
+        channel = (
+            acquisition.native_channel
+            if acquisition is not None and acquisition.mode == "RUST_NATIVE"
+            else None
+        )
         return BinanceBarRawBinding(
+            native_channel=channel,
             market=identity.market,
             product_type=identity.product_type.value,
             native_symbol=source.instrument.native_symbol,

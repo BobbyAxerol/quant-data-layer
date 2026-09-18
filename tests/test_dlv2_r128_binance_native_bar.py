@@ -227,5 +227,60 @@ class BarEdgeOwnershipTests(unittest.TestCase):
         )
 
 
+class CaptureChannelTests(unittest.TestCase):
+    """A REST row for a native binding must be captured on the native channel.
+
+    The core routes a raw envelope to a binding by its `native_channel`, and one
+    binding has one channel. The bar edge still bootstraps and repairs warmup
+    history over REST for a `RUST_NATIVE` binding, so those rows have to arrive
+    on the channel the core registered or every one of them is quarantined as
+    FencingRejected - which is exactly what happened on 2026-09-18 between the
+    core roll and this fix: 1,447 to 3,486 quarantines per core, and the 1m
+    warmup repair silently publishing into nothing.
+    """
+
+    @staticmethod
+    def _binding(channel: str | None):
+        from qdl.adapters.binance.bar_edge import BinanceBarRawBinding
+
+        return BinanceBarRawBinding(
+            market="USDM",
+            product_type="PERPETUAL",
+            native_symbol="BTCUSDT",
+            interval="1m",
+            subscription_id="binance-usdm-btcusdt-bar-stable-001",
+            source_session_id="qdl-v2-stable-binance-rest-r1-g1",
+            connection_generation=1,
+            lease_epoch=1,
+            authority_revision=1,
+            partition_plan_epoch=1,
+            adapter_version="binance-usdm/2.0.0",
+            config_revision=17,
+            instrument_catalog_revision=8,
+            native_channel=channel,
+        )
+
+    def test_a_rest_binding_keeps_the_rest_channel(self):
+        self.assertEqual(self._binding(None).capture_channel, "rest-klines/1m")
+
+    def test_a_native_binding_captures_on_its_websocket_channel(self):
+        self.assertEqual(
+            self._binding("btcusdt@kline_1m").capture_channel, "btcusdt@kline_1m"
+        )
+
+    def test_the_capture_envelope_carries_that_channel(self):
+        from qdl.adapters.binance import bar_edge
+
+        envelope = bar_edge._capture_row(
+            self._binding("btcusdt@kline_1m"),
+            [1786352340000, "61200.00", "61240.00", "61190.00", "61234.10", "12.500",
+             1786352399999, "765200.00", 11, "0", "0", "0"],
+            origin="BACKFILLED",
+            received_at_ns=1_786_352_400_123_456_000,
+            test_provenance=False,
+        )
+        self.assertEqual(envelope.native_channel, "btcusdt@kline_1m")
+
+
 if __name__ == "__main__":
     unittest.main()

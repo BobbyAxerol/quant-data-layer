@@ -55,12 +55,22 @@ def role_is_running(role: str) -> bool:
     return role in result.stdout
 
 
+STATE_VOLUME = "qdl_v2_stable_candidate_stable_state"
+
+
 def read_checkpoint(role: str, path: str) -> dict:
-    """Read the checkpoint from inside the role, where the state volume is mounted."""
-    script = f"import json,sys;sys.stdout.write(open({path!r}).read())"
+    """Read the checkpoint through the state volume, not through the role.
+
+    The migration's whole point is to run while the edge is stopped, so reading
+    it with `docker exec` into that role fails exactly when it is needed.
+    """
+
+    script = f"import sys;sys.stdout.write(open({path!r}).read())"
     result = subprocess.run(
-        ["docker", "exec", "-i", role, "python", "-c", script],
-        capture_output=True, text=True, timeout=120,
+        ["docker", "run", "--rm", "-i",
+         "-v", f"{STATE_VOLUME}:/var/lib/qdl-stable",
+         "--entrypoint", "python", _image_of(role), "-c", script],
+        capture_output=True, text=True, timeout=180,
     )
     if result.returncode != 0:
         raise SystemExit(f"cannot read the checkpoint: {result.stderr.strip()[:300]}")
@@ -200,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     result = subprocess.run(
         ["docker", "run", "--rm", "-i",
-         "-v", "qdl_v2_stable_candidate_stable_state:/var/lib/qdl-stable",
+         "-v", f"{STATE_VOLUME}:/var/lib/qdl-stable",
          "--entrypoint", "python", _image_of(args.role), "-c", writer],
         capture_output=True, text=True, timeout=180,
     )
