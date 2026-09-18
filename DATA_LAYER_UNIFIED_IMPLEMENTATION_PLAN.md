@@ -41603,6 +41603,95 @@ The overlap-the-commit code change from the earlier R1.29 text is **not** in
 this table. It rewrites a transactional loop; it is considered only if C2
 fails and the projector spans put the remaining time in the core.
 
+
+##### Phase 2 result - two candidates measured and both reverted, one answered, two closed
+
+Every candidate got its own window against the Phase 1 reference. Two were kept
+long enough to measure and neither met its own bar, so neither was kept. They
+are written down because a rejected change with numbers is worth more than an
+untried one.
+
+**C3 - kafka2 1.25 -> 1.50, paid by `stream_v2_passive` 2.00 -> 1.75.**
+Ceiling sum unchanged at 20.75. It did what the hypothesis said it would, on
+kafka2's own terms: throttling **16.9% -> 4.2%**, stall 73.7 s -> 14.4 s, and
+book p95 3,440 -> 2,102 ms. But its keep criterion was *p50 falls across feeds
+and load does not rise*:
+
+| | Phase 1 | C3 |
+|---|---|---|
+| book p50 | 985 ms | **860** |
+| quote p50 | 848 ms | **718** |
+| mark p50 | 997 ms | 985 |
+| trade p50 | 1,181 ms | 1,178 |
+| data layer draw | 5.08 vcore | **5.63** |
+| host load, 15 min | 11.4 | **13.0** |
+
+p50 fell on two feeds of four, was flat on the other two, and both draw and load
+rose. Un-throttling a broker costs the CPU it was being denied, which is the
+lesson the incident already taught. **Reverted at 19:14Z.**
+
+**C2 - `batch_wait_ms` 25 -> 50 on `rust_core` alone.** One field in one core
+config; `core-002.json`, `core-003.json` and the ingestor config byte-identical.
+Its keep criterion was *that core's `raw_age` mean falls and venue-to-durable
+p50 does not rise*. Over eight progress lines:
+
+| | before C2 | under C2 |
+|---|---|---|
+| `rust_core` `raw_age` mean | 208-229 ms | **252 ms** (range 225-273) |
+| `rust_core` `commit` mean | ~90 ms | 72.6 ms |
+
+`raw_age` **rose**. And the commit improvement is not C2's: `rust_core_2` and
+`rust_core_3` still ran `batch_wait_ms=25` and their commit means were 74.9 and
+73.8 ms in the same window, so the whole stack's commit got cheaper for another
+reason. The hypothesis is refuted on its own measurement - waiting an extra
+25 ms to fill a batch costs each frame more than halving the commit count saves
+it. **Reverted at 19:37Z.** The first sample of the C2 window (19:16Z, p50 4-14 s)
+is the recreate transient and is excluded, not averaged in.
+
+**C5 - the QUOTE livelock, and the guide's own hypothesis was wrong.** The
+gateway counters went live on the stream at 19:54Z and read over eight minutes:
+
+| | |
+|---|---|
+| `rejected_at_push` | **254,834** |
+| `aged_out_at_read` | **956** |
+| delivered | 1,520,432 |
+| coalesced | 284,413 |
+| `slow_consumer` report lines | **0** |
+
+And the freshness predicate on QUOTE, bound 2,000 ms: **64,000 checked, 5,665
+refused (8.9%), mean age 1,166 ms, worst 19,539 ms.**
+
+C5 asked whether the livelock is `aged_out_at_read` (the queue wait) or
+`rejected_at_push` (the pipeline). It is `rejected_at_push`, by **266 to one**.
+A quote record that is refused is refused *on arrival*, already older than the
+consumer's bound; it never enters the queue and never ages in it. The mean
+record is at 1,166 ms of a 2,000 ms budget, so the refusals are the 8.9% tail,
+not the body.
+
+**And the gateway is not ejecting anyone.** There is not one `slow_consumer`
+line in the window, which means `SlowConsumer` never fired and the stream never
+asked a consumer to reconnect. The QUOTE slices are still reconnecting - SOLUSDT
+went 2,270 to 2,271 in ninety seconds while this was measured - so those
+reconnects are the consumer's own, on the other side of the boundary. The
+earlier R1.29 text called this a "filter-and-reconnect livelock" driven by the
+gateway; the filtering is real and the ejection is not. That correction belongs
+to whoever takes the item this plan already files under *Not in this program*:
+QUOTE streaming, eight slices, open since 2026-09-05.
+
+**C1 and C4** are recorded above: both closed by measurement with no change.
+
+##### What Phase 2 leaves
+
+Nothing was kept. The stack ends Phase 2 on exactly the Phase 1 reference
+configuration - compose ceiling sum **20.75**, the two measured core values from
+0c, data layer draw **4.6-5.0 vcore** against a 5.0 budget, 188 partitions with
+none stale, `v1_fallback` and `v2_error` at zero.
+
+The one thing that did change is what can be seen: the projector, the stream and
+the gateway now log, after a life of writing into a root logger with no handler.
+Three of the five candidates were answerable only because of that.
+
 #### Phase 3 - Complete the endpoint set, inside the budget
 
 Opened only after Phase 2 has held for twenty-four hours with the budget met.
@@ -41622,11 +41711,117 @@ Each item is its own step under R1-R7.
    a separate section, because it is not a speed item and it is the one armed
    trap left.
 
+
+##### Phase 3 result - two items closed by measurement, one gated, one opened as R1.30
+
+**Item 1 - the thirteen Binance intervals still on REST. Gated, not started.**
+Phase 3's own condition is that Phase 2 has held for twenty-four hours with the
+budget met. Phase 2 finished at 20:00Z on 2026-09-18. The gate is a date, not a
+judgement, and moving an interval is a rollout under R1-R7 that adds load to a
+stack measured at 4.6-5.0 vcore against a 5.0 budget. It waits.
+
+**Item 2 - `binance-usdm-*-bar-1w` at `origin=RECON`. There is no anomaly, and
+the report that said there was is the defect.** `BarOrigin` reads
+`UNSPECIFIED 0, VENUE_NATIVE 1, AGGREGATED 2, BACKFILLED 3, RECONCILED 4`. The
+R1.28 measurement decoded 3 as `RECONCILED`; it is `BACKFILLED`, which is
+exactly what a weekly bar produced by the history bootstrap should carry. The
+Binance bar edge only ever passes `BACKFILLED` or `VENUE_NATIVE`
+(`qdl/adapters/binance/bar_edge.py:270,354,396`) and has no path that emits
+`RECONCILED` at all. **Closed, no change.** The same off-by-one means the
+`NATIVE` labels reported in R1.28 were right, because `VENUE_NATIVE` is 1 either
+way.
+
+**Item 3 - OKX `mark_index_price` `received -> published` of 98-181 ms. Closed:
+it is the semantic, measured.** Binance sends mark and index in one
+`@markPrice@1s` frame, so the two component confirmations arrive together and
+the hop is 0 ms. OKX publishes them on two subscriptions, and
+`qdl-realtime-core/src/lib.rs` sets `received_at_ns` to the **oldest**
+confirmation and `normalized_at_ns` to the **newest** by design, with the
+comment that a paired execution view is only as fresh as its oldest component.
+The 98-181 ms is the distance between the two OKX components, which is a real
+property of the venue's own delivery and not a cost this stack adds. Measured
+2026-09-18: BNB 111, BTC 101, DOGE 181, ETH 98, SOL 100 ms; every Binance
+partition 0 ms. **Closed, no change.**
+
+**Item 4 - the unfinished R1.24 migration. Opened as R1.30**, below, as the
+guide directs. It is the one armed trap left and it is not a speed item.
+
+**A drain observed during Phase 3, and left alone.** At 20:01Z
+`projector_v2_2` showed a 35 s `canonical_age` while its peers ran at 2.0 and
+2.5 s, which is what put OKX `mark_index_price` `3 commit` at 13-30 s in the
+item 3 measurement. Seven minutes later it read **445 ms** with the other two
+at 285 and 501 ms, and the consumer went from 47 to **56 ready, 37
+execution-ready**. Nothing was changed. This is the second time in one session
+that the answer to a projector lag was to measure it twice before touching it.
+
 #### Phase 4 - Close
 
 Push `dev`. Cut `2.0.19` with a certificate whose digests come from
 `docker image inspect` and whose numbers come from Phase 1 and Phase 2 tables
 here. Ledger entry.
+
+---
+
+<a id="dl-v2-r130-mark-index-migration-20260918"></a>
+### R1.30 — finish or refuse the MARK_INDEX migration R1.24 started (2026-09-18)
+
+**Status: `OPEN, NOT STARTED`.** Split out of R1.29 Phase 3 item 4 because it is
+not a latency item and it is the last armed trap in this program.
+
+#### What the trap is
+
+Generating the runtime bundle from the current catalog **removes every
+MARK_INDEX binding**. Measured twice on 2026-09-18 while preparing R1.28:
+
+* `ingestor-binance-usdm.json` generated from the catalog drops the five
+  Binance `@markPrice@1s` bindings and adds the five `@kline_1m` ones - a net
+  count of 24 either way, which is why a count check would not have caught it.
+* `core.json`, `core-002.json` and `core-003.json` each drop **ten**
+  MARK_INDEX bindings, five per venue.
+
+Both were applied as targeted transforms instead, and the R1.28 rollout diffed
+the result against the running config before touching anything. That worked
+because someone looked. The next regeneration will do the same thing again.
+
+#### Why the generator is right and the runtime is right
+
+They are two halves of a migration that was started and never finished. R1.24
+recorded it: `MARK_INDEX_PRICE` moved from the ingestor's realtime Kafka path to
+the reference path, `QDL_STABLE_REFERENCE_DATA_ENABLED` is already `true` on
+query and stream, and
+`qdl/certification/phase103_consumer_acceptance.py:255` says a reference product
+is a bounded provider read rather than Kafka data. The catalog describes the
+destination. The runtime still holds the origin, and holds it deliberately -
+those bindings are what make Binance and OKX mark/index canonical at all, which
+R1.27 spent a day restoring.
+
+#### The two ways out, and what each needs
+
+**Finish it.** Prove the reference path serves `MARK_INDEX_PRICE` for these
+instruments *before* removing the ingestor bindings - R1.24 already named this
+as the one real unknown and it is still unproven. Gate: both venues answer
+`MARK_INDEX_PRICE` from the reference path with the ingestor bindings still in
+place. Only then regenerate and recreate. If it does not answer, stop: the
+migration is incomplete upstream and the catalog needs a decision, not a config
+swap.
+
+**Or refuse it.** Make the generator decline to emit a bundle that removes a
+binding the running config has, unless it is told to. A regeneration that
+silently drops a live feed is the failure mode; a generator that names what it
+would remove and stops is not. This is the smaller change and it disarms the
+trap without deciding the migration.
+
+**Recommendation: refuse first, finish second.** The refusal is cheap, it is
+testable without touching a runtime, and it protects every future regeneration
+including the thirteen interval rollouts R1.29 Phase 3 item 1 will need. The
+migration itself can then be done deliberately, with the reference-path proof
+in front of it, rather than under the pressure of a bundle that is already
+half-applied.
+
+#### Not to be done by regenerating and diffing by hand again
+
+That is what R1.28 did, and it worked, and it is not a control. The guard
+belongs in the generator or in a check that runs before a packet is applied.
 
 ---
 
