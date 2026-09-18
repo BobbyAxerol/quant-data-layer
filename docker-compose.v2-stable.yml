@@ -178,28 +178,21 @@ services:
     # DL-V2 R1.5 measured allocation: 50% of its 0.75 ceiling with bursts to 69% across the quorum.
     # R1.25: 1.00 left kafka1 at 97% of a core and 18.6% throttled while its
     # peers ran 1.25; parity with kafka2/kafka3.
-    # R1.29: 1.25 was still not enough. Measured 2026-09-18 across the quorum:
-    # kafka1 1.3% of periods throttled for 424 s, kafka2 13.2% for 5,248 s,
-    # kafka3 5.0% for 1,448 s. A throttled broker slows every produce and every
-    # fetch in the pipeline, which is most of the 477 ms between a frame being
-    # published and being durable. Parity at 2.00.
-    cpus: 2.00
+    cpus: 1.25
     hostname: kafka1
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
   kafka2:
     <<: *kafka
     # DL-V2 R1.5 measured allocation: 69% of its 0.75 ceiling.
-    # R1.29: the worst of the three - 13.2% of periods throttled for 5,248 s.
-    cpus: 2.00
+    cpus: 1.25
     hostname: kafka2
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
   kafka3:
     <<: *kafka
     # DL-V2 R1.5 measured allocation: 66% of its 0.75 ceiling.
-    # R1.29: 5.0% of periods throttled for 1,448 s.
-    cpus: 2.00
+    cpus: 1.25
     hostname: kafka3
     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
@@ -307,10 +300,7 @@ services:
   query_v2_1:
     <<: *python
     # DL-V2 R1.5 measured allocation: 22% of its 0.75 ceiling.
-    # R1.29: the worst offender in the stack by stall time - 5.4% of periods
-    # throttled for 1,372 s on 2026-09-18, on the role every warmup read and
-    # every alpha history call goes through.
-    cpus: 1.50
+    cpus: 1.00
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -337,8 +327,7 @@ services:
   query_v2_2:
     <<: *python
     # DL-V2 R1.5 measured allocation: 1% measured, kept equal to query_v2_1 because the shared qdl-v2-query alias can send either reader all of the traffic.
-    # R1.29: 2.7% of periods throttled for 118 s; parity with query_v2_1 holds.
-    cpus: 1.50
+    cpus: 1.00
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -577,11 +566,14 @@ services:
 
   rust_core:
     <<: *rust
-    # R1.29: 0.50 came from an R1.5 measurement, three programs of load ago.
-    # Measured 2026-09-18 it was throttled on 2.4% of its periods for 15.5 s
-    # while `docker stats` showed 18% of a core - the average reports headroom
-    # the scheduler is not giving. Its commit span had a 12 ms minimum against a
-    # 93 ms mean, which is what CPU denial mid-cycle looks like.
+    # DL-V2 R1.5 measured allocation: 12% of its 0.75 ceiling.
+    # R1.29 0c disproved 0.50 by stepping down to it and watching. Within twelve
+    # minutes `raw_age` min went from 8 ms to 5,755 ms, twenty-five partitions
+    # crossed the 2 s bound and the container sat pinned at 51% of a 0.50
+    # ceiling. The three cores stopped being equally loaded somewhere across
+    # R1.24's OKX bars, R1.27's routing and R1.28's native bars: at that same
+    # moment rust_core_2 drew 0.09 of a 1.00 ceiling and rust_core_3 0.11 of
+    # 0.50. Paid for by the cut on rust_core_2; the three-core total stays 2.00.
     cpus: 1.00
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core.json]
@@ -611,7 +603,11 @@ services:
     <<: *rust
     # DL-V2 R1.19: it carried 0.45 cores p50 against the 0.75 anchor default and
     # was throttled on 24.9% of its periods. This is the busiest of the three.
-    cpus: 1.00
+    # R1.29: it is now the quietest - 0.09 of a core against this ceiling on
+    # 2026-09-18 while rust_core was pinned at its own. This cut pays for that
+    # raise, same size, same step, and it held the drain criterion for a full
+    # window at 0.50 drawing 9%.
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-002.json]
     environment:
@@ -628,8 +624,7 @@ services:
 
   rust_core_3:
     <<: *rust
-    # R1.5 measured 10% of a 0.75 ceiling. Unthrottled at 0.50 on
-    # 2026-09-18, so it keeps it; raise it only against a measurement.
+    # DL-V2 R1.5 measured allocation: 10% of its 0.75 ceiling.
     cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-003.json]
@@ -717,11 +712,7 @@ services:
   ingestor_binance_usdm:
     <<: *rust
     # DL-V2 R1.5 measured allocation: 20% of its 0.75 ceiling.
-    # R1.29: 5.9% of periods throttled for 264 s in seventy minutes, carrying
-    # 29 subscriptions after R1.28 added five BAR bindings. This is the front
-    # door: a stalled ingestor stamps received_at_ns late and every span
-    # downstream inherits it.
-    cpus: 1.00
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -760,10 +751,7 @@ services:
   ingestor_okx_swap:
     <<: *rust
     # DL-V2 R1.5 measured allocation: 15% of its 0.75 ceiling.
-    # R1.29: 5.8% of periods throttled for 5,945 s - ninety-nine minutes of
-    # denied CPU - while carrying 89 subscriptions, 70 of them the native BAR
-    # lane R1.24 added after this number was last measured.
-    cpus: 1.00
+    cpus: 0.50
     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
     command: [/runtime/config.json]
     networks: [stable_internal, stable_egress]
@@ -804,10 +792,7 @@ services:
     <<: *python
     # DL-V2 R1.5 measured allocation: 3% measured; it bursts once per bar close, not continuously.
     # R1.19 second pass: still throttled 17.7% at 0.50. It reads every closed-bar binding in one burst each minute, so the ceiling has to fit the burst, not the average.
-    # R1.29 third pass: 0.75 still leaves it throttled on 15.3% of its periods.
-    # The burst got bigger, not smaller - it now bootstraps and repairs 140 BAR
-    # bindings on restart.
-    cpus: 1.25
+    cpus: 0.75
     command: [python, -m, app.entrypoints.binance_bar_v2_stable]
     networks: [stable_internal, stable_egress]
     environment:

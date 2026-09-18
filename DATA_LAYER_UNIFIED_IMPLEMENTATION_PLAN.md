@@ -41369,6 +41369,143 @@ before and after of `docker system df`. Packets under
 never deleted; the rest total 3.4 MB and are not worth the risk of a wrong
 guess - leave them and list them here.
 
+
+##### 0a result - the stall is consumer lag on the canonical topic, and the instrument had no handler (16:09Z)
+
+**The spans could not be read at first, and the reason was worth more than the
+spans.** The code was in the image - six matches for `_report_spans` inside the
+running container - and it emitted nothing. `stable_bar_edge.main` calls
+`logging.basicConfig`; nothing on the projector's path ever did, so its root
+logger had no handler. The projector had emitted **zero `qdl.*` lines** in its
+life while the bar edge emitted fourteen in thirty minutes. That silences the
+new spans and also `"stable projector generation failed; reconnecting
+attempt=%s error=%s"` - the one line that says a projector is looping, which is
+the exact class of fault being hunted. `serve_stable_stream` has the same gap,
+so the gateway subscription counters and freshness summaries added in `5676656`
+are written and never seen; it is fixed in source and rolled at candidate C5,
+because R3 keeps a green role untouched until the step that needs it.
+
+Image `qdl-v2-python:2.0.19-211bf14`
+(`sha256:1d99cc83f8e0a123ae4b9a430291041a7da620ac35d307f9976010a9ff3b2f11`),
+rolled `projector_v2_2` 16:07:29Z, `projector_v2_3` 16:08:12Z, `projector_v2`
+16:08:56Z. No other role changed image. The recreate returned all three to
+their compose ceiling of 1.00 from the 2.00 left by the incident, which
+completes the projector half of 0c as a side effect and is recorded here rather
+than claimed as a separate step.
+
+**The answer, at 16:09Z:**
+
+| role | `canonical_age_ms` | `durable_append_ms` |
+|---|---|---|
+| `projector_v2` | min 42 · mean **597** · max 1,465 | min 38 · mean 398 · max 1,205 |
+| `projector_v2_2` | min 34,898 · mean **1,102,645** · max 1,118,729 | min 701 · mean 1,030 · max 1,467 |
+| `projector_v2_3` | min 33,149 · mean **2,147,410** · max 2,316,409 | min 790 · mean 941 · max 1,180 |
+
+Of the three cases 0a named, this is the first: **the two projectors are behind
+on the canonical topic**, by eighteen and thirty-six minutes. `durable_append`
+is about one second on all three, so the spool write is not the wall, and the
+raw/canonical ordering wait is not implicated either. `projector_v2` is healthy.
+
+`projector_v2_3` was pinned at **98.8% of its 1.00 ceiling** and throttled on
+5.8% of periods; `projector_v2_2` at 43.7% and also 5.8%. They are CPU-bound -
+and the ceiling is already at the honest maximum: the compose comment on
+`projector_v2` says it, *"One Python process is one core, so 1.00 is the honest
+ceiling"*. Raising a GIL-bound Python process above 1.00 buys nothing, which is
+why the incident's raise to 2.00 did not drain them.
+
+##### 0b result - the smallest change the spans justify is none (16:16Z)
+
+Two span samples, 330 s apart, before touching anything:
+
+| role | mean `canonical_age` at 16:10:56Z | at 16:16:26Z | drain rate |
+|---|---|---|---|
+| `projector_v2` | 501 ms | 923 ms | healthy, not lagging |
+| `projector_v2_2` | 1,043,136 ms | **749,352 ms** | 0.89 s of lag per second |
+| `projector_v2_3` | 1,721,886 ms | **1,313,553 ms** | 1.24 s of lag per second |
+
+Both are draining at roughly twice real time and clear in about fourteen and
+eighteen minutes on their own. **No ceiling was raised and no config changed.**
+The rule that made this the answer is the one the incident broke: the spans
+decide, and they say wait. The drain criterion is then checked on the clock, not
+assumed.
+
+
+##### 0c result - three of four ceilings went back; `rust_core` at 0.50 is disproven (18:28Z)
+
+The projectors returned to 1.00 with their 0a recreate, so 0c was three windows
+on the cores. Each is eleven minutes, one variable, drain criterion after.
+
+| window | change | drain criterion | consumer |
+|---|---|---|---|
+| 1, 17:29Z | `rust_core_3` 2.00 -> **0.50** | all four hold | 53 / 34 |
+| 2, 17:41Z | `rust_core_2` 2.00 -> **1.00** | all four hold | 51 / 31 |
+| 3, 17:52Z | `rust_core` 2.00 -> **0.50** | **FAIL** | 50 / 31 |
+| 4, 18:04Z | `rust_core` -> **1.00**, `rust_core_2` -> **0.50** | all four hold | 51 / 33 |
+
+**Window 3 is the one the guide predicted.** Within twelve minutes at 0.50,
+`rust_core`'s `raw_age` min went from 8 ms to **5,755 ms** and mean to 7,575 ms,
+twenty-five partitions crossed the 2 s bound, and the container sat pinned at
+**51% of a 0.50 ceiling**. Its compose value is disproven and is raised in
+`docker-compose.v2-stable.yml` with that measurement written beside it.
+
+**It is paid for, under R4, by the role that stopped needing it.** At the same
+instant `rust_core_2` drew **0.09 of a 1.00 ceiling** and `rust_core_3` **0.11
+of 0.50**. The three cores are no longer equally loaded - R1.24's OKX bars,
+R1.27's routing and R1.28's native bars all landed on `rust_core`'s partitions -
+so `rust_core_2` gives up exactly what `rust_core` takes. The three-core ceiling
+total is **2.00 before and after**, and the compose file's ceiling sum is
+**20.75, unchanged from baseline**.
+
+After window 4, with the cores drawing 0.39 / 0.09 / 0.09 vcore:
+
+```
+raw_age min      6.7 / 30.3 / 32.3 ms      all under the 50 ms bound
+partitions       49 of 49 under 2 s        column `4 total`
+verify_stable_feed_partitions   exit 0
+consumer         ready 51, execution_ready 33, v1_fallback 0, v2_error 0
+```
+
+**A measurement error of the executor's own, corrected here.** Two drain checks
+reported 43 then 30 partitions "over 2 s" and neither was true: the check read
+column 7 (`p95`) where the criterion names column `4 total`. Fixed and re-run,
+the same window reads 49 of 49 under the bound. The criterion is the one the
+guide wrote; the script that read it was wrong.
+
+**And a false claim from the incident, corrected.** The R1.29 incident entry
+said the compose file had been returned to baseline. It had not: the revert was
+`git checkout`, which restored the committed file - and the raises had been
+committed in `5676656`. The ceiling sum was **26.00**, not 20.75, for the whole
+of Phase 0 until 18:20Z. It is now 20.75 with only the two measured core changes
+on top of it.
+
+##### 0d result - clean up, by digest (18:33Z)
+
+Three images deleted, each verified to have no container first:
+
+| image | digest | size |
+|---|---|---|
+| `qdl-v2-python:2.0.15-5130f6f` | `b3f908cb17cf…` | 887 MB |
+| `qdl-v2-python:2.0.16-df4b8aa` | `3c1af2c74d5f…` | 894 MB |
+| `qdl-v2-rust:2.0.17-e9cb4b7` | `432f4b62e567…` | 198 MB |
+
+`qdl-v2-python:2.0.18-3ecf0ac` was already gone: R5 deleted it in the step that
+built its successor. `qdl-v2-rust:2.0.18-3ecf0ac` is **kept** - the guide listed
+it as unreferenced but the Binance ingestor runs it. `qdl-v2-rust:2.0.17-ee7f1b3`
+is kept as that ingestor's one-step rollback, and `qdl-v2-python:2.0.12-8ba4165`
+is held by the stack's two init containers.
+
+| | before | after |
+|---|---|---|
+| images | 33, 15.60 GB, 4.17 GB reclaimable | 30, 14.11 GB, 2.67 GB |
+| build cache | 15.78 GB, 1.71 GB reclaimable | 14.00 GB, **0 B** |
+| scratchpad | 5.2 GB | **3.6 MB** |
+
+No unnamed container remains. Packets under `~/.local/state/qdl-v2/dlv2-r12*`
+total 3.9 MB; two are mounted by running roles -
+`dlv2-r124-okx-native-bar-20260917T091434Z` by `ingestor_okx_swap` and
+`dlv2-r128-native-bar-20260918T120904Z` by five roles - and the other eight are
+left in place as the guide says, not guessed at.
+
 #### Phase 1 - The reference, at baseline, for thirty minutes
 
 With every ceiling at its compose value and the drain criterion held: run
