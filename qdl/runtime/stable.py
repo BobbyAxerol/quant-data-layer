@@ -752,6 +752,15 @@ async def serve_stable_query() -> None:
 
 
 async def serve_stable_stream() -> None:
+    # R1.29, same gap as the projector: this role emits no `qdl.*` line at all,
+    # so the stream gateway's subscription counters and freshness summaries are
+    # written and never seen. Configured here rather than left to uvicorn,
+    # which owns its own loggers and not these. The stream is rolled at R1.29
+    # candidate C5, which is the step that reads these counters.
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     runtime = create_stable_stream_runtime()
     await runtime.start()
     server = uvicorn.Server(uvicorn.Config(
@@ -766,6 +775,17 @@ async def serve_stable_stream() -> None:
 
 
 async def serve_stable_projector() -> None:
+    # R1.29. This role had no logging handler at all. `stable_bar_edge.main`
+    # calls `logging.basicConfig` and its lines are readable; nothing on the
+    # projector's path ever did, so every `logger.warning` it has ever emitted
+    # went to a root logger with no handler and vanished - including
+    # "stable projector generation failed; reconnecting", which is the one line
+    # that would say a projector is looping. Same call, same format as the bar
+    # edge, so one grep reads both.
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     config = StableRuntimeConfig.from_environment("projector_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
