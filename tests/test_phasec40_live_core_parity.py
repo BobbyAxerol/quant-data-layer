@@ -66,9 +66,14 @@ class C40LiveCoreParityTests(unittest.TestCase):
             "binance_usdm_bbo",
             "binance_usdm_bar",
         }:
-            provider_payload["s"] = native_symbol
-            if isinstance(provider_payload.get("k"), dict):
-                provider_payload["k"]["s"] = native_symbol
+            # One kind, two provider shapes: the websocket kline names the
+            # symbol in `s`/`k.s`, the REST capture in `symbol`.
+            if "symbol" in provider_payload:
+                provider_payload["symbol"] = native_symbol
+            else:
+                provider_payload["s"] = native_symbol
+                if isinstance(provider_payload.get("k"), dict):
+                    provider_payload["k"]["s"] = native_symbol
         elif acquisition.provider_kind == "binance_usdm_rest_bar":
             provider_payload["symbol"] = native_symbol
         elif acquisition.provider_kind == "okx_trade":
@@ -103,9 +108,13 @@ class C40LiveCoreParityTests(unittest.TestCase):
             authority_revision=self.catalog.authority_revision,
             partition_plan_epoch=1,
             received_at_ns=received_at_ns,
+            # The transport follows the shape that actually arrived, not the
+            # binding's kind: since R1.28 one kind carries both a websocket
+            # kline and a REST capture, and labelling a REST row WEBSOCKET
+            # would make the corpus describe a capture that never happened.
             transport_protocol=(
                 raw_provider_pb2.TRANSPORT_PROTOCOL_HTTP
-                if acquisition.provider_kind == "binance_usdm_rest_bar"
+                if "row" in provider_payload
                 else raw_provider_pb2.TRANSPORT_PROTOCOL_WEBSOCKET
             ),
             transport_compression=raw_provider_pb2.TRANSPORT_COMPRESSION_NONE,
@@ -143,6 +152,14 @@ class C40LiveCoreParityTests(unittest.TestCase):
                 "binance-usdm-btcusdt-quote",
                 "binance_usdm_bbo.json",
             ),
+            # R1.28: this binding is native, so the parity corpus exercises the
+            # websocket kline it now carries. The REST shape still reaches the
+            # same kind through the bar edge's warmup bootstrap and is covered
+            # by the second entry below.
+            (
+                "binance-usdm-btcusdt-bar-1m",
+                "binance_usdm_bar.json",
+            ),
             (
                 "binance-usdm-btcusdt-bar-1m",
                 "binance_usdm_rest_bar.json",
@@ -166,6 +183,10 @@ class C40LiveCoreParityTests(unittest.TestCase):
             (
                 "binance-usdm-ethusdt-quote",
                 "binance_usdm_bbo.json",
+            ),
+            (
+                "binance-usdm-ethusdt-bar-1m",
+                "binance_usdm_bar.json",
             ),
             (
                 "binance-usdm-ethusdt-bar-1m",

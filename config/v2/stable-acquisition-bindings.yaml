@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 16
+revision: 17
 topics:
   raw: md.raw.realtime.v2
   canonical: md.canonical.v2
@@ -72,14 +72,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: BINANCE
-  provider_kind: binance_usdm_rest_bar
-  native_channel: rest-klines/1m
+  provider_kind: binance_usdm_bar
+  native_channel: bnbusdt@kline_1m
   sequence_policy: NONE
-  websocket_url: null
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-bnbusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -302,14 +302,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: BINANCE
-  provider_kind: binance_usdm_rest_bar
-  native_channel: rest-klines/1m
+  provider_kind: binance_usdm_bar
+  native_channel: btcusdt@kline_1m
   sequence_policy: NONE
-  websocket_url: null
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -476,14 +476,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: BINANCE
-  provider_kind: binance_usdm_rest_bar
-  native_channel: rest-klines/1m
+  provider_kind: binance_usdm_bar
+  native_channel: dogeusdt@kline_1m
   sequence_policy: NONE
-  websocket_url: null
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-dogeusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -706,14 +706,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: BINANCE
-  provider_kind: binance_usdm_rest_bar
-  native_channel: rest-klines/1m
+  provider_kind: binance_usdm_bar
+  native_channel: ethusdt@kline_1m
   sequence_policy: NONE
-  websocket_url: null
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -880,14 +880,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1m
-  mode: PYTHON_REST
+  mode: RUST_NATIVE
   runtime: BINANCE
-  provider_kind: binance_usdm_rest_bar
-  native_channel: rest-klines/1m
+  provider_kind: binance_usdm_bar
+  native_channel: solusdt@kline_1m
   sequence_policy: NONE
-  websocket_url: null
+  websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: null
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-solusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE

@@ -141,7 +141,22 @@ pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, Strin
             canonicalize_binance(fixture)
         }
         "binance_usdm_bbo" | "binance_spot_bbo" => canonicalize_binance_bbo(fixture),
-        "binance_usdm_bar" | "binance_spot_bar" => canonicalize_binance_bar(fixture),
+        // One provider kind, two provider shapes. A native binding still
+        // receives REST-shaped rows: the bar edge bootstraps warmup history
+        // over REST for every enabled BAR demand regardless of acquisition mode
+        // (`stable_bar_edge.py`, `history_bindings`), and the realtime core
+        // refuses two bindings that share a source_id, so the native kind is
+        // the only kind those rows can arrive under. OKX has the same property
+        // by writing its REST rows in the websocket shape; Binance's REST
+        // capture keeps its own shape, so the split is made here. Both shapes
+        // produce the same event identity for the same closed bar.
+        "binance_usdm_bar" | "binance_spot_bar" => {
+            if fixture.raw.get("k").is_some() {
+                canonicalize_binance_bar(fixture)
+            } else {
+                canonicalize_binance_rest_bar(fixture)
+            }
+        }
         "binance_usdm_rest_bar" | "binance_spot_rest_bar" => canonicalize_binance_rest_bar(fixture),
         "okx_trade" => canonicalize_okx(fixture),
         "okx_bbo" => canonicalize_okx_bbo(fixture),
@@ -370,14 +385,27 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
         return Err("provider kline symbol does not match resolved instrument".into());
     }
     let source_time = integer(&fixture.raw, "E")?;
-    let sequence = format!(
-        "{}:{}:{}",
-        text(kline, "t")?,
-        integer(kline, "L")?,
-        source_time
-    );
-    let mut envelope = base_envelope(fixture, "bar", sequence, source_time)?;
     let is_final = boolean(kline, "x")?;
+    // One provider event identity per closed bar, across REST bootstrap,
+    // WebSocket delivery and process restart - the property OKX was given
+    // deliberately (`canonicalize_okx_bar`) and Binance never had. A closed
+    // kline keys on open and close time, which is exactly what
+    // `canonicalize_binance_rest_bar` keys on, so the REST row and the native
+    // row for the same bar collapse to one event instead of publishing the bar
+    // twice. A provisional kline keeps the frame-scoped identity: it is dropped
+    // by the final-bar policy before dedup, and nothing should make a sequence
+    // of in-progress rows look like one event.
+    let sequence = if is_final {
+        format!("{}:{}", integer(kline, "t")?, integer(kline, "T")?)
+    } else {
+        format!(
+            "{}:{}:{}",
+            text(kline, "t")?,
+            integer(kline, "L")?,
+            source_time
+        )
+    };
+    let mut envelope = base_envelope(fixture, "bar", sequence, source_time)?;
     envelope.payload = Some(event_envelope::Payload::Bar(Bar {
         interval: text(kline, "i")?,
         open_time_ns: integer(kline, "t")? * 1_000_000,
@@ -1122,6 +1150,57 @@ mod tests {
             let error = canonical_bytes(&fixture).expect_err("non-positive trade must fail");
             assert_eq!(error, message);
         }
+    }
+
+    /// R1.28. A closed bar has one provider event identity, whichever provider
+    /// shape it arrives in.
+    ///
+    /// The Binance REST edge and the native `@kline_1m` lane describe the same
+    /// bar in two different shapes. Before R1.28 they keyed on different things:
+    /// REST on open and close time, the websocket on open time, last trade id
+    /// and the frame's own emission time. The same bar arriving both ways then
+    /// produced two events, two rows in one partition, and a warmup series with
+    /// a duplicated open time. OKX was given this property deliberately
+    /// (`canonicalize_okx_bar`, "one provider event identity across REST
+    /// bootstrap, WebSocket delivery, and process restart"); Binance never had
+    /// it, and Phase 3 of R1.27 needs it because both producers are briefly
+    /// live during the cutover.
+    ///
+    /// Restoring the frame-scoped websocket sequence turns this test red.
+    #[test]
+    fn a_closed_binance_bar_has_one_identity_in_both_provider_shapes() {
+        let read = |name: &str| -> TradeFixture {
+            let path = format!(
+                "{}/../../tests/fixtures/phase2/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            serde_json::from_slice(&std::fs::read(path).expect("read fixture"))
+                .expect("decode fixture")
+        };
+        let mut websocket = read("binance_usdm_bar.json");
+        let mut rest = read("binance_usdm_rest_bar.json");
+        assert_eq!(websocket.raw["k"]["x"], serde_json::Value::Bool(true));
+        assert_eq!(websocket.raw["k"]["t"], rest.raw["row"][0]);
+        assert_eq!(websocket.raw["k"]["T"], rest.raw["row"][6]);
+
+        // The fixtures were captured against two shadow sources. In production
+        // one binding owns one source_id and the acquisition mode decides only
+        // which shape arrives under it, so the identity is compared the way the
+        // runtime compares it.
+        rest.context.source_id = websocket.context.source_id.clone();
+
+        let from_websocket = canonicalize_trade(&websocket).expect("websocket bar");
+        let from_rest = canonicalize_trade(&rest).expect("rest bar");
+        assert_eq!(
+            from_websocket.event_id, from_rest.event_id,
+            "one closed bar must have one event identity in both provider shapes"
+        );
+
+        // A provisional kline keeps its frame-scoped identity: a sequence of
+        // in-progress rows must never collapse into one event.
+        websocket.raw["k"]["x"] = serde_json::Value::Bool(false);
+        let provisional = canonicalize_trade(&websocket).expect("provisional bar");
+        assert_ne!(provisional.event_id, from_rest.event_id);
     }
 
     #[test]

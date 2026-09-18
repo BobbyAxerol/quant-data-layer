@@ -13,10 +13,10 @@
       "sha256": "13c774bb5e1f0c22bf8d729c29de055817e4785bfe23c070a2dcfea404b85ce5"
     },
     {
-      "bytes": 528,
+      "bytes": 524,
       "fixture": "binance_usdm_bar.json",
       "golden": "binance-usdm-bar.bin",
-      "sha256": "f187fa907e721e0993b1c3ff2ff4ea8f04afe63b3d018f9a59ff916ad075c56a"
+      "sha256": "b8651c2e4177858800431c308342d8098f3089692c9c43a7f501ae8addb49412"
     },
     {
       "bytes": 554,
@@ -37,10 +37,10 @@
       "sha256": "d62bc031c6faba2649962153c193c1de62a4e39b43413e6792f5f45407162b95"
     },
     {
-      "bytes": 518,
+      "bytes": 514,
       "fixture": "binance_spot_bar.json",
       "golden": "binance-spot-bar.bin",
-      "sha256": "ea67bc0fd11e1140aa5d0b0f3f86b26f4fa3e3464136fc792614016990ff7322"
+      "sha256": "da89d0f26c77dbeeeedd69697144fbb1d73c1add54c6efab1fe9c266f5eb8732"
     },
     {
       "bytes": 540,

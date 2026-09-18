@@ -302,9 +302,20 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             }:
                 continue
             if family == ("BINANCE", "USDM"):
-                self.assertEqual(item.provider_kind, "binance_usdm_rest_bar")
-                self.assertEqual(item.mode, "PYTHON_REST")
-                self.assertEqual(item.native_channel, f"rest-klines/{source.interval}")
+                # R1.28 moved 1m, and only 1m, onto the venue's own routed
+                # `@kline_1m` frame; every other interval keeps the REST edge
+                # until it carries its own admission evidence.
+                if source.interval == "1m":
+                    self.assertEqual(item.provider_kind, "binance_usdm_bar")
+                    self.assertEqual(item.mode, "RUST_NATIVE")
+                    self.assertEqual(
+                        item.native_channel,
+                        f"{source.instrument.native_symbol.lower()}@kline_1m",
+                    )
+                else:
+                    self.assertEqual(item.provider_kind, "binance_usdm_rest_bar")
+                    self.assertEqual(item.mode, "PYTHON_REST")
+                    self.assertEqual(item.native_channel, f"rest-klines/{source.interval}")
             else:
                 self.assertEqual(item.provider_kind, "okx_bar")
                 self.assertEqual(item.mode, "RUST_NATIVE")

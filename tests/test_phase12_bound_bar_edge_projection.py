@@ -301,13 +301,45 @@ class BoundBarEdgeProjectionTests(unittest.TestCase):
             },
         )
 
-    def test_rejects_native_acquisition_outside_declared_okx_final_bar_recovery(self) -> None:
+    def test_rejects_native_acquisition_outside_the_declared_final_bar_lanes(self) -> None:
+        """An undeclared native BAR lane must be refused, not projected.
+
+        Two declared lanes exist: OKX Swap `candle*`, and since R1.28 Binance
+        USD-M **1m** `@kline_1m`. Any other interval flipped to `RUST_NATIVE`
+        is a lane nobody certified, and silently projecting it to REST would
+        hide that. 5m is used here precisely because 1m is now legitimate -
+        this test used to flip 1m, and would have gone quiet the day 1m became
+        declared.
+        """
+
+        catalog, acquisition = _documents()
+        binding = _binding_for_source_ids("binance-usdm-btcusdt-bar-5m")
+        invalid = deepcopy(acquisition)
+        for item in invalid["bindings"]:
+            if item["binding_id"] == "binance-usdm-btcusdt-bar-5m":
+                item["mode"] = "RUST_NATIVE"
+                break
+        with self.assertRaisesRegex(ValueError, "only permits"):
+            projection.build_bound_bar_projection(
+                binding=binding,
+                catalog_document=catalog,
+                acquisition_document=invalid,
+            )
+
+    def test_rejects_a_declared_interval_that_names_the_wrong_provider_kind(self) -> None:
+        """1m is declared; `binance_usdm_bar` is what declares it.
+
+        A binding that is native at 1m but still names the REST kind is a
+        half-applied migration, and the bounded edge must refuse it rather than
+        project a shape its canonicaliser will not recognise.
+        """
+
         catalog, acquisition = _documents()
         binding = _binding_for_source_ids("binance-usdm-btcusdt-bar-1m")
         invalid = deepcopy(acquisition)
         for item in invalid["bindings"]:
             if item["binding_id"] == "binance-usdm-btcusdt-bar-1m":
-                item["mode"] = "RUST_NATIVE"
+                item["provider_kind"] = "binance_usdm_rest_bar"
                 break
         with self.assertRaisesRegex(ValueError, "only permits"):
             projection.build_bound_bar_projection(

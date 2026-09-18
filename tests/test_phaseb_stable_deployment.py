@@ -403,8 +403,13 @@ class StableDeploymentContractTests(unittest.TestCase):
             if item.binding_id in final_crypto_bars
         }
         self.assertEqual(final_bar_modes, {"PYTHON_REST", "RUST_NATIVE"})
+        # R1.28: Binance USD-M 1m is native on the routed `/market` lane, every
+        # other Binance interval is still the REST edge. Asserted per interval
+        # rather than as "all Binance is REST", which is what this pinned until
+        # 2026-09-18.
         self.assertTrue(all(
-            item.mode == "PYTHON_REST"
+            item.mode == ("RUST_NATIVE" if sources[item.binding_id].interval == "1m"
+                          else "PYTHON_REST")
             for item in self.acquisition.bindings
             if item.binding_id in final_crypto_bars and item.runtime == "BINANCE"
         ))

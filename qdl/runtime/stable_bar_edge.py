@@ -144,6 +144,23 @@ def _latest_source_closed_boundary_ms(
     )
 
 
+def recurring_rest_bar_bindings(pairs: tuple) -> tuple:
+    """The BAR bindings this edge keeps polling once the bootstrap has run.
+
+    Only `PYTHON_REST`. A binding whose acquisition mode is `RUST_NATIVE` is
+    owned by its Rust websocket lane, and polling it as well would publish the
+    same closed bar twice - once from the venue's own frame and once from a REST
+    replica that may still be seconds behind it.
+
+    The rule is venue-neutral on purpose. It was documented for years as
+    applying to OKX but not to Binance (`scripts/verify_runtime_generations.py`,
+    `check_bar_owners`), which is not what the code has done since `302eb21`
+    (2026-08-25); naming it here is what makes that testable rather than
+    re-asserted.
+    """
+    return tuple(pair for pair in pairs if pair[1].mode == "PYTHON_REST")
+
+
 class StableBinanceBarEdge:
     """Bounded real-provider BAR bootstrap plus Binance closed-bar polling.
 
@@ -279,12 +296,8 @@ class StableBinanceBarEdge:
         )
         # Only explicitly configured REST bindings are polled after bootstrap.
         # Native websocket BARs stay owned by their Rust acquisition lane.
-        self.bindings = tuple(
-            pair for pair in self.history_bindings if pair[1].mode == "PYTHON_REST"
-        )
-        self.okx_bindings = tuple(
-            pair for pair in self.history_okx_bindings if pair[1].mode == "PYTHON_REST"
-        )
+        self.bindings = recurring_rest_bar_bindings(self.history_bindings)
+        self.okx_bindings = recurring_rest_bar_bindings(self.history_okx_bindings)
         # Demand decides which venues and markets exist, so this edge must not
         # assert a fixed market-family set. It owns every enabled crypto BAR
         # bootstrap and only the explicit REST subset for recurring polling.

@@ -1458,3 +1458,81 @@ needs its own investigation.
 **Rollback** was prepared, proven twice in entries 35 and 37, and not used:
 `--env-file rollback.env` on the same override pins core `432f4b62` and ingestor
 `b05d4446` against the sealed bundle.
+
+---
+
+## 40. Binance native 1m bars: admitted by measurement, gated in source, not rolled (2026-09-18)
+
+**Pinned at** commit of this entry; `qdl-v2-rust` not rebuilt, no role recreated,
+`config/v2/stable-acquisition-bindings.yaml` revision 16 to 17 in the repository
+only. The running stack still publishes Binance 1m over REST.
+
+**Certified.** `tested locally` and nothing above it. The admission evidence is
+live and from the venue; the lane it admits has never run here.
+
+**The admission evidence** - `scripts/certify_binance_native_bar_admission.py`,
+against `wss://fstream.binance.com/market/ws` with a SUBSCRIBE, the same control
+shape the ingestor uses:
+
+```
+15 of 15 final klines, five symbols, three closes each
+arrival after close: min 0.043 s, median 0.253 s, max 1.144 s
+REST identical to the WS final bar: 1/15 at +0 s, 6/15 at +2 s,
+                                    8/15 at +4 s, 15/15 at +6 s
+```
+
+The websocket bar is what the venue settles on; REST takes up to six seconds to
+agree with it. The 6 s settlement guard is the cost of reading bars over REST,
+not a correctness requirement. `production_catalog.py` had kept Binance BAR on
+REST behind a comment asking for exactly this evidence - evidence that could not
+exist while the ingestor dialled the base Binance decommissioned on 2026-04-23.
+
+**One provider event identity per closed bar.** A closed kline now keys on
+`open_time:close_time`, identical to the REST path, so the REST row and the
+native row for one bar are one event. A provisional kline keeps its frame-scoped
+key. OKX had this by design (`canonicalize_okx_bar`); Binance did not, and the
+cutover needs it because both producers are briefly live. Rust and Python were
+changed together and the two Binance bar goldens regenerated; the other 17 did
+not move.
+
+**One kind, two provider shapes.** The bar edge bootstraps warmup history over
+REST for every enabled BAR demand regardless of mode, and the core refuses two
+bindings sharing a `source_id`, so a native binding still receives REST-shaped
+frames. Found by the C40 live-parity corpus failing with "Binance kline frame
+requires k object". The dispatch now sends `k` to the kline path and `row` to the
+REST path, in both languages.
+
+**Gate.** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
+--locked -- -D warnings`, `cargo test --workspace --locked`: clean, clean,
+**186 passed / 0 failed / 1 ignored** (184 before). Python suite **1,588 OK,
+7 skipped** (1,579 before), in `qdl-v2-python:2.0.17-5c01cb6`. Two new Rust
+tests and nine new Python tests, including one that is red if the frame-scoped
+sequence is restored.
+
+**Reconciliation baseline**, before any cutover:
+`scripts/reconcile_native_bars_against_rest.py` compared 25 canonical bars across
+the five symbols against REST for the same `open_time` and found **0
+disagreements**. It publishes nothing and records no revision; see below.
+
+**Why it is not rolled.** Two things, neither of which is a code defect.
+
+1. **The consumer contract for a revised bar is unsettled**, which the plan
+   itself names as a precondition of Phase 3 rather than a step inside it.
+   `adapters/market_data/data_layer_v2.py:407-420` treats `FINAL` and `REVISED`
+   identically and carries neither `revision` nor `supersedes_event_id`, so what
+   a strategy does with a bar it already acted on is undefined. That is why the
+   reconciliation shipped here reads and reports rather than publishes.
+2. **The bar edge's checkpoint pins `acquisition_revision`.** `_restore_state`
+   raises `stable BAR checkpoint acquisition_revision differs from runtime
+   authority` on a mismatch; the running edge is on revision 14 from its own
+   packet and this change makes the repository 17. Recreating it therefore needs
+   a checkpoint migration that no step of Phase 3 describes - R1.24's "a
+   regeneration is a migration", one layer down.
+
+**And one correction.** Phase 3 item 3 claimed the bar edge "filters by mode for
+OKX but not for Binance". It has been venue-neutral since `302eb21`
+(2026-08-25): measured against the shipped plan, 70 Binance BAR bindings polled
+and 0 OKX. The claim was copied into the plan from a docstring on 2026-09-18
+without reading `stable_bar_edge.py` - the failure rule E1 exists to prevent,
+committed while writing that plan. The rule now has a name,
+`recurring_rest_bar_bindings`, and a test on both venues.

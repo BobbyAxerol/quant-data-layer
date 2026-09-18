@@ -564,6 +564,12 @@ impl RealtimeCore {
             filtered_outcome: None,
         };
         let mut failure: Option<(QuarantineReason, &'static str)> = None;
+        // How many of this batch's filtered frames were provisional bars. The
+        // runtime attributes a batch's whole `filtered` count to one outcome,
+        // so a batch that filtered anything else must stay unattributed rather
+        // than be attributed wrongly - a wrong reason hides a feed exactly as
+        // well as no reason did on 2026-09-18.
+        let mut provisional_bars = 0usize;
         for (row_index, (provider_kind, frame)) in frames.into_iter().enumerate() {
             if is_binance_trade_status_frame(&binding, &provider_kind, &frame) {
                 batch.filtered += 1;
@@ -638,6 +644,7 @@ impl RealtimeCore {
                             ) => {}
                     Some(event_envelope::Payload::Bar(_)) => {
                         batch.filtered += 1;
+                        provisional_bars += 1;
                         continue;
                     }
                     _ => {
@@ -742,6 +749,9 @@ impl RealtimeCore {
         }
         for event_id in staged_seen_order {
             self.remember(event_id);
+        }
+        if provisional_bars > 0 && provisional_bars == batch.filtered {
+            batch.filtered_outcome = Some("PROVISIONAL_BAR");
         }
         Ok(batch)
     }
@@ -2901,6 +2911,73 @@ mod tests {
             panic!("OKX final candle must be BAR")
         };
         assert!(bar.is_final);
+    }
+
+    /// The Binance native 1m BAR lane R1.28 admits, exercised the way the
+    /// runtime will exercise it: provisional klines arrive, then the close
+    /// arrives on a lane that R1.27 routing renamed and that therefore carries a
+    /// lower generation than the provisional rows did.
+    ///
+    /// It pins two things that were each a real defect class: exactly one final
+    /// bar per close, and a provisional row that is filtered *and says why* -
+    /// a bare `filtered` counter hid a whole feed for ten minutes on 2026-09-18.
+    #[test]
+    fn a_binance_closed_kline_publishes_once_on_a_renamed_lane() {
+        let ws = binding((
+            "BINANCE_DIRECT",
+            "BINANCE",
+            "USDM",
+            "PERPETUAL",
+            "BTCUSDT",
+            "btcusdt@kline_1m",
+            "binance_usdm_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        assert!(ws.require_final_bar, "a *_bar kind must require final bars");
+        let kline = |closed: bool, event_time: i64, last_trade: i64| {
+            format!(
+                r#"{{"e":"kline","E":{event_time},"s":"BTCUSDT","k":{{"t":1786352340000,"T":1786352399999,"s":"BTCUSDT","i":"1m","f":1,"L":{last_trade},"o":"61200.00","c":"61234.10","h":"61240.00","l":"61190.00","v":"12.500","n":11,"x":{closed},"q":"765200.00","V":"6.000","Q":"367000.00"}}}}"#
+            )
+            .into_bytes()
+        };
+        let mut core = core(ws.clone(), true);
+
+        for (index, event_time) in [1786352360000_i64, 1786352380000].into_iter().enumerate() {
+            let batch = core
+                .process(raw(&ws, &kline(false, event_time, 5 + index as i64), 9), 10)
+                .unwrap();
+            assert!(
+                batch.canonical.is_empty(),
+                "a provisional kline must not publish"
+            );
+            assert!(batch.quarantines.is_empty());
+            assert_eq!(batch.filtered, 1);
+            assert_eq!(batch.filtered_outcome, Some("PROVISIONAL_BAR"));
+        }
+
+        // The close, on a lane renamed by routing and at a *lower* generation
+        // than the provisional rows carried. A fence that compared generations
+        // without knowing what a lane is would refuse this and the bar would
+        // never appear - which is how R1.27 2c failed twice.
+        let mut closed = raw(&ws, &kline(true, 1786352400123, 110), 1);
+        closed.source_session_id = "binance-market-bar-001-1-1700000000000000000".into();
+        let published = core.process(closed, 11).unwrap();
+        assert_eq!(
+            published.canonical.len(),
+            1,
+            "exactly one final bar per close"
+        );
+        assert!(published.quarantines.is_empty());
+        assert_eq!(published.filtered, 0);
+        assert_eq!(published.filtered_outcome, None);
+        let envelope = EventEnvelope::decode(published.canonical[0].payload.as_slice()).unwrap();
+        let event_envelope::Payload::Bar(bar) = envelope.payload.unwrap() else {
+            panic!("a closed Binance kline must canonicalise to a BAR")
+        };
+        assert!(bar.is_final);
+        assert_eq!(bar.interval, "1m");
+        assert_eq!(bar.open_time_ns, 1_786_352_340_000 * 1_000_000);
     }
 
     #[test]

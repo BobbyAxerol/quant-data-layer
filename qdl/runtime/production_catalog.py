@@ -700,14 +700,38 @@ class ProductionCatalogBuilder:
                     "RUST_NATIVE", "binance_usdm_mark_index",
                     f"{item.native_symbol.lower()}@markPrice@1s", "NONE",
                 )
+            elif (
+                item.feed is FeedType.BAR
+                and item.market == "USDM"
+                and item.interval == "1m"
+            ):
+                # R1.28. The comment below asked for "fresh final-bar admission
+                # evidence" before a native Binance BAR lane could exist. It
+                # could not have existed when it was written: the ingestor was
+                # still dialling the base Binance decommissioned on 2026-04-23,
+                # so a `@kline_*` subscription was ACKed and then pushed
+                # nothing, which is exactly what "no final kline delivery after
+                # a valid WS ACK" looks like from the inside. R1.27 routed the
+                # lanes; `scripts/certify_binance_native_bar_admission.py` then
+                # measured 15 of 15 final klines across the five symbols,
+                # arriving 0.043-1.144 s after their own close and carrying the
+                # values REST only converges onto by +6 s. That is the evidence,
+                # and this is the lane it admits.
+                #
+                # 1m only, and USD-M only. 1m is the interval the alpha runtime
+                # materialises and the one the settlement guard was built for.
+                # Every other interval keeps the REST edge until it carries its
+                # own evidence; a batch would be a hope, not a migration.
+                mode, kind, channel, sequence = (
+                    "RUST_NATIVE", "binance_usdm_bar",
+                    f"{item.native_symbol.lower()}@kline_{item.interval}", "NONE",
+                )
             else:
-                # The current provider/host certification proves direct Binance
-                # trade and BBO, but not final kline delivery after a valid WS
-                # ACK.  Keep provider REST at the outer edge for every generated
-                # Binance BAR demand; it writes the same V2 raw envelope and the
-                # Rust core remains the only canonical/replay/query authority.
-                # A reviewed manifest revision can re-enable a native BAR lane
-                # after fresh final-bar admission evidence.
+                # Every other generated Binance BAR demand stays on provider
+                # REST at the outer edge; it writes the same V2 raw envelope and
+                # the Rust core remains the only canonical/replay/query
+                # authority. A reviewed manifest revision can move another
+                # interval across, with its own admission evidence.
                 mode, kind, channel, sequence = (
                     "PYTHON_REST", f"binance_{family}_rest_bar",
                     f"rest-klines/{item.interval}", "NONE",

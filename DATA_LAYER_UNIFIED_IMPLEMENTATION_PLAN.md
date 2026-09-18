@@ -39907,7 +39907,7 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases (2026-09-18)
 
-**Status: `PHASE 1 LANDED / PHASE 2 LANDED AND SOAKED IN PRODUCTION / PHASE 3 NOT STARTED, NEEDS ITS OWN APPROVAL`.**
+**Status: `PHASE 1 LANDED / PHASE 2 LANDED AND SOAKED IN PRODUCTION / PHASE 3 SOURCE LANDED AND GATED, NOT ROLLED`.**
 Binance USD-M now runs on the venue's routed base URLs. The five `MARK_INDEX_PRICE`
 partitions that had been silent since the unrouted base was decommissioned on
 2026-04-23 went from 4014 s stale to 3 s fresh on the roll, and every one of the
@@ -39919,7 +39919,10 @@ core had a second connection-generation fence that was not lane-aware (fixed in
 venue's documented procedure - found in captured production frames, corrected in
 2d, and pinned by a regression test built from those frames. Both failures are
 recorded below in full rather than edited out.
-Phase 3 changes the canonical bar producer and is not open.
+Phase 3's source landed on 2026-09-18 with its admission evidence, its gates and
+its tests; it is **not rolled**. Doing the work turned up three defects in this
+plan's own Phase 3 text and one blocker none of its steps describes, all recorded
+in the Phase 3 section below.
 
 #### The defect
 
@@ -40820,6 +40823,144 @@ REST publication.
 closed bar which reconciliation later revises keeps the revision it saw;
 decision history is never rewritten. That is a consumer contract question, and
 the reason this is a separate phase.
+
+##### Phase 3 source landed (`SOURCE PASS / RUNTIME UNTOUCHED`, 2026-09-18)
+
+Everything below is source, tests and evidence. No image was built, no role was
+recreated, nothing in the running stack was touched. **Phase 3 is not rolled**,
+and the three findings at the end are why.
+
+**The admission evidence the catalog comment demanded.**
+`production_catalog.py` had kept every generated Binance BAR demand on
+`PYTHON_REST` behind a comment saying the platform had never proven "final kline
+delivery after a valid WS ACK", and that a native lane could be re-enabled
+"after fresh final-bar admission evidence". That evidence could not have existed
+when the comment was written: the ingestor was dialling the base Binance
+decommissioned on 2026-04-23, so a `@kline_*` subscription was ACKed and then
+pushed nothing - which is exactly what the comment describes, seen from the
+inside. R1.27 routed the lanes. `scripts/certify_binance_native_bar_admission.py`
+then measured it, on the same `/market/ws` control URL the ingestor uses:
+
+```
+  symbol      finals  provisional    arrival after close (s)
+  BTCUSDT          3          301    min=0.235 med=0.412 max=1.144
+  ETHUSDT          3          341    min=0.064 med=0.083 max=0.253
+  BNBUSDT          3          142    min=0.518 med=0.571 max=0.753
+  SOLUSDT          3          257    min=0.078 med=0.090 max=0.680
+  DOGEUSDT         3          293    min=0.043 med=0.094 max=0.794
+  across all symbols: n=15 min=0.043s median=0.253s max=1.144s
+
+  REST at close+ 0s identical to the WS final bar:  1/15
+  REST at close+ 2s identical to the WS final bar:  6/15
+  REST at close+ 4s identical to the WS final bar:  8/15
+  REST at close+ 6s identical to the WS final bar: 15/15
+  ADMISSION: PASS
+```
+
+Read it the right way round: the websocket bar is the one the venue settles on,
+and REST spends up to six seconds catching up to it. The 6 s settlement guard is
+the price of reading bars over REST, not a correctness requirement, and a native
+lane does not need it.
+
+**Source changes.**
+
+1. `qdl/runtime/production_catalog.py` - Binance USD-M **BAR 1m only** becomes
+   `RUST_NATIVE` / `binance_usdm_bar` / `{symbol}@kline_1m` / `NONE`, on the
+   routed pair the R1.27 generator already emits. Every other interval keeps the
+   REST edge; the stale comment is replaced by the measurement above.
+2. `config/v2/stable-acquisition-bindings.yaml` - revision 16 to 17, twenty-six
+   lines: five bindings times five fields, plus the revision.
+3. **One provider event identity per closed bar**, in
+   `rust/qdl-core/src/canonical.rs` and `qdl/canonical/market.py` together. A
+   closed kline now keys on `open_time:close_time`, which is what
+   `canonicalize_binance_rest_bar` already keys on, so the REST row and the
+   native row for one bar collapse to a single event instead of publishing it
+   twice. A *provisional* kline keeps its frame-scoped key: a sequence of
+   in-progress rows must never look like one event. OKX was given this property
+   deliberately; Binance never had it, and the cutover needs it because both
+   producers are briefly live. The two Binance bar goldens were regenerated;
+   nothing else moved.
+4. **One kind, two provider shapes.** The same dispatch now sends a frame with
+   `k` to the kline path and a frame with `row` to the REST path. This is not
+   tidiness - it is required, and finding 2 below explains why.
+5. `rust/qdl-realtime-core/src/lib.rs` - a filtered provisional bar now says so:
+   `filtered_outcome = PROVISIONAL_BAR`, attributed only when every filtered
+   frame in the batch was one, so a mixed batch stays unattributed rather than
+   attributed wrongly.
+6. `qdl/runtime/stable_bar_edge.py` - the recurring-poll rule is now a named
+   function, `recurring_rest_bar_bindings`, with the reason in its docstring.
+   It had no name and therefore no test, which is how the operator docs came to
+   describe it wrongly for weeks (finding 1).
+
+**Tests.** `cargo fmt` clean, `clippy -D warnings` clean, `cargo test
+--workspace --locked` **186 passed, 0 failed, 1 ignored** (184 before). New:
+`a_closed_binance_bar_has_one_identity_in_both_provider_shapes` in `qdl-core`,
+which turns red if the frame-scoped sequence is restored, and
+`a_binance_closed_kline_publishes_once_on_a_renamed_lane` in
+`qdl-realtime-core`, which feeds provisional klines and then the close on a lane
+renamed by routing at a *lower* generation - the shape that failed twice in 2c.
+`tests/test_dlv2_r128_binance_native_bar.py` adds 8 Python tests: 1m and only 1m
+is native, against the whole interval set rather than a sample; the native
+binding is a routed `/market` kline; every other interval is still REST; the
+bar edge's poll rule excludes native bindings on **both** venues; and the
+shipped plan moves exactly five bindings.
+
+**Three findings from doing the work. Each one is a defect in this plan, not in
+the code.**
+
+*Finding 1 - the plan repeated a claim that was already false.* Phase 3 item 3
+said the bar edge "filters by mode for OKX but not for Binance", citing the
+`check_bar_owners` docstring. The filter has been venue-neutral since `302eb21`
+(2026-08-25). Measured against the shipped plan: 70 Binance BAR bindings polled,
+0 OKX, and flipping the five 1m bindings drops it to 65. **Item 3 needs no code
+change.** The claim entered the plan on 2026-09-18 in `062efde`, copied from the
+docstring without reading `stable_bar_edge.py` - the exact failure rule E1
+exists to prevent, committed while writing the rule's own plan.
+
+*Finding 2 - a native binding still receives REST-shaped frames, and the plan
+did not account for it.* The bar edge bootstraps warmup history over REST for
+**every** enabled BAR demand regardless of acquisition mode, and the realtime
+core refuses two bindings that share a `source_id`. So after the cutover the
+native kind is the only kind those REST rows can arrive under. OKX never hit
+this because its bar edge writes REST rows in the websocket `arg`/`data` shape;
+Binance's REST capture keeps its own shape. Found by the C40 live-parity corpus,
+which failed with "Binance kline frame requires k object" - a test doing exactly
+its job. Fixed by change 4 above, and the corpus now carries both shapes for
+both Binance 1m bindings.
+
+*Finding 3 - the rollout order in this plan opens a gap it then calls
+authoritative.* It says to roll the catalog and bar edge first, "the bar edge
+stops publishing 1m; nothing yet replaces it, so this step is observed for one
+full minute boundary with the REST lane still authoritative through the
+reconciliation path". Those cannot both be true: once the bar edge stops
+publishing, nothing publishes 1m until the ingestor is rolled, and a
+reconciliation path that publishes nothing cannot be authoritative. The correct
+order is the one R1.24 used for OKX - **bar edge and ingestor recreated together
+from one packet** - which is why change 3 above matters: during the seconds of
+overlap both producers write the same bar, and it must be one event, not two.
+
+**Reconciliation, and what is deliberately not built.**
+`scripts/reconcile_native_bars_against_rest.py` reads the canonical 1m bars out
+of the spool and asks Binance REST for the same `open_time`, comparing field by
+field on decimal value. Run now, before any cutover, it is the baseline: **25
+bars across the five symbols, 0 disagreements.** It publishes nothing. Item 4
+asks reconciliation to "record a revision when they differ", and that is not
+built here on purpose: this plan's own precondition says the consumer contract
+for a revised bar must be settled **before** Phase 3 starts, and it is not.
+`adapters/market_data/data_layer_v2.py:407-420` treats `FINAL` and `REVISED`
+identically and carries neither `revision` nor `supersedes_event_id` forward, so
+what a strategy does with a bar it already acted on is undefined today. Reading
+first also answers whether the publishing path is needed at all.
+
+**What still blocks the roll**, beyond the owner's decision on the contract
+above. The bar edge's checkpoint pins `acquisition_revision` and
+`_restore_state` raises `stable BAR checkpoint acquisition_revision differs from
+runtime authority` on a mismatch. The running edge is on revision 14 from its
+own packet; this change makes the repository 17. Recreating the bar edge against
+a new acquisition revision therefore needs a checkpoint migration, which R1.24
+called "a regeneration is a migration" and which no step of Phase 3 describes.
+
+---
 
 #### Not in this program
 

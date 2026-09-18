@@ -208,9 +208,10 @@ def _project_acquisition_for_python_bar_edge(
     """Keep the bounded recovery edge as the explicit final-BAR owner.
 
     The broad acquisition plan may describe an OKX final BAR as ``RUST_NATIVE``
-    for the shared native plane.  The existing bounded Python edge is still the
-    certified recovery/finality owner for its sealed consumer projection.  It
-    must therefore project only that exact OKX final-BAR lane to REST rather
+    for the shared native plane, and since R1.28 a Binance USD-M 1m final BAR as
+    well.  The existing bounded Python edge is still the certified
+    recovery/finality owner for its sealed consumer projection.  It must
+    therefore project only those two declared final-BAR lanes to REST rather
     than silently accepting arbitrary native feeds or venues.
     """
 
@@ -232,6 +233,32 @@ def _project_acquisition_for_python_bar_edge(
         result["mode"] = "PYTHON_REST"
         result["websocket_url"] = None
         result["business_websocket_url"] = None
+        return result
+
+    # R1.28: Binance USD-M 1m on the routed `/market` kline lane. Named as
+    # narrowly as the OKX lane above - one venue, one market, one interval, one
+    # provider kind - so a later interval cannot arrive here by drifting into a
+    # wildcard.
+    if (
+        mode == "RUST_NATIVE"
+        and getattr(source, "feed", None).value == "BAR"
+        and bool(getattr(source, "require_final_bar", False))
+        and getattr(identity, "venue", None) == "BINANCE"
+        and getattr(identity, "market", None) == "USDM"
+        and str(getattr(source, "interval", "")) == "1m"
+        and str(result.get("provider_kind")) == "binance_usdm_bar"
+        and "@kline_" in str(result.get("native_channel", ""))
+    ):
+        # The bounded edge is a REST owner, so what it projects must be a REST
+        # binding all the way down: the kind and the channel move with the mode,
+        # or `StableAcquisitionBinding.validate` refuses a PYTHON_REST binding
+        # that still names a websocket kind.
+        result["mode"] = "PYTHON_REST"
+        result["provider_kind"] = "binance_usdm_rest_bar"
+        result["native_channel"] = f"rest-klines/{getattr(source, 'interval', '1m')}"
+        result["websocket_url"] = None
+        result["business_websocket_url"] = None
+        result["market_websocket_url"] = None
         return result
 
     raise ValueError(

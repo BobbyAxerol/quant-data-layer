@@ -127,14 +127,31 @@ def canonicalize_binance_usdm_bbo(
 def canonicalize_binance_usdm_bar(
     raw: Mapping[str, Any], context: TradeContext
 ) -> market_data_pb2.EventEnvelope:
-    _verify_symbol(raw, context)
     kline = raw.get("k")
     if not isinstance(kline, Mapping):
+        # One provider kind, two provider shapes. A native binding still
+        # receives REST-shaped rows from the bar edge's warmup bootstrap, and
+        # one binding owns one source_id, so this kind is the only kind those
+        # rows can arrive under. Both shapes produce the same event identity for
+        # the same closed bar. Kept identical to the Rust dispatch in
+        # `rust/qdl-core/src/canonical.rs`.
+        if "row" in raw:
+            return canonicalize_binance_usdm_rest_bar(raw, context)
         raise ValueError("Binance kline frame requires k object")
+    _verify_symbol(raw, context)
     if str(_required(kline, "s")).upper() != context.native_symbol.upper():
         raise ValueError("provider kline symbol does not match resolved instrument")
     source_time = int(_required(raw, "E"))
-    sequence = f"{_required(kline, 't')}:{_required(kline, 'L')}:{source_time}"
+    is_final = _required_bool(kline, "x")
+    # One provider event identity per closed bar, across REST bootstrap,
+    # WebSocket delivery and process restart, so the REST row and the native row
+    # for the same bar collapse to one event rather than publishing it twice.
+    # This must stay byte-identical to `canonicalize_binance_bar` in
+    # `rust/qdl-core/src/canonical.rs`; the golden parity fixtures compare them.
+    if is_final:
+        sequence = f"{int(_required(kline, 't'))}:{int(_required(kline, 'T'))}"
+    else:
+        sequence = f"{_required(kline, 't')}:{_required(kline, 'L')}:{source_time}"
     envelope = _envelope(
         raw=raw,
         context=context,
@@ -142,7 +159,6 @@ def canonicalize_binance_usdm_bar(
         source_sequence=sequence,
         source_event_time_ms=source_time,
     )
-    is_final = _required_bool(kline, "x")
     bar = market_data_pb2.Bar(
         interval=str(_required(kline, "i")),
         open_time_ns=int(_required(kline, "t")) * 1_000_000,

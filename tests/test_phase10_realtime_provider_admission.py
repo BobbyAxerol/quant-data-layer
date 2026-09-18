@@ -49,15 +49,29 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
         )
         self.assertEqual({item.venue for item in self.bindings}, {"BINANCE", "OKX"})
         self.assertEqual({item.market for item in self.bindings}, {"USDM", "SWAP"})
+        # R1.28 moved Binance USD-M 1m onto the routed `@kline_1m` lane, so the
+        # twelve-binding baseline now carries no PYTHON_REST binding at all: OKX
+        # Swap 1m went native in R1.24, Binance 1m here. Every other Binance
+        # interval is still REST, but no other interval is in this baseline.
         self.assertEqual(
             {
                 item.binding_id
                 for item in self.bindings
                 if item.mode == "PYTHON_REST"
             },
+            set(),
+        )
+        self.assertEqual(
+            {
+                item.binding_id
+                for item in self.bindings
+                if item.mode == "RUST_NATIVE" and "-bar-" in item.binding_id
+            },
             {
                 "binance-usdm-btcusdt-bar-1m",
                 "binance-usdm-ethusdt-bar-1m",
+                "okx-swap-btcusdt-bar-1m",
+                "okx-swap-eth-usdt-swap-bar-1m",
             },
         )
 
@@ -95,10 +109,18 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             )
 
     def test_binance_rest_bar_requires_a_final_native_closed_row(self):
-        binding = next(
-            item
-            for item in self.bindings
-            if item.binding_id == "binance-usdm-ethusdt-bar-1m"
+        # The REST BAR admission boundary still exists and still guards every
+        # Binance interval that has not moved. R1.28 took 1m out of this
+        # baseline's REST set, so the binding is projected back to what a REST
+        # interval looks like rather than the test quietly losing its subject.
+        binding = replace(
+            next(
+                item
+                for item in self.bindings
+                if item.binding_id == "binance-usdm-ethusdt-bar-1m"
+            ),
+            mode="PYTHON_REST",
+            native_channel="rest-klines/1m",
         )
         payload = {
             "symbol": "ETHUSDT",
@@ -231,7 +253,17 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
     def test_binance_feed_lanes_are_complete_and_request_ids_are_role_bound(self):
         binance = tuple(item for item in self.native_bindings if item.venue == "BINANCE")
         lanes = admission.binance_admission_lanes(binance)
-        self.assertEqual({name: len(items) for name, items in lanes.items()}, {"BAR": 0, "TRADE": 2, "QUOTE": 2})
+        # BAR was 0 for as long as Binance had no native bar lane. R1.28 opened
+        # it for 1m on the routed `/market` base, so the admission lanes carry
+        # two of them - one per baseline symbol.
+        self.assertEqual(
+            {name: len(items) for name, items in lanes.items()},
+            {"BAR": 2, "TRADE": 2, "QUOTE": 2},
+        )
+        self.assertEqual(
+            sorted(item.native_channel for item in lanes["BAR"]),
+            ["btcusdt@kline_1m", "ethusdt@kline_1m"],
+        )
         self.assertEqual(
             admission.binance_request_id(role="BINANCE:USDM:QUOTE", generation=12),
             10_123,
@@ -253,7 +285,16 @@ class RealtimeProviderAdmissionTests(unittest.TestCase):
             )
 
     def test_report_accepts_one_http_recovery_for_each_venue_rest_bar(self):
-        bindings = tuple(item for item in self.bindings if item.mode == "PYTHON_REST")
+        # Same reason as above: the baseline has no PYTHON_REST binding since
+        # R1.28, so the two REST BAR bindings this report is about are projected
+        # from the two 1m bars rather than dropped, which would have turned this
+        # assertion into 0 == 0 and tested nothing.
+        bindings = tuple(
+            replace(item, mode="PYTHON_REST", native_channel=f"rest-klines/{item.interval}")
+            for item in self.bindings
+            if item.venue == "BINANCE" and item.feed == "BAR"
+        )
+        self.assertEqual(len(bindings), 2)
         sessions = tuple(
             admission.SessionEvidence(
                 f"{binding.venue}:REST_BAR", 1, 0, 0, 1,
