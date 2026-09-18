@@ -1270,3 +1270,41 @@ lands.
 because nothing has yet changed a lane identity in production. It is evidence
 that the fix is inert when it should be inert, which is the only thing 2b can
 prove and the reason it is a separate phase from 2c.
+
+## 37. The book fence is proved working, and one book still did not come back (2026-09-18)
+
+R1.27 Phase 2c on the fixed cores. Applied 08:04:55Z, rolled back 08:13:52Z.
+
+- **The 2a fix fired and was readable.** Nine `l2_session_began` events, one per
+  Binance book binding, each naming `previous_generation 96` against
+  `frame_generation 1` on a provably different lane. **Zero
+  `IGNORED_STALE_GENERATION`, zero `l2_frame_refused`** on all three cores. The
+  same moment on 2026-09-18 at 06:11Z produced no log line and a dead feed;
+  entry 30's rule, applied to a second fence, worked.
+- **The routed lane delivered its purpose.** Binance `mark_index_price` reached
+  five canonical partitions at **0 s**, against zero partitions before the first
+  attempt. Eight of nine books stayed at 0-1 s; quote and trade never moved.
+- **One book did not recover.** `ethusdt-261225`, a dated quarterly, ran at a
+  0.24 s median gap for the forty minutes before the roll - 5,996 rows - then
+  published **four rows and stopped**. Snapshots kept being applied and the
+  bridge never completed: buffered 498 → 2,157, bootstrap 7 → 24, quarantines
+  4 → 17, looping about every thirty seconds. The rollback returned it to 0 s
+  within three minutes, which identifies the cause as this path.
+- **Two gate items failed.** `execution_ready` 37 → 32 at T+2 and 33 at T+10,
+  measured where the gate says to measure. And the book item passed only in
+  letter: "newest age 0 s" was true of the feed while one of its partitions was
+  dead.
+
+**The finding worth keeping is about the instrument, not the bug.** A feed-level
+number hid a dead partition, exactly as a bare `filtered` count hid a dead feed
+two days ago. Each time the fix was to make the measure one level finer, and
+each time the next failure was one level finer still. `filtered_by_outcome` is
+per core; it needs to be per binding. The acceptance item needs to read every
+partition, not the newest. This is entry 33 again in a new place: a subset
+reported under the whole gate's name.
+
+**What is no longer in doubt.** The lane rule, `begin_session`, and the logging
+all work in production under the exact condition that defeated them. What
+remains is narrower and offline-reproducible: after `begin_session` clears the
+bootstrap buffer, one book fails to bridge its snapshot to its deltas while
+eight others succeed.

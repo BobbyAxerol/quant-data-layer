@@ -39907,7 +39907,7 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASES 1, 2a AND 2b LANDED / 2c AND PHASE 3 AWAITING OWNER APPROVAL`.**
+**Status: `PHASES 1, 2a AND 2b LANDED / 2c ATTEMPTED TWICE AND ROLLED BACK, ONE BOOK UNEXPLAINED / PHASE 3 NOT STARTED`.**
 2b moved the three cores onto the lane-aware book fence on 2026-09-18; no ingestor,
 projector, reader, broker or consumer was touched.
 Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
@@ -40479,6 +40479,91 @@ comparable inside one identified lane" has to be applied everywhere a
 generation is compared, and there were two such places, not one. Before the
 next change of this kind: `grep -rn 'generation' rust/` and account for every
 comparison.
+
+##### 2c attempted on the fixed cores and rolled back (`FAILED / PRODUCTION RESTORED`, 2026-09-18)
+
+Applied 08:04:55Z, rolled back 08:13:52Z. One role each way; the three cores
+stayed on the 2b image throughout, confirmed after the rollback.
+
+**The fix did exactly what 2a built it to do.** Nine `l2_session_began` events,
+one per Binance book binding, each naming both sides:
+
+```
+previous_session  binance-USDM-001-96-…                 previous_generation  96
+frame_session     binance-USDM-public-book-001-1-…      frame_generation      1
+```
+
+Generation 96 against 1, the lane proved different, the book restarted instead
+of refusing for ever. **Zero `IGNORED_STALE_GENERATION` and zero
+`l2_frame_refused` on all three cores** for the whole window. On 2026-09-18 at
+06:11Z this same moment produced no log line at all and a dead book.
+
+**And the routed lane delivered what the whole program is for.** Binance
+`mark_index_price`: five canonical partitions, newest **0 s**, against zero
+partitions before the first attempt and a frozen 6,157 s at this attempt's
+baseline. Eight of the nine Binance book partitions stayed at 0-1 s. Quote and
+trade never moved off 0 s.
+
+**One book did not recover, and that is why this rolled back.**
+`binance-usdm-ethusdt-261225-book-primary-v2`, a dated quarterly:
+
+| window | rows | p50 gap | max gap |
+|---|---:|---:|---:|
+| 40 minutes before the roll | 5,996 | **0.24 s** | 134 s (the 2b core roll) |
+| after the roll | **4** | — | then nothing |
+
+It published four rows and stopped. `BUFFERED_AWAITING_BOOTSTRAP` climbed 498 →
+2,157 and `BOOTSTRAP_APPLIED` 7 → 24 while quarantines went 4 → 17 on that core:
+snapshots kept arriving and being applied, the bridge never completed, the book
+gapped, resynced and repeated roughly every thirty seconds. No refusal, no
+error line from the ingestor, and the aggregate "newest book age" stayed 0 s
+because the other eight were healthy - which is exactly how a single dead
+partition hides inside a feed-level number.
+
+**Two acceptance items failed.** Item 7, `execution_ready` not lower: 37 → 32 at
+T+2 and 33 at T+10, measured at the two points the gate names. And item 2 in
+substance if not in letter: `newest` passed while one partition of that feed was
+dead.
+
+**The rollback identified the cause again.** All nine books, including
+`ethusdt-261225`, returned to 0-1 s on the pinned image and sealed bundle within
+three minutes. The previous binary bridges that book after a recreate and this
+path does not.
+
+**What is now known that was not before.** The failure is no longer the book
+fence - that is proved working by the nine session-began events and the zero
+refusals. It is narrower: after `begin_session` clears the bootstrap buffer, one
+book never completes its snapshot-to-delta bridge while eight others do. That is
+a bridging question inside `L2BookAdapter`, on a specific instrument, and it is
+reproducible offline because the whole sequence is deterministic given a
+snapshot and a delta stream.
+
+**What must exist before 2c is attempted a third time.**
+
+1. A test that drives `begin_session` followed by a REST snapshot and a delta
+   stream whose ranges do not line up on the first attempt, and asserts the book
+   reaches `Ready` rather than looping. The 2a test proved the lane decision; it
+   did not prove the bridge that follows it.
+2. Per-binding book state readable from outside the process. Today
+   `BUFFERED_AWAITING_BOOTSTRAP` is one number across every book on a core, so a
+   single book looping is invisible until someone queries the spool partition by
+   partition. `filtered_by_outcome` was the right idea one level too coarse.
+3. An acceptance item that reads **every** partition of a feed, not the newest.
+   The feed-level number passed while a partition was dead, and that is the same
+   shape as entry 33: a subset reported under the whole gate's name.
+
+**Artefacts.** Packet `/home/bobby/.local/state/qdl-v2/dlv2-r127-2c-ingestor-20260918T080235Z`
+with its bundle, override and both env files. The image under investigation is
+`qdl-v2-rust:2.0.17-e9cb4b7` (`sha256:432f4b62e567`), which the three cores are
+still running successfully - the defect is in the ingestor's routed lane meeting
+the book bridge, not in the core image as such.
+
+**Production after the rollback.** All nine Binance books 0-1 s, quote and trade
+0 s, OKX unaffected, consumer `execution_ready` 34 with `v1_fallback` and
+`v2_error` at 0. Binance `mark_index_price` ages again, as it did before, until
+2c lands.
+
+---
 
 #### Phase 3 — Native final BAR on the routed lane; REST demoted to reconciliation.
 
