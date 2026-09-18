@@ -39907,7 +39907,7 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases (2026-09-18)
 
-**Status: `PHASE 1 LANDED / PHASE 2 LANDED AND SOAKED IN PRODUCTION / PHASE 3 SOURCE LANDED AND GATED, NOT ROLLED`.**
+**Status: `PHASE 1 LANDED / PHASE 2 LANDED AND SOAKED IN PRODUCTION / PHASE 3 SOURCE LANDED AND GATED, ROLLING`.**
 Binance USD-M now runs on the venue's routed base URLs. The five `MARK_INDEX_PRICE`
 partitions that had been silent since the unrouted base was decommissioned on
 2026-04-23 went from 4014 s stale to 3 s fresh on the roll, and every one of the
@@ -40952,13 +40952,120 @@ identically and carries neither `revision` nor `supersedes_event_id` forward, so
 what a strategy does with a bar it already acted on is undefined today. Reading
 first also answers whether the publishing path is needed at all.
 
-**What still blocks the roll**, beyond the owner's decision on the contract
-above. The bar edge's checkpoint pins `acquisition_revision` and
+**What blocked the roll when this was written** - both resolved in the section
+that follows, which should be read with this one. The bar edge's checkpoint pins `acquisition_revision` and
 `_restore_state` raises `stable BAR checkpoint acquisition_revision differs from
 runtime authority` on a mismatch. The running edge is on revision 14 from its
 own packet; this change makes the repository 17. Recreating the bar edge against
 a new acquisition revision therefore needs a checkpoint migration, which R1.24
 called "a regeneration is a migration" and which no step of Phase 3 describes.
+
+---
+
+##### Phase 3 unblocked: the contract was already in the code, and the checkpoint has a migration (2026-09-18)
+
+**The revision contract is closed, by design rather than by decision.** The
+previous section listed it as an owner decision. That was wrong: the answer was
+already in the alpha runtime and had been for as long as these strategies have
+run. Every alpha gates on the venue's own closed flag and computes once, at
+append:
+
+* `alphas/scalping_PSAR/main/scalping_psar_common.py:524` -
+  `if kline.get("x") is not True: return`
+* `alphas/scalping_PSAR/main/scalping_psar_common.py:190` - `i = len(close) - 1`,
+  the signal is evaluated on the bar that was just appended
+* `candle_stream` with `prepare(maxlen=600)` - warmup fills the series, each
+  closed bar is appended to it
+* the same gate in eleven more: `scalping_sl_tp`, `delta_rsi`,
+  `combine_weight_sl_tp`, `pmax_confluene`, `vn_ib_timing`, `scalping_purely`,
+  `fib_sl_tp_strength`, `vol_breakout_sl_tp`, `bb_salping`, `adaptive_hma_cpp`,
+  `qqe_ssl_wae_risk`. **No file under `alphas/` contains `settle`, `min_settle`
+  or any wait on REST.**
+
+So a decision is made once, on the closed bar, and never recomputed. A REST
+revision arriving six seconds later cannot change a decision that has already
+been taken; it can only mutate the warmup series underneath a running strategy.
+Reconciliation therefore reads and reports and never publishes, and
+`scripts/reconcile_native_bars_against_rest.py` is a divergence monitor, not a
+revision source. This is not a preference between two options - the second
+option was never available.
+
+Raising it as an owner decision was the same failure as finding 1, one repo
+over: asserting an open question without reading the domain that answers it.
+
+**The checkpoint blocker has a migration.**
+`scripts/migrate_stable_bar_edge_checkpoint.py` carries a bar-edge checkpoint
+across an acquisition revision, keeping its watermarks, and refuses anything
+that is not a mode-only bump. Dry-run by default; it will not write while the
+edge is running. Against the live checkpoint:
+
+```
+  checkpoint            /var/lib/qdl-stable/runtime/stable-crypto-bar-edge-r16-20260917.json
+  schema                qdl.stable-bar-edge-state.v4
+  acquisition_revision  16 -> 17
+  catalog_revision      8 (planned 8)
+  binding_ids           140 (planned 140)
+  last_open_ms          140 watermarks carried
+```
+
+`tests/test_dlv2_r128_bar_edge_checkpoint_migration.py` pins it, including the
+test that matters: the unmigrated checkpoint fed to the real `_restore_state` at
+revision 17 raises `acquisition_revision`, and the migrated one restores with
+all its watermarks and `_history_bootstrapped` true - no re-bootstrap.
+
+**Two facts about the runtime that the rollout has to respect**, both found by
+reading the running roles rather than the packet:
+
+1. **The acquisition plan is baked into the python image**, at
+   `/app/config/v2/stable-acquisition-bindings.yaml`, and only one role reads
+   it: `binance_bar_edge` is the only entrypoint that references
+   `StableAcquisitionPlan`. `query`, `projector` and `stream` do not. So a
+   revision bump needs a python image rebuild but recreates **one** role, not
+   eight.
+2. **The R1.27 packet's env files name the wrong checkpoint.** They carry
+   `QDL_STABLE_BAR_STATE_PATH=...stable-crypto-bar-edge-r14-4355ea...`, while
+   the running edge uses `...-r16-20260917.json`. Recreating the bar edge with
+   those env files would point it at a stale checkpoint from 2026-08-30. The
+   Phase 3 packet takes the path from the running role, not from an older
+   packet.
+
+**The corrected rollout order.** Finding 3 named the defect; this is the
+replacement. Four steps, each with its own rollback, each observed before the
+next:
+
+| step | role | why here |
+|---|---|---|
+| 1 | build `qdl-v2-rust` and `qdl-v2-python` at this commit | nothing is recreated |
+| 2 | `rust_core`, `rust_core_2`, `rust_core_3` | they must be able to canonicalise a kline before one is produced; no behaviour change until then |
+| 3 | `ingestor_binance_usdm` with the five BAR bindings | native 1m starts publishing. The REST edge is still publishing the same bars, and after the identity change they are **one event**, so the overlap deduplicates instead of doubling |
+| 4 | migrate the checkpoint, then `binance_bar_edge` on the new python image | REST polling for 1m stops. Migration first, because the edge writes its checkpoint on every publish |
+
+Step 3 before step 4 on purpose: the plan's original order stopped the REST
+producer before anything replaced it, and the overlap it feared is exactly what
+the shared event identity makes safe.
+
+**Acceptance**, at T+2, T+10 and T+30 after step 4:
+
+1. `scripts/verify_stable_feed_partitions.py` exits zero - 188 partitions, none
+   stale, none empty. The five Binance 1m BAR partitions must keep publishing
+   across the whole cutover; a gap here is the failure.
+2. Every Binance 1m bar's `origin` is `VENUE_NATIVE` and its `lifecycle` is
+   `Final`, read from the spool, not inferred.
+3. Exactly one canonical row per `open_time` per binding across the cutover
+   window - the overlap must deduplicate, not double.
+4. Close-to-canonical for Binance 1m at or under 1 s, against the 6.63 s the
+   REST edge delivers today.
+5. `scripts/reconcile_native_bars_against_rest.py` reports 0 disagreements.
+6. `v1_fallback_count` and `v2_error_count` stay 0 and
+   `execution_ready_v2_slices` does not fall.
+7. `filtered_by_outcome` carries `PROVISIONAL_BAR` on the cores, which is how a
+   provisional kline proves it was filtered rather than lost.
+8. The bar edge logs a restored checkpoint with 140 bindings and does **not**
+   re-bootstrap.
+
+**Rollback**, one command per step: recreate the role with its previous image
+digest and, for step 4, restore the checkpoint from the `.pre-r17` copy the
+migration leaves behind.
 
 ---
 
