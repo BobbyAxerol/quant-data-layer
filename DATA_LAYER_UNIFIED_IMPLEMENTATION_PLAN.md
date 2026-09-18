@@ -41069,6 +41069,114 @@ migration leaves behind.
 
 ---
 
+<a id="dl-v2-r129-time-to-alpha-20260918"></a>
+### R1.29 — time to the alpha cache, and the livelock that was hiding behind it (2026-09-18)
+
+**Status: `MEASURED / INSTRUMENTED / NOT YET OPTIMISED`.** The target is under
+500 ms from the venue's own timestamp to the alpha's execution cache. Nothing
+is near it except `MARK_INDEX_PRICE`, and the reason turned out not to be the
+one this program assumed.
+
+#### What was assumed, and what is true
+
+The assumption in the R1.28 report was a slow consumer: the alpha cache advanced
+in ~15 s steps for trade and book, ~60 s for quote, so the consumer must be
+polling. It is not. `services/market_data/data_layer_bridge.py:450` awaits
+`iterator.__anext__()` - it is event driven - and the client batches for
+`max_batch_wait_ms=20` (`adapters/market_data/data_layer_v2.py:850`). There is
+no poll interval anywhere in that path.
+
+**The measured chain, end to end.**
+
+1. A consumer declares `max_freshness_ms` per feed: QUOTE 2000, BOOK_DELTA 2000,
+   TRADE 3000, MARK_INDEX 15000, BOOK_SNAPSHOT 60000, BAR 180000.
+2. The stream's predicate ages a record from the **venue's own timestamp** to
+   the stream service's clock: `qdl/stream/grpc_service.py:222-230`,
+   `self._clock_ns() - envelope.source_event_time_ns <= max_freshness_ms`.
+3. Measured venue-to-durable on this stack is 403-638 ms median for quote, with
+   p95 of 623-1127 ms. Add the stream's own queue wait and a record routinely
+   crosses 2000 ms.
+4. A record that ages out between being queued and being read is discarded
+   (`qdl/stream/gateway.py:148-160`), and once a whole buffer's worth has been
+   discarded without one delivery the gateway raises `SlowConsumer`, by design,
+   so the consumer reconnects rather than waiting on a stream that will never
+   speak (R1.13).
+5. The consumer reconnects, receives its warmup snapshot - one record - and the
+   cycle begins again.
+
+**That is the whole mechanism, and it is visible in the consumer's own
+counters.** Two heartbeat samples 45 s apart:
+
+```
+t    BTCUSDT/QUOTE=rc1355  DOGEUSDT/QUOTE=rc1235  ETHUSDT/QUOTE=rc1411  SOLUSDT/QUOTE=rc1665
+t+45 BTCUSDT/QUOTE=rc1356  DOGEUSDT/QUOTE=rc1235  ETHUSDT/QUOTE=rc1412  SOLUSDT/QUOTE=rc1666
+```
+
+One reconnect per slice per 45 s, which is exactly the cadence at which the
+quote cache advances. These slices are not carrying stale data; they are in a
+**filter-and-reconnect livelock**, and the cache updates once per cycle.
+
+It follows that the feeds which look healthy are the ones whose freshness bound
+is loose enough to clear the pipeline: MARK_INDEX at 15 s and BOOK_SNAPSHOT at
+60 s. The feeds that look broken are the three tightest bounds. Nothing about
+those instruments is different.
+
+**So there is one number to attack, not two.** Reduce venue-to-durable below the
+tightest bound with margin and the livelock stops, the cache becomes continuous,
+and the 500 ms target becomes a question about the remaining hops rather than
+about a consumer.
+
+#### The middle of the pipeline was not measurable
+
+Every four-quantity report this program has published, including the ones in
+R1.27 and R1.28, printed `received -> published = 0 ms`. That was never a
+measurement. `qdl-realtime-core/src/lib.rs` set both `normalized_at_ns` and
+`published_at_ns` to a copy of `raw.received_at_ns`, so the two fields were the
+same number by construction and the subtraction could only ever be zero. The
+core's own consume, canonicalisation and produce were invisible, and the whole
+477 ms of `published -> committed` was one opaque block covering three Kafka
+hops.
+
+**The obvious correction was wrong, and a test said so.** Stamping those two
+fields with the core's own clock makes the canonical record depend on when it
+was processed, and
+`transport_replay_is_byte_deterministic_across_fresh_cores` fails immediately:
+replaying one raw event through two fresh cores stopped producing identical
+bytes. That contract is worth more than the measurement - a canonical record has
+to be a pure function of the raw event or replay and audit mean nothing - so the
+change was reverted rather than the test relaxed.
+
+**Corrected properly.** The span is reported instead of stored.
+`qdl-realtime-core.rs` already computes `normalized_at_ns = now_ns()` after it
+assembles a batch, and each input carries `raw.received_at_ns`, so the core can
+say how old a frame already was when it first saw it without putting a wall
+clock in the data. The progress line gains two spans, each reset with the line
+that reports it:
+
+* `raw_age_ms`: the ingestor's produce, Kafka, and this core's consume.
+* `commit_ms`: how long the transactional commit of one batch takes.
+
+`published -> committed` minus `raw_age` minus `commit` is what remains for the
+canonical hop and the projector, which is the number that decides whether the
+next change is a Kafka setting or something else entirely.
+
+#### What is deliberately not done yet
+
+No Kafka client setting was changed. `fetch.wait.max.ms` is unset on both the
+Rust consumer and the Python projector, so both use librdkafka's 500 ms default,
+and the projector consumes `read_committed` behind a transactional producer.
+Either could be the 477 ms; a probe to confirm it was refused by the broker ACLs
+for a new consumer group, so **it stays a hypothesis and is written here as
+one.** Tuning six roles on an unconfirmed hypothesis is what this program keeps
+paying for. The instrumentation above lands first; the next measurement says
+which half the time is in, and only then does a setting change.
+
+#### Gate
+
+`cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --locked`.
+
+---
+
 #### Not in this program
 
 The consumer's `MARK_INDEX_PRICE` routing to the reference batch

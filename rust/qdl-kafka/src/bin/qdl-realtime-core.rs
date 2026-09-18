@@ -128,6 +128,49 @@ fn is_approved_subscription(
     approved_subscriptions.contains(&raw.subscription_id)
 }
 
+/// Min, median-free summary of one span, in nanoseconds, reported in milliseconds.
+///
+/// Deliberately not a histogram: this exists to say which half of the pipeline
+/// a delay is in, and min/mean/max over one reporting interval answers that.
+#[derive(Debug, Default)]
+struct SpanSummary {
+    count: u64,
+    total_ns: i128,
+    min_ns: i64,
+    max_ns: i64,
+}
+
+impl SpanSummary {
+    fn observe(&mut self, span_ns: i64) {
+        let span_ns = span_ns.max(0);
+        if self.count == 0 || span_ns < self.min_ns {
+            self.min_ns = span_ns;
+        }
+        if span_ns > self.max_ns {
+            self.max_ns = span_ns;
+        }
+        self.count += 1;
+        self.total_ns += i128::from(span_ns);
+    }
+
+    fn report(&self) -> serde_json::Value {
+        if self.count == 0 {
+            return serde_json::Value::Null;
+        }
+        let mean_ns = (self.total_ns / i128::from(self.count)) as i64;
+        json!({
+            "n": self.count,
+            "min": self.min_ns as f64 / 1e6,
+            "mean": mean_ns as f64 / 1e6,
+            "max": self.max_ns as f64 / 1e6,
+        })
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 fn strict_quarantine_reason(error: &CoreError) -> Option<(QuarantineReason, &'static str)> {
     match error {
         CoreError::UnknownBinding => Some((
@@ -212,6 +255,12 @@ async fn run_generation(
     // symptom was this counter rising slightly. Breaking it down by outcome
     // makes a feed that stops readable from the progress line alone.
     let mut filtered_by_outcome: BTreeMap<&'static str, u64> = BTreeMap::new();
+    // R1.29. Two spans this loop can see and nothing else can: how old a frame
+    // is when the core first reads it, and how long its transactional commit
+    // takes. Reported on the progress line and reset with it, so each line
+    // describes its own interval rather than all of history.
+    let mut raw_age = SpanSummary::default();
+    let mut commit_latency = SpanSummary::default();
     let mut ignored_out_of_scope = 0_u64;
     let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
@@ -291,6 +340,16 @@ async fn run_generation(
         let mut outputs = vec![];
         for input in &inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
+            // R1.29. How old a frame already is when this core first sees it:
+            // the ingestor's produce, Kafka, and this consume. It is reported
+            // rather than written into the envelope, because a canonical record
+            // must stay a pure function of the raw event - putting a wall clock
+            // in it breaks replay determinism, which
+            // `transport_replay_is_byte_deterministic_across_fresh_cores`
+            // catches. Every four-quantity report before this printed
+            // `received -> published = 0 ms`, which was two copies of one field
+            // subtracting to zero, not a measurement.
+            raw_age.observe(normalized_at_ns.saturating_sub(raw.received_at_ns));
             let result = if !is_approved_subscription(&raw, &approved_subscriptions) {
                 if config.strict_subscription_scope {
                     scope_quarantines = scope_quarantines.saturating_add(1);
@@ -367,7 +426,9 @@ async fn run_generation(
                 });
             }
         }
+        let commit_started_ns = now_ns()?;
         bridge.commit(&inputs, &outputs).await?;
+        commit_latency.observe(now_ns()?.saturating_sub(commit_started_ns));
         processed += inputs.len() as u64;
         batches += 1;
         if batches % config.metrics_every_batches == 0 {
@@ -385,8 +446,12 @@ async fn run_generation(
                     "ignored_out_of_scope": ignored_out_of_scope,
                     "scope_quarantines": scope_quarantines,
                     "batches": batches,
+                    "raw_age_ms": raw_age.report(),
+                    "commit_ms": commit_latency.report(),
                 }))?
             );
+            raw_age.reset();
+            commit_latency.reset();
         }
     };
     bridge.unsubscribe();
