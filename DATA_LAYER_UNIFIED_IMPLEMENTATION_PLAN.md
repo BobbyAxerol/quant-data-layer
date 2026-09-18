@@ -39907,7 +39907,7 @@ other by construction.
 <a id="dl-v2-r127-binance-ws-route-20260918"></a>
 ### R1.27 — Binance USD-M WebSocket routing: three phases, owner approval pending (2026-09-18)
 
-**Status: `PHASE 1 LANDED (source only) / PHASE 2 ATTEMPTED AND ROLLED BACK / PHASE 3 NOT STARTED`.**
+**Status: `PHASE 1 LANDED (source only) / PHASE 2 FAILED, ROLLED BACK, ROOT CAUSE FOUND / PHASES 2-3 REDESIGNED, AWAITING OWNER RE-APPROVAL`.**
 Phase 1 was approved and applied on 2026-09-18 and touched no runtime. Phase 2 was
 approved, applied the same day, broke the Binance BOOK lane and was rolled back
 ten minutes later; see the Phase 2 record below.
@@ -40119,39 +40119,117 @@ packet must carry both, with a rollback that also carries both.
 
 ---
 
-#### Phase 2 — Roll one role and prove MARK_INDEX to the consumer.
+#### Phase 2 — Make the book core lane-aware, roll the cores, then roll the ingestor.
 
-**Change.** Build the image, recreate **`ingestor_binance_usdm` only**, through
-its own packet with `rollout.env` / `rollback.env`. Nothing else is touched:
-not the cores, not the projectors, not the bar edge, not the query or stream
-replicas, not Kafka, Redis or SQLite.
+Redesigned after the 2026-09-18 attempt; see the failure record and the root
+cause below. The previous Phase 2 assumed the ingestor was the only thing that
+had to change. It was not: the book core has its own generation fence, so a
+routed lane can only come up safely once the cores know what a lane is. Three
+sub-phases, each with its own gate and rollback, applied in order and never
+together.
 
-**Acceptance is end to end, not "the socket has frames".** Ledger entry 33's
-lesson applies: a subset reported under the gate's name is not the gate.
+##### 2a — Source: the book core learns lanes; the silent outcome learns to speak
 
-1. `markPriceUpdate` frames arriving on the `/market` lane, counted at the
-   ingestor.
-2. Canonical `MARK_INDEX_PRICE` events for all five Binance instruments,
-   counted from `md.canonical.v2` — today this is **0**.
-3. `cache:market:v2:execution_mark_index_price:BINANCE:USD_M:*` present, with
-   `quality.state LIVE`, `execution_eligible true`, and an age inside the sealed
-   2,000 ms policy — today these rows come from the reference REST batch.
-4. `market_data_service` heartbeat: Binance `MARK_INDEX_PRICE` slices leave the
-   unhealthy list, `execution_ready_v2_slices` rises from its current **37/60**.
-5. The three `/public` feeds keep their current rates: BOOK, QUOTE and TRADE
-   frame counts unchanged within noise.
+**Change, in `qdl-core` and `qdl-realtime-core` only.**
 
-`markPriceUpdate` carries mark (`p`) and index (`i`) in one frame, so one lane
-serves both components. `T` in that payload is the next funding time and must
-not be read as an observation time.
+1. **One lane rule, one implementation.** `session_lane` and
+   `same_session_lane` in `qdl-venue-core/src/ordering.rs` become `pub` and
+   are reused; no second parser is written.
+2. **`L2BookAdapter::begin_session(generation)`** - adopt the generation
+   unconditionally, clear the book, clear the bootstrap buffer, move to
+   `AwaitingSnapshot`. The book core gets no lane knowledge of its own; it is
+   told when a session begins by the one component that can prove it.
+3. **`process_l2` decides, using the lane rule.** It remembers the last
+   session id per book binding. On a frame whose session lane differs from the
+   remembered one - or cannot be proved the same, the R1.25 `_ => false`
+   rule - it calls `begin_session(frame.generation)` before handing the frame
+   to the adapter. Same lane and lower generation stays refused: that is the
+   genuine stale case and its safety is unchanged.
+4. **Nothing on the book path is silent any more.** Every
+   `IgnoredStaleGeneration`, `SnapshotSourceRejected` and `IdentityMismatch`
+   emits one structured line - binding key, frame session, frame generation,
+   core generation, core status - the way `qdl_realtime_core_stale_generation`
+   does since R1.25. `qdl_realtime_core_progress` gains `filtered_by_outcome`,
+   so "filtered" can never again hide a whole feed.
+5. **Lane names carry the feed.** `binance-<route>-<feed>-<shard>` (and the
+   same shape for OKX when it is next touched). Adding a feed to a route can
+   then never renumber an existing lane, so Phase 3's BAR lane does not move
+   MARK_INDEX's identity. A test asserts the names are stable when a feed is
+   added.
 
-**Rollback.** The same packet with `rollback.env`, which pins the current image
-digest and the unrouted base. One role, one command.
+**Tests that must exist before 2a is called done.**
 
-**Done when.** All five acceptance items hold for a bounded observation window,
-recorded with the counts, not with a claim.
+- `qdl-realtime-core`: lane A `binance-USDM-001-96-…` at generation 96 is
+  driven to `Ready` with a snapshot and bridging deltas; lane B
+  `binance-USDM-public-book-001-1-…` at generation **1** then sends a snapshot
+  and deltas and **must publish**, with zero `IgnoredStaleGeneration` for the
+  binding. This is the exact production failure, replayed.
+- `qdl-realtime-core`: same lane A, generation 95, still refused - and the
+  refusal is now visible in the structured log.
+- `qdl-core`: `begin_session` from every `BookStatus`, including `Ready` and
+  `Gapped`, always lands in `AwaitingSnapshot` with an empty book and buffer.
+- `qdl-kafka`: lane naming is stable under feed addition; two routed groups
+  cannot share a name.
 
----
+**Gate.** All three clauses - fmt, clippy `-D warnings`, `cargo test --workspace
+--locked` - plus the Python suite in the isolated runner. No image, no
+container, no bundle.
+
+##### 2b — Roll the three cores, serially
+
+The fix lives in the core binary, so the cores move first. They are backward
+compatible: the running ingestors' lane identities do not change, so a fixed
+core beside an unfixed ingestor behaves exactly as today.
+
+**Change.** Build `qdl-v2-rust:2.0.17-<sha>` from the 2a commit with the
+revision label. Recreate `rust_core`, then `rust_core_2`, then `rust_core_3`,
+one at a time, each through its own packet entry, each verified before the
+next: `running`, `restart 0`, progress lines resuming, `quarantines` not
+growing, every feed's newest age in the spool unchanged within noise, consumer
+`execution_ready` not lower than before that role moved.
+
+**Rollback per role.** The same recreate pinned to
+`sha256:b05d44467942483bcff60fe20e0cbca95fd1ea20d9ae5136ea2f2c4d34cb1531`.
+Three roles, three independent rollbacks; never all at once.
+
+**Not touched.** Ingestors, projectors, bar edge, query and stream replicas,
+Kafka, Redis, SQLite, any consumer.
+
+##### 2c — Roll the ingestor, with the acceptance the first attempt should have had
+
+Same one-role packet shape as the first attempt: a verbatim copy of the sealed
+bundle whose only delta is the routed pair, `rollout.env` / `rollback.env`, one
+override for `ingestor_binance_usdm`. Preflight the config/image coupling both
+ways again before recreating.
+
+**Acceptance, measured, in this order, with the number each one had before:**
+
+| # | what | before (2026-09-18 baseline) | must become |
+|---|---|---|---|
+| 1 | routed lanes `LIVE` with fresh transport | — | 4 lanes, all `LIVE` |
+| 2 | Binance `book` newest age in the spool | 0 s | **≤ 5 s at T+2 min and stays there** - the item the first attempt failed |
+| 3 | `filtered_by_outcome.IgnoredStaleGeneration` for Binance book bindings | n/a | **0** after T+2 min |
+| 4 | Binance `mark_index_price` canonical partitions | **0** | **5**, newest ≤ 2 s |
+| 5 | Binance `quote` / `trade` newest age | 0-1 s | unchanged |
+| 6 | consumer `BOOK_DELTA` / `BOOK_SNAPSHOT` Binance slices | healthy | healthy again within the resync window, then stable |
+| 7 | consumer `execution_ready_v2_slices` | 34-37 | not lower, measured at T+10 and T+30 |
+| 8 | consumer `execution_mark_index_price` cache source | `reference_batch` | **unchanged, and that is expected** |
+
+Item 8 is written down so it cannot be mistaken for a failure: the consumer
+routes `MARK_INDEX_PRICE` to the reference batch unconditionally
+(`trading_system/adapters/market_data/data_layer_v2.py:752`). Moving it to the
+canonical plane is a Trading System change and is listed under "Not in this
+program". Phase 2 makes that change possible; it does not make it.
+
+**Soak.** Thirty minutes at all eight items before PASS is written, then the
+endpoint report with the four latency quantities per the 2026-09-18 rule.
+
+**Rollback.** Same packet, `rollback.env`, one command - proven on 2026-09-18.
+
+**Also carried from the first attempt.** The bundle in use is sealed at
+revision 17 and differs from `config/v2/` (revision 16); the packet transforms
+the bundle, and reconciling the repository file to it is a separate follow-up,
+named so it is not forgotten again.
 
 ##### Phase 2 attempted and rolled back (`FAILED / PRODUCTION RESTORED`, 2026-09-18)
 
@@ -40224,45 +40302,127 @@ the state it was in before the attempt.
 
 ---
 
+##### Phase 2 root cause, found offline after the rollback (2026-09-18, no runtime touched)
+
+**The L2 book core keeps a second connection-generation fence, and it compares
+bare integers.** R1.25 made `OrderingTracker` lane-aware; it never touched this
+one, and book frames never reach `OrderingTracker` at all:
+`qdl-realtime-core/src/lib.rs:526-527` returns early into `process_l2` for any
+binding with `l2`, before the ordering match at line 662. For BOOK, the book
+core's own fence is the only fence there is.
+
+Three sites in `qdl-core/src/l2_book.rs` reject a lower generation and answer
+`IgnoredStaleGeneration`: `apply_snapshot` (550), `apply_delta` (588) and
+`request_resync` (645), all through `accept_generation` (692: `incoming <
+self.generation` → refuse). `l2_adapter.rs:461` drops a lower-generation delta
+before it even reaches the core. None of them logs; `process_l2` counts the
+outcome as `filtered` (lib.rs:1132) and moves on.
+
+**The numbers make it exact.** The generation counters on the shared state
+volume, read after the rollback:
+
+| lane | counter |
+|---|---|
+| old book lane `binance-001` | **96** |
+| old trade / quote / mark lanes `binance-002/003/004` | 94 / 86 / 14 |
+| routed lanes `binance-public-001/002/003`, `binance-market-001` | **1** each |
+
+The old book lane had left the book core at generation 96. The routed book lane
+opened at generation 1. Its REST snapshot: `accept_generation(1)` → refused.
+Every delta: refused or dropped. The core would have accepted the lane again at
+generation 97 - after 96 reconnects. Nothing was quarantined and nothing was
+logged, which is why ten minutes of looking found the frames arriving and could
+not see where they went. The cores' `filtered` rate rose on all three during
+exactly that window and fell back after the rollback (187→213→177,
+98→146→99, 129→199→123 per 1,000 processed).
+
+**Why only book.** TRADE and QUOTE also restarted at generation 1, but they go
+through `OrderingTracker`, which since R1.25 treats a different lane as a
+different producer and starts a session. MARK_INDEX is latest-state. Only BOOK
+carries its generation into a state machine that was never taught what a lane
+is. And why old restarts were always fine: the same lane resumes a monotonic
+counter, 96 → 97, always higher. The defect only appears when the lane
+*identity* changes, which is what a route split necessarily does - and what
+adding a BAR lane in Phase 3 would do again.
+
+**What this says about the tests.** The harness I described in the failure
+record - "drive the book lane from subscribe through snapshot to a verified
+book" - would not have caught it either, unless the second session came from a
+**renamed lane at a lower generation**. The test that was missing is that
+specific. It belongs in `qdl-realtime-core`, where the defect is, not in the
+ingestor.
+
+**The rule, added to the one entry 30 already gave.** "Generations are only
+comparable inside one identified lane" has to be applied everywhere a
+generation is compared, and there were two such places, not one. Before the
+next change of this kind: `grep -rn 'generation' rust/` and account for every
+comparison.
+
 #### Phase 3 — Native final BAR on the routed lane; REST demoted to reconciliation.
 
-Opened only after Phase 2 has held. It changes the canonical bar producer, which
-is the highest-blast-radius change in this program.
+Opened only after Phase 2c has held its soak. It changes the canonical bar
+producer for Binance, which is the highest-blast-radius change in this program,
+and it now inherits two facts Phase 2 established: lane identity must be stable
+by construction (2a, item 5), and a stateful feed needs its own end-to-end test
+before it is rolled.
 
-**Change.** Add the Binance `@kline_<interval>` binding on the `/market` lane and
-publish a final bar when the venue says `x=true`, the way OKX publishes on
-`confirm=1`. The REST edge is not deleted and `min_settle_seconds` is not
-removed from the code: the REST read moves from the live signal path to a
-**reconciliation** lane that fetches the same `open_time` after the measured
-convergence delay, compares field by field, and records a revision when they
-differ.
+**Scope, deliberately narrow.** Binance USD-M **1m only, the five liquid
+symbols** - the interval the alpha runtime materialises and the one the 6 s
+guard was built for. The other thirteen intervals stay on the REST edge until
+1m has held; each is a later revision with its own evidence, not a batch.
 
-**Comparison identity is fixed** at venue + product + symbol + interval +
-`open_time`, using explicit `startTime`, never "the last row", because a row's
-position moves at the boundary. Mismatches are reported per field — OHLC, base
-volume, quote volume, trade count, taker volumes — and never merged across
-responses into a bar the venue never returned.
+**Change.**
 
-**Expected, from the Phase 0 measurement.** Binance close-to-canonical
-`6.63 s → ~0.5 s`; close-to-alpha-cache `8.2-8.8 s → ~2.2-2.5 s`, which is OKX's
-current range. Nothing in the consumer contract changes:
+1. Acquisition revision 18: the five Binance USD-M `BAR 1m` bindings move from
+   `PYTHON_REST` to `RUST_NATIVE` on the `/market` lane
+   (`binance-market-bar-001`). The catalog generator already emits the routed
+   pair; `validate_stream` already admits `@kline_*`; the core already
+   canonicalises a Binance kline. What is new is the binding, not the code path.
+2. The core publishes a final bar on `x=true` only, the way OKX publishes on
+   `confirm=1`. A kline with `x=false` is a provisional row and is filtered as
+   OKX provisional candles are - and, after 2a, counted by outcome.
+3. **The bar edge stops publishing Binance 1m for a binding whose mode is
+   `RUST_NATIVE`.** Today it filters by mode for OKX but not for Binance
+   (`scripts/verify_runtime_generations.py`, `check_bar_owners` docstring).
+   Without this the same bar would have two producers, which is the exact
+   coexistence R1.25 had to tolerate and Phase 3 must not create on purpose.
+4. The REST read is not deleted and `min_settle_seconds` is not removed. It
+   becomes a **reconciliation** lane: fetch the same `open_time` after the
+   measured convergence delay, compare field by field, and record a revision
+   when they differ. Comparison identity is venue + product + symbol + interval
+   + `open_time` with explicit `startTime`, never "the last row"; mismatches
+   are reported per field and never merged into a bar the venue never returned.
+
+**Tests that must exist before Phase 3 is rolled.** A `qdl-realtime-core` test
+that feeds provisional then closed klines on a renamed lane at a lower
+generation and asserts exactly one final bar per close, no duplicate when the
+reconciliation row agrees, and one revision record when it does not. A bar-edge
+test that a `RUST_NATIVE` Binance binding produces no REST publication.
+
+**Rollout, in order, each with its own rollback.** Catalog and bar-edge image
+first (the bar edge stops publishing 1m; nothing yet replaces it, so this step
+is observed for one full minute boundary with the REST lane still authoritative
+through the reconciliation path), then the ingestor with the BAR binding. If
+the native lane does not publish a final bar inside two boundaries, the
+ingestor rolls back and the bar edge's mode filter is reverted, which restores
+REST publication.
+
+**Expected, from the 2026-09-18 measurement.** Binance close-to-canonical
+`6.63 s → ~0.5 s`; close-to-alpha-cache `8.2-8.8 s → ~2.2-2.5 s`, OKX's range.
 `DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS` stays `180000`.
 
-**What must be settled before this phase starts, not during it.** A strategy
-that acted on a WS closed bar which reconciliation later revises must keep the
-revision it saw; decision history is never rewritten to look as though the
-strategy knew a later version. That is a contract question for the consumer,
-and it is the reason this is a separate phase rather than the tail of Phase 2.
-
-**Rollback.** The bar edge is untouched and still holds the REST path with its
-6 s guard, so rollback is the previous acquisition revision plus the previous
-ingestor image.
-
----
+**Settled before Phase 3 starts, not during it.** A strategy that acted on a WS
+closed bar which reconciliation later revises keeps the revision it saw;
+decision history is never rewritten. That is a consumer contract question, and
+the reason this is a separate phase.
 
 #### Not in this program
 
-QUOTE streaming (8 slices, 606-1,206 reconnects each, open since 2026-09-05),
+The consumer's `MARK_INDEX_PRICE` routing to the reference batch
+(`trading_system/adapters/market_data/data_layer_v2.py:752`), which is what
+decides whether Risk ever reads the canonical mark/index plane Phase 2 creates -
+a Trading System change with its own approval. QUOTE streaming (8 slices,
+606-1,206 reconnects each, open since 2026-09-05),
 the OKX reference batch serving `INDEX` from the already-subscribed
 `index-tickers` binding instead of the stale REST row (diagnosed 2026-09-16,
 still unapplied), `BOOK_SNAPSHOT`'s 30 s refresh against a 60,000 ms bound, and
