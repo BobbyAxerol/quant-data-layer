@@ -43690,7 +43690,7 @@ answers 409 - 6,080 rejected mTLS POSTs per projector per 30 minutes, ~36,000 an
 hour across three. The projector could remember the lease holder and re-probe on
 failure. It is write-path code and was not taken at a release gate.
 
-### R1.32 - Execution MARK/INDEX live-view correction (`SOURCE_TESTED / RUNTIME_PENDING`, 2026-09-19)
+### R1.32 - Execution MARK/INDEX live-view correction (`SOURCE_TESTED / RUNTIME_PRECHECK_FAILED`, 2026-09-19)
 
 **Approved goal.** Remove the execution-grade `MARK_INDEX_PRICE` dependency on
 venue REST and the expensive spool-query path without weakening the existing
@@ -43898,3 +43898,60 @@ reference, consumer, L2 and five-liquid selection with `--rm`, `--network
 none`, source read-only and temporary `/tmp`: **98 passed, 0 failed** in
 `14.352 s`. No image was built and no runtime resource was changed by this
 evidence.
+
+**Bounded runtime precheck (`RUNTIME_PRECHECK_FAILED`, 2026-09-19).** The
+approved four-role candidate packet was applied exactly once: only
+`stream_v2_active`, `stream_v2_passive`, `query_v2_1`, and `query_v2_2` now
+run `qdl-v2-python:2.0.21-rc.1-25dce61`
+(`sha256:ee0154e88e9a26213d7354532edc01e441f3a5754cb2b64c8f672d8593189414`,
+source `25dce612cc11bf246320c36c7360ec128072033f`). All four became healthy.
+The named rollback remains
+`sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`.
+No V1, Rust core, ingestor, projector, BAR edge, Kafka offset/topology, Redis,
+SQLite, Trading System, alpha or order-path role was recreated or configured.
+
+The actual `trading-system.paper.stable` mTLS/JWT identity then called the
+public V2 SDK `reference_batch` route for all ten registered execution
+MARK/INDEX requirements for 60 seconds. This was a diagnostic precheck with
+`require_all=False` solely to retain typed per-binding evidence; it is not a
+substitute for the required strict 300-second C2 acceptance. It completed 21
+batches / 210 exact binding reads, made no V1 or direct-venue request, and
+created no order or consumer state. Consumer call-to-usable time was `p50
+1998.718 ms`, `p95 2029.260 ms`, `p99 2054.484 ms`, `max 2054.484 ms`.
+`96/210` exact results were `DATA_STALE`; per-binding provider-confirmation to
+consumer-receipt maxima reached `3179.391 ms`, so the `2,000 ms` execution
+gate fails honestly. The data was real provider-derived live state, not test
+or generated market data.
+
+The route itself is correct. Every returned observation carried
+`execution_view=STABLE_STREAM_GATEWAY`, the internal V2 live-view lineage and
+the expected exact identity; no secondary spool or venue REST route appeared.
+Direct read-only timing from *each* query replica showed that the container
+named `stream_v2_active` is not the current Redis lease holder and rejects the
+ten reads quickly (`1.7-4.7 ms` after initial TLS), while the current holder
+named `stream_v2_passive` returns the same ten exact live records in
+`2.1-11.2 ms` after handshake. The labels are deployment names, not authority
+claims; the two-URL fallback behaves correctly and is not the two-second tail.
+
+**Root cause and decision boundary.** `MarketDataService.reference_data_batch`
+uses `BoundedWarmupExecutor` for all reference products. The new local
+`INTERNAL_STREAM` lane has no explicit policy, so it inherits the external
+provider default: max concurrency `4`, token bucket `5 requests/s`, burst `5`,
+and retry policy `4`. A ten-item execution batch therefore queues behind a
+provider rate budget even though all reads are bounded, authenticated local
+gateway calls. That artificial queue consumes the full freshness margin and
+makes otherwise-current data stale at consumer receipt. This is an in-scope
+blocking defect, not an SLA relaxation or provider-quality failure.
+
+The only valid next source slice is a named bounded `INTERNAL_STREAM` policy:
+retain finite local concurrency, disable external-provider rate pacing, and
+perform one attempt because the reader already tries its declared current
+lease-holder URLs and a missing/stale/gapped/fenced view must remain typed
+fail-closed. Required regressions: ten-item execution batch has no artificial
+rate queue; local transport failure/stale/gap remain terminal typed outcomes;
+external Binance/OKX/DNSE budgets remain unchanged; and both query replicas
+preserve active/passive lease fallback. It requires a new immutable **query
+reader only** image and rolling recreate of only `query_v2_1` and `query_v2_2`,
+with the currently active `25dce61` candidate retained as exact rollback. Then
+and only then rerun one strict 300-second C2 test with `require_all=True`.
+No further runtime action or release is permitted from this precheck.
