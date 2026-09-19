@@ -42807,3 +42807,141 @@ frames each in 45 s, and every long interval's `t`/`T` matching
 
 Nothing about this moves the rollout gate, which remains the date
 **2026-09-19T20:00Z** and an owner-scheduled step after it.
+
+<a id="dl-v2-r131-serve-readiness-20260919"></a>
+### R1.31 serve readiness — what a consumer waits for, and two things that do not serve (2026-09-19T07:00Z)
+
+Owner's question, answered from where the consumer stands: on `executor_network`,
+with the consumer's own certificate and credential, one hop outside the data
+layer's containers.
+
+#### Request to response, the pull path
+
+| product | call | min | p50 | p95 | max |
+|---|---|---|---|---|---|
+| `resolve_instrument` | | 3.2 | 4.1 | 8.7 | 8.7 ms |
+| `MARK_INDEX_PRICE` | snapshot | 4.0 | 5.3 | 6.3 | 10.9 ms |
+| `TRADE` | snapshot | 4.9 | 5.7 | 8.6 | 101.1 ms |
+| `QUOTE` | snapshot | 5.1 | 6.1 | 10.5 | 12.8 ms |
+| `BOOK_DELTA` | snapshot | 27.8 | 35.0 | 45.4 | 86.4 ms |
+| `BOOK_SNAPSHOT` | snapshot | 37.4 | 49.6 | 151.0 | 219.6 ms |
+| `BAR/1m` | warmup, 1,000 rows | 821.6 | 961.4 | 1,459.8 | 1,459.8 ms |
+
+#### Venue event to consumer, the push path
+
+This is the one that decides when an order can be pushed. The clock is the
+probe's, the event time is the venue's, so it contains every hop - wire,
+ingestor, Kafka, core, projector, stream - and none of the consumer's own work.
+
+| feed | n | min | p50 | p95 | max |
+|---|---|---|---|---|---|
+| `QUOTE` | 238 | 178.2 | **500.6** | 802.5 | 907.0 ms |
+| `TRADE` | 70 | 303.4 | **501.5** | 903.1 | 1,002.8 ms |
+| `BOOK_DELTA` | 200 | 306.2 | **604.6** | 938.6 | 1,166.0 ms |
+| `MARK_INDEX_PRICE` | 19 | 369.7 | **642.2** | 1,210.6 | 1,210.6 ms |
+| `BOOK_SNAPSHOT` | 20 | 325.4 | **675.8** | 1,240.0 | 1,240.0 ms |
+
+This host's clock runs about **185 ms behind OKX's** (measured on `mark-price`,
+whose `ts` came back consistently negative), so the OKX half of these rows is
+inflated by roughly that much and the Binance half is not. The figures are left
+uncorrected because correcting one venue and not the other would be worse.
+
+**So: a risk engine or order kernel driven by the stream is holding a venue
+event about half a second after the venue stamped it, with a tail under 1.25 s.
+One that polls instead gets an answer in 4-50 ms.** Startup warmup of 1,000 1m
+bars costs about one second, once.
+
+#### History is correct for past days, and fast
+
+`scripts/verify_history_through_data_layer.py`, 120 rows per interval, every
+value compared against Binance's own REST row for the same open time:
+
+**14 of 14 intervals correct** - alignment, span, ordering, no gap, OHLC shape,
+lifecycle, origin, and open/high/low/close/volume equal to the venue - in
+**55-768 ms**, reaching back **0.1 d (1m) to 845.3 d (1w)** with `coverage: FULL`
+throughout.
+
+Two bugs in the probe were found and fixed before this ran, and both would have
+been published as data-layer faults: it compared every interval against a
+`BTCUSDT` default while the manifest names an instrument per requirement (so it
+diffed DOGE against BTC), and it checked alignment with `open % interval`, which
+is wrong for a weekly bar because the epoch is a Thursday and a week anchors to
+Monday. 130 false faults on 3d and 1w, none elsewhere.
+
+#### Two things that do not serve
+
+**1. Seven of the alpha's fourteen BAR intervals cannot warm up at all.**
+Reproducing the alpha's own ask - `warmup_limit: 10000`,
+`require_full_coverage: true`, its own certificate:
+
+| interval | at 10,000 rows |
+|---|---|
+| 1m, 3m, 5m, 1h, 2h | **OK**, 6,987-7,434 ms, back 6.9 d to 833.4 d |
+| 15m, 30m | `required feed has an unresolved sequence gap` |
+| 4h, 6h, 8h, 12h, 1d, 3d, 1w | `BAR result row count differs from the warmup horizon` |
+
+The second group is arithmetic, not a defect. `_BOOTSTRAP_HISTORY_LOOKBACK_DAYS`
+is **1,095** - three years - and three years does not contain 10,000 bars at 4h
+or longer:
+
+| iv | rows in 3 years | asked |
+|---|---|---|
+| 2h | 13,140 | 10,000 ✔ |
+| 4h | 6,570 | 10,000 ✘ |
+| 1d | 1,095 | 10,000 ✘ |
+| 1w | 156 | 10,000 ✘ |
+
+10,000 weekly bars is 192 years. Binance does not have it either. **The alpha's
+manifest is asking for something that cannot exist**, and the fix is in that
+manifest, not in the data layer.
+
+**2. 15m and 30m have a real history gap, and it is the data layer's.**
+Capacity is not the reason - three years holds 105,120 bars at 15m. Bisected by
+row count:
+
+| interval | OK to | fails at | so the gap is |
+|---|---|---|---|
+| 15m | 400 rows = 4.2 d | 900 rows = 9.4 d | 4.2 - 9.4 days back |
+| 30m | 400 rows = 8.3 d | 900 rows = 18.8 d | 8.3 - 18.8 days back |
+
+The windows overlap at roughly **8-9 days ago**, around 2026-09-10/11. With
+`gap_policy: BLOCK` the alpha cannot warm up past about four days on 15m or
+eight days on 30m. This is unfixed and it is a serve gap, not a manifest
+mismatch.
+
+#### Resilience, stated plainly
+
+| role | replicas | what a single loss costs |
+|---|---|---|
+| `rust_core` | 3 | partition share redistributes |
+| `projector_v2` | 3 | partitions rebalance; **proven today** - one carried all six and drained a 60k backlog |
+| `query_v2` | 2 | halved capacity; one replica pins at its 1.0 ceiling under an alpha warmup burst |
+| `stream_v2` | 2, active/passive lease | the lease has moved once (2026-09-18 16:07) and projectors failed over correctly |
+| `kafka` | 3 | quorum holds |
+| `binance_bar_edge` | **1** | REST-polled intervals and all history bootstrap stop |
+| `ingestor_binance_usdm` | **1** | all Binance realtime stops |
+| `ingestor_okx_swap` | **1** | all OKX realtime stops |
+| `stable_redis` | **1**, ephemeral | projection cache identity lost, projectors refuse to bind; documented, with a boot-recovery unit |
+
+**Four single points of failure**, and three of them (bar edge, two ingestors)
+have no standby at all. That is the honest answer to "is it resilient": the
+consuming tiers are redundant and have been exercised; the producing tiers are
+not redundant and have not.
+
+What was exercised today, unplanned: two of three projectors hung and the third
+carried the whole topic without data loss - 188/188 partitions were back inside
+their declared bounds before anyone intervened. That is a real resilience
+result, and it is also the only one this stack has.
+
+#### Stability
+
+17/17 roles Up. Restarts since their current start: `kafka1` 5 and `kafka2` 1,
+both from the 2026-09-16 reboot recovery and stable since 09-17; `query_v2_1` 1,
+caused by this session's own probe running a full-table `GROUP BY` inside a role
+with a 512 MiB limit. Every other role 0.
+
+Consumer errors per minute, pre-session window against the last five minutes:
+`DataLayerError` **-96%**, `SilentSliceError` -47%,
+`StaleExecutionReferenceError` -32%. The remaining `StaleExecutionReference`
+lines are the OKX REST index lag documented above and are not affected by
+anything in this session.
