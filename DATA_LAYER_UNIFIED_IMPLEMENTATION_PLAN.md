@@ -42324,3 +42324,46 @@ release day is how the two incidents in this journal happened. It is the first
 item of the next block, with the numbers above as its acceptance criteria:
 index component inside 2,000 ms at p99, measured from the consumer's own
 `ages_ms`, with no increase in OKX request rate.
+
+<a id="dl-v2-r131-spool-lag-open-20260919"></a>
+#### R1.31 — the spool lag is real, its mechanism is not established (2026-09-19T05:54Z)
+
+The withdrawal above was itself wrong and is reversed. Read from the **writer's**
+container and the **reader's** container within the same second:
+
+```
+projector_v2: newest event 2,322 ms old
+query_v2_1:   newest event 2,232 ms old
+```
+
+Both agree, so this is not read visibility. `accepted_at_ns` is the Kafka
+broker's own stamp (`stable_projector.py:367`), so the durable spool trails the
+broker's newest message by about **2.3 s**.
+
+That does not reconcile with the other instruments, and the disagreement is the
+finding rather than any explanation of it:
+
+| instrument | value |
+|---|---|
+| projector `canonical_age_ms` (age when read) | mean 261.6, max 774 ms |
+| projector `durable_append_ms` | mean 66, max 191 ms |
+| Kafka group lag | 366 records across 6 partitions |
+| spool trail behind broker stamp | 2,232-2,322 ms |
+
+261 + 66 does not make 2,300. One of those four is measuring something other
+than what its name says, and which one is the next measurement. It is **not**
+the 409 failover: every batch does pay a wasted round trip to
+`stream_v2_active`, 571 of them in three minutes, but a 409 is answered by a 200
+from the passive gateway **30 ms** later at p50, 147 ms at worst. Worth removing
+as waste; far too small to be this.
+
+**This blocks the item 4 fix, and that is the point of recording it.** "Serve
+INDEX from the canonical binding" assumes the query role can *read* a canonical
+value fresher than the 764-1,414 ms REST row. The canonical event is fresh when
+it is produced - `received_at_ns - source_event_time_ns` is 47 ms at p50 - but if
+what reaches the query role through the spool is 2.3 s behind, the fix buys
+nothing. Establishing which is the first step of that work, before any code.
+
+Three reversals in one afternoon on this one number is the lesson worth keeping:
+every age quoted here is now stated with the clock it was taken against and the
+container it was taken in, because the first two readings were not.
