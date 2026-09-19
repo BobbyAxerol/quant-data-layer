@@ -45075,9 +45075,26 @@ or touch an order path. After each named role, require its exact candidate
 digest, health, `restart=0`, no OOM, bounded catch-up and continued healthy
 peer service. Any failure stops immediately and uses the same helper in
 `rollback` mode for only the changed named role. A successful packet must log
-one finite watermark-prewarm summary, preserve the durable count of `70`
-final-BAR partitions, and then run the fresh two-reader, public-SDK,
+one finite watermark-prewarm summary, preserve/complete durable watermark
+coverage for every declared final-BAR partition, and then run the fresh two-reader, public-SDK,
 no-order strict C2 for `300` seconds before B can close.
+
+**B2.1 first-role result (2026-09-19; rollout continues).** `projector_v2`
+alone was recreated at `2026-09-19T22:22:56Z`; it reached `healthy`,
+`restart=0`, `OOM=false` on the exact candidate digest. Before broker
+readiness it logged `partitions=144 seeded=70 empty=4`. Read-only durable
+inspection reconciled the result: the sealed catalog declares `144` final-BAR
+partitions, of which the cache already held `70`, the prewarm atomically added
+the remaining `70` crypto rows, and `4` declared VN partitions genuinely have
+no retained history while the market is closed. The shared watermark table now
+contains exactly `140` durable rows; no empty row or synthetic BAR was
+invented. The initial one-time preparation finished before polling; subsequent
+projector spans dropped from the prior cold path to canonical lookup max
+`10.7 ms` and canonical age max `534.6 ms` in the observed post-start sample.
+Existing stream `409`/peer `200` responses are the established active/passive
+idempotent fan-out behavior, not a delivery error. The remaining two roles may
+only reuse these durable rows and must prove the same health/no-restart/OOM
+gate before C2.
 
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
