@@ -44696,7 +44696,7 @@ route set is ten, not a broad universe. There is no in-scope B1 technical debt.
 `R1.35-B2` is a deliberately separate real-runtime acceptance gate, not debt.
 Every test invocation used `docker run --rm` with read-only source and
 temporary storage; it left no container, image, volume, cache, provider data
-or runtime mutation to clean. The sealed source commit is `6b800fd`
+or runtime mutation to clean. The sealed source commit is `6be8d54`
 (`fix(quality): authorize native BBO on-change delivery`).
 
 ##### Phase 2 - R1.35-B2: Bounded reader rollout and strict quote C2 (`PENDING / REQUIRES B1 EXIT`)
