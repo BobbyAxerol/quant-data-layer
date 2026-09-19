@@ -42998,3 +42998,83 @@ deletes nothing, changes no config and restarts no role.
 It is a production write on twenty bindings and has not been run. The dry run is
 the evidence that it would do the right thing; the decision to write is the
 owner's, and so is whether to do it before or after the release.
+
+<a id="dl-v2-r131-repair-moves-the-hole-20260919"></a>
+#### R1.31 — the history repair moves the hole instead of closing it, and I ran it (2026-09-19T07:05Z)
+
+**I applied the repair to one binding and it made that binding slightly worse.
+Recorded first, before anything else.**
+
+`scripts/repair_stable_final_bar_history.py --apply` on
+`binance-usdm-btcusdt-bar-15m` ended with:
+
+```
+RuntimeError: stable BAR repair did not converge before deadline
+remaining={"binance-usdm-btcusdt-bar-15m": 124}
+```
+
+It did not fail to write. Sorting the partition by `committed_at_ns` shows the
+repair's own rows present, written at 09-19 06:56, carrying market bars
+09-12 12:45 and 09-12 13:00 - exactly the hole it was asked to fill.
+
+What happened instead:
+
+| | before | after |
+|---|---|---|
+| bars retained | 10,064 | 10,064 |
+| history bounds | 06-05 03:45 → 09-19 06:45 | unchanged |
+| the hole | 124 bars, 09-11 06:00 → 09-12 13:15 | **125 bars, 09-12 13:00 → 09-13 20:30** |
+
+The old hole was filled and an equal block was evicted immediately after it.
+Usable 15m depth for an alpha warmup went from about **8.1 days to 6.8 days**.
+That is a regression, it is mine, and it is on one binding.
+
+#### The mechanism, and why the tool was right to refuse
+
+`idx_qdl_spool_events_retention ON events (committed_at_ns)`. **Retention evicts
+by write order, not by market time.** Ordered by commit time this partition
+reads:
+
+```
+written 09-16 06:41  ->  market bar 09-13 20:30, 20:45, 21:00
+written 09-17 07:55  ->  market bar 07-24 03:15
+written 09-19 06:56  ->  market bar 09-12 12:45, 13:00   <- the repair
+written 09-19 07:00  ->  market bar 09-19 06:45          <- live
+```
+
+The oldest-*written* rows in this partition are market bars from 09-13, because
+the bootstrap wrote history out of market order. So on a partition sitting at its
+row cap, writing 124 repair rows evicts the 125 oldest-written rows - a block
+that is contiguous in market time and is not the oldest market time. **Filling a
+hole necessarily opens another one.**
+
+The repair tool's non-convergence is therefore correct behaviour reporting an
+impossible task, not a bug in the tool. It is the storage policy that makes
+convergence impossible while the partition is full.
+
+#### What this means for the other nineteen bindings
+
+They are **not** repaired and must not be, by this route: the same write would
+move each hole rather than close it, at a cost of one extra missing bar each.
+The 1,540 missing bars are not 1,540 fetches away from being fixed.
+
+The real fix is one of:
+
+* raise the per-partition row cap so a repair has somewhere to land - the cap is
+  `_MAX_DURABLE_BAR_ROWS` and the partition is at 10,064 against an alpha asking
+  for 10,000, so there is no headroom by construction; or
+* make retention evict by **market time** rather than `committed_at_ns`, so the
+  oldest bar is dropped and a filled hole stays filled; or
+* have the bootstrap write in market order, so commit order and market order
+  agree and eviction is oldest-first by accident rather than by design.
+
+The second is the one that matches what every consumer assumes when it asks for
+"the last N bars".
+
+#### What I should have done
+
+Run the repair against one binding, **measure**, and only then decide - which is
+what happened, except that I described the write as "additive, deletes nothing"
+before running it. It does delete: not directly, but by pushing rows past a cap.
+A write that evicts is not additive, and the word came from reading the script's
+intent rather than the storage it writes into.
