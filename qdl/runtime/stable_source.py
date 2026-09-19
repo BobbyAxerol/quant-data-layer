@@ -271,7 +271,19 @@ class StableSpoolQueryBackend:
                     == end_ns
                 )
             )
-        full = len(items) == requested and not gap_open and exact_boundary
+        # R1.31. `warmup_limit` is a cap on how far back a caller may look, not a
+        # promise that the venue has that much history behind it. The alpha asks
+        # for 10,000 rows at every interval, which at 1w is 192 years and at 4h is
+        # 4.6 - neither exists, at Binance or here. Requiring the exact count made
+        # seven of fourteen intervals answer with a refusal instead of the bars
+        # they do have.
+        #
+        # `not gap_open` already proves the returned window is contiguous, and
+        # `exact_boundary` still holds a time-range request to its endpoints. A
+        # rows request that comes back short is short because history starts
+        # there, and that window is complete - it is simply bounded by the
+        # venue's own history rather than by the cap.
+        full = not gap_open and exact_boundary
         return HistoryResult(
             items=items,
             coverage=CoverageStatus.FULL if full else CoverageStatus.PARTIAL,

@@ -1007,11 +1007,16 @@ class V2QueryService:
             )
         specification = requirement.warmup_specification
         if specification is not None and specification.rows is not None:
-            if len(items) != specification.rows:
+            # R1.31. `rows` is a maximum lookback, not an exact contract: a caller
+            # may always ask for more history than the venue has. Returning more
+            # than was asked for is still a defect; returning fewer is the venue's
+            # history ending, and the contiguity checks above already separate
+            # that from a hole.
+            if len(items) > specification.rows:
                 raise QueryServiceError(
                     QueryProblem(
                         CanonicalErrorCode.PARTIAL_RESULT,
-                        "BAR result row count differs from the warmup horizon",
+                        "BAR result returned more rows than the warmup horizon allows",
                         True,
                     ),
                     request_id=request_id,
