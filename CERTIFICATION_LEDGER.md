@@ -1736,3 +1736,142 @@ gated on Phase 2 holding twenty-four hours and waits. Phase 4's push and release
 were refused by this environment's publication control and need the owner.
 R1.30 is opened for the MARK_INDEX regeneration trap, which R1.28 survived only
 because someone diffed by hand.
+
+---
+
+## 44. R1.31: a lossy-bundle refusal, a hung projector, and R1.30's gate answered (2026-09-19)
+
+**Pinned at.** `dev` at `766d5ae`; `qdl-v2-rust:2.0.19-003b5f9`
+(`sha256:b7b9d153f0ed…`), `qdl-v2-python:2.0.20-e7fd0c9`
+(`sha256:a8419c182180…`). Catalog revision **8**, acquisition revision **17**,
+routing revision **18** - none moved.
+
+**Roles and digests as certified:**
+
+| role | image |
+|---|---|
+| `rust_core` ×3, `ingestor_okx_swap` | `qdl-v2-rust:2.0.19-003b5f9` |
+| `ingestor_binance_usdm` | `qdl-v2-rust:2.0.18-3ecf0ac` |
+| `projector_v2` ×3, `query_v2` ×2, `binance_bar_edge` | `qdl-v2-python:2.0.20-e7fd0c9` |
+| `stream_v2_active`, `stream_v2_passive` | `qdl-v2-python:2.0.19-40629b7` |
+
+`ingestor_binance_usdm` and the two stream roles are at functional parity with
+the release commit: the streams have **zero** files changed in `qdl/stream/`
+since their image, and the ingestor's one file is `qdl-realtime-core.rs`, which
+is not the binary it runs (`docker inspect` shows
+`/usr/local/bin/qdl-native-raw-ingestor`).
+
+**No Rust image was built.** `git diff 003b5f9..HEAD -- rust/ Cargo.* generated/rust`
+is empty, so the deployed 2.0.19 image already is HEAD's Rust; `ingestor_okx_swap`
+was moved onto it rather than onto anything new.
+
+### Certified
+
+**A lossy regeneration is now refused, not caught by eye.**
+`scripts/assert_runtime_bundle_is_not_lossy.py`, 15 tests. Against the live
+bundle it reads **629 bindings in five files** and refuses all forty MARK_INDEX
+identities. A first cut keyed only on `source_id` read 576 in three and missed
+both ingestors entirely - which is the count-neutral half of the R1.30 trap. It
+earned itself the same hour: the unapplied `ingestor-okx-swap.json` in the r128
+packet holds **24** identities against the running **94**.
+
+**The VN plane is pinned to V1 by test, not by memory.** All four
+`vn_primary_v2` requirements already routed `V1_PRIMARY`/`NONE`; three further
+fences hold - `BAR_EDGE_RUNTIMES`, the `stable-vn` Compose profile, and no DNSE
+binding on any ingestor. 10 tests. Owner decision, 2026-09-19.
+
+**A projector that cannot close its broker no longer stops projecting.**
+`projector_v2` and `projector_v2_3` were `Up`, silent and idle from 05:07 and
+05:09, both stopping immediately after `attempt=5` with `retry_max_seconds` at
+5.0. The only await in the recovery path was an unbounded
+`asyncio.to_thread(broker.close)`. Kafka had rebalanced all six
+`md.canonical.v2` partitions onto the one survivor, lag to **47,258**. Bounded
+at 10 s, 6 tests driving the real supervisor with a blocking broker. After the
+roll: three consumers, two partitions each, lag **318**.
+
+**Seven of thirteen Binance intervals admitted on the routed lane**: 3m, 5m,
+15m, 30m, 1h, 2h, 6h, each PASS on 5 of 5 symbols, final bar **0.079-0.527 s**
+after close against 7,820-22,473 ms on REST. The lane is proven for all
+thirteen - subscription accepted, 63-64 provisional frames each in 45 s, and
+every long interval's `t`/`T` matching `canonical_interval_ms` with `1w`
+anchored to Monday. Six captures run unattended to their own boundaries at
+0.03 vcore.
+
+The script could not have been run per interval before this: its budget was
+`60 * (BAR_COUNT + 1)`, one minute per bar, so every interval other than 1m gave
+up before its first boundary and printed nothing. 1m is unchanged at 160 s, so
+entry 40's evidence still stands.
+
+**R1.30's gate is answered, and the answer is no.** R1.24 left one unknown and
+R1.30 restated it: can the reference path serve `MARK_INDEX_PRICE`? It serves
+it and cannot meet the bound the manifest grants. Measured through
+`OkxRestClient` itself, on a 90-100 ms round trip:
+
+| | |
+|---|---|
+| manifest | `max_freshness_ms: 2000`, `EXECUTION`, ten requirements |
+| OKX REST `index-tickers` `ts` | **764 - 1,414 ms** stale at the venue |
+| consumer observes | 2,088 - 2,501 ms, p50 2,212 |
+| canonical binding | **286 - 418 ms** end to end |
+
+Both terms the consumer divides are stamped at fetch, so no cache, lane or
+bucket on this side closes it.
+
+### Health at certification
+
+17/17 roles Up, **4.86 vcore** of the 5.0 budget, `quarantines` 0,
+`scope_quarantines` 0, `raw_age_ms` mean 138. **188/188 partitions inside their
+own declared `stale_after_ms`** - read from a `--rm` side container with the
+state volume mounted read-only, which is the only way this should have been read
+all session. Consumer errors per minute against the pre-session window:
+`DataLayerError` **-96%**, `SilentSliceError` -47%,
+`StaleExecutionReferenceError` -32%.
+
+**Gate.** Python suite **1,628 tests, 7 skipped, 0 real failures** in
+`qdl-v2-python:2.0.20-e7fd0c9`. The four reported errors were all
+`RotatingFileHandler` opening `/app/logs/app.log` under a mount the container's
+uid could not write; the same four modules run 14 tests and pass with it
+writable. No Rust source changed after `003b5f9`.
+
+**Cleanup.** Build cache 15.57 → 6.46 GB, disk 113 → 107 G. Deleted by digest:
+`qdl-v2-rust:2.0.17-ee7f1b3`, `qdl-v2-python:2.0.20-6bd9e74` (a duplicate
+`2.0.20` tag), two anonymous 0 B volumes. Kept deliberately: one rollback digest
+per role, `rust:<none>` (the builder base pinned by
+`Dockerfile.qdl-rust-runtime`), the reuse image set, and the volumes
+`stable_authority_db`, `qdl-cargo-home`, `qdl_c40_authority_admin_packets`. No
+probe container survives; `docker ps -a` shows none unnamed.
+
+### Five corrections of this executor's own reports
+
+1. **A probe restarted a production role.** Every endpoint reading ran
+   `docker exec` inside `query_v2_1` with `cache_size=-64000` and a full-table
+   `GROUP BY`. That role has a 512 MiB limit and serves at 120 MiB; at 06:03 it
+   exited 0 and Docker restarted it.
+2. **"The spool is 2.3 s behind"** - four times, reversed four times. The probe
+   read the clock *after* its own 1.2 s query. Corrected: 286-418 ms, which is
+   `canonical_age` 261 plus `durable_append` 66.
+3. **"33 of 188 partitions are stale"** was a draining backlog, not a state.
+4. **"The 750 ms TTL moved the tail by 580 ms"** - it cannot have.
+   `received_at_ns` and `observed_at_ns` are both stamped at fetch and travel on
+   the cached result, so a cache hit reports the same number. The drop was venue
+   variance. The TTL is kept for a different reason: the cache age is an
+   *unreported* addition to the age of an execution-grade input.
+5. **"Four packets are unmounted evidence"** - four of the eleven are live bind
+   mounts carrying the running configuration; the check used
+   `--filter volume=`, which does not match bind mounts.
+
+### Not done, and why
+
+**Item 4 is not implemented.** Its fix is to declare the ten `MARK_INDEX_PRICE`
+bindings in the source catalog so the spool can serve them - which **reverses
+the direction R1.24 chose**, on an execution-grade risk input. The latency
+consequence of R1.24 is measured here; R1.24's own reasoning is not re-examined.
+That is an owner decision, not a release-day edit, and committing a revision-9
+catalog the runtime is not on would manufacture exactly the drift entries 39-43
+spend their pages chasing.
+
+**Six intervals are in flight, not certified.** Their boundaries fall at 08:00Z,
+12:00Z, 00:00Z and 2026-09-21.
+
+**Nothing was pushed, merged, tagged or released.** The owner reserved that
+("nếu ổn thì tôi sẽ duyệt") and has not given it. Twenty commits wait on `dev`.
