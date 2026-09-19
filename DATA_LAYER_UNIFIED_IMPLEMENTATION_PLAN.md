@@ -44490,7 +44490,7 @@ The historical `19`-override Compose chain remains an auditability debt. These
 are pre-existing operational items outside this MARK/INDEX correction; no
 quality rule was weakened and no unrelated source/runtime change was made.
 
-### R1.35 - Universal quality convergence, endpoint certification and release closure (`PLANNED / NO RUNTIME CHANGE YET`, 2026-09-19)
+### R1.35 - Universal quality convergence, endpoint certification and release closure (`IN_PROGRESS / B2.1 CANDIDATE ROLLED BACK`, 2026-09-19)
 
 **Why this exists.** R1.34 correctly certified the narrow execution
 `MARK_INDEX_PRICE` live-view route, but it is not a certificate for every V2
@@ -44500,10 +44500,11 @@ product or consumer route. A read-only spool scan subsequently classified
 DNSE/VN bindings remain `V1_PRIMARY`, and six Spot bindings have neither an
 active ingestor nor consumer entitlement. The other twenty-one cannot be
 accepted or dismissed from raw spool age alone: `MARK_INDEX_PRICE`, `TRADE`
-and `BOOK_DELTA` may use the explicit quiet/session contract, while `QUOTE`
-is always an event-fresh strict execution price. Four strict quote rows were
-near or beyond their source threshold in that sample: Binance USD-M BNB and
-OKX Swap ETH/BNB/DOGE.
+and `BOOK_DELTA` may use the explicit quiet/session contract. `QUOTE` is
+`STRICT_EVENT` by default; whether native update-on-change BBO may use a
+separately signed session-aware contract is the exact R1.35-B1 question, not
+an assumed exception. Four quote rows were near or beyond their raw-event
+threshold in that sample: Binance USD-M BNB and OKX Swap ETH/BNB/DOGE.
 
 This closure implements and proves one coherent answer. It does not weaken an
 SLA, backdate provider timestamps, turn an absent event into zero, silently
@@ -44518,9 +44519,16 @@ freshness, replay and release evidence.
 1. The typed quality answer must be semantically identical at Rust core,
    Python V2 query/SDK and audit/report boundaries. Cross-language parity is
    mandatory; a second raw-age heuristic is not an authority.
-2. `QUOTE`, price-bearing `BOOK_SNAPSHOT`, and final BAR reads remain strict:
-   event freshness, exact identity, complete data, no open gap and declared
-   finality must all hold. Quiet-session admission never applies to them.
+2. `QUOTE`, price-bearing `BOOK_SNAPSHOT`, and final BAR reads remain
+   execution-strict: exact identity, complete data, no open gap and declared
+   finality must all hold. A `QUOTE` may use session-aware admission only when
+   its *signed source binding* declares the native provider lane as
+   `ON_CHANGE` BBO and its exact consumer requirement elects `OBSERVE`; this
+   is a delivery contract, not an SLA relaxation. `STRICT_EVENT` remains the
+   default for every other quote source. An `ON_CHANGE` quote is blocked on a
+   disconnected/expired session, generation or config mismatch, open gap,
+   missing immutable last-event lineage, or any source/consumer-policy
+   disagreement. `BOOK_SNAPSHOT` and final BAR never use quiet admission.
 3. `TRADE`, `BOOK_DELTA` and execution `MARK_INDEX_PRICE` may be admitted only
    when their manifest explicitly selects `OBSERVE` and the typed answer proves
    a live provider session, exact session/generation/config revision, no
@@ -44537,6 +44545,235 @@ freshness, replay and release evidence.
    containers and the order path remain unchanged unless a later approved
    packet names an exact role, digest, runtime revision, rollback and blast
    radius.
+
+#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`PLANNED / PLAN ONLY`, 2026-09-19)
+
+This is the authoritative compact execution map for the remaining R1.35
+closure. It refines, rather than replaces, the detailed B/C/D sections below
+and follows the fund-grade guide sections 3.2-3.8, 4.1-4.3, 9.4-9.10,
+13.1-13.7, 16, 17, 18, 19, 24 and 25. No step silently promotes a route,
+changes a source timestamp, creates a per-symbol service/container, or treats
+a passing process health check as data acceptance.
+
+| Delivery phase | Status | Outcome required before the next phase |
+| --- | --- | --- |
+| **1. R1.35-B1 - Source delivery semantics and quality authority** | `PENDING / source-only` | One Rust/Python/query decision for `STRICT_EVENT` versus signed `ON_CHANGE` BBO delivery, with exact manifest authorization and no false live result. |
+| **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PENDING / requires B1 exit and a separate runtime packet` | A sealed reader bundle/image proves all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
+| **3. R1.35-C - Full endpoint, binding and consumer certification** | `PENDING / requires B2 exit` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
+| **R1.35-D - Hygiene, provenance and immutable release** | `PENDING / requires C exit and explicit cleanup/release approvals` | Source, runtime, artifact, rollback, Git lineage and published release are one auditable state; only disposable artifacts are removed. |
+
+##### Phase 1 - R1.35-B1: Source delivery semantics and quality authority (`PENDING / SOURCE ONLY`)
+
+**Goal.** Repair the real false-positive class without weakening genuine
+staleness: native Binance/OKX BBO lanes are update-on-change, so raw
+last-event age alone cannot diagnose a live unchanged best bid/offer. The
+canonical quality answer must distinguish this explicitly from an
+event-driven quote, a quiet/disconnected provider session, or a stale/gapped
+data plane.
+
+**Allowed implementation.** Add one provider-neutral, catalog-bound delivery
+semantic (`STRICT_EVENT` default; `ON_CHANGE` only for documented native BBO
+source lanes). Carry it through the canonical Rust quality contract, Python
+evaluator, stable catalog parser/compiler, Query/SDK status/snapshot
+projection and shared golden corpus. Only the exact Trading System execution
+quote routes may select `OBSERVE`, and only after the source binding states
+`ON_CHANGE`. The route remains eligible only when all of the following hold:
+
+1. immutable last-event/source/receipt lineage exists and remains exposed;
+2. provider session is `LIVE` and its independently persisted liveness age is
+   within the route's signed bound;
+3. source generation, configuration revision, instrument/feed identity and
+   authority match exactly;
+4. completeness is true and no sequence, resync or watermark fence is open;
+5. the consuming manifest's policy, freshness/session budget and route
+   entitlement match the signed source declaration.
+
+The change may touch the shared Rust/Python quality contract, catalog compiler
+and parser, exact consumer manifest/routing material, Query/SDK projection and
+their tests. It may not add a symbol timer, vendor REST execution fallback,
+new consumer identity/service/topology, rewritten timestamps, an external
+provider rate-limit change, or a broad consumer entitlement.
+
+**Required source tests.**
+
+- Rust/Python golden parity for strict fresh/stale, `ON_CHANGE` quiet-but-live,
+  heartbeat stopped, disconnect, generation/config change, source authority
+  mismatch, gap/resync, duplicate/out-of-order, missing lineage, incomplete
+  snapshot and cross-venue/symbol identity mix.
+- A strict event-driven `QUOTE` with an old event remains rejected even if a
+  different lane is live; an `ON_CHANGE` declaration on a non-BBO source is
+  rejected by catalog compilation; a consumer cannot self-elect `OBSERVE`
+  unless the exact signed binding permits it.
+- Query status and snapshot cannot disagree: both preserve raw event age and
+  return the same typed state/reason/eligibility. A second generic raw-age
+  predicate must not downgrade a source-authorized `ON_CHANGE` quote, nor
+  upgrade an unauthorized one.
+- Consumer-manifest/parser/routing tests for the ten declared Binance USD-M /
+  OKX Swap BTC/ETH/SOL/DOGE/BNB execution quote routes; all other routes retain
+  their current policy until independently declared.
+- Format, Clippy with warnings denied, Rust unit/golden, Python unit/contract/
+  SDK, catalog/manifest compile, generated-contract drift, `compileall` and
+  `git diff --check`.
+
+**Exit gate.** Both language implementations and public Query/SDK return an
+identical, fail-closed answer for every case above. No generic quote becomes
+quiet, no timestamp is overwritten, no event/gap/identity fence is weakened,
+and the exact manifest/catalog hashes are reproducible. Any source failure is
+fixed inside B1; it is not carried as technical debt or papered over by an SLA
+increase.
+
+**Rollback / boundary.** This is source-only. Its rollback is the preceding
+Git commit. No image build, bundle seal, role recreate, offset/cache mutation
+or consumer rollout is authorized by B1.
+
+##### Phase 2 - R1.35-B2: Bounded reader rollout and strict quote C2 (`PENDING / REQUIRES B1 EXIT`)
+
+**Goal.** Prove the B1 contract against real Binance USD-M and OKX Swap data,
+from an external authenticated consumer through both existing V2 query
+replicas. The test must show that the same `ON_CHANGE` source contract resolves
+the observed BBO false-positive without accepting a stale, disconnected or
+gapped route.
+
+**Runtime scope.** First seal the exact source commit, catalog/acquisition
+revision, consumer-manifest revision, identity/key revision and immutable
+reader image digest. The expected bounded packet is only
+`query_v2_1`, `query_v2_2`, `stream_v2_active` and `stream_v2_passive`, rolled
+one role at a time with their current mounts/TLS/config and one recorded
+rollback image/config pair. The final packet must name actual digests and
+runtime directory before execution. It does not recreate projectors, Rust
+cores, ingestors, V1, Kafka, Redis, SQLite, Trading System, alpha or an order
+path; it does not reset offsets, flush caches or delete state.
+
+**Acceptance and measurements.** Run exactly one public-SDK, no-order C2 for
+at least 300 seconds with `require_all=true`, using workload mTLS/JWT and the
+ten entitled execution BBO routes: Binance USD-M and OKX Swap
+BTC/ETH/SOL/DOGE/BNB. Include declared controls for TRADE, BOOK_DELTA,
+BOOK_SNAPSHOT and MARK_INDEX_PRICE so the quote fix cannot mask a regression.
+For every binding and both replicas, record bounded evidence only:
+
+1. typed state, reason, execution eligibility, raw event age, session
+   liveness, generation/config revision, gap/completeness and watermark;
+2. consumer request start -> SDK-usable response p50/p95/p99/max and sample
+   count, separately from venue event age and host durable timing;
+3. request/status/snapshot/stream latency, direct-provider and V1-fallback
+   counts, reconnect/cursor results and any typed error reason; and
+4. Kafka lag, queue depth, projector/query/stream CPU/RSS, restart/OOM,
+   connection/reconnect and dropped-message counters.
+
+**Negative proof.** Isolated deterministic/replay fixtures must prove
+quiet-but-connected, heartbeat expiry, disconnect, generation transition,
+duplicate, open gap/resync and wrong-identity outcomes. The shared serving
+stream is never intentionally severed to manufacture a fault. Any unexpected
+strict rejection, silent fallback, cross-mix, duplicate, gap, restart/OOM or
+resource breach fails B2 and triggers rollback only of the named reader roles.
+
+**Exit gate.** All ten BBO routes and declared controls pass on both replicas;
+no percentile hides a failure; raw event lineage remains unchanged; V1/direct
+provider fallback is zero unless an exact non-execution policy explicitly
+authorizes it; no order, alpha signal/sizing, Trading System or broker state
+mutation occurred. The evidence contains a reproducible consumer-call-to-usable
+latency matrix and exact runtime/image/bundle provenance.
+
+**Rollback / boundary.** Stop at the recorded active role/image/config pair if
+any acceptance invariant fails. Do not retry for luck or widen a freshness
+budget. Only B2 pass permits Phase 3.
+
+##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
+
+**Goal.** Turn a successful BBO correction into a release certificate for the
+whole currently active V2 consumer surface, rather than extrapolating from
+BTC/ETH or a single endpoint. The sealed inventory distinguishes active
+execution/alpha/monitoring demand from `V1_PRIMARY`, `CATALOG_DARK` and
+out-of-session inventory; exclusions are reported, never silently counted as
+coverage.
+
+**Coverage matrix.** On both query replicas and through the public SDK,
+exercise every sealed active entitlement for catalog/resolve/pagination;
+TRADE, QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT and BOOK_DELTA; final
+BAR/history/warmup and batch warmup; reference batch (funding, OI, long-short,
+taker flow, mark/index, metadata and native/continuous basis only where
+entitled); and authenticated stream/Replay/signed cursor/reconnect. Validate
+per-feed semantics, decimal/unit/timezone, instrument/venue identity,
+finality/revision, ordering, depth/sequence/checksum, no cross-symbol data and
+the declared `maxlen` limits (`700`, `2,500`, `5,000`, `10,000`) wherever the
+consumer contract supports them.
+
+**Latency and health evidence.** Generate one bounded per-binding report, not
+just a new-endpoint sample. For each endpoint/route/replica, report sample
+count, p50/p95/p99/max, typed outcome and resource context for: venue event ->
+host receipt; receipt -> Kafka; Kafka -> canonical; canonical -> durable spool
+and latest view; request start -> SDK usable; stream event -> consumer receipt;
+final close -> usable BAR; and cursor/reconnect completion. Event age,
+session-liveness age, durable-projection delay and consumer-call latency remain
+separate columns. The scanner must apply the shared typed semantics so
+TRADE/BOOK_DELTA/MARK_INDEX quiet-session rows are not false-positive stale;
+genuinely strict QUOTE, BOOK_SNAPSHOT and final BAR failures remain visible.
+
+**Required tests.** Run contract/golden/SDK/API/Proto/OpenAPI drift,
+provider-conformance, parser, compatibility, migration-idempotency,
+cross-language parity, bounded real-provider no-order acceptance, replay,
+cursor expiry, reconnect, slow consumer, duplicate/gap/resync, active/passive
+handoff, latest-view/durable parity and bounded capacity tests. No full
+universe websocket subscription is inferred from warmup/read coverage; every
+actual stream route must be named in the sealed manifest. `V2_PRIMARY`,
+allowed V1 fallback and `BLOCKED` behavior are tested independently.
+
+**Exit gate.** Every sealed active binding succeeds under its declared policy
+on both replicas; all exposed endpoint families have consumer-side evidence;
+the scanner classification is typed and reproducible; resource limits remain
+bounded; and there is zero unexplained loss, duplicate, gap, stale strict
+execution data, cross-identity mix, restart/OOM or unapproved fallback. If a
+new in-scope endpoint defect appears, fix and retest it in C before release.
+DNSE/VN `V1_PRIMARY` and explicit dark Spot rows remain stated release
+exclusions, not technical debt hidden in the certificate.
+
+##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
+
+**Goal.** Close the release without leaving test containers, images, cache,
+worktrees or ambiguous source/runtime provenance behind.
+
+**Cleanup and release sequence.**
+
+1. Preserve bounded acceptance evidence and seal the source/catalog/manifest/
+   API/Proto/image/runtime digests, rollback pair and exact tested route
+   inventory in this plan and the release certificate. Never retain provider
+   payloads, credentials, cursors or unbounded logs.
+2. Before cleanup, inventory canonical service containers/images, exact
+   rollback images, stopped test containers, BuildKit cache, disk and inode
+   usage. Confirm that the three known test containers (`lucid_sinoussi`,
+   `youthful_shamir`, `qdl-admit-1d`) are not canonical services and have no
+   referenced mounts/volumes. A separate bounded cleanup approval remains
+   required before stopping/removing them.
+3. Retain only active role images plus one explicitly named rollback image per
+   changed role. Remove only unreferenced R1.35 client/test images and matching
+   unreferenced build cache; no broad prune, volume/network removal, Kafka
+   offset reset, Redis flush, SQLite deletion or data retention change. Record
+   pre/post disk and inode metrics plus post-cleanup service health.
+4. Run `git diff --check`, verify the user's Git identity, inspect staged
+   scope, complete all tests/plan evidence, commit each coherent tested source
+   slice, push the feature branch and obtain green CI on a PR to `dev`.
+5. After approved `dev` merge, build and attest an immutable release candidate
+   from the exact `dev` SHA, perform only the formally approved role/digest
+   handoff and repeat affected C2/latency acceptance. A changed source or image
+   invalidates inherited runtime evidence.
+6. After the `dev` certificate and rollback drill pass, merge `dev -> main`,
+   tag the exact main commit with the next semantic version, build/attest the
+   tag image, publish release notes/certificate and synchronize canonical local
+   `dev`/`main` from remote. Remove this merged feature worktree and local
+   branch only after target-branch containment is verified.
+
+**Final release gate.** R1.35-A/B1/B2/C are `PASS`; cleanup has an exact
+retention and disk record; source, tag, image, runtime configuration and
+certificate identify the same release lineage; V1 rollback is available and
+proven; and the public endpoint/latency matrix agrees with the sealed consumer
+inventory. No in-scope quality, binding, runtime, cleanup or provenance gap is
+carried into release as technical debt.
+
+**Planning record (2026-09-19).** This delivery map is documentation-only: it
+adds no source/runtime/data change, no image, no container and no acceptance
+claim. `git diff --check` passed for the plan edit. The first permitted
+implementation action is Phase 1/B1 source work; Phase 2/B2 runtime and all
+cleanup/release actions remain separately gated as written above.
 
 #### R1.35-A - Quality semantics convergence and audit parity (`PASS / SOURCE-CONTRACT`, 2026-09-19)
 
@@ -44654,10 +44891,12 @@ event age for the ten Binance USD-M/OKX Swap BTC/ETH/SOL/DOGE/BNB bindings;
 the same audit also observed five paired MARK/INDEX component-cadence failures.
 This B slice first obtains typed, read-only evidence from both readers and the
 actual consumer path, then changes only the shared layer proven responsible.
-No SLA relaxation, per-symbol timer, REST execution substitute, consumer
-manifest change or direct provider fallback is allowed. Any runtime packet is
-deferred until source tests identify its exact role/image/config scope and a
-rollback pair.
+No SLA relaxation, per-symbol timer, REST execution substitute, direct
+provider fallback, or broad/unsourced consumer-manifest change is allowed. An
+exact signed-source and exact-entitlement policy update is permitted only if
+the B1 contract and golden gates below prove it is necessary. Any runtime
+packet is deferred until source tests identify its exact role/image/config
+scope and a rollback pair.
 
 **Current diagnostic slice (source-only).** Add one bounded public-SDK probe
 that records at most ten typed failures per binding/reader: observation time,
@@ -44744,9 +44983,10 @@ path changed. Source commit and the explicitly bounded projector rollout are
 the next B boundary; the real-provider matrix remains mandatory and cannot be
 inherited from this source-only evidence.
 
-**Goal.** Make every active execution `QUOTE` binding genuinely strict-ready
-for Binance USD-M and OKX Swap, including the initial BNB/OKX ETH/BNB/DOGE
-findings, without symbol-specific workarounds or a relaxed freshness policy.
+**Goal.** Make every active execution `QUOTE` binding execution-strict under
+its declared provider delivery semantics for Binance USD-M and OKX Swap,
+including the initial BNB/OKX ETH/BNB/DOGE findings, without symbol-specific
+workarounds, forged timestamps or a relaxed quality policy.
 
 **Diagnostic before change.** Run a read-only typed-status and timestamp matrix
 for BTC/ETH/SOL/DOGE/BNB across Binance USD-M and OKX Swap, through both query
@@ -44775,9 +45015,10 @@ fallback policy and V1 behavior remain unchanged.
 
 **Required tests and evidence.**
 
-- Unit/golden coverage of missing frame, quiet-but-connected quote rejection,
-  disconnect, stale provider session, reconnect, generation change, duplicate,
-  gap/resync, identity cross-mix and two-replica parity.
+- Unit/golden coverage of missing frame; strict-event quote rejection;
+  source-authorized `ON_CHANGE` BBO quiet-but-connected admission; disconnect,
+  stale provider session, reconnect, generation change, duplicate, gap/resync,
+  identity cross-mix and two-replica parity.
 - Real-provider matrix for all ten execution quotes across both replicas,
   sampled long enough to cover multiple source updates; every usable strict
   result must be complete, gap-free and inside its declared effective freshness
@@ -44790,12 +45031,13 @@ fallback policy and V1 behavior remain unchanged.
   isolated/replay fixtures; do not disrupt the shared production stream merely
   to manufacture a fault.
 
-**Exit gate.** Zero unexpected strict quote stale/reject results in the
-sealed real-provider matrix; typed query and auditor parity holds; no direct
-provider/V1 fallback is observed; no unexplained gap/duplicate/cross-identity
-state exists; resource bounds hold. A runtime packet may recreate only roles
-proved affected by the selected repair, one at a time, with exact image digest,
-runtime revision and previous digest/config rollback recorded before execution.
+**Exit gate.** Zero unexpected quote stale/reject results under each sealed
+delivery semantic in the real-provider matrix; typed query and auditor parity
+holds; no direct-provider/V1 fallback is observed; no unexplained
+gap/duplicate/cross-identity state exists; resource bounds hold. A runtime
+packet may recreate only roles proved affected by the selected repair, one at a
+time, with exact image digest, runtime revision and previous digest/config
+rollback recorded before execution.
 
 **Rollback and decision boundary.** Roll back only the named role(s) to the
 recorded active digest/runtime pair. Do not reset Kafka offsets, flush Redis,
@@ -45095,6 +45337,64 @@ Existing stream `409`/peer `200` responses are the established active/passive
 idempotent fan-out behavior, not a delivery error. The remaining two roles may
 only reuse these durable rows and must prove the same health/no-restart/OOM
 gate before C2.
+
+**B2.1 packet outcome and strict rollback (`FAIL-CLOSED / CORRECTION
+REQUIRED`, 2026-09-19).** All three named projectors reached the candidate
+digest with `healthy`, `restart=0` and no OOM. The two public-SDK, no-order
+strict-QUOTE probes then completed their full 300 seconds: each made `150`
+rounds over the ten declared execution quotes and returned `1,496` usable
+reads, but each rejected the same four observations of the OKX Swap BNB quote
+binding `f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3`. Query-1 request/status and
+snapshot p99 were `12.759 ms`/`12.566 ms`; query-2 were `44.832 ms`/`45.541
+ms`. There were no request errors, V1/direct-provider fallback, gap, identity
+cross-mix, restart or OOM. The immutable bounded evidence is under
+`/home/bobby/.local/state/qdl-v2/r135-b21-prewarm-20260919T221719Z/evidence/`.
+
+Read-only canonical timing establishes that this is not a B2.1 durable-cache
+regression: the two rejected provider events bracket an approximately
+`4,099.97 ms` upstream accepted-time gap, while their durable delivery commits
+took `481.6 ms` and `648.6 ms`; the same source lane then resumed normal
+sub-second quote delivery. Both typed responses remained `LIVE`, complete and
+gap-free at the session/generation/config fences. The selected provider BBO
+channels are update-on-change, so an unchanged best bid/offer can correctly
+have an old *last event* while its one shared WebSocket session remains live.
+Raw event age must remain immutable evidence; treating it as a connection
+failure is an incorrect generic quality contract.
+
+The B2.1 packet declared a strict-matrix rollback rule. Before any new source
+correction, the exact helper rolls only `projector_v2`, `projector_v2_3` and
+`projector_v2_2` back to `2.0.24-40a1155` with their unchanged mounts and
+`512/128` bounds. It does not reset offsets, flush Redis, delete SQLite, or
+touch V1, Query, stream, Rust, ingestors, Trading System, alpha or any order
+path. Disposable C2 client containers are removed after their already
+persisted bounded evidence is copied out.
+
+**Rollback execution confirmation.** The declared helper was run for exactly
+those three projectors; each returned to
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`
+(`2.0.24-40a1155`) with unchanged mounts, `healthy`, `restart=0` and no OOM.
+The two disposable C2 client containers were removed after bounded evidence
+persisted. This was a role-only rollback: no Kafka offset/topology, Redis,
+SQLite, V1, reader/stream, Rust, ingestor, Trading System, alpha, broker or
+order-path object changed.
+
+**In-scope source-contract correction after rollback.** The next repair is
+not an SLA relaxation or a per-symbol exception. The catalog must explicitly
+declare an `ON_CHANGE` delivery semantic only for documented native BBO quote
+lanes; all other QUOTE sources remain `STRICT_EVENT`. A consumer may select
+quiet observation only where its exact manifest route and the signed source
+binding both permit it. Such a quote remains execution-eligible only while
+the original event lineage is retained *and* its exact source session is
+`LIVE`, generation/config match, no sequence gap is open, and independently
+written transport liveness is inside that route's declared bound. A
+disconnected, heartbeat-expired, generation-changed, gap-open or generic quote
+remains fail-closed. Python and Rust must share this decision through golden
+tests; the query edge may not rewrite an event timestamp or infer the source
+property from a symbol name. The correction may update the catalog compiler,
+binding parser, shared evaluators, exact quote entitlements and their tests;
+it cannot add a service, provider REST fallback, relaxed external quota, new
+consumer identity or runtime topology. A fresh sealed bundle and a query/
+stream-only packet will be prepared only after source parity passes.
 
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
