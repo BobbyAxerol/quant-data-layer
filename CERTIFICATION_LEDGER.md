@@ -1875,3 +1875,134 @@ spend their pages chasing.
 
 **Nothing was pushed, merged, tagged or released.** The owner reserved that
 ("nếu ổn thì tôi sẽ duyệt") and has not given it. Twenty commits wait on `dev`.
+
+## 45. R1.31 release gate: the suite is green, one regression was mine, 6 vcore (2026-09-19)
+
+**Pinned at.** `dev` at the commit carrying this entry.
+`qdl-v2-python:2.0.20-95d9595`
+(`sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`),
+`qdl-v2-rust:2.0.19-003b5f9` (`sha256:b7b9d153f0ed…`),
+`qdl-v2-rust:2.0.18-3ecf0ac` (`sha256:eec638842184…`). Catalog revision **9**,
+source policy **1**, authority **1**.
+
+| role | image |
+|---|---|
+| `projector_v2` ×3, `query_v2` ×2, `stream_v2_active`, `stream_v2_passive`, `binance_bar_edge` | `qdl-v2-python:2.0.20-95d9595` |
+| `rust_core` ×3, `ingestor_okx_swap` | `qdl-v2-rust:2.0.19-003b5f9` |
+| `ingestor_binance_usdm` | `qdl-v2-rust:2.0.18-3ecf0ac` |
+
+**No image was built for this entry.** The two changes are test-only
+(`5f85410`) and a new read-only script (`b7d62e7`).
+
+### Certified
+
+**Suite green: 1675 tests, 0 failures, 7 skipped.** The three failures at the
+gate were caused by this session's own headroom change (64 → 2064) and were
+stale literals pinning `10_064`. The substantive one,
+`test_public_bar_warmup_scans_physical_tail_before_market_selection`, was
+reparametrised on the headroom rather than re-pinned, and then **mutation
+tested**: forcing the bar scan back to the public window fails it with
+`PARTIAL != FULL`, so it still discriminates instead of passing vacuously.
+
+**History is correct for past dates, checked against the venue, not against
+ourselves.** 14/14 Binance intervals, every one `FULL`, compared field by field
+with Binance REST at both ends of the window:
+
+| iv | 1m | 5m | 15m | 1h | 4h | 6h | 12h | 1d | 3d | 1w |
+|---|---|---|---|---|---|---|---|---|---|---|
+| time | 431ms | 444ms | 323ms | 395ms | 265ms | 269ms | 107ms | 98ms | 100ms | **58ms** |
+| back | 0.1d | 0.4d | 1.3d | 5.0d | 20.0d | 30.1d | 60.4d | 120.4d | 362.4d | **845.4d** |
+
+**Delivery to a consumer, measured from where the consumer stands.** Stream
+delivery is the venue's stamp to arrival; the subscribe gate is 40 attempts per
+feed with the trading system's own certificate, **200 subscribes, 0 refused**:
+
+| feed | p50 | p95 | max | budget | margin |
+|---|---|---|---|---|---|
+| TRADE | 627.7ms | 1029.8ms | 1242.1ms | 3000ms | 1758ms |
+| QUOTE | 643.2ms | 1171.2ms | 1188.8ms | 2000ms | 811ms |
+| MARK_INDEX_PRICE | 648.7ms | 1285.9ms | **1647.6ms** | 2000ms | **352ms** |
+| BOOK_SNAPSHOT | 625.7ms | 1497.7ms | 1652.7ms | 60000ms | wide |
+| BOOK_DELTA | 747.1ms | 1249.5ms | 1562.3ms | 2000ms | 438ms |
+
+`MARK_INDEX_PRICE` has the thinnest margin in the system at 352 ms and is the
+one feed that a pipeline hiccup can push past its `BLOCK` policy. That is a
+property of a 2,000 ms budget against a ~650 ms path, not a defect, and it is
+named here so the next reader does not rediscover it as an incident.
+
+**Endpoint inventory.** 216 catalog bindings: **206 live, 0 over their own
+budget, 10 with no event stored.** The ten are the four DNSE bindings - owner
+decision, served by V1, and live V2 refuses them with `required data is not
+available` - and six spot bindings that **no ingestor produces and no consumer
+manifest requests**. The 53 ingestor subscriptions are 24 `binance-usdm` and 29
+`okx`, none spot, so the six are dead catalog weight rather than a gap.
+
+**CPU budget 5 → 6 vcore, spent by measurement.** The stack was at 4.70 of 5.0
+(94%). The seventeen per-container limits already sum to 17.0 vcore on a
+16-vcore host, so the raise went to the four cgroups actually losing time:
+`kafka2` 14.4% of periods throttled (9,612 s) and `kafka3` 5.2% (2,480 s) to
+1.75; `rust_core_2` 8.9% and `stable_redis` 1.8% to 0.75. `kafka1` at 1.4% and
+the projectors and gateways at ≈0% were left alone. Applied with
+`docker update --cpus`, **no container recreated** - which is what keeps
+`stable_redis` away from `ProjectionCacheMismatch`. Now **5.66 of 6.0**; the
+headroom was absorbed at once, which is the evidence the brokers were starved.
+Memory was checked separately because a `cpus` limit throttles and cannot OOM:
+worst headroom is `kafka2` at **50.2% of 2 GiB**, so there is no OOM exposure.
+
+### Health at certification
+
+17/17 roles `Up`, 14 reporting `healthy`; the three `rust_core` replicas carry
+no healthcheck, which needs a Rust change and is recorded with B3.
+
+### Cleanup
+
+Four superseded python builds deleted **by digest**: `2.0.20-4baada5`,
+`2.0.20-d661428`, `2.0.20-7f8dac2`, `2.0.18-5ea5915`. Images 33 → 29,
+14.82 → 14.04 GB - layer sharing, not the nominal 3.5 GB. Unused build cache
+994.8 MB → **0**, 6.60 → 5.61 GB. **No volume removed**: all three dangling ones
+are the three kept deliberately (`qdl-cargo-home`,
+`qdl_c40_authority_admin_packets`, `stable_authority_db`). **No container
+removed**: the only two stopped are the stack's own one-shot inits, and every
+probe this session ran `--rm`. Kept as the one rollback per role -
+`2.0.20-e7fd0c9` (projector/query/bar-edge), `2.0.19-40629b7` (stream),
+`2.0.17-1acf87a` (OKX ingestor, and referenced by three files in the active
+chain). `tradingsystem-image:v1.2.4-8ef859a` was left alone as another repo's
+rollback target.
+
+### Four corrections of this executor's own reports
+
+1. **A regression I caused, in the B1 roll.** At 08:21:55Z `ingestor_okx_swap`
+   was recreated with a chain carrying `r125-rollout.override.yml` (old digest
+   pin) but **not** `okx-ingestor-image.override.yml`, so it fell from
+   `2.0.19-003b5f9` to `2.0.17-1acf87a` - the digest that override names as its
+   own rollback - undoing R1.31 item 1 and leaving the OKX producer nine `rust/`
+   files behind the three cores it feeds. Not a live outage: 206 bindings live
+   and none over budget throughout. Repaired by appending the missing override
+   and recreating that one role; the rendered diff was **exactly one line** and
+   the B1 healthcheck survived the merge.
+2. **"Sixteen bindings are over budget."** No. The first cut of the liveness
+   report compared the spool's `committed_at_ns` against `stale_after_ms`. The
+   runtime reads a `PROVIDER_CONFIRMATION` binding - all ten
+   `MARK_INDEX_PRICE` ones - from `received_at_ns`
+   (`stable_source.py:483-492`), which is the whole point of R1.24. Against the
+   runtime's own rule: **206 live, 0 over budget**.
+3. **"TRADE stream p50 is 1530 ms, a regression."** It was measured six minutes
+   after the projector cold start at 08:29:26, while the restart backlog
+   drained. Steady state is **619 ms**. The spikes are confined to
+   08:29:41-08:30:21 and 08:35:16-08:35:59 and nothing exceeds 3 s after 08:36.
+4. **"MARK_INDEX_PRICE is refused on EVENT_AGE."** Same window. Steady state is
+   **0 refusals in 200 subscribes**, and the instrument is Binance USD-M, so the
+   OKX `index-tickers` finding never applied to it.
+
+### Not done, and why
+
+**`stable_redis` remains a single point of failure and was not touched beyond
+its cpu ceiling.** Recreating it is the documented way to freeze the spool.
+
+**One optimisation is measured and deferred.** Each projector posts every
+canonical batch to both gateways and the non-holder answers 409: **6,080
+rejected POSTs per projector per 30 minutes**, ~36,000 an hour across three.
+Removing it is projector code on the write path and belongs with B2/B3.
+
+**Nothing was pushed, merged, tagged or released.** The owner reserved that
+explicitly ("trước khi tôi duyệt release"). Commits wait on `dev`.

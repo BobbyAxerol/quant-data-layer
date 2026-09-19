@@ -43452,3 +43452,154 @@ bars survive a bar-edge outage since R1.28, longer intervals tolerate 540 s+,
 and it restarted in 18 s when measured today - and it touches checkpoint
 ownership. B3 (Rust ingestor HA) addresses the more severe failure and is the
 better next step. B4 (Redis HA) is separate infrastructure.
+
+#### R1.31 — release gate: three stale literals, one regression I caused, cleanup (2026-09-19T09:05Z)
+
+**The suite's three failures were mine, and they were stale literals.** Raising
+`STABLE_SPOOL_LATE_BACKFILL_HEADROOM` 64 → 2064 for the debt A repair moved
+`STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW` to 12064; three tests pinned 10064 as a
+number. Two were plain pins. The third,
+`test_public_bar_warmup_scans_physical_tail_before_market_selection`, built its
+fixture from the literal 64 — a repaired block of 64 rows appended first over
+`range(-64, 10_000)` — so it was reparametrised on the headroom: one full
+headroom of late repairs ending just below the newest bars, which preserves the
+shape it exists to catch (a hole *inside* the requested window, newest rows
+intact). Checked by mutation: forcing the bar scan back to the public window
+fails it with `PARTIAL != FULL`, so it still discriminates. Suite **1675 tests,
+0 failures, 7 skipped**. `5f85410`.
+
+**A regression I introduced in the B1 roll, found and repaired.** At 08:21:55Z I
+recreated `ingestor_okx_swap` with a chain that carried
+`r125-rollout.override.yml` (which pins the old digest) but **not**
+`okx-ingestor-image.override.yml`. It fell from `2.0.19-003b5f9` back to
+`2.0.17-1acf87a` — the digest that override names as its own rollback — undoing
+R1.31 item 1 and putting the OKX producer nine `rust/` files behind the three
+cores it feeds, `l2_book.rs`, `l2_adapter.rs` and `ordering.rs` among them. It
+was not a live outage: 206 bindings live and none over budget throughout. The
+repair appended the missing override and recreated that one role; the rendered
+image diff was **exactly one line**, and the B1 healthcheck survived the merge.
+Back on `b7b9d153f0ed`, `healthy` in about a minute, 206 live and 0 over budget
+after. This is the §4.8 trap in the data layer's own stack: a recreate must
+carry the image chain of the role being recreated.
+
+**The liveness report was measuring the wrong quantity, and said so loudly.**
+A first cut of `scripts/report_binding_liveness.py` compared the spool's
+`committed_at_ns` against `quality.stale_after_ms` and reported **sixteen**
+bindings 40–80% over budget across four samples. The runtime does not measure
+them that way: `stable_source.py:483-492` reads a `PROVIDER_CONFIRMATION`
+binding — every one of the ten `MARK_INDEX_PRICE` bindings — from
+`received_at_ns`, which is the whole point of R1.24. Against the runtime's own
+rule the same stack reports **206 live, 0 over budget**. The script now mirrors
+that rule and carries `append_lag` as a separate column so durable-write lag
+cannot masquerade as event age. It also opens the spool `mode=ro` and never
+`immutable=1`; the latter silently returned nothing on four of six samples.
+
+**Two more of this session's own numbers, corrected.** "TRADE stream p50
+1530 ms" and one `EVENT_AGE` refusal on `MARK_INDEX_PRICE` both came from a
+window six minutes after the projector cold start at 08:29:26, while the restart
+backlog drained (`canonical_age` max 25.6–31.1 s, `durable_append` max
+3.8–4.8 s, confined to 08:29:41–08:30:21 and 08:35:16–08:35:59, nothing above
+3 s after 08:36). Steady state: TRADE p50 **619 ms**, and **200 subscribes
+across five feeds with 0 refused**.
+
+**Cleanup.** Four superseded python builds deleted by digest —
+`2.0.20-4baada5`, `2.0.20-d661428`, `2.0.20-7f8dac2`, `2.0.18-5ea5915`; images
+33 → 29, 14.82 → 14.04 GB (layer sharing, not the nominal 3.5 GB). Unused build
+cache 994.8 MB → 0, 6.60 → 5.61 GB. **Nothing removed from volumes**: all three
+dangling ones are the three kept deliberately (`qdl-cargo-home`,
+`qdl_c40_authority_admin_packets`, `stable_authority_db`). **No container
+removed**: the only two stopped are the stack's own one-shot inits, and every
+probe this session ran `--rm`. Kept as the one rollback per role:
+`2.0.20-e7fd0c9` (projector/query/bar-edge), `2.0.19-40629b7` (stream),
+`2.0.17-1acf87a` (OKX ingestor, and referenced by three files in the active
+chain). `tradingsystem-image:v1.2.4-8ef859a` was left alone — another repo's
+rollback target, not this stack's garbage.
+
+**Endpoint inventory at the gate.** 216 catalog bindings: **206 live, 0 over
+their own budget, 10 with no event stored** — the four DNSE bindings (owner
+decision, served by V1; live V2 refuses them with `required data is not
+available`) and six spot bindings that **no ingestor produces and no consumer
+manifest requests**. The 53 ingestor subscriptions are 24 `binance-usdm` and 29
+`okx`, none spot. The six spot entries are dead catalog weight, not a gap.
+
+#### R1.31 — CPU budget 5 → 6 vcore, spent where the cgroups were throttling (2026-09-19T09:10Z)
+
+Owner decision, 2026-09-19: the stack measured **4.70 of 5.0 vcore (94%)**, so
+raise the budget to 6 and optimise rather than spread the extra evenly.
+
+**The budget is not a cgroup sum.** The seventeen per-container limits already
+add to **17.0 vcore** on a 16-vcore host, because a `cpus` limit is a ceiling and
+not a reservation. There is no single knob to turn, so the question is which
+cgroups are actually losing time. Read from `/sys/fs/cgroup/cpu.stat`:
+
+| role | limit | in use | throttled periods | throttled |
+|---|---|---|---|---|
+| `kafka2` | 1.25 | 81% | **14.4%** | 9,612 s |
+| `kafka3` | 1.25 | 87% | 5.2% | 2,480 s |
+| `rust_core_2` | 0.50 | 17% | 8.9% | 2,134 s |
+| `stable_redis` | 0.50 | 2% | 1.8% | 2,857 s |
+| `kafka1` | 1.25 | 49% | 1.4% | 807 s |
+| projectors ×3, streams ×2 | — | — | ≈0% | ≤0.7 s |
+
+The first four were raised — `kafka2`/`kafka3` to 1.75, `rust_core_2` and
+`stable_redis` to 0.75. `kafka1` and every green role were left alone, which is
+the owner's 09-18 rule about tuning one variable against a target metric.
+
+**Applied with `docker update --cpus`, not a recreate.** It rewrites the cgroup
+on the running container; all four were verified not to have restarted. That
+matters most for `stable_redis`, where a *recreate* loses the projection cache
+identity, the projectors refuse to bind with `ProjectionCacheMismatch` and the
+spool freezes. A `cpus` change has none of that exposure, so the safe ceiling
+raise and the dangerous recreate are not the same operation and were not treated
+as one. `cpu-budget.override.yml` was written alongside so a future `compose up`
+does not silently drop the ceilings back; its rendered diff is four `cpus`
+values and no image change.
+
+**Result: 5.66 of 6.0 vcore.** The headroom was taken up immediately, which is
+the evidence the two brokers were genuinely starved rather than merely busy.
+
+**Memory was checked because the owner's concern was OOM, and a `cpus` limit
+cannot cause one** - it throttles. The worst memory headroom in the stack is
+`kafka2` at **50.2% of 2 GiB**; everything else is at or under 37%. There is no
+OOM exposure to relieve.
+
+**One optimisation measured and deliberately not taken before the release.**
+Each projector posts every canonical batch to *both* stream gateways and the
+non-holder answers 409: **6,080 rejected POSTs per projector per 30 minutes**,
+about 36,000 an hour across the three, each one an mTLS round trip whose only
+possible outcome is rejection. Teaching the projector to remember the lease
+holder and re-probe on failure would remove it, but that is projector code on
+the write path and it belongs with B2/B3, not in a release gate.
+
+### Debt B — the producer single points of failure, as a block (2026-09-19T09:15Z)
+
+Recorded as its own block at the owner's instruction, so it is one decision
+later rather than four scattered notes. B1 is done and is not repeated here.
+
+**What is actually single.** Three producer roles have no second instance:
+`ingestor_binance_usdm`, `ingestor_okx_swap`, `binance_bar_edge`; `stable_redis`
+is a fourth, separate case. `lease_epoch` in an ingestor config is a **static
+fencing token fixed at 1**, not leader election - the core refuses two bindings
+sharing a `source_id`, which is what makes a second ingestor instance a design
+change rather than a replica count.
+
+**B2 - bar edge active/passive. 1-2 days, deferred.** It addresses the *least*
+severe failure: 1m bars survive a bar-edge outage since R1.28, longer intervals
+tolerate 540 s+, and it restarted in 18 s when measured. It touches checkpoint
+ownership, which is the part that can corrupt rather than merely stop.
+
+**B3 - Rust ingestor HA. The better next step.** It addresses the more severe
+failure and is where the `lease_epoch` design change belongs. The three
+`rust_core` replicas having no healthcheck is part of this block: adding one
+needs a Rust change, so it is not a compose edit.
+
+**B4 - Redis HA. Separate infrastructure.** `stable_redis` is deliberately
+ephemeral and off the mTLS mesh; recreating it loses the projection cache
+identity and freezes the spool. Making it redundant is not a replica count
+either - it is a decision about where projection cache identity lives.
+
+**One measured optimisation sits with this block**, not with the release: each
+projector posts every canonical batch to both stream gateways and the non-holder
+answers 409 - 6,080 rejected mTLS POSTs per projector per 30 minutes, ~36,000 an
+hour across three. The projector could remember the lease holder and re-probe on
+failure. It is write-path code and was not taken at a release gate.
