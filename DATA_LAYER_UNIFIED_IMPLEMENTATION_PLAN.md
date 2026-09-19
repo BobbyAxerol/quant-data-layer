@@ -42394,3 +42394,55 @@ need a scheduled capture, not a longer wait.
 
 The rollout gate is unchanged and is a date: Phase 2's twenty-four hours mature
 at **2026-09-19T20:00Z**. Six intervals now have their evidence ready for it.
+
+<a id="dl-v2-r131-close-20260919"></a>
+#### R1.31 close-out — suite, endpoints, and a probe that took a role down (2026-09-19T06:05Z)
+
+**The probe method was wrong and it cost a restart.** Every endpoint measurement
+in this session ran `docker exec` inside `query_v2_1` with
+`pragma cache_size=-64000`, `temp_store=MEMORY` and a `GROUP BY partition_key`
+over the whole `events` table. That role has a **512 MiB** limit and sits at
+120 MiB serving. At 06:03 it exited 0 and Docker restarted it - `restarts=1`,
+`oomKilled=false`, so the process was shut down rather than killed outright, but
+the cause is the same: a diagnostic was run inside a production role until the
+role could not hold it.
+
+The correct shape, used for the final reading, is a side container:
+
+```
+docker run --rm -v qdl_v2_stable_candidate_stable_state:/state:ro \
+  qdl-v2-python:2.0.20-e7fd0c9 python3 -u -B -c '...'
+```
+
+Read that way: **188/188 endpoints inside their own declared `stale_after_ms`.**
+The 187/188 readings earlier in the session were the same partition each time,
+`okx-swap-bnb-usdt-swap-trade`, oscillating around a 15 s bound its own trade
+cadence does not respect - gaps of 2.6 s at p50 but 27.1 s at the tail. The
+binding is healthy and the bound is tighter than the instrument; that is a
+catalog tuning item, not a pipeline one.
+
+One more unit error of mine belongs in the record: a display line divided
+nanoseconds by 1e6 and printed the result as seconds, turning 18.8 s of
+staleness into "18,770 s" and nearly a dead-partition alarm into the report.
+Caught by checking the partition's event count against its peers before writing
+it down.
+
+**Suite: 1,628 tests, 7 skipped, 0 real failures.** The first run reported four
+errors; all four were the same `RotatingFileHandler` opening `/app/logs/app.log`
+under a mount the container's uid 10001 could not write. With the directory
+writable the same four modules run 14 tests, all pass. The harness was wrong,
+not the code.
+
+#### Where this leaves the release
+
+Ready: items 1, 2 and 5 complete; the projector hang fixed and deployed; 188/188
+endpoints in bound; 17/17 roles; 4.4 vcore of 5.0; cleanup done with one
+rollback digest kept per role.
+
+Not ready: item 3 has six of thirteen intervals certified and a rollout gate that
+is a date (20:00Z). Item 4 has its cause measured to the millisecond and its fix
+unwritten, blocked behind an open question about what the query role can actually
+read. Item 6 is the owner's decision and has not been taken.
+
+A release cut now would be honest about all of that or it would not be worth
+cutting.
