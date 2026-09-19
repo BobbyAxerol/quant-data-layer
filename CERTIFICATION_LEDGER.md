@@ -1949,13 +1949,41 @@ headroom was absorbed at once, which is the evidence the brokers were starved.
 Memory was checked separately because a `cpus` limit throttles and cannot OOM:
 worst headroom is `kafka2` at **50.2% of 2 GiB**, so there is no OOM exposure.
 
-**Verified after the raise**, throttle rate over a 120 s window: `kafka2`
-**14.4% → 1.4%**, `kafka3` 5.2% → 0.2%, `rust_core_2` 8.9% → 0.7%,
-`stable_redis` 1.8% → **0.0%**. `kafka1`, deliberately not raised, reads 1.2% in
-the same window against its 1.4% cumulative - an untouched control that barely
-moves is what separates "the raise worked" from "the host happened to be quiet".
-The before figures are cumulative since container start and the after is one
-window; the control is what makes them comparable.
+**That verification was not a valid comparison, and this corrects it.** The
+"before" figures are *cumulative* counters over up to 47 hours of container
+life; the "after" was a single *120 s window*. They are not the same quantity,
+and the control proves it rather than rescuing it: `kafka1`, deliberately not
+raised, reads **1.2%** in that window against raised `kafka2` at **1.4%**. The
+window was simply quiet. **No throttling improvement is claimed.** This
+program's own method, from entry 33, is `cpu.stat` **60-second deltas** judged
+against request-latency p95 - not cumulative counters, and not throttling as
+the target metric.
+
+**Two of the four raises rest on stale evidence.** Entry 33 already records
+`stable_redis` `0.25 -> 0.50` taking it to **0.0%**; the 1.8% used to justify
+0.75 here was three days cumulative and mostly historical, so that raise fixed
+nothing. And `rust_core_2` was cut `1.00 -> 0.50` deliberately under R4 to pay
+for `rust_core`, holding the three-core total constant; raising it to 0.75
+partially undoes that decision and the R4 constraint no longer holds.
+
+**Judged on the target metric instead**, 200 subscribes across five feeds before
+and after, same probe: summed p95 **6,234 -> 5,642 ms (-9.5%)**, summed max
+**7,294 -> 6,443 ms (-11.7%)**, summed p50 **3,292 -> 3,475 ms (+5.6%)**, and
+**0 refused** both times. `MARK_INDEX_PRICE` max, the only figure that actually
+binds against a 2,000 ms `BLOCK` policy, went **1,647.6 -> 1,373.9 ms**, so the
+thinnest margin in the system widened from 352 ms to **626 ms**. Ambient load
+was *higher* during the second run, 11.6 against 10.2, from
+`live_data_executor` at 169.79% outside this stack, and data layer draw fell
+4.70 -> 3.76-4.29.
+
+R1.29's C3 is why this is written out rather than declared a win: it cut
+`kafka2` throttling 16.9% -> 4.2% and was **still reverted**, because p50 fell
+on two feeds of four while draw and load rose. C3 paid for `kafka2` by cutting
+`stream_v2_passive` 2.00 -> 1.75; this raise took nothing away, which is the
+material difference. **The honest verdict is that the raise is not proven
+beneficial and not proven harmful.** It is kept because the owner raised the
+budget, the tails improved, the binding margin widened and no consumer was
+refused - not because throttling moved.
 
 ### Health at certification
 
