@@ -42,10 +42,30 @@ class HeartbeatTests(unittest.TestCase):
         self.assertTrue(self.path.exists())
 
     def test_a_later_write_advances_the_timestamp(self) -> None:
+        write_heartbeat(self.path, role="r", min_interval_ns=0)
+        first = json.loads(self.path.read_text())["updated_at_ns"]
+        write_heartbeat(self.path, role="r", min_interval_ns=0)
+        self.assertGreater(json.loads(self.path.read_text())["updated_at_ns"], first)
+
+    def test_it_is_throttled_so_the_observation_does_not_move_the_observed(self) -> None:
+        """The projector turns its loop ~100 times a second; this must not.
+
+        The first cut wrote on every call and cost what it was worth: three
+        projectors made ~300 writes a second, durable_append_ms rose from about
+        55 ms to 90 ms, and stream delivery p50 went from 0.5 s to 1.0 s.
+        """
         write_heartbeat(self.path, role="r")
         first = json.loads(self.path.read_text())["updated_at_ns"]
-        write_heartbeat(self.path, role="r")
-        self.assertGreater(json.loads(self.path.read_text())["updated_at_ns"], first)
+        for _ in range(100):
+            write_heartbeat(self.path, role="r")
+        self.assertEqual(json.loads(self.path.read_text())["updated_at_ns"], first)
+
+    def test_the_throttle_is_far_finer_than_the_healthcheck_window(self) -> None:
+        """1 s against a 30 s window leaves an order of magnitude of margin."""
+        from qdl.runtime.heartbeat import _MIN_INTERVAL_NS
+
+        healthcheck_window_ns = 30 * 1_000_000_000
+        self.assertLessEqual(_MIN_INTERVAL_NS * 10, healthcheck_window_ns)
 
     def test_an_unwritable_path_does_not_raise(self) -> None:
         """A heartbeat that kills its own role is worse than no heartbeat."""

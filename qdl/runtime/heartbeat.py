@@ -25,22 +25,45 @@ import tempfile
 import time
 from pathlib import Path
 
+# R1.31. The first cut wrote on every call and was measured costing more than it
+# was worth: the projector turns `run_once` about a hundred times a second, so
+# three projectors produced ~300 file writes a second and `durable_append_ms`
+# rose from about 55 ms to 90 ms while stream delivery p50 went from 0.5 s to
+# 1.0 s. A healthcheck reads this file every twenty seconds against a
+# thirty-second window; once a second is already ten times finer than it needs.
+_MIN_INTERVAL_NS = 1_000_000_000
+_last_written_ns: dict[str, int] = {}
 
-def write_heartbeat(path: str | os.PathLike[str], *, role: str, detail: str = "") -> None:
-    """Rewrite the heartbeat file atomically. Never raises into a serving loop.
+
+def write_heartbeat(
+    path: str | os.PathLike[str],
+    *,
+    role: str,
+    detail: str = "",
+    min_interval_ns: int = _MIN_INTERVAL_NS,
+) -> None:
+    """Rewrite the heartbeat file atomically, at most once per interval.
 
     A heartbeat that crashes the role it watches is worse than no heartbeat, so
     every failure here is swallowed: the file simply stops advancing, which is
-    exactly the signal the healthcheck is looking for anyway.
+    exactly the signal the healthcheck is looking for anyway. A heartbeat that
+    slows the role it watches is nearly as bad, which is what the throttle is
+    for - the observation must not move what it observes.
     """
     try:
+        key = os.fspath(path)
+        now_ns = time.time_ns()
+        previous = _last_written_ns.get(key)
+        if previous is not None and now_ns - previous < min_interval_ns:
+            return
+        _last_written_ns[key] = now_ns
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps({
             "schema": "qdl.role-heartbeat.v1",
             "role": role,
             "detail": detail,
-            "updated_at_ns": time.time_ns(),
+            "updated_at_ns": now_ns,
             "pid": os.getpid(),
         })
         handle, temporary = tempfile.mkstemp(dir=str(target.parent), prefix=".hb-")
