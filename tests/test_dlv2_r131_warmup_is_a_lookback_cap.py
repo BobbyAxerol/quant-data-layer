@@ -101,5 +101,52 @@ class WarmupHorizonCheckTests(unittest.TestCase):
         self.assertNotIn("if len(items) != specification.rows:", source)
 
 
+class PassThroughHorizonTests(unittest.TestCase):
+    """The same rule on the pass-through path, which serves unbound intervals.
+
+    `provider_history` answers BAR `FRESH_SNAPSHOT` for an interval with no
+    binding. It had the identical exact-count refusal, so an alpha asking 10,000
+    rows through pass-through hit the same wall as through the spool.
+    """
+
+    @staticmethod
+    def _rejects(*, rows_returned: int, expected: int, rows_request: bool) -> bool:
+        # Mirrors provider_history.py.
+        return rows_returned > expected or (
+            not rows_request and rows_returned != expected
+        )
+
+    def test_a_rows_request_may_come_back_short(self) -> None:
+        self.assertFalse(self._rejects(
+            rows_returned=156, expected=10_000, rows_request=True))
+
+    def test_a_rows_request_may_not_come_back_long(self) -> None:
+        self.assertTrue(self._rejects(
+            rows_returned=10_001, expected=10_000, rows_request=True))
+
+    def test_a_time_range_request_still_demands_the_exact_count(self) -> None:
+        """A named window is a contract; it is not a lookback cap."""
+        self.assertTrue(self._rejects(
+            rows_returned=99, expected=100, rows_request=False))
+        self.assertFalse(self._rejects(
+            rows_returned=100, expected=100, rows_request=False))
+
+    def test_the_source_still_checks_this_way(self) -> None:
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1]
+                  / "qdl/runtime/provider_history.py").read_text(encoding="utf-8")
+        self.assertIn("rows_request = expected_start_ns is None", source)
+        self.assertIn("not rows_request and len(items) != expected_count", source)
+
+    def test_an_empty_pass_through_result_is_still_refused(self) -> None:
+        """Truncating to nothing is not an answer."""
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1]
+                  / "qdl/runtime/provider_history.py").read_text(encoding="utf-8")
+        self.assertIn("pass-through target history returned no rows", source)
+
+
 if __name__ == "__main__":
     unittest.main()

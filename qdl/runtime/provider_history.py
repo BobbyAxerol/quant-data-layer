@@ -933,10 +933,22 @@ class ProviderBarHistorySource:
                 )
                 for item in items
             )
-        if len(items) != expected_count:
+        # R1.31, same rule as the durable path: a rows request is a cap on how
+        # far back the caller may look, not a quota the provider must fill. An
+        # alpha asking for 10,000 bars at 1w is asking for 192 years; the honest
+        # answer is the bars that exist. A time-range request still has to be
+        # exact, and its endpoints are checked immediately below.
+        rows_request = expected_start_ns is None
+        if len(items) > expected_count or (
+            not rows_request and len(items) != expected_count
+        ):
             raise ProviderHistoryUnavailable(
                 "pass-through target history is incomplete: "
                 f"{len(items)} of {expected_count}"
+            )
+        if not items:
+            raise ProviderHistoryUnavailable(
+                "pass-through target history returned no rows"
             )
         if expected_start_ns is not None and (
             int(items[0].payload["open_time_ns"]) != expected_start_ns
