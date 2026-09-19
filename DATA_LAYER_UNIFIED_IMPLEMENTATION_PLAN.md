@@ -42049,3 +42049,162 @@ runs one release digest, the 188 declared bindings reconcile against live
 partitions across both caches with the reference plane counted, and the QUOTE
 p95 is inside its bound with the reconnect rate flat for a full window. Items
 3 and 4 are the only ones that can still surprise.
+
+<a id="dl-v2-r131-execution-20260919"></a>
+### R1.31 execution — six items worked, two corrections, one live incident found (2026-09-19)
+
+Owner approved the whole list on 2026-09-19 and decided item 5: the four DNSE
+bindings are not served by V2 for this release, VN defaults to V1.
+
+#### Corrections to R1.31 as written this morning
+
+**The eleven evidence packets are not all evidence. Four are live configuration.**
+The earlier check used `docker ps --filter volume=<path>`, which matches volumes
+and not bind mounts, and reported `0 containers` for all eleven. Walking
+`.Mounts` on every running container instead:
+
+| packet | mounted by |
+|---|---|
+| `dlv2-r128-native-bar-20260918T120904Z/runtime/` | `rust_core` x3, `ingestor_binance_usdm`, `binance_bar_edge` |
+| `dlv2-r124-okx-native-bar-20260917T091434Z/runtime/` | `ingestor_okx_swap` |
+| `mark-index-compat-a366d0e-20260905T185000Z/runtime/` | `query_v2` x2, `stream_v2_*` x2, `projector_v2` x3 |
+| `655d2106d01f/cert-material-rotate-.../` | `kafka1/2/3` TLS material |
+
+A cleanup that took the "unmounted" list at face value would have deleted the
+running configuration of the whole stack. The live surface spans four packet
+generations, the oldest from 2026-09-05.
+
+**`rust:<none>` is not a dangling image.** `sha256:1111c28d995d` is the builder
+base pinned by `Dockerfile.qdl-rust-runtime`. Deleting it makes the next Rust
+build re-pull 1.12 GB. It stays.
+
+#### Item 2 - the refusal, and what live data taught it
+
+`scripts/assert_runtime_bundle_is_not_lossy.py` compares binding identities
+between the running bundle and a proposed one, per file, and exits non-zero
+naming what would disappear. A binding that moves to a sibling file is reported
+as a move, not a loss, so a core reshard does not read as a lost feed.
+
+A first cut keyed only on `source_id` and reported **576 bindings in three
+files** against the live bundle: it had missed both ingestors entirely, because
+an ingestor binding carries `subscription_id`. That is exactly the half of the
+R1.30 trap that is count-neutral. Reading both identities it sees **629 bindings
+in five files** and refuses all **forty** MARK_INDEX identities. 15 unit tests.
+
+It earned its keep the same hour. The unapplied `ingestor-okx-swap.json` in the
+r128 packet holds **24** identities against the running **94**: applying it would
+have dropped seventy OKX BAR bindings. That is why it was never applied, and now
+the reason is mechanical rather than remembered.
+
+#### Item 5 - VN on V1, and the four fences that were already there
+
+All four `vn_primary_v2` requirements already routed `V1_PRIMARY` with
+`fallback: NONE` and reason `VN_REAL_PROVIDER_GATE_UNEXERCISED`; nothing said
+so anywhere. Three further fences keep V2 off the VN plane: the bar edge admits
+only the `BINANCE` and `OKX` runtimes, `vn_edge_v2` sits behind the `stable-vn`
+Compose profile, and no ingestor carries a DNSE binding. 10 tests pin all four.
+
+The bar-edge fence was a set literal inside a comprehension, so a test could only
+assert on its source text - the defect this journal criticised in the P18 review.
+Extracted to `BAR_EDGE_RUNTIMES` and `admits_runtime`, driven by every runtime
+the committed acquisition plan declares.
+
+#### Item 1 - done, and it needed no build
+
+`git diff 003b5f9..HEAD -- rust/ Cargo.* generated/rust` is **empty**: the
+deployed `qdl-v2-rust:2.0.19-003b5f9` already is HEAD's Rust. `ingestor_okx_swap`
+was recreated onto it with a one-field override, the resolved Compose config
+differing in exactly one line. Up with 99 bindings, `RUST_PRIMARY`, 0 restarts,
+book-snapshot renewals every 30 s, core quarantines 0.
+
+#### Item 3 - three of thirteen certified; the script could not have run
+
+R1.29 Phase 3 item 1 says to run `certify_binance_native_bar_admission.py` per
+interval. Its budget was `60 * (BAR_COUNT + 1)`, hardcoded at one minute per bar,
+so **every run with an interval other than 1m gave up before the first boundary**
+and printed nothing. Three background runs died this way before the cause was
+found. The budget now comes from `canonical_interval_ms`; 1m is unchanged at
+160 s, so the existing evidence still stands.
+
+With that fixed, 5m, 15m and 30m all **PASS**, 5/5 symbols each, final bar
+arriving **0.079-0.413 s after close** against 7,820-22,473 ms on REST. The three
+runs caught the same wall-clock boundary, which is the point: one lane, one
+latency, whatever the interval. The remaining ten need a boundary that does not
+arrive inside a session (2h through 3m), and the rollout is still gated on the
+date - Phase 2's twenty-four hours mature at 2026-09-19T20:00Z.
+
+#### Item 4 - the instrument was right, my cause was wrong
+
+Measured over ten minutes of the consumer's own error lines: `mark_price` 31-106 ms,
+`index_price` **never younger than 2,013 ms**, p50 2,254, max 3,081, against
+`limit_ms=2000`. The floor sat exactly on the 2.0 s reference snapshot TTL, so the
+TTL looked like the cause. `MARK_INDEX_PRICE` was given its own 750 ms TTL,
+deployed to both query roles - **and the number did not move**: 2,088 / 2,212 /
+2,501 after. The TTL was not the binding constraint.
+
+What is established: OKX publishes the index 132-759 ms fresh when called
+directly; the OKX ingestor already subscribes `index-tickers` for all five
+instruments and those canonical partitions are sub-second; the catalog supplies
+the right `instFamily`; there is no second cache on the data-layer reference path.
+So the data layer already holds a fresh index and the REST reference path is the
+slow one. Where the remaining ~2 s is added is **not** established and is not
+guessed here. The structural answer named on 2026-09-16 - serve INDEX from the
+subscribed `index-tickers` binding instead of the REST row - is untouched and
+remains the right fix.
+
+The TTL change is kept: a cache that holds an execution-grade value for as long
+as the bound it is checked against is a latent defect whether or not it is
+today's binding one. 8 tests pin the relationship, not the number.
+
+#### The live incident this work uncovered
+
+**Two of three projectors are hung, and one is doing the work of three.**
+
+`projector_v2` and `projector_v2_3` last spoke at 05:09:36 and 05:07:39, both
+immediately after `generation failed; reconnecting attempt=5`. `retry_max_seconds`
+is **5.0**, so a projector in backoff logs every five seconds. Eleven minutes of
+silence is not backoff. The next statement after that log line is the `finally`
+block, and `stable_projector.py:1075` is
+`await asyncio.to_thread(broker.close)` - **with no timeout**. A Kafka client
+close that blocks there never returns, and the supervisor never runs again.
+
+Kafka confirms the consequence. All six partitions of `md.canonical.v2` are
+assigned to `stable-projector-2` alone, with lag **901 to 47,258**. The spool
+follows: **155 of 188 partitions are inside their own declared `stale_after_ms`,
+33 are outside** - trade at 204 s against a 15 s bound, book at 449 s against 60 s,
+quote at 156 s against 5 s, 1m bars at 207-508 s against 180 s.
+
+This is not release damage. The 409s from `stream_v2_active` begin at
+**2026-09-18 16:07**, thirteen hours before anything was touched today, and the
+lease has been on `stream_v2_passive` since. `projector_v2_2` fails over
+correctly (409 then 200); the other two did not.
+
+Everything upstream is healthy: cores at 0 quarantines, `raw_age_ms` mean 138,
+commit mean 78, `canonical` climbing. `stream_v2_passive` is delivering to
+`trading-system.paper.stable` with `aged_out_at_read: 0`. The stack is serving
+**degraded, from one projector**.
+
+The remedy is a restart of the two hung roles, which is blocked pending owner
+approval. The durable fix is a timeout on that close, and a liveness signal that
+fires when a projector stops logging rather than only when it errors.
+
+#### Cleanup performed
+
+Build cache 15.57 GB -> 4.85 GB (**10.74 GB** reclaimed). Deleted
+`qdl-v2-rust:2.0.17-ee7f1b3` by digest and two anonymous 0 B volumes. Disk
+113 G -> 104 G. Every probe container ran `--rm` and none survives; `docker ps -a`
+shows no unnamed container.
+
+Deliberately kept, with the reason: `rust:<none>` (pinned builder base),
+`qdl-v2-rust:2.0.17-1acf87a` (the one-step rollback for the role just moved),
+`alpine:3.20` / `bufbuild/buf` / `local/trading-system-test:p18-1d2e3ad` (the
+reuse set), `tradingsystem-image:v1.2.4-8ef859a` (another repo's), and the
+volumes `stable_authority_db`, `qdl-cargo-home`, `qdl_c40_authority_admin_packets`.
+The two exited one-shots stay; `restart: "no"` is deliberate.
+
+#### What closure still needs
+
+The projector hang is now the first item, ahead of everything in R1.31 as
+written. A release cut while two of three projectors are hung would certify a
+degraded stack. Then: item 4's real cause, the ten remaining intervals after
+20:00Z, and item 6's merge.
