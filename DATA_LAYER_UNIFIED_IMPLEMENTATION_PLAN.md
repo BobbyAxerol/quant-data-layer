@@ -42945,3 +42945,56 @@ Consumer errors per minute, pre-session window against the last five minutes:
 `StaleExecutionReferenceError` -32%. The remaining `StaleExecutionReference`
 lines are the OKX REST index lag documented above and are not affected by
 anything in this session.
+
+<a id="dl-v2-r131-history-gap-20260919"></a>
+#### R1.31 — the 15m/30m history gap, located exactly and ready to repair (2026-09-19T07:00Z)
+
+**First reading was wrong and is withdrawn.** Taking the last 1,500 events by
+`logical_offset` showed three gaps and 480 missing bars on 15m. `logical_offset`
+is append order, and `stable_source.py` says in its own comment that a provider
+history repair is appended *after* newer live bars. Sorted by market time over
+all 10,064 events the picture is different and much smaller.
+
+**What is actually missing**, across every affected partition, both venues:
+
+| interval | partitions | missing each | holes each | window |
+|---|---|---|---|---|
+| 15m | 10 (5 Binance, 5 OKX) | **124** | 1 | 2026-09-11 → 09-12 |
+| 30m | 10 | **30** | 1 | 2026-09-02 |
+
+**1,540 bars total.** Every partition holds 10,064 bars and every one has exactly
+one hole of exactly the same size. That uniformity is the diagnosis: a venue
+outage does not hit Binance and OKX with an identical bar count, so this is our
+bootstrap, not theirs. The windows differ slightly by venue (OKX 09-11 01:15,
+Binance 09-11 06:00) while the counts do not.
+
+`scripts/repair_stable_final_bar_history.py` - which exists for exactly this -
+was run as a dry run inside the bar edge and agrees independently:
+
+```
+{"status": "DRY_RUN", "production_mutations": 0,
+ "repairs": [{"binding_id": "binance-usdm-btcusdt-bar-15m",
+              "missing_rows": 124, "window_rows": 1000, "venue": "BINANCE"}]}
+```
+
+The tool's count and the spool survey's count are the same number, reached two
+different ways.
+
+#### Why it matters and what it blocks
+
+`gap_policy: BLOCK`. With the hole where it is, an alpha warmup cannot read past
+about **four days on 15m** and **eight days on 30m**, against a manifest that
+asks for 10,000 bars. The bisection matches the hole exactly: 15m succeeds at
+400 rows (4.2 d) and fails at 900 (9.4 d); 30m succeeds at 400 (8.3 d) and fails
+at 900 (18.8 d).
+
+#### The repair, not run
+
+Twenty bindings, `--rows 1000`, `--expected-missing <binding>=124` or `=30`,
+then `--apply --confirm REPAIR_QDL_STABLE_FINAL_BAR_HISTORY`. It is additive:
+it writes missing bars fetched from the provider through the normal data plane,
+deletes nothing, changes no config and restarts no role.
+
+It is a production write on twenty bindings and has not been run. The dry run is
+the evidence that it would do the right thing; the decision to write is the
+owner's, and so is whether to do it before or after the release.
