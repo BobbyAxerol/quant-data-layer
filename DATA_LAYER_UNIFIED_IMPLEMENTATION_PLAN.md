@@ -44930,7 +44930,7 @@ commit `40a1155` was built as immutable
 The owner-only packet is outside Git at
 `/home/bobby/.local/state/qdl-v2/r135-b2-final-bar-watermark-20260919T213906Z/`:
 candidate override SHA-256 `442089b1...e7e036`, rollback override SHA-256
-`4c022fa3...7f5446`, and bounded roll helper SHA-256 `725486a6...f94b93`.
+`4c022fa3...7f5446`, and bounded roll helper SHA-256 `ac31f23e...93ea25`.
 Both Compose renders and `bash -n` passed. The packet preserves the current
 canonical Compose chain, sealed runtime mounts, TLS, state volume,
 `stable-projector-v1` group and all existing Kafka/Redis/SQLite identities.
@@ -44960,6 +44960,27 @@ session/gap/watermark parity, direct-provider/V1 fallback count, consumer-call
 to-usable p50/p95/p99/max and resource/restart/lag observations. Any strict
 failure is a B failure and invokes the exact five-role rollback; C cannot
 start from a partially accepted packet.
+
+**B2 first role attempt, rollback and packet correction (2026-09-19).** The
+first candidate recreation intentionally stopped at `stream_v2_passive`; it
+never progressed to active stream or any projector. Startup failed closed with
+`stable acquisition and source catalog binding sets differ`, and the role
+restarted nine times. The first rollback used the same incomplete base chain
+and therefore also could not load the required source/acquisition pair. The
+active stream remained healthy at restart count zero throughout; no V1, Kafka,
+Redis, SQLite, Query, Rust, ingestor, Trading System, alpha or order path was
+touched.
+
+Root cause was packet provenance, not final-BAR source behavior: the active
+runtime's `mark-index-r134-58998ae-r3` override mounts the matched
+`stable-source-bindings.yaml` and `stable-acquisition-bindings.yaml`, but the
+new packet had omitted that last active override. The helper now includes it;
+both candidate and rollback full-chain renders pass. A second, exact rollback
+of only `stream_v2_passive` restored image `sha256:1ad341...fa88d`, health and
+restart count `0`, while active stayed healthy on that same digest. The B2
+helper digest above is the corrected one. This incident is retained as bounded
+rollout evidence and makes the full current config-chain requirement explicit;
+it does not broaden B scope or certify the candidate.
 
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
