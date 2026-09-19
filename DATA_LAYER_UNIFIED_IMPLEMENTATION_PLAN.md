@@ -42555,3 +42555,44 @@ Acceptance: the index component inside 2,000 ms at p99 from the consumer's own
 execution-grade risk input, and the two incidents already in this journal both
 came from landing that class of change at the end of a working day. The
 specification above is complete enough to be executed as its own block.
+
+<a id="dl-v2-r131-item4-decision-20260919"></a>
+#### R1.31 item 4 — why it stops at a decision rather than at code
+
+Attempting the implementation reached a fork that is the owner's to take, not a
+detail to pick while writing.
+
+The obvious reader already exists: `StableSpoolQueryBackend.latest()`
+(`qdl/runtime/stable_source.py:193`). Its first statement is
+`self.catalog.binding_for(requirement)`, and **`mark_index_price` has no binding
+in `config/v2/stable-source-bindings.yaml`** - it is declared in the reference
+demand plane as `MARK_PRICE` + `INDEX_PRICE` and materialised by the core into a
+partition family the source catalog has never listed. So the existing path
+cannot serve it as written.
+
+**Option A - declare the ten bindings in the source catalog.** The existing
+`latest()`, its identity checks and `_validate_records` all start working, with
+no second read path. The cost is a catalog revision bump, which by coupling 3
+means rebuild and recreate of query, stream, projector and bar edge, and by
+C.19/C.32 means the bar edge's checkpoint identity moves and needs migrating.
+It also puts ten new bindings in front of the bar edge's ownership assertion,
+which is what R1.28 spent a day on. Wide, and it touches exactly the catalog the
+R1.30 guard exists to protect.
+
+**Option B - a dedicated reader keyed on the partition prefix.** Contained: one
+indexed single-row read of `{instrument_uid}/mark_index_price/%`, no catalog
+change, no revision bump, nothing recreated beyond the query role. The cost is a
+second read path for execution-grade data that does not go through
+`_validate_records`, so the identity and lineage checks have to be reproduced
+rather than reused - and an execution-grade path with its own copy of the
+validation is how the two settlement defects in the P18 review happened.
+
+Neither is a coin toss. A is correct and expensive; B is cheap and duplicates a
+safety check on the one feed where that check protects Risk. Recommendation: **B
+with the validation lifted into a shared helper both paths call**, so there is
+one implementation of the check and two callers - which is more work than B and
+less than A, and leaves no second copy.
+
+That is a design decision with a blast radius attached to each branch, and it is
+recorded here for the owner rather than taken at the end of a session that has
+already produced four reversals on a single measurement.
