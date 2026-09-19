@@ -42646,3 +42646,28 @@ runtime is not on manufactures exactly the drift this journal spends its pages
 chasing: the next regeneration would silently produce a bundle nobody rolled.
 The catalog change and its rollout belong in the same transaction, and that
 transaction is a rollout the owner schedules.
+
+<a id="dl-v2-r131-admission-seven-20260919"></a>
+#### R1.31 item 3 — seven of thirteen, and the lane proven for all thirteen (2026-09-19T06:20Z)
+
+`3m` is **three minutes**, not three months - Binance writes a month as `1M`, and
+`canonical_interval_ms("3m")` returns 180,000. It was sitting in the "needs a
+boundary hours away" list for no reason other than the reading of its name.
+Certified in six minutes: **PASS, 5 of 5 symbols.** That makes **seven of
+thirteen**: 3m, 5m, 15m, 30m, 1h, 2h, 6h.
+
+For the remaining six the lane itself is now proven, which is most of what
+admission asks. One socket, all thirteen streams:
+
+```
+SUBSCRIBE ack: accepted (result=None, no error)
+every one of the 13 intervals delivered 63-64 provisional frames in 45 s
+```
+
+So `wss://fstream.binance.com/market/ws` accepts and streams **4h, 8h, 12h, 1d,
+3d and 1w** today. What none of them can show inside a session is the `x=true`
+transition, because that happens at 08:00Z (4h, 8h), 12:00Z (12h), 00:00Z (1d)
+and days out for 3d and 1w. Those six need a scheduled capture, and the budget
+fix from earlier today is what makes an unattended run possible at all.
+
+The rollout gate is unchanged and remains a date: 2026-09-19T20:00Z.
