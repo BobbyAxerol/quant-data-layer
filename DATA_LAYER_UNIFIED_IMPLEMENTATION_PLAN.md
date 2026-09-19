@@ -43956,7 +43956,7 @@ with the currently active `25dce61` candidate retained as exact rollback. Then
 and only then rerun one strict 300-second C2 test with `require_all=True`.
 No further runtime action or release is permitted from this precheck.
 
-### R1.33 - Internal execution-read admission and freshness correction (`SOURCE_COMPLETE / RUNTIME_PENDING`, 2026-09-19)
+### R1.33 - Internal execution-read admission and freshness correction (`SOURCE_COMPLETE / RUNTIME_ROLLED / C2_BLOCKED`, 2026-09-19)
 
 **Goal.** Remove the self-inflicted external-provider queue from the V2
 execution MARK/INDEX read path while keeping the existing `2,000 ms`
@@ -44011,6 +44011,22 @@ then runs the existing strict C2 300-second `require_all=True` test over all
 ten active execution MARK/INDEX bindings. No rollout is implied by this source
 task.
 
+**Approved runtime packet (2026-09-19).** Owner approved immutable reader
+image `qdl-v2-python:2.0.21-292fb97@sha256:531554f99f4cc03e5768c6bdc2172d58528311aa1e1df601d74a651c07992c25`
+from source `292fb97e3ca52a59750b247f0f38ac89a43ce36b`, with serial rolling
+recreate of exactly `query_v2_1`, `query_v2_2`, `stream_v2_active`, and
+`stream_v2_passive`. It preserves their existing runtime, TLS and stable-state
+mounts and leaves V1, Rust, ingestors, projectors, bar edge, Kafka, Redis,
+SQLite, Trading System, alpha and all order paths untouched. Exact rollback is
+`qdl-v2-python:2.0.21-rc.1-25dce61@sha256:ee0154e88e9a26213d7354532edc01e441f3a5754cb2b64c8f672d8593189414`
+on only those four roles. Runtime evidence is held outside Git at
+`/home/bobby/.local/state/qdl-v2/mark-index-r133-292fb97-20260919T151548Z`;
+it records no secret value. Exit requires the four reader health/image/mount
+checks plus one strict 300-second C2 run with `require_all=True` over the ten
+execution MARK/INDEX bindings and a measured consumer-call-to-usable p99 at or
+below `2,000 ms`. This packet is still a narrow correction, not a broad release
+or manifest promotion.
+
 **Completed source slice (2026-09-19).** `BoundedWarmupExecutor` now declares
 `INTERNAL_STREAM` with concurrency `4`, no token-rate pacing, one attempt and
 a `1,000 ms` local circuit cooldown. This retains bounded failure pressure
@@ -44057,8 +44073,61 @@ whitespace and the repository's relevant deterministic suites passed. No image,
 container, service, Kafka/Redis/SQLite state, provider call or market data was
 created by source verification.
 
-**Current status.** `SOURCE_COMPLETE / RUNTIME_PENDING`. The required rollout
-packet is now four reader roles rather than query-only because the stream must
+**Pre-roll status.** `SOURCE_COMPLETE / RUNTIME_PENDING`. The required rollout
+packet was four reader roles rather than query-only because the stream must
 emit the authoritative freshness-basis header. That is an additive private
-protocol change with query-first rolling compatibility, but its expanded
-runtime blast radius requires its own explicit packet before any recreate.
+protocol change with query-first rolling compatibility; the approved packet
+below was subsequently applied.
+
+**Runtime result (2026-09-19, approved four-reader packet).** Compose preflight
+used the existing full runtime chain plus the final candidate overlay. It then
+serially recreated only `query_v2_1`, `query_v2_2`, `stream_v2_passive`, and
+`stream_v2_active`. All four are healthy on
+`qdl-v2-python:2.0.21-292fb97@sha256:531554f99f4cc03e5768c6bdc2172d58528311aa1e1df601d74a651c07992c25`;
+their stable-state, TLS and host runtime mounts are unchanged. V1, Rust,
+ingestors, projectors, bar edge, Kafka, Redis, SQLite, Trading System, alpha
+and order paths were not recreated or configured. The exact four-role rollback
+image remains
+`qdl-v2-python:2.0.21-rc.1-25dce61@sha256:ee0154e88e9a26213d7354532edc01e441f3a5754cb2b64c8f672d8593189414`.
+
+The strict C2 harness correctly failed closed before its 300-second duration:
+`require_all=True` received typed `DATA_STALE` results and terminates on the
+first non-OK batch by design. Successful real consumer reads prove the R1.33
+admission correction itself: no direct venue REST or V1 fallback was attempted;
+query replica 1 recorded `242.881 ms` consumer-call-to-usable and provider
+confirmation-to-usable p99 `1,251.462 ms` for ten bindings, while replica 2
+recorded call p99 `209.934 ms` and provider-confirmation-to-usable p99
+`1,978.744 ms` across five complete batches. These are diagnostic samples, not
+a C2 certificate, because later batches returned typed stale results.
+
+**Fail-closed diagnosis and decision boundary.** The remaining failure is not
+the former external-provider limiter or its `1,000 ms` local cooldown: C2 saw
+`DATA_STALE`, not queue timeout or circuit rejection. Five OKX SWAP logical
+MARK/INDEX products pair `mark-price` with `index-tickers`; the Rust core
+correctly preserves each component's immutable receipt lineage and publishes
+the pair with the older component confirmation. OKX documents quiet-channel
+cadence of up to 10 seconds for unchanged mark price and up to 60 seconds for
+unchanged index tickers. A hard two-second event-confirmation rule for this
+paired product therefore rejects a healthy, unchanged provider state. This is
+a contract-semantic defect, not a condition that can be fixed by relaxing the
+SLA, retrying C2, or rewriting a timestamp.
+
+The required follow-up is a separately approved, provider-neutral source
+slice: retain both component timestamps unchanged, add component-aware
+session/subscription liveness to the live-view admission, and allow a quiet
+component only when its exact session/generation is live, no gap/fence is open,
+and the bounded venue-declared quiet cadence is still valid. It must fail
+closed on disconnect, generation change, missing subscription state or expired
+quiet cadence, and expose the distinction in typed lineage/status. Required
+tests are quiet-connected, actual stale/disconnect, reconnect/generation,
+gap/resync and identity isolation for Binance and OKX; only then may a new
+Rust/reader rollout packet and one replacement 300-second C2 be proposed.
+No semantic source or runtime change for that follow-up has been made here.
+
+**Operational observation.** The runtime remains correct but carries a
+19-file historical Compose override chain. This rollout used that exact chain
+and a final four-role overlay, so it did not alter topology or mounts. The
+chain is an auditability/operability debt, not the C2 root cause; it is outside
+this narrow packet and must be consolidated in a separately approved cleanup
+slice. Candidate, named rollback image and bounded external evidence directory
+are retained; no cleanup is performed while the packet is unresolved.
