@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from qdl.runtime.mark_index_lineage import (
     validate_derived_mark_index_component,
 )
 from qdl.raw.envelope import validate_raw_envelope
+from qdl.runtime.heartbeat import write_heartbeat
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
 from qdl.transport import (
@@ -187,6 +189,7 @@ class StableProjectorEngine:
         self._append_span = _SpanSummary()
         self._spans_reported_at_ns = time.time_ns()
         self.canonical_topic = canonical_topic
+        self.heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         self.raw_topics = raw_topics
         self.sink = sink
         self.projector = projector
@@ -274,6 +277,14 @@ class StableProjectorEngine:
         await self._drain_ready()
 
     async def run_once(self, timeout_seconds: float = 1.0) -> bool:
+        # R1.31. One line so a container healthcheck can tell "idle" from
+        # "stopped". Two projectors hung inside the supervisor's recovery path
+        # on 2026-09-19 and stayed `Up` for eleven minutes; the supervisor was
+        # no longer calling this method, and nothing said so. Written first,
+        # before any work, because the question is whether the loop turns.
+        if self.heartbeat_path is not None:
+            write_heartbeat(self.heartbeat_path, role="stable_projector",
+                            detail=self.canonical_topic)
         records: list[KafkaProjectorRecord] = []
         batch_bytes = 0
         while self._deferred_records and len(records) < self.max_batch_records:

@@ -30,6 +30,7 @@ from qdl.adapters.okx.bar_edge import (
 )
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.runtime.heartbeat import write_heartbeat
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_capacity import (
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
@@ -311,6 +312,7 @@ class StableBinanceBarEdge:
         # Native websocket BARs stay owned by their Rust acquisition lane.
         self.bindings = recurring_rest_bar_bindings(self.history_bindings)
         self.okx_bindings = recurring_rest_bar_bindings(self.history_okx_bindings)
+        self._heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         # Keyed by binding id so a capture can ask what channel the core has this
         # binding registered under; see `_binance_binding`.
         self._acquisition_by_id = {
@@ -1403,6 +1405,18 @@ class StableBinanceBarEdge:
             return
         failures = 0
         while not self._stopped.is_set():
+            # R1.31. The edge writes its state file only when a checkpoint
+            # moves, which for the intervals it still owns can be hours apart -
+            # 1m went native on the ingestor in R1.28 - so that file cannot tell
+            # "idle" from "stopped". This can: it is rewritten every turn of the
+            # loop, before the work, and a healthcheck reads only its age.
+            # `getattr` because the scheduling tests drive `run_forever` on a
+            # lightweight double that never runs `__init__`, the same
+            # accommodation `_source_provider` already makes for them.
+            heartbeat_path = getattr(self, "_heartbeat_path", None)
+            if heartbeat_path is not None:
+                write_heartbeat(heartbeat_path, role="stable_bar_edge",
+                                detail=f"bindings={len(self.history_bindings)}")
             try:
                 # Bootstrap is a bounded latest-closed history read.  It must
                 # run immediately after process start; `_next_ready_at()` is
