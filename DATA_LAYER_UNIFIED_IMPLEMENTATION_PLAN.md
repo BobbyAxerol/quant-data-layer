@@ -44335,3 +44335,12 @@ V1 operational finding, not altered or used to weaken V2 acceptance. The only
 next action is the owner-approved seven-role rolling recreate followed by the
 strict C2 300-second receipt; on failure rollback is limited to those same
 roles and recorded image/runtime coordinates.
+
+**Rolling checkpoint 1/2 (`RUST CORE PASS`, 2026-09-19).** `rust_core`,
+`rust_core_2` and `rust_core_3` were recreated sequentially to
+`sha256:389753b37c4f…` with only their individual sealed core JSON bind mounts.
+After each recreation, and again after all three, every core was `running`,
+`restart=0`, `OOM=false`, and emitted no bounded warning/error/panic record.
+Kafka, Redis, SQLite, V1, both ingestors, all projectors, BAR edge, reader
+roles, Trading System, alpha and order paths were not recreated or changed in
+this checkpoint. Reader rolling and strict C2 remain pending.
