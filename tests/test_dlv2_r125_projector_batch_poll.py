@@ -7,7 +7,11 @@ the in-order deferral of whatever does not fit the byte bound.
 """
 
 import asyncio
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from qdl.runtime.stable_projector import poll_projector_records
 from qdl.transport.kafka_projector import KafkaProjectorRecord
@@ -56,6 +60,20 @@ class _SingleBroker:
 
 
 class PollProjectorRecordsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_projector_import_does_not_depend_on_query_package_order(self):
+        environment = dict(os.environ)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-c", "import qdl.runtime.stable_projector"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     async def test_batch_broker_is_served_by_one_call(self):
         broker = _BatchBroker([[_record(1), _record(2), _record(3)]])
         records = await poll_projector_records(

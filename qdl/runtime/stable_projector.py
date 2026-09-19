@@ -163,6 +163,7 @@ class StableProjectorEngine:
         max_pending_bytes: int = 256 * 1024 * 1024,
         max_batch_records: int = 128,
         max_batch_bytes: int | None = None,
+        max_commit_records: int | None = None,
         batch_wait_seconds: float = 0.025,
     ) -> None:
         if (
@@ -173,7 +174,13 @@ class StableProjectorEngine:
             raise ValueError("stable projector topics are invalid")
         if max_pending_records <= 0 or max_pending_bytes <= 0:
             raise ValueError("stable projector pending bounds must be positive")
-        if not 1 <= max_batch_records <= 1000 or not 0 < batch_wait_seconds <= 1:
+        if max_commit_records is None:
+            max_commit_records = max_batch_records
+        if (
+            not 1 <= max_batch_records <= 1000
+            or not 1 <= max_commit_records <= max_batch_records
+            or not 0 < batch_wait_seconds <= 1
+        ):
             raise ValueError("stable projector batch policy is invalid")
         if max_batch_bytes is None:
             max_batch_bytes = min(8 * 1024 * 1024, max_pending_bytes)
@@ -187,6 +194,10 @@ class StableProjectorEngine:
         # them, so each line describes its own interval.
         self._canonical_age_span = _SpanSummary()
         self._append_span = _SpanSummary()
+        self._poll_span = _SpanSummary()
+        self._lookup_span = _SpanSummary()
+        self._projection_span = _SpanSummary()
+        self._checkpoint_span = _SpanSummary()
         self._spans_reported_at_ns = time.time_ns()
         self.canonical_topic = canonical_topic
         self.heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
@@ -198,6 +209,7 @@ class StableProjectorEngine:
         self.max_pending_bytes = max_pending_bytes
         self.max_batch_records = max_batch_records
         self.max_batch_bytes = max_batch_bytes
+        self.max_commit_records = max_commit_records
         self.batch_wait_seconds = batch_wait_seconds
         poll_headroom = min(max_batch_records, max(1, max_pending_records // 4))
         self._canonical_pause_high_records = max(
@@ -294,12 +306,14 @@ class StableProjectorEngine:
             records.append(self._deferred_records.popleft())
             batch_bytes += len(item.payload)
         if not records:
+            poll_started_ns = time.time_ns()
             fetched = await poll_projector_records(
                 self.broker,
                 max_records=self.max_batch_records,
                 timeout_seconds=timeout_seconds,
                 batch_wait_seconds=self.batch_wait_seconds,
             )
+            self._poll_span.observe(time.time_ns() - poll_started_ns)
             if not fetched:
                 # Another projector replica may have persisted the correlated raw
                 # envelope into the shared cache. Retry bounded local partitions so
@@ -326,10 +340,20 @@ class StableProjectorEngine:
             return
         self._spans_reported_at_ns = now_ns
         logger.info(
-            "qdl_stable_projector_spans canonical_age_ms=%s durable_append_ms=%s",
-            self._canonical_age_span.report(),
+            "qdl_stable_projector_spans broker_poll_ms=%s canonical_lookup_ms=%s "
+            "durable_append_ms=%s compatibility_projection_ms=%s "
+            "checkpoint_ms=%s canonical_age_ms=%s",
+            self._poll_span.report(),
+            self._lookup_span.report(),
             self._append_span.report(),
+            self._projection_span.report(),
+            self._checkpoint_span.report(),
+            self._canonical_age_span.report(),
         )
+        self._poll_span.reset()
+        self._lookup_span.reset()
+        self._projection_span.reset()
+        self._checkpoint_span.reset()
         self._canonical_age_span.reset()
         self._append_span.reset()
 
@@ -354,121 +378,145 @@ class StableProjectorEngine:
 
     async def _drain_ready(self) -> None:
         while True:
+            lookup_started_ns = time.time_ns()
             ready = await self._ready_batch()
+            self._lookup_span.observe(time.time_ns() - lookup_started_ns)
             if not ready:
                 return
-            fresh = tuple(
-                item
-                for item in ready
-                if not item.already_durable
+            for start in range(0, len(ready), self.max_commit_records):
+                await self._commit_ready_batch(
+                    ready[start:start + self.max_commit_records]
+                )
+
+    async def _commit_ready_batch(
+        self, ready: tuple[_ReadyCanonical, ...]
+    ) -> None:
+        """Commit one bounded FIFO slice after a larger Kafka fetch.
+
+        Polling a large Kafka batch keeps the consumer efficient.  The durable
+        append, Redis compatibility projection and checkpoint have different
+        contention properties, however, so they must not hold every selected
+        partition in one unbounded turn.  Each slice retains the existing
+        downstream-before-checkpoint order and can replay idempotently.
+        """
+
+        fresh = tuple(
+            item
+            for item in ready
+            if not item.already_durable
+            and not item.semantic_duplicate
+            and item.terminal_reason is None
+        )
+        append_started_ns = time.time_ns()
+        fresh_stored = (
+            await self.sink.publish_many([item.event for item in fresh])
+            if fresh
+            else ()
+        )
+        if fresh:
+            self._append_span.observe(time.time_ns() - append_started_ns)
+            for item in fresh:
+                # How old the canonical record already was when this projector
+                # began its durable handoff. `accepted_at_ns` is the broker's
+                # own stamp, never a replacement for provider lineage.
+                self._canonical_age_span.observe(
+                    append_started_ns - item.record.accepted_at_ns
+                )
+        stored_iterator = iter(fresh_stored)
+        resolved: list[tuple[_ReadyCanonical, StoredEvent]] = []
+        for item in ready:
+            stored = (
+                item.existing
+                if item.already_durable
+                or item.semantic_duplicate
+                or item.terminal_reason is not None
+                else next(stored_iterator)
+            )
+            if stored is None:
+                raise RuntimeError("stable retained canonical record has no cache record")
+            resolved.append((item, stored))
+
+        projected = tuple(
+            (item, stored)
+            for item, stored in resolved
+            if (
+                item.project_latest
                 and not item.semantic_duplicate
                 and item.terminal_reason is None
             )
-            append_started_ns = time.time_ns()
-            fresh_stored = (
-                await self.sink.publish_many([item.event for item in fresh])
-                if fresh
-                else ()
+        )
+        projection_started_ns = time.time_ns()
+        projections = [
+            self.projector.build(
+                stored,
+                item.raw_envelope,
+                derived_mark_index_component=item.derived_mark_index_component,
             )
-            if fresh:
-                self._append_span.observe(time.time_ns() - append_started_ns)
-                for item in fresh:
-                    # How old the canonical record already was when this
-                    # projector read it: the core's produce, Kafka, and this
-                    # consume. `accepted_at_ns` is the broker's own stamp.
-                    self._canonical_age_span.observe(
-                        append_started_ns - item.record.accepted_at_ns
-                    )
-                self._report_spans()
-            stored_iterator = iter(fresh_stored)
-            resolved: list[tuple[_ReadyCanonical, StoredEvent]] = []
-            for item in ready:
-                stored = (
-                    item.existing
-                    if item.already_durable
-                    or item.semantic_duplicate
-                    or item.terminal_reason is not None
-                    else next(stored_iterator)
-                )
-                if stored is None:
-                    raise RuntimeError("stable retained canonical record has no cache record")
-                resolved.append((item, stored))
-
-            projected = tuple(
-                (item, stored)
-                for item, stored in resolved
-                if (
-                    item.project_latest
-                    and not item.semantic_duplicate
-                    and item.terminal_reason is None
-                )
+            for item, stored in projected
+        ]
+        applied = (
+            await asyncio.to_thread(self.target.apply_many, projections)
+            if projections
+            else ()
+        )
+        if projected:
+            self._projection_span.observe(time.time_ns() - projection_started_ns)
+        if len(applied) != len(projected):
+            raise RuntimeError(
+                "stable projection target returned an invalid result count"
             )
-            projections = [
-                self.projector.build(
-                    stored,
-                    item.raw_envelope,
-                    derived_mark_index_component=item.derived_mark_index_component,
-                )
-                for item, stored in projected
-            ]
-            applied = (
-                await asyncio.to_thread(self.target.apply_many, projections)
-                if projections
-                else ()
-            )
-            if len(applied) != len(projected):
-                raise RuntimeError(
-                    "stable projection target returned an invalid result count"
-                )
-            terminalized = tuple(
-                item for item in ready if item.terminal_reason is not None
-            )
-            if terminalized:
-                await asyncio.to_thread(
-                    self._quarantine_terminal_recovery_overlaps, terminalized
-                )
-                logger.warning(
-                    "terminalized stale BAR recovery overlaps count=%s reason=%s",
-                    len(terminalized),
-                    terminalized[0].terminal_reason,
-                )
-            applied_by_event = {
-                item.record.event_id: was_applied
-                for (item, _stored), was_applied in zip(
-                    projected, applied, strict=True
-                )
-            }
+        terminalized = tuple(
+            item for item in ready if item.terminal_reason is not None
+        )
+        if terminalized:
             await asyncio.to_thread(
-                self._checkpoint_records, [item.record for item in ready]
+                self._quarantine_terminal_recovery_overlaps, terminalized
             )
-            for item in ready:
-                if (
-                    item.already_durable
-                    or item.semantic_duplicate
-                    or (
-                        item.record.event_id in applied_by_event
-                        and not applied_by_event[item.record.event_id]
-                    )
-                ):
-                    self._duplicate_projections += 1
-                self._canonical_committed += 1
-                queue = self._queues[item.partition]
-                current = queue.popleft()
-                if current.offset != item.record.offset:
-                    raise RuntimeError(
-                        "stable canonical queue order changed during batch"
-                    )
-                self._pending_records -= 1
-                self._pending_bytes -= len(item.record.payload)
-                capture_id = bytes(item.envelope.raw_capture_id)
-                waiting = self._waiting.get(capture_id)
-                if waiting is not None:
-                    waiting.discard(item.partition)
-                    if not waiting:
-                        self._waiting.pop(capture_id, None)
-                if not queue:
-                    self._queues.pop(item.partition, None)
-            self._update_canonical_backpressure()
+            logger.warning(
+                "terminalized stale BAR recovery overlaps count=%s reason=%s",
+                len(terminalized),
+                terminalized[0].terminal_reason,
+            )
+        applied_by_event = {
+            item.record.event_id: was_applied
+            for (item, _stored), was_applied in zip(
+                projected, applied, strict=True
+            )
+        }
+        checkpoint_started_ns = time.time_ns()
+        await asyncio.to_thread(
+            self._checkpoint_records, [item.record for item in ready]
+        )
+        self._checkpoint_span.observe(time.time_ns() - checkpoint_started_ns)
+        for item in ready:
+            if (
+                item.already_durable
+                or item.semantic_duplicate
+                or (
+                    item.record.event_id in applied_by_event
+                    and not applied_by_event[item.record.event_id]
+                )
+            ):
+                self._duplicate_projections += 1
+            self._canonical_committed += 1
+            queue = self._queues[item.partition]
+            current = queue.popleft()
+            if current.offset != item.record.offset:
+                raise RuntimeError(
+                    "stable canonical queue order changed during batch"
+                )
+            self._pending_records -= 1
+            self._pending_bytes -= len(item.record.payload)
+            capture_id = bytes(item.envelope.raw_capture_id)
+            waiting = self._waiting.get(capture_id)
+            if waiting is not None:
+                waiting.discard(item.partition)
+                if not waiting:
+                    self._waiting.pop(capture_id, None)
+            if not queue:
+                self._queues.pop(item.partition, None)
+        self._update_canonical_backpressure()
+        self._report_spans()
 
     @staticmethod
     def _verified_payload_hash(

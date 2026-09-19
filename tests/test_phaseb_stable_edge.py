@@ -1316,13 +1316,16 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.spool.close()
         self.temp.cleanup()
 
-    def engine(self, broker, target, raw_topic, canonical_topic, *, sink=None):
+    def engine(
+        self, broker, target, raw_topic, canonical_topic, *, sink=None, **overrides
+    ):
         return StableProjectorEngine(
             broker=broker, spool=self.spool, catalog=self.catalog,
             canonical_topic=canonical_topic, raw_topics=(raw_topic,),
             sink=sink or LocalStableCanonicalSink(self.gateway, self.spool),
             projector=StableCompatibilityProjector(self.catalog), target=target,
             max_pending_records=10, max_pending_bytes=1024 * 1024,
+            **overrides,
         )
 
     def _native_backfill_overlap(self):
@@ -1741,6 +1744,59 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(engine.stats.raw_committed, 2)
+        self.assertEqual(engine.stats.canonical_committed, 2)
+        self.assertEqual(engine.stats.pending_canonical, 0)
+
+    async def test_projector_limits_each_durable_commit_turn_without_reordering(self):
+        first_binding, first_raw, first_event = _stable_pair(
+            self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"
+        )
+        second_binding, second_raw, second_event = _stable_pair(
+            self.catalog, "okx_bbo.json", "okx-swap-btcusdt-quote"
+        )
+        raw_topic, canonical_topic, raw_first, canonical_first = _broker_records(
+            first_binding, first_raw, first_event, raw_offset=0, canonical_offset=0
+        )
+        _, _, raw_second, canonical_second = _broker_records(
+            second_binding, second_raw, second_event, raw_offset=1, canonical_offset=1
+        )
+        broker = _Broker()
+        target = InMemoryStableProjectionTarget()
+        sink = _CountingStableSink(LocalStableCanonicalSink(self.gateway, self.spool))
+        projection_calls = []
+        original_apply_many = target.apply_many
+
+        def tracked_apply_many(records):
+            projection_calls.append(tuple(record.offset for record in records))
+            return original_apply_many(records)
+
+        target.apply_many = tracked_apply_many
+        engine = self.engine(
+            broker,
+            target,
+            raw_topic,
+            canonical_topic,
+            sink=sink,
+            max_batch_records=2,
+            max_commit_records=1,
+        )
+
+        await engine.accept_many(
+            (raw_first, raw_second, canonical_first, canonical_second)
+        )
+
+        self.assertEqual(sink.publish_many_calls, 2)
+        self.assertEqual(projection_calls, [(1,), (1,)])
+        self.assertEqual(broker.checkpoint_batches, [2, 1, 1])
+        self.assertEqual(
+            broker.checkpoints,
+            [
+                (raw_topic, 0, 0),
+                (raw_topic, 0, 1),
+                (canonical_topic, 0, 0),
+                (canonical_topic, 0, 1),
+            ],
+        )
         self.assertEqual(engine.stats.canonical_committed, 2)
         self.assertEqual(engine.stats.pending_canonical, 0)
 
@@ -2710,20 +2766,26 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values.update({
                 "QDL_STABLE_MAX_PENDING_RECORDS": "2048",
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
-                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "1000",
+                "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "512",
                 "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
+                "QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS": "128",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
                 "projector_v2", values
             )
             self.assertEqual(bounded_projector.max_pending_records, 2048)
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
-            self.assertEqual(bounded_projector.projector_max_batch_records, 1000)
+            self.assertEqual(bounded_projector.projector_max_batch_records, 512)
             self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
+            self.assertEqual(bounded_projector.projector_max_commit_records, 128)
             values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1001"
             with self.assertRaisesRegex(ValueError, "projector batch bound"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
-            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1000"
+            values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "512"
+            values["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"] = "513"
+            with self.assertRaisesRegex(ValueError, "commit batch bound"):
+                StableRuntimeConfig.from_environment("projector_v2", values)
+            values["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"] = "128"
             values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
             with self.assertRaisesRegex(ValueError, "pending records"):
                 StableRuntimeConfig.from_environment("projector_v2", values)

@@ -5,13 +5,14 @@ reaching the 3 GiB physical bound with 7,720 bytes to spare. Every canonical
 write then failed closed for two hours. The frames had already been
 checkpointed - PASSIVE recycles a WAL but never shrinks the file - so the
 outage was the file, not the retained data. These tests pin both halves of the
-repair: retention work reclaims a WAL that outgrew journal_size_limit, and the
-physical bound reclaims before it refuses a write.
+repair: routine retention remains nonblocking, and the physical bound reclaims
+before it refuses a write.
 """
 
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from qdl.transport.contracts import BackpressureRequired, DurableEvent
 from qdl.transport.sqlite_spool import (
@@ -67,6 +68,20 @@ class SpoolWalBoundTests(unittest.TestCase):
         spool = self._spool()
         spool._checkpoint_wal_truncate_locked()
         self.assertEqual(spool._wal_bytes(), 0)
+
+    def test_routine_maintenance_never_runs_blocking_truncate(self):
+        spool = self._spool()
+        with patch.object(
+            spool, "_wal_bytes", return_value=JOURNAL_SIZE_LIMIT_BYTES + 1
+        ), patch.object(
+            spool, "_checkpoint_wal_passive_locked", return_value=False
+        ) as passive, patch.object(
+            spool, "_checkpoint_wal_truncate_locked", return_value=True
+        ) as truncate:
+            spool.append(_event(1, b"p" * 4096))
+
+        passive.assert_called_once_with()
+        truncate.assert_not_called()
 
     def test_storage_bytes_counts_every_physical_file(self):
         spool = self._spool()

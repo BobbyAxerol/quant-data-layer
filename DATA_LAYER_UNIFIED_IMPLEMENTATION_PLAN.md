@@ -44646,7 +44646,103 @@ containers used `--rm`; no new image or persistent test artifact was created.
 The three pre-existing leaked test containers remain intentionally untouched
 until the separately scoped R1.35-D cleanup gate.
 
-#### R1.35-B - Strict quote root-cause repair and bounded runtime proof (`PENDING / REQUIRES R1.35-A EXIT`)
+#### R1.35-B - Strict quote root-cause repair and bounded runtime proof (`IN_PROGRESS / R1.35-A SOURCE EXIT`, 2026-09-19)
+
+**Execution record.** R1.35-A source/golden exit is sealed at `bcb9540`.
+The only known live defect admitted into this scope is strict execution quote
+event age for the ten Binance USD-M/OKX Swap BTC/ETH/SOL/DOGE/BNB bindings;
+the same audit also observed five paired MARK/INDEX component-cadence failures.
+This B slice first obtains typed, read-only evidence from both readers and the
+actual consumer path, then changes only the shared layer proven responsible.
+No SLA relaxation, per-symbol timer, REST execution substitute, consumer
+manifest change or direct provider fallback is allowed. Any runtime packet is
+deferred until source tests identify its exact role/image/config scope and a
+rollback pair.
+
+**Current diagnostic slice (source-only).** Add one bounded public-SDK probe
+that records at most ten typed failures per binding/reader: observation time,
+declared freshness budget, typed quality/session/gap/completeness/eligibility
+facts and exception class only. It must not retain prices, book levels, raw
+payloads, credentials, cursor state or direct-provider output. This lets the
+same real two-reader matrix distinguish an intermittent projection/query tail
+from a venue/session failure before any serving role is changed. The probe is
+not a new product route and has no runtime rollout or cleanup side effect.
+
+**Selected repair boundary (source, before runtime packet).** The two-reader
+probe and read-only timestamp trace rule out a Binance/OKX session outage and
+consumer/API-call latency: all ten sessions remained `LIVE`, complete and
+gap-free while upstream accepted events continued. During the failing window
+(`2026-09-19T19:59:18Z` through `20:00:11Z`), the shared projector pipeline
+delivered canonical records to SQLite up to `10.75`--`23.3 s` after its own
+accepted timestamp. Projector replicas 2 and 3 both recorded 12--26 s
+canonical age spikes; their source sends are presently configured as one
+1,000-record transaction that holds all selected partition locks through the
+SQLite append, compatibility projection and checkpoint sequence. The exact
+individual slow substage is not yet emitted, so this slice must add bounded
+stage spans rather than infer a venue fault from one aggregate age.
+
+The repair keeps the efficient bounded Kafka fetch but introduces a
+provider-neutral **commit micro-batch** cap below the fetch cap. Each chunk
+preserves FIFO within every partition and performs durable append, projection
+and checkpoint before the next chunk; it limits the lock footprint, SQLite
+write, Redis pipeline and checkpoint work that one projector turn may hold.
+It is not a symbol-specific throttle, does not change source timestamp,
+manifest, cursor semantics, provider quota or V1 policy, and does not create a
+second latest-state authority. Per-turn spans must separately report broker
+poll, canonical lookup/lineage, durable append, compatibility projection and
+checkpoint time. The runtime candidate will use a `512` record fetch cap and
+`128` record commit cap only after source/unit/golden tests pass. If the
+instrumented evidence shows a different shared stage is responsible, repair
+that same shared stage rather than adding a cache bypass.
+
+**Test-harness boundary discovered during B.** A clean isolated import of the
+projector exposed an existing package cycle: `mark_index_lineage` imported the
+public `qdl.query` re-export, which imports Query service and then the
+MARK/INDEX live reader back into lineage. This is a narrow module-boundary
+defect that can hide or skip a direct projector regression depending on import
+order; it has no intended runtime behavior. B may make the lower-level lineage
+verifier compare the binding's already-serialized contract feed value without
+initializing the public Query package, and add a clean-process regression. No
+public contract, role or runtime configuration changes because of this repair.
+
+**Source implementation and test record (2026-09-19; runtime unchanged).**
+Implemented the bounded public-SDK quality probe as
+`scripts/measure_binding_quality.py`; it has a fixed evidence cap and records
+only typed status/latency facts. Its real read-only two-replica run showed
+that the failure is shared-pipeline behavior: all ten quote sessions were
+`LIVE`, complete and gap-free, while one reader window saw repeated strict
+event-age rejection across the five Binance and five OKX bindings. SQLite
+timestamp correlation retained no payloads and showed continuous source
+acceptance but `10.75`--`23.3 s` accepted-to-durable tail during the failure.
+Projector-2/3 span logs independently showed `12`--`26 s` canonical age
+spikes in that same window.
+
+The source repair makes routine SQLite maintenance use only nonblocking
+`PASSIVE` checkpointing; a bounded `TRUNCATE` remains exclusively in the
+physical-capacity fail-closed path. `StableProjectorEngine` now fetches a
+bounded batch but commits it in an independently validated FIFO micro-batch;
+the stable Compose candidate declares fetch `512` / commit `128` for every
+projector. It adds bounded aggregate spans for broker poll, canonical
+lookup/lineage, durable append, compatibility projection and checkpoint, so
+the next real window identifies any remaining shared stage rather than
+guessing. A clean-process import test also fixes the lineage verifier's
+dependency on the eager public Query package initializer; this does not alter
+the serialized feed contract.
+
+**Source gates actually run.** A disposable `--network none`, read-only
+Python container executed the spool WAL, projector poll, stable-edge,
+R1.35-quality, stale-reason, SDK feed-status and SDK stream suites: `102
+passed`, `1 skipped` (the pre-existing isolated-Redis case). The probe's
+strict-versus-quiet semantics regression was then added; the final combined
+source suite passed `104`, with the same `1` isolated-Redis skip. The
+clean-process projector import/batch suite is included in that final run. The
+new quality-probe CLI loaded successfully in the same isolated image. `git
+diff --check` and Python `compileall` passed before the final test run. No
+image, provider, runtime
+role, Kafka offset/topology, Redis, SQLite, V1, Trading System, alpha or order
+path changed. Source commit and the explicitly bounded projector rollout are
+the next B boundary; the real-provider matrix remains mandatory and cannot be
+inherited from this source-only evidence.
 
 **Goal.** Make every active execution `QUOTE` binding genuinely strict-ready
 for Binance USD-M and OKX Swap, including the initial BNB/OKX ETH/BNB/DOGE

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.provider.v1 import raw_provider_pb2
-from qdl.query import FeedType
 from qdl.raw.envelope import validate_raw_envelope
 
 if TYPE_CHECKING:
@@ -118,7 +117,12 @@ def validate_derived_mark_index_component(
     """Validate one physical raw component of a Rust-derived mark/index pair."""
 
     if (
-        binding.feed is not FeedType.MARK_INDEX_PRICE
+        # Keep this lower-level lineage verifier independent of qdl.query's
+        # public package initializer. The binding already carries the stable
+        # contract enum's wire value; importing that package here creates a
+        # cycle through the execution live-reader during a clean projector
+        # import.
+        getattr(binding.feed, "value", binding.feed) != "MARK_INDEX_PRICE"
         or binding.v1_compatibility != "NONE"
     ):
         raise ValueError("derived MARK_INDEX lineage is not permitted for binding")

@@ -407,18 +407,15 @@ class SQLiteDurableSpool:
                     })
                 self._connection.execute("COMMIT")
                 if maintenance_ran:
-                    # PASSIVE never blocks readers or discards a committed event.
-                    # It gives SQLite a bounded opportunity to recycle the WAL
-                    # after retention work before the physical cache bound becomes
-                    # a false backpressure signal. PASSIVE recycles the WAL but
-                    # never shrinks the file, so a WAL that has already outgrown
-                    # its declared journal_size_limit is reclaimed instead: that
-                    # file, not the retained rows, is what reached the physical
-                    # bound and froze every writer on 2026-09-17.
-                    if self._wal_bytes() > JOURNAL_SIZE_LIMIT_BYTES:
-                        self._checkpoint_wal_truncate_locked()
-                    else:
-                        self._checkpoint_wal_passive_locked()
+                    # Routine retention must never turn a hot append into a
+                    # blocking TRUNCATE checkpoint. Under a shared read-heavy
+                    # cache, TRUNCATE can wait for another reader's snapshot
+                    # until SQLite's busy timeout and make otherwise fresh
+                    # market events stale. PASSIVE is nonblocking; the
+                    # physical-capacity path below retains the bounded
+                    # TRUNCATE reclaim/fail-closed policy when disk headroom
+                    # actually requires it.
+                    self._checkpoint_wal_passive_locked()
                 return results
             except BaseException:
                 if self._connection.in_transaction:

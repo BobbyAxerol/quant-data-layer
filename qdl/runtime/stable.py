@@ -205,6 +205,7 @@ class StableRuntimeConfig:
     max_pending_bytes: int = 256 * 1024 * 1024
     projector_max_batch_records: int = 128
     projector_max_batch_bytes: int = 8 * 1024 * 1024
+    projector_max_commit_records: int = 128
     # DL-V2 R1.11. How long a drain waits for more records before it commits to
     # the batch it has. With a backlog this is irrelevant, the batch fills at
     # once; at the head it is everything, because a 10 ms window collects only a
@@ -284,6 +285,10 @@ class StableRuntimeConfig:
         if self.role == "projector_v2":
             if not 1 <= self.projector_max_batch_records <= 1000:
                 raise ValueError("stable projector batch bound must be 1..1000")
+            if not 1 <= self.projector_max_commit_records <= self.projector_max_batch_records:
+                raise ValueError(
+                    "stable projector commit batch bound must fit inside fetch batch"
+                )
             if not 0 < self.projector_batch_wait_seconds <= 1:
                 raise ValueError("stable projector batch wait must be within 0..1 seconds")
             if self.max_pending_records < self.projector_max_batch_records:
@@ -414,6 +419,9 @@ class StableRuntimeConfig:
             ),
             projector_max_batch_bytes=int(
                 env.get("QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES", "8388608")
+            ),
+            projector_max_commit_records=int(
+                env.get("QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS", "128")
             ),
             pass_through_enabled=_env_flag(
                 env, "QDL_STABLE_PASS_THROUGH_ENABLED", default=False
@@ -918,6 +926,7 @@ async def serve_stable_projector() -> None:
             max_pending_bytes=config.max_pending_bytes,
             max_batch_records=config.projector_max_batch_records,
             max_batch_bytes=config.projector_max_batch_bytes,
+            max_commit_records=config.projector_max_commit_records,
             batch_wait_seconds=config.projector_batch_wait_seconds,
         )
 
