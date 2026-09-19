@@ -42485,3 +42485,73 @@ therefore available, not blocked, and the numbers above are its budget.
 Four reversals on one number in one session. The rule that would have prevented
 all four: **time the probe as well as the thing it measures**, and never take a
 clock reading on the far side of work whose duration is unknown.
+
+<a id="dl-v2-r131-item4-contract-20260919"></a>
+#### R1.31 item 4 — what the consumer actually measures, and why the TTL could not have moved it
+
+Reading the consumer's own validator closes this
+(`trading_system/adapters/market_data/data_layer_v2.py:503-590`):
+
+```python
+freshness_ms = max(0, (data.received_at_ns - observed_at_ns) // 1_000_000)
+if freshness_ms > max_freshness_ms:
+    raise StaleExecutionReferenceError(max_freshness_ms, field_age_ms)
+```
+
+Both terms are stamped **at fetch**. `received_at_ns` is captured when the batch
+runs and travels with the cached `ReferenceBatchResult`; `observed_at_ns` is the
+venue's own `ts` on the row. A cache hit returns the same object, so the number
+the consumer computes is identical whether the value is served immediately or a
+full TTL later.
+
+**So the earlier claim that the 750 ms TTL "moved the tail by about 580 ms" was
+wrong and is withdrawn.** It cannot have. Maximum falling from 3,081 to 2,501 ms
+between two ten-minute windows is variance in the venue's own index lag, which
+the direct samples show ranging 764-1,414 ms within a single minute. Attributing
+that to the change was the same mistake as attributing the spool lag to the
+pipeline: a number moved after a change, and the change was credited without a
+mechanism.
+
+What the consumer reports is therefore **entirely the venue's index `ts` lag at
+fetch time**, and nothing on our side of the REST call can reduce it.
+
+#### The finding that the TTL change is actually worth keeping for
+
+`received_at_ns` being the fetch time and not the serve time means **the
+freshness metric understates the true age of the value by the cache age**. A
+price fetched once and served 2.0 s later is reported to Risk as being as fresh
+as it was at fetch. The consumer is not wrong to compute it that way - it cannot
+see our cache - but it means the cache TTL is an unreported addition to the age
+of an execution-grade input.
+
+That makes the 750 ms TTL correct for a reason other than the one it was
+introduced with: it bounds the unreported term to 750 ms instead of 2.0 s. It is
+kept, and the understatement is recorded here so the next person does not read
+`ages_ms` as the whole truth.
+
+#### The fix, fully specified
+
+`index-tickers` is subscribed on the WS lane and its canonical pairing carries
+`received_at_ns - source_event_time_ns` of 36/47/129 ms (min/p50/max over forty
+consecutive events), against 764-1,414 ms for the same venue's REST row. The
+venue is fast on the socket and slow on the endpoint; that is the whole story.
+
+Serving INDEX from the canonical binding therefore needs:
+
+1. a reader over the spool returning the newest `mark_index_price` envelope for
+   an `instrument_uid` (indexed single-row read, **not** the full-table scan this
+   session's probe used - that query costs 1.2 s and took a query role down);
+2. `OkxSwapReferenceAdapter` taking it as an optional source and preferring it
+   for the INDEX component when its `source_event_time_ns` beats the REST row;
+3. lineage keeping `provider="OKX_DIRECT"` and `source_role="REFERENCE"` - the
+   consumer requires exactly one provider and rejects any other role - with the
+   endpoint naming the canonical binding;
+4. a flag, defaulting off, so deployment is its own decision.
+
+Acceptance: the index component inside 2,000 ms at p99 from the consumer's own
+`ages_ms`, with no increase in OKX request rate.
+
+**Not written in this session, deliberately.** It changes the producer of an
+execution-grade risk input, and the two incidents already in this journal both
+came from landing that class of change at the end of a working day. The
+specification above is complete enough to be executed as its own block.
