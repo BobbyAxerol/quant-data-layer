@@ -7,10 +7,12 @@ The primary metric is therefore not a server-side timestamp: it is the time
 between initiating ``reference_batch`` and receiving the typed, SDK-validated
 result which a consumer can use.
 
-It also records the age from the trusted provider-confirmation timestamp to
-that consumer receipt.  That includes canonical delivery, the active stream
-gateway, V2 query, mTLS/network and SDK validation.  It intentionally does
-not use venue source-event time, which is a different freshness measure.
+It also records immutable provider/component lineage age separately.  For a
+quiet MARK/INDEX component this is deliberately *not* a delivery-latency
+metric: the source timestamp remains unchanged while the governed session,
+generation, gap fence and component cadence establish whether the result is
+usable.  The gate measures consumer-call-to-usable latency and validates that
+typed quiet-session evidence independently.
 
 Run it from a disposable container on the stable internal network with the
 existing ``trading-system`` identity mounted read-only.  It never calls V1,
@@ -49,6 +51,10 @@ from scripts.measure_consumer_request_latency import transports  # noqa: E402
 _LIVE_ENDPOINT = "qdl://stable-stream/internal/v2/execution/mark-index/latest"
 _LIVE_VIEW = "STABLE_STREAM_GATEWAY"
 _VALID_STAGES = frozenset({"CANONICAL_READ_COMMITTED", "SPOOL_CONFIRMED"})
+_VALID_RECENCY_MODES = frozenset({
+    "STRICT_EVENT_SESSION_LIVE",
+    "COMPONENT_SESSION_LIVE",
+})
 _DEFAULT_MANIFEST = ROOT / "consumers/stable/trading-system-paper.yaml"
 
 
@@ -99,6 +105,9 @@ def execution_mark_index_requirements(manifest: Path) -> tuple[ReferenceRequirem
         item.product is not ReferenceProduct.MARK_INDEX_PRICE
         or item.consumer_grade.value != ConsumerGrade.EXECUTION.value
         or item.max_freshness_ms is None
+        or getattr(item.event_recency_policy, "value", item.event_recency_policy)
+        != "OBSERVE"
+        or item.max_session_liveness_ms is None
         for item in mapped
     ):
         raise ValueError("execution MARK/INDEX mapping lost its governed reference policy")
@@ -155,11 +164,14 @@ def validate_live_response(
         labels = dict(getattr(observation, "labels", {}))
         received_at_ns = int(getattr(data, "received_at_ns", 0))
         provider_confirmation_ns = int(labels.get("provider_confirmation_ns", "0"))
+        source_event_time_ns = int(labels.get("source_event_time_ns", "0"))
         stage = labels.get("delivery_stage")
         if (
             labels.get("execution_view") != _LIVE_VIEW
             or provider_confirmation_ns <= 0
             or provider_confirmation_ns != received_at_ns
+            or source_event_time_ns <= 0
+            or source_event_time_ns > provider_confirmation_ns
             or stage not in _VALID_STAGES
             or received_at_ns > usable_at_ns
         ):
@@ -170,15 +182,92 @@ def validate_live_response(
             for entry in lineage
         ):
             raise ValueError("execution MARK/INDEX response did not use the internal live reader")
-        values[instrument_uid] = {
-            "provider_confirmation_to_usable_ms": (
-                usable_at_ns - provider_confirmation_ns
-            ) / 1_000_000,
-            "delivery_stage": stage,
-        }
+        values[instrument_uid] = _quiet_session_evidence(
+            requirement,
+            labels,
+            provider_confirmation_ns=provider_confirmation_ns,
+            usable_at_ns=usable_at_ns,
+        )
+        values[instrument_uid]["delivery_stage"] = stage
     if set(values) != set(expected):
         raise ValueError("execution MARK/INDEX response did not cover every requested binding")
     return values
+
+
+def _quiet_session_evidence(
+    requirement: ReferenceRequirement,
+    labels: dict[str, str],
+    *,
+    provider_confirmation_ns: int,
+    usable_at_ns: int,
+) -> dict[str, Any]:
+    """Validate the explicit quiet-channel contract at the SDK boundary.
+
+    Provider timestamps are immutable lineage.  A quiet component is admitted
+    only when the stream/query path proves a current provider session and the
+    exact component receipt remains inside its signed cadence.  This mirrors
+    the fail-closed query check without treating an unchanged component as a
+    newly delivered market event.
+    """
+
+    policy = getattr(
+        requirement.event_recency_policy,
+        "value",
+        requirement.event_recency_policy,
+    )
+    if policy != "OBSERVE" or requirement.max_session_liveness_ms is None:
+        raise ValueError("execution MARK/INDEX requirement lacks quiet-session policy")
+    if (
+        labels.get("event_recency_policy") != "OBSERVE"
+        or labels.get("recency_mode") not in _VALID_RECENCY_MODES
+        or labels.get("provider_session_state") != "LIVE"
+    ):
+        raise ValueError("execution MARK/INDEX quiet-session evidence is not live")
+    try:
+        session_liveness_ms = int(labels["provider_session_liveness_ms"])
+        session_checked_at_ns = int(labels["provider_session_checked_at_ns"])
+        components = {
+            name: (
+                int(labels[f"component_{name.lower()}_received_at_ns"]),
+                int(labels[f"component_{name.lower()}_quiet_after_ms"]),
+            )
+            for name in ("MARK", "INDEX")
+        }
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("execution MARK/INDEX quiet-session evidence is malformed") from error
+    if (
+        session_liveness_ms < 0
+        or session_checked_at_ns <= 0
+        or session_checked_at_ns > usable_at_ns
+    ):
+        raise ValueError("execution MARK/INDEX quiet-session clock is invalid")
+    session_age_ms = session_liveness_ms + (
+        usable_at_ns - session_checked_at_ns
+    ) / 1_000_000
+    if session_age_ms > requirement.max_session_liveness_ms:
+        raise ValueError("execution MARK/INDEX provider session exceeded its SLA")
+    component_ages: dict[str, float] = {}
+    for name, (receipt_ns, quiet_after_ms) in components.items():
+        if (
+            receipt_ns <= 0
+            or receipt_ns > usable_at_ns
+            or not 250 <= quiet_after_ms <= 120_000
+        ):
+            raise ValueError("execution MARK/INDEX component evidence is invalid")
+        age_ms = (usable_at_ns - receipt_ns) / 1_000_000
+        if age_ms > quiet_after_ms:
+            raise ValueError("execution MARK/INDEX component exceeded its quiet cadence")
+        component_ages[name] = age_ms
+    return {
+        # This is an immutable lineage diagnostic, never the quiet-channel SLA.
+        "provider_confirmation_to_usable_ms": (
+            usable_at_ns - provider_confirmation_ns
+        ) / 1_000_000,
+        "provider_session_liveness_to_usable_ms": session_age_ms,
+        "component_mark_age_to_usable_ms": component_ages["MARK"],
+        "component_index_age_to_usable_ms": component_ages["INDEX"],
+        "recency_mode": labels["recency_mode"],
+    }
 
 
 async def collect(
@@ -193,8 +282,12 @@ async def collect(
     deadline = time.monotonic() + duration_seconds
     next_call = time.monotonic()
     calls_ms: list[float] = []
-    freshness_by_uid: dict[str, list[float]] = defaultdict(list)
+    provider_age_by_uid: dict[str, list[float]] = defaultdict(list)
+    session_age_by_uid: dict[str, list[float]] = defaultdict(list)
+    mark_age_by_uid: dict[str, list[float]] = defaultdict(list)
+    index_age_by_uid: dict[str, list[float]] = defaultdict(list)
     stages: Counter[str] = Counter()
+    recency_modes: Counter[str] = Counter()
     errors: list[str] = []
     batches = 0
     while time.monotonic() < deadline:
@@ -214,22 +307,50 @@ async def collect(
         calls_ms.append((time.perf_counter() - started) * 1_000)
         batches += 1
         for uid, value in values.items():
-            freshness_by_uid[uid].append(value["provider_confirmation_to_usable_ms"])
+            provider_age_by_uid[uid].append(
+                value["provider_confirmation_to_usable_ms"]
+            )
+            session_age_by_uid[uid].append(
+                value["provider_session_liveness_to_usable_ms"]
+            )
+            mark_age_by_uid[uid].append(value["component_mark_age_to_usable_ms"])
+            index_age_by_uid[uid].append(value["component_index_age_to_usable_ms"])
             stages[str(value["delivery_stage"])] += 1
+            recency_modes[str(value["recency_mode"])] += 1
         next_call += cadence_seconds
     per_binding = {
         uid: {
-            "provider_confirmation_to_usable_ms": _summary(values),
+            "provider_confirmation_to_usable_ms": _summary(
+                provider_age_by_uid[uid]
+            ),
+            "provider_session_liveness_to_usable_ms": _summary(
+                session_age_by_uid[uid]
+            ),
+            "component_mark_age_to_usable_ms": _summary(mark_age_by_uid[uid]),
+            "component_index_age_to_usable_ms": _summary(index_age_by_uid[uid]),
         }
-        for uid, values in sorted(freshness_by_uid.items())
+        for uid in sorted(provider_age_by_uid)
     }
-    all_freshness = [value for values in freshness_by_uid.values() for value in values]
+    all_provider_age = [
+        value for values in provider_age_by_uid.values() for value in values
+    ]
+    all_session_age = [
+        value for values in session_age_by_uid.values() for value in values
+    ]
+    all_component_age = [
+        value
+        for values in (*mark_age_by_uid.values(), *index_age_by_uid.values())
+        for value in values
+    ]
     return {
         "batches": batches,
         "consumer_call_to_usable_ms": _summary(calls_ms),
-        "provider_confirmation_to_usable_ms": _summary(all_freshness),
+        "provider_confirmation_to_usable_ms": _summary(all_provider_age),
+        "provider_session_liveness_to_usable_ms": _summary(all_session_age),
+        "component_age_to_usable_ms": _summary(all_component_age),
         "per_binding": per_binding,
         "delivery_stages": dict(sorted(stages.items())),
+        "recency_modes": dict(sorted(recency_modes.items())),
         "errors": errors,
     }
 
@@ -261,21 +382,15 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         )
     finally:
         await client.close()
-    aggregate = result["provider_confirmation_to_usable_ms"]
-    minimum_samples = math.floor(args.duration_seconds / args.cadence_seconds) - 1
-    per_binding_complete = all(
-        data["provider_confirmation_to_usable_ms"].get("n", 0) >= minimum_samples
-        for data in result["per_binding"].values()
-    )
-    gate_passed = (
-        not result["errors"]
-        and len(result["per_binding"]) == len(requirements)
-        and per_binding_complete
-        and aggregate.get("n", 0) >= minimum_samples * len(requirements)
-        and float(aggregate.get("p99_ms", float("inf"))) < args.max_p99_ms
+    minimum_samples, gate_passed = _acceptance_gate(
+        result,
+        requirement_count=len(requirements),
+        duration_seconds=args.duration_seconds,
+        cadence_seconds=args.cadence_seconds,
+        max_consumer_call_p99_ms=args.max_p99_ms,
     )
     evidence = {
-        "schema": "qdl.execution-mark-index-consumer-latency.v1",
+        "schema": "qdl.execution-mark-index-consumer-latency.v2",
         "started_at_ns": started_ns,
         "finished_at_ns": time.time_ns(),
         "consumer_id": os.environ.get("QDL_CONSUMER_ID", "trading-system.paper.stable"),
@@ -284,13 +399,45 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "direct_provider_request_attempted": False,
         "requirement_count": len(requirements),
         "minimum_samples_per_binding": minimum_samples,
-        "max_provider_confirmation_to_usable_p99_ms": args.max_p99_ms,
+        "max_consumer_call_to_usable_p99_ms": args.max_p99_ms,
         "gate_passed": gate_passed,
         **result,
     }
     if args.output:
         _write_evidence(args.output, evidence)
     return evidence
+
+
+def _acceptance_gate(
+    result: dict[str, Any],
+    *,
+    requirement_count: int,
+    duration_seconds: float,
+    cadence_seconds: float,
+    max_consumer_call_p99_ms: float,
+) -> tuple[int, bool]:
+    """Apply the C2 gate without ever substituting immutable lineage for latency."""
+
+    minimum_samples = math.floor(duration_seconds / cadence_seconds) - 1
+    aggregate = result["consumer_call_to_usable_ms"]
+    per_binding_complete = all(
+        data["provider_session_liveness_to_usable_ms"].get("n", 0)
+        >= minimum_samples
+        and data["component_mark_age_to_usable_ms"].get("n", 0) >= minimum_samples
+        and data["component_index_age_to_usable_ms"].get("n", 0) >= minimum_samples
+        for data in result["per_binding"].values()
+    )
+    return (
+        minimum_samples,
+        (
+            not result["errors"]
+            and len(result["per_binding"]) == requirement_count
+            and per_binding_complete
+            and aggregate.get("n", 0) >= minimum_samples
+            and float(aggregate.get("p99_ms", float("inf")))
+            < max_consumer_call_p99_ms
+        ),
+    )
 
 
 def parse_args() -> argparse.Namespace:

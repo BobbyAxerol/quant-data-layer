@@ -44387,3 +44387,62 @@ System, alpha and order paths remain excluded. The replacement acceptance is
 still exactly two no-order 300-second `require_all=True` ten-binding probes,
 one per query replica, with the current query CA and successor workload
 identity copied only to container tmpfs.
+
+**C2 quiet-channel acceptance metric correction (`APPROVED / SOURCE IN
+PROGRESS`, 2026-09-19).** The approved additive keyring repair was applied to
+only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`; read-only process inspection confirms the successor
+Trading-System key ID and subject are present without recording any key
+material. A disposable authenticated preflight then completed five exact
+ten-binding V2 batches with no V1 fallback, direct-provider call, order, or
+consumer-state mutation. Consumer-call-to-usable measured `p50 74.967 ms`,
+`p95/p99 280.999 ms`. Its old acceptance predicate nevertheless rejected a
+quiet component because it incorrectly treated immutable
+`provider_confirmation_ns` as the delivery-latency SLA (`p99 2115.892 ms`).
+
+That predicate conflicts with this R1.34 contract: an admitted
+`COMPONENT_SESSION_LIVE` response retains original component/provider receipt
+timestamps by design, while query has already fail-closed on exact session,
+generation, config revision, gap/fence and signed per-component cadence. The
+approved source-only correction is limited to the disposable C2 harness and
+its deterministic tests. It will retain and report immutable provider and
+component ages as lineage diagnostics, independently validate the returned
+quiet/session evidence at consumer receipt, and gate only
+consumer-call-to-usable `p99 <= 2,000 ms` plus complete typed live evidence.
+It may not alter source timestamps, component cadence, requirement freshness,
+manifest, provider adapters, Rust core, query/stream runtime, V1, Kafka,
+Redis, SQLite, Trading System, alpha or the order path. Required tests cover
+strict and quiet-live responses; missing/malformed session evidence; expired
+session/cadence; and preservation of original provider confirmation lineage.
+After the source gate, one disposable no-order 300-second C2 probe per query
+replica will run against the already-rolled R1.34 runtime. The probe image is
+ephemeral and `--rm`; there is no additional service rollout. Any failure
+remains fail-closed and leaves the current seven-role runtime untouched.
+
+**C2 quiet-channel source gate (`PASS / IMMUTABLE CLIENT BUILD PENDING`,
+2026-09-19).** The acceptance harness now emits schema
+`qdl.execution-mark-index-consumer-latency.v2`. It retains
+`provider_confirmation_to_usable_ms` and the two component ages as immutable
+lineage diagnostics, separately records session-liveness-to-usable, and gates
+only the actual SDK `consumer_call_to_usable_ms` p99 together with complete
+per-binding quiet/session evidence. It does not change a source timestamp,
+quiet cadence, requirement, manifest, endpoint, runtime role or provider
+adapter. Deterministic regressions prove a quiet connected response with an
+unchanged 60-second provider receipt remains admissible only within its
+component cadence; strict mode remains typed; disconnected, expired-session,
+expired-component, missing/malformed evidence and direct-provider lineage all
+fail closed; and a 70-second immutable provider-age cannot override a
+281-millisecond consumer-call gate. The complete relevant isolated suite ran
+inside the existing final Python image with source mounted read-only and
+network disabled:
+
+`python -m unittest -v tests.test_execution_mark_index_consumer_latency tests.test_execution_mark_index_live_view tests.test_phase113_reference_v2 tests.test_production_catalog`:
+`44/44 PASS`.
+
+`git diff --check` and `python3 -m py_compile` for the changed harness/test
+also passed. No runtime, durable store, provider connection, order, consumer
+state or V1 path was modified by this source gate. The next permitted step is
+one immutable disposable client image from the committed source and exactly
+two `--rm` no-order 300-second C2 probes, one against each existing query
+replica; no reader/core recreate is required because the deployed R1.34
+reader/runtime already contains the relevant quiet contract.
