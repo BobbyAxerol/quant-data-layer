@@ -43347,3 +43347,56 @@ should be known before a release rather than after an incident.
 
 It is a deliberate production interruption on one venue at a time, so it is the
 owner's call, not a thing to slip into a verification run.
+
+<a id="dl-v2-r131-debt-a-closed-20260919"></a>
+#### R1.31 — debt A closed: 20/20 partitions clean, 14/14 intervals serve (2026-09-19T07:56Z)
+
+Headroom 64 -> 2,064, rolled to the seven roles that open the spool (query x2,
+projector x3, stream x2), then the repair on all twenty bindings.
+
+| | before | after |
+|---|---|---|
+| 15m partitions | 10,064 rows, 127-128 missing each | **10,192 rows, 0 missing** |
+| 30m partitions | 10,064 rows, 32 missing each | **10,096 rows, 0 missing** |
+| total missing | 1,590 | **0** |
+| alpha intervals serving | 12/14 | **14/14** |
+| 15m usable depth | ~4 days | **104.2 days** |
+| 30m usable depth | ~8 days | **208.4 days** |
+
+Every interval `coverage: FULL` and equal to Binance's own REST rows at both ends
+of the series.
+
+**"did not converge" was a false alarm and cost an hour.** The tool's
+`--wait-seconds` default is 180 and the round trip is repair -> Kafka -> core ->
+projector -> stream -> spool; the rows land after the deadline. Measured directly:
+the first two bindings reported `did not converge` and were **already clean** when
+the spool was read. The remaining eighteen were published with `--wait-seconds 3`
+and verified by measurement instead, which took nine minutes rather than an hour.
+
+The convergence check is not wrong to exist - it is too impatient, and it also
+reads with `STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW` compiled into whichever image
+the bar edge runs, which is not necessarily the one the spool enforces.
+
+**Two of my own hypotheses failed before this one held**, and both are recorded
+above rather than edited out: the first repair moved the hole because the
+partition was at cap, and "31 fits in the 64-row headroom" was wrong because the
+headroom was already fully consumed. What finally worked is the plain reading:
+there was no free space, so make some.
+
+**This is a reprieve on a ~104-day clock, not a cure.** The trim still keeps the
+newest rows by `logical_offset` while append order is deliberately not market
+order. Retention by market time is the cure and remains planned.
+
+#### Debt B - evidence gained, unplanned
+
+Rolling `stream_v2_passive` - the lease holder - handed the lease to
+`stream_v2_active` cleanly, with no lost batch: the projectors went from
+`409 then 200` to `200` directly. That is **producer-side failover demonstrated
+live**, not inferred, and it also removed the waste documented earlier at 571
+useless requests every three minutes.
+
+Three genuine single points of failure remain: `binance_bar_edge`,
+`ingestor_binance_usdm`, `ingestor_okx_swap`, plus `stable_redis` which is the
+lease store itself. The bar edge can reuse `ActivePassiveGatewayLease` - the same
+mechanism just proven; the Rust ingestors need a Rust client and a core that
+accepts a fenced takeover.
