@@ -79,6 +79,19 @@ class StableBarHistoryRepairPlan:
     missing_envelopes: tuple[object, ...]
 
 
+# The runtimes this edge polls. VN (`runtime: DNSE`) is declared in the catalog
+# and the acquisition plan but is served by V1, so the edge must not bootstrap or
+# poll it - it holds no DNSE credentials, and a poll would surface as a provider
+# outage rather than the config decision it is. Named here so the boundary can be
+# asserted against behaviour instead of against the text of a comprehension.
+BAR_EDGE_RUNTIMES: frozenset[str] = frozenset({"BINANCE", "OKX"})
+
+
+def admits_runtime(runtime: str) -> bool:
+    """Whether the crypto BAR edge owns bootstrap and polling for a runtime."""
+    return runtime in BAR_EDGE_RUNTIMES
+
+
 def _canonical_cache_id(path: str | Path) -> str:
     """Read the durable cache generation without initializing or mutating it."""
     database = Path(path).expanduser().resolve()
@@ -311,7 +324,7 @@ class StableBinanceBarEdge:
             source.binding_id
             for source, acquisition in pairs
             if acquisition.enabled
-            and acquisition.runtime in {"BINANCE", "OKX"}
+            and admits_runtime(acquisition.runtime)
             and source.feed.value == "BAR"
         }
         history_owned = {
