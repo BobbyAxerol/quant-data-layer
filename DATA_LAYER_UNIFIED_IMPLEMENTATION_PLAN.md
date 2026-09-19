@@ -43689,3 +43689,161 @@ projector posts every canonical batch to both stream gateways and the non-holder
 answers 409 - 6,080 rejected mTLS POSTs per projector per 30 minutes, ~36,000 an
 hour across three. The projector could remember the lease holder and re-probe on
 failure. It is write-path code and was not taken at a release gate.
+
+### R1.32 - Execution MARK/INDEX live-view correction (`SOURCE_TESTED / RUNTIME_PENDING`, 2026-09-19)
+
+**Approved goal.** Remove the execution-grade `MARK_INDEX_PRICE` dependency on
+venue REST and the expensive spool-query path without weakening the existing
+`2,000 ms` consumer bound. The stream gateway already receives the canonical
+latest-state event. This slice makes that authoritative, fenced live state
+available to the V2 query role through a private authenticated read path.
+
+**Evidence and decision.** The completed real-provider measurement establishes
+that the currently subscribed ten Binance/OKX MARK/INDEX bindings can be read
+from the stream gateway with p99 `1693.8 ms`, with `0/239` samples over the
+execution threshold. The spool path measured p99 `2318 ms`; direct OKX REST
+owns `2.1-2.9 s` before local processing. Therefore neither a TTL adjustment
+nor a retry/narrower provider poll is an acceptable execution fix. The chosen
+path is a bounded in-memory latest execution view in the existing stream
+gateway; it does not add a service, a symbol worker, a public endpoint, or a
+consumer-manifest revision.
+
+**Approved source scope.**
+
+1. The stream role retains only the newest verified canonical
+   `MARK_INDEX_PRICE` event per exact instrument identity, fence epoch and
+   generation. It is bounded to declared execution bindings and is cleared or
+   rejected on lease loss/generation mismatch.
+2. A private mTLS plus existing internal-signature read endpoint exposes one
+   typed view to query replicas. It never returns a stale, incomplete,
+   gap-open, non-authoritative, identity-mismatched, or passive-gateway value.
+3. The V2 query reference-batch path uses that view **only** for execution
+   `MARK_INDEX_PRICE` requests. Alpha/research reference products, history,
+   durable replay and spool projection retain their current contracts.
+4. A missing/invalid live view is a typed fail-closed result; it must not
+   silently call venue REST for an execution request. Existing consumer
+   V1-fallback policy remains outside this service and unchanged.
+
+**Invariants.** Price/unit/decimal values stay canonical; mark and index remain
+a paired result from one exact instrument; provider/source-role lineage is
+preserved; source-event and provider-confirmation freshness semantics are not
+relaxed; no cross-venue or cross-symbol substitution is permitted. The four VN
+bindings intentionally remain `V1_PRIMARY`; six inactive Spot catalog entries
+are excluded from the V2 active-demand execution gate and are not silently
+promoted by this work.
+
+**Source gates.** Unit/contract tests cover identity, units/decimals, bounded
+replacement, lease fence, generation reset, stale/gap/incomplete rejection,
+active/passive behavior, MARK/INDEX pairing, no REST invocation for an eligible
+execution read, and unchanged alpha/research reference behavior. Targeted
+integration tests cover private signature/TLS client behavior and query-result
+lineage. Only provider-captured/replayed bytes are valid outside deterministic
+tests; no generated market value is used as evidence.
+
+**Runtime gate and rollback decision boundary.** Source work may build/test in
+this feature worktree only. A later separately approved packet may build one
+immutable Python image and rolling-recreate exactly `stream_v2_active`,
+`stream_v2_passive`, `query_v2_1`, and `query_v2_2`, retaining their current
+runtime mounts and an exact per-role rollback image. It must not touch V1,
+Rust/ingestors, projectors, bar edge, Kafka topology/offsets, Redis, SQLite,
+Trading System, alpha or order paths. Acceptance is a bounded real-provider
+measurement through a real V2 consumer identity: all ten active MARK/INDEX
+bindings, p99 below `2,000 ms`, zero stale/gap/identity rejection, no added
+venue REST calls, and no consumer/order mutation. Until that packet passes,
+this item is source-tested only.
+
+**Source slice completed (2026-09-19).** Added the bounded
+`ExecutionMarkIndexLiveView` to the existing leased stream process and a
+private signed read edge. The view retains one canonical paired event per
+declared identity, rejects an older provider generation, stays blocked after a
+gap until a newer generation arrives, and is cleared with the gateway fence.
+The query role now selects this reader only for
+`INTERNAL_EXECUTION`/execution-grade current `MARK_INDEX_PRICE`; it cannot
+fall through to a venue REST adapter. Alpha/research reference reads retain the
+existing `ReferenceBatch` path.
+
+**Source evidence.** `python3 -m py_compile` passed for all changed modules.
+The host intentionally has no `pytest`; the existing immutable
+`qdl-v2-python:2.0.20-95d9595` image ran the isolated, read-only,
+network-disabled `python -m unittest -v tests.test_execution_mark_index_live_view
+tests.test_phase113_reference_v2 tests.test_mark_index_paired_lineage`: **26
+passed, 0 failed**. Coverage includes Binance USD-M and OKX Swap exact identity
+and cross-venue rejection, paired decimals/lineage, stale/gap/generation/fence
+rejection, private signature validation, no execution REST fallback, unchanged
+alpha REST behavior, and existing MARK/INDEX freshness regressions. The suite
+also caught and fixed one local refactor regression: the pre-existing HTTPS URL
+validator still required `urlsplit` after HMAC helper extraction. No runtime
+role, provider connection, Kafka/Redis/SQLite state, consumer, alpha, order
+path, image or cache was changed by this source evidence.
+
+**Expanded source evidence.** The same immutable image then ran the broader
+read-only, network-disabled regression selection:
+`tests.test_execution_mark_index_live_view`, `tests.test_phase113_reference_v2`,
+`tests.test_mark_index_paired_lineage`, `tests.test_phase104_reference_batch`,
+`tests.test_phase104_v2_query_stream_integration`,
+`tests.test_phase105_consumer_acceptance`,
+`tests.test_phase115c_five_liquid_handoff`, and
+`tests.test_reference_l2_consumer_acceptance`: **93 passed, 0 failed** in
+`14.473 s`. It exercises strict provider identity, paired mark/index decimals,
+execution freshness, five-symbol two-venue scope, L2 isolation, entitlement
+scope, and the unchanged reference/warmup contracts. The invocation remained
+`--rm`, `--network none`, `--read-only`, with only a temporary `/tmp` filesystem;
+it created no image, container, provider, or runtime data artifact.
+
+**Latency-path correction before rollout (2026-09-19).** Read-only inspection
+of the live implementation found that the first source implementation called
+`ExecutionMarkIndexLiveView.remember(...)` *after*
+`DurableStreamGateway.publish_many(...)`. That gateway deliberately fsyncs the
+secondary SQLite spool before normal fan-out. It was correct for identity and
+fail-closed behavior, but it could not remove the measured spool tail and is
+therefore not a valid latency repair. The source slice is reopened before any
+runtime action. The corrected boundary is: a stable projector has already read
+the canonical event from Kafka `read_committed`; after the active stream
+gateway validates signed canonical/raw lineage and its current lease, it may
+offer the bounded execution latest-state view **before** the secondary spool
+projection completes. A later spool success promotes only its optional spool
+watermark; any append failure withdraws that exact event, and any lease fence
+clears every view. Query still fails closed on missing, stale, gapped or fenced
+state and never falls back to venue REST. This does not add a producer, broker,
+service, public API or another cache. The previous `93/93` source suite is
+re-run after this correction; the old commit is not eligible for rollout.
+
+**Corrected-source evidence (2026-09-19).** The correction was recompiled with
+`python3 -m py_compile` for every changed production and test module. The same
+immutable `qdl-v2-python:2.0.20-95d9595` image then ran the complete isolated,
+network-disabled, read-only regression selection listed above: **96 passed, 0
+failed** in `14.026 s`. The added integration-ordering case deliberately holds
+`publish_many` after signed canonical validation and proves that a typed,
+read-committed MARK/INDEX view is available before the secondary SQLite spool;
+after release it is promoted to `SPOOL_CONFIRMED`. Unit cases prove exact-event
+withdrawal through the actual `503` backpressure path, promotion without replacement, lease fencing,
+identity isolation, and no venue REST fallback.
+
+**Hot-path measurement (source-only).** A 2,000-request in-process ASGI/HMAC
+read of the corrected private endpoint measured `p50 0.5958 ms`, `p95 0.7651
+ms`, `p99 0.9307 ms`, and `max 1.8597 ms`. This is deliberately not presented
+as a real-provider or consumer result: it excludes mTLS/process scheduling,
+network and provider cadence. The current deployed runtime still uses the old
+image and its read-only 900-second MARK/INDEX report retains the secondary
+spool path, with `venue -> durable` p99 between `1,443.4 ms` and `3,759.0 ms`
+across the ten active bindings. A real consumer latency certificate requires
+the bounded rollout and acceptance gate already defined above.
+
+**Read-only deployed baseline audit (2026-09-19).** The current runtime still
+uses `sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`
+for query/stream and is intentionally unchanged. A bounded 30-minute scan of
+the two ingestors, three Rust cores, two query replicas, two stream roles, bar
+edge and three projectors found no matching `ERROR`, `FATAL`, `Traceback` or
+`WARN` records in the most recent 1,200 lines per role. All listed
+health-checked roles remained healthy. Rust core 2's cumulative
+`quarantines=576` and `duplicates=140` were unchanged while it processed
+287,924 further records; `scope_quarantines=0`. The passive stream emitted
+three normal subscription-progress records with bounded coalescing/aged reads
+but `overflowed=false`; this is not a MARK/INDEX rejection, is not changed by
+this scope, and remains observable during the later acceptance window.
+
+**Current status.** `SOURCE_TESTED / RUNTIME_PENDING`. No service, image,
+runtime configuration, provider connection, Kafka/Redis/SQLite state,
+consumer, alpha, order path, or test artifact was changed by this source
+slice. The only next decision is the bounded four-role rollout described
+above; it is deliberately not implied by source tests or a health response.

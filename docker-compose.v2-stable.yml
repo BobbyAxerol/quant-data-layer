@@ -321,6 +321,10 @@ services:
       QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
+      # The read path is private mTLS plus the stable HMAC boundary. Query
+      # tries the current holder first and can use the passive peer only after
+      # it acquires the existing stream lease; it never calls venue REST.
+      QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
     healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key'); urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 
@@ -347,6 +351,7 @@ services:
       QDL_STABLE_TLS_CLIENT_CA_FILE: /stable-certs/query/client-ca-bundle.crt
       QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
       QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
+      QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
     depends_on: {stable_redis: {condition: service_healthy}, stable_state_init: {condition: service_completed_successfully}, stable_tls_init: {condition: service_completed_successfully}}
     healthcheck: {test: [CMD, python, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key'); urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)"], interval: 5s, timeout: 3s, retries: 20}
 

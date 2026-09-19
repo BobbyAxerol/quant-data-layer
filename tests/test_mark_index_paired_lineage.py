@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
+import json
 import tempfile
 import unittest
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -28,13 +32,14 @@ from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
     install_stable_canonical_ingest,
 )
+from qdl.runtime.execution_mark_index import ExecutionMarkIndexLiveView
 from qdl.runtime.stable_projector import (
     LocalStableCanonicalSink,
     StableProjectorEngine,
 )
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.stream import DurableStreamGateway
-from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, SpoolConfig
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 
 
@@ -165,6 +170,17 @@ def _pair(*, venue: str = "OKX"):
         feed=FeedType.MARK_INDEX_PRICE,
         v1_compatibility="NONE",
         partition_key="paired/mark-index",
+        instrument=SimpleNamespace(
+            instrument_uid=envelope.instrument_uid,
+            instrument_id=envelope.instrument_id,
+            metadata_revision=envelope.instrument_revision,
+        ),
+        authoritative=True,
+        source_role="PRIMARY",
+        source_policy_id="paired-mark-index-v1",
+        source_id=envelope.source_id,
+        stale_after_ms=2_000,
+        freshness_basis="PROVIDER_CONFIRMATION",
     )
     return binding, mark, index, envelope
 
@@ -322,6 +338,207 @@ class PairedMarkIndexLineageTests(unittest.IsolatedAsyncioTestCase):
             await sink.close()
             await client.aclose()
         finally:
+            spool.close()
+            temp.cleanup()
+
+    async def test_execution_mark_index_view_is_available_before_secondary_spool(self):
+        """A read-committed canonical MARK/INDEX record must not wait for SQLite.
+
+        The test deliberately holds ``publish_many`` after the signed endpoint
+        has validated the canonical/raw pair.  Query eligibility is visible at
+        that point; releasing the append then promotes the same event with a
+        spool offset.  This pins the latency boundary rather than merely the
+        view's in-memory methods.
+        """
+
+        binding, _mark, index, envelope = _pair()
+        catalog = _Catalog(binding)
+        temp, spool, gateway = self._spool_gateway()
+
+        class _Authority:
+            current_epoch = 5
+
+            @staticmethod
+            def assert_active(expected_epoch=None):
+                if expected_epoch is not None and expected_epoch != 5:
+                    raise RuntimeError("test gateway fenced")
+                return 5
+
+        gateway.authority = _Authority()
+        view = ExecutionMarkIndexLiveView(
+            frozenset({binding.instrument.instrument_uid})
+        )
+        app = FastAPI()
+        install_stable_canonical_ingest(
+            app,
+            gateway=gateway,
+            catalog=catalog,
+            spool=spool,
+            secret=_SECRET,
+            execution_mark_index_view=view,
+        )
+        body = json.dumps({
+            "schema": "qdl.v2.stable-canonical-ingest.v1",
+            "batch_id": "00000000-0000-4000-8000-000000000003",
+            "events": [{
+                "canonical": base64.b64encode(
+                    envelope.SerializeToString(deterministic=True)
+                ).decode("ascii"),
+                "raw_stream": "kafka-header:qdl-raw-provider-envelope",
+                "raw_event_id": bytes(envelope.raw_capture_id).hex(),
+                "raw_provider_envelope": base64.b64encode(
+                    index.SerializeToString(deterministic=True)
+                ).decode("ascii"),
+                "raw_lineage_kind": DERIVED_MARK_INDEX_COMPONENT_V1,
+            }],
+        }, sort_keys=True, separators=(",", ":")).encode()
+        signature = "sha256=" + hmac.new(
+            _SECRET, body, hashlib.sha256
+        ).hexdigest()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_publish_many = gateway.publish_many
+
+        async def delayed_publish_many(events):
+            entered.set()
+            await release.wait()
+            return await original_publish_many(events)
+
+        request: asyncio.Task[httpx.Response] | None = None
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        )
+        try:
+            with patch.object(gateway, "publish_many", side_effect=delayed_publish_many):
+                request = asyncio.create_task(client.post(
+                    "/internal/v2/canonical/events",
+                    content=body,
+                    headers={"X-QDL-Stable-Signature": signature},
+                ))
+                entered_wait = asyncio.create_task(entered.wait())
+                done, pending = await asyncio.wait(
+                    (request, entered_wait), timeout=2.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if request in done:
+                    await request
+                self.assertIn(entered_wait, done, "ingest did not reach spool boundary")
+                if entered_wait in pending:
+                    entered_wait.cancel()
+                pre_spool = await view.read(
+                    instrument_uid=binding.instrument.instrument_uid,
+                    instrument_revision=binding.instrument.metadata_revision,
+                    source_policy_id=binding.source_policy_id,
+                    max_freshness_ms=binding.stale_after_ms,
+                    gateway_epoch=gateway.assert_active(),
+                    now_ns=envelope.received_at_ns + 1_000_000,
+                )
+                self.assertEqual(
+                    pre_spool.record.delivery_stage, "CANONICAL_READ_COMMITTED"
+                )
+                self.assertEqual(
+                    spool.read_tail(
+                        stream=_STREAM, partition_key=binding.partition_key, limit=1
+                    ),
+                    [],
+                )
+                release.set()
+                response = await request
+            self.assertEqual(response.status_code, 200)
+            confirmed = await view.read(
+                instrument_uid=binding.instrument.instrument_uid,
+                instrument_revision=binding.instrument.metadata_revision,
+                source_policy_id=binding.source_policy_id,
+                max_freshness_ms=binding.stale_after_ms,
+                gateway_epoch=gateway.assert_active(),
+                now_ns=envelope.received_at_ns + 1_000_000,
+            )
+            self.assertEqual(confirmed.record.delivery_stage, "SPOOL_CONFIRMED")
+            self.assertIsNotNone(confirmed.record.spool_watermark_offset)
+        finally:
+            if request is not None and not request.done():
+                request.cancel()
+                with suppress(asyncio.CancelledError):
+                    await request
+            await client.aclose()
+            spool.close()
+            temp.cleanup()
+
+    async def test_execution_mark_index_view_withdraws_when_secondary_spool_rejects(self):
+        """A failed secondary append must not leave an execution value usable."""
+
+        binding, _mark, index, envelope = _pair()
+        catalog = _Catalog(binding)
+        temp, spool, gateway = self._spool_gateway()
+
+        class _Authority:
+            current_epoch = 5
+
+            @staticmethod
+            def assert_active(expected_epoch=None):
+                if expected_epoch is not None and expected_epoch != 5:
+                    raise RuntimeError("test gateway fenced")
+                return 5
+
+        gateway.authority = _Authority()
+        view = ExecutionMarkIndexLiveView(
+            frozenset({binding.instrument.instrument_uid})
+        )
+        app = FastAPI()
+        install_stable_canonical_ingest(
+            app,
+            gateway=gateway,
+            catalog=catalog,
+            spool=spool,
+            secret=_SECRET,
+            execution_mark_index_view=view,
+        )
+        body = json.dumps({
+            "schema": "qdl.v2.stable-canonical-ingest.v1",
+            "batch_id": "00000000-0000-4000-8000-000000000004",
+            "events": [{
+                "canonical": base64.b64encode(
+                    envelope.SerializeToString(deterministic=True)
+                ).decode("ascii"),
+                "raw_stream": "kafka-header:qdl-raw-provider-envelope",
+                "raw_event_id": bytes(envelope.raw_capture_id).hex(),
+                "raw_provider_envelope": base64.b64encode(
+                    index.SerializeToString(deterministic=True)
+                ).decode("ascii"),
+                "raw_lineage_kind": DERIVED_MARK_INDEX_COMPONENT_V1,
+            }],
+        }, sort_keys=True, separators=(",", ":")).encode()
+        signature = "sha256=" + hmac.new(
+            _SECRET, body, hashlib.sha256
+        ).hexdigest()
+
+        async def reject_append(events):
+            del events
+            raise BackpressureRequired("test secondary spool rejection")
+
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        )
+        try:
+            with patch.object(gateway, "publish_many", side_effect=reject_append):
+                response = await client.post(
+                    "/internal/v2/canonical/events",
+                    content=body,
+                    headers={"X-QDL-Stable-Signature": signature},
+                )
+            self.assertEqual(response.status_code, 503)
+            read = await view.read(
+                instrument_uid=binding.instrument.instrument_uid,
+                instrument_revision=binding.instrument.metadata_revision,
+                source_policy_id=binding.source_policy_id,
+                max_freshness_ms=binding.stale_after_ms,
+                gateway_epoch=gateway.assert_active(),
+                now_ns=envelope.received_at_ns + 1_000_000,
+            )
+            self.assertIsNone(read.record)
+            self.assertEqual(read.reason, "NOT_READY")
+        finally:
+            await client.aclose()
             spool.close()
             temp.cleanup()
 

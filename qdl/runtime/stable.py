@@ -23,6 +23,11 @@ from qdl.consumer import ConsumerManifestLoader, ConsumerManifestRegistry
 from qdl.projection.stable import RedisStableProjectionTarget, StableCompatibilityProjector
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
+from qdl.runtime.execution_mark_index import (
+    ExecutionMarkIndexLiveView,
+    install_execution_mark_index_read,
+)
+from qdl.runtime.internal_auth import is_stable_internal_url
 from qdl.runtime.lease import ActivePassiveGatewayLease, RedisGatewayLeaseStore
 from qdl.runtime.readiness import (
     CallableReadinessProbe,
@@ -46,6 +51,7 @@ from qdl.runtime.stable_source import (
     StableGrpcSnapshotLoader,
     build_stable_query_stack,
 )
+from qdl.reference.execution_live import HttpExecutionMarkIndexReader
 from qdl.security import (
     AuditChain,
     DataPlaneIdentityService,
@@ -189,6 +195,7 @@ class StableRuntimeConfig:
     kafka_canonical_topic: str | None = None
     kafka_cert_root: Path | None = None
     stream_ingest_urls: tuple[str, ...] = ()
+    execution_mark_index_urls: tuple[str, ...] = ()
     max_pending_records: int = 10_000
     max_pending_bytes: int = 256 * 1024 * 1024
     projector_max_batch_records: int = 128
@@ -292,6 +299,12 @@ class StableRuntimeConfig:
                 self.kafka_canonical_topic, self.kafka_cert_root,
             )) or not self.stream_ingest_urls:
                 raise ValueError("stable projector Kafka/stream dependencies are required")
+        if any(not is_stable_internal_url(value) for value in self.execution_mark_index_urls):
+            raise ValueError("stable execution MARK/INDEX URLs must be private stream endpoints")
+        if self.execution_mark_index_urls and not self.reference_data_enabled:
+            raise ValueError(
+                "stable execution MARK/INDEX reader requires reference data to be enabled"
+            )
 
     @property
     def session_liveness_dir(self) -> Path:
@@ -319,6 +332,13 @@ class StableRuntimeConfig:
         urls_raw = json.loads(env.get("QDL_STABLE_STREAM_INGEST_URLS_JSON", "[]"))
         if not isinstance(urls_raw, list):
             raise ValueError("QDL_STABLE_STREAM_INGEST_URLS_JSON must be an array")
+        execution_mark_index_urls_raw = json.loads(
+            env.get("QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON", "[]")
+        )
+        if not isinstance(execution_mark_index_urls_raw, list):
+            raise ValueError(
+                "QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON must be an array"
+            )
         instance_id = env.get("QDL_STABLE_INSTANCE_ID", f"stable-{role}-local")
         return cls(
             role=role,
@@ -370,6 +390,9 @@ class StableRuntimeConfig:
             kafka_canonical_topic=env.get("QDL_STABLE_KAFKA_CANONICAL_TOPIC"),
             kafka_cert_root=Path(cert_root_raw) if cert_root_raw else None,
             stream_ingest_urls=tuple(str(value) for value in urls_raw),
+            execution_mark_index_urls=tuple(
+                str(value) for value in execution_mark_index_urls_raw
+            ),
             max_pending_records=int(env.get("QDL_STABLE_MAX_PENDING_RECORDS", "10000")),
             max_pending_bytes=int(env.get("QDL_STABLE_MAX_PENDING_BYTES", "268435456")),
             projector_batch_wait_seconds=float(
@@ -608,6 +631,15 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     catalog = StableSourceCatalog.load(config.source_bindings_path)
     spool = build_stable_spool(config, catalog)
     handoff = build_stable_handoff(config, spool)
+    execution_mark_index_reader = (
+        HttpExecutionMarkIndexReader(
+            config.execution_mark_index_urls,
+            config.internal_ingest_secret,
+            ssl_context=stable_client_ssl_context(config),
+        )
+        if config.execution_mark_index_urls
+        else None
+    )
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
@@ -616,6 +648,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         provider_admission_url=config.provider_admission_url,
         provider_admission_secret=config.internal_ingest_secret,
         session_liveness_root=str(config.session_liveness_dir),
+        execution_mark_index_reader=execution_mark_index_reader,
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota,
@@ -633,10 +666,13 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     app.state.runtime_manifest = config.public_manifest()
     app.state.stable_spool = spool
     app.state.stable_audit = AuditChain(config.audit_path)
+    app.state.execution_mark_index_reader = execution_mark_index_reader
     install_stable_health(app, readiness, config.public_manifest())
 
     @app.on_event("shutdown")
     async def close_stable_query():
+        if execution_mark_index_reader is not None:
+            await execution_mark_index_reader.close()
         await asyncio.to_thread(spool.close)
         await asyncio.to_thread(identity.quota.close)
 
@@ -649,6 +685,7 @@ class StableStreamRuntime:
     redis: AsyncRedis
     spool: SQLiteDurableSpool
     gateway: DurableStreamGateway
+    execution_mark_index_view: ExecutionMarkIndexLiveView
     lease: ActivePassiveGatewayLease
     grpc_server: grpc.aio.Server
     health_app: FastAPI
@@ -696,7 +733,13 @@ def create_stable_stream_runtime(
         max_replay_events=config.max_replay_events,
         cursor_ttl_seconds=config.cursor_ttl_seconds, authority=lease,
     )
-    lease.on_fenced = gateway.fence_all
+    execution_mark_index_view = ExecutionMarkIndexLiveView.from_catalog(catalog)
+
+    async def fence_gateway_execution_view() -> None:
+        await gateway.fence_all()
+        await execution_mark_index_view.fence_all()
+
+    lease.on_fenced = fence_gateway_execution_view
     query_service, backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
@@ -734,9 +777,15 @@ def create_stable_stream_runtime(
     install_stable_canonical_ingest(
         app, gateway=gateway, catalog=catalog, spool=spool,
         secret=config.internal_ingest_secret,
+        execution_mark_index_view=execution_mark_index_view,
+    )
+    install_execution_mark_index_read(
+        app, gateway=gateway, view=execution_mark_index_view,
+        secret=config.internal_ingest_secret,
     )
     return StableStreamRuntime(
-        config, async_redis, spool, gateway, lease, grpc_server, app, identity.quota
+        config, async_redis, spool, gateway, execution_mark_index_view,
+        lease, grpc_server, app, identity.quota
     )
 
 

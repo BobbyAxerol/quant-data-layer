@@ -1,0 +1,753 @@
+"""Execution MARK/INDEX live-view contract tests.
+
+All market values in this file are deterministic test provenance.  They prove
+the private current-state boundary, not provider latency or a real market read.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import unittest
+
+import httpx
+from fastapi import FastAPI
+
+from qdl.common.v1 import common_pb2
+from qdl.domain.capabilities import CapabilityAvailability, FeedCapability
+from qdl.domain.decimal import CanonicalDecimal
+from qdl.domain.instrument import (
+    AssetClass,
+    InstrumentIdentity,
+    InstrumentRecord,
+    InstrumentRegistry,
+    ProductType,
+)
+from qdl.marketdata.v2 import market_data_pb2
+from qdl.query import (
+    AccessPurpose,
+    ConsumerGrade,
+    DataProduct,
+    EntitlementGrant,
+    EntitlementPolicy,
+    FeedType,
+    InstrumentQuery,
+    MemoryMarketDataBackend,
+    V2QueryService,
+)
+from qdl.query.reference import ReferenceBatchRequirement, ReferenceDataRequirement
+from qdl.reference.batch import ReferenceBatch
+from qdl.reference.contracts import (
+    MarkIndexKind,
+    ReferenceBatchResult,
+    ReferenceCoverage,
+    ReferenceFetch,
+    ReferenceLineage,
+    ReferenceObservation,
+    ReferenceProduct,
+    ReferenceRequest,
+    ReferenceStatus,
+    decimal_field,
+)
+from qdl.reference.execution_live import HttpExecutionMarkIndexReader
+from qdl.runtime.execution_mark_index import (
+    ExecutionMarkIndexLiveView,
+    install_execution_mark_index_read,
+)
+from qdl.runtime.internal_auth import stable_hmac_signature
+from qdl.runtime.lease import GatewayFenced
+from qdl.runtime.stable_catalog import StableSourceBinding
+from qdl.transport import Cursor, DurableEvent, StoredEvent
+
+
+NOW_NS = 1_800_000_000_000_000_000
+SECRET = b"execution-mark-index-live-view-test-secret"
+STREAM = "md.canonical.execution-mark-index-test.v2"
+LIVE_ENDPOINT = "qdl://stable-stream/internal/v2/execution/mark-index/latest"
+
+
+def _record(*, venue: str, market: str, native_symbol: str, base: str) -> InstrumentRecord:
+    identity = InstrumentIdentity.create(
+        venue=venue,
+        market=market,
+        product_type=ProductType.PERPETUAL,
+        canonical_symbol=f"{base}-USDT",
+    )
+    return InstrumentRecord(
+        identity=identity,
+        metadata_revision=7,
+        asset_class=AssetClass.DERIVATIVE,
+        native_symbol=native_symbol,
+        base_asset=base,
+        quote_asset="USDT",
+        settlement_asset="USDT",
+        price_tick=CanonicalDecimal.from_text("0.01"),
+        quantity_step=CanonicalDecimal.from_text("0.001"),
+        contract_multiplier=CanonicalDecimal.from_text("1"),
+        session_calendar_id="CRYPTO_24X7",
+    )
+
+
+def _binding(record: InstrumentRecord, *, source_policy_id: str = "crypto_liquid_v2"):
+    provider = "BINANCE_DIRECT" if record.identity.venue == "BINANCE" else "OKX_DIRECT"
+    return StableSourceBinding(
+        binding_id=f"execution-mark-index-{record.native_symbol.lower()}",
+        instrument=record,
+        provider=provider,
+        source_id=provider,
+        source_role="PRIMARY",
+        source_policy_id=source_policy_id,
+        authoritative=True,
+        adapter_version="execution-mark-index-test/1",
+        normalizer_version="execution-mark-index-core-test/1",
+        feed=FeedType.MARK_INDEX_PRICE,
+        interval=None,
+        stale_after_ms=2_000,
+        require_final_bar=False,
+        continuous_calendar=True,
+        v1_compatibility="NONE",
+        canonical_stream=STREAM,
+        freshness_basis="PROVIDER_CONFIRMATION",
+    )
+
+
+def _envelope(
+    binding: StableSourceBinding,
+    *,
+    sequence: int,
+    generation: int = 1,
+    received_at_ns: int = NOW_NS,
+    quality_flags: tuple[int, ...] = (),
+) -> market_data_pb2.EventEnvelope:
+    raw = hashlib.sha256(
+        f"execution-mark-index:{binding.instrument.instrument_uid}:{sequence}:{generation}".encode()
+    ).digest()
+    record = binding.instrument
+    envelope = market_data_pb2.EventEnvelope(
+        schema_name="qdl.marketdata.v2",
+        schema_major=2,
+        schema_minor=0,
+        event_id=raw[:16],
+        instrument_uid=record.instrument_uid,
+        instrument_id=record.instrument_id,
+        instrument_revision=record.metadata_revision,
+        venue=record.identity.venue,
+        market=record.identity.market,
+        product_type=record.identity.product_type.value,
+        native_symbol=record.native_symbol,
+        provider=binding.provider,
+        source_id=binding.source_id,
+        source_role=common_pb2.SOURCE_ROLE_PRIMARY,
+        lease_epoch=5,
+        source_event_time_ns=received_at_ns - 1_000_000,
+        received_at_ns=received_at_ns,
+        normalized_at_ns=received_at_ns + 1,
+        published_at_ns=received_at_ns + 2,
+        source_sequence=f"test:{generation}:{sequence}",
+        partition_sequence=sequence,
+        normalizer_version=binding.normalizer_version,
+        adapter_version=binding.adapter_version,
+        raw_capture_id=raw[:16],
+        raw_payload_hash=raw,
+        correlation_id=raw.hex(),
+        config_revision=11,
+        source_session_id="execution-mark-index-test-session",
+        connection_generation=generation,
+        authority_revision=3,
+        partition_plan_epoch=1,
+    )
+    envelope.quality_flags.extend(quality_flags)
+    envelope.mark_index_price.mark_price.source_text = "101.25"
+    envelope.mark_index_price.index_price.source_text = "101.00"
+    envelope.canonical_payload_hash = hashlib.sha256(
+        envelope.mark_index_price.SerializeToString(deterministic=True)
+    ).digest()
+    return envelope
+
+
+def _stored(envelope: market_data_pb2.EventEnvelope, *, offset: int) -> StoredEvent:
+    payload = envelope.SerializeToString(deterministic=True)
+    event = DurableEvent(
+        stream=STREAM,
+        partition_key=f"execution/{envelope.instrument_uid}",
+        event_id=bytes(envelope.event_id),
+        payload=payload,
+        accepted_at_ns=envelope.received_at_ns,
+    )
+    return StoredEvent(
+        event=event,
+        cursor=Cursor(STREAM, event.partition_key, offset),
+        committed_at_ns=envelope.received_at_ns,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+
+class _Gateway:
+    def __init__(self, epoch: int = 5) -> None:
+        self.epoch = epoch
+        self.fenced = False
+
+    def assert_active(self, expected_epoch: int | None = None) -> int:
+        if self.fenced or (expected_epoch is not None and expected_epoch != self.epoch):
+            raise GatewayFenced("test gateway fenced")
+        return self.epoch
+
+
+class _FallbackReferenceAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def fetch(self, request, *, capability, received_at_ns):
+        del capability
+        self.calls += 1
+        fields = tuple(
+            field
+            for field in (
+                decimal_field("mark_price", "101.25", "QUOTE_PRICE"),
+                decimal_field("index_price", "101.00", "QUOTE_PRICE"),
+            )
+            if field is not None
+        )
+        return ReferenceFetch(
+            observations=(ReferenceObservation(
+                instrument_uid=request.instrument.instrument_uid,
+                instrument_revision=request.instrument.metadata_revision,
+                product=request.product,
+                observed_at_ns=NOW_NS,
+                fields=fields,
+            ),),
+            lineage=(ReferenceLineage(
+                provider="BINANCE_DIRECT",
+                provider_endpoint="TEST_REFERENCE_REST_ADAPTER",
+                source_role="REFERENCE",
+                adapter_version="execution-mark-index-test/1",
+                capability_name="mark_index_price",
+            ),),
+            coverage=ReferenceCoverage(
+                requested_start_ms=None,
+                requested_end_ms=None,
+                observed_min_ms=NOW_NS // 1_000_000,
+                observed_max_ms=NOW_NS // 1_000_000,
+                complete_left=True,
+                complete_right=True,
+                truncated=False,
+                terminal_reason="TEST_CURRENT",
+            ),
+        )
+
+
+class _LiveReader:
+    def __init__(self, *, status: ReferenceStatus = ReferenceStatus.OK) -> None:
+        self.status = status
+        self.calls = 0
+
+    async def fetch(self, request, *, max_freshness_ms, source_policy_id):
+        del max_freshness_ms, source_policy_id
+        self.calls += 1
+        capability = FeedCapability(CapabilityAvailability.AVAILABLE, snapshot=True)
+        lineage = ReferenceLineage(
+            provider="BINANCE_DIRECT",
+            provider_endpoint=LIVE_ENDPOINT,
+            source_role="REFERENCE",
+            adapter_version="execution-mark-index-live-test/1",
+            capability_name="mark_index_price",
+        )
+        if self.status is not ReferenceStatus.OK:
+            return ReferenceBatchResult(
+                request=request,
+                status=self.status,
+                capability=capability,
+                lineage=(lineage,),
+                coverage=ReferenceCoverage(
+                    requested_start_ms=None,
+                    requested_end_ms=None,
+                    observed_min_ms=None,
+                    observed_max_ms=None,
+                    complete_left=False,
+                    complete_right=False,
+                    truncated=False,
+                    terminal_reason="LIVE_VIEW_STALE",
+                ),
+                received_at_ns=NOW_NS,
+                error_code="LIVE_VIEW_STALE",
+                error_detail="test stale live view",
+            )
+        fields = tuple(
+            field
+            for field in (
+                decimal_field("mark_price", "101.25", "QUOTE_PRICE"),
+                decimal_field("index_price", "101.00", "QUOTE_PRICE"),
+            )
+            if field is not None
+        )
+        return ReferenceBatchResult(
+            request=request,
+            status=ReferenceStatus.OK,
+            capability=capability,
+            lineage=(lineage,),
+            coverage=ReferenceCoverage(
+                requested_start_ms=None,
+                requested_end_ms=None,
+                observed_min_ms=NOW_NS // 1_000_000,
+                observed_max_ms=NOW_NS // 1_000_000,
+                complete_left=True,
+                complete_right=True,
+                truncated=False,
+                terminal_reason="LIVE_EXECUTION_VIEW",
+            ),
+            received_at_ns=NOW_NS,
+            observations=(ReferenceObservation(
+                instrument_uid=request.instrument.instrument_uid,
+                instrument_revision=request.instrument.metadata_revision,
+                product=request.product,
+                observed_at_ns=NOW_NS,
+                fields=fields,
+            ),),
+        )
+
+    def stats(self) -> dict[str, int]:
+        return {"calls": self.calls, "successes": self.calls if self.status is ReferenceStatus.OK else 0,
+                "failures": 0 if self.status is ReferenceStatus.OK else self.calls}
+
+
+class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.record = _record(
+            venue="BINANCE", market="USDM", native_symbol="BTCUSDT", base="BTC"
+        )
+        self.binding = _binding(self.record)
+        self.view = ExecutionMarkIndexLiveView(frozenset({self.record.instrument_uid}))
+
+    async def test_generation_gap_fence_and_exact_identity_are_fail_closed(self):
+        first = _envelope(self.binding, sequence=1, generation=2)
+        await self.view.remember(
+            binding=self.binding, envelope=first, stored=_stored(first, offset=10), gateway_epoch=5
+        )
+        ready = await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertIsNotNone(ready.record)
+
+        delayed_old_generation = _envelope(
+            self.binding, sequence=2, generation=1, received_at_ns=NOW_NS + 1_000_000
+        )
+        await self.view.remember(
+            binding=self.binding,
+            envelope=delayed_old_generation,
+            stored=_stored(delayed_old_generation, offset=11),
+            gateway_epoch=5,
+        )
+        unchanged = await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(unchanged.record.connection_generation, 2)
+
+        gap = _envelope(
+            self.binding,
+            sequence=3,
+            generation=2,
+            received_at_ns=NOW_NS + 2_000_000,
+            quality_flags=(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,),
+        )
+        await self.view.remember(
+            binding=self.binding, envelope=gap, stored=_stored(gap, offset=12), gateway_epoch=5
+        )
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=7,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "GAP_OR_RESYNC",
+        )
+        same_generation = _envelope(
+            self.binding, sequence=4, generation=2, received_at_ns=NOW_NS + 3_000_000
+        )
+        await self.view.remember(
+            binding=self.binding,
+            envelope=same_generation,
+            stored=_stored(same_generation, offset=13),
+            gateway_epoch=5,
+        )
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=7,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "GAP_OR_RESYNC",
+        )
+        recovered = _envelope(
+            self.binding, sequence=5, generation=3, received_at_ns=NOW_NS + 4_000_000
+        )
+        await self.view.remember(
+            binding=self.binding,
+            envelope=recovered,
+            stored=_stored(recovered, offset=14),
+            gateway_epoch=5,
+        )
+        self.assertIsNotNone((await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )).record)
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=8,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "IDENTITY_MISMATCH",
+        )
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=7,
+                source_policy_id="different-policy",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "SOURCE_POLICY_MISMATCH",
+        )
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=7,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 3_000_000_000,
+            )).reason,
+            "STALE",
+        )
+        await self.view.fence_all()
+        self.assertEqual(
+            (await self.view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=7,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "NOT_READY",
+        )
+
+    async def test_pre_spool_record_is_readable_then_withdrawn_or_promoted_exactly(self):
+        first = _envelope(self.binding, sequence=1, generation=2)
+        await self.view.remember(
+            binding=self.binding, envelope=first, stored=None, gateway_epoch=5
+        )
+        pre_spool = await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(pre_spool.record.delivery_stage, "CANONICAL_READ_COMMITTED")
+        self.assertIsNone(pre_spool.record.spool_watermark_offset)
+
+        # A failed append can only withdraw its own current unconfirmed record;
+        # a later record must not disappear with it.
+        later = _envelope(
+            self.binding, sequence=2, generation=2, received_at_ns=NOW_NS + 1_000_000
+        )
+        await self.view.remember(
+            binding=self.binding, envelope=later, stored=None, gateway_epoch=5
+        )
+        await self.view.withdraw(
+            instrument_uid=self.record.instrument_uid,
+            event_id=bytes(first.event_id),
+            gateway_epoch=5,
+        )
+        retained = await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(retained.record.event_id, bytes(later.event_id))
+
+        await self.view.remember(
+            binding=self.binding,
+            envelope=later,
+            stored=_stored(later, offset=12),
+            gateway_epoch=5,
+        )
+        confirmed = await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(confirmed.record.delivery_stage, "SPOOL_CONFIRMED")
+        self.assertEqual(confirmed.record.spool_watermark_offset, 12)
+        await self.view.withdraw(
+            instrument_uid=self.record.instrument_uid,
+            event_id=bytes(later.event_id),
+            gateway_epoch=5,
+        )
+        self.assertIsNotNone((await self.view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=7,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=5,
+            now_ns=NOW_NS + 500_000_000,
+        )).record)
+
+    async def test_private_endpoint_and_reader_preserve_pair_and_never_call_venue(self):
+        envelope = _envelope(self.binding, sequence=1)
+        await self.view.remember(
+            binding=self.binding, envelope=envelope, stored=None, gateway_epoch=5
+        )
+        gateway = _Gateway()
+        app = FastAPI()
+        install_execution_mark_index_read(app, gateway=gateway, view=self.view, secret=SECRET)
+        body = json.dumps(
+            {
+                "schema": "qdl.v2.execution-mark-index-read.v1",
+                "instrument_uid": self.record.instrument_uid,
+                "instrument_revision": 7,
+                "source_policy_id": "crypto_liquid_v2",
+                "max_freshness_ms": 2_000,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            denied = await client.post("/internal/v2/execution/mark-index/latest", content=body)
+            self.assertEqual(denied.status_code, 401)
+            response = await client.post(
+                "/internal/v2/execution/mark-index/latest",
+                content=body,
+                headers={"X-QDL-Stable-Signature": stable_hmac_signature(SECRET, body)},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["schema"], "qdl.v2.execution-mark-index-view.v2")
+        self.assertEqual(payload["delivery_stage"], "CANONICAL_READ_COMMITTED")
+        self.assertIsNone(payload["spool_watermark_offset"])
+        self.assertEqual(
+            market_data_pb2.EventEnvelope.FromString(base64.b64decode(payload["canonical"])).instrument_uid,
+            self.record.instrument_uid,
+        )
+
+        venue_calls = []
+
+        async def stream_handler(request: httpx.Request) -> httpx.Response:
+            venue_calls.append(str(request.url))
+            self.assertEqual(request.url.host, "stream_v2_active")
+            return httpx.Response(200, json=payload, request=request)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(stream_handler))
+        reader = HttpExecutionMarkIndexReader(
+            ("https://stream_v2_active:8200",), SECRET, client=client
+        )
+        try:
+            result = await reader.fetch(
+                ReferenceRequest(
+                    self.record, ReferenceProduct.MARK_INDEX_PRICE, mark_index_kind=MarkIndexKind.BOTH
+                ),
+                max_freshness_ms=2_000,
+                source_policy_id="crypto_liquid_v2",
+            )
+        finally:
+            await client.aclose()
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual({field.name for field in result.observations[0].fields}, {"mark_price", "index_price"})
+        self.assertEqual(result.lineage[0].provider_endpoint, LIVE_ENDPOINT)
+        self.assertEqual(len(venue_calls), 1)
+
+    async def test_reader_accepts_both_venues_but_rejects_cross_venue_identity(self):
+        records = (
+            _record(
+                venue="BINANCE", market="USDM", native_symbol="SOLUSDT", base="SOL"
+            ),
+            _record(
+                venue="OKX", market="SWAP", native_symbol="SOL-USDT-SWAP", base="SOL"
+            ),
+        )
+        for sequence, record in enumerate(records, start=1):
+            with self.subTest(venue=record.identity.venue):
+                binding = _binding(record)
+                envelope = _envelope(binding, sequence=sequence)
+                payload = {
+                    "schema": "qdl.v2.execution-mark-index-view.v2",
+                    "lease_epoch": 5,
+                    "spool_watermark_offset": sequence,
+                    "delivery_stage": "SPOOL_CONFIRMED",
+                    "canonical": base64.b64encode(
+                        envelope.SerializeToString(deterministic=True)
+                    ).decode("ascii"),
+                }
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    return httpx.Response(200, json=payload, request=request)
+
+                client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+                reader = HttpExecutionMarkIndexReader(
+                    ("https://stream_v2_active:8200",), SECRET, client=client
+                )
+                try:
+                    result = await reader.fetch(
+                        ReferenceRequest(
+                            record,
+                            ReferenceProduct.MARK_INDEX_PRICE,
+                            mark_index_kind=MarkIndexKind.BOTH,
+                        ),
+                        max_freshness_ms=2_000,
+                        source_policy_id="crypto_liquid_v2",
+                    )
+                finally:
+                    await client.aclose()
+                self.assertEqual(result.status, ReferenceStatus.OK)
+                self.assertEqual(
+                    result.observations[0].instrument_uid, record.instrument_uid
+                )
+
+        expected = records[0]
+        wrong = _envelope(_binding(records[1]), sequence=99)
+        payload = {
+            "schema": "qdl.v2.execution-mark-index-view.v2",
+            "lease_epoch": 5,
+            "spool_watermark_offset": 99,
+            "delivery_stage": "SPOOL_CONFIRMED",
+            "canonical": base64.b64encode(
+                wrong.SerializeToString(deterministic=True)
+            ).decode("ascii"),
+        }
+
+        async def wrong_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=payload, request=request)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(wrong_handler))
+        reader = HttpExecutionMarkIndexReader(
+            ("https://stream_v2_active:8200",), SECRET, client=client
+        )
+        try:
+            result = await reader.fetch(
+                ReferenceRequest(expected, ReferenceProduct.MARK_INDEX_PRICE),
+                max_freshness_ms=2_000,
+                source_policy_id="crypto_liquid_v2",
+            )
+        finally:
+            await client.aclose()
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "LIVE_VIEW_PROTOCOL")
+
+
+class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.record = _record(
+            venue="BINANCE", market="USDM", native_symbol="BTCUSDT", base="BTC"
+        )
+        registry = InstrumentRegistry()
+        registry.register(self.record, [])
+        self.fallback = _FallbackReferenceAdapter()
+        self.entitlements = EntitlementPolicy((EntitlementGrant(
+            source_id="BINANCE_DIRECT",
+            license_revision="execution-mark-index-live-test",
+            purposes=frozenset({AccessPurpose.INTERNAL_EXECUTION, AccessPurpose.INTERNAL_ALPHA}),
+            products=frozenset({DataProduct.CANONICAL_SNAPSHOT}),
+            valid_from_ns=0,
+        ),))
+        self.common = {
+            "instruments": InstrumentQuery(registry),
+            "backend": MemoryMarketDataBackend(),
+            "entitlements": self.entitlements,
+            "reference_batch": ReferenceBatch({("BINANCE", "USDM"): self.fallback}, clock_ns=lambda: NOW_NS),
+            "reference_source_id": lambda _record: "BINANCE_DIRECT",
+            "clock_ns": lambda: NOW_NS,
+        }
+
+    def _execution_requirement(self) -> ReferenceDataRequirement:
+        return ReferenceDataRequirement(
+            instrument_uid=self.record.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_liquid_v2",
+            limit=1,
+            page_size=1,
+            max_pages=1,
+            max_freshness_ms=2_000,
+        )
+
+    async def test_execution_uses_live_view_but_alpha_reference_keeps_existing_adapter(self):
+        live = _LiveReader()
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+        execution = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("execution-reader", (self._execution_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(execution.partial)
+        self.assertEqual(live.calls, 1)
+        self.assertEqual(self.fallback.calls, 0)
+        self.assertEqual(
+            execution.results[0].result.lineage[0].provider_endpoint, LIVE_ENDPOINT
+        )
+
+        alpha_requirement = ReferenceDataRequirement(
+            instrument_uid=self.record.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+        )
+        alpha = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (alpha_requirement,)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(alpha.partial)
+        self.assertEqual(live.calls, 1)
+        self.assertEqual(self.fallback.calls, 1)
+        self.assertEqual(
+            alpha.results[0].result.lineage[0].provider_endpoint,
+            "TEST_REFERENCE_REST_ADAPTER",
+        )
+
+    async def test_execution_live_view_stale_is_typed_and_never_falls_back_to_rest(self):
+        live = _LiveReader(status=ReferenceStatus.ERROR)
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader", (self._execution_requirement(),), require_all=False
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertTrue(result.partial)
+        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(live.calls, 1)
+        self.assertEqual(self.fallback.calls, 0)

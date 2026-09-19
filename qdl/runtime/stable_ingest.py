@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import re
@@ -25,8 +23,10 @@ from qdl.runtime.mark_index_lineage import (
     validate_derived_mark_index_component,
     validate_single_raw_lineage,
 )
+from qdl.runtime.execution_mark_index import ExecutionMarkIndexLiveView
+from qdl.runtime.internal_auth import is_stable_internal_url, stable_hmac_signature
 from qdl.runtime.lease import GatewayFenced
-from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.stream import DurableStreamGateway
 from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, StoredEvent
 
@@ -36,26 +36,6 @@ _RESULT_SCHEMA = "qdl.v2.stable-canonical-ingest-result.v1"
 _MAX_REJECTION_DETAIL_CHARS = 192
 _UNSAFE_REJECTION_TOKEN = re.compile(r"[A-Za-z0-9+/=_-]{33,}")
 logger = logging.getLogger(__name__)
-
-
-def _signature(secret: bytes, body: bytes) -> str:
-    return "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
-
-
-def _internal_url(value: str) -> bool:
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return False
-    try:
-        return ipaddress.ip_address(parsed.hostname).is_loopback
-    except ValueError:
-        return parsed.hostname in {
-            "localhost",
-            "stream_v2",
-            "stream_v2_active",
-            "stream_v2_passive",
-            "qdl-stable-stream",
-        } or parsed.hostname.endswith(".internal")
 
 
 def _bounded_rejection_detail(response: httpx.Response) -> str:
@@ -87,6 +67,7 @@ def install_stable_canonical_ingest(
     catalog: StableSourceCatalog,
     spool: SQLiteDurableSpool,
     secret: bytes,
+    execution_mark_index_view: ExecutionMarkIndexLiveView | None = None,
 ) -> None:
     if len(secret) < 32:
         raise ValueError("stable internal ingest secret must contain at least 256 bits")
@@ -97,7 +78,9 @@ def install_stable_canonical_ingest(
         signature: str | None = Header(None, alias="X-QDL-Stable-Signature"),
     ):
         body = await request.body()
-        if not signature or not hmac.compare_digest(signature, _signature(secret, body)):
+        if not signature or not hmac.compare_digest(
+            signature, stable_hmac_signature(secret, body)
+        ):
             raise HTTPException(status_code=401, detail="invalid stable ingest signature")
         try:
             payload = json.loads(body)
@@ -208,13 +191,41 @@ def install_stable_canonical_ingest(
                 },
             )))
 
+        pre_spool_view_records: list[tuple[StableSourceBinding, market_data_pb2.EventEnvelope]] = []
+        if execution_mark_index_view is not None:
+            # The signed projector is the read-committed canonical Kafka
+            # consumer.  Offer the strictly validated MARK/INDEX event before
+            # the secondary SQLite projection so an execution query does not
+            # inherit that projection's batch tail.  Any append failure below
+            # withdraws exactly this unconfirmed record.
+            for binding, envelope, _event in prepared:
+                await execution_mark_index_view.remember(
+                    binding=binding,
+                    envelope=envelope,
+                    stored=None,
+                    gateway_epoch=lease_epoch,
+                )
+                pre_spool_view_records.append((binding, envelope))
+
+        async def withdraw_pre_spool_view_records() -> None:
+            if execution_mark_index_view is None:
+                return
+            for _binding, envelope in pre_spool_view_records:
+                await execution_mark_index_view.withdraw(
+                    instrument_uid=envelope.instrument_uid,
+                    event_id=bytes(envelope.event_id),
+                    gateway_epoch=lease_epoch,
+                )
+
         try:
             stored_values = await gateway.publish_many(
                 [event for _binding, _envelope, event in prepared]
             )
         except GatewayFenced as error:
+            await withdraw_pre_spool_view_records()
             raise HTTPException(status_code=409, detail="stable gateway was fenced") from error
         except BackpressureRequired as error:
+            await withdraw_pre_spool_view_records()
             logger.warning(
                 "stable canonical ingest backpressure reason=%s",
                 _bounded_rejection_text(str(error)),
@@ -223,6 +234,9 @@ def install_stable_canonical_ingest(
                 status_code=503,
                 detail="stable canonical cache capacity temporarily unavailable",
             ) from error
+        except BaseException:
+            await withdraw_pre_spool_view_records()
+            raise
         duplicate_ids = [
             event.event_id
             for (_binding, _envelope, event), stored in zip(
@@ -251,6 +265,13 @@ def install_stable_canonical_ingest(
             stored = stored or duplicates.get(event.event_id)
             if stored is None:
                 raise HTTPException(status_code=503, detail="stable cache ACK is unavailable")
+            if execution_mark_index_view is not None:
+                await execution_mark_index_view.remember(
+                    binding=binding,
+                    envelope=envelope,
+                    stored=stored,
+                    gateway_epoch=lease_epoch,
+                )
             results.append({
                 "event_id": envelope.event_id.hex(),
                 "partition_key": binding.partition_key,
@@ -278,7 +299,7 @@ class StableHttpCanonicalSink:
     def __post_init__(self) -> None:
         if (
             not self.urls
-            or any(not _internal_url(value) for value in self.urls)
+            or any(not is_stable_internal_url(value) for value in self.urls)
             or len(self.secret) < 32
             or self.timeout_seconds <= 0
             or self.max_request_bytes <= 0
@@ -413,7 +434,9 @@ class StableHttpCanonicalSink:
                         content=body,
                         headers={
                             "Content-Type": "application/json",
-                            "X-QDL-Stable-Signature": _signature(self.secret, body),
+                            "X-QDL-Stable-Signature": stable_hmac_signature(
+                                self.secret, body
+                            ),
                         },
                     )
                     if response.status_code in {409, 503}:

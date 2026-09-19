@@ -45,6 +45,7 @@ from qdl.runtime.stable_capacity import (
 )
 from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
+from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
 
 
@@ -1084,6 +1085,7 @@ def build_stable_query_stack(
     provider_admission_url: str | None = None,
     provider_admission_secret: bytes | None = None,
     session_liveness_root: str | None = None,
+    execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -1138,6 +1140,7 @@ def build_stable_query_stack(
         entitlements=entitlements,
         reference_batch=reference_batch,
         reference_source_id=reference_source_id,
+        execution_mark_index_reader=execution_mark_index_reader,
     )
     issuer = StableConsumerCursorIssuer(
         handoff, catalog, ttl_seconds=cursor_ttl_seconds

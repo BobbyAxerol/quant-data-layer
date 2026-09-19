@@ -42,6 +42,7 @@ from qdl.query.results import (
 )
 from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
 from qdl.reference.batch import ReferenceBatch
+from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.reference.contracts import (
     ReferenceBatchResult,
     ReferenceProduct,
@@ -190,9 +191,16 @@ class V2QueryService:
         warmup_executor: BoundedWarmupExecutor | None = None,
         reference_batch: ReferenceBatch | None = None,
         reference_source_id: Callable[[InstrumentRecord], str] | None = None,
+        execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
+        if execution_mark_index_reader is not None and (
+            reference_batch is None or reference_source_id is None
+        ):
+            raise ValueError(
+                "execution MARK/INDEX live reader requires the reference policy boundary"
+            )
         self.instruments = instruments
         self.backend = backend
         self.entitlements = entitlements
@@ -200,6 +208,7 @@ class V2QueryService:
         self.warmup_executor = warmup_executor or BoundedWarmupExecutor()
         self.reference_batch = reference_batch
         self._reference_source_id = reference_source_id
+        self.execution_mark_index_reader = execution_mark_index_reader
         self.last_batch_evidence: dict[str, object] = {}
         self.last_reference_batch_evidence: dict[str, object] = {}
 
@@ -509,6 +518,11 @@ class V2QueryService:
 
         executor_before = self.warmup_executor.stats()
         reference_before = self.reference_batch.stats()
+        execution_live_before = (
+            self.execution_mark_index_reader.stats()
+            if self.execution_mark_index_reader is not None
+            else {}
+        )
         results: list[ReferenceBatchItemResult | None] = [None] * len(batch.requirements)
         admitted: list[tuple[int, ReferenceDataRequirement, ReferenceRequest]] = []
         for index, requirement in enumerate(batch.requirements):
@@ -564,8 +578,20 @@ class V2QueryService:
             *,
             bypass_cache: bool = False,
         ) -> ReferenceBatchResult:
-            _index, _requirement, request = candidate
-            result = await self.reference_batch.fetch_one(request, bypass_cache=bypass_cache)
+            _index, requirement, request = candidate
+            if self._uses_execution_mark_index_live_reader(requirement, request, purpose):
+                # This is deliberately not a provider retry/cache path. The
+                # active stream gateway either has one verified current view or
+                # query returns its typed fail-closed reason to the consumer.
+                result = await self.execution_mark_index_reader.fetch(
+                    request,
+                    max_freshness_ms=requirement.max_freshness_ms or 0,
+                    source_policy_id=requirement.source_policy_id,
+                )
+            else:
+                result = await self.reference_batch.fetch_one(
+                    request, bypass_cache=bypass_cache
+                )
             # Rust provider admission deliberately communicates bounded
             # pressure through a typed retry delay.  Keep Rust as the only
             # admission authority and let the shared executor honor that
@@ -584,7 +610,13 @@ class V2QueryService:
             admitted,
             work=work,
             identity=lambda candidate: candidate[2].cache_key,
-            provider=lambda candidate: candidate[2].instrument.identity.venue,
+            provider=lambda candidate: (
+                "INTERNAL_STREAM"
+                if self._uses_execution_mark_index_live_reader(
+                    candidate[1], candidate[2], purpose
+                )
+                else candidate[2].instrument.identity.venue
+            ),
             deadline_ms=lambda candidate: candidate[1].deadline_ms,
         )
 
@@ -626,7 +658,13 @@ class V2QueryService:
                         (refresh_candidate,),
                         work=lambda candidate: work(candidate, bypass_cache=True),
                         identity=lambda candidate: candidate[2].cache_key,
-                        provider=lambda candidate: candidate[2].instrument.identity.venue,
+                        provider=lambda candidate: (
+                            "INTERNAL_STREAM"
+                            if self._uses_execution_mark_index_live_reader(
+                                candidate[1], candidate[2], purpose
+                            )
+                            else candidate[2].instrument.identity.venue
+                        ),
                         deadline_ms=lambda candidate: candidate[1].deadline_ms,
                     )
                 )[0]
@@ -659,6 +697,11 @@ class V2QueryService:
             raise RuntimeError("reference batch lost a result during bounded scheduling")
         executor_after = self.warmup_executor.stats()
         reference_after = self.reference_batch.stats()
+        execution_live_after = (
+            self.execution_mark_index_reader.stats()
+            if self.execution_mark_index_reader is not None
+            else {}
+        )
         self.last_reference_batch_evidence = {
             "request_id": request_id,
             "item_count": len(resolved),
@@ -673,8 +716,28 @@ class V2QueryService:
                 for key in reference_after
                 if key != "cache_entries" and key != "inflight"
             },
+            **{
+                f"execution_live_{key}": execution_live_after.get(key, 0)
+                - execution_live_before.get(key, 0)
+                for key in execution_live_after
+            },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
+
+    def _uses_execution_mark_index_live_reader(
+        self,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        purpose: AccessPurpose,
+    ) -> bool:
+        return (
+            self.execution_mark_index_reader is not None
+            and purpose is AccessPurpose.INTERNAL_EXECUTION
+            and requirement.consumer_grade is ConsumerGrade.EXECUTION
+            and requirement.max_freshness_ms is not None
+            and request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and not request.is_history
+        )
 
     def _reference_snapshot_requires_refresh(
         self,
@@ -693,6 +756,12 @@ class V2QueryService:
         relaxed and a second stale observation remains terminal.
         """
 
+        if any(
+            item.provider_endpoint
+            == "qdl://stable-stream/internal/v2/execution/mark-index/latest"
+            for item in result.lineage
+        ):
+            return False
         if self._reference_snapshot_was_current_at_receipt(
             requirement,
             request,
@@ -799,6 +868,24 @@ class V2QueryService:
             return QueryProblem(
                 CanonicalErrorCode.UNSUPPORTED_FEED,
                 result.error_detail or "reference product is unavailable at this provider",
+                False,
+            )
+        if result.error_code == "LIVE_VIEW_STALE":
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                result.error_detail or "execution MARK/INDEX live view is stale",
+                True,
+            )
+        if result.error_code == "LIVE_VIEW_GAPPED":
+            return QueryProblem(
+                CanonicalErrorCode.DATA_NOT_READY,
+                result.error_detail or "execution MARK/INDEX live view has an open gap",
+                True,
+            )
+        if result.error_code == "LIVE_VIEW_IDENTITY":
+            return QueryProblem(
+                CanonicalErrorCode.CONFLICT,
+                result.error_detail or "execution MARK/INDEX live view identity differs",
                 False,
             )
         return QueryProblem(
