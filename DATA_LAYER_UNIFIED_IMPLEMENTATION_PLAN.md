@@ -42367,3 +42367,30 @@ nothing. Establishing which is the first step of that work, before any code.
 Three reversals in one afternoon on this one number is the lesson worth keeping:
 every age quoted here is now stated with the clock it was taken against and the
 container it was taken in, because the first two readings were not.
+
+<a id="dl-v2-r131-admission-six-20260919"></a>
+#### R1.31 item 3 — six of thirteen intervals certified (2026-09-19T06:00Z)
+
+The 06:00Z boundary is shared by 1h, 2h and 6h, so all three were captured in one
+window. With 5m, 15m and 30m from the earlier boundary that is **six of the
+thirteen** Binance USD-M intervals still on REST, each **PASS, 5 of 5 symbols**:
+
+| interval | boundary | final bar arrives after close |
+|---|---|---|
+| 5m, 15m, 30m | 05:15Z | 0.079 - 0.413 s |
+| 1h, 2h, 6h | 06:00Z | 0.107 - 0.519 s |
+
+Against 7,820 - 22,473 ms on the REST path those intervals use today. REST agreed
+with the WS final bar at +2 s to +6 s in every case, so REST remains a valid
+reconciliation source and a poor primary one.
+
+Each group shares a boundary and therefore a set of arrival numbers; that is the
+result, not a limitation of it. One lane carries every interval, and its latency
+does not depend on which interval is riding it.
+
+**Seven remain and none can be certified inside a session**: 4h and 8h next close
+at 08:00Z, 12h at 12:00Z, 1d at 00:00Z, and 3d, 1w and 3m are multi-day. They
+need a scheduled capture, not a longer wait.
+
+The rollout gate is unchanged and is a date: Phase 2's twenty-four hours mature
+at **2026-09-19T20:00Z**. Six intervals now have their evidence ready for it.
