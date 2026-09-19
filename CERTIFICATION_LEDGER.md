@@ -2090,5 +2090,15 @@ canonical batch to both gateways and the non-holder answers 409: **6,080
 rejected POSTs per projector per 30 minutes**, ~36,000 an hour across three.
 Removing it is projector code on the write path and belongs with B2/B3.
 
-**Nothing was pushed, merged, tagged or released.** The owner reserved that
-explicitly ("trước khi tôi duyệt release"). Commits wait on `dev`.
+**Released on the owner's approval, 2026-09-19 09:47Z.** `dev` pushed
+`98ac38a..554cd3d`; `main` fast-forwarded to the same commit and pushed
+`fd8f62e..554cd3d`; annotated tag `v2.0.20` (`f87f1e4`, dereferencing to
+`554cd3d`) pushed, its body the 132-line certificate that is this release's
+manifest. The GitHub release is published, not a draft and not a prerelease,
+authored `BobbyAxerol`:
+<https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.0.20>.
+
+Published with `scripts/publish_github_release.py` against a fine-grained token
+held in a 0600 file outside the repository; the token was never printed and the
+tool refused to replace an existing release. `gh` is not installed on this host,
+which is why the script exists.
