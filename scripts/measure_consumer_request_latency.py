@@ -55,16 +55,25 @@ MANIFEST = Path(os.environ.get(
 ROUNDS = int(os.environ.get("QDL_ROUNDS", "12"))
 # One instrument per feed keeps the probe bounded; the manifest decides which.
 PER_FEED = int(os.environ.get("QDL_PER_FEED", "2"))
+# R1.31. Restrict to named feeds. The alpha manifest carries metric series whose
+# `interval` the SDK refuses on a plain requirement, and one refusal aborts the
+# whole run before any timing happens.
+FEEDS = frozenset(f for f in os.environ.get("QDL_FEEDS", "").split(",") if f)
 
 
 def transports():
+    # R1.31. The identity directory name was hardcoded to `trading-system`, which
+    # made this measurable only for the consumer that reads 1m bars. The alpha
+    # reads fourteen intervals from the same data layer with its own certificate,
+    # so the name is a variable and the default is unchanged.
+    workload = os.environ.get("QDL_WORKLOAD", "trading-system")
     tls = WorkloadTlsConfig(
-        f"{ID}/trading-system/ca.crt",
-        f"{ID}/trading-system/client.crt",
-        f"{ID}/trading-system/client.key",
+        f"{ID}/{workload}/ca.crt",
+        f"{ID}/{workload}/client.crt",
+        f"{ID}/{workload}/client.key",
     )
     credential = RotatingJwtCredentialProvider(
-        private_key_file=f"{ID}/trading-system-jwt/private.key",
+        private_key_file=f"{ID}/{workload}-jwt/private.key",
         key_id=os.environ.get("QDL_JWT_KEY_ID", "stable-trading-system-rs256-v1"),
         algorithm="RS256",
         issuer=os.environ.get("QDL_JWT_ISSUER", "https://identity.qdl.stable.internal"),
@@ -111,7 +120,13 @@ def requirements() -> list[tuple[str, DataRequirement]]:
     out: list[tuple[str, DataRequirement]] = []
     names = {f.name for f in dataclasses.fields(DataRequirement)}
     for item in spec["requirements"]:
-        feed = str(item["feed"])
+        # R1.31. Keyed on feed alone this capped BAR at two rows total, which
+        # hides twelve of the alpha's fourteen intervals behind whichever two
+        # the manifest happens to list first. The interval is part of the
+        # product, so it is part of the key.
+        feed = f"{item['feed']}/{item.get('interval') or '-'}"
+        if FEEDS and str(item["feed"]) not in FEEDS:
+            continue
         if picked.get(feed, 0) >= PER_FEED:
             continue
         picked[feed] = picked.get(feed, 0) + 1
