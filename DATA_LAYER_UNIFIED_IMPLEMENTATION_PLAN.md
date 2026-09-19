@@ -43263,3 +43263,87 @@ and untouched by any of this.
 
 **Tests:** 20 in `test_dlv2_r131_warmup_is_a_lookback_cap.py`; 106 history/warmup,
 71 pass-through/interval and 9 SDK suites pass; full suite **1,647 OK**.
+
+<a id="dl-v2-r131-debt-plan-20260919"></a>
+### R1.31 — how both debts close, costed (2026-09-19T07:35Z)
+
+Owner: the goal is no debt. Here is what each one actually takes, with the
+mechanism established rather than assumed.
+
+#### Debt A — the 15m/30m interior gap
+
+**Root cause, established.** `_trim_partition_windows_locked` keeps the newest
+`max_partition_records` by **`logical_offset`** and deletes the rest. Write order
+is not market order, and it is not supposed to be: after a cache rebuild the
+projector replays a recent realtime window *first* and the bar edge backfills
+older history *after*, which `_durable_final_bar_opens`' own docstring describes
+as the designed sequence. So the retained 10,064 rows are the newest by *append*,
+which after any rebuild is a different set from the newest by *market time* - and
+the difference is a hole.
+
+**Why the repair cannot converge at cap.** Measured on
+`binance-usdm-btcusdt-bar-15m`: the repair wrote its 124 rows (market 09-11 06:15
+to 09-12 13:00) and the trim deleted the 125 oldest-by-append (market 09-12 13:15
+to 09-13 20:15). Both sets sit inside the same 1,000-row plan window, so
+`history_repair_remaining_rows` is unchanged. The partition was already at
+10,064 = the cap; the 64 rows of `LATE_BACKFILL_HEADROOM` were long since
+consumed, which is why the earlier "31 fits in 64" reasoning was wrong.
+
+**Fix 1 - permanent, correct: retention by market time.**
+
+* `events` gains `market_time_ns INTEGER NOT NULL DEFAULT 0` plus an index on
+  `(stream, partition_key, market_time_ns)`.
+* The projector supplies it in `headers_json`, from `bar.open_time_ns` for BAR
+  and `source_event_time_ns` otherwise, so the spool never decodes protobuf and
+  the transport layer stays payload-agnostic.
+* The trim keeps the newest N by `market_time_ns` where a partition has them, and
+  falls back to `logical_offset` where every row is 0.
+
+Cost: a schema migration on a live 66 GB volume, and a guard so a partition
+whose rows predate the column is not trimmed by a field it does not have -
+without that guard the first trim evicts all existing history. Touches the most
+safety-critical durable component. **This is a change to design and test with the
+stack down or on a copy, not a release-day edit.**
+
+**Fix 2 - available now, durable for months: give the repair room.**
+
+`STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW` from 10,064 to 12,064. The repair then
+writes into free space and converges; the filled rows carry the highest offsets
+and are the last to be evicted. For 15m the window is 104 days of bars against
+96 live bars a day, so a repaired hole survives roughly that long.
+
+Cost: one constant, a python rebuild, and a recreate of **seven** roles - the
+spool is opened by query x2, stream x2 and projector x3 - then the repair on
+twenty bindings. Disk: 188 partitions x 2,000 rows x ~600 B = about 226 MB.
+
+It is a reprieve, not a cure: eviction still removes oldest-by-append, so a new
+hole appears wherever those rows sit in market time once the window turns over.
+Fix 1 is what ends it.
+
+#### Debt B — the four single points of failure
+
+**The producers are single-writer by design, not by omission.** `lease_epoch` in
+the ingestor config is a **static fencing token set to 1**, not a leader
+election; a second instance would double-publish, and the core refuses two
+bindings sharing a `source_id`. So "add a replica" is not a config change.
+
+The mechanism to do it properly already exists and is already in production:
+`ActivePassiveGatewayLease` over `RedisGatewayLeaseStore`
+(`qdl/runtime/lease.py`), which is how `stream_v2_active`/`passive` arbitrate -
+and which was observed handing over on 2026-09-18 at 16:07.
+
+| role | language | path to a standby | size |
+|---|---|---|---|
+| `binance_bar_edge` | Python | reuse `ActivePassiveGatewayLease` directly | **feasible** - same pattern, same store |
+| `ingestor_binance_usdm` | Rust | needs a Rust lease client against the same store, plus the core accepting a fenced takeover | **larger** |
+| `ingestor_okx_swap` | Rust | as above | **larger** |
+| `stable_redis` | - | it *is* the lease store; HA means Redis replication plus projection-cache identity surviving failover | **separate problem** |
+
+**What is available today without writing any of that**: measure the recovery
+each one already has. Stop a producer, time the gap until its partitions are
+inside their declared bounds again, restart, confirm. That converts "never
+exercised" into a number, which is the honest half of resilience and is what
+should be known before a release rather than after an incident.
+
+It is a deliberate production interruption on one venue at a time, so it is the
+owner's call, not a thing to slip into a verification run.
