@@ -6,6 +6,7 @@ the private current-state boundary, not provider latency or a real market read.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -238,13 +239,24 @@ class _FallbackReferenceAdapter:
 
 
 class _LiveReader:
-    def __init__(self, *, status: ReferenceStatus = ReferenceStatus.OK) -> None:
+    def __init__(
+        self,
+        *,
+        status: ReferenceStatus = ReferenceStatus.OK,
+        source_event_time_ns: int = NOW_NS,
+        provider_confirmation_ns: int = NOW_NS,
+        freshness_basis: str = "SOURCE_EVENT",
+    ) -> None:
         self.status = status
         self.calls = 0
+        self.calls_by_policy: list[tuple[str, int, int | None]] = []
+        self.source_event_time_ns = source_event_time_ns
+        self.provider_confirmation_ns = provider_confirmation_ns
+        self.freshness_basis = freshness_basis
 
-    async def fetch(self, request, *, max_freshness_ms, source_policy_id):
-        del max_freshness_ms, source_policy_id
+    async def fetch(self, request, *, max_freshness_ms, source_policy_id, deadline_ms=None):
         self.calls += 1
+        self.calls_by_policy.append((source_policy_id, max_freshness_ms, deadline_ms))
         capability = FeedCapability(CapabilityAvailability.AVAILABLE, snapshot=True)
         lineage = ReferenceLineage(
             provider="BINANCE_DIRECT",
@@ -269,7 +281,7 @@ class _LiveReader:
                     truncated=False,
                     terminal_reason="LIVE_VIEW_STALE",
                 ),
-                received_at_ns=NOW_NS,
+                received_at_ns=self.provider_confirmation_ns,
                 error_code="LIVE_VIEW_STALE",
                 error_detail="test stale live view",
             )
@@ -296,13 +308,17 @@ class _LiveReader:
                 truncated=False,
                 terminal_reason="LIVE_EXECUTION_VIEW",
             ),
-            received_at_ns=NOW_NS,
+            received_at_ns=self.provider_confirmation_ns,
             observations=(ReferenceObservation(
                 instrument_uid=request.instrument.instrument_uid,
                 instrument_revision=request.instrument.metadata_revision,
                 product=request.product,
-                observed_at_ns=NOW_NS,
+                observed_at_ns=self.source_event_time_ns,
                 fields=fields,
+                labels=(
+                    ("freshness_basis", self.freshness_basis),
+                    ("provider_confirmation_ns", str(self.provider_confirmation_ns)),
+                ),
             ),),
         )
 
@@ -561,6 +577,10 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["delivery_stage"], "CANONICAL_READ_COMMITTED")
         self.assertIsNone(payload["spool_watermark_offset"])
         self.assertEqual(
+            response.headers["X-QDL-Execution-Freshness-Basis"],
+            "PROVIDER_CONFIRMATION",
+        )
+        self.assertEqual(
             market_data_pb2.EventEnvelope.FromString(base64.b64decode(payload["canonical"])).instrument_uid,
             self.record.instrument_uid,
         )
@@ -570,7 +590,12 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         async def stream_handler(request: httpx.Request) -> httpx.Response:
             venue_calls.append(str(request.url))
             self.assertEqual(request.url.host, "stream_v2_active")
-            return httpx.Response(200, json=payload, request=request)
+            return httpx.Response(
+                200,
+                json=payload,
+                headers={"X-QDL-Execution-Freshness-Basis": "PROVIDER_CONFIRMATION"},
+                request=request,
+            )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(stream_handler))
         reader = HttpExecutionMarkIndexReader(
@@ -589,6 +614,10 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.OK)
         self.assertEqual({field.name for field in result.observations[0].fields}, {"mark_price", "index_price"})
         self.assertEqual(result.lineage[0].provider_endpoint, LIVE_ENDPOINT)
+        self.assertEqual(
+            dict(result.observations[0].labels)["freshness_basis"],
+            "PROVIDER_CONFIRMATION",
+        )
         self.assertEqual(len(venue_calls), 1)
 
     async def test_reader_accepts_both_venues_but_rejects_cross_venue_identity(self):
@@ -668,6 +697,98 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.ERROR)
         self.assertEqual(result.error_code, "LIVE_VIEW_PROTOCOL")
 
+    async def test_reader_uses_one_deadline_across_active_passive_urls(self):
+        envelope = _envelope(self.binding, sequence=50)
+        payload = {
+            "schema": "qdl.v2.execution-mark-index-view.v2",
+            "lease_epoch": 5,
+            "spool_watermark_offset": 50,
+            "delivery_stage": "SPOOL_CONFIRMED",
+            "canonical": base64.b64encode(
+                envelope.SerializeToString(deterministic=True)
+            ).decode("ascii"),
+        }
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.host)
+            if request.url.host == "stream_v2_active":
+                await asyncio.sleep(0.05)
+            return httpx.Response(200, json=payload, request=request)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        reader = HttpExecutionMarkIndexReader(
+            (
+                "https://stream_v2_active:8200",
+                "https://stream_v2_passive:8200",
+            ),
+            SECRET,
+            timeout_seconds=1.0,
+            client=client,
+        )
+        try:
+            result = await reader.fetch(
+                ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE),
+                max_freshness_ms=2_000,
+                source_policy_id="crypto_liquid_v2",
+                deadline_ms=10,
+            )
+        finally:
+            await client.aclose()
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "LIVE_VIEW_UNAVAILABLE")
+        self.assertEqual(calls, ["stream_v2_active"])
+
+    async def test_reader_fails_over_within_one_deadline(self):
+        envelope = _envelope(self.binding, sequence=51)
+        payload = {
+            "schema": "qdl.v2.execution-mark-index-view.v2",
+            "lease_epoch": 5,
+            "spool_watermark_offset": 51,
+            "delivery_stage": "SPOOL_CONFIRMED",
+            "canonical": base64.b64encode(
+                envelope.SerializeToString(deterministic=True)
+            ).decode("ascii"),
+        }
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.host)
+            if request.url.host == "stream_v2_active":
+                return httpx.Response(
+                    409,
+                    json={"detail": "execution MARK/INDEX gateway fenced"},
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json=payload,
+                headers={"X-QDL-Execution-Freshness-Basis": "PROVIDER_CONFIRMATION"},
+                request=request,
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        reader = HttpExecutionMarkIndexReader(
+            (
+                "https://stream_v2_active:8200",
+                "https://stream_v2_passive:8200",
+            ),
+            SECRET,
+            timeout_seconds=1.0,
+            client=client,
+        )
+        try:
+            result = await reader.fetch(
+                ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE),
+                max_freshness_ms=2_000,
+                source_policy_id="crypto_liquid_v2",
+                deadline_ms=100,
+            )
+        finally:
+            await client.aclose()
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual(calls, ["stream_v2_active", "stream_v2_passive"])
+
 
 class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -693,16 +814,23 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             "clock_ns": lambda: NOW_NS,
         }
 
-    def _execution_requirement(self) -> ReferenceDataRequirement:
+    def _execution_requirement(
+        self,
+        *,
+        source_policy_id: str = "crypto_liquid_v2",
+        max_freshness_ms: int = 2_000,
+        deadline_ms: int = 20_000,
+    ) -> ReferenceDataRequirement:
         return ReferenceDataRequirement(
             instrument_uid=self.record.instrument_uid,
             product=ReferenceProduct.MARK_INDEX_PRICE,
             consumer_grade=ConsumerGrade.EXECUTION,
-            source_policy_id="crypto_liquid_v2",
+            source_policy_id=source_policy_id,
             limit=1,
             page_size=1,
             max_pages=1,
-            max_freshness_ms=2_000,
+            max_freshness_ms=max_freshness_ms,
+            deadline_ms=deadline_ms,
         )
 
     async def test_execution_uses_live_view_but_alpha_reference_keeps_existing_adapter(self):
@@ -751,3 +879,115 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
         self.assertEqual(live.calls, 1)
         self.assertEqual(self.fallback.calls, 0)
+
+    async def test_provider_confirmation_freshness_is_explicit_and_source_event_remains_lineage(self):
+        clock = {"ns": NOW_NS + 1_500_000_000}
+        requirement = self._execution_requirement()
+        service = V2QueryService(
+            **{**self.common, "clock_ns": lambda: clock["ns"]},
+            execution_mark_index_reader=_LiveReader(
+                source_event_time_ns=NOW_NS - 3_000_000_000,
+                provider_confirmation_ns=NOW_NS,
+                freshness_basis="PROVIDER_CONFIRMATION",
+            ),
+        )
+        accepted = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("execution-reader", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(accepted.partial)
+        labels = dict(accepted.results[0].result.observations[0].labels)
+        self.assertEqual(labels["freshness_basis"], "PROVIDER_CONFIRMATION")
+        self.assertEqual(labels["provider_confirmation_ns"], str(NOW_NS))
+        self.assertEqual(
+            accepted.results[0].result.observations[0].observed_at_ns,
+            NOW_NS - 3_000_000_000,
+        )
+
+        source_event_service = V2QueryService(
+            **{**self.common, "clock_ns": lambda: clock["ns"]},
+            execution_mark_index_reader=_LiveReader(
+                source_event_time_ns=NOW_NS - 3_000_000_000,
+                provider_confirmation_ns=NOW_NS,
+                freshness_basis="SOURCE_EVENT",
+            ),
+        )
+        rejected = await source_event_service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader", (requirement,), require_all=False
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertTrue(rejected.partial)
+        self.assertEqual(rejected.results[0].problem.code.value, "DATA_STALE")
+
+    async def test_execution_live_snapshot_that_ages_before_assembly_is_never_ok(self):
+        clock = {"ns": NOW_NS}
+
+        class AgingReader(_LiveReader):
+            async def fetch(self, *args, **kwargs):
+                result = await super().fetch(*args, **kwargs)
+                clock["ns"] += 2_001_000_000
+                return result
+
+        service = V2QueryService(
+            **{**self.common, "clock_ns": lambda: clock["ns"]},
+            execution_mark_index_reader=AgingReader(),
+        )
+        result = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader",
+                (self._execution_requirement(),),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertTrue(result.partial)
+        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(self.fallback.calls, 0)
+
+    async def test_execution_live_singleflight_isolated_by_policy_freshness_and_deadline(self):
+        class BlockingReader(_LiveReader):
+            def __init__(self):
+                super().__init__()
+                self.entered = 0
+                self.started = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def fetch(self, *args, **kwargs):
+                self.entered += 1
+                if self.entered == 2:
+                    self.started.set()
+                await self.release.wait()
+                return await super().fetch(*args, **kwargs)
+
+        live = BlockingReader()
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+        first = asyncio.create_task(service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader-a",
+                (self._execution_requirement(source_policy_id="policy-a"),),
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        ))
+        second = asyncio.create_task(service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader-b",
+                (self._execution_requirement(
+                    source_policy_id="policy-b",
+                    max_freshness_ms=1_500,
+                    deadline_ms=1_500,
+                ),),
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        ))
+        await asyncio.wait_for(live.started.wait(), timeout=0.2)
+        live.release.set()
+        left, right = await asyncio.gather(first, second)
+        self.assertFalse(left.partial)
+        self.assertFalse(right.partial)
+        self.assertEqual(live.calls, 2)
+        self.assertEqual(
+            set(live.calls_by_policy),
+            {("policy-a", 2_000, 2_000), ("policy-b", 1_500, 1_500)},
+        )

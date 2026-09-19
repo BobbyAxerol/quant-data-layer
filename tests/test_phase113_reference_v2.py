@@ -189,22 +189,25 @@ class AdvanceClockAfterInitialBatchExecutor(BoundedWarmupExecutor):
 
 
 class AdvanceClockAfterBatchedMarkRefreshExecutor(BoundedWarmupExecutor):
-    """Expose stale response assembly after a multi-item MARK refresh.
+    """Expose stale response assembly before one concurrent multi-item refresh.
 
-    The first two-item execute ages initial snapshots. A legacy second
-    two-item refresh would age both refreshed snapshots before response
-    assembly. Per-item refreshes remain current at their own assembly turn.
+    The first two-item execute ages initial snapshots. The replacement refresh
+    is concurrent and response-time validation happens after it completes, so
+    the fixture advances only that initial batch instead of inventing a second
+    two-second pause after current replacement observations exist.
     """
 
     def __init__(self, *args, clock, adapter, **kwargs):
         super().__init__(*args, **kwargs)
         self._test_clock = clock
         self._test_adapter = adapter
+        self._advance_once = True
 
     async def execute(self, items, **kwargs):
         values = tuple(items)
         result = await super().execute(values, **kwargs)
-        if len(values) == 2:
+        if len(values) == 2 and self._advance_once:
+            self._advance_once = False
             self._test_clock["ns"] += 2_100_000_000
             self._test_adapter.observed_at_ns = self._test_clock["ns"]
         return result

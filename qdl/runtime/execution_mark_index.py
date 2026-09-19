@@ -15,7 +15,7 @@ import json
 import time
 from dataclasses import dataclass
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
@@ -31,6 +31,7 @@ _REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
 _RESPONSE_SCHEMA = "qdl.v2.execution-mark-index-view.v2"
 _DELIVERY_CANONICAL_READ_COMMITTED = "CANONICAL_READ_COMMITTED"
 _DELIVERY_SPOOL_CONFIRMED = "SPOOL_CONFIRMED"
+_FRESHNESS_BASIS_HEADER = "X-QDL-Execution-Freshness-Basis"
 _GAP_FLAGS = frozenset({
     common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,
     common_pb2.QUALITY_FLAG_OUT_OF_ORDER,
@@ -295,6 +296,7 @@ def install_execution_mark_index_read(
     @app.post("/internal/v2/execution/mark-index/latest", include_in_schema=False)
     async def latest_mark_index(
         request: Request,
+        response: Response,
         signature: str | None = Header(None, alias="X-QDL-Stable-Signature"),
     ):
         body = await request.body()
@@ -336,6 +338,10 @@ def install_execution_mark_index_read(
                 detail=f"execution MARK/INDEX live view unavailable:{result.reason}",
             )
         record = result.record
+        # A header keeps the private JSON response additive-compatible with a
+        # rolling reader deployment while carrying the stream-authoritative
+        # basis that governed this exact record's live admission.
+        response.headers[_FRESHNESS_BASIS_HEADER] = record.freshness_basis
         return {
             "schema": _RESPONSE_SCHEMA,
             "lease_epoch": record.gateway_epoch,

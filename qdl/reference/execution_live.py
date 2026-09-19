@@ -7,6 +7,7 @@ has already admitted the canonical paired event under its writer lease.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import ssl
@@ -39,6 +40,7 @@ from qdl.marketdata.v2 import market_data_pb2
 _REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
 _RESPONSE_SCHEMA = "qdl.v2.execution-mark-index-view.v2"
 _ENDPOINT = "/internal/v2/execution/mark-index/latest"
+_FRESHNESS_BASIS_HEADER = "X-QDL-Execution-Freshness-Basis"
 
 
 class ExecutionMarkIndexReader(Protocol):
@@ -48,6 +50,7 @@ class ExecutionMarkIndexReader(Protocol):
         *,
         max_freshness_ms: int,
         source_policy_id: str,
+        deadline_ms: int | None = None,
     ) -> ReferenceBatchResult: ...
 
     def stats(self) -> dict[str, int]: ...
@@ -93,10 +96,13 @@ class HttpExecutionMarkIndexReader:
         *,
         max_freshness_ms: int,
         source_policy_id: str,
+        deadline_ms: int | None = None,
     ) -> ReferenceBatchResult:
         """Fetch one exact current snapshot without an external-provider fallback."""
 
         self._calls += 1
+        if deadline_ms is not None and deadline_ms < 1:
+            raise ValueError("execution MARK/INDEX read deadline must be positive")
         capability = self._capability(request)
         if (
             request.product is not ReferenceProduct.MARK_INDEX_PRICE
@@ -121,19 +127,32 @@ class HttpExecutionMarkIndexReader:
             separators=(",", ":"),
         ).encode()
         errors: list[str] = []
+        deadline_at = (
+            time.monotonic() + deadline_ms / 1_000 if deadline_ms is not None else None
+        )
         assert self.client is not None
         for url in self.urls:
+            timeout_seconds = self.timeout_seconds
+            if deadline_at is not None:
+                timeout_seconds = min(timeout_seconds, deadline_at - time.monotonic())
+                if timeout_seconds <= 0:
+                    errors.append("DEADLINE")
+                    break
             try:
-                response = await self.client.post(
-                    f"{url.rstrip('/')}{_ENDPOINT}",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-QDL-Stable-Signature": stable_hmac_signature(self.secret, body),
-                    },
+                response = await asyncio.wait_for(
+                    self.client.post(
+                        f"{url.rstrip('/')}{_ENDPOINT}",
+                        content=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-QDL-Stable-Signature": stable_hmac_signature(self.secret, body),
+                        },
+                        timeout=timeout_seconds,
+                    ),
+                    timeout=timeout_seconds,
                 )
-            except httpx.TransportError:
-                errors.append("TRANSPORT")
+            except (asyncio.TimeoutError, httpx.TransportError):
+                errors.append("TIMEOUT" if deadline_at is not None else "TRANSPORT")
                 continue
             if response.status_code == 409:
                 errors.append(self._bounded_reason(response))
@@ -142,7 +161,14 @@ class HttpExecutionMarkIndexReader:
                 errors.append(f"HTTP_{response.status_code}")
                 continue
             try:
-                result = self._result_from_response(request, capability, response)
+                result = self._result_from_response(
+                    request,
+                    capability,
+                    response,
+                    freshness_basis=response.headers.get(
+                        _FRESHNESS_BASIS_HEADER, "SOURCE_EVENT"
+                    ).strip().upper(),
+                )
             except (DecodeError, ValueError, TypeError, KeyError):
                 errors.append("PROTOCOL")
                 continue
@@ -211,6 +237,8 @@ class HttpExecutionMarkIndexReader:
         request: ReferenceRequest,
         capability: FeedCapability,
         response: httpx.Response,
+        *,
+        freshness_basis: str,
     ) -> ReferenceBatchResult:
         payload = response.json()
         if (
@@ -223,6 +251,7 @@ class HttpExecutionMarkIndexReader:
             or payload["delivery_stage"] not in {
                 "CANONICAL_READ_COMMITTED", "SPOOL_CONFIRMED",
             }
+            or freshness_basis not in {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"}
         ):
             raise ValueError("execution MARK/INDEX live view response is invalid")
         spool_watermark_offset = payload["spool_watermark_offset"]
@@ -253,6 +282,7 @@ class HttpExecutionMarkIndexReader:
             labels=(
                 ("native_symbol", request.instrument.native_symbol),
                 ("execution_view", "STABLE_STREAM_GATEWAY"),
+                ("freshness_basis", freshness_basis),
                 ("source_event_time_ns", str(observed_at_ns)),
                 ("provider_confirmation_ns", str(int(envelope.received_at_ns))),
                 ("connection_generation", str(int(envelope.connection_generation))),

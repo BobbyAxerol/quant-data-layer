@@ -43955,3 +43955,110 @@ reader only** image and rolling recreate of only `query_v2_1` and `query_v2_2`,
 with the currently active `25dce61` candidate retained as exact rollback. Then
 and only then rerun one strict 300-second C2 test with `require_all=True`.
 No further runtime action or release is permitted from this precheck.
+
+### R1.33 - Internal execution-read admission and freshness correction (`SOURCE_COMPLETE / RUNTIME_PENDING`, 2026-09-19)
+
+**Goal.** Remove the self-inflicted external-provider queue from the V2
+execution MARK/INDEX read path while keeping the existing `2,000 ms`
+freshness, canonical lineage, lease/gap fencing and typed fail-closed behavior.
+This is a narrow reader-path correction; it is not a Kafka, provider quota or
+freshness-SLA relaxation.
+
+**Approved scope.**
+
+1. Declare `INTERNAL_STREAM` as an explicit bounded local policy: finite
+   concurrency aligned with the existing reader connection pool, no token-rate
+   pacing, one logical attempt, and a short local circuit cooldown rather than
+   the 30-second external-provider default. The reader may still try its
+   declared active/passive gateway URLs within that one deadline.
+2. Bind execution-reader singleflight identity to the full caller policy
+   (`source_policy_id` and `max_freshness_ms`) so one consumer cannot receive a
+   result admitted under another consumer's conditions.
+3. Carry the catalog's `freshness_basis` through the private live-view response
+   and use it during query admission. This is required because the stream role
+   is the only authority that knows which basis admitted its current record.
+   Provider confirmation can govern recency only for bindings that explicitly
+   declare it; source event time remains immutable lineage and is never
+   rewritten as fresh.
+4. Bound the complete active/passive read by the execution request's remaining
+   deadline, rather than allowing two independent per-URL two-second waits.
+   A timeout, stale view, gap, fence or source-policy mismatch remains a typed
+   failure with no venue REST retry.
+5. Revalidate every returned current snapshot against one response-time clock
+   before assembly. Execution-grade reference batches already cannot contain
+   history or a different reference product by contract; this gate prevents a
+   valid-at-fetch snapshot becoming an `OK` stale response during batch work.
+
+**Invariants and exclusions.** Binance, OKX and DNSE external provider budgets,
+retry behavior and circuit policy remain byte-for-byte unchanged. V1, public
+schemas, Rust, stream-gateway ownership, Kafka, projectors, Redis, SQLite,
+catalog bindings, consumer manifests and all order paths are outside this
+source slice. No synthetic market value is used outside deterministic tests.
+
+**Required source gates.** Regressions must prove a ten-item internal batch has
+no token wait and remains concurrency-bounded; external venue policy values
+are unchanged; policy-distinct concurrent requests never singleflight together;
+provider-confirmation and source-event freshness evaluate correctly; transport
+deadline covers active/passive failover as one logical read; stale/gap/fence
+remain terminal; and shared response-time validation cannot return stale data.
+
+**Runtime decision boundary.** After source gates pass, build one immutable
+reader image. Because the private response must carry stream-authoritative
+freshness basis, a later bounded packet may rolling-recreate exactly
+`stream_v2_active`, `stream_v2_passive`, `query_v2_1` and `query_v2_2`,
+retaining the currently deployed `25dce61` candidate as exact rollback. It
+then runs the existing strict C2 300-second `require_all=True` test over all
+ten active execution MARK/INDEX bindings. No rollout is implied by this source
+task.
+
+**Completed source slice (2026-09-19).** `BoundedWarmupExecutor` now declares
+`INTERNAL_STREAM` with concurrency `4`, no token-rate pacing, one attempt and
+a `1,000 ms` local circuit cooldown. This retains bounded failure pressure
+without turning a recovered lease-holder into a 30-second stale-data outage.
+The execution reader applies one total deadline across both declared gateway
+URLs, while still allowing a fast fenced/lease-miss response to fail over to
+the active holder. Query singleflight identity now includes source policy,
+freshness bound and deadline. Current execution reads inherit the smaller of
+their request deadline and freshness bound, so a nominal `20,000 ms` reference
+deadline cannot hold a `2,000 ms` execution price read open.
+
+The stream private response now sends its actual catalog freshness basis in a
+private response header. It is additive for an older query reader; a new query
+reader treats an absent header conservatively as `SOURCE_EVENT`. The new reader
+preserves that basis and provider-confirmation timestamp in typed observation
+lineage. Query validates provider confirmation only when the active stream
+explicitly declared it; otherwise it validates immutable source-event time.
+The response assembly uses one clock after all bounded refresh work completes.
+
+**Source evidence.** `python3 -m py_compile` passed for every changed
+production and test module, and `git diff --check` passed. The immutable
+existing `qdl-v2-python:2.0.21-rc.1-25dce61` image ran network-disabled,
+read-only tests with a temporary `/tmp` filesystem and `--rm` cleanup:
+
+1. `tests.test_execution_mark_index_live_view`,
+   `tests.test_phase10_universal_warmup`, and
+   `tests.test_phase113_reference_v2`: **76 passed, 0 failed** after the final
+   stale-at-response regression.
+2. The final broader query/reference/consumer selection including
+   `tests.test_phase104_reference_batch`,
+   `tests.test_phase104_v2_query_stream_integration`,
+   `tests.test_phase105_consumer_acceptance`,
+   `tests.test_phase115c_five_liquid_handoff`, and
+   `tests.test_reference_l2_consumer_acceptance`: **143 passed, 0 failed**.
+
+The new regressions cover ten-item internal admission with no token wait,
+bounded concurrency, one retryable failure attempt, unchanged Binance/OKX/DNSE
+policy values, the explicit `1,000 ms` local circuit cooldown, active/passive
+total-deadline behavior, policy-distinct singleflight, explicit
+provider-confirmation versus source-event freshness, stale-at-response
+rejection, existing gap/fence rejection and no REST fallback.
+`ruff` is not installed in the retained immutable runtime image; syntax,
+whitespace and the repository's relevant deterministic suites passed. No image,
+container, service, Kafka/Redis/SQLite state, provider call or market data was
+created by source verification.
+
+**Current status.** `SOURCE_COMPLETE / RUNTIME_PENDING`. The required rollout
+packet is now four reader roles rather than query-only because the stream must
+emit the authoritative freshness-basis header. That is an additive private
+protocol change with query-first rolling compatibility, but its expanded
+runtime blast radius requires its own explicit packet before any recreate.

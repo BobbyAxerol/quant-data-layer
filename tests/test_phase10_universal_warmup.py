@@ -437,6 +437,63 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(executor.provider_policies["OKX"].requests_per_second, 5.0)
         self.assertEqual(executor.provider_policies["BINANCE"].requests_per_second, 8.0)
 
+    async def test_internal_stream_has_bounded_concurrency_without_external_pacing_or_retry(self):
+        sleeps = []
+        running = 0
+        peak = 0
+
+        async def sleep(delay):
+            sleeps.append(delay)
+
+        async def work(value):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0)
+            running -= 1
+            return value
+
+        executor = BoundedWarmupExecutor(sleep=sleep)
+        result = await executor.execute(
+            range(10),
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "INTERNAL_STREAM",
+            deadline_ms=lambda _: 2_000,
+        )
+        policy = executor.provider_policies["INTERNAL_STREAM"]
+        self.assertEqual([item.value for item in result], list(range(10)))
+        self.assertTrue(all(item.ok and item.attempts == 1 for item in result))
+        self.assertLessEqual(peak, 4)
+        self.assertEqual(sleeps, [])
+        self.assertIsNone(policy.requests_per_second)
+        self.assertEqual(policy.max_attempts, 1)
+        self.assertEqual(policy.circuit_cooldown_ms, 1_000)
+        self.assertEqual(executor.provider_policies["OKX"].requests_per_second, 5.0)
+        self.assertEqual(executor.provider_policies["BINANCE"].requests_per_second, 8.0)
+        self.assertEqual(executor.provider_policies["DNSE"].requests_per_second, 2.0)
+
+    async def test_internal_stream_retryable_failure_is_one_typed_attempt(self):
+        calls = 0
+
+        async def work(_value):
+            nonlocal calls
+            calls += 1
+            raise RetryableWarmupError("test internal transport failure")
+
+        executor = BoundedWarmupExecutor[int, int]()
+        result = await executor.execute(
+            (1,),
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "INTERNAL_STREAM",
+            deadline_ms=lambda _: 2_000,
+        )
+        self.assertEqual(calls, 1)
+        self.assertFalse(result[0].ok)
+        self.assertEqual(result[0].attempts, 1)
+        self.assertEqual(executor.retry_count, 0)
+
     async def test_identical_concurrent_work_is_singleflight(self):
         executor = BoundedWarmupExecutor[int, int]()
         started = asyncio.Event()

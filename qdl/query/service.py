@@ -51,6 +51,11 @@ from qdl.reference.contracts import (
 )
 
 
+_EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
+    "qdl://stable-stream/internal/v2/execution/mark-index/latest"
+)
+
+
 def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
     """Split the freshness verdict into its three independent causes.
 
@@ -587,6 +592,7 @@ class V2QueryService:
                     request,
                     max_freshness_ms=requirement.max_freshness_ms or 0,
                     source_policy_id=requirement.source_policy_id,
+                    deadline_ms=self._reference_deadline_ms(candidate, purpose),
                 )
             else:
                 result = await self.reference_batch.fetch_one(
@@ -609,15 +615,9 @@ class V2QueryService:
         executions = await self.warmup_executor.execute(
             admitted,
             work=work,
-            identity=lambda candidate: candidate[2].cache_key,
-            provider=lambda candidate: (
-                "INTERNAL_STREAM"
-                if self._uses_execution_mark_index_live_reader(
-                    candidate[1], candidate[2], purpose
-                )
-                else candidate[2].instrument.identity.venue
-            ),
-            deadline_ms=lambda candidate: candidate[1].deadline_ms,
+            identity=lambda candidate: self._reference_batch_identity(candidate, purpose),
+            provider=lambda candidate: self._reference_provider_lane(candidate, purpose),
+            deadline_ms=lambda candidate: self._reference_deadline_ms(candidate, purpose),
         )
 
         # Revalidate after every bounded initial task has returned. A current
@@ -627,11 +627,17 @@ class V2QueryService:
         # provider MARK/INDEX row gets the same one bounded, cache-bypassing
         # re-read; any still-stale result remains fail-closed.
         refresh_candidates = []
+        initial_validation_ns = self._clock_ns()
         for execution in executions:
             if execution.error is not None or execution.value is None:
                 continue
             _index, requirement, request = execution.item
-            problem = self._reference_problem(requirement, request, execution.value)
+            problem = self._reference_problem(
+                requirement,
+                request,
+                execution.value,
+                at_ns=initial_validation_ns,
+            )
             if (
                 problem is not None
                 and problem.code is CanonicalErrorCode.DATA_STALE
@@ -642,32 +648,18 @@ class V2QueryService:
                 )
             ):
                 refresh_candidates.append(execution.item)
-        refresh_by_index = {candidate[0]: candidate for candidate in refresh_candidates}
+        refreshed = await self.warmup_executor.execute(
+            refresh_candidates,
+            work=lambda candidate: work(candidate, bypass_cache=True),
+            identity=lambda candidate: self._reference_batch_identity(candidate, purpose),
+            provider=lambda candidate: self._reference_provider_lane(candidate, purpose),
+            deadline_ms=lambda candidate: self._reference_deadline_ms(candidate, purpose),
+        ) if refresh_candidates else ()
+        refresh_by_index = {execution.item[0]: execution for execution in refreshed}
+        assembly_validation_ns = self._clock_ns()
 
         for initial_execution in executions:
-            execution = initial_execution
-            refresh_candidate = refresh_by_index.get(initial_execution.item[0])
-            if refresh_candidate is not None:
-                # A bounded batch refresh can itself make an early MARK/INDEX
-                # result stale before response assembly. Re-read and validate
-                # this exact already-admitted item at its assembly turn instead.
-                # It is still one cache-bypass recovery through the same
-                # provider lane; a second stale result remains fail-closed.
-                execution = (
-                    await self.warmup_executor.execute(
-                        (refresh_candidate,),
-                        work=lambda candidate: work(candidate, bypass_cache=True),
-                        identity=lambda candidate: candidate[2].cache_key,
-                        provider=lambda candidate: (
-                            "INTERNAL_STREAM"
-                            if self._uses_execution_mark_index_live_reader(
-                                candidate[1], candidate[2], purpose
-                            )
-                            else candidate[2].instrument.identity.venue
-                        ),
-                        deadline_ms=lambda candidate: candidate[1].deadline_ms,
-                    )
-                )[0]
+            execution = refresh_by_index.get(initial_execution.item[0], initial_execution)
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)
@@ -684,7 +676,12 @@ class V2QueryService:
                 continue
             assert execution.value is not None
             result = execution.value
-            problem = self._reference_problem(requirement, request, result)
+            problem = self._reference_problem(
+                requirement,
+                request,
+                result,
+                at_ns=assembly_validation_ns,
+            )
             results[index] = ReferenceBatchItemResult(
                 requirement,
                 result.status.value if problem is None else problem.code.value,
@@ -739,6 +736,47 @@ class V2QueryService:
             and not request.is_history
         )
 
+    def _reference_provider_lane(
+        self,
+        candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest],
+        purpose: AccessPurpose,
+    ) -> str:
+        if self._uses_execution_mark_index_live_reader(
+            candidate[1], candidate[2], purpose
+        ):
+            return "INTERNAL_STREAM"
+        return candidate[2].instrument.identity.venue
+
+    def _reference_batch_identity(
+        self,
+        candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest],
+        purpose: AccessPurpose,
+    ) -> tuple[object, ...]:
+        _index, requirement, request = candidate
+        if self._uses_execution_mark_index_live_reader(requirement, request, purpose):
+            # A stream view is authorized and freshness-bound by these exact
+            # caller values. Sharing a singleflight task across a different
+            # policy or deadline would make the result's admission ambiguous.
+            return (
+                *request.cache_key,
+                "INTERNAL_EXECUTION",
+                requirement.source_policy_id,
+                requirement.max_freshness_ms,
+                requirement.deadline_ms,
+            )
+        return request.cache_key
+
+    def _reference_deadline_ms(
+        self,
+        candidate: tuple[int, ReferenceDataRequirement, ReferenceRequest],
+        purpose: AccessPurpose,
+    ) -> int:
+        _index, requirement, request = candidate
+        if self._uses_execution_mark_index_live_reader(requirement, request, purpose):
+            assert requirement.max_freshness_ms is not None
+            return min(requirement.deadline_ms, requirement.max_freshness_ms)
+        return requirement.deadline_ms
+
     def _reference_snapshot_requires_refresh(
         self,
         requirement: ReferenceDataRequirement,
@@ -756,11 +794,7 @@ class V2QueryService:
         relaxed and a second stale observation remains terminal.
         """
 
-        if any(
-            item.provider_endpoint
-            == "qdl://stable-stream/internal/v2/execution/mark-index/latest"
-            for item in result.lineage
-        ):
+        if self._is_execution_mark_index_live_result(result):
             return False
         if self._reference_snapshot_was_current_at_receipt(
             requirement,
@@ -801,9 +835,35 @@ class V2QueryService:
         return source_age_at_receipt_ms <= freshness_ms
 
     @staticmethod
-    def _reference_freshness_timestamp(result: ReferenceBatchResult) -> int:
+    def _is_execution_mark_index_live_result(result: ReferenceBatchResult) -> bool:
+        return bool(result.lineage) and all(
+            item.provider_endpoint == _EXECUTION_MARK_INDEX_LIVE_ENDPOINT
+            for item in result.lineage
+        )
+
+    @classmethod
+    def _reference_freshness_timestamp(cls, result: ReferenceBatchResult) -> int:
         # A snapshot pair is only as current as its oldest component. History
         # instead measures how recently the series was updated, not its start.
+        if (
+            result.request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and not result.request.is_history
+            and cls._is_execution_mark_index_live_result(result)
+        ):
+            labels = tuple(dict(item.labels) for item in result.observations)
+            bases = {item.get("freshness_basis", "SOURCE_EVENT") for item in labels}
+            if bases == {"PROVIDER_CONFIRMATION"}:
+                try:
+                    confirmations = tuple(
+                        int(item["provider_confirmation_ns"]) for item in labels
+                    )
+                except (KeyError, TypeError, ValueError):
+                    return 0
+                return min(confirmations, default=0) if all(
+                    value > 0 for value in confirmations
+                ) else 0
+            if bases != {"SOURCE_EVENT"}:
+                return 0
         select = (
             min
             if result.request.product is ReferenceProduct.MARK_INDEX_PRICE
@@ -820,6 +880,8 @@ class V2QueryService:
         requirement: ReferenceDataRequirement,
         request: ReferenceRequest,
         result: ReferenceBatchResult,
+        *,
+        at_ns: int | None = None,
     ) -> QueryProblem | None:
         if result.request != request:
             return QueryProblem(
@@ -850,7 +912,10 @@ class V2QueryService:
                     )
             if requirement.max_freshness_ms is not None:
                 observed_ns = self._reference_freshness_timestamp(result)
-                freshness_ms = max(0, (self._clock_ns() - observed_ns) // 1_000_000)
+                freshness_ms = max(
+                    0,
+                    ((self._clock_ns() if at_ns is None else at_ns) - observed_ns) // 1_000_000,
+                )
                 if freshness_ms > requirement.max_freshness_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,

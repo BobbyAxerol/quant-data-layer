@@ -79,6 +79,19 @@ class BoundedWarmupExecutor(Generic[T, R]):
             requests_per_second=None,
             max_attempts=1,
         ),
+        # A stable-stream read is already canonical, authenticated and local to
+        # the V2 data plane. It still needs finite admission, but external
+        # venue token pacing and multi-attempt provider retry would only age an
+        # otherwise valid execution snapshot before the consumer can use it.
+        "INTERNAL_STREAM": ProviderBudgetPolicy(
+            max_concurrency=4,
+            requests_per_second=None,
+            max_attempts=1,
+            # A brief circuit still prevents a failed local reader from being
+            # hammered, but a venue-sized 30-second cooldown would mask a
+            # recovered lease holder and needlessly make execution stale.
+            circuit_cooldown_ms=1_000,
+        ),
         "BINANCE": ProviderBudgetPolicy(
             max_concurrency=8,
             requests_per_second=8.0,
