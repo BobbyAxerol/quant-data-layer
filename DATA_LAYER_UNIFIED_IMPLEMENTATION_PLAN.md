@@ -44802,6 +44802,41 @@ recorded active digest/runtime pair. Do not reset Kafka offsets, flush Redis,
 delete SQLite or remove V1. If quote data is truly unavailable from the venue,
 the binding remains fail-closed and the release cannot pass.
 
+**Approved bounded projector packet (prepared 2026-09-19; not yet applied).**
+The source gate is sealed at `7e53a12` and was built locally as
+`qdl-v2-python:2.0.23-7e53a12@sha256:970a1ce4f9dfef31001a1b0c9239b6ef5fc009f81edc67beb7ab097a3fe8f511`.
+The packet may recreate **only**, one at a time, `projector_v2`,
+`projector_v2_3`, then `projector_v2_2`. It preserves the currently deployed
+Compose chain, sealed runtime mount
+`/home/bobby/.local/state/qdl-v2/mark-index-compat-a366d0e-20260905T185000Z/runtime`,
+TLS/state volumes, `stable-projector-v1` consumer group, and every existing
+topic/offset. Its sole effective deltas are the candidate image and
+`QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS=512` plus
+`QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS=128`. It is recorded outside Git at
+`/home/bobby/.local/state/qdl-v2/r135-b-projector-20260919T203500Z/`:
+`candidate.override.yml` SHA-256 `5e9900a6...466cb35`,
+`rollback.override.yml` SHA-256 `cfc64a7d...1944ce`, and owner-only
+`roll-r135-b.sh` SHA-256 `bae70066...4be0db`. The script enumerates the exact
+active Compose chain and accepts one named projector only; both overrides
+passed isolated YAML validation and the script passed `bash -n`.
+
+The rollback is per named projector through that same script in `rollback`
+mode, restoring the exact active image
+`sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`
+and its `1000`-record batch setting. The rollout allows normal existing
+market-data writes while a restarted member catches up. It does **not** touch
+V1, Kafka brokers/topics/offsets, Redis, SQLite deletion or reset, Rust core,
+ingestors, BAR edge, query/stream readers, Trading System, alpha containers,
+broker credentials, or any order path. After each single recreate, require
+health, no restart/OOM, bounded lag/catch-up and continuous remaining
+projectors before proceeding. After all three, run the two-reader public-SDK,
+real-provider strict-QUOTE matrix for at least 300 seconds, with all ten
+Binance USD-M/OKX Swap BTC/ETH/SOL/DOGE/BNB bindings and the declared
+TRADE/BOOK/MARK-INDEX controls. It records consumer-call-to-usable latency,
+typed quality, resource/restart evidence and no direct-provider/V1 fallback;
+any strict failure stops the packet and rolls back only the affected
+projector(s).
+
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
