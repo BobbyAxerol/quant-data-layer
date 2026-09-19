@@ -44132,7 +44132,7 @@ this narrow packet and must be consolidated in a separately approved cleanup
 slice. Candidate, named rollback image and bounded external evidence directory
 are retained; no cleanup is performed while the packet is unresolved.
 
-### R1.34 - Component-aware quiet-channel MARK/INDEX admission (`APPROVED / IN_PROGRESS`, 2026-09-19)
+### R1.34 - Component-aware quiet-channel MARK/INDEX admission (`SOURCE_COMPLETE / RUNTIME_ROLLED / C2 PASS / CLOSED`, 2026-09-19)
 
 **Goal.** Correct the execution MARK/INDEX read contract for provider channels
 which legitimately repeat an unchanged value slowly, without rewriting source
@@ -44388,8 +44388,8 @@ still exactly two no-order 300-second `require_all=True` ten-binding probes,
 one per query replica, with the current query CA and successor workload
 identity copied only to container tmpfs.
 
-**C2 quiet-channel acceptance metric correction (`APPROVED / SOURCE IN
-PROGRESS`, 2026-09-19).** The approved additive keyring repair was applied to
+**C2 quiet-channel acceptance metric correction (`SOURCE COMPLETE / C2 PASS`,
+2026-09-19).** The approved additive keyring repair was applied to
 only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
 `stream_v2_passive`; read-only process inspection confirms the successor
 Trading-System key ID and subject are present without recording any key
@@ -44419,8 +44419,8 @@ replica will run against the already-rolled R1.34 runtime. The probe image is
 ephemeral and `--rm`; there is no additional service rollout. Any failure
 remains fail-closed and leaves the current seven-role runtime untouched.
 
-**C2 quiet-channel source gate (`PASS / IMMUTABLE CLIENT BUILD PENDING`,
-2026-09-19).** The acceptance harness now emits schema
+**C2 quiet-channel source gate (`PASS / CLIENT BUILT`, 2026-09-19).** The
+acceptance harness now emits schema
 `qdl.execution-mark-index-consumer-latency.v2`. It retains
 `provider_confirmation_to_usable_ms` and the two component ages as immutable
 lineage diagnostics, separately records session-liveness-to-usable, and gates
@@ -44433,16 +44433,59 @@ component cadence; strict mode remains typed; disconnected, expired-session,
 expired-component, missing/malformed evidence and direct-provider lineage all
 fail closed; and a 70-second immutable provider-age cannot override a
 281-millisecond consumer-call gate. The complete relevant isolated suite ran
-inside the existing final Python image with source mounted read-only and
-network disabled:
+inside the final immutable client image with network disabled:
 
 `python -m unittest -v tests.test_execution_mark_index_consumer_latency tests.test_execution_mark_index_live_view tests.test_phase113_reference_v2 tests.test_production_catalog`:
 `44/44 PASS`.
 
 `git diff --check` and `python3 -m py_compile` for the changed harness/test
 also passed. No runtime, durable store, provider connection, order, consumer
-state or V1 path was modified by this source gate. The next permitted step is
-one immutable disposable client image from the committed source and exactly
-two `--rm` no-order 300-second C2 probes, one against each existing query
-replica; no reader/core recreate is required because the deployed R1.34
-reader/runtime already contains the relevant quiet contract.
+state or V1 path was modified by this source gate. The subsequent C2 probes
+used that image; no reader/core recreate was needed because the deployed
+R1.34 reader/runtime already contained the quiet contract.
+
+**Replacement C2 acceptance and closure (`PASS`, 2026-09-19).** Two exact
+no-order, `require_all=True`, 300-second consumer probes ran from the
+immutable client image built from `5ac0200b734902d43b5873e2a07cd3c5d4d7a404`,
+one targeted at each existing V2 query replica. Each completed `151` batches
+and `1,510` exact MARK/INDEX reads across all ten Binance USD-M/OKX Swap
+execution bindings; every binding recorded at least `151` samples against the
+required `149`. Both receipts use the successor Trading-System identity and
+the additive keyring repair, report `errors=[]`, `gate_passed=true`,
+`v1_fallback_attempted=false`, and `direct_provider_request_attempted=false`.
+They are retained outside Git under
+`/home/bobby/.local/state/qdl-v2/mark-index-r134-58998ae-r3-20260919T172500Z/c2-execution-mark-index-r134-20260919T174000Z/query_v2_{1,2}-r5/`.
+
+| Metric | `query_v2_1` | `query_v2_2` |
+| --- | ---: | ---: |
+| Consumer call -> usable p50 / p95 / p99 | 71.386 / 169.013 / **285.985 ms** | 71.991 / 149.056 / **266.952 ms** |
+| Session-liveness -> usable p99 | 1,462.775 ms | 1,957.237 ms |
+| Immutable provider-confirmation age p99 (lineage only) | 3,120.321 ms | 3,334.456 ms |
+| Component age p99 (lineage/cadence only) | 2,923.991 ms | 3,157.486 ms |
+
+The two delivery stages and both recency modes were observed. The component
+ages remain under their signed cadence; they are intentionally not relabelled
+as consumer response time. All seven R1.34 runtime roles remain healthy,
+`restart=0`, `OOM=false`: reader roles use
+`qdl-v2-python:2.0.22-58998ae@sha256:1ad34175322f…`, Rust core roles use
+`qdl-v2-rust:2.0.20-f1c9e1d@sha256:389753b37c4…`, and sealed runtime remains
+`mark-index-r134-58998ae-r3-20260919T172500Z`. No post-source reader/core
+recreate was needed for the harness-only correction. V1, Kafka, Redis,
+SQLite, ingestors, projectors, BAR edge, Trading System, alpha and order paths
+were untouched.
+
+**Scoped hygiene.** The disposable C2 container image
+`qdl-v2-python:2.0.22-5ac0200@sha256:0e5f67fc443a…` had no container users and
+was removed after C2. Docker image storage returned from `19.85 GB` to
+`19.14 GB`; all C2 containers used `--rm` and none remain. BuildKit cache is
+`13.51 GB` with `2.587 GB` reclaimable after the build; it includes pre-existing
+shared cache, so no broad cache prune was performed without a separately scoped
+cleanup approval. Active and named rollback runtime images remain retained.
+
+**Bounded observations, not R1.34 blockers.** No V2 reader/core
+warning/error/panic/OOM record appeared during the acceptance window. V1 logged
+one Binance Futures kline first-frame timeout followed by its existing
+`303 s` reconnect backoff; DNSE reported stale outside its trading session.
+The historical `19`-override Compose chain remains an auditability debt. These
+are pre-existing operational items outside this MARK/INDEX correction; no
+quality rule was weakened and no unrelated source/runtime change was made.
