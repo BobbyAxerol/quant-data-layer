@@ -2268,6 +2268,186 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(broker.checkpoints[-1], (canonical_topic, 0, 1))
 
+    async def test_final_bar_watermark_hydrates_once_and_fences_late_restart(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, canonical_topic, raw_record, _canonical_record = _broker_records(
+            binding, raw, event
+        )
+
+        def record(envelope, offset, *, kafka_partition=0, key=binding.partition_key,
+                   raw_payload=raw_record.payload):
+            return KafkaProjectorRecord(
+                topic=canonical_topic,
+                partition=kafka_partition,
+                offset=offset,
+                key=key,
+                event_id=bytes(envelope.event_id),
+                payload=envelope.SerializeToString(deterministic=True),
+                accepted_at_ns=envelope.received_at_ns,
+                raw_provider_envelope=raw_payload,
+            )
+
+        def changed_bar(label, *, base=event, close_delta_ns=0, revised=False):
+            value = type(event)()
+            value.CopyFrom(base)
+            value.event_id = hashlib.sha256(label.encode()).digest()[:16]
+            value.source_sequence = f"{base.source_sequence}:{label}"
+            if close_delta_ns:
+                value.bar.open_time_ns += close_delta_ns
+                value.bar.close_time_ns += close_delta_ns
+                value.source_event_time_ns += close_delta_ns
+                value.received_at_ns += close_delta_ns
+                value.normalized_at_ns += close_delta_ns
+                value.published_at_ns += close_delta_ns
+            if revised:
+                value.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+                value.bar.revision = 1
+            value.canonical_payload_hash = hashlib.sha256(
+                value.bar.SerializeToString(deterministic=True)
+            ).digest()
+            return value
+
+        tail_limits = []
+        read_tail = self.spool.read_tail
+
+        def tracked_read_tail(**kwargs):
+            tail_limits.append(kwargs["limit"])
+            return read_tail(**kwargs)
+
+        # This row models an existing cache written before the additive
+        # watermark table. It remains valid history but has no table row.
+        _append(self.spool, self.catalog, event)
+        self.assertIsNone(
+            self.spool.final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+            )
+        )
+        self.spool.read_tail = tracked_read_tail
+        target = InMemoryStableProjectionTarget()
+        engine = self.engine(_Broker(), target, raw_topic, canonical_topic)
+        newer = changed_bar("newer-after-legacy", close_delta_ns=60_000_000_000)
+        await engine.accept(record(newer, 0))
+        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(
+            self.spool.final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+            ),
+            newer.bar.close_time_ns,
+        )
+
+        revision = changed_bar("same-close-revision", base=newer, revised=True)
+        older_in_same_batch = changed_bar(
+            "older-in-same-batch", base=event, close_delta_ns=0
+        )
+        quote_binding, quote_raw, quote_event = _stable_pair(
+            self.catalog, "binance_usdm_bbo.json", "binance-usdm-btcusdt-quote"
+        )
+        _quote_raw_topic, _quote_canonical_topic, quote_raw_record, _quote_record = (
+            _broker_records(quote_binding, quote_raw, quote_event)
+        )
+        await engine.accept_many((
+            record(revision, 1),
+            record(older_in_same_batch, 2),
+            record(
+                quote_event,
+                0,
+                kafka_partition=1,
+                key=quote_binding.partition_key,
+                raw_payload=quote_raw_record.payload,
+            ),
+        ))
+        self.assertEqual(tail_limits, [10_000])
+        canonical_value = next(
+            payload
+            for key, payload in target.latest.items()
+            if key.startswith("qdl:stable:v2:latest:bar:")
+        )
+        self.assertEqual(
+            market_data_pb2.EventEnvelope.FromString(canonical_value).bar.revision,
+            1,
+        )
+        self.assertTrue(any(
+            key.startswith("qdl:stable:v2:latest:quote:")
+            for key in target.latest
+        ))
+
+        restarted_target = InMemoryStableProjectionTarget()
+        restarted = self.engine(
+            _Broker(), restarted_target, raw_topic, canonical_topic
+        )
+        late = changed_bar("late-after-restart")
+        await restarted.accept(record(late, 2))
+        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(restarted_target.latest, {})
+        self.assertEqual(
+            self.spool.final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+            ),
+            newer.bar.close_time_ns,
+        )
+
+    async def test_http_ingest_derives_final_bar_watermark_from_validated_envelope(self):
+        binding, raw, event = _stable_pair(
+            self.catalog,
+            "binance_usdm_rest_bar.json",
+            "binance-usdm-btcusdt-bar-1m",
+        )
+        raw_topic, _canonical_topic, raw_record, canonical_record = _broker_records(
+            binding, raw, event
+        )
+        app = FastAPI()
+        secret = b"phase-b-stable-final-bar-watermark-32"
+        install_stable_canonical_ingest(
+            app, gateway=self.gateway, catalog=self.catalog,
+            spool=self.spool, secret=secret,
+        )
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        )
+        sink = StableHttpCanonicalSink(
+            ("http://localhost",), secret, self.spool, client=client
+        )
+        durable = DurableEvent(
+            stream=self.catalog.canonical_stream,
+            partition_key=binding.partition_key,
+            event_id=canonical_record.event_id,
+            payload=canonical_record.payload,
+            accepted_at_ns=canonical_record.accepted_at_ns,
+            headers={
+                "raw_stream": raw_topic,
+                "raw_event_id": raw_record.event_id.hex(),
+                "raw_provider_envelope": base64.b64encode(
+                    raw_record.payload
+                ).decode("ascii"),
+            },
+        )
+        try:
+            stored = await sink.publish(durable)
+            self.assertEqual(
+                self.spool.final_bar_watermark(
+                    stream=stored.event.stream,
+                    partition_key=stored.event.partition_key,
+                ),
+                event.bar.close_time_ns,
+            )
+            self.assertNotIn(
+                "qdl.final_bar_close_time_ns", durable.headers
+            )
+            self.assertEqual(
+                stored.event.headers["qdl.final_bar_close_time_ns"],
+                str(event.bar.close_time_ns),
+            )
+        finally:
+            await sink.close()
+            await client.aclose()
+
     async def test_same_event_id_with_changed_market_semantics_fails_closed(self):
         binding, raw, event = _stable_pair(
             self.catalog, "binance_usdm_trade.json", "binance-usdm-btcusdt-trade"

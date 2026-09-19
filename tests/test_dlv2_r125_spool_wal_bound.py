@@ -14,7 +14,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from qdl.transport.contracts import BackpressureRequired, DurableEvent
+from qdl.transport.contracts import (
+    BackpressureRequired,
+    DurableEvent,
+    FINAL_BAR_CLOSE_TIME_NS_HEADER,
+)
 from qdl.transport.sqlite_spool import (
     JOURNAL_SIZE_LIMIT_BYTES,
     SpoolConfig,
@@ -29,6 +33,17 @@ def _event(index: int, payload: bytes) -> DurableEvent:
         event_id=index.to_bytes(16, "big"),
         payload=payload,
         accepted_at_ns=1_700_000_000_000_000_000 + index,
+    )
+
+
+def _bar_event(index: int, close_time_ns: int) -> DurableEvent:
+    return DurableEvent(
+        stream="md.canonical.v2",
+        partition_key="OKX/SWAP/BTC-USDT-SWAP/bar/1m",
+        event_id=index.to_bytes(16, "big"),
+        payload=f"final-bar-{index}".encode(),
+        accepted_at_ns=1_700_000_000_000_000_000 + index,
+        headers={FINAL_BAR_CLOSE_TIME_NS_HEADER: str(close_time_ns)},
     )
 
 
@@ -56,6 +71,133 @@ class SpoolWalBoundTests(unittest.TestCase):
         spool = self._spool()
         limit = spool._connection.execute("PRAGMA journal_size_limit").fetchone()[0]
         self.assertEqual(int(limit), JOURNAL_SIZE_LIMIT_BYTES)
+
+    def test_final_bar_watermark_is_atomic_max_and_survives_reopen(self):
+        spool = self._spool()
+        partition = "OKX/SWAP/BTC-USDT-SWAP/bar/1m"
+        other_partition = "OKX/SWAP/ETH-USDT-SWAP/bar/1m"
+        self.assertIsNone(
+            spool.final_bar_watermark(
+                stream="md.canonical.v2", partition_key=partition
+            )
+        )
+        spool.append_many((_bar_event(1, 300), _bar_event(2, 200)))
+        self.assertEqual(
+            spool.final_bar_watermark(
+                stream="md.canonical.v2", partition_key=partition
+            ),
+            300,
+        )
+        self.assertEqual(
+            spool.seed_final_bar_watermark(
+                stream="md.canonical.v2", partition_key=partition, close_time_ns=250
+            ),
+            300,
+        )
+        spool.append(DurableEvent(
+            stream="md.canonical.v2",
+            partition_key=other_partition,
+            event_id=b"o" * 16,
+            payload=b"final-bar-other-partition",
+            accepted_at_ns=2,
+            headers={FINAL_BAR_CLOSE_TIME_NS_HEADER: "900"},
+        ))
+        self.assertEqual(
+            spool.final_bar_watermark(
+                stream="md.canonical.v2", partition_key=other_partition
+            ),
+            900,
+        )
+        self.assertEqual(
+            spool.final_bar_watermark(
+                stream="md.canonical.v2", partition_key=partition
+            ),
+            300,
+        )
+        spool.close()
+        reopened = self._spool()
+        self.assertEqual(
+            reopened.final_bar_watermark(
+                stream="md.canonical.v2", partition_key=partition
+            ),
+            300,
+        )
+
+    def test_duplicate_event_can_hydrate_legacy_final_bar_watermark(self):
+        spool = self._spool()
+        legacy = DurableEvent(
+            stream="md.canonical.v2",
+            partition_key="OKX/SWAP/BTC-USDT-SWAP/bar/1m",
+            event_id=b"l" * 16,
+            payload=b"legacy-final-bar",
+            accepted_at_ns=1,
+        )
+        spool.append(legacy)
+        self.assertIsNone(
+            spool.final_bar_watermark(
+                stream=legacy.stream, partition_key=legacy.partition_key
+            )
+        )
+        hydrated = DurableEvent(
+            stream=legacy.stream,
+            partition_key=legacy.partition_key,
+            event_id=legacy.event_id,
+            payload=legacy.payload,
+            accepted_at_ns=legacy.accepted_at_ns,
+            headers={FINAL_BAR_CLOSE_TIME_NS_HEADER: "400"},
+        )
+        result = spool.append(hydrated)
+        self.assertTrue(result.duplicate)
+        self.assertEqual(
+            spool.final_bar_watermark(
+                stream=legacy.stream, partition_key=legacy.partition_key
+            ),
+            400,
+        )
+
+    def test_legacy_hydration_is_reused_after_a_second_spool_opens(self):
+        first = self._spool()
+        partition = "OKX/SWAP/BTC-USDT-SWAP/bar/1m"
+        calls = []
+        self.assertEqual(
+            first.hydrate_final_bar_watermark(
+                stream="md.canonical.v2",
+                partition_key=partition,
+                legacy_lookup=lambda: calls.append("first") or 300,
+            ),
+            300,
+        )
+        self.assertEqual(calls, ["first"])
+
+        second = SQLiteDurableSpool(first.config)
+        self.addCleanup(second.close)
+        self.assertEqual(
+            second.hydrate_final_bar_watermark(
+                stream="md.canonical.v2",
+                partition_key=partition,
+                legacy_lookup=lambda: self.fail("second spool must not rescan legacy tail"),
+            ),
+            300,
+        )
+
+    def test_malformed_final_bar_watermark_rolls_back_the_event(self):
+        spool = self._spool()
+        malformed = DurableEvent(
+            stream="md.canonical.v2",
+            partition_key="OKX/SWAP/BTC-USDT-SWAP/bar/1m",
+            event_id=b"m" * 16,
+            payload=b"malformed-final-bar",
+            accepted_at_ns=1,
+            headers={FINAL_BAR_CLOSE_TIME_NS_HEADER: "-1"},
+        )
+        with self.assertRaisesRegex(ValueError, "final BAR watermark header"):
+            spool.append(malformed)
+        self.assertEqual(
+            spool.read_tail(
+                stream=malformed.stream, partition_key=malformed.partition_key, limit=1
+            ),
+            [],
+        )
 
     def test_truncate_checkpoint_reclaims_the_wal_file(self):
         spool = self._spool()

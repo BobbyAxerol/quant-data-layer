@@ -9,6 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from qdl.transport.contracts import (
     AppendResult,
@@ -18,6 +19,7 @@ from qdl.transport.contracts import (
     CursorExpired,
     DurableEvent,
     EventIdCollision,
+    FINAL_BAR_CLOSE_TIME_NS_HEADER,
     PayloadCorruption,
     StoredEvent,
 )
@@ -210,6 +212,14 @@ class SQLiteDurableSpool:
                 cache_id TEXT NOT NULL,
                 created_at_ns INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS final_bar_watermarks (
+                stream TEXT NOT NULL,
+                partition_key TEXT NOT NULL,
+                close_time_ns INTEGER NOT NULL,
+                updated_at_ns INTEGER NOT NULL,
+                PRIMARY KEY (stream, partition_key)
+            );
             """
         )
         self._ensure_usage_state()
@@ -270,6 +280,153 @@ class SQLiteDurableSpool:
     def append(self, event: DurableEvent) -> AppendResult:
         return self.append_many([event])[0]
 
+    @staticmethod
+    def _final_bar_close_time_ns(event: DurableEvent) -> int | None:
+        value = event.headers.get(FINAL_BAR_CLOSE_TIME_NS_HEADER)
+        if value is None:
+            return None
+        if (
+            not isinstance(value, str)
+            or not value.isascii()
+            or not value.isdecimal()
+        ):
+            raise ValueError("final BAR watermark header is invalid")
+        close_time_ns = int(value)
+        if not 0 < close_time_ns < 2**63:
+            raise ValueError("final BAR watermark header is invalid")
+        return close_time_ns
+
+    def _upsert_final_bar_watermark_locked(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        close_time_ns: int,
+        updated_at_ns: int,
+    ) -> int:
+        self._connection.execute(
+            """
+            INSERT INTO final_bar_watermarks(
+                stream, partition_key, close_time_ns, updated_at_ns
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(stream, partition_key) DO UPDATE SET
+                close_time_ns = MAX(
+                    final_bar_watermarks.close_time_ns,
+                    excluded.close_time_ns
+                ),
+                updated_at_ns = CASE
+                    WHEN excluded.close_time_ns >= final_bar_watermarks.close_time_ns
+                    THEN excluded.updated_at_ns
+                    ELSE final_bar_watermarks.updated_at_ns
+                END
+            """,
+            (stream, partition_key, close_time_ns, updated_at_ns),
+        )
+        row = self._connection.execute(
+            """
+            SELECT close_time_ns FROM final_bar_watermarks
+            WHERE stream = ? AND partition_key = ?
+            """,
+            (stream, partition_key),
+        ).fetchone()
+        if row is None or int(row["close_time_ns"]) <= 0:
+            raise PayloadCorruption("final BAR watermark is unavailable")
+        return int(row["close_time_ns"])
+
+    def final_bar_watermark(
+        self, *, stream: str, partition_key: str
+    ) -> int | None:
+        if not stream.strip() or not partition_key.strip():
+            raise ValueError("final BAR watermark identity is incomplete")
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT close_time_ns FROM final_bar_watermarks
+                WHERE stream = ? AND partition_key = ?
+                """,
+                (stream, partition_key),
+            ).fetchone()
+        if row is None:
+            return None
+        value = int(row["close_time_ns"])
+        if value <= 0:
+            raise PayloadCorruption("final BAR watermark is invalid")
+        return value
+
+    def seed_final_bar_watermark(
+        self, *, stream: str, partition_key: str, close_time_ns: int
+    ) -> int:
+        if not stream.strip() or not partition_key.strip() or not 0 < close_time_ns < 2**63:
+            raise ValueError("final BAR watermark is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                value = self._upsert_final_bar_watermark_locked(
+                    stream=stream,
+                    partition_key=partition_key,
+                    close_time_ns=close_time_ns,
+                    updated_at_ns=self._clock_ns(),
+                )
+                self._connection.execute("COMMIT")
+                return value
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
+    def hydrate_final_bar_watermark(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        legacy_lookup: Callable[[], int | None],
+    ) -> int | None:
+        """Seed one legacy BAR partition exactly once across spool processes.
+
+        The first process holding SQLite's write lock checks whether an active
+        stream owner has already supplied the watermark. Only if it is still
+        absent does it perform the bounded retained-tail lookup. This keeps a
+        restart/rebalance from multiplying legacy scans at an aligned BAR
+        boundary, while preserving the durable max fence.
+        """
+
+        if not stream.strip() or not partition_key.strip():
+            raise ValueError("final BAR watermark identity is incomplete")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT close_time_ns FROM final_bar_watermarks
+                    WHERE stream = ? AND partition_key = ?
+                    """,
+                    (stream, partition_key),
+                ).fetchone()
+                if row is not None:
+                    value = int(row["close_time_ns"])
+                    if value <= 0:
+                        raise PayloadCorruption("final BAR watermark is invalid")
+                    self._connection.execute("COMMIT")
+                    return value
+                close_time_ns = legacy_lookup()
+                if close_time_ns is None:
+                    self._connection.execute("COMMIT")
+                    return None
+                if not 0 < close_time_ns < 2**63:
+                    raise PayloadCorruption("legacy final BAR watermark is invalid")
+                value = self._upsert_final_bar_watermark_locked(
+                    stream=stream,
+                    partition_key=partition_key,
+                    close_time_ns=close_time_ns,
+                    updated_at_ns=self._clock_ns(),
+                )
+                self._connection.execute("COMMIT")
+                return value
+            except BaseException:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
     def append_many(self, events: list[DurableEvent]) -> list[AppendResult]:
         if not events:
             return []
@@ -292,6 +449,7 @@ class SQLiteDurableSpool:
                 added_payload_bytes = 0
                 results = []
                 for event in events:
+                    final_bar_close_time_ns = self._final_bar_close_time_ns(event)
                     digest = hashlib.sha256(event.payload).hexdigest()
                     headers_json = json.dumps(
                         dict(event.headers), sort_keys=True, separators=(",", ":")
@@ -310,6 +468,13 @@ class SQLiteDurableSpool:
                         ):
                             raise EventIdCollision(
                                 "event ID maps to different immutable content"
+                            )
+                        if final_bar_close_time_ns is not None:
+                            self._upsert_final_bar_watermark_locked(
+                                stream=event.stream,
+                                partition_key=event.partition_key,
+                                close_time_ns=final_bar_close_time_ns,
+                                updated_at_ns=self._clock_ns(),
                             )
                         results.append(
                             AppendResult(
@@ -382,6 +547,13 @@ class SQLiteDurableSpool:
                             headers_json,
                         ),
                     )
+                    if final_bar_close_time_ns is not None:
+                        self._upsert_final_bar_watermark_locked(
+                            stream=event.stream,
+                            partition_key=event.partition_key,
+                            close_time_ns=final_bar_close_time_ns,
+                            updated_at_ns=committed_at_ns,
+                        )
                     added_records += 1
                     added_payload_bytes += len(event.payload)
                     results.append(

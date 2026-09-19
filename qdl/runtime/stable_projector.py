@@ -23,6 +23,10 @@ from qdl.runtime.mark_index_lineage import (
 )
 from qdl.raw.envelope import validate_raw_envelope
 from qdl.runtime.heartbeat import write_heartbeat
+from qdl.runtime.final_bar_watermark import (
+    final_bar_close_time_ns,
+    final_bar_watermark_headers,
+)
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.stream import DurableStreamGateway
 from qdl.transport import (
@@ -769,6 +773,26 @@ class StableProjectorEngine:
                 closes.append(int(envelope.bar.close_time_ns))
         return max(closes) if closes else None
 
+    def _durable_bar_high_watermark(self, partition_key: str) -> int | None:
+        """Return one exact BAR partition watermark without repeated tail scans.
+
+        Old caches predate the additive table. Their first BAR lookup is the
+        only bounded scan, immediately persisted as an atomic max; all later
+        projector turns and restarts use the O(1) durable value.
+        """
+
+        current = self.spool.final_bar_watermark(
+            stream=self.catalog.canonical_stream,
+            partition_key=partition_key,
+        )
+        if current is not None:
+            return current
+        return self.spool.hydrate_final_bar_watermark(
+            stream=self.catalog.canonical_stream,
+            partition_key=partition_key,
+            legacy_lookup=lambda: self._latest_bar_close_ns(partition_key),
+        )
+
     async def _ready_batch(self) -> tuple[_ReadyCanonical, ...]:
         candidates = []
         for partition, record in self._round_robin_candidates(
@@ -813,7 +837,8 @@ class StableProjectorEngine:
             and record.raw_provider_envelope is None
         )
         raw_by_id = await asyncio.to_thread(self._find_raw_many, fallback_ids)
-        bar_high_watermarks: dict[str, int | None] = {}
+        final_bar_high_watermarks: dict[str, int | None] = {}
+        legacy_bar_high_watermarks: dict[str, int | None] = {}
         ready = []
         blocked_partitions = set()
         for partition, record, envelope, capture_id in candidates:
@@ -896,16 +921,32 @@ class StableProjectorEngine:
 
             project_latest = True
             if envelope.WhichOneof("payload") == "bar":
-                if record.key not in bar_high_watermarks:
-                    bar_high_watermarks[record.key] = await asyncio.to_thread(
-                        self._latest_bar_close_ns, record.key
-                    )
-                current = bar_high_watermarks[record.key]
-                close_ns = int(envelope.bar.close_time_ns)
+                close_ns = final_bar_close_time_ns(envelope)
+                if close_ns is not None:
+                    if record.key not in final_bar_high_watermarks:
+                        final_bar_high_watermarks[record.key] = await asyncio.to_thread(
+                            self._durable_bar_high_watermark, record.key
+                        )
+                    current = final_bar_high_watermarks[record.key]
+                else:
+                    # A catalog may still retain a non-final historical BAR.
+                    # Preserve its legacy selection semantics without letting
+                    # it pollute the final-BAR durable watermark.
+                    if record.key not in legacy_bar_high_watermarks:
+                        legacy_bar_high_watermarks[record.key] = await asyncio.to_thread(
+                            self._latest_bar_close_ns, record.key
+                        )
+                    current = legacy_bar_high_watermarks[record.key]
+                    close_ns = int(envelope.bar.close_time_ns)
                 project_latest = current is None or close_ns >= current
-                bar_high_watermarks[record.key] = (
-                    close_ns if current is None else max(current, close_ns)
-                )
+                if close_ns is not None:
+                    final_bar_high_watermarks[record.key] = (
+                        close_ns if current is None else max(current, close_ns)
+                    )
+                else:
+                    legacy_bar_high_watermarks[record.key] = (
+                        close_ns if current is None else max(current, close_ns)
+                    )
             ready.append(_ReadyCanonical(
                 partition=partition,
                 record=record,
@@ -922,6 +963,7 @@ class StableProjectorEngine:
                     headers={
                         "raw_stream": raw_stream,
                         "raw_event_id": raw_event_id.hex(),
+                        **final_bar_watermark_headers(envelope),
                         "raw_provider_envelope": base64.b64encode(
                             raw_envelope
                         ).decode("ascii"),

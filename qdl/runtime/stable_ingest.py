@@ -24,6 +24,7 @@ from qdl.runtime.mark_index_lineage import (
     validate_single_raw_lineage,
 )
 from qdl.runtime.execution_mark_index import ExecutionMarkIndexLiveView
+from qdl.runtime.final_bar_watermark import final_bar_watermark_headers
 from qdl.runtime.internal_auth import is_stable_internal_url, stable_hmac_signature
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
@@ -183,6 +184,7 @@ def install_stable_canonical_ingest(
                 headers={
                     "raw_stream": raw_stream,
                     "raw_event_id": raw_event_id.hex(),
+                    **final_bar_watermark_headers(envelope),
                     **(
                         {"raw_lineage_kind": raw_lineage_kind}
                         if raw_lineage_kind is not None

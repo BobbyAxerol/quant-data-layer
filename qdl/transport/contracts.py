@@ -7,6 +7,11 @@ from enum import Enum
 from typing import Mapping, Protocol, runtime_checkable
 
 
+# Internal-only durable metadata. The stable stream ingress derives this only
+# after it has validated a canonical final/revised BAR against the catalog.
+FINAL_BAR_CLOSE_TIME_NS_HEADER = "qdl.final_bar_close_time_ns"
+
+
 class StreamName(str, Enum):
     RAW = "md.raw.v1"
     CANONICAL = "md.canonical.v2"

@@ -44837,6 +44837,93 @@ typed quality, resource/restart evidence and no direct-provider/V1 fallback;
 any strict failure stops the packet and rolls back only the affected
 projector(s).
 
+**Candidate result and corrected B2 repair boundary (2026-09-19).** The
+prepared `7e53a12` packet was applied only to the three named projectors,
+one at a time, then rolled back exactly to the recorded pre-packet digest
+after the real two-reader 300-second matrix found `24` strict rejections on
+query replica 1 and `25` on replica 2 (one additional snapshot transport
+error). Every observed binding session was `LIVE`, complete and gap-free;
+there was no direct provider or V1 fallback. The successful reads had
+low request latency, so neither provider availability nor Query admission is
+the selected fault.
+
+A bounded read-only canonical window over `2026-09-19T20:59:30Z` through
+`21:01:30Z` then established the missing shared cause. It contained `70`
+final BAR records, including `35` in the 10-second `21:00:00Z` bucket and
+`25` in the following bucket, alongside continuing quote/trade/book/reference
+traffic. For every BAR, `_ready_batch()` rebuilt a local watermark map and
+called `_latest_bar_close_ns()`, which read and decoded up to `10,000`
+retained records for that one BAR partition. Thus a normal aligned final-BAR
+burst repeatedly performed expensive tail scans on the same SQLite database
+which has to accept strict quote materialization. The new spans reported
+multi-second `canonical_lookup` tails at the same boundary. This is a real
+shared projector defect, not a provider latency, and the prior micro-batch
+repair alone is insufficient.
+
+**B2 approved source scope before the next runtime packet.** Add one additive,
+rebuildable `final_bar_watermarks` SQLite table owned by the existing canonical
+spool. The active stream gateway derives a validated final/revised BAR close
+watermark only from the already catalog-validated canonical envelope and stores
+the max close atomically in the same SQLite transaction as its immutable
+canonical append. Projectors consult that O(1) durable watermark before
+selecting the latest projection. A pre-existing spool with no row is handled
+by one bounded legacy tail scan per exact BAR partition, immediately seedable
+with an atomic max; it is never repeated once the row exists. Equal close
+revisions remain projectable; older backfills remain durable history but do
+not regress latest state. No provider timestamp, payload, source policy,
+SLA, Kafka ordering, Redis authority or public contract changes.
+
+**B2 required proof and rollback.** Add deterministic regression for atomic
+max/upsert, malformed internal watermark rejection, duplicate/late/revised
+BAR behavior, clean restart/rebalance lookup, one-time legacy hydration,
+cross-partition isolation, and a mixed BAR/strict-QUOTE batch proving no
+repeated tail scan after hydration. Run the existing no-network projector,
+spool, quality and SDK suites, then build one new immutable Python image.
+The subsequent packet must roll only the two existing stream roles and three
+existing projector roles, one at a time, with exact active digest/config
+rollback recorded before execution; V1, Kafka topology/offsets, Redis flush,
+SQLite deletion, Rust, ingestors, query, Trading System, alpha and order path
+remain excluded. A fresh two-replica 300-second public-SDK matrix is required;
+any strict failure rolls back only those named roles. The prior failed
+candidate is retained only as an explicit rollback/audit artifact until B2
+ends; it is not runtime authority.
+
+**B2 source implementation and proof (2026-09-19; runtime unchanged).**
+Implemented an additive `final_bar_watermarks(stream, partition_key)` table in
+the existing canonical SQLite spool. A final/revised BAR watermark is private
+durable metadata, derived only after catalog validation at the active stream
+ingress; the protobuf, source timestamp, public API and consumer contract are
+unchanged. The table max is updated in the same append transaction as the
+immutable event, including idempotent duplicate replay. A lower late backfill
+can never regress either `close_time_ns` or its effective update time.
+
+`StableProjectorEngine` now reads that exact partition watermark in O(1). A
+cache predating the additive table performs one retained-tail scan only while a
+SQLite `BEGIN IMMEDIATE` lock is held, then atomically seeds the max; another
+replica/restart observes the row and never rescans. The projector also retains
+an in-memory per-batch max so an older BAR arriving after a newer BAR in the
+same fetched batch cannot overwrite latest state before the durable append is
+committed. Equal-close revisions remain eligible; old final BARs stay in
+durable history but do not project latest. Non-final historical BAR handling
+retains the prior isolated selection path.
+
+Source verification used only disposable Docker containers with `--network
+none`, read-only source and tmpfs bytecode/cache. The focused spool/projector
+suite passed `70 tests`, `1 skipped` (the pre-existing isolated-Redis case).
+The complete affected no-network matrix passed `110 tests`, `1` same
+pre-existing skip: R1.35 quality probe, spool WAL/watermark, projector batch
+poll, stable edge/recovery, quality convergence, stale-reason, SDK feed-status
+and SDK stream projection. `compileall` passed with `PYTHONPYCACHEPREFIX` on
+tmpfs, and `git diff --check` passed. These tests cover atomic max/upsert,
+malformed metadata rollback, duplicate hydration, cross-partition isolation,
+restart/rebalance reuse, final revision, late/out-of-order in one batch,
+mixed strict quote and HTTP ingress derivation. No image was built and no
+runtime role, V1, Kafka topology/offset, Redis, SQLite data, Rust core,
+ingestor, Query, Trading System, alpha or order path changed in this source
+slice. B remains `IN_PROGRESS` until the exact five-role B2 image packet and
+fresh two-reader real-provider matrix pass; that is an acceptance gate, not
+technical debt.
+
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
