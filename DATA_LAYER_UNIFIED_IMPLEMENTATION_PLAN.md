@@ -43140,3 +43140,72 @@ They need one number raised and one repair run.
 
 Neither is applied. The 15m regression from the earlier attempt stands at one
 binding, usable depth 8.1 days to 6.8. Nothing further was written.
+
+<a id="dl-v2-r131-lookback-cap-20260919"></a>
+#### R1.31 — `warmup_limit` is a lookback cap, and the long intervals needed two lines (2026-09-19T07:15Z)
+
+Owner, on reading the analysis above: *"đừng giới hạn là bao nhiêu ngày, mà tôi
+setup từ đầu là chỉ cho call tối đa 10000 nến look back kể từ thời điểm hiện tại
+mà, bất kỳ interval nào... nếu 1W mà call 10000 nến thì tất nhiên lịch sử làm gì
+có nhiều như thế, thì tự cắt lại thôi."*
+
+He is right, and the three entries above built an elaborate structure on a wrong
+premise. **`warmup_limit` is a cap on how far back a caller may look, not a
+quota the data layer must fill.** A weekly bar asked for 10,000 rows is asking
+for 192 years; nobody has it, and the answer is the rows that exist.
+
+Everything written above about `_BOOTSTRAP_HISTORY_LOOKBACK_DAYS` being 1,095 and
+three years not containing 10,000 bars at 4h is **arithmetically true and beside
+the point**. The bootstrap depth is not the defect. The defect is that two checks
+treated a short answer as a failure.
+
+#### The two lines
+
+`qdl/runtime/stable_source.py`:
+
+```python
+-full = len(items) == requested and not gap_open and exact_boundary
++full = not gap_open and exact_boundary
+```
+
+`qdl/query/service.py`:
+
+```python
+-if len(items) != specification.rows:
++if len(items) > specification.rows:
+```
+
+`not gap_open` already proves the returned window is contiguous and
+`exact_boundary` still holds a time-range request to its endpoints, so a hole
+inside the window is still `PARTIAL` and `require_full_coverage` still bites. An
+over-long result is still refused, because a cap that can be exceeded is not a
+cap. What changes is that a window bounded by the venue's own history is now
+complete rather than partial.
+
+That is what fixes **4h, 6h, 8h, 12h, 1d, 3d and 1w** - seven of the alpha's
+fourteen intervals - without touching the bootstrap, the retention policy, the
+row cap, or any manifest.
+
+#### What it does not fix, and the two repair attempts that failed
+
+15m and 30m fail on `required feed has an unresolved sequence gap`, which is the
+interior hole, not the row count. That is untouched by this change.
+
+Both attempts to close it failed and neither hypothesis survived:
+
+1. `binance-usdm-btcusdt-bar-15m`, 124 rows: did not converge, and moved the hole
+   forward while growing it by one. Usable depth 8.1 days to 6.8. **A regression,
+   mine, on one binding.**
+2. `binance-usdm-btcusdt-bar-30m`, 31 rows - inside the 64-row
+   `STABLE_SPOOL_LATE_BACKFILL_HEADROOM` the previous entry said would make it
+   work: **also did not converge**, `remaining=31`. So the headroom explanation
+   was wrong too.
+
+The repair path is therefore not understood, two production writes were spent
+learning that, and it is left alone. What is known: the rows are written (they
+are visible in the spool at their correct market times) and
+`history_repair_remaining_rows` still counts them missing afterwards. Why is the
+next measurement, not another attempt.
+
+The `--expected-missing` guard did its job on the way: it refused 30 when the
+true count was 31 and would not run until the number matched.
