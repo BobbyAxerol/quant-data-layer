@@ -43585,6 +43585,37 @@ was *higher* during the second run, 11.6 against 10.2, from
 `live_data_executor` at 169.79% outside this stack, and data layer draw fell
 4.70 -> 3.76-4.29.
 
+**Re-measured properly, and one of the four raises was withdrawn.** The figures
+above are cumulative counters since container start, which is the wrong basis;
+entry 33's method is `cpu.stat` **60-second deltas**. Measured that way, with
+`kafka1` and `kafka2` held fixed as controls:
+
+| role | at 0.75 | at 0.50 | draw | verdict |
+|---|---|---|---|---|
+| `rust_core_2` | 0.3% | **3.6%** | 0.183 either way | raise **justified** |
+| `stable_redis` | 0.0% | **0.0%** | 0.034 either way | raise **withdrawn** |
+
+`rust_core_2` draws 0.183 at both ceilings, so its throttling is burst shape
+rather than volume: it needs headroom above its average, and 0.75 is kept on
+that evidence. `stable_redis` draws **0.034 - 7% of a 0.50 ceiling** - and
+throttles 0.0% at either, exactly as entry 33 already recorded when it took it
+to 0.0% at 0.50. That raise fixed nothing and was reverted to 0.50.
+
+The controls are what make this readable: `kafka1` moved 0.5% → 1.0% and
+`kafka2` 1.5% → 0.7% with no change made to either, so anything under about one
+percentage point is ambient noise here. `rust_core_2`'s 3.3-point jump is not.
+
+Final ceilings: `kafka2` and `kafka3` 1.75, `rust_core_2` 0.75, `stable_redis`
+**unchanged at 0.50**, `kafka1` and every green role untouched. Net ceiling
+added is **+1.25**, not the +1.50 first applied. `cpu-budget.override.yml` was
+corrected to match, and its rendered values were checked against the live
+cgroups role by role.
+
+**Left for the owner, not changed:** `query_v2_1` throttles **1.9-3.3%** across
+these windows, the highest rate in the stack, while drawing **0.072 of a 1.00
+ceiling**. That is the same burst shape as `rust_core_2` and it is not a role
+this session was asked to touch, so it is recorded rather than tuned.
+
 R1.29's C3 is why this is written out rather than declared a win: it cut
 `kafka2` throttling 16.9% -> 4.2% and was **still reverted**, because p50 fell
 on two feeds of four while draw and load rose. C3 paid for `kafka2` by cutting
