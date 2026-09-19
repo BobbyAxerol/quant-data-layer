@@ -43847,3 +43847,54 @@ runtime configuration, provider connection, Kafka/Redis/SQLite state,
 consumer, alpha, order path, or test artifact was changed by this source
 slice. The only next decision is the bounded four-role rollout described
 above; it is deliberately not implied by source tests or a health response.
+
+**Runtime acceptance authorised (2026-09-19, `RUNTIME_PREPARING`).** The
+approved packet is deliberately narrow: build one immutable Python candidate
+from this source revision, then rolling-recreate only `stream_v2_passive`,
+`stream_v2_active`, `query_v2_1`, and `query_v2_2`, serially and with their
+existing `/runtime`, TLS and state mounts. The current reader rollback image is
+`sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`;
+rollback recreates only an affected reader role against that exact image and
+its unchanged runtime mount. This packet must not recreate or configure V1,
+Rust core, ingestors, projectors, bar edge, Kafka topology or offsets, Redis,
+SQLite, Trading System, alpha, or an order path. Normal real-provider reads
+continue as before; the probe itself performs V2 query reads only.
+
+**Consumer-observed latency gate.** Before the runtime packet is built, this
+branch adds a small reusable read-only harness rather than inferring consumer
+latency from a server log. It loads the registered
+`trading-system.paper.stable` manifest, selects exactly its ten execution
+`MARK_INDEX_PRICE` requirements, and calls the public `AsyncDataLayerClient`
+over the same mTLS/JWT REST query route that `market_data_service` uses. Each
+sample records (a) `consumer_call_to_usable_ms`, timed around the completed SDK
+request and model validation, and (b) `provider_confirmation_to_usable_ms`,
+calculated from the typed provider-confirmation timestamp to that completed
+consumer receipt. It rejects a missing/non-OK result, cross-identity response,
+V1/direct-provider fallback, stale/gap/fenced view, invalid delivery stage or
+unbounded source lineage. The real-provider acceptance runs one bounded 300 s
+window below the registered quota, records p50/p95/p99/max per exact binding
+and aggregate, and requires every binding to have valid receipts, zero typed
+failure/fallback and aggregate provider-confirmation-to-usable p99 below
+`2,000 ms`. It creates only a disposable `--rm` client container and a bounded
+secret-free evidence JSON under the external runtime state directory.
+
+**Decision boundary and hygiene.** Passing this packet is a runtime
+certificate for this MARK/INDEX correction only, not a release, manifest
+promotion or broader consumer cutover. The active candidate image and the
+named reader rollback image are retained until the release decision; no other
+test image, container, cache, volume, network or source state is retained.
+
+**Acceptance-harness source evidence (2026-09-19).** Added
+`scripts/measure_execution_mark_index_consumer_latency.py`. It loads the
+canonical `ConsumerManifestLoader` representation rather than re-parsing SDK
+enums, so the measured request has the same feed, grade, freshness, gap and
+source-policy values enforced by query. Its focused regression rejects a
+non-internal/provider lineage and confirms the stable paper manifest resolves
+to exactly ten execution MARK/INDEX requests. An initial test exposed a probe
+only enum-boundary error (`qdl_sdk.Grade` is not the internal
+`ConsumerGrade`); it was corrected before any runtime action. The immutable
+existing image ran the new probe regression plus the complete MARK/INDEX,
+reference, consumer, L2 and five-liquid selection with `--rm`, `--network
+none`, source read-only and temporary `/tmp`: **98 passed, 0 failed** in
+`14.352 s`. No image was built and no runtime resource was changed by this
+evidence.
