@@ -2007,6 +2007,25 @@ these windows, the highest rate in the stack, while drawing **0.072 of a 1.00
 ceiling**. That is the same burst shape as `rust_core_2` and it is not a role
 this session was asked to touch, so it is recorded rather than tuned.
 
+**The OKX regression was one instance of a structural fault, now closed.** There
+is no single recorded compose chain for this stack: each container stores the
+chain used the last time *it* was created, and they disagree badly -
+`ingestor_okx_swap` 19 files, the B1 roles 18, `rust_core_2` 15, `kafka2` 10,
+and `stable_redis` **1, whose base compose file is a worktree that no longer
+exists**. Recreating any role from its own label therefore drops every override
+added after that role was last built, which is exactly how the OKX ingestor fell
+back an image.
+
+The complete chain is now written down as `canonical-chain.txt` in the R1.31 cpu
+packet, with a README stating the two prohibitions - never `up -d` without
+`--no-deps`, because every stored config hash was computed from a shorter chain
+and a whole-stack `up` would recreate all seventeen; and never recreate
+`stable_redis`, whose base file is gone and whose recreation freezes the spool.
+
+**Verified rather than asserted:** rendering that chain and comparing `image`,
+`cpus` and `healthcheck` against `docker inspect` for all seventeen running
+roles gives **0 mismatch**, `stable_redis` included.
+
 R1.29's C3 is why this is written out rather than declared a win: it cut
 `kafka2` throttling 16.9% -> 4.2% and was **still reverted**, because p50 fell
 on two feeds of four while draw and load rose. C3 paid for `kafka2` by cutting
