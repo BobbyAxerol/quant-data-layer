@@ -44924,6 +44924,43 @@ slice. B remains `IN_PROGRESS` until the exact five-role B2 image packet and
 fresh two-reader real-provider matrix pass; that is an acceptance gate, not
 technical debt.
 
+**B2 bounded runtime packet prepared (2026-09-19; not yet applied).** Source
+commit `40a1155` was built as immutable
+`qdl-v2-python:2.0.24-40a1155@sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`.
+The owner-only packet is outside Git at
+`/home/bobby/.local/state/qdl-v2/r135-b2-final-bar-watermark-20260919T213906Z/`:
+candidate override SHA-256 `442089b1...e7e036`, rollback override SHA-256
+`4c022fa3...7f5446`, and bounded roll helper SHA-256 `725486a6...f94b93`.
+Both Compose renders and `bash -n` passed. The packet preserves the current
+canonical Compose chain, sealed runtime mounts, TLS, state volume,
+`stable-projector-v1` group and all existing Kafka/Redis/SQLite identities.
+
+The only allowed recreation sequence is `stream_v2_passive`,
+`stream_v2_active`, `projector_v2`, `projector_v2_3`, then `projector_v2_2`,
+one role at a time. Candidate changes only those five image references plus
+the already-selected projector fetch/commit bounds `512/128`. Before the
+packet all five are healthy with restart count zero: streams use exact image
+`sha256:1ad34175322f2f8eec34b3e772e3935d999248e40432ecf5852f832df1dfa88d`;
+projectors use exact image
+`sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0`
+and `1000/null` batch settings. Per-role rollback recreates only the named
+role with precisely those image/config values. After each role, require health,
+no restart/OOM, bounded catch-up and a live remaining peer before continuing.
+Any failure stops the packet and rolls back only changed named roles; it never
+resets offsets, flushes Redis, deletes SQLite, touches V1, Rust, ingestors,
+Query, Trading System, alpha or any order path. Normal existing market-data
+writes during stream/projector catch-up are expected and are not a data-plane
+reset.
+
+After all five are stable, the sole acceptance is a fresh two-query-replica,
+public-SDK real-provider matrix for at least 300 seconds over the ten strict
+Binance USD-M/OKX Swap BTC/ETH/SOL/DOGE/BNB `QUOTE` bindings, with declared
+TRADE/BOOK/MARK-INDEX controls. Evidence must include typed state/eligibility,
+session/gap/watermark parity, direct-provider/V1 fallback count, consumer-call
+to-usable p50/p95/p99/max and resource/restart/lag observations. Any strict
+failure is a B failure and invokes the exact five-role rollback; C cannot
+start from a partially accepted packet.
+
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
