@@ -42446,3 +42446,42 @@ read. Item 6 is the owner's decision and has not been taken.
 
 A release cut now would be honest about all of that or it would not be worth
 cutting.
+
+<a id="dl-v2-r131-spool-lag-resolved-20260919"></a>
+#### R1.31 — the spool lag was the measurement, and item 4 is unblocked (2026-09-19T06:10Z)
+
+The "2.3 s spool lag" is withdrawn for the last time, with the cause this time.
+The probe computed `time.time_ns() - max(accepted_at_ns)` and read the clock
+**after** the query returned. Timing the query as well:
+
+```
+spool behind 1,726 ms  (query took 1,308 ms)
+spool behind 1,629 ms  (query took 1,228 ms)
+spool behind 1,639 ms  (query took 1,295 ms)
+spool behind 1,522 ms  (query took 1,236 ms)
+spool behind 1,465 ms  (query took 1,170 ms)
+```
+
+Subtract the query and the spool is **286-418 ms** behind the broker stamp. That
+is `canonical_age_ms` 261 plus `durable_append_ms` 66, which is 327 - the four
+instruments agreed all along and the fifth was reporting its own cost. The same
+error is why the earlier reading looked identical from the writer's and the
+reader's container: both were running the same slow query.
+
+**This unblocks item 4.** The open question was whether the query role can read a
+canonical value faster than the REST row it would replace. It can, by a wide
+margin:
+
+| path | age of the index component |
+|---|---|
+| OKX REST `index-tickers` | 764 - 1,414 ms at the venue, before any cache |
+| canonical binding, through the spool | 286 - 418 ms end to end |
+
+The consumer's bound is 2,000 ms. The REST path spends up to 1,414 ms of it
+before we touch it; the canonical path spends about 400 ms including the durable
+write. Serving INDEX from the already-subscribed `index-tickers` binding is
+therefore available, not blocked, and the numbers above are its budget.
+
+Four reversals on one number in one session. The rule that would have prevented
+all four: **time the probe as well as the thing it measures**, and never take a
+clock reading on the far side of work whose duration is unknown.
