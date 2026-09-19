@@ -41863,3 +41863,189 @@ the OKX reference batch serving `INDEX` from the already-subscribed
 still unapplied), `BOOK_SNAPSHOT`'s 30 s refresh against a 60,000 ms bound, and
 the `rust_core` 0.89 s queue from R1.22. Each is named so this program is not
 quietly widened to carry them.
+
+<a id="dl-v2-r131-close-manifest-release-20260919"></a>
+### R1.31 — what is left to close, re-manifest and re-release, with the cleanup (2026-09-19)
+
+**Status: `OPEN, NOT STARTED`.** Written on request. No runtime was mutated to
+produce it; every number below carries the command that produced it.
+
+#### Where the stack actually is, measured 2026-09-19T04:34Z
+
+17 roles Up, 0 restarting, 0 not-Up. `kafka1` restart=5 and `kafka2` restart=1
+are lifetime counts from the 09-16 reboot recovery; both last started
+2026-09-17T09:5x, so nothing is flapping. Actual draw 4.47 vcore against the
+5.0 budget; compose ceiling sum 20.75.
+
+Spool `shared/canonical-cache.sqlite3`: **188 partitions** - `bar` 140,
+`book` 18, `mark_index_price` 10, `quote` 10, `trade` 10. A second cache,
+`shared-c2`, holds 12 more.
+
+#### The declared-vs-live reconciliation, done properly
+
+`config/v2/stable-source-bindings.yaml` (catalog_revision 8) declares 206
+bindings, all enabled, over **188 unique `source.source_id`** - the id is nested
+under `source`, not at the top level, which is what made an earlier pass of this
+reconciliation read `1`. Against the live 188:
+
+* **Declared with no partition in `shared`: 10.** Six are the SPOT pairs
+  (`binance-spot-btcusdt-{bar,quote,trade}-stable-001`,
+  `okx-spot-btcusdt-{bar,quote,trade}-stable-001`) and they are **not missing** -
+  they are in the `shared-c2` cache. Four are DNSE (below).
+* **Live with no entry in that file: 10** - exactly the ten
+  `mark_index_price` partitions. They are declared, in a different and also
+  committed plane: `config/v2/stable-reference-l2-demand.yaml` carries
+  `MARK_PRICE` ×2 and `INDEX_PRICE` ×2, each over a five-symbol universe,
+  Binance and OKX. The runtime composes the pair into one reference product -
+  `MarkIndexKind.BOTH`, `qdl/reference/contracts.py:34-37,225-226`, named
+  `mark_index_price` by `product_feed_name` at `qdl/reference/contracts.py:333`.
+  5 Binance + 5 OKX = the 10 partitions.
+
+**So the earlier reading that the running stack cannot be rebuilt from source
+was wrong, and is withdrawn.** The capability is in Git. What is true is the
+narrower thing R1.30 already recorded: regeneration *drops* the ingestor's
+MARK_INDEX bindings, because the catalog describes the destination of a
+migration whose origin the runtime still holds. That is a trap in the
+generator, not a missing declaration, and R1.30 has the two ways out.
+
+#### Item 1 - one role is functionally stale, and only one
+
+Seven distinct qdl images run across three release lines:
+
+| role | image | files changed in its own paths since |
+|---|---|---|
+| `rust_core` ×3 | `qdl-v2-rust:2.0.19-003b5f9` | 0 |
+| `ingestor_binance_usdm` | `qdl-v2-rust:2.0.18-3ecf0ac` | 1 |
+| `ingestor_okx_swap` | `qdl-v2-rust:2.0.17-1acf87a` | **9** |
+| `projector_v2` ×3 | `qdl-v2-python:2.0.19-211bf14` | 0 |
+| `stream_v2_*` ×2 | `qdl-v2-python:2.0.19-40629b7` | 0 |
+| `query_v2_*` ×2 | `qdl-v2-python:2.0.17-5c01cb6` | 1 |
+| `binance_bar_edge` | `qdl-v2-python:2.0.18-5ea5915` | 0 |
+
+The two "1"s are not drift. `ingestor_binance_usdm`'s one file is
+`rust/qdl-kafka/src/bin/qdl-realtime-core.rs`; both ingestors run
+`/usr/local/bin/qdl-native-raw-ingestor` (`docker inspect .Config.Entrypoint`),
+so that change is not in its binary. `query_v2`'s one file is
+`qdl/runtime/stable.py`, and `git diff -U0` puts both hunks in
+`serve_stable_stream` and `serve_stable_projector` - not `serve_stable_query`.
+Both are at functional parity.
+
+`ingestor_okx_swap` is not. Its nine include
+`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs` - the binary it runs - plus
+`l2_book.rs`, `l2_adapter.rs`, `qdl-venue-core/src/ordering.rs` and
+`canonical.rs`. **Rebuild and recreate that one role at HEAD.** Blast radius:
+one container, OKX swap acquisition; rollback is `docker start` on the prior
+container or the pinned `2.0.17-1acf87a` digest.
+
+Every image commit resolves in the repo (`git log -1` on all seven), so
+coupling #6 is satisfied and a digest rollback has a rebuildable revision
+behind it.
+
+#### Item 2 - the R1.30 guard, before any regeneration
+
+R1.30's recommendation stands: **refuse first, finish second.** Until the
+generator declines to emit a bundle that removes a binding the running config
+holds, no regeneration in this program is safe - including the thirteen
+interval rollouts of item 3. This is a test-only change; it touches no runtime.
+
+#### Item 3 - thirteen Binance intervals still on REST
+
+R1.29 Phase 3 item 1. 7,820-22,473 ms close-to-canonical against 1,178 ms for
+the native 1m lane. Gated on Phase 2 holding 24 h from 2026-09-18T20:00Z; at
+2026-09-19T04:34Z that gate has **15.4 h left** and matures 2026-09-19T20:00Z.
+Sequenced after item 2, because the rollout regenerates the bundle.
+
+#### Item 4 - the QUOTE tail
+
+p95 1,114 ms and max 1,929 ms against a 2,000 ms bound: 8.9% refused at push
+and a reconnect livelock of roughly one per slice per 90-180 s. This is the
+only measured quantity in the stack still touching its own bound. It is a
+latency item with an instrument already deployed (`gateway.py` counters,
+`grpc_service.py` freshness summary), so it can be worked without new
+plumbing - but it is a tuning item, and R1-R7 apply: one variable, ten-minute
+window, target metric decides, resource-neutral.
+
+#### Item 5 - the four DNSE bindings, a decision not a defect
+
+`dnse-fpt-bar-stable-001`, `dnse-fpt-trade-stable-001`,
+`dnse-vn30f1m-bar-stable-001`, `dnse-vn30f1m-trade-stable-001` are declared and
+enabled in catalog revision 8 and have no partition. The cause is not a fault:
+`vn_edge_v2` carries `profiles: [stable-vn]` in `docker-compose.v2-stable.yml`
+and has never been started - `docker ps -a` matches no `vn_edge` container.
+The catalog claims four bindings the deployed profile cannot serve. Two clean
+outcomes, both cheap: deploy the profile, or mark the four not-in-scope for this
+release so the catalog stops claiming them. **Owner's call**; it should not be
+decided inside a cleanup.
+
+#### Item 6 - `main` is one commit behind
+
+`origin/main` `fd8f62e`, `origin/dev` `98ac38a`, one commit apart:
+`98ac38a feat(r129): measure what a caller waits for, not how old a cached
+value is`. Tag `v2.0.19` is at `5e9eaf1` and is contained in both.
+
+#### The manifest, and why it is not checkable today
+
+A tag that names one release while six of twelve qdl roles carry two older tags
+cannot be verified by looking at the stack - which is the whole purpose of a
+manifest. Four of the seven images are already at functional parity, so
+homogenisation is cheap: rebuild the qdl images once at the closing commit, roll
+the roles whose digest changes, and the manifest becomes a statement anyone can
+check with `docker ps` and a digest list.
+
+Order: item 1 → item 2 → item 5 decision → item 3 → item 4 → rebuild at one
+commit → regenerate and diff (guard now armed) → gate → merge `dev` → `main` →
+tag → certificate entry. Items 3 and 4 are the only ones that need a live
+window; the rest are hours, not days.
+
+#### Cleanup - measured first, because most of it is not worth doing
+
+`docker system df` at 2026-09-19T04:34Z: images 31 (14.82 GB, 2.671 GB
+reclaimable), containers 54 (52 running), volumes 18 (66.62 GB), build cache
+15.57 GB of which **10.72 GB reclaimable**. Disk 113 G used of 290 G, 39%.
+
+**Delete, by digest:**
+
+* `qdl-v2-rust:2.0.17-ee7f1b3` (`a863f7e11c15`, 198 MB) - no container
+  references it and it is not the rollback target of any running role
+  (`ingestor_okx_swap` pins `2.0.17-1acf87a`).
+* `rust:<none>` (`1111c28d995d`, 1.12 GB) - dangling build base.
+* Build cache: `docker builder prune` reclaims 10.72 GB. This is the only
+  cleanup on the host that is worth a command.
+* Two anonymous 0 B volumes,
+  `2f3cc203e646...` and `8d21b7330f55...`, created 2026-09-15.
+
+**Keep, explicitly - a `prune` would take these and must not be run:**
+
+* `qdl_v2_stable_candidate_stable_authority_db` (68.13 MB) shows as dangling
+  because no running role attaches it. It holds authority state. Deleting it is
+  the `stable_redis` mistake in a different volume.
+* `qdl-cargo-home` (138.1 MB) - the Rust build cache every rebuild reuses.
+* `qdl_c40_authority_admin_packets` (36.1 kB) - C40 corpus, Codex's.
+* `alpine:3.20`, `bufbuild/buf:1.50.0`, `local/trading-system-test:p18-1d2e3ad`
+  are unreferenced by design: they are the reuse images named in
+  `/home/bobby/CLAUDE.md` §3b. Deleting them causes the next task to build.
+* The two exited one-shots, `stable_tls_init` and `stable_state_init`
+  (`Exited (0)` two weeks ago) - `restart: "no"` is deliberate.
+
+**Flag, do not touch:** `tradingsystem-image:v1.2.4-8ef859a` (851 MB) is
+unreferenced but belongs to `trading_system`, whose `market_data_service` runs
+`v1.2.3-f317fe3`. It is plausibly a staged image of Codex's. Ask before removing.
+
+**Leave alone, because the measurement says so:** the eleven evidence packets
+under `~/.local/state/qdl-v2/dlv2-r12*` total **4.7 MB** across all eleven and
+are mounted by 0 containers. They are the evidence behind ledger entries
+39-43. Deleting them frees nothing measurable and destroys the audit trail;
+"clean up" is not a reason to remove evidence that costs 4.7 MB.
+
+After the rebuild of the manifest step, the superseded qdl tags become
+deletable too - by digest, keeping exactly one prior digest per role as the
+one-step rollback.
+
+#### Closure criterion
+
+The data layer closes when: `ingestor_okx_swap` is at HEAD, the generator
+refuses a lossy bundle, the DNSE four are deployed or de-scoped, every qdl role
+runs one release digest, the 188 declared bindings reconcile against live
+partitions across both caches with the reference plane counted, and the QUOTE
+p95 is inside its bound with the reconnect rate flat for a full window. Items
+3 and 4 are the only ones that can still surprise.
