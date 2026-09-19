@@ -45046,6 +45046,39 @@ System, alpha or order path changed in this source slice. The next allowed
 action is one immutable Python build followed by a three-projector-only packet
 with the current B2 image as exact rollback, then a fresh two-reader C2.
 
+**B2.1 immutable build and bounded runtime packet (READY / NOT YET
+EXECUTED, 2026-09-19).** The source commit is
+`a23fcbe35ab586ba64bd045092c694eaca93f457`; its immutable Python image is
+`sha256:73a3e677c56c196c063fa425dd1ccb200c3523f0573692abf09cb8febb66a13e`
+(`qdl-v2-python:2.0.25-a23fcbe`, OCI revision `a23fcbe35ab586ba64bd045092c694eaca93f457`).
+The only candidate roles are the existing `projector_v2`, `projector_v2_3`
+and `projector_v2_2`, recreated one at a time with their established
+`512/128` batch/commit bounds. Exact rollback for each named role is the
+currently active B2 image
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`
+(`2.0.24-40a1155`) using exactly the same runtime mounts and `512/128`
+bounds. The sealed external packet directory is
+`/home/bobby/.local/state/qdl-v2/r135-b21-prewarm-20260919T221719Z`; its
+candidate override SHA-256 is
+`1a26f5788bd074d20bf6d2c8be401429bf3177dc2ce2837c1537c99c9389fc0d`,
+rollback override SHA-256 is
+`ad5e3ed1ca4bc5058fb2dc605c77f3e60900b39f4c74df8efce93ffbb510a35d`,
+and exact-role helper SHA-256 is
+`bdcae1706aad90c8ea55c61f15fa559c7b62ea333658eee06e93383a41c18771`.
+Both full Compose chains rendered successfully and the helper passed
+`bash -n`.
+
+The packet is deliberately projector-only: it does not recreate stream,
+Query, Rust, ingestor, V1, Trading System or alpha roles, and it does not
+reset Kafka offsets/topology, flush Redis, delete SQLite, change a manifest,
+or touch an order path. After each named role, require its exact candidate
+digest, health, `restart=0`, no OOM, bounded catch-up and continued healthy
+peer service. Any failure stops immediately and uses the same helper in
+`rollback` mode for only the changed named role. A successful packet must log
+one finite watermark-prewarm summary, preserve the durable count of `70`
+final-BAR partitions, and then run the fresh two-reader, public-SDK,
+no-order strict C2 for `300` seconds before B can close.
+
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
