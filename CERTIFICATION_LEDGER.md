@@ -1949,6 +1949,14 @@ headroom was absorbed at once, which is the evidence the brokers were starved.
 Memory was checked separately because a `cpus` limit throttles and cannot OOM:
 worst headroom is `kafka2` at **50.2% of 2 GiB**, so there is no OOM exposure.
 
+**Verified after the raise**, throttle rate over a 120 s window: `kafka2`
+**14.4% → 1.4%**, `kafka3` 5.2% → 0.2%, `rust_core_2` 8.9% → 0.7%,
+`stable_redis` 1.8% → **0.0%**. `kafka1`, deliberately not raised, reads 1.2% in
+the same window against its 1.4% cumulative - an untouched control that barely
+moves is what separates "the raise worked" from "the host happened to be quiet".
+The before figures are cumulative since container start and the after is one
+window; the control is what makes them comparable.
+
 ### Health at certification
 
 17/17 roles `Up`, 14 reporting `healthy`; the three `rust_core` replicas carry

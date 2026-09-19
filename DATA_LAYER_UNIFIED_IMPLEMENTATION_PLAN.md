@@ -43558,6 +43558,14 @@ values and no image change.
 **Result: 5.66 of 6.0 vcore.** The headroom was taken up immediately, which is
 the evidence the two brokers were genuinely starved rather than merely busy.
 
+**Verified after the raise**, throttle rate over a 120 s window: `kafka2`
+**14.4% → 1.4%**, `kafka3` 5.2% → 0.2%, `rust_core_2` 8.9% → 0.7%,
+`stable_redis` 1.8% → **0.0%**. `kafka1`, deliberately not raised, reads 1.2% in
+the same window against its 1.4% cumulative - an untouched control that barely
+moves is what separates "the raise worked" from "the host happened to be quiet".
+The before figures are cumulative since container start and the after is one
+window; the control is what makes them comparable.
+
 **Memory was checked because the owner's concern was OOM, and a `cpus` limit
 cannot cause one** - it throttles. The worst memory headroom in the stack is
 `kafka2` at **50.2% of 2 GiB**; everything else is at or under 37%. There is no
