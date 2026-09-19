@@ -44344,3 +44344,15 @@ After each recreation, and again after all three, every core was `running`,
 Kafka, Redis, SQLite, V1, both ingestors, all projectors, BAR edge, reader
 roles, Trading System, alpha and order paths were not recreated or changed in
 this checkpoint. Reader rolling and strict C2 remain pending.
+
+**Rolling checkpoint 2/2 (`READER PASS / C2 PENDING`, 2026-09-19).**
+`stream_v2_active`, `stream_v2_passive`, `query_v2_1` and `query_v2_2` were
+then recreated one at a time to `sha256:1ad34175322f…`. Every reader is
+`running`, healthy, `restart=0` and `OOM=false`, with no bounded startup
+warning/error record. A process-local read through each new stream resolves
+and parses the sealed pair as `216/216`; both queries resolve the sealed
+216-binding catalog. No other role was recreated. The next action is exactly
+one existing strict C2 no-order acceptance for 300 seconds with
+`require_all=True`; it must report all ten execution MARK/INDEX bindings,
+consumer-call-to-usable latency, no V1/direct-provider fallback and no order
+or consumer-state mutation.
