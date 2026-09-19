@@ -60,7 +60,9 @@ from qdl.raw.capture import bind_capture_context, capture_exact_frame
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_LATE_BACKFILL_HEADROOM,
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
 )
 from qdl.runtime.stable import (
     StableRuntimeConfig,
@@ -697,11 +699,21 @@ class StableQueryContractTests(unittest.TestCase):
         # The first logical records simulate authentic late repairs.  Once the
         # cache has grown, a public-size append-tail scan would evict precisely
         # these recent market-time bars and manufacture a false warmup gap.
-        repaired_indices = tuple(range(9_900, 9_964))
+        # One full headroom of late repairs, ending just below the newest bars.
+        # They are appended first, so a public-sized append-tail scan drops
+        # exactly this block: a hole inside the requested window with the newest
+        # rows still present, which is the shape that manufactures a false gap.
+        repaired_stop = 9_964
+        repaired_indices = tuple(
+            range(repaired_stop - STABLE_SPOOL_LATE_BACKFILL_HEADROOM, repaired_stop)
+        )
         repaired_set = set(repaired_indices)
         remaining_indices = tuple(
             index
-            for index in range(-64, 10_000)
+            for index in range(
+                -STABLE_SPOOL_LATE_BACKFILL_HEADROOM,
+                STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
+            )
             if index not in repaired_set
         )
         rows = tuple(

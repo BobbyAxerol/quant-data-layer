@@ -42,6 +42,7 @@ from qdl.runtime.stable_bar_edge import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_LATE_BACKFILL_HEADROOM,
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
     STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
 )
@@ -684,7 +685,13 @@ class StableBarBootstrapTests(unittest.TestCase):
                     connection.cursor.calls, [_DURABLE_COVERAGE_BATCH_ROWS]
                 )
                 self.assertEqual(STABLE_SPOOL_PUBLIC_PARTITION_WINDOW, 10_000)
-                self.assertEqual(STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, 10_064)
+                # The physical tail is the public ceiling plus the late-backfill
+                # headroom; its size is owned by test_dlv2_r131_repair_needs_headroom.
+                self.assertEqual(
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+                    STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+                    + STABLE_SPOOL_LATE_BACKFILL_HEADROOM,
+                )
                 self.assertEqual(
                     connection.calls[0][1],
                     (

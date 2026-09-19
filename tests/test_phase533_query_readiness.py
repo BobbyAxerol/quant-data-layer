@@ -10,6 +10,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from qdl.runtime.readiness import ComponentState
+from qdl.runtime.stable_capacity import (
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+)
 from qdl.runtime.stable import (
     build_stable_spool,
     serve_stable_projector,
@@ -121,8 +124,12 @@ class Phase533QueryReadinessTests(unittest.TestCase):
         # The public query/SDK ceiling stays 10,000.  The extra bounded
         # physical tail prevents late backfills from evicting current rows by
         # logical append order before market-time selection.
-        self.assertEqual(capacity.max_partition_records, 10_064)
-        self.assertEqual(capacity.max_records, 1_016_464)
+        self.assertEqual(
+            capacity.max_partition_records, STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+        )
+        self.assertEqual(
+            capacity.max_records, 101 * STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+        )
 
     def test_rebuildable_stable_spool_skips_open_time_integrity_scan(self):
         stable_config = SimpleNamespace(
