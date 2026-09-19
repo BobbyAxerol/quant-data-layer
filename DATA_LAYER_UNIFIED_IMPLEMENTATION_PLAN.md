@@ -44356,3 +44356,34 @@ one existing strict C2 no-order acceptance for 300 seconds with
 `require_all=True`; it must report all ten execution MARK/INDEX bindings,
 consumer-call-to-usable latency, no V1/direct-provider fallback and no order
 or consumer-state mutation.
+
+**C2 identity preflight (`FAIL-CLOSED / ADDITIVE KEYRING REPAIR REQUIRED`,
+2026-09-19).** The first disposable Trading-System C2 launcher attempts were
+stopped before a provider or data-plane request by launcher-only Docker
+argument/permission defects; their containers used `--rm` and left no runtime
+state. The first actual V2 TLS request then proved the historical
+`stable-trading-system` leaf expired on `2026-08-22`; replacing only its
+client-side server CA with the current query CA removed the old trust error but
+correctly did not make an expired identity acceptable. The preserved recovery
+extension contains a successor `stable-trading-system` client certificate
+valid through `2026-12-03`, and `openssl verify` confirms it is already trusted
+by the active `query/client-ca-bundle.crt`. A no-order preflight with that
+successor reached the V2 API and failed closed as `untrusted workload token key
+or algorithm`: read-only query inspection proves the active public JWT keyring
+has only the five `v1` IDs, while the prepared additive recovery packet
+`c42e1160...4400adde0` defines the matching
+`stable-trading-system-rs256-v2` key and subject.
+
+This is a reader rollout configuration omission, not a MARK/INDEX, provider,
+Rust, latency or quality-SLA failure. The exact repair is to layer the existing
+public-only recovery keyring onto the existing R1.34 Compose environment and
+serially recreate only `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive` on their current images and sealed runtime. Before the
+replacement C2, query inspection must prove the additive key IDs/subjects
+without printing any key value. Rollback is the current five-key environment
+and recreation of those same four reader roles only. V1, Rust cores,
+ingestors, projectors, BAR edge, Kafka, Redis, SQLite, TLS files, Trading
+System, alpha and order paths remain excluded. The replacement acceptance is
+still exactly two no-order 300-second `require_all=True` ten-binding probes,
+one per query replica, with the current query CA and successor workload
+identity copied only to container tmpfs.
