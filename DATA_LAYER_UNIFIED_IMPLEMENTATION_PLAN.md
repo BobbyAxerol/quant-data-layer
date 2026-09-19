@@ -43078,3 +43078,65 @@ what happened, except that I described the write as "additive, deletes nothing"
 before running it. It does delete: not directly, but by pushing rows past a cap.
 A write that evicts is not additive, and the word came from reading the script's
 intent rather than the storage it writes into.
+
+<a id="dl-v2-r131-headroom-20260919"></a>
+#### R1.31 — the design already solved this, and the number is 64 (2026-09-19T07:10Z)
+
+Two corrections to the entry above, both from reading the code instead of the
+index name.
+
+**It is not `committed_at_ns`.** The per-partition cap evicts by
+**`logical_offset`** (`sqlite_spool.py:_trim_partition_windows_locked`):
+
+```sql
+SELECT logical_offset ... ORDER BY logical_offset DESC LIMIT 1 OFFSET (limit-1)
+DELETE FROM events WHERE stream=? AND partition_key=? AND logical_offset < ?
+```
+
+The `committed_at_ns` index serves the separate time-based replay retention. Both
+are append-ordered, so the conclusion held, but anyone fixing this needs the right
+column.
+
+**And it is not an oversight.** `qdl/runtime/stable_capacity.py` says it out loud:
+
+```python
+# The durable spool retains a small additional tail so late authentic backfills
+# do not evict an otherwise required public history window by append order.
+STABLE_SPOOL_PUBLIC_PARTITION_WINDOW = 10_000
+STABLE_SPOOL_LATE_BACKFILL_HEADROOM  = 64
+STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW = 10_064
+```
+
+The mechanism for exactly this problem exists and is **64 rows**. That is why the
+partitions hold 10,064 and not 10,000, and it is the whole reason the number
+looked odd.
+
+#### Which makes the split clean
+
+| interval | hole | headroom | verdict |
+|---|---|---|---|
+| **30m** | **30** rows | 64 | **fits - repairable today, unchanged code** |
+| **15m** | **124** rows | 64 | **exceeds it - the repair evicts, which is what happened** |
+
+My failed repair is explained to the row: 124 late-backfill rows into 64 rows of
+headroom evicts the difference by append order, and the evicted block is
+contiguous in market time because the bootstrap wrote out of market order.
+
+So the earlier conclusion - "not repairable by this route, the real fix is a
+schema or policy change" - was too pessimistic and is corrected:
+
+* **ten 30m bindings**: 30 rows each, inside the headroom, repairable now with
+  the existing tool and no code change;
+* **ten 15m bindings**: need `STABLE_SPOOL_LATE_BACKFILL_HEADROOM` raised from 64
+  to at least 124 - 192 or 256 gives margin - which is one constant, a python
+  image rebuild, and a recreate of query and stream. No schema change, no
+  retention-policy rewrite, no market-time index.
+
+The three-option list in the previous entry stands as the *general* fix for
+out-of-market-order bootstrap, but it is not what these twenty bindings need.
+They need one number raised and one repair run.
+
+#### Not run
+
+Neither is applied. The 15m regression from the earlier attempt stands at one
+binding, usable depth 8.1 days to 6.8. Nothing further was written.
