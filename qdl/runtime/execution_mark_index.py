@@ -14,29 +14,68 @@ import hmac
 import json
 import time
 from dataclasses import dataclass
+from typing import Mapping
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
-from qdl.query.contracts import FeedType
+from qdl.query.contracts import FeedType, StalePolicy
 from qdl.runtime.internal_auth import stable_hmac_signature
 from qdl.runtime.lease import GatewayFenced
+from qdl.runtime.mark_index_lineage import paired_mark_index_lineage
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from qdl.runtime.session_liveness import (
+    ProviderSessionStatus,
+    StableSessionLivenessReader,
+)
 from qdl.stream import DurableStreamGateway
 from qdl.transport import StoredEvent
 
 
-_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
+_LEGACY_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
+_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v2"
 _RESPONSE_SCHEMA = "qdl.v2.execution-mark-index-view.v2"
 _DELIVERY_CANONICAL_READ_COMMITTED = "CANONICAL_READ_COMMITTED"
 _DELIVERY_SPOOL_CONFIRMED = "SPOOL_CONFIRMED"
 _FRESHNESS_BASIS_HEADER = "X-QDL-Execution-Freshness-Basis"
+_RECENCY_MODE_HEADER = "X-QDL-Execution-Recency-Mode"
+_SESSION_STATE_HEADER = "X-QDL-Execution-Session-State"
+_SESSION_LIVENESS_HEADER = "X-QDL-Execution-Session-Liveness-Ms"
+_SESSION_CHECKED_AT_HEADER = "X-QDL-Execution-Session-Checked-At-Ns"
+_COMPONENT_RECEIPTS_HEADER = "X-QDL-Execution-Component-Receipts-Ns"
+_COMPONENT_CADENCE_HEADER = "X-QDL-Execution-Component-Quiet-After-Ms"
 _GAP_FLAGS = frozenset({
     common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,
     common_pb2.QUALITY_FLAG_OUT_OF_ORDER,
     common_pb2.QUALITY_FLAG_RESYNC_REQUIRED,
 })
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionMarkIndexQuietPolicy:
+    """Signed component cadence for one logical MARK/INDEX product."""
+
+    component_quiet_after_ms: tuple[tuple[str, int], ...]
+
+    def __post_init__(self) -> None:
+        values = dict(self.component_quiet_after_ms)
+        if (
+            set(values) != {"MARK", "INDEX"}
+            or any(not 250 <= value <= 120_000 for value in values.values())
+        ):
+            raise ValueError("execution MARK/INDEX quiet policy is incomplete")
+
+    @classmethod
+    def from_acquisition(cls, acquisition) -> "ExecutionMarkIndexQuietPolicy | None":
+        mark_index = acquisition.mark_index
+        if mark_index is None or not mark_index.component_quiet_after_ms:
+            return None
+        values = dict(mark_index.component_quiet_after_ms)
+        if "BOTH" in values:
+            values = {"MARK": values["BOTH"], "INDEX": values["BOTH"]}
+        return cls(tuple(sorted((str(name), int(value)) for name, value in values.items())))
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +91,10 @@ class ExecutionMarkIndexRecord:
     stale_after_ms: int
     source_event_time_ns: int
     received_at_ns: int
+    venue: str
+    market: str
+    source_session_id: str
+    config_revision: int
     connection_generation: int
     partition_sequence: int
     spool_watermark_offset: int | None
@@ -65,23 +108,45 @@ class ExecutionMarkIndexRead:
 
     record: ExecutionMarkIndexRecord | None
     reason: str | None = None
+    recency_mode: str | None = None
+    session: ProviderSessionStatus | None = None
+    session_checked_at_ns: int | None = None
+    component_receipts_ns: tuple[tuple[str, int], ...] = ()
+    component_quiet_after_ms: tuple[tuple[str, int], ...] = ()
 
 
 class ExecutionMarkIndexLiveView:
     """Bounded latest-state view keyed by exact canonical instrument identity."""
 
-    def __init__(self, allowed_instrument_uids: frozenset[str]) -> None:
+    def __init__(
+        self,
+        allowed_instrument_uids: frozenset[str],
+        *,
+        quiet_policies: Mapping[str, ExecutionMarkIndexQuietPolicy] | None = None,
+        session_liveness_reader: StableSessionLivenessReader | None = None,
+    ) -> None:
         if not allowed_instrument_uids:
             raise ValueError("execution MARK/INDEX view requires allowed bindings")
+        policies = dict(quiet_policies or {})
+        if not set(policies).issubset(allowed_instrument_uids):
+            raise ValueError("execution MARK/INDEX quiet policy is outside allowed bindings")
         self._allowed_instrument_uids = allowed_instrument_uids
+        self._quiet_policies = policies
+        self._session_liveness_reader = session_liveness_reader
         self._records: dict[str, ExecutionMarkIndexRecord] = {}
         self._invalid: dict[str, tuple[int, int, str]] = {}
         self._lock = asyncio.Lock()
 
     @classmethod
-    def from_catalog(cls, catalog: StableSourceCatalog) -> "ExecutionMarkIndexLiveView":
-        allowed = frozenset(
-            binding.instrument.instrument_uid
+    def from_catalog(
+        cls,
+        catalog: StableSourceCatalog,
+        *,
+        acquisition: StableAcquisitionPlan | None = None,
+        session_liveness_reader: StableSessionLivenessReader | None = None,
+    ) -> "ExecutionMarkIndexLiveView":
+        bindings = tuple(
+            binding
             for binding in catalog.bindings
             if (
                 binding.feed is FeedType.MARK_INDEX_PRICE
@@ -89,7 +154,31 @@ class ExecutionMarkIndexLiveView:
                 and binding.source_role == "PRIMARY"
             )
         )
-        return cls(allowed)
+        allowed = frozenset(binding.instrument.instrument_uid for binding in bindings)
+        quiet_policies: dict[str, ExecutionMarkIndexQuietPolicy] = {}
+        if acquisition is not None:
+            acquisitions = {item.binding_id: item for item in acquisition.bindings}
+            for binding in bindings:
+                try:
+                    candidate = acquisitions[binding.binding_id]
+                except KeyError as error:
+                    raise ValueError(
+                        "execution MARK/INDEX acquisition binding is unavailable"
+                    ) from error
+                policy = ExecutionMarkIndexQuietPolicy.from_acquisition(candidate)
+                if policy is not None:
+                    existing = quiet_policies.setdefault(
+                        binding.instrument.instrument_uid, policy
+                    )
+                    if existing != policy:
+                        raise ValueError(
+                            "execution MARK/INDEX quiet policy differs for one instrument"
+                        )
+        return cls(
+            allowed,
+            quiet_policies=quiet_policies,
+            session_liveness_reader=session_liveness_reader,
+        )
 
     async def remember(
         self,
@@ -122,6 +211,9 @@ class ExecutionMarkIndexLiveView:
             or envelope.source_id != binding.source_id
             or envelope.source_event_time_ns <= 0
             or envelope.received_at_ns <= 0
+            or not envelope.source_session_id
+            or envelope.connection_generation < 1
+            or envelope.config_revision < 1
             or gateway_epoch < 1
         ):
             raise ValueError("execution MARK/INDEX event identity/provenance is invalid")
@@ -141,6 +233,10 @@ class ExecutionMarkIndexLiveView:
             stale_after_ms=binding.stale_after_ms,
             source_event_time_ns=int(envelope.source_event_time_ns),
             received_at_ns=int(envelope.received_at_ns),
+            venue=str(envelope.venue),
+            market=str(envelope.market),
+            source_session_id=str(envelope.source_session_id),
+            config_revision=int(envelope.config_revision),
             connection_generation=int(envelope.connection_generation),
             partition_sequence=int(envelope.partition_sequence),
             spool_watermark_offset=(stored.cursor.offset if stored is not None else None),
@@ -239,12 +335,27 @@ class ExecutionMarkIndexLiveView:
         source_policy_id: str,
         max_freshness_ms: int,
         gateway_epoch: int,
+        event_recency_policy: StalePolicy = StalePolicy.BLOCK,
+        max_session_liveness_ms: int | None = None,
         now_ns: int | None = None,
     ) -> ExecutionMarkIndexRead:
         """Return only a view valid for this exact execution request."""
 
-        if not instrument_uid or instrument_revision < 1 or max_freshness_ms <= 0:
+        if (
+            not instrument_uid
+            or instrument_revision < 1
+            or max_freshness_ms <= 0
+            or not isinstance(event_recency_policy, StalePolicy)
+        ):
             raise ValueError("execution MARK/INDEX read identity/freshness is invalid")
+        if (
+            event_recency_policy is StalePolicy.UNSPECIFIED
+            or (
+                event_recency_policy is StalePolicy.OBSERVE
+                and (max_session_liveness_ms is None or max_session_liveness_ms <= 0)
+            )
+        ):
+            raise ValueError("execution MARK/INDEX quiet policy is invalid")
         now_ns = time.time_ns() if now_ns is None else now_ns
         async with self._lock:
             invalid = self._invalid.get(instrument_uid)
@@ -265,9 +376,60 @@ class ExecutionMarkIndexLiveView:
             else record.source_event_time_ns
         )
         bound_ms = min(max_freshness_ms, record.stale_after_ms)
-        if max(0, (now_ns - freshness_anchor_ns) // 1_000_000) > bound_ms:
-            return ExecutionMarkIndexRead(None, "STALE")
-        return ExecutionMarkIndexRead(record)
+        event_age_ms = max(0, (now_ns - freshness_anchor_ns) // 1_000_000)
+        if event_recency_policy is not StalePolicy.OBSERVE:
+            if event_age_ms > bound_ms:
+                return ExecutionMarkIndexRead(None, "STALE")
+            return ExecutionMarkIndexRead(record, recency_mode="STRICT_EVENT")
+
+        policy = self._quiet_policies.get(instrument_uid)
+        if policy is None or self._session_liveness_reader is None:
+            return ExecutionMarkIndexRead(None, "QUIET_POLICY_UNAVAILABLE")
+        try:
+            envelope = market_data_pb2.EventEnvelope.FromString(record.canonical)
+            lineage = paired_mark_index_lineage(envelope)
+        except (TypeError, ValueError):
+            return ExecutionMarkIndexRead(None, "LINEAGE_INVALID")
+        component_receipts = (
+            ("MARK", lineage.mark_received_at_ns),
+            ("INDEX", lineage.index_received_at_ns),
+        )
+        component_cadence = policy.component_quiet_after_ms
+        cadence_by_component = dict(component_cadence)
+        if any(
+            max(0, (now_ns - receipt_ns) // 1_000_000)
+            > cadence_by_component[component]
+            for component, receipt_ns in component_receipts
+        ):
+            return ExecutionMarkIndexRead(None, "COMPONENT_STALE")
+        session = self._session_liveness_reader.status(
+            venue=record.venue,
+            market=record.market,
+            source_session_id=record.source_session_id,
+            connection_generation=record.connection_generation,
+            config_revision=record.config_revision,
+            now_ns=now_ns,
+        )
+        if session.state != "LIVE":
+            return ExecutionMarkIndexRead(None, "SESSION_STATE")
+        assert max_session_liveness_ms is not None
+        if (
+            session.liveness_ms is None
+            or session.liveness_ms > max_session_liveness_ms
+        ):
+            return ExecutionMarkIndexRead(None, "SESSION_LIVENESS")
+        return ExecutionMarkIndexRead(
+            record,
+            recency_mode=(
+                "STRICT_EVENT_SESSION_LIVE"
+                if event_age_ms <= bound_ms
+                else "COMPONENT_SESSION_LIVE"
+            ),
+            session=session,
+            session_checked_at_ns=now_ns,
+            component_receipts_ns=component_receipts,
+            component_quiet_after_ms=component_cadence,
+        )
 
     async def fence_all(self) -> None:
         """A passive/reacquired gateway may never retain old writer state."""
@@ -306,15 +468,43 @@ def install_execution_mark_index_read(
             raise HTTPException(status_code=401, detail="invalid stable read signature")
         try:
             payload = json.loads(body)
-            if set(payload) != {
+            legacy_fields = {
                 "schema", "instrument_uid", "instrument_revision",
                 "source_policy_id", "max_freshness_ms",
-            } or payload["schema"] != _REQUEST_SCHEMA:
+            }
+            quiet_fields = legacy_fields | {
+                "event_recency_policy", "max_session_liveness_ms",
+            }
+            if (
+                not isinstance(payload, dict)
+                or payload.get("schema") not in {
+                    _LEGACY_REQUEST_SCHEMA,
+                    _REQUEST_SCHEMA,
+                }
+                or (
+                    payload["schema"] == _LEGACY_REQUEST_SCHEMA
+                    and set(payload) != legacy_fields
+                )
+                or (
+                    payload["schema"] == _REQUEST_SCHEMA
+                    and set(payload) != quiet_fields
+                )
+            ):
                 raise ValueError("execution MARK/INDEX read schema is invalid")
             instrument_uid = str(payload["instrument_uid"])
             instrument_revision = int(payload["instrument_revision"])
             source_policy_id = str(payload["source_policy_id"])
             max_freshness_ms = int(payload["max_freshness_ms"])
+            if payload["schema"] == _REQUEST_SCHEMA:
+                event_recency_policy = StalePolicy(
+                    str(payload["event_recency_policy"]).upper()
+                )
+                max_session_liveness_ms = int(payload["max_session_liveness_ms"])
+                if event_recency_policy is not StalePolicy.OBSERVE:
+                    raise ValueError("quiet execution MARK/INDEX policy is invalid")
+            else:
+                event_recency_policy = StalePolicy.BLOCK
+                max_session_liveness_ms = None
             if not instrument_uid or not source_policy_id or not 1 <= max_freshness_ms <= 300_000:
                 raise ValueError("execution MARK/INDEX read fields are invalid")
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -328,6 +518,8 @@ def install_execution_mark_index_read(
                 source_policy_id=source_policy_id,
                 max_freshness_ms=max_freshness_ms,
                 gateway_epoch=epoch,
+                event_recency_policy=event_recency_policy,
+                max_session_liveness_ms=max_session_liveness_ms,
             )
             gateway.assert_active(epoch)
         except GatewayFenced as error:
@@ -342,6 +534,22 @@ def install_execution_mark_index_read(
         # rolling reader deployment while carrying the stream-authoritative
         # basis that governed this exact record's live admission.
         response.headers[_FRESHNESS_BASIS_HEADER] = record.freshness_basis
+        if result.recency_mode is not None:
+            response.headers[_RECENCY_MODE_HEADER] = result.recency_mode
+        if result.session is not None and result.session_checked_at_ns is not None:
+            response.headers[_SESSION_STATE_HEADER] = result.session.state
+            response.headers[_SESSION_LIVENESS_HEADER] = str(
+                result.session.liveness_ms
+            )
+            response.headers[_SESSION_CHECKED_AT_HEADER] = str(
+                result.session_checked_at_ns
+            )
+            response.headers[_COMPONENT_RECEIPTS_HEADER] = _component_header(
+                result.component_receipts_ns
+            )
+            response.headers[_COMPONENT_CADENCE_HEADER] = _component_header(
+                result.component_quiet_after_ms
+            )
         return {
             "schema": _RESPONSE_SCHEMA,
             "lease_epoch": record.gateway_epoch,
@@ -349,3 +557,11 @@ def install_execution_mark_index_read(
             "delivery_stage": record.delivery_stage,
             "canonical": base64.b64encode(record.canonical).decode("ascii"),
         }
+
+
+def _component_header(values: tuple[tuple[str, int], ...]) -> str:
+    """Encode fixed component evidence into one additive private header."""
+
+    if set(name for name, _value in values) != {"MARK", "INDEX"}:
+        raise ValueError("execution MARK/INDEX component header is incomplete")
+    return ",".join(f"{name}={value}" for name, value in sorted(values))

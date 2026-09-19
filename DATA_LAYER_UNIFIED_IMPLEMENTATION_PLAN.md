@@ -44131,3 +44131,131 @@ chain is an auditability/operability debt, not the C2 root cause; it is outside
 this narrow packet and must be consolidated in a separately approved cleanup
 slice. Candidate, named rollback image and bounded external evidence directory
 are retained; no cleanup is performed while the packet is unresolved.
+
+### R1.34 - Component-aware quiet-channel MARK/INDEX admission (`APPROVED / IN_PROGRESS`, 2026-09-19)
+
+**Goal.** Correct the execution MARK/INDEX read contract for provider channels
+which legitimately repeat an unchanged value slowly, without rewriting source
+timestamps, accepting a stale/disconnected source, changing the global
+`2,000 ms` request latency target, or introducing a provider REST fallback.
+The bounded latest view remains a read-committed, fenced projection of the
+Rust canonical event. It is not a new cache or a second authority.
+
+**Approved scope and semantic contract.**
+
+1. Propagate the existing governed `event_recency_policy` and
+   `max_session_liveness_ms` from `DataRequirement` through the additive V2
+   reference SDK/API/domain request into the private live-view request. A
+   quiet read is possible only for an explicit `OBSERVE` requirement with a
+   declared provider-session SLA; existing callers retain blocking event-age
+   behavior.
+2. Add a signed, generated, provider-neutral component cadence policy to the
+   existing MARK/INDEX acquisition contract. It declares bounded quiet windows
+   for each physical component, rather than hard-coding a symbol in Python:
+   Binance's combined `BOTH` frame and OKX's distinct `MARK`/`INDEX` frames
+   are both represented by the same component model. The Rust core continues
+   to own parsing, same-generation pairing, canonical identity and immutable
+   component receipts; it must not invent a current timestamp.
+3. The active stream live-view admits a quiet pair only after it verifies all
+   of: exact canonical instrument/policy/revision; current gateway epoch; no
+   gap/resync fence; valid paired component lineage; every component still
+   within its signed quiet window; and an exact source session ID, connection
+   generation and config revision whose bounded liveness record is `LIVE`.
+   Missing, malformed, ambiguous, disconnected, clock-skewed, generation- or
+   config-mismatched session evidence, a component whose cadence expires, or a
+   gap/resync remains typed fail-closed. The original source event time and
+   per-component receipt timestamps remain observable lineage.
+4. The private protocol remains rolling-safe: the stream accepts legacy
+   strict requests and the additive quiet-aware request; new result evidence
+   is carried in additive headers/labels so an older query reader remains
+   conservative. Public `/v2` schema changes are additive and require
+   regenerated OpenAPI/SDK evidence.
+
+**Explicit exclusions.** No V1 change or fallback, external Binance/OKX/DNSE
+quota/circuit change, REST polling bypass, Kafka/topic/offset mutation, Redis
+flush, SQLite deletion, new service/container/symbol worker, Trading System,
+alpha or order-path change is permitted. `max_freshness_ms=2,000` remains the
+bounded consumer request/usable-read budget; component value age is reported
+separately and may only be admitted under the declared quiet contract.
+
+**Required source gates.** Python/Rust/API/SDK regressions cover both Binance
+and OKX: fresh pair; quiet-but-live pair; expired mark; expired index;
+disconnected heartbeat; stopped heartbeat; malformed/duplicate session record;
+generation/config mismatch; gap/resync; reconnect; delayed old generation;
+component and venue isolation; unchanged original timestamps; exact
+manifest/entitlement propagation; legacy strict request; OpenAPI/SDK
+compatibility; and no direct venue REST. Rust configuration tests prove that a
+component policy is complete and bounded for every generated MARK/INDEX
+binding. Source tests run in the immutable builder image with network disabled.
+
+**Runtime boundary and exit.** After source gates, build one immutable Rust
+core image and one immutable Python reader image, seal one runtime revision,
+and rolling-recreate only `rust_core`, `rust_core_2`, `rust_core_3`,
+`stream_v2_active`, `stream_v2_passive`, `query_v2_1`, and `query_v2_2`.
+Current exact image/config pairs become named rollback coordinates; V1,
+ingestors, projectors, BAR edge, Kafka topology/offsets, Redis, SQLite,
+Trading System, alpha and the order path stay untouched. A replacement strict
+300-second C2 must demonstrate all ten Binance USD-M/OKX Swap MARK/INDEX
+bindings, typed quiet/session/component evidence, no gap/fallback/direct REST,
+and consumer-call-to-usable p99 at or below 2,000 ms. It reports component
+value age separately rather than mislabelling an unchanged provider value as a
+new event. Only that receipt can remove the R1.33 C2 block.
+
+**Rollback and decision boundary.** A source/test failure stops before image
+build. A runtime/C2 failure rolls only those seven roles back to the recorded
+pre-R1.34 images and runtime directory; it never retries by weakening a
+cadence or freshness rule. Test images/cache are inventoried after the source
+slice; only active and named rollback images are retained while the runtime
+packet remains unresolved. Other read-only findings are recorded separately;
+they are not changed by this task without scope approval.
+
+**Source gate (`PASS / IMMUTABLE IMAGES AND SEALED RUNTIME PENDING`,
+2026-09-19).** The source contract now carries `event_recency_policy` and
+`max_session_liveness_ms` end-to-end as an additive V2 reference request.
+`OBSERVE` is permitted only for an execution `MARK_INDEX_PRICE` snapshot with
+an explicit session SLA; legacy requests remain `BLOCK`. The generated
+acquisition contract supplies complete bounded component cadence for every
+newly generated execution binding (Binance USD-M `BOTH=5,000 ms`; OKX Swap
+`MARK=15,000 ms`, `INDEX=70,000 ms`). Rust rejects an out-of-bounds policy and
+refuses to re-materialize a pair when any retained component expires; it never
+re-dates the provider event. The stream live view additionally requires exact
+session ID/generation/config, `LIVE` liveness, current gateway epoch and no
+gap/resync fence, while query rechecks the same evidence immediately before
+returning it to a consumer. The private reader rejects missing session
+provenance and validates headers against immutable pair lineage.
+
+**Tests actually run.** All ran with `--network none`, read-only source and
+disposable tmpfs target/state unless stated otherwise:
+
+- `python -m unittest -v tests.test_execution_mark_index_live_view
+  tests.test_phase113_reference_v2 tests.test_production_catalog`: `37/37`
+  pass. Covers both venues, strict legacy behavior, quiet-but-live, expired
+  component, disconnect/stopped heartbeat, session generation mismatch,
+  gap fence, exact identity, session-provenance corruption, no REST fallback
+  and generated cadence completeness.
+- `python -m unittest -v tests.test_fund_phase5_api
+  tests.test_fund_phase5_contracts tests.test_fund_phase5_consumer
+  tests.test_fund_phase5_stream_sdk tests.test_fund_phase5_e2e`: `45/45`
+  pass. `contracts/v2/openapi.snapshot.json` was regenerated and the
+  additive public SDK/API schema is frozen by the contract test.
+- `cargo fmt --all -- --check`, `cargo clippy -p qdl-realtime-core --lib
+  --locked --offline -- -D warnings`, and `cargo test -p qdl-realtime-core
+  --lib --locked --offline`: format/clippy pass; `42` pass, `1` explicitly
+  skipped Redis integration test because no isolated Redis URL was supplied.
+  The disposable builder `qdl-rust-builder:r134-test` existed only to provide
+  pinned dependency cache for the offline Rust test; it has not started a
+  runtime role and will be removed after the final immutable image is built.
+- A network-isolated parse of `consumers/stable/trading-system-paper.yaml`
+  confirms exactly `10` execution `MARK_INDEX_PRICE` requirements, each with
+  `event_recency_policy=OBSERVE`, `max_session_liveness_ms=45,000`, and the
+  independent quality `stale_policy=BLOCK`. This proves that quiet-channel
+  admission is a narrow event-recency entitlement, not a relaxation of
+  quality/freshness blocking.
+
+No provider request, V1 fallback, Kafka/Redis/SQLite mutation, service
+recreate, Trading System/alpha/order action or source-runtime mount change
+occurred during this source gate. The active R129 runtime has the ten logical
+MARK/INDEX bindings but predates the signed component cadence. The next
+permitted action is therefore exactly one new sealed runtime revision from
+this source, followed by the approved seven-role rolling packet and one strict
+300-second C2 receipt. R1.34 remains `SOURCE_COMPLETE / RUNTIME_PENDING`.

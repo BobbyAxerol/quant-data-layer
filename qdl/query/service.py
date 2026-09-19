@@ -592,6 +592,8 @@ class V2QueryService:
                     request,
                     max_freshness_ms=requirement.max_freshness_ms or 0,
                     source_policy_id=requirement.source_policy_id,
+                    event_recency_policy=requirement.effective_event_recency_policy,
+                    max_session_liveness_ms=requirement.max_session_liveness_ms,
                     deadline_ms=self._reference_deadline_ms(candidate, purpose),
                 )
             else:
@@ -762,6 +764,8 @@ class V2QueryService:
                 "INTERNAL_EXECUTION",
                 requirement.source_policy_id,
                 requirement.max_freshness_ms,
+                requirement.effective_event_recency_policy.value,
+                requirement.max_session_liveness_ms,
                 requirement.deadline_ms,
             )
         return request.cache_key
@@ -910,6 +914,14 @@ class V2QueryService:
                         "reference provider history did not cover the requested complete window",
                         False,
                     )
+            if self._uses_quiet_execution_mark_index_contract(
+                requirement, request, result
+            ):
+                return self._quiet_execution_mark_index_problem(
+                    requirement,
+                    result,
+                    at_ns=self._clock_ns() if at_ns is None else at_ns,
+                )
             if requirement.max_freshness_ms is not None:
                 observed_ns = self._reference_freshness_timestamp(result)
                 freshness_ms = max(
@@ -959,6 +971,111 @@ class V2QueryService:
             result.error_code not in {"PROVIDER_PROTOCOL"},
             result.retry_after_ms,
         )
+
+    @classmethod
+    def _uses_quiet_execution_mark_index_contract(
+        cls,
+        requirement: ReferenceDataRequirement,
+        request: ReferenceRequest,
+        result: ReferenceBatchResult,
+    ) -> bool:
+        """Identify the one explicit exception to normal event-age admission.
+
+        A quiet provider component is not a fresh market event.  The exception
+        is therefore deliberately limited to the execution MARK/INDEX live
+        view, whose stream gateway has already verified the paired lineage and
+        current provider session.  Every other reference product retains the
+        normal immutable event-age check below.
+        """
+
+        return (
+            requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+            and requirement.consumer_grade is ConsumerGrade.EXECUTION
+            and request.product is ReferenceProduct.MARK_INDEX_PRICE
+            and not request.is_history
+            and cls._is_execution_mark_index_live_result(result)
+        )
+
+    @staticmethod
+    def _quiet_execution_mark_index_problem(
+        requirement: ReferenceDataRequirement,
+        result: ReferenceBatchResult,
+        *,
+        at_ns: int,
+    ) -> QueryProblem | None:
+        """Recheck stream evidence at query assembly without altering lineage.
+
+        The private reader proves headers match the canonical envelope.  Query
+        still has to account for time spent in its own bounded executor before
+        handing the result to the consumer.  This keeps session and component
+        cadences fail-closed at the outer admission boundary as well.
+        """
+
+        if requirement.max_session_liveness_ms is None or len(result.observations) != 1:
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                "quiet execution MARK/INDEX contract is incomplete",
+                True,
+            )
+        labels = dict(result.observations[0].labels)
+        if (
+            labels.get("event_recency_policy") != StalePolicy.OBSERVE.value
+            or labels.get("recency_mode")
+            not in {"STRICT_EVENT_SESSION_LIVE", "COMPONENT_SESSION_LIVE"}
+            or labels.get("provider_session_state") != "LIVE"
+        ):
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                "quiet execution MARK/INDEX session evidence is not live",
+                True,
+            )
+        try:
+            session_liveness_ms = int(labels["provider_session_liveness_ms"])
+            session_checked_at_ns = int(labels["provider_session_checked_at_ns"])
+            components = tuple(
+                (
+                    int(labels[f"component_{name.lower()}_received_at_ns"]),
+                    int(labels[f"component_{name.lower()}_quiet_after_ms"]),
+                )
+                for name in ("MARK", "INDEX")
+            )
+        except (KeyError, TypeError, ValueError):
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                "quiet execution MARK/INDEX evidence is malformed",
+                True,
+            )
+        if (
+            session_liveness_ms < 0
+            or session_checked_at_ns <= 0
+            or session_checked_at_ns > at_ns
+        ):
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                "quiet execution MARK/INDEX session clock is invalid",
+                True,
+            )
+        elapsed_ms = (at_ns - session_checked_at_ns) // 1_000_000
+        if session_liveness_ms + elapsed_ms > requirement.max_session_liveness_ms:
+            return QueryProblem(
+                CanonicalErrorCode.DATA_STALE,
+                "quiet execution MARK/INDEX provider session exceeded its SLA",
+                True,
+            )
+        for receipt_ns, cadence_ms in components:
+            if (
+                receipt_ns <= 0
+                or cadence_ms < 250
+                or cadence_ms > 120_000
+                or receipt_ns > at_ns
+                or (at_ns - receipt_ns) // 1_000_000 > cadence_ms
+            ):
+                return QueryProblem(
+                    CanonicalErrorCode.DATA_STALE,
+                    "quiet execution MARK/INDEX component exceeded its cadence",
+                    True,
+                )
+        return None
 
     def status(self, requirement: DataRequirement) -> QualityMetadata:
         request_id = self.request_id()

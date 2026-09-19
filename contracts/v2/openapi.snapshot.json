@@ -2162,6 +2162,16 @@
             ],
             "title": "End Time Ns"
           },
+          "event_recency_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/qdl_sdk__models__StalePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "instrument_uid": {
             "maxLength": 200,
             "minLength": 1,
@@ -2220,6 +2230,19 @@
             "minimum": 1.0,
             "title": "Max Pages",
             "type": "integer"
+          },
+          "max_session_liveness_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 86400000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Session Liveness Ms"
           },
           "page_size": {
             "anyOf": [
@@ -2283,7 +2306,7 @@
           "event_recency_policy": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StalePolicy"
+                "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy"
               },
               {
                 "type": "null"
@@ -2362,7 +2385,7 @@
             "type": "string"
           },
           "stale_policy": {
-            "$ref": "#/components/schemas/StalePolicy",
+            "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy",
             "default": "BLOCK"
           },
           "warmup": {
@@ -2500,16 +2523,6 @@
         ],
         "title": "SourceView",
         "type": "object"
-      },
-      "StalePolicy": {
-        "enum": [
-          "UNSPECIFIED",
-          "BLOCK",
-          "PAUSE",
-          "OBSERVE"
-        ],
-        "title": "StalePolicy",
-        "type": "string"
       },
       "SystemReadinessSummary": {
         "additionalProperties": false,
@@ -2902,6 +2915,25 @@
         ],
         "title": "WarmupTimeRange",
         "type": "object"
+      },
+      "qdl__query__contracts__StalePolicy": {
+        "enum": [
+          "UNSPECIFIED",
+          "BLOCK",
+          "PAUSE",
+          "OBSERVE"
+        ],
+        "title": "StalePolicy",
+        "type": "string"
+      },
+      "qdl_sdk__models__StalePolicy": {
+        "enum": [
+          "BLOCK",
+          "PAUSE",
+          "OBSERVE"
+        ],
+        "title": "StalePolicy",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -3029,7 +3061,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/StalePolicy"
+                  "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy"
                 },
                 {
                   "type": "null"
@@ -3081,7 +3113,7 @@
             "name": "stale_policy",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/StalePolicy",
+              "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy",
               "default": "BLOCK"
             }
           },
@@ -3553,7 +3585,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/StalePolicy"
+                  "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy"
                 },
                 {
                   "type": "null"
@@ -3605,7 +3637,7 @@
             "name": "stale_policy",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/StalePolicy",
+              "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy",
               "default": "BLOCK"
             }
           },
@@ -3760,7 +3792,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/StalePolicy"
+                  "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy"
                 },
                 {
                   "type": "null"
@@ -3812,7 +3844,7 @@
             "name": "stale_policy",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/StalePolicy",
+              "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy",
               "default": "BLOCK"
             }
           },
@@ -4052,7 +4084,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/StalePolicy"
+                  "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy"
                 },
                 {
                   "type": "null"
@@ -4104,7 +4136,7 @@
             "name": "stale_policy",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/StalePolicy",
+              "$ref": "#/components/schemas/qdl__query__contracts__StalePolicy",
               "default": "BLOCK"
             }
           },

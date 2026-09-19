@@ -239,6 +239,12 @@ def reference_request_for_requirement(
         "consumer_grade": Grade(requirement.consumer_grade.value),
         "source_policy_id": requirement.source_policy_id,
         "max_freshness_ms": requirement.max_freshness_ms,
+        "event_recency_policy": (
+            requirement.event_recency_policy.value
+            if requirement.event_recency_policy is not None
+            else None
+        ),
+        "max_session_liveness_ms": requirement.max_session_liveness_ms,
         "require_full_coverage": requirement.require_full_coverage,
         "deadline_ms": 60_000,
     }

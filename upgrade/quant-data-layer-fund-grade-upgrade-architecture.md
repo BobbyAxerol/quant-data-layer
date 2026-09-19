@@ -5836,6 +5836,36 @@ runtime image, bundle, role, provider session, durable store or consumer was
 changed by this evidence.  This is not a C2 certificate; one separately
 approved runtime packet remains required.
 
+#### J.7.2 MARK/INDEX component recency on quiet provider channels
+
+`MARK_INDEX_PRICE` is a paired execution reference, not a generic sparse
+trade. Its original component timestamps and receipts remain immutable
+lineage. A provider may legitimately leave an unchanged mark or index value
+quiet for its documented cadence, so an execution consumer may use a pair
+whose older component is beyond the ordinary event-age bound only when all of
+the following are true:
+
+- the signed acquisition binding declares a finite quiet window for every
+  physical component;
+- Rust has retained the exact same-session, same-generation pair and refuses
+  to materialize a pair whose component exceeds its own window;
+- the V2 request explicitly sets `event_recency_policy=OBSERVE` and a bounded
+  `max_session_liveness_ms`;
+- the stream gateway reads a matching `LIVE` provider-session record in the
+  current config revision and proves no gap/resync or gateway fence; and
+- the query result carries the original component receipt times, component
+  cadence, session check time and liveness evidence for the consumer to audit.
+
+This is a narrow execution-reference exception, not a relaxation of
+`max_freshness_ms` for trade, quote, book, BAR or arbitrary reference data.
+For an admitted quiet MARK/INDEX pair, the two-second consumer limit remains
+the bounded request-to-usable-read budget; component age is evaluated against
+the signed component cadence and is never rewritten as a fresh event. Missing
+cadence, stale component, stopped/disconnected/ambiguous session, generation
+or config mismatch, clock skew, gap/resync, or a legacy strict request fails
+closed. The same model represents a combined Binance frame and separate OKX
+MARK/INDEX frames without a symbol-specific Python exception.
+
 ### J.8 Phase 11.5 consumer-scoped universal route binding
 
 The universal release manifest is a release-control artifact, not an

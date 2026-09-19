@@ -154,6 +154,29 @@ class StableMarkIndexAcquisition:
 
     provider_protocol: str
     index_native_symbol: str | None
+    component_quiet_after_ms: tuple[tuple[str, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        names = tuple(name for name, _value in self.component_quiet_after_ms)
+        if len(names) != len(set(names)):
+            raise ValueError("MARK_INDEX component cadence contains duplicates")
+        if any(
+            name not in {"BOTH", "MARK", "INDEX"}
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 250 <= value <= 120_000
+            for name, value in self.component_quiet_after_ms
+        ):
+            raise ValueError("MARK_INDEX component cadence is invalid")
+
+    def quiet_after_ms_for(self, component: str) -> int | None:
+        """Return the signed quiet window for one physical component.
+
+        An absent value deliberately preserves strict legacy behavior. New
+        generated bindings must carry a complete provider-specific mapping.
+        """
+
+        return dict(self.component_quiet_after_ms).get(component)
 
     def validate(
         self,
@@ -177,6 +200,8 @@ class StableMarkIndexAcquisition:
                 or self.index_native_symbol is not None
             ):
                 raise ValueError("Binance MARK_INDEX acquisition differs from provider protocol")
+            if self.component_quiet_after_ms and set(dict(self.component_quiet_after_ms)) != {"BOTH"}:
+                raise ValueError("Binance MARK_INDEX component cadence is incomplete")
             return
         if self.provider_protocol == "OKX_MARK_INDEX":
             index_symbol = (self.index_native_symbol or "").strip().upper()
@@ -189,6 +214,8 @@ class StableMarkIndexAcquisition:
                 or index_symbol == source.instrument.native_symbol
             ):
                 raise ValueError("OKX MARK_INDEX acquisition differs from provider protocol")
+            if self.component_quiet_after_ms and set(dict(self.component_quiet_after_ms)) != {"MARK", "INDEX"}:
+                raise ValueError("OKX MARK_INDEX component cadence is incomplete")
             return
         raise ValueError("MARK_INDEX provider protocol is not certified")
 
@@ -237,6 +264,7 @@ class StablePhysicalEntry:
     physical_native_channel: str
     provider_kind: str
     mark_index_component: str | None = None
+    mark_index_quiet_after_ms: int | None = None
 
     def __iter__(self):
         """Keep the former private `(source, acquisition)` projection usable.
@@ -572,9 +600,11 @@ class StableAcquisitionPlan:
             mark_index_raw = value.get("mark_index")
             if mark_index_raw is not None:
                 required_mark_index = {"provider_protocol", "index_native_symbol"}
+                optional_mark_index = {"component_quiet_after_ms"}
                 if (
                     not isinstance(mark_index_raw, dict)
-                    or set(mark_index_raw) != required_mark_index
+                    or not required_mark_index <= set(mark_index_raw)
+                    or set(mark_index_raw) - required_mark_index - optional_mark_index
                     or (
                         mark_index_raw["index_native_symbol"] is not None
                         and not isinstance(mark_index_raw["index_native_symbol"], str)
@@ -583,6 +613,27 @@ class StableAcquisitionPlan:
                     raise ValueError(
                         "stable MARK_INDEX acquisition fields are incomplete or unknown"
                     )
+                cadence_raw = mark_index_raw.get("component_quiet_after_ms")
+                if cadence_raw is None:
+                    cadence = ()
+                elif (
+                    not isinstance(cadence_raw, dict)
+                    or not cadence_raw
+                    or any(
+                        not isinstance(name, str)
+                        or isinstance(value, bool)
+                        or not isinstance(value, int)
+                        for name, value in cadence_raw.items()
+                    )
+                ):
+                    raise ValueError("stable MARK_INDEX component cadence is invalid")
+                else:
+                    cadence = tuple(
+                        sorted(
+                            (str(name).upper(), int(value))
+                            for name, value in cadence_raw.items()
+                        )
+                    )
                 mark_index = StableMarkIndexAcquisition(
                     provider_protocol=str(mark_index_raw["provider_protocol"]).upper(),
                     index_native_symbol=(
@@ -590,6 +641,7 @@ class StableAcquisitionPlan:
                         if mark_index_raw["index_native_symbol"] is not None
                         else None
                     ),
+                    component_quiet_after_ms=cadence,
                 )
             else:
                 mark_index = None
@@ -736,6 +788,9 @@ class StableAcquisitionPlan:
                             physical_native_channel=physical_channel,
                             provider_kind=provider_kind,
                             mark_index_component=component,
+                            mark_index_quiet_after_ms=(
+                                acquisition.mark_index.quiet_after_ms_for(component)
+                            ),
                         ))
         return tuple(result)
 
@@ -794,6 +849,10 @@ class StableAcquisitionPlan:
                 item["physical_native_symbol"] = entry.physical_native_symbol
                 item["physical_native_channel"] = entry.physical_native_channel
                 item["mark_index"] = {"component": entry.mark_index_component}
+                if entry.mark_index_quiet_after_ms is not None:
+                    item["mark_index"]["quiet_after_ms"] = (
+                        entry.mark_index_quiet_after_ms
+                    )
             bindings.append(item)
         return {
             "core": {

@@ -435,6 +435,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -473,6 +475,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -511,6 +515,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -549,6 +555,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -587,6 +595,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -625,6 +635,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -663,6 +675,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -701,6 +715,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -739,6 +755,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
@@ -777,6 +795,8 @@ spec:
     source_policy_id: crypto_liquid_v2
     warmup_limit: 0
     max_freshness_ms: 2000
+    event_recency_policy: OBSERVE
+    max_session_liveness_ms: 45000
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK

@@ -48,6 +48,8 @@ pub enum MarkIndexComponent {
 #[serde(deny_unknown_fields)]
 pub struct MarkIndexBinding {
     pub component: MarkIndexComponent,
+    #[serde(default)]
+    pub quiet_after_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -252,6 +254,14 @@ impl CoreBinding {
                     ))
                 }
             }
+            if mark_index
+                .quiet_after_ms
+                .is_some_and(|value| !(250..=120_000).contains(&value))
+            {
+                return Err(CoreError::Configuration(
+                    "mark/index component quiet cadence is outside the bounded contract".into(),
+                ));
+            }
         } else if self.physical_native_symbol.is_some() {
             return Err(CoreError::Configuration(
                 "physical identity is reserved for a mark/index component binding".into(),
@@ -379,6 +389,7 @@ struct MarkIndexComponentState {
     received_at_ns: i64,
     raw_capture_id: Vec<u8>,
     raw_frame_sha256: Vec<u8>,
+    quiet_after_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -819,6 +830,7 @@ impl RealtimeCore {
             received_at_ns: raw.received_at_ns,
             raw_capture_id: raw.capture_id.clone(),
             raw_frame_sha256: raw.raw_frame_sha256.clone(),
+            quiet_after_ms: contract.quiet_after_ms,
         };
         let update = |slot: &mut Option<MarkIndexComponentState>, value: (String, i64)| {
             update_mark_index_component(slot, candidate(value))
@@ -877,6 +889,18 @@ impl RealtimeCore {
                 filtered_outcome: None,
             };
         };
+        if mark_index_component_expired(mark, processing_at_ns)
+            || mark_index_component_expired(index, processing_at_ns)
+        {
+            self.mark_index_pairs.insert(target_key, state);
+            return ProcessBatch {
+                canonical: vec![],
+                quarantines: vec![],
+                duplicates: 0,
+                filtered: 1,
+                filtered_outcome: Some("MARK_INDEX_COMPONENT_EXPIRED"),
+            };
+        }
         let oldest_confirmation_ns = mark.received_at_ns.min(index.received_at_ns);
         let newest_confirmation_ns = mark.received_at_ns.max(index.received_at_ns);
         let source_event_time_ms = mark.source_event_time_ms.min(index.source_event_time_ms);
@@ -1510,6 +1534,18 @@ fn update_mark_index_component(
     Ok(true)
 }
 
+fn mark_index_component_expired(
+    component: &MarkIndexComponentState,
+    processing_at_ns: i64,
+) -> bool {
+    let Some(quiet_after_ms) = component.quiet_after_ms else {
+        return false;
+    };
+    let quiet_after_ns = quiet_after_ms.saturating_mul(1_000_000);
+    let quiet_after_ns = i64::try_from(quiet_after_ns).unwrap_or(i64::MAX);
+    processing_at_ns.saturating_sub(component.received_at_ns) > quiet_after_ns
+}
+
 fn pair_raw_identity(
     mark: &MarkIndexComponentState,
     index: &MarkIndexComponentState,
@@ -1809,6 +1845,7 @@ mod tests {
         );
         result.mark_index = Some(MarkIndexBinding {
             component: MarkIndexComponent::Both,
+            quiet_after_ms: None,
         });
         result
     }
@@ -1833,6 +1870,7 @@ mod tests {
         mark.physical_native_channel = Some("mark-price".into());
         mark.mark_index = Some(MarkIndexBinding {
             component: MarkIndexComponent::Mark,
+            quiet_after_ms: None,
         });
         let mut index = mark.clone();
         index.provider_kind = "okx_index_price".into();
@@ -1840,6 +1878,7 @@ mod tests {
         index.physical_native_channel = Some("index-tickers".into());
         index.mark_index = Some(MarkIndexBinding {
             component: MarkIndexComponent::Index,
+            quiet_after_ms: None,
         });
         (mark, index)
     }
@@ -1958,6 +1997,72 @@ mod tests {
         assert_eq!(stale.quarantines.len(), 1);
         let evidence = QuarantineRecord::decode(stale.quarantines[0].payload.as_slice()).unwrap();
         assert_eq!(evidence.reason, QuarantineReason::StaleGeneration as i32);
+    }
+
+    #[test]
+    fn okx_mark_index_quiet_component_expiry_blocks_re_materialization() {
+        let (mut mark, mut index) = okx_mark_index_bindings("DOGE-USDT-SWAP", "DOGE-USDT");
+        mark.mark_index.as_mut().unwrap().quiet_after_ms = Some(250);
+        index.mark_index.as_mut().unwrap().quiet_after_ms = Some(500);
+        let mut core = core_many(vec![mark.clone(), index.clone()], true);
+        let mark_frame = br#"{"arg":{"channel":"mark-price","instId":"DOGE-USDT-SWAP"},"data":[{"instId":"DOGE-USDT-SWAP","markPx":"0.14525","ts":"1786352400000"}]}"#;
+        let index_frame = br#"{"arg":{"channel":"index-tickers","instId":"DOGE-USDT"},"data":[{"instId":"DOGE-USDT","idxPx":"0.14510","ts":"1786352400100"}]}"#;
+        let origin_ns = 1_786_352_400_000_000_000;
+
+        assert!(core
+            .process(
+                raw_with_receipt(&mark, mark_frame, 5, origin_ns),
+                origin_ns + 100,
+            )
+            .unwrap()
+            .canonical
+            .is_empty());
+        assert_eq!(
+            core.process(
+                raw_with_receipt(&index, index_frame, 5, origin_ns + 100_000_000),
+                origin_ns + 100_000_100,
+            )
+            .unwrap()
+            .canonical
+            .len(),
+            1
+        );
+
+        // A fresh MARK cannot re-date the quiet INDEX component. The retained
+        // pair remains available only to the configured index cadence, and is
+        // never emitted as a new canonical MARK/INDEX observation after that.
+        let expired = core
+            .process(
+                raw_with_receipt(&mark, mark_frame, 5, origin_ns + 601_000_000),
+                origin_ns + 601_000_100,
+            )
+            .unwrap();
+        assert!(expired.canonical.is_empty());
+        assert_eq!(expired.filtered, 1);
+        assert_eq!(
+            expired.filtered_outcome.as_deref(),
+            Some("MARK_INDEX_COMPONENT_EXPIRED")
+        );
+    }
+
+    #[test]
+    fn mark_index_quiet_cadence_must_remain_bounded() {
+        let mut binding = binance_mark_index_binding("DOGEUSDT");
+        binding.mark_index.as_mut().unwrap().quiet_after_ms = Some(249);
+        let result = RealtimeCore::new(RealtimeCoreConfig {
+            canonical_stream: "qdl.test.canonical.v2".into(),
+            quarantine_stream: "qdl.test.quarantine.v1".into(),
+            allow_test_provenance: true,
+            dedup_capacity: 16,
+            bindings: vec![binding],
+        });
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("out-of-bounds MARK/INDEX quiet cadence was accepted"),
+        };
+        assert!(
+            matches!(error, CoreError::Configuration(message) if message.contains("quiet cadence"))
+        );
     }
 
     #[test]

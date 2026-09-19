@@ -10,7 +10,9 @@ import asyncio
 import base64
 import hashlib
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
@@ -37,6 +39,7 @@ from qdl.query import (
     MemoryMarketDataBackend,
     V2QueryService,
 )
+from qdl.query.contracts import StalePolicy
 from qdl.query.reference import ReferenceBatchRequirement, ReferenceDataRequirement
 from qdl.reference.batch import ReferenceBatch
 from qdl.reference.contracts import (
@@ -53,12 +56,14 @@ from qdl.reference.contracts import (
 )
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
 from qdl.runtime.execution_mark_index import (
+    ExecutionMarkIndexQuietPolicy,
     ExecutionMarkIndexLiveView,
     install_execution_mark_index_read,
 )
 from qdl.runtime.internal_auth import stable_hmac_signature
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.stable_catalog import StableSourceBinding
+from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.transport import Cursor, DurableEvent, StoredEvent
 
 
@@ -167,6 +172,87 @@ def _envelope(
     return envelope
 
 
+def _paired_envelope(
+    binding: StableSourceBinding,
+    *,
+    sequence: int,
+    generation: int = 1,
+    mark_received_at_ns: int,
+    index_received_at_ns: int,
+) -> market_data_pb2.EventEnvelope:
+    """Build deterministic Rust-shaped pair lineage for quiet-contract tests."""
+
+    envelope = _envelope(
+        binding,
+        sequence=sequence,
+        generation=generation,
+        received_at_ns=min(mark_received_at_ns, index_received_at_ns),
+    )
+    mark_capture = hashlib.sha256(
+        f"mark:{binding.instrument.instrument_uid}:{sequence}".encode()
+    ).digest()[:16]
+    index_capture = hashlib.sha256(
+        f"index:{binding.instrument.instrument_uid}:{sequence}".encode()
+    ).digest()[:16]
+    source_times = (
+        mark_received_at_ns // 1_000_000,
+        index_received_at_ns // 1_000_000,
+    )
+    envelope.source_event_time_ns = min(source_times) * 1_000_000
+    envelope.received_at_ns = min(mark_received_at_ns, index_received_at_ns)
+    envelope.normalized_at_ns = envelope.received_at_ns + 1
+    envelope.published_at_ns = envelope.received_at_ns + 2
+    envelope.source_sequence = ":".join(
+        str(value)
+        for value in (
+            *source_times,
+            mark_received_at_ns,
+            index_received_at_ns,
+            mark_capture.hex(),
+            index_capture.hex(),
+        )
+    )
+    capture = hashlib.sha256()
+    capture.update(b"qdl-mark-index-capture-v1")
+    capture.update(mark_capture)
+    capture.update(index_capture)
+    envelope.raw_capture_id = capture.digest()[:16]
+    envelope.raw_payload_hash = hashlib.sha256(
+        b"paired-mark-index-test" + mark_capture + index_capture
+    ).digest()
+    return envelope
+
+
+def _write_session(
+    root: Path,
+    envelope: market_data_pb2.EventEnvelope,
+    *,
+    state: str = "LIVE",
+    generation: int | None = None,
+    config_revision: int | None = None,
+    last_transport_at_ns: int = NOW_NS - 1_000_000,
+) -> None:
+    directory = root / f"{envelope.venue.lower()}-{envelope.market.lower()}"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "source.json").write_text(
+        json.dumps({
+            "schema": "qdl.provider-session-liveness.v1",
+            "source_session_id": envelope.source_session_id,
+            "connection_generation": (
+                envelope.connection_generation if generation is None else generation
+            ),
+            "state": state,
+            "last_transport_at_ns": last_transport_at_ns,
+            "updated_at_ns": last_transport_at_ns,
+            "config_revision": (
+                envelope.config_revision
+                if config_revision is None else config_revision
+            ),
+        }),
+        encoding="utf-8",
+    )
+
+
 def _stored(envelope: market_data_pb2.EventEnvelope, *, offset: int) -> StoredEvent:
     payload = envelope.SerializeToString(deterministic=True)
     event = DurableEvent(
@@ -250,13 +336,24 @@ class _LiveReader:
         self.status = status
         self.calls = 0
         self.calls_by_policy: list[tuple[str, int, int | None]] = []
+        self.calls_by_recency: list[tuple[StalePolicy, int | None]] = []
         self.source_event_time_ns = source_event_time_ns
         self.provider_confirmation_ns = provider_confirmation_ns
         self.freshness_basis = freshness_basis
 
-    async def fetch(self, request, *, max_freshness_ms, source_policy_id, deadline_ms=None):
+    async def fetch(
+        self,
+        request,
+        *,
+        max_freshness_ms,
+        source_policy_id,
+        event_recency_policy=StalePolicy.BLOCK,
+        max_session_liveness_ms=None,
+        deadline_ms=None,
+    ):
         self.calls += 1
         self.calls_by_policy.append((source_policy_id, max_freshness_ms, deadline_ms))
+        self.calls_by_recency.append((event_recency_policy, max_session_liveness_ms))
         capability = FeedCapability(CapabilityAvailability.AVAILABLE, snapshot=True)
         lineage = ReferenceLineage(
             provider="BINANCE_DIRECT",
@@ -293,6 +390,22 @@ class _LiveReader:
             )
             if field is not None
         )
+        labels = [
+            ("freshness_basis", self.freshness_basis),
+            ("provider_confirmation_ns", str(self.provider_confirmation_ns)),
+        ]
+        if event_recency_policy is StalePolicy.OBSERVE:
+            labels.extend((
+                ("event_recency_policy", "OBSERVE"),
+                ("recency_mode", "COMPONENT_SESSION_LIVE"),
+                ("provider_session_state", "LIVE"),
+                ("provider_session_liveness_ms", "1"),
+                ("provider_session_checked_at_ns", str(NOW_NS)),
+                ("component_mark_received_at_ns", str(NOW_NS - 10_000_000_000)),
+                ("component_index_received_at_ns", str(NOW_NS - 60_000_000_000)),
+                ("component_mark_quiet_after_ms", "15000"),
+                ("component_index_quiet_after_ms", "70000"),
+            ))
         return ReferenceBatchResult(
             request=request,
             status=ReferenceStatus.OK,
@@ -315,10 +428,7 @@ class _LiveReader:
                 product=request.product,
                 observed_at_ns=self.source_event_time_ns,
                 fields=fields,
-                labels=(
-                    ("freshness_basis", self.freshness_basis),
-                    ("provider_confirmation_ns", str(self.provider_confirmation_ns)),
-                ),
+                labels=tuple(labels),
             ),),
         )
 
@@ -427,6 +537,7 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
             gateway_epoch=5,
             now_ns=NOW_NS + 500_000_000,
         )).record)
+
         self.assertEqual(
             (await self.view.read(
                 instrument_uid=self.record.instrument_uid,
@@ -472,6 +583,127 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
             )).reason,
             "NOT_READY",
         )
+
+    async def test_quiet_pair_is_session_bound_and_preserves_component_lineage(self):
+        """Only a declared, healthy paired provider session may admit quiet data."""
+
+        record = _record(
+            venue="OKX", market="SWAP", native_symbol="DOGE-USDT-SWAP", base="DOGE"
+        )
+        binding = _binding(record)
+        envelope = _paired_envelope(
+            binding,
+            sequence=1,
+            generation=3,
+            mark_received_at_ns=NOW_NS - 10_000_000_000,
+            index_received_at_ns=NOW_NS - 60_000_000_000,
+        )
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            view = ExecutionMarkIndexLiveView(
+                frozenset({record.instrument_uid}),
+                quiet_policies={
+                    record.instrument_uid: ExecutionMarkIndexQuietPolicy((
+                        ("MARK", 15_000), ("INDEX", 70_000),
+                    )),
+                },
+                session_liveness_reader=StableSessionLivenessReader(root),
+            )
+            await view.remember(
+                binding=binding,
+                envelope=envelope,
+                stored=_stored(envelope, offset=31),
+                gateway_epoch=5,
+            )
+            _write_session(root, envelope)
+            quiet = await view.read(
+                instrument_uid=record.instrument_uid,
+                instrument_revision=record.metadata_revision,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                event_recency_policy=StalePolicy.OBSERVE,
+                max_session_liveness_ms=45_000,
+                now_ns=NOW_NS,
+            )
+            self.assertIsNotNone(quiet.record)
+            self.assertEqual(quiet.recency_mode, "COMPONENT_SESSION_LIVE")
+            self.assertEqual(
+                quiet.record.source_event_time_ns,
+                envelope.source_event_time_ns,
+            )
+            self.assertEqual(
+                dict(quiet.component_receipts_ns),
+                {"MARK": NOW_NS - 10_000_000_000, "INDEX": NOW_NS - 60_000_000_000},
+            )
+
+            strict = await view.read(
+                instrument_uid=record.instrument_uid,
+                instrument_revision=record.metadata_revision,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=5,
+                now_ns=NOW_NS,
+            )
+            self.assertEqual(strict.reason, "STALE")
+
+            _write_session(root, envelope, state="DISCONNECTED")
+            self.assertEqual(
+                (await view.read(
+                    instrument_uid=record.instrument_uid,
+                    instrument_revision=record.metadata_revision,
+                    source_policy_id="crypto_liquid_v2",
+                    max_freshness_ms=2_000,
+                    gateway_epoch=5,
+                    event_recency_policy=StalePolicy.OBSERVE,
+                    max_session_liveness_ms=45_000,
+                    now_ns=NOW_NS,
+                )).reason,
+                "SESSION_STATE",
+            )
+
+            _write_session(root, envelope, generation=4)
+            self.assertEqual(
+                (await view.read(
+                    instrument_uid=record.instrument_uid,
+                    instrument_revision=record.metadata_revision,
+                    source_policy_id="crypto_liquid_v2",
+                    max_freshness_ms=2_000,
+                    gateway_epoch=5,
+                    event_recency_policy=StalePolicy.OBSERVE,
+                    max_session_liveness_ms=45_000,
+                    now_ns=NOW_NS,
+                )).reason,
+                "SESSION_STATE",
+            )
+
+            _write_session(root, envelope)
+            expired_mark = _paired_envelope(
+                binding,
+                sequence=2,
+                generation=3,
+                mark_received_at_ns=NOW_NS - 16_000_000_000,
+                index_received_at_ns=NOW_NS - 60_000_000_000,
+            )
+            await view.remember(
+                binding=binding,
+                envelope=expired_mark,
+                stored=_stored(expired_mark, offset=32),
+                gateway_epoch=5,
+            )
+            self.assertEqual(
+                (await view.read(
+                    instrument_uid=record.instrument_uid,
+                    instrument_revision=record.metadata_revision,
+                    source_policy_id="crypto_liquid_v2",
+                    max_freshness_ms=2_000,
+                    gateway_epoch=5,
+                    event_recency_policy=StalePolicy.OBSERVE,
+                    max_session_liveness_ms=45_000,
+                    now_ns=NOW_NS,
+                )).reason,
+                "COMPONENT_STALE",
+            )
 
     async def test_pre_spool_record_is_readable_then_withdrawn_or_promoted_exactly(self):
         first = _envelope(self.binding, sequence=1, generation=2)
@@ -697,6 +929,56 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.ERROR)
         self.assertEqual(result.error_code, "LIVE_VIEW_PROTOCOL")
 
+    async def test_reader_rejects_missing_session_provenance_for_quiet_request(self):
+        envelope = _envelope(self.binding, sequence=98)
+        envelope.source_session_id = ""
+        payload = {
+            "schema": "qdl.v2.execution-mark-index-view.v2",
+            "lease_epoch": 5,
+            "spool_watermark_offset": 98,
+            "delivery_stage": "SPOOL_CONFIRMED",
+            "canonical": base64.b64encode(
+                envelope.SerializeToString(deterministic=True)
+            ).decode("ascii"),
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=payload,
+                headers={
+                    "X-QDL-Execution-Freshness-Basis": "PROVIDER_CONFIRMATION",
+                    "X-QDL-Execution-Recency-Mode": "COMPONENT_SESSION_LIVE",
+                    "X-QDL-Execution-Session-State": "LIVE",
+                    "X-QDL-Execution-Session-Liveness-Ms": "1",
+                    "X-QDL-Execution-Session-Checked-At-Ns": str(NOW_NS),
+                    "X-QDL-Execution-Component-Receipts-Ns": (
+                        f"INDEX={NOW_NS - 1},MARK={NOW_NS - 1}"
+                    ),
+                    "X-QDL-Execution-Component-Quiet-After-Ms": (
+                        "INDEX=70000,MARK=15000"
+                    ),
+                },
+                request=request,
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        reader = HttpExecutionMarkIndexReader(
+            ("https://stream_v2_active:8200",), SECRET, client=client
+        )
+        try:
+            result = await reader.fetch(
+                ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE),
+                max_freshness_ms=2_000,
+                source_policy_id="crypto_liquid_v2",
+                event_recency_policy=StalePolicy.OBSERVE,
+                max_session_liveness_ms=45_000,
+            )
+        finally:
+            await client.aclose()
+        self.assertEqual(result.status, ReferenceStatus.ERROR)
+        self.assertEqual(result.error_code, "LIVE_VIEW_PROTOCOL")
+
     async def test_reader_uses_one_deadline_across_active_passive_urls(self):
         envelope = _envelope(self.binding, sequence=50)
         payload = {
@@ -819,6 +1101,8 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
         *,
         source_policy_id: str = "crypto_liquid_v2",
         max_freshness_ms: int = 2_000,
+        event_recency_policy: StalePolicy | None = None,
+        max_session_liveness_ms: int | None = None,
         deadline_ms: int = 20_000,
     ) -> ReferenceDataRequirement:
         return ReferenceDataRequirement(
@@ -830,6 +1114,8 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             page_size=1,
             max_pages=1,
             max_freshness_ms=max_freshness_ms,
+            event_recency_policy=event_recency_policy,
+            max_session_liveness_ms=max_session_liveness_ms,
             deadline_ms=deadline_ms,
         )
 
@@ -944,6 +1230,40 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(result.partial)
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(self.fallback.calls, 0)
+
+    async def test_quiet_execution_mark_index_rechecks_component_and_session_evidence(self):
+        clock = {"ns": NOW_NS}
+        requirement = self._execution_requirement(
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        )
+        service = V2QueryService(
+            **{**self.common, "clock_ns": lambda: clock["ns"]},
+            execution_mark_index_reader=_LiveReader(
+                source_event_time_ns=NOW_NS - 60_000_000_000,
+                provider_confirmation_ns=NOW_NS - 60_000_000_000,
+                freshness_basis="PROVIDER_CONFIRMATION",
+            ),
+        )
+        accepted = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("execution-reader", (requirement,)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertFalse(accepted.partial)
+        labels = dict(accepted.results[0].result.observations[0].labels)
+        self.assertEqual(labels["recency_mode"], "COMPONENT_SESSION_LIVE")
+        self.assertEqual(labels["component_index_quiet_after_ms"], "70000")
+
+        clock["ns"] += 70_001_000_000
+        stale = await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "execution-reader", (requirement,), require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        self.assertTrue(stale.partial)
+        self.assertEqual(stale.results[0].problem.code.value, "DATA_STALE")
         self.assertEqual(self.fallback.calls, 0)
 
     async def test_execution_live_singleflight_isolated_by_policy_freshness_and_deadline(self):

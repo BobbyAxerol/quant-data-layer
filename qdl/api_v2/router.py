@@ -155,6 +155,12 @@ def _reference_requirement(model) -> ReferenceDataRequirement:
         basis_series=DomainBasisSeries(model.basis_series.value),
         basis_contract_type=model.basis_contract_type,
         max_freshness_ms=model.max_freshness_ms,
+        event_recency_policy=(
+            StalePolicy(model.event_recency_policy.value)
+            if model.event_recency_policy is not None
+            else None
+        ),
+        max_session_liveness_ms=model.max_session_liveness_ms,
         require_full_coverage=model.require_full_coverage,
         deadline_ms=model.deadline_ms,
     )

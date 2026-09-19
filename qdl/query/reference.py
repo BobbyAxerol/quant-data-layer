@@ -22,6 +22,7 @@ from qdl.query.contracts import (
     DataRequirement,
     FeedType,
     RecoveryPolicy,
+    StalePolicy,
 )
 from qdl.reference.contracts import (
     BasisSeries,
@@ -85,6 +86,8 @@ class ReferenceDataRequirement:
     basis_series: BasisSeries = BasisSeries.NATIVE
     basis_contract_type: str | None = None
     max_freshness_ms: int | None = None
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = None
     require_full_coverage: bool = True
     deadline_ms: int = 20_000
 
@@ -115,6 +118,32 @@ class ReferenceDataRequirement:
             raise ValueError("reference interval cannot be blank")
         if self.max_freshness_ms is not None and self.max_freshness_ms <= 0:
             raise ValueError("reference max_freshness_ms must be positive")
+        if (
+            self.max_session_liveness_ms is not None
+            and self.max_session_liveness_ms <= 0
+        ):
+            raise ValueError("reference max_session_liveness_ms must be positive")
+        if self.event_recency_policy is not None and not isinstance(
+            self.event_recency_policy, StalePolicy
+        ):
+            raise TypeError("reference event_recency_policy must use StalePolicy")
+        if (
+            self.event_recency_policy is StalePolicy.UNSPECIFIED
+            or (
+                self.event_recency_policy is StalePolicy.OBSERVE
+                and self.max_session_liveness_ms is None
+            )
+        ):
+            raise ValueError(
+                "observed reference event recency requires a provider session SLA"
+            )
+        if (
+            self.event_recency_policy is StalePolicy.OBSERVE
+            and not execution_mark_snapshot
+        ):
+            raise ValueError(
+                "observed reference event recency only applies to execution MARK_INDEX_PRICE"
+            )
         if not 100 <= self.deadline_ms <= 120_000:
             raise ValueError("reference deadline_ms must be between 100 and 120000")
         self._validate_shape()
@@ -136,6 +165,8 @@ class ReferenceDataRequirement:
             # provider pagination limit outside the access-control boundary.
             warmup_limit=self.limit,
             max_freshness_ms=self.max_freshness_ms,
+            event_recency_policy=self.event_recency_policy,
+            max_session_liveness_ms=self.max_session_liveness_ms,
             require_full_coverage=self.require_full_coverage,
             require_final_bars=False,
             recovery=RecoveryPolicy.FRESH_SNAPSHOT,
@@ -219,6 +250,10 @@ class ReferenceDataRequirement:
                 raise ValueError("continuous BASIS requires CURRENT_QUARTER or NEXT_QUARTER")
         elif self.basis_contract_type is not None or self.basis_series is not BasisSeries.NATIVE:
             raise ValueError("basis selector fields only apply to BASIS")
+
+    @property
+    def effective_event_recency_policy(self) -> StalePolicy:
+        return self.event_recency_policy or StalePolicy.BLOCK
 
 
 @dataclass(frozen=True, slots=True)

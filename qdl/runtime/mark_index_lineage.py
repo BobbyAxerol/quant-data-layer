@@ -20,6 +20,10 @@ class DerivedMarkIndexLineage:
 
     mark_capture_id: bytes
     index_capture_id: bytes
+    mark_source_event_time_ms: int
+    index_source_event_time_ms: int
+    mark_received_at_ns: int
+    index_received_at_ns: int
 
 
 def paired_mark_index_lineage(
@@ -65,6 +69,10 @@ def paired_mark_index_lineage(
     return DerivedMarkIndexLineage(
         mark_capture_id=mark_capture_id,
         index_capture_id=index_capture_id,
+        mark_source_event_time_ms=source_times[0],
+        index_source_event_time_ms=source_times[1],
+        mark_received_at_ns=source_times[2],
+        index_received_at_ns=source_times[3],
     )
 
 

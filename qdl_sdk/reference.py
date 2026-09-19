@@ -13,7 +13,13 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from qdl_sdk.models import ClosedModel, DecimalValue, Grade, ProblemDetails
+from qdl_sdk.models import (
+    ClosedModel,
+    DecimalValue,
+    Grade,
+    ProblemDetails,
+    StalePolicy,
+)
 
 
 # Reference products may be deliberately less frequent than price data. The
@@ -74,6 +80,12 @@ class ReferenceRequirement(ClosedModel):
         gt=0,
         le=MAX_REFERENCE_FRESHNESS_MS,
     )
+    event_recency_policy: StalePolicy | None = None
+    max_session_liveness_ms: int | None = Field(
+        default=None,
+        gt=0,
+        le=86_400_000,
+    )
     require_full_coverage: bool = True
     deadline_ms: int = Field(default=20_000, ge=100, le=120_000)
 
@@ -96,6 +108,17 @@ class ReferenceRequirement(ClosedModel):
                 raise ValueError("reference time range must increase")
         if self.interval is not None and not self.interval.strip():
             raise ValueError("reference interval cannot be blank")
+        if (
+            self.event_recency_policy is StalePolicy.OBSERVE
+            and self.max_session_liveness_ms is None
+        ):
+            raise ValueError(
+                "observed reference event recency requires a provider session SLA"
+            )
+        if self.event_recency_policy is StalePolicy.OBSERVE and not execution_mark_snapshot:
+            raise ValueError(
+                "observed reference event recency only applies to execution MARK_INDEX_PRICE"
+            )
         if self.page_size is not None and self.page_size > self.limit:
             raise ValueError("reference page_size cannot exceed limit")
         historical = self.start_time_ns is not None

@@ -34,13 +34,22 @@ from qdl.reference.contracts import (
     product_feed_name,
 )
 from qdl.runtime.internal_auth import is_stable_internal_url, stable_hmac_signature
+from qdl.runtime.mark_index_lineage import paired_mark_index_lineage
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.query.contracts import StalePolicy
 
 
-_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
+_LEGACY_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
+_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v2"
 _RESPONSE_SCHEMA = "qdl.v2.execution-mark-index-view.v2"
 _ENDPOINT = "/internal/v2/execution/mark-index/latest"
 _FRESHNESS_BASIS_HEADER = "X-QDL-Execution-Freshness-Basis"
+_RECENCY_MODE_HEADER = "X-QDL-Execution-Recency-Mode"
+_SESSION_STATE_HEADER = "X-QDL-Execution-Session-State"
+_SESSION_LIVENESS_HEADER = "X-QDL-Execution-Session-Liveness-Ms"
+_SESSION_CHECKED_AT_HEADER = "X-QDL-Execution-Session-Checked-At-Ns"
+_COMPONENT_RECEIPTS_HEADER = "X-QDL-Execution-Component-Receipts-Ns"
+_COMPONENT_CADENCE_HEADER = "X-QDL-Execution-Component-Quiet-After-Ms"
 
 
 class ExecutionMarkIndexReader(Protocol):
@@ -50,6 +59,8 @@ class ExecutionMarkIndexReader(Protocol):
         *,
         max_freshness_ms: int,
         source_policy_id: str,
+        event_recency_policy: StalePolicy = StalePolicy.BLOCK,
+        max_session_liveness_ms: int | None = None,
         deadline_ms: int | None = None,
     ) -> ReferenceBatchResult: ...
 
@@ -96,6 +107,8 @@ class HttpExecutionMarkIndexReader:
         *,
         max_freshness_ms: int,
         source_policy_id: str,
+        event_recency_policy: StalePolicy = StalePolicy.BLOCK,
+        max_session_liveness_ms: int | None = None,
         deadline_ms: int | None = None,
     ) -> ReferenceBatchResult:
         """Fetch one exact current snapshot without an external-provider fallback."""
@@ -109,20 +122,33 @@ class HttpExecutionMarkIndexReader:
             or request.is_history
             or max_freshness_ms <= 0
             or not source_policy_id.strip()
+            or not isinstance(event_recency_policy, StalePolicy)
+            or (
+                event_recency_policy is StalePolicy.OBSERVE
+                and (max_session_liveness_ms is None or max_session_liveness_ms <= 0)
+            )
         ):
             self._failures += 1
             return self._failure(
                 request, capability, "LIVE_VIEW_INVALID_REQUEST",
                 "execution live view accepts only a current MARK_INDEX_PRICE request",
             )
+        quiet_request = event_recency_policy is StalePolicy.OBSERVE
+        payload = {
+            "schema": _REQUEST_SCHEMA if quiet_request else _LEGACY_REQUEST_SCHEMA,
+            "instrument_uid": request.instrument.instrument_uid,
+            "instrument_revision": request.instrument.metadata_revision,
+            "source_policy_id": source_policy_id,
+            "max_freshness_ms": max_freshness_ms,
+        }
+        if quiet_request:
+            assert max_session_liveness_ms is not None
+            payload.update({
+                "event_recency_policy": event_recency_policy.value,
+                "max_session_liveness_ms": max_session_liveness_ms,
+            })
         body = json.dumps(
-            {
-                "schema": _REQUEST_SCHEMA,
-                "instrument_uid": request.instrument.instrument_uid,
-                "instrument_revision": request.instrument.metadata_revision,
-                "source_policy_id": source_policy_id,
-                "max_freshness_ms": max_freshness_ms,
-            },
+            payload,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -168,6 +194,8 @@ class HttpExecutionMarkIndexReader:
                     freshness_basis=response.headers.get(
                         _FRESHNESS_BASIS_HEADER, "SOURCE_EVENT"
                     ).strip().upper(),
+                    event_recency_policy=event_recency_policy,
+                    max_session_liveness_ms=max_session_liveness_ms,
                 )
             except (DecodeError, ValueError, TypeError, KeyError):
                 errors.append("PROTOCOL")
@@ -239,6 +267,8 @@ class HttpExecutionMarkIndexReader:
         response: httpx.Response,
         *,
         freshness_basis: str,
+        event_recency_policy: StalePolicy,
+        max_session_liveness_ms: int | None,
     ) -> ReferenceBatchResult:
         payload = response.json()
         if (
@@ -269,31 +299,41 @@ class HttpExecutionMarkIndexReader:
             or envelope.native_symbol != request.instrument.native_symbol
             or envelope.source_event_time_ns <= 0
             or envelope.received_at_ns < envelope.source_event_time_ns
+            or not envelope.source_session_id
+            or envelope.connection_generation < 1
+            or envelope.config_revision < 1
         ):
             raise ValueError("execution MARK/INDEX live view identity/provenance mismatch")
         fields = self._fields(request, envelope)
         observed_at_ns = int(envelope.source_event_time_ns)
+        labels = [
+            ("native_symbol", request.instrument.native_symbol),
+            ("execution_view", "STABLE_STREAM_GATEWAY"),
+            ("freshness_basis", freshness_basis),
+            ("source_event_time_ns", str(observed_at_ns)),
+            ("provider_confirmation_ns", str(int(envelope.received_at_ns))),
+            ("connection_generation", str(int(envelope.connection_generation))),
+            ("gateway_lease_epoch", str(int(payload["lease_epoch"]))),
+            ("delivery_stage", str(payload["delivery_stage"])),
+            (
+                "spool_watermark_offset",
+                "PENDING" if spool_watermark_offset is None
+                else str(int(spool_watermark_offset)),
+            ),
+        ]
+        if event_recency_policy is StalePolicy.OBSERVE:
+            labels.extend(self._quiet_labels(
+                envelope,
+                response,
+                max_session_liveness_ms=max_session_liveness_ms,
+            ))
         observation = ReferenceObservation(
             instrument_uid=request.instrument.instrument_uid,
             instrument_revision=request.instrument.metadata_revision,
             product=ReferenceProduct.MARK_INDEX_PRICE,
             observed_at_ns=observed_at_ns,
             fields=fields,
-            labels=(
-                ("native_symbol", request.instrument.native_symbol),
-                ("execution_view", "STABLE_STREAM_GATEWAY"),
-                ("freshness_basis", freshness_basis),
-                ("source_event_time_ns", str(observed_at_ns)),
-                ("provider_confirmation_ns", str(int(envelope.received_at_ns))),
-                ("connection_generation", str(int(envelope.connection_generation))),
-                ("gateway_lease_epoch", str(int(payload["lease_epoch"]))),
-                ("delivery_stage", str(payload["delivery_stage"])),
-                (
-                    "spool_watermark_offset",
-                    "PENDING" if spool_watermark_offset is None
-                    else str(int(spool_watermark_offset)),
-                ),
-            ),
+            labels=tuple(labels),
         )
         lineage = ReferenceLineage(
             provider=self.capability_resolver(request.instrument).provider,
@@ -323,6 +363,60 @@ class HttpExecutionMarkIndexReader:
             ),
             received_at_ns=int(envelope.received_at_ns),
             observations=(observation,),
+        )
+
+    @staticmethod
+    def _quiet_labels(
+        envelope: market_data_pb2.EventEnvelope,
+        response: httpx.Response,
+        *,
+        max_session_liveness_ms: int | None,
+    ) -> tuple[tuple[str, str], ...]:
+        if max_session_liveness_ms is None:
+            raise ValueError("quiet execution MARK/INDEX request has no session SLA")
+        recency_mode = response.headers.get(_RECENCY_MODE_HEADER, "").strip()
+        if recency_mode not in {
+            "STRICT_EVENT_SESSION_LIVE",
+            "COMPONENT_SESSION_LIVE",
+        }:
+            raise ValueError("quiet execution MARK/INDEX response mode is invalid")
+        session_state = response.headers.get(_SESSION_STATE_HEADER, "").strip()
+        if session_state != "LIVE":
+            raise ValueError("quiet execution MARK/INDEX session state is invalid")
+        try:
+            session_liveness_ms = int(response.headers[_SESSION_LIVENESS_HEADER])
+            session_checked_at_ns = int(response.headers[_SESSION_CHECKED_AT_HEADER])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("quiet execution MARK/INDEX session evidence is invalid") from error
+        if (
+            not 0 <= session_liveness_ms <= max_session_liveness_ms
+            or session_checked_at_ns <= 0
+        ):
+            raise ValueError("quiet execution MARK/INDEX session evidence exceeds policy")
+        receipts = _component_header_values(
+            response.headers.get(_COMPONENT_RECEIPTS_HEADER, "")
+        )
+        cadence = _component_header_values(
+            response.headers.get(_COMPONENT_CADENCE_HEADER, "")
+        )
+        lineage = paired_mark_index_lineage(envelope)
+        if receipts != {
+            "MARK": lineage.mark_received_at_ns,
+            "INDEX": lineage.index_received_at_ns,
+        }:
+            raise ValueError("quiet execution MARK/INDEX receipt lineage differs")
+        if any(not 250 <= value <= 120_000 for value in cadence.values()):
+            raise ValueError("quiet execution MARK/INDEX cadence is invalid")
+        return (
+            ("event_recency_policy", StalePolicy.OBSERVE.value),
+            ("recency_mode", recency_mode),
+            ("provider_session_state", session_state),
+            ("provider_session_liveness_ms", str(session_liveness_ms)),
+            ("provider_session_checked_at_ns", str(session_checked_at_ns)),
+            ("component_mark_received_at_ns", str(receipts["MARK"])),
+            ("component_index_received_at_ns", str(receipts["INDEX"])),
+            ("component_mark_quiet_after_ms", str(cadence["MARK"])),
+            ("component_index_quiet_after_ms", str(cadence["INDEX"])),
         )
 
     @staticmethod
@@ -384,3 +478,25 @@ class HttpExecutionMarkIndexReader:
             error_code=code,
             error_detail=detail,
         )
+
+
+def _component_header_values(value: str) -> dict[str, int]:
+    """Parse one bounded private header without accepting partial components."""
+
+    result: dict[str, int] = {}
+    for item in value.split(","):
+        name, separator, raw = item.partition("=")
+        if not separator or name in result:
+            raise ValueError("quiet execution MARK/INDEX component header is invalid")
+        try:
+            parsed = int(raw)
+        except ValueError as error:
+            raise ValueError(
+                "quiet execution MARK/INDEX component header is invalid"
+            ) from error
+        if name not in {"MARK", "INDEX"} or parsed <= 0:
+            raise ValueError("quiet execution MARK/INDEX component header is invalid")
+        result[name] = parsed
+    if set(result) != {"MARK", "INDEX"}:
+        raise ValueError("quiet execution MARK/INDEX component header is incomplete")
+    return result

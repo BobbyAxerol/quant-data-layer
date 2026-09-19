@@ -37,7 +37,11 @@ from qdl.runtime.readiness import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-from qdl.runtime.stable_deployment import validate_shared_authority_record
+from qdl.runtime.stable_deployment import (
+    StableAcquisitionPlan,
+    validate_shared_authority_record,
+)
+from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.runtime.stable_ingest import (
     StableHttpCanonicalSink,
     install_stable_canonical_ingest,
@@ -167,6 +171,7 @@ class StableRuntimeConfig:
     audit_path: Path
     manifest_paths: tuple[Path, ...]
     source_bindings_path: Path
+    acquisition_bindings_path: Path
     tls_ca_path: Path
     tls_certificate_path: Path
     tls_private_key_path: Path
@@ -243,6 +248,8 @@ class StableRuntimeConfig:
             raise ValueError("stable authority revision and consumer manifests are required")
         if not self.source_bindings_path.is_file():
             raise ValueError("stable source binding catalog is unavailable")
+        if self.role == "stream_v2" and not self.acquisition_bindings_path.is_file():
+            raise ValueError("stable acquisition binding plan is unavailable")
         missing_tls = [
             path for path in (
                 self.tls_ca_path,
@@ -357,6 +364,10 @@ class StableRuntimeConfig:
             )),
             manifest_paths=manifests,
             source_bindings_path=Path(env["QDL_STABLE_SOURCE_BINDINGS"]),
+            acquisition_bindings_path=Path(env.get(
+                "QDL_STABLE_ACQUISITION_BINDINGS",
+                "/app/config/v2/stable-acquisition-bindings.yaml",
+            )),
             tls_ca_path=Path(env["QDL_STABLE_TLS_CA_FILE"]),
             tls_certificate_path=Path(env["QDL_STABLE_TLS_CERT_FILE"]),
             tls_private_key_path=Path(env["QDL_STABLE_TLS_KEY_FILE"]),
@@ -718,6 +729,9 @@ def create_stable_stream_runtime(
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    acquisition = StableAcquisitionPlan.load(
+        config.acquisition_bindings_path, catalog=catalog
+    )
     spool = build_stable_spool(config, catalog)
     handoff = build_stable_handoff(config, spool)
     async_redis = AsyncRedis.from_url(config.redis_url, decode_responses=True)
@@ -733,7 +747,13 @@ def create_stable_stream_runtime(
         max_replay_events=config.max_replay_events,
         cursor_ttl_seconds=config.cursor_ttl_seconds, authority=lease,
     )
-    execution_mark_index_view = ExecutionMarkIndexLiveView.from_catalog(catalog)
+    execution_mark_index_view = ExecutionMarkIndexLiveView.from_catalog(
+        catalog,
+        acquisition=acquisition,
+        session_liveness_reader=StableSessionLivenessReader(
+            config.session_liveness_dir
+        ),
+    )
 
     async def fence_gateway_execution_view() -> None:
         await gateway.fence_all()

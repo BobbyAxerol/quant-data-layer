@@ -320,6 +320,77 @@ class ProductionCatalogTests(unittest.TestCase):
             self.assertEqual(len(demand), 1)
             self.assertEqual(demand[0].depth_per_side, 100)
 
+    def test_mark_index_cadence_is_generated_complete_for_binance_and_okx(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = {
+                "schema": "qdl.v2.production-demand.v1",
+                "revision": 1,
+                "consumers": [{
+                    "consumer_id": "execution", "consumer_grade": "EXECUTION",
+                    "requirements": [
+                        {
+                            "venue": "BINANCE", "market": "USDM",
+                            "product_type": "PERPETUAL", "native_symbol": "BTCUSDT",
+                            "feed": "MARK_INDEX_PRICE", "interval": None,
+                            "source_policy_id": "crypto_liquid_v2",
+                            "max_freshness_ms": 2_000, "require_live": True,
+                            "index_native_symbol": None,
+                        },
+                        {
+                            "venue": "OKX", "market": "SWAP",
+                            "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                            "feed": "MARK_INDEX_PRICE", "interval": None,
+                            "source_policy_id": "crypto_liquid_v2",
+                            "max_freshness_ms": 2_000, "require_live": True,
+                            "index_native_symbol": "BTC-USDT",
+                        },
+                    ],
+                }],
+            }
+            import yaml
+            path = root / "mark-index.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            demand = ProductionDemandManifest.load_many([path])
+            bundle = ProductionCatalogBuilder(
+                catalog_revision=1,
+                source_policy_revision=1,
+                authority_revision=1,
+            ).build(
+                demand=demand,
+                binance_usdm=parse_exchange_info(BINANCE, valid_from_ns=1),
+                okx_rows=OKX,
+            )
+            acquisition = {
+                item["binding_id"]: item
+                for item in bundle.acquisition_plan["bindings"]
+            }
+            self.assertEqual(
+                acquisition["binance-usdm-btcusdt-mark_index_price"]["mark_index"]
+                ["component_quiet_after_ms"],
+                {"BOTH": 5_000},
+            )
+            self.assertEqual(
+                acquisition["okx-swap-btc-usdt-swap-mark_index_price"]["mark_index"]
+                ["component_quiet_after_ms"],
+                {"MARK": 15_000, "INDEX": 70_000},
+            )
+            paths = bundle.write(root / "out")
+            catalog = StableSourceCatalog.load(paths["source_catalog"])
+            plan = StableAcquisitionPlan.load(paths["acquisition_plan"], catalog=catalog)
+            physical = plan._physical_entries(
+                source_by_id={item.binding_id: item for item in catalog.bindings},
+                selected_ids=frozenset(item.binding_id for item in catalog.bindings),
+            )
+            by_component = {
+                (item.source.instrument.identity.venue, item.mark_index_component):
+                item.mark_index_quiet_after_ms
+                for item in physical
+            }
+            self.assertEqual(by_component[("BINANCE", "BOTH")], 5_000)
+            self.assertEqual(by_component[("OKX", "MARK")], 15_000)
+            self.assertEqual(by_component[("OKX", "INDEX")], 70_000)
+
     def test_catalog_accepts_all_certified_fixed_bar_intervals_and_scales_staleness(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

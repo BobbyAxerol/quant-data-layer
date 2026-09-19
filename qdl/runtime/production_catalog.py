@@ -72,6 +72,14 @@ _BINANCE_DEPTH_REST = {
     "SPOT": "https://api.binance.com/api/v3/depth",
 }
 _OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
+# Provider-declared quiet cadence is compiled into the signed acquisition
+# bundle, never inferred by a reader at runtime. The margin is deliberately
+# finite: it covers normal provider cadence plus transport jitter, while the
+# independent session-liveness bound still detects a dead connection.
+_MARK_INDEX_COMPONENT_QUIET_AFTER_MS = {
+    ("BINANCE", "USDM"): {"BOTH": 5_000},
+    ("OKX", "SWAP"): {"MARK": 15_000, "INDEX": 70_000},
+}
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -804,6 +812,14 @@ class ProductionCatalogBuilder:
                 "snapshot_refresh_seconds": 30,
             }
         if item.feed is FeedType.MARK_INDEX_PRICE:
+            try:
+                component_quiet_after_ms = _MARK_INDEX_COMPONENT_QUIET_AFTER_MS[
+                    (item.venue, item.market)
+                ]
+            except KeyError as error:
+                raise ValueError(
+                    "MARK_INDEX provider quiet cadence is not certified"
+                ) from error
             result["mark_index"] = {
                 "provider_protocol": (
                     "BINANCE_MARK_PRICE"
@@ -811,6 +827,7 @@ class ProductionCatalogBuilder:
                     else "OKX_MARK_INDEX"
                 ),
                 "index_native_symbol": item.index_native_symbol,
+                "component_quiet_after_ms": dict(component_quiet_after_ms),
             }
         return result
 
