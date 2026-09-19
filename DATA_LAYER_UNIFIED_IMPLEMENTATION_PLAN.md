@@ -42596,3 +42596,53 @@ less than A, and leaves no second copy.
 That is a design decision with a blast radius attached to each branch, and it is
 recorded here for the owner rather than taken at the end of a session that has
 already produced four reversals on a single measurement.
+
+<a id="dl-v2-r131-item4-resolved-20260919"></a>
+#### R1.31 item 4 — one recommendation, and the fork was mine to close (2026-09-19T06:20Z)
+
+The fork recorded earlier is withdrawn. Option B's cheap middle path does not
+exist, and Option A is cheaper than it was costed.
+
+**Why B collapses.** `_validate_records` (`stable_source.py:333`) does exactly
+one thing: decode the envelope and call `catalog.binding_for_envelope`, then
+check the resolved binding matches. It is catalog-binding resolution and nothing
+else. A feed with no catalog binding cannot use it, so "lift it into a shared
+helper both paths call" was written without reading it - there is nothing shared
+to lift. B would need a different check invented from scratch on the one feed
+that guards Risk.
+
+**Why the data layer, not the consumer, owns this.** Three facts settle it:
+
+* `consumers/stable/trading-system-paper.yaml` grants **ten**
+  `MARK_INDEX_PRICE` requirements at `consumer_grade: EXECUTION` with
+  `max_freshness_ms: 2000`;
+* `qdl/stream/grpc_service.py:170` already lists `MARK_INDEX_PRICE` in
+  `LATEST_STATE_FEEDS`, and ten canonical partitions are live and 286-418 ms
+  fresh;
+* but `StableSpoolQueryBackend.latest()` opens with
+  `catalog.binding_for(requirement)`, and **no binding exists**, so the spool
+  path cannot serve the feed at all. The reference batch is not a fallback the
+  consumer chose - it is the only route the data layer offers.
+
+The absence of the ten bindings from `config/v2/stable-source-bindings.yaml` is
+therefore the root cause of item 4. Not in the way this journal first claimed
+this morning - the capability is in Git, in the reference demand plane - but
+because the *query service* cannot route a requirement it cannot bind.
+
+**And the bar-edge cost was overstated.** The edge's ownership assertion filters
+`source.feed.value == "BAR"` (`stable_bar_edge.py`), so ten `MARK_INDEX_PRICE`
+bindings never enter its expected set. What remains is the catalog revision
+moving 8 to 9, which changes the edge's checkpoint identity - and
+`scripts/migrate_stable_bar_edge_checkpoint.py` exists for exactly that, with
+seven tests, written in R1.28.
+
+**Recommendation, single:** declare the ten bindings, bump the catalog to
+revision 9, regenerate the bundle **through the R1.31 guard**, migrate the
+bar-edge checkpoint, recreate query, stream, projector and bar edge. Both tools
+this rollout needs were written in the last two days.
+
+**Not committed here, deliberately.** Committing a revision-9 catalog that the
+runtime is not on manufactures exactly the drift this journal spends its pages
+chasing: the next regeneration would silently produce a bundle nobody rolled.
+The catalog change and its rollout belong in the same transaction, and that
+transaction is a rollout the owner schedules.
