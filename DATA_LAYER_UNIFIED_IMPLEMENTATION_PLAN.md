@@ -44289,3 +44289,49 @@ an expected gRPC task diagnostic; neither failed a test. The final reader
 image must be rebuilt from this corrected source; the Rust binary remains the
 already-tested R1.34 artifact because no Rust source changed after its
 successful format/clippy/test gate.
+
+**Sealed-pair preflight (`IN PROGRESS`, 2026-09-19).** The new stream image
+parses an acquisition contract at startup, while the currently deployed
+pre-R1.34 stream does not. Read-only inspection found that the active reader
+pins a `216`-binding source catalog under `/runtime` but leaves the acquisition
+path unset. A new image would otherwise pair that runtime catalog with the
+different image-default contract. The narrow packet must therefore explicitly
+pin both `QDL_STABLE_SOURCE_BINDINGS` and
+`QDL_STABLE_ACQUISITION_BINDINGS` to one sealed runtime pair. Its legacy
+acquisition document will be normalized only for schema-required transport
+metadata using the existing venue rules (Binance routed `public`/`market`, OKX
+public/business, and explicit null for non-WebSocket modes), then parsed
+against the same 216 source IDs. The transformation is required to preserve
+strict validation; it must prove no binding identity, mode, provider kind,
+channel, demand, L2/MARK_INDEX semantic field or topology changes other than
+the approved component cadence. It creates no provider connection by itself.
+Only after this parse/mapping gate passes may the approved seven-role packet
+run.
+
+**Sealed-pair result (`PASS / ROLLING READY`, 2026-09-19).** The final
+non-root reader image is `qdl-v2-python:2.0.22-58998ae`, image ID
+`sha256:1ad34175322f…`, labelled with source revision
+`58998ae1f4e84161c1c6dcf681ce92f4247faa63`; its network-isolated,
+no-source-mount regression remains `83/83` pass. The already-tested Rust core
+artifact is `qdl-v2-rust:2.0.20-f1c9e1d`, image ID
+`sha256:389753b37c4f…`. The sealed R1.34 runtime pair parses under that final
+reader as `216` source bindings plus `216` acquisition bindings; it preserves
+ten logical MARK/INDEX contracts and maps `45` physical component entries
+across the three core JSON files. The normalizer changed only `249` required
+transport metadata fields and the ten approved cadence maps; it proves all
+other semantic fields are byte-equivalent after restoration. Compose render
+shows exactly the approved three core and four reader roles on the new images,
+with only their existing TLS/state mounts and the sealed `/runtime` bind. It
+explicitly pins both reader paths to the same runtime pair.
+
+**Read-only runtime check.** A 30-minute V2 warning/error scan found no
+matching warning, error, panic or OOM record across the three cores, two
+ingestors, three projectors, BAR edge, two streams and two queries; all were
+`running`, had `restart=0`, and were not OOM-killed. The separate V1 fallback
+service continues to log Binance Futures kline first-frame timeouts and a few
+publisher-queue-full reconnects, while DNSE is stale outside its session. V1
+is explicitly preserved by this packet, so this is recorded as an existing
+V1 operational finding, not altered or used to weaken V2 acceptance. The only
+next action is the owner-approved seven-role rolling recreate followed by the
+strict C2 300-second receipt; on failure rollback is limited to those same
+roles and recorded image/runtime coordinates.
