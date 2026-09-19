@@ -42671,3 +42671,30 @@ and days out for 3d and 1w. Those six need a scheduled capture, and the budget
 fix from earlier today is what makes an unattended run possible at all.
 
 The rollout gate is unchanged and remains a date: 2026-09-19T20:00Z.
+
+<a id="dl-v2-r131-admission-unattended-20260919"></a>
+#### R1.31 item 3 — four unattended captures running to their own boundaries (2026-09-19T06:25Z)
+
+The remaining work on item 3 is waiting, and waiting is the one thing that
+cannot be delegated by working harder. It can be left running.
+
+Four `--rm` containers are up, one per interval, each dialling the routed
+`/market` lane and exiting the moment it has its closed bar:
+
+| interval | exits at | budget ceiling |
+|---|---|---|
+| 4h | 08:00Z | 28,840 s |
+| 8h | 08:00Z | 57,640 s |
+| 12h | 12:00Z | 86,440 s |
+| 1d | 00:00Z | 172,840 s |
+
+Logs land in the session scratchpad as `<interval>.log`. The budget is a ceiling,
+not a wait: each exits at its boundary, so none of them lives longer than it must,
+and `--rm` means none of them survives its own exit. They are WebSocket listeners
+and draw no measurable CPU.
+
+That takes item 3 to **eleven of thirteen** without anyone watching. `3d` and
+`1w` are the only two left, and both need a capture scheduled days out rather
+than a container held open - that is a cron entry, not a session.
+
+None of this moves the rollout gate, which is a date: **2026-09-19T20:00Z**.
