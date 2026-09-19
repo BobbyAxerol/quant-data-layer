@@ -43400,3 +43400,55 @@ Three genuine single points of failure remain: `binance_bar_edge`,
 lease store itself. The bar edge can reuse `ActivePassiveGatewayLease` - the same
 mechanism just proven; the Rust ingestors need a Rust client and a core that
 accepts a fenced takeover.
+
+<a id="dl-v2-r131-b1-done-20260919"></a>
+#### R1.31 B1 — a hung role is now visible (2026-09-19T08:25Z)
+
+Owner approved B1 and deferred B2/B3/B4 to their own block.
+
+**Six containers had no healthcheck at all** - both ingestors, the bar edge and
+the three projectors. Redis, query and stream already had one. That is why two
+projectors could hang at 05:07 and stay `Up` for eleven minutes: Docker restarts
+a process that exits and has no opinion about one that is alive and idle.
+
+| role | signal | window |
+|---|---|---|
+| `ingestor_binance_usdm` / `ingestor_okx_swap` | existing `session-liveness/*.json`, rewritten every 1 s, checked for age **and** `"state":"LIVE"` | 30 s |
+| `projector_v2` x3 | new heartbeat at the top of `run_once` | 30 s |
+| `binance_bar_edge` | new heartbeat at the top of its `run_forever` loop | 180 s |
+
+The ingestors needed no code. The bar edge writes its state file only when a
+checkpoint moves - since 1m went native in R1.28 that can be hours - so its state
+file could not serve as a heartbeat, and the projector wrote nothing readable.
+`qdl/runtime/heartbeat.py` fills that: one small file, rewritten atomically,
+every failure swallowed, because a heartbeat that kills the role it watches is
+worse than none.
+
+**Proven, five cases, in the images the roles actually run:**
+
+| input | means | verdict |
+|---|---|---|
+| heartbeat fresh | loop turning | **healthy** |
+| heartbeat 10 min old | **hung** - today's failure | **unhealthy** |
+| session `LIVE`, fresh | ingestor producing | **healthy** |
+| session not `LIVE` | session broken | **unhealthy** |
+| session `LIVE` but stale | **hung** | **unhealthy** |
+
+A first attempt at this proof used `alpine` and reported everything unhealthy;
+busybox `find` has no `-newermt`. The roles run debian-based images, where it
+does - which is why the check was verified inside the real containers rather
+than a convenient one.
+
+All seventeen roles are `Up`; the six new checks report `healthy` and the four
+heartbeat files are being rewritten.
+
+**What B1 does not do.** Docker does not restart an unhealthy container. This
+makes a hang visible in `docker ps` and to `monitor_service`; acting on it
+automatically needs that service extended, and is recorded rather than claimed.
+
+**Deferred to their own block, with the reasoning from the estimate:** B2
+(bar-edge active/passive) is 1-2 days against the *least* severe failure - 1m
+bars survive a bar-edge outage since R1.28, longer intervals tolerate 540 s+,
+and it restarted in 18 s when measured today - and it touches checkpoint
+ownership. B3 (Rust ingestor HA) addresses the more severe failure and is the
+better next step. B4 (Redis HA) is separate infrastructure.
