@@ -42698,3 +42698,30 @@ That takes item 3 to **eleven of thirteen** without anyone watching. `3d` and
 than a container held open - that is a cron entry, not a session.
 
 None of this moves the rollout gate, which is a date: **2026-09-19T20:00Z**.
+
+<a id="dl-v2-r131-boundary-proof-20260919"></a>
+#### R1.31 item 3 — the last evidence obtainable without waiting (2026-09-19T06:30Z)
+
+For `3d` and `1w` the closed-bar transition is days away, but everything except
+that transition can be checked now. Reading one live frame per interval off the
+routed lane and comparing its own `t`/`T` against `canonical_interval_ms`:
+
+| interval | open (UTC) | close (UTC) | span | expected |
+|---|---|---|---|---|
+| 3d | 2026-09-17 00:00:00Z | 2026-09-19 23:59:59Z | 3.0 d | 3.0 d |
+| 1w | 2026-09-14 00:00:00Z | 2026-09-20 23:59:59Z | 7.0 d | 7.0 d |
+| 1d | 2026-09-19 00:00:00Z | 2026-09-19 23:59:59Z | 1.0 d | 1.0 d |
+| 12h | 2026-09-19 00:00:00Z | 2026-09-19 11:59:59Z | 0.5 d | 0.5 d |
+
+Every span matches, and `1w` anchors to Monday - the calendar anchoring
+`provider_bar_calendar_anchor_ms` assumes. So the lane is carrying genuine 3d and
+1w bars with the right boundaries, not a degenerate or mislabelled stream.
+
+What that leaves unproven for those two is exactly one thing: that `x` flips to
+true at the boundary. Seven intervals have now shown that flip on this lane and
+four more are waiting on it unattended. For `3d` and `1w` it needs a capture
+scheduled days out.
+
+**Item 3's evidence is therefore complete except for waiting**: the lane is
+proven for 13 of 13, the closed-bar transition for 7 of 13 with 4 more in
+flight, and the two remaining need a calendar entry rather than more work.
