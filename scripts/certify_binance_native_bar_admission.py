@@ -44,6 +44,12 @@ import urllib.request
 
 import websockets
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from qdl.adapters.intervals import canonical_interval_ms  # noqa: E402
+
 # The routed control URL. `/market` carries kline, aggTrade, markPrice and
 # ticker since 2026-03-06; the unrouted base was decommissioned 2026-04-23.
 MARKET_WS = os.environ.get("MARKET_WS", "wss://fstream.binance.com/market/ws")
@@ -85,11 +91,16 @@ def ws_bar(kline: dict) -> dict[str, str]:
 async def main() -> int:
     streams = [f"{s.lower()}@kline_{INTERVAL}" for s in SYMBOLS]
     # One boundary per bar, plus the slowest REST delay, plus a margin for the
-    # first partial minute.
-    budget = 60 * (BAR_COUNT + 1) + max(REST_DELAYS) + 30
+    # partial interval this run starts inside. R1.29 Phase 3 item 1 asks for this
+    # script to be run per interval; until R1.31 the budget was hardcoded at 60 s
+    # per bar, so every run with INTERVAL other than 1m gave up before the first
+    # boundary and reported nothing rather than failing. The interval's own length
+    # comes from `qdl/adapters/intervals.py`, which owns interval semantics.
+    interval_seconds = canonical_interval_ms(INTERVAL) / 1000.0
+    budget = interval_seconds * (BAR_COUNT + 1) + max(REST_DELAYS) + 30
     print(f"  url        {MARKET_WS}")
     print(f"  subscribe  {len(streams)} streams, {INTERVAL}, {BAR_COUNT} closed bars each")
-    print(f"  budget     {budget:.0f}s\n")
+    print(f"  budget     {budget:.0f}s ({interval_seconds:.0f}s per bar)\n")
 
     finals: dict[str, list[dict]] = {symbol: [] for symbol in SYMBOLS}
     provisional: dict[str, int] = {symbol: 0 for symbol in SYMBOLS}

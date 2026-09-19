@@ -54,6 +54,18 @@ class ReferenceBatchPolicy:
     max_cache_entries: int = 512
     history_ttl_seconds: float = 30.0
     snapshot_ttl_seconds: float = 2.0
+    # R1.31. `MARK_INDEX_PRICE` is the one reference product an execution caller
+    # may read, and the consumer validates it against a 2,000 ms freshness limit.
+    # A cache TTL equal to that limit guarantees the limit is broken: the value
+    # is served up to one whole TTL after it was fetched, on top of the age it
+    # already had at the venue. Measured 2026-09-19 over ten minutes on OKX, the
+    # index component never came back younger than 2,013 ms - a floor of exactly
+    # TTL plus transport - while the mark component stayed at 31-106 ms. The
+    # venue itself publishes the index 132-759 ms fresh, so the staleness was
+    # entirely this cache. 750 ms leaves the worst observed venue age inside the
+    # limit with roughly 490 ms to spare, and costs 6.7 requests per second
+    # across the five OKX index ids against a `market` bucket that refills at 10.
+    execution_snapshot_ttl_seconds: float = 0.75
     metadata_ttl_seconds: float = 300.0
     missing_ttl_seconds: float = 2.0
     unavailable_ttl_seconds: float = 60.0
@@ -74,6 +86,7 @@ class ReferenceBatchPolicy:
             for value in (
                 self.history_ttl_seconds,
                 self.snapshot_ttl_seconds,
+                self.execution_snapshot_ttl_seconds,
                 self.metadata_ttl_seconds,
                 self.missing_ttl_seconds,
                 self.unavailable_ttl_seconds,
@@ -92,6 +105,8 @@ class ReferenceBatchPolicy:
             return self.metadata_ttl_seconds
         if result.request.is_history:
             return self.history_ttl_seconds
+        if result.request.product is ReferenceProduct.MARK_INDEX_PRICE:
+            return self.execution_snapshot_ttl_seconds
         return self.snapshot_ttl_seconds
 
 
