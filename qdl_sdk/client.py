@@ -151,10 +151,15 @@ def _validate_query_payload(
             raise ContinuityError("PARTIAL_RESULT", "warmup response is not full coverage")
         specification = requirement.warmup_specification
         if specification is not None and specification.rows is not None:
-            if response.count != specification.rows:
+            # R1.31. `rows` is the furthest back a caller may look, not a promise
+            # the venue has that much history. 10,000 weekly bars is 192 years.
+            # The server already refuses an over-long answer and still marks an
+            # interior hole as PARTIAL, which `require_full_coverage` catches two
+            # lines above; a short window is history ending, not a fault.
+            if response.count > specification.rows:
                 raise ContinuityError(
                     "PARTIAL_RESULT",
-                    "warmup row count differs from the requested horizon",
+                    "warmup returned more rows than the requested horizon allows",
                 )
     for index, row in enumerate(rows):
         is_tail = index == len(rows) - 1

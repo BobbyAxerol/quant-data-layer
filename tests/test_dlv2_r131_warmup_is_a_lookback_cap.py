@@ -148,5 +148,47 @@ class PassThroughHorizonTests(unittest.TestCase):
         self.assertIn("pass-through target history returned no rows", source)
 
 
+class SdkClientHorizonTests(unittest.TestCase):
+    """The fourth site, and the one that made the server fix look like it failed.
+
+    After the server stopped refusing short windows the alpha still saw
+    `ContinuityError: warmup row count differs from the requested horizon` -
+    from `qdl_sdk.client`, not from the data layer. Every consumer validates the
+    same rule on its own side, so the cap has to mean the same thing there.
+    """
+
+    @staticmethod
+    def _rejects(*, count: int, rows: int) -> bool:
+        # Mirrors `if response.count > specification.rows`.
+        return count > rows
+
+    def test_a_short_warmup_is_accepted_by_the_client(self) -> None:
+        self.assertFalse(self._rejects(count=156, rows=10_000))
+
+    def test_an_exact_warmup_is_accepted(self) -> None:
+        self.assertFalse(self._rejects(count=10_000, rows=10_000))
+
+    def test_an_over_long_warmup_is_still_refused(self) -> None:
+        self.assertTrue(self._rejects(count=10_001, rows=10_000))
+
+    def test_the_client_still_checks_this_way(self) -> None:
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1]
+                  / "qdl_sdk/client.py").read_text(encoding="utf-8")
+        self.assertIn("if response.count > specification.rows:", source)
+        self.assertNotIn("if response.count != specification.rows:", source)
+
+    def test_the_client_still_enforces_full_coverage_and_row_consistency(self) -> None:
+        """The two neighbouring checks must survive, or a hole passes silently."""
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1]
+                  / "qdl_sdk/client.py").read_text(encoding="utf-8")
+        self.assertIn("if response.count != len(rows):", source)
+        self.assertIn('requirement.require_full_coverage and response.coverage != "FULL"',
+                      source)
+
+
 if __name__ == "__main__":
     unittest.main()
