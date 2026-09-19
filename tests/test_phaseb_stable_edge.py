@@ -1451,6 +1451,7 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         sleeps = []
         active = []
         brokers = []
+        events = []
         generations = ["fail", "recover"]
 
         class Broker:
@@ -1466,6 +1467,9 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         class Engine:
             def __init__(self, outcome):
                 self.outcome = outcome
+
+            async def prepare_for_polling(self):
+                events.append(f"prepare:{self.outcome}")
 
             async def run_once(self, timeout_seconds):
                 self.assert_timeout = timeout_seconds
@@ -1483,16 +1487,27 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         async def sleep(delay):
             sleeps.append(delay)
 
+        def on_broker(value):
+            events.append("broker:none" if value is None else "broker:ready")
+            active.append(value)
+
         await supervise_stable_projector(
             broker_factory=factory,
             should_stop=lambda: stopped[0],
-            on_broker=active.append,
+            on_broker=on_broker,
             sleep=sleep,
         )
         self.assertEqual(len(brokers), 2)
         self.assertEqual([broker.closed for broker in brokers], [1, 1])
         self.assertEqual(sleeps, [0.25])
         self.assertEqual(active, [brokers[0], None, brokers[1], None])
+        self.assertEqual(
+            events,
+            [
+                "prepare:fail", "broker:ready", "broker:none",
+                "prepare:recover", "broker:ready", "broker:none",
+            ],
+        )
 
     async def test_run_once_defers_a_polled_record_at_the_batch_byte_bound(self):
         class Record:
@@ -2315,7 +2330,8 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         read_tail = self.spool.read_tail
 
         def tracked_read_tail(**kwargs):
-            tail_limits.append(kwargs["limit"])
+            if kwargs["partition_key"] == binding.partition_key:
+                tail_limits.append(kwargs["limit"])
             return read_tail(**kwargs)
 
         # This row models an existing cache written before the additive
@@ -2330,9 +2346,22 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.spool.read_tail = tracked_read_tail
         target = InMemoryStableProjectionTarget()
         engine = self.engine(_Broker(), target, raw_topic, canonical_topic)
+        await engine.prepare_for_polling()
+        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(
+            self.spool.final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=binding.partition_key,
+            ),
+            event.bar.close_time_ns,
+        )
+
+        # The first live batch is now O(1): the cache migration finished before
+        # polling, so a final BAR cannot make the strict quote path scan history.
+        tail_limits.clear()
         newer = changed_bar("newer-after-legacy", close_delta_ns=60_000_000_000)
         await engine.accept(record(newer, 0))
-        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(tail_limits, [])
         self.assertEqual(
             self.spool.final_bar_watermark(
                 stream=self.catalog.canonical_stream,
@@ -2362,7 +2391,7 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 raw_payload=quote_raw_record.payload,
             ),
         ))
-        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(tail_limits, [])
         canonical_value = next(
             payload
             for key, payload in target.latest.items()
@@ -2383,7 +2412,7 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
         )
         late = changed_bar("late-after-restart")
         await restarted.accept(record(late, 2))
-        self.assertEqual(tail_limits, [10_000])
+        self.assertEqual(tail_limits, [])
         self.assertEqual(restarted_target.latest, {})
         self.assertEqual(
             self.spool.final_bar_watermark(

@@ -232,6 +232,66 @@ class StableProjectorEngine:
         self._canonical_committed = 0
         self._duplicate_projections = 0
         self._deferred_records: deque[KafkaProjectorRecord] = deque()
+        self._final_bar_watermarks_prepared = False
+
+    def _final_bar_partition_keys(self) -> tuple[str, ...]:
+        """Declared final-BAR partitions whose legacy history needs one seed.
+
+        A cache created before the additive watermark table has valid BAR
+        history but no O(1) latest-close row.  Hydrating that history before
+        the first Kafka poll keeps an aligned final-BAR burst out of the live
+        quote materialization path.
+        """
+
+        return tuple(sorted({
+            binding.partition_key
+            for binding in self.catalog.bindings
+            if binding.require_final_bar and binding.feed.value == "BAR"
+        }))
+
+    def _prewarm_final_bar_watermarks(self) -> tuple[int, int, int]:
+        """Seed missing final-BAR watermarks before this generation polls.
+
+        The spool owns the atomic read/seed race.  Another live stream or
+        projector can write a row while this loop is running; that case reads
+        the durable row rather than scanning the retained tail a second time.
+        """
+
+        partitions = self._final_bar_partition_keys()
+        seeded = 0
+        empty = 0
+        for partition_key in partitions:
+            if self.spool.final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=partition_key,
+            ) is not None:
+                continue
+            value = self.spool.hydrate_final_bar_watermark(
+                stream=self.catalog.canonical_stream,
+                partition_key=partition_key,
+                legacy_lookup=lambda key=partition_key: self._latest_bar_close_ns(key),
+            )
+            if value is None:
+                empty += 1
+            else:
+                seeded += 1
+        return len(partitions), seeded, empty
+
+    async def prepare_for_polling(self) -> None:
+        """Finish the bounded legacy cache migration before accepting live work."""
+
+        if self._final_bar_watermarks_prepared:
+            return
+        partitions, seeded, empty = await asyncio.to_thread(
+            self._prewarm_final_bar_watermarks
+        )
+        self._final_bar_watermarks_prepared = True
+        logger.info(
+            "stable projector final BAR watermark prewarm partitions=%s seeded=%s empty=%s",
+            partitions,
+            seeded,
+            empty,
+        )
 
     async def accept(self, record: KafkaProjectorRecord) -> None:
         await self.accept_many((record,))
@@ -242,6 +302,7 @@ class StableProjectorEngine:
         values = tuple(records)
         if not values:
             return
+        await self.prepare_for_polling()
         start = 0
         while start < len(values):
             epoch = values[start].assignment_epoch
@@ -301,6 +362,7 @@ class StableProjectorEngine:
         if self.heartbeat_path is not None:
             write_heartbeat(self.heartbeat_path, role="stable_projector",
                             detail=self.canonical_topic)
+        await self.prepare_for_polling()
         records: list[KafkaProjectorRecord] = []
         batch_bytes = 0
         while self._deferred_records and len(records) < self.max_batch_records:
@@ -1158,6 +1220,9 @@ async def supervise_stable_projector(
         broker = None
         try:
             broker, engine = broker_factory()
+            prepare = getattr(engine, "prepare_for_polling", None)
+            if callable(prepare):
+                await prepare()
             on_broker(broker)
             while not should_stop():
                 if await engine.run_once(timeout_seconds=1.0):

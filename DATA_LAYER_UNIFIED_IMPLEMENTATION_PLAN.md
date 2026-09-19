@@ -44982,6 +44982,70 @@ helper digest above is the corrected one. This incident is retained as bounded
 rollout evidence and makes the full current config-chain requirement explicit;
 it does not broaden B scope or certify the candidate.
 
+**B2 runtime result and cold-cache correction boundary (2026-09-19; B remains
+`IN_PROGRESS`).** The corrected five-role packet completed in its exact order:
+`stream_v2_passive`, `stream_v2_active`, `projector_v2`, `projector_v2_3`,
+then `projector_v2_2`. Every named role is healthy, `restart=0`,
+`OOM=false`, on `sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`.
+V1, Kafka topology/offsets, Redis, SQLite reset/deletion, Rust, ingestors,
+Query, Trading System, alpha and order paths remain unchanged.
+
+The first public-SDK preflight proved mTLS/JWT, the named Query route and the
+ten declared quote bindings are reachable, but correctly failed strict quality
+(`48` typed stale outcomes over eight rounds). There was no API error, gap,
+incomplete record, session loss, direct-provider call or V1 fallback. At the
+first aligned final-BAR boundary after the additive table appeared, the old
+cache had no `final_bar_watermarks` rows. Each of the `70` final BAR partitions
+therefore performed its permitted one-time retained-tail hydration inside the
+live projector path. Projector spans recorded canonical lookup up to `10.91 s`,
+and the resulting canonical age reached `27.03 s`; quote session liveness
+remained live while strict event freshness properly failed. The durable table
+then reached exactly `70` rows, proving the diagnosis. This is a migration
+cold-start latency defect, not provider latency or an SLA/configuration issue.
+
+**B2.1 approved in-scope correction before C2.** Before a projector begins
+Kafka polling, it must pre-hydrate the catalog's declared final-BAR partitions
+through the existing bounded, atomic spool primitive. The first projector may
+do the finite legacy work before accepting a live batch; concurrent/restarted
+projectors observe the same persisted rows. The live `_ready_batch()` path must
+therefore never initiate a multi-partition cold-cache hydration burst. There is
+no new service, table, public API, provider call, timestamp alteration, manifest
+change, fallback, or topology. Required proof: a pre-existing cache with many
+BAR partitions is hydrated before poll; the first mixed final-BAR/strict-QUOTE
+batch performs no retained-tail lookup; restart/rebalance reuse is O(1);
+empty-cache and malformed/late/revised BAR behavior stay fail-closed and
+correct. Run the affected no-network projector/spool/quality/SDK matrix, build
+one immutable Python image, roll only the three existing projectors with exact
+rollback, and then repeat the two-reader 300-second public-SDK matrix. A strict
+failure still blocks B and invokes only that bounded rollback.
+
+**B2.1 source implementation and proof (2026-09-19; no B2.1 runtime role
+changed).** `StableProjectorEngine` now derives the exact final-BAR partition
+set from the sealed catalog and atomically hydrates missing rows before it is
+registered ready or polls Kafka. `run_once()` and direct `accept_many()` share
+the same idempotent guard, while the supervisor performs preparation before
+publishing its broker to readiness. Thus a normal live batch can only read an
+already persisted O(1) watermark; a migration scan is finite startup work, not
+a quote-path side effect. The spool remains the sole durable authority, and an
+empty partition remains valid until its first final BAR rather than being
+invented.
+
+The regression converts the prior lazy-hydration proof into the required
+pre-poll behavior: a pre-table historical BAR is seeded once during prepare;
+the first newer/revised/late BAR plus a quote batch makes zero retained-tail
+reads; a restarted engine reuses the shared row; and the supervisor records
+`prepare` before it advertises a broker generation ready. Isolated no-network
+source gates passed: `tests.test_phaseb_stable_edge` `58 passed, 1 skipped`
+(the pre-existing isolated-Redis case); the remaining R1.35 quality/spool/
+batch-poll/stale/SDK modules `51 passed`; and stable deployment contract
+coverage `28 passed`. `compileall` and `git diff --check` passed. The expected
+argument-validation and injected-backpressure/recovery log lines in those
+tests are fixture assertions, not runtime warnings. No image, stream,
+projector, V1, Kafka topology/offset, Redis, SQLite data, Query, Trading
+System, alpha or order path changed in this source slice. The next allowed
+action is one immutable Python build followed by a three-projector-only packet
+with the current B2 image as exact rollback, then a fresh two-reader C2.
+
 #### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
