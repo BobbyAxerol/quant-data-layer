@@ -1174,6 +1174,162 @@ class StableSessionLivenessQualityTests(unittest.TestCase):
         self.assertEqual(raised.exception.problem.code.value, "DATA_STALE")
 
 
+class StableOnChangeQuoteQualityTests(unittest.TestCase):
+    """Native BBO can be quiet, but only behind the signed source contract."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.catalog = StableSourceCatalog.load(CATALOG_PATH)
+        self.spool = SQLiteDurableSpool(SpoolConfig(
+            path=Path(self.temp.name) / "stable.sqlite3",
+            max_records=100,
+            max_payload_bytes=2 * 1024 * 1024,
+            max_storage_bytes=8 * 1024 * 1024,
+            min_free_disk_bytes=0,
+        ))
+        self.binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "okx-swap-btcusdt-quote"
+        )
+        self.event = _stable_event(
+            self.catalog, "okx_bbo.json", self.binding.binding_id
+        )
+        self.event.config_revision = 7
+        _append(self.spool, self.catalog, self.event)
+        self.now_ns = self.event.source_event_time_ns + 5_000_000_000
+        self.root = Path(self.temp.name) / "session-liveness"
+
+    def tearDown(self):
+        self.spool.close()
+        self.temp.cleanup()
+
+    def _requirement(self, *, policy=StalePolicy.OBSERVE):
+        return DataRequirement(
+            instrument_uid=self.binding.instrument.instrument_uid,
+            feed=self.binding.feed,
+            interval=self.binding.interval,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id=self.binding.source_policy_id,
+            max_freshness_ms=2_000,
+            event_recency_policy=policy,
+            max_session_liveness_ms=2_000,
+            stale_policy=StalePolicy.BLOCK,
+        )
+
+    def _write_session(
+        self,
+        *,
+        state="LIVE",
+        generation=None,
+        revision=7,
+        age_ms=1,
+    ):
+        directory = self.root / "okx-swap"
+        directory.mkdir(parents=True, exist_ok=True)
+        transport_at_ns = self.now_ns - age_ms * 1_000_000
+        (directory / "bbo-lane.json").write_text(
+            json.dumps({
+                "schema": "qdl.provider-session-liveness.v1",
+                "source_session_id": self.event.source_session_id,
+                "connection_generation": (
+                    self.event.connection_generation
+                    if generation is None
+                    else generation
+                ),
+                "state": state,
+                "last_transport_at_ns": transport_at_ns,
+                "updated_at_ns": transport_at_ns,
+                "config_revision": revision,
+            }),
+            encoding="utf-8",
+        )
+
+    def _backend(self):
+        return StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="f" * 64,
+            config_revision=7,
+            session_liveness_root=str(self.root),
+            clock_ns=lambda: self.now_ns,
+        )
+
+    def _service(self, backend):
+        return V2QueryService(
+            instruments=InstrumentQuery(self.catalog.instrument_registry()),
+            backend=backend,
+            entitlements=self.catalog.entitlements(),
+            clock_ns=lambda: self.now_ns,
+        )
+
+    def test_on_change_quote_is_usable_only_with_live_signed_session(self):
+        self._write_session(age_ms=1_999)
+        requirement = self._requirement()
+        item = self._backend().latest(requirement)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.state, "LIVE")
+        self.assertEqual(item.quality.event_recency_state, "STALE")
+        self.assertGreater(item.quality.freshness_ms, requirement.max_freshness_ms)
+        self.assertEqual(item.quality.provider_session_liveness_ms, 1_999)
+        self.assertIn("LAST_EVENT_STALE", item.quality.flags)
+        self.assertIn("DELIVERY_ON_CHANGE", item.quality.flags)
+        self.assertTrue(item.quality.execution_eligible)
+        result = self._service(self._backend()).snapshot(
+            requirement, purpose=AccessPurpose.INTERNAL_EXECUTION
+        )
+        self.assertTrue(result.item.quality.execution_eligible)
+
+    def test_on_change_quote_keeps_strict_policy_and_all_fences_fail_closed(self):
+        self._write_session()
+        strict = self._requirement(policy=StalePolicy.BLOCK)
+        item = self._backend().latest(strict)
+        self.assertIsNotNone(item)
+        assert item is not None
+        self.assertEqual(item.quality.state, "STALE")
+        self.assertFalse(item.quality.execution_eligible)
+        with self.assertRaises(QueryServiceError) as raised:
+            self._service(self._backend()).snapshot(
+                strict, purpose=AccessPurpose.INTERNAL_EXECUTION
+            )
+        self.assertEqual(raised.exception.problem.code.value, "DATA_STALE")
+
+        observed = self._requirement()
+        for state, generation, revision, age_ms, expected_session in (
+            ("DISCONNECTED", None, 7, 1, "DISCONNECTED"),
+            ("LIVE", None, 7, 2_001, "STALE"),
+            ("LIVE", None, 6, 1, "UNKNOWN"),
+            ("LIVE", 2, 7, 1, "UNKNOWN"),
+        ):
+            with self.subTest(
+                state=state,
+                generation=generation,
+                revision=revision,
+                age_ms=age_ms,
+            ):
+                self._write_session(
+                    state=state,
+                    generation=generation,
+                    revision=revision,
+                    age_ms=age_ms,
+                )
+                backend = self._backend()
+                candidate = backend.latest(observed)
+                self.assertIsNotNone(candidate)
+                assert candidate is not None
+                self.assertEqual(candidate.quality.state, "STALE")
+                self.assertEqual(
+                    candidate.quality.provider_session_state, expected_session
+                )
+                self.assertFalse(candidate.quality.execution_eligible)
+                with self.assertRaises(QueryServiceError) as raised:
+                    self._service(backend).snapshot(
+                        observed, purpose=AccessPurpose.INTERNAL_EXECUTION
+                    )
+                self.assertEqual(raised.exception.problem.code.value, "DATA_STALE")
+
+
 class StableCursorScopeValidatorTests(unittest.TestCase):
     def setUp(self):
         self.catalog = StableSourceCatalog.load(CATALOG_PATH)

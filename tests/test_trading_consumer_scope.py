@@ -31,7 +31,7 @@ class TradingConsumerScopeTests(unittest.TestCase):
     def test_sealed_roundtrip_and_manifest_revision(self):
         parsed = ConsumerRouteBinding.from_canonical_mapping(self.binding.canonical_mapping())
         self.assertEqual(parsed, self.binding)
-        self.assertEqual(parsed.consumer_manifest_revision, 9)
+        self.assertEqual(parsed.consumer_manifest_revision, 10)
         value = self.binding.canonical_mapping()
         value["products"][0]["native_symbol"] = "WRONG"
         with self.assertRaises(ValueError):

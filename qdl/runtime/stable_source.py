@@ -572,6 +572,7 @@ class StableSpoolQueryBackend:
                 session_state=session_state,
                 session_liveness_ms=session_liveness_ms,
                 session_limit_ms=requirement.max_session_liveness_ms,
+                delivery_semantics=binding.delivery_semantics,
                 generation_matches="SOURCE_SESSION_AMBIGUOUS" not in session_flags,
                 config_matches="SOURCE_SESSION_CONFIG_MISMATCH" not in session_flags,
                 gap_open=gap_open,
@@ -583,9 +584,18 @@ class StableSpoolQueryBackend:
                 ),
                 require_final_bar=binding.require_final_bar,
                 watermark_offset=watermark_offset,
+                allow_quiet_execution=(
+                    binding.delivery_semantics == "ON_CHANGE"
+                    and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+                ),
                 flags=(
                     flags
                     + session_flags
+                    + (
+                        ("DELIVERY_ON_CHANGE",)
+                        if binding.delivery_semantics == "ON_CHANGE"
+                        else ()
+                    )
                     + (
                         ("FRESHNESS_BASIS_PROVIDER_CONFIRMATION",)
                         if binding.freshness_basis == "PROVIDER_CONFIRMATION"

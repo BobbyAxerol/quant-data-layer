@@ -579,6 +579,10 @@ class ReleaseRouteObservation:
     v2_session_liveness_ms: int | None = None
     v2_complete: bool | None = None
     v2_execution_eligible: bool | None = None
+    # This is release-evidence metadata derived from the existing public
+    # quality flags, not a new consumer-facing data-plane field. Older signed
+    # evidence remains parseable but cannot certify a quiet BBO route.
+    v2_delivery_semantics: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -616,6 +620,10 @@ class ReleaseRouteObservation:
                 ))
             ):
                 raise ValueError("release route typed session evidence is invalid")
+        if self.v2_delivery_semantics is not None and self.v2_delivery_semantics not in {
+            "STRICT_EVENT", "ON_CHANGE"
+        }:
+            raise ValueError("release route delivery semantics are invalid")
 
     def public_record(self) -> dict[str, object]:
         result = {
@@ -640,6 +648,8 @@ class ReleaseRouteObservation:
                 "v2_complete": self.v2_complete,
                 "v2_execution_eligible": self.v2_execution_eligible,
             })
+            if self.v2_delivery_semantics is not None:
+                result["v2_delivery_semantics"] = self.v2_delivery_semantics
         return result
 
 
@@ -665,10 +675,22 @@ def v2_observation_is_current(requirement, observed: ReleaseRouteObservation) ->
     maximum = requirement.max_freshness_ms
     if maximum is None or all(age <= maximum for age in ages):
         return True
-    return (
+    if (
         requirement.feed.value in {"TRADE", "BOOK_DELTA"}
         and requirement.effective_event_recency_policy.value == "OBSERVE"
-        and session_live and observed.v2_execution_eligible is False
+        and session_live
+        and observed.v2_execution_eligible is False
+    ):
+        return True
+    # An old BBO event can be current only when its sealed source declaration
+    # proves native update-on-change delivery and Query has independently made
+    # it execution eligible. A generic observed QUOTE cannot self-upgrade.
+    return (
+        requirement.feed.value == "QUOTE"
+        and requirement.effective_event_recency_policy.value == "OBSERVE"
+        and session_live
+        and observed.v2_execution_eligible is True
+        and observed.v2_delivery_semantics == "ON_CHANGE"
     )
 
 

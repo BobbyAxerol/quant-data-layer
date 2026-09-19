@@ -12,6 +12,21 @@
       "expected": {"semantics":"STRICT_EVENT","availability":"ACTIVE","state":"STALE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE"]}
     },
     {
+      "name": "on_change_quote_live_session",
+      "input": {"binding_id":"okx-bnb-quote","instrument_uid":"bnb","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":4001,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":1999,"session_limit_ms":2000,"delivery_semantics":"ON_CHANGE","components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":81,"allow_quiet_execution":true,"flags":["DELIVERY_ON_CHANGE"]},
+      "expected": {"semantics":"QUIET_SESSION","delivery_semantics":"ON_CHANGE","availability":"ACTIVE","state":"LIVE","event_recency_state":"STALE","complete":true,"execution_eligible":true,"reason_codes":["DELIVERY_ON_CHANGE","LAST_EVENT_STALE"]}
+    },
+    {
+      "name": "on_change_quote_heartbeat_expired",
+      "input": {"binding_id":"okx-bnb-quote","instrument_uid":"bnb","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":4001,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":2001,"session_limit_ms":2000,"delivery_semantics":"ON_CHANGE","components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":82,"allow_quiet_execution":true,"flags":["DELIVERY_ON_CHANGE"]},
+      "expected": {"semantics":"QUIET_SESSION","delivery_semantics":"ON_CHANGE","availability":"ACTIVE","state":"STALE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["DELIVERY_ON_CHANGE","LAST_EVENT_STALE","SOURCE_SESSION_HEARTBEAT_EXPIRED"]}
+    },
+    {
+      "name": "on_change_quote_gap",
+      "input": {"binding_id":"okx-bnb-quote","instrument_uid":"bnb","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":4001,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":20,"session_limit_ms":2000,"delivery_semantics":"ON_CHANGE","components":[],"generation_matches":true,"config_matches":true,"gap_open":true,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":83,"allow_quiet_execution":true,"flags":["DELIVERY_ON_CHANGE"]},
+      "expected": {"semantics":"QUIET_SESSION","delivery_semantics":"ON_CHANGE","availability":"ACTIVE","state":"GAPPED","event_recency_state":"STALE","complete":false,"execution_eligible":false,"reason_codes":["DELIVERY_ON_CHANGE","LAST_EVENT_STALE","OPEN_SEQUENCE_GAP"]}
+    },
+    {
       "name": "quiet_trade_connected",
       "input": {"binding_id":"okx-doge-trade","instrument_uid":"doge","feed":"TRADE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":18000,"event_limit_ms":3000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":100,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":9,"allow_quiet_execution":false,"flags":[]},
       "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"LIVE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE"]}

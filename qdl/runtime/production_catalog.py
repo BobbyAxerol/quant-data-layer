@@ -60,6 +60,7 @@ _BINANCE_MARKET_STREAM_URL = {
     "SPOT": "wss://stream.binance.com:9443/ws",
 }
 _BOOK_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
+_ON_CHANGE_QUOTE_MARKETS = frozenset({("BINANCE", "USDM"), ("OKX", "SWAP")})
 _SUPPORTED_FEEDS = {
     FeedType.TRADE,
     FeedType.QUOTE,
@@ -668,6 +669,14 @@ class ProductionCatalogBuilder:
                 **(
                     {"freshness_basis": "PROVIDER_CONFIRMATION"}
                     if item.feed is FeedType.MARK_INDEX_PRICE
+                    else {}
+                ),
+                **(
+                    {"delivery_semantics": "ON_CHANGE"}
+                    if (
+                        item.feed is FeedType.QUOTE
+                        and (item.venue, item.market) in _ON_CHANGE_QUOTE_MARKETS
+                    )
                     else {}
                 ),
             },

@@ -44557,12 +44557,12 @@ a passing process health check as data acceptance.
 
 | Delivery phase | Status | Outcome required before the next phase |
 | --- | --- | --- |
-| **1. R1.35-B1 - Source delivery semantics and quality authority** | `PENDING / source-only` | One Rust/Python/query decision for `STRICT_EVENT` versus signed `ON_CHANGE` BBO delivery, with exact manifest authorization and no false live result. |
+| **1. R1.35-B1 - Source delivery semantics and quality authority** | `PASS / source-only` | One Rust/Python/query decision for `STRICT_EVENT` versus signed `ON_CHANGE` BBO delivery, with exact manifest authorization and no false live result. |
 | **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PENDING / requires B1 exit and a separate runtime packet` | A sealed reader bundle/image proves all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
 | **3. R1.35-C - Full endpoint, binding and consumer certification** | `PENDING / requires B2 exit` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
 | **R1.35-D - Hygiene, provenance and immutable release** | `PENDING / requires C exit and explicit cleanup/release approvals` | Source, runtime, artifact, rollback, Git lineage and published release are one auditable state; only disposable artifacts are removed. |
 
-##### Phase 1 - R1.35-B1: Source delivery semantics and quality authority (`PENDING / SOURCE ONLY`)
+##### Phase 1 - R1.35-B1: Source delivery semantics and quality authority (`PASS / SOURCE ONLY`, 2026-09-19)
 
 **Goal.** Repair the real false-positive class without weakening genuine
 staleness: native Binance/OKX BBO lanes are update-on-change, so raw
@@ -44625,6 +44625,79 @@ increase.
 **Rollback / boundary.** This is source-only. Its rollback is the preceding
 Git commit. No image build, bundle seal, role recreate, offset/cache mutation
 or consumer rollout is authorized by B1.
+
+**Implementation start (2026-09-19).** The approved source slice is now in
+progress. It is limited to the shared Rust/Python evaluator, catalog and
+acquisition validation, the exact Trading System paper manifest/routing
+declaration, Query/SDK-preserving eligibility projection, shared golden and
+regression tests. No runtime, provider, container, image, Kafka, Redis,
+SQLite, V1, Trading System, alpha or order-path action has occurred.
+
+**Completed source slice and decision.** The source now declares
+`delivery_semantics=ON_CHANGE` only for the ten currently certified native BBO
+bindings: Binance USD-M and OKX Swap BTC/ETH/SOL/DOGE/BNB. Spot remains
+`STRICT_EVENT`, and DNSE remains outside this V2 route. The declaration is
+accepted only when its acquisition entry is a Rust-native documented BBO lane
+(`@bookTicker` for Binance USD-M or `bbo-tbt` for OKX); invalid feed, mode,
+provider kind or channel fails catalog/acquisition loading. Rust and Python
+share the same evaluator and golden corpus. The stable source preserves the
+immutable raw event age and `LAST_EVENT_STALE`, adds bounded
+`DELIVERY_ON_CHANGE` provenance, and may make only the exact
+`ON_CHANGE`/`OBSERVE`/live-session/no-gap/no-mismatch view execution-eligible.
+Query carries that already-pinned source answer instead of reapplying a raw
+age predicate, while still requiring entitlement, authority, policy, complete
+coverage, live session and liveness bound. No REST fallback, timestamp rewrite,
+symbol worker, public V2 field or provider quota change was introduced.
+
+**Sealed source contract.** `trading-system-paper.yaml` is manifest revision
+`10`, with exactly the ten quote requirements at `OBSERVE` and a `2,000 ms`
+session-liveness bound. Its canonical manifest SHA-256 is
+`5ca9aff1960883f59827e3a34ed709f4c30cf5db96c4e1253dd6f1116fb20cdf`.
+`stable-v2-release-routing.yaml` is revision `19`; it binds the unchanged
+catalog revision `8` and the changed catalog-file SHA-256
+`1aacf39153a6fd6346309c6705c24f2daa13ee5a083993b1304cceaa9d3450b2`.
+The catalog revision intentionally did not change because it is raw-event
+provenance, whereas this source-only routing/quality policy change is sealed
+by the catalog file digest and route revision. A first implementation used the
+raw YAML digest for the consumer manifest; the loader correctly rejected it,
+and the routing reference was corrected to the manifest's canonical digest
+above before acceptance.
+
+**Tests and evidence (`PASS`).** All commands ran in an isolated read-only
+container/image or the local source-only interpreter; no provider socket,
+runtime role, persistent test namespace or data plane was created.
+
+1. `python3 -m py_compile` over every changed Python module/test and structural
+   JSON/YAML validation: pass.
+2. `docker run --rm --network none --read-only ... qdl-v2-python:2.0.25-a23fcbe
+   python -m unittest` for the B1 golden, catalog/acquisition, stable source,
+   Query/SDK, release-evidence, routing and catalog-regeneration set: `25`
+   passed. It proves strict quote rejection; quiet-but-connected BBO; heartbeat
+   expiry; disconnect; configuration/generation mismatch; open gap; route
+   entitlement; both venue channel shapes; Spot exclusion; and canonical
+   manifest/routing containment.
+3. The wider isolated compatibility suite for stable edge/deployment, release
+   routing/observations, universal release, execution mark/index, stale-reason
+   and Trading System scope completed with exit status zero. Its intentional
+   backpressure/recovery injections remained test-only and produced no runtime
+   mutation.
+4. `cargo test -p qdl-core`: `49 passed, 0 failed`; the Rust golden matches the
+   Python fixture. `cargo clippy -p qdl-core --all-targets -- -D warnings` and
+   `cargo fmt --all -- --check`: pass.
+5. Read-only `python -m compileall -q qdl tests`, `git diff --check`, and
+   generated-contract scope inspection: pass; no Proto/generated SDK file
+   drift exists because this is an internal quality/evidence extension rather
+   than a public wire-schema change.
+
+**Exit / debt / cleanup.** B1 exit is met: generic quotes remain strict; raw
+lineage remains observable; all quiet-session and identity/continuity fences
+fail closed; Rust, Query and release evidence agree; and the sealed exact
+route set is ten, not a broad universe. There is no in-scope B1 technical debt.
+`R1.35-B2` is a deliberately separate real-runtime acceptance gate, not debt.
+Every test invocation used `docker run --rm` with read-only source and
+temporary storage; it left no container, image, volume, cache, provider data
+or runtime mutation to clean. The sealed source commit is `6b800fd`
+(`fix(quality): authorize native BBO on-change delivery`).
 
 ##### Phase 2 - R1.35-B2: Bounded reader rollout and strict quote C2 (`PENDING / REQUIRES B1 EXIT`)
 

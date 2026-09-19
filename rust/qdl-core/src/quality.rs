@@ -7,6 +7,28 @@
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DeliverySemantics {
+    StrictEvent,
+    OnChange,
+}
+
+impl Default for DeliverySemantics {
+    fn default() -> Self {
+        Self::StrictEvent
+    }
+}
+
+impl DeliverySemantics {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::StrictEvent => "STRICT_EVENT",
+            Self::OnChange => "ON_CHANGE",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ComponentEvidence {
     pub name: String,
@@ -31,6 +53,8 @@ pub struct BindingQualityInput {
     pub session_state: String,
     pub session_liveness_ms: Option<u64>,
     pub session_limit_ms: Option<u64>,
+    #[serde(default)]
+    pub delivery_semantics: DeliverySemantics,
     pub components: Vec<ComponentEvidence>,
     pub generation_matches: bool,
     pub config_matches: bool,
@@ -49,6 +73,7 @@ pub struct BindingQualityDecision {
     pub instrument_uid: String,
     pub feed: String,
     pub semantics: String,
+    pub delivery_semantics: String,
     pub availability: String,
     pub state: String,
     pub event_recency_state: String,
@@ -72,7 +97,8 @@ fn semantics(input: &BindingQualityInput) -> &'static str {
     if feed == "BAR" || input.require_final_bar {
         "FINAL_SCHEDULED"
     } else if input.event_recency_policy == "OBSERVE"
-        && matches!(feed.as_str(), "TRADE" | "BOOK_DELTA" | "MARK_INDEX_PRICE")
+        && (matches!(feed.as_str(), "TRADE" | "BOOK_DELTA" | "MARK_INDEX_PRICE")
+            || (feed == "QUOTE" && input.delivery_semantics == DeliverySemantics::OnChange))
     {
         "QUIET_SESSION"
     } else {
@@ -200,6 +226,7 @@ pub fn evaluate_binding_quality(input: &BindingQualityInput) -> BindingQualityDe
         instrument_uid: input.instrument_uid.clone(),
         feed: input.feed.clone(),
         semantics,
+        delivery_semantics: input.delivery_semantics.as_str().to_owned(),
         availability,
         state,
         event_recency_state,
@@ -233,12 +260,18 @@ mod tests {
     #[derive(Deserialize)]
     struct Expected {
         semantics: String,
+        #[serde(default = "default_delivery_semantics")]
+        delivery_semantics: String,
         availability: String,
         state: String,
         event_recency_state: String,
         complete: bool,
         execution_eligible: bool,
         reason_codes: Vec<String>,
+    }
+
+    fn default_delivery_semantics() -> String {
+        "STRICT_EVENT".to_owned()
     }
 
     #[test]
@@ -253,6 +286,11 @@ mod tests {
         for case in fixture.cases {
             let actual = evaluate_binding_quality(&case.input);
             assert_eq!(actual.semantics, case.expected.semantics, "{}", case.name);
+            assert_eq!(
+                actual.delivery_semantics, case.expected.delivery_semantics,
+                "{}",
+                case.name
+            );
             assert_eq!(
                 actual.availability, case.expected.availability,
                 "{}",

@@ -63,6 +63,10 @@ class BindingQualityInput:
     session_state: str
     session_liveness_ms: int | None
     session_limit_ms: int | None
+    # Provider delivery behavior is a source contract, not a caller choice.
+    # Native BBO can legitimately be quiet while the best bid/offer is
+    # unchanged; every other lane remains strict by default.
+    delivery_semantics: str = "STRICT_EVENT"
     components: tuple[ComponentEvidence, ...] = ()
     generation_matches: bool = True
     config_matches: bool = True
@@ -83,6 +87,7 @@ class BindingQualityInput:
             or not self.acquisition_mode.strip()
             or self.event_limit_ms < 1
             or self.event_recency_policy not in {"BLOCK", "PAUSE", "OBSERVE"}
+            or self.delivery_semantics not in {"STRICT_EVENT", "ON_CHANGE"}
             or self.session_state not in {
                 "LIVE", "STALE", "DISCONNECTED", "UNKNOWN", "NOT_APPLICABLE"
             }
@@ -107,6 +112,7 @@ class BindingQualityDecision:
     instrument_uid: str
     feed: str
     semantics: FeedSemantics
+    delivery_semantics: str
     availability: AvailabilityClass
     state: str
     event_recency_state: str
@@ -125,6 +131,7 @@ class BindingQualityDecision:
             "instrument_uid": self.instrument_uid,
             "feed": self.feed,
             "semantics": self.semantics.value,
+            "delivery_semantics": self.delivery_semantics,
             "availability": self.availability.value,
             "state": self.state,
             "event_recency_state": self.event_recency_state,
@@ -137,13 +144,25 @@ class BindingQualityDecision:
         }
 
 
-def semantics_for(*, feed: str, event_recency_policy: str, require_final_bar: bool) -> FeedSemantics:
+def semantics_for(
+    *,
+    feed: str,
+    event_recency_policy: str,
+    require_final_bar: bool,
+    delivery_semantics: str = "STRICT_EVENT",
+) -> FeedSemantics:
     normalized_feed = feed.upper()
     if normalized_feed == "BAR" or require_final_bar:
         return FeedSemantics.FINAL_SCHEDULED
     if (
         event_recency_policy == "OBSERVE"
-        and normalized_feed in {"TRADE", "BOOK_DELTA", "MARK_INDEX_PRICE"}
+        and (
+            normalized_feed in {"TRADE", "BOOK_DELTA", "MARK_INDEX_PRICE"}
+            or (
+                normalized_feed == "QUOTE"
+                and delivery_semantics == "ON_CHANGE"
+            )
+        )
     ):
         return FeedSemantics.QUIET_SESSION
     return FeedSemantics.STRICT_EVENT
@@ -182,6 +201,7 @@ def evaluate_binding_quality(value: BindingQualityInput) -> BindingQualityDecisi
         feed=value.feed,
         event_recency_policy=value.event_recency_policy,
         require_final_bar=value.require_final_bar,
+        delivery_semantics=value.delivery_semantics,
     )
     availability = availability_for(value)
     reasons = list(value.flags)
@@ -274,6 +294,7 @@ def evaluate_binding_quality(value: BindingQualityInput) -> BindingQualityDecisi
         instrument_uid=value.instrument_uid,
         feed=value.feed.upper(),
         semantics=semantics,
+        delivery_semantics=value.delivery_semantics,
         availability=availability,
         state=state,
         event_recency_state=event_state,

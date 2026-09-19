@@ -1201,14 +1201,37 @@ class V2QueryService:
             at_ns=self._clock_ns(),
         )
         quality = item.quality
+        # A source-authorized native BBO can be unchanged for longer than the
+        # consumer's raw-event window.  Its immutable source timestamp remains
+        # stale for audit, but the stable source evaluator may authorize the
+        # exact ON_CHANGE/OBSERVE binding from verified session/fence facts.
+        # No caller can opt into this through a request: the source catalog
+        # emits DELIVERY_ON_CHANGE only for the validated native BBO lanes.
+        on_change_quote = (
+            requirement.feed is FeedType.QUOTE
+            and "DELIVERY_ON_CHANGE" in quality.flags
+        )
+        event_recency_eligible = (
+            quality.event_recency_state != "STALE" or on_change_quote
+        )
+        freshness_eligible = (
+            requirement.max_freshness_ms is None
+            or quality.freshness_ms <= requirement.max_freshness_ms
+            or on_change_quote
+        )
         eligible = (
-            execution_entitlement.allowed
+            # The source backend owns feed delivery semantics. In particular,
+            # it is the only layer allowed to make a quiet native BBO eligible
+            # after its signed ON_CHANGE binding and all session/fence checks.
+            # Do not reapply a raw-age predicate here and undo that decision.
+            quality.execution_eligible
+            and execution_entitlement.allowed
             and item.source.authoritative
             and quality.policy_id == requirement.source_policy_id
             and quality.state == "LIVE"
             and quality.complete
             and not quality.gap_open
-            and quality.event_recency_state != "STALE"
+            and event_recency_eligible
             and quality.provider_session_state
             not in {"STALE", "DISCONNECTED", "UNKNOWN"}
             and (
@@ -1220,10 +1243,7 @@ class V2QueryService:
                     <= requirement.max_session_liveness_ms
                 )
             )
-            and (
-                requirement.max_freshness_ms is None
-                or quality.freshness_ms <= requirement.max_freshness_ms
-            )
+            and freshness_eligible
         )
         return replace(
             item,

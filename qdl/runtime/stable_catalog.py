@@ -79,6 +79,10 @@ class StableSourceBinding:
     # mark/index feed may instead use its authenticated receipt confirmation
     # for execution freshness when the provider repeats an unchanged value.
     freshness_basis: str = "SOURCE_EVENT"
+    # Native BBO may be emitted only when a best bid/offer changes. This source
+    # declaration is validated again against its physical acquisition binding;
+    # a consumer manifest cannot opt into it by itself.
+    delivery_semantics: str = "STRICT_EVENT"
     # Explicitly signed historical revisions are replay-only lineage.  They
     # never change the current instrument metadata returned to consumers.
     historical_metadata_revisions: tuple[int, ...] = ()
@@ -121,6 +125,13 @@ class StableSourceBinding:
             raise ValueError("stable source freshness bound must be positive")
         if self.freshness_basis not in {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"}:
             raise ValueError("stable source freshness basis is invalid")
+        if self.delivery_semantics not in {"STRICT_EVENT", "ON_CHANGE"}:
+            raise ValueError("stable source delivery semantics is invalid")
+        if (
+            self.delivery_semantics == "ON_CHANGE"
+            and self.feed is not FeedType.QUOTE
+        ):
+            raise ValueError("on-change delivery is reserved for native BBO QUOTE")
         if (
             self.freshness_basis == "PROVIDER_CONFIRMATION"
             and self.feed is not FeedType.MARK_INDEX_PRICE
@@ -403,7 +414,7 @@ class StableSourceCatalog:
             raise ValueError("stable source lineage fields are incomplete or unknown")
         required_quality = {"stale_after_ms", "require_final_bar", "continuous_calendar"}
         if not required_quality <= set(quality) or set(quality) - required_quality - {
-            "freshness_basis"
+            "freshness_basis", "delivery_semantics"
         }:
             raise ValueError("stable source quality fields are incomplete or unknown")
         interval = raw["interval"]
@@ -425,6 +436,7 @@ class StableSourceCatalog:
             v1_compatibility=str(raw["v1_compatibility"]).upper(),
             canonical_stream=canonical_stream,
             freshness_basis=str(quality.get("freshness_basis", "SOURCE_EVENT")).upper(),
+            delivery_semantics=str(quality.get("delivery_semantics", "STRICT_EVENT")).upper(),
             historical_metadata_revisions=history_by_uid[instrument.instrument_uid],
         )
 

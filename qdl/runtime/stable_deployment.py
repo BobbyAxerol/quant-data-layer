@@ -413,6 +413,26 @@ class StableAcquisitionBinding:
         )
         if self.provider_kind not in allowed:
             raise ValueError("stable acquisition provider kind differs from catalog feed")
+        if source.delivery_semantics == "ON_CHANGE":
+            if (
+                source.feed is not FeedType.QUOTE
+                or self.mode != "RUST_NATIVE"
+                or self.provider_kind not in {
+                    "binance_usdm_bbo", "binance_spot_bbo", "okx_bbo",
+                }
+            ):
+                raise ValueError(
+                    "on-change delivery requires a Rust-native documented BBO lane"
+                )
+            if (
+                self.runtime == "BINANCE"
+                and not self.native_channel.endswith("@bookTicker")
+            ) or (
+                self.runtime == "OKX" and self.native_channel != "bbo-tbt"
+            ):
+                raise ValueError(
+                    "on-change delivery channel differs from the documented BBO lane"
+                )
         if self.l2 is not None and self.mark_index is not None:
             raise ValueError("stable acquisition cannot combine L2 and MARK_INDEX")
         if self.l2 is not None:

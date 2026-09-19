@@ -31,6 +31,7 @@ _SESSION_QUALITY_FIELDS = frozenset({
     "state", "provider_session_state", "provider_session_liveness_ms",
     "complete", "execution_eligible",
 })
+_DELIVERY_SEMANTICS_FIELD = "delivery_semantics"
 _CAPTURE_FIELDS = frozenset({"captured_at_ms", "cpu_millicores", "rss_bytes"})
 _BUNDLE_FIELDS = frozenset({
     "schema",
@@ -90,9 +91,12 @@ def _require_positive_int(value: object, field: str) -> int:
 
 
 def _quality(value: object, field: str) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) not in (
-        _QUALITY_FIELDS, _QUALITY_FIELDS | _SESSION_QUALITY_FIELDS
-    ):
+    allowed_shapes = (
+        _QUALITY_FIELDS,
+        _QUALITY_FIELDS | _SESSION_QUALITY_FIELDS,
+        _QUALITY_FIELDS | _SESSION_QUALITY_FIELDS | {_DELIVERY_SEMANTICS_FIELD},
+    )
+    if not isinstance(value, Mapping) or set(value) not in allowed_shapes:
         raise ValueError(f"Phase 10.5 B3 {field} quality fields are invalid")
     gap_open = value.get("gap_open")
     if not isinstance(gap_open, bool):
@@ -116,6 +120,10 @@ def _quality(value: object, field: str) -> dict[str, object]:
             v1_source_age_ms=None, v1_receive_age_ms=None, consumer_lag=0,
             cpu_millicores=0, rss_bytes=0, **_session_observation_fields(result, result),
         )
+    if _DELIVERY_SEMANTICS_FIELD in value:
+        if value[_DELIVERY_SEMANTICS_FIELD] not in {"STRICT_EVENT", "ON_CHANGE"}:
+            raise ValueError(f"Phase 10.5 B3 {field}.delivery_semantics is invalid")
+        result[_DELIVERY_SEMANTICS_FIELD] = value[_DELIVERY_SEMANTICS_FIELD]
     return result
 
 
@@ -126,12 +134,20 @@ def _session_observation_fields(primary, secondary) -> dict[str, object]:
     sessions = (primary["provider_session_state"], secondary["provider_session_state"])
     ages = (primary["provider_session_liveness_ms"], secondary["provider_session_liveness_ms"])
     # Either replica can block readiness; a healthy peer never hides a fault.
+    delivery_semantics = None
+    if (
+        primary.get(_DELIVERY_SEMANTICS_FIELD)
+        == secondary.get(_DELIVERY_SEMANTICS_FIELD)
+        and primary.get(_DELIVERY_SEMANTICS_FIELD) in {"STRICT_EVENT", "ON_CHANGE"}
+    ):
+        delivery_semantics = primary[_DELIVERY_SEMANTICS_FIELD]
     return {
         "v2_quality_state": "LIVE" if states == ("LIVE", "LIVE") else next(s for s in states if s != "LIVE"),
         "v2_session_state": sessions[0] if sessions[0] == sessions[1] else "UNKNOWN",
         "v2_session_liveness_ms": max(ages) if all(a is not None for a in ages) else None,
         "v2_complete": primary["complete"] and secondary["complete"],
         "v2_execution_eligible": primary["execution_eligible"] and secondary["execution_eligible"],
+        "v2_delivery_semantics": delivery_semantics,
     }
 
 
@@ -179,6 +195,14 @@ def compact_view_quality(view: object, *, observed_at_ns: int | None = None) -> 
     }
     if all(hasattr(quality, key) for key in _SESSION_QUALITY_FIELDS):
         result.update({key: getattr(quality, key) for key in _SESSION_QUALITY_FIELDS})
+        flags = getattr(quality, "flags", ())
+        if not isinstance(flags, (tuple, list)) or any(
+            not isinstance(flag, str) for flag in flags
+        ):
+            raise ValueError("Phase 10.5 B3 view.quality flags are invalid")
+        result[_DELIVERY_SEMANTICS_FIELD] = (
+            "ON_CHANGE" if "DELIVERY_ON_CHANGE" in flags else "STRICT_EVENT"
+        )
     return _quality(result, "view")
 
 

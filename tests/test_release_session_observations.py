@@ -59,6 +59,28 @@ class ReleaseSessionObservationTests(unittest.TestCase):
         self.assertFalse(v2_observation_is_current(requirement,
             replace(observation, v2_session_state="DISCONNECTED")))
 
+    def test_old_on_change_quote_requires_signed_delivery_and_execution_eligibility(self):
+        requirement = self.requirement(FeedType.QUOTE, StalePolicy.OBSERVE)
+        observation = replace(
+            self.observation(),
+            v2_execution_eligible=True,
+            v2_delivery_semantics="ON_CHANGE",
+        )
+        self.assertTrue(v2_observation_is_current(requirement, observation))
+        for fields in (
+            {"v2_delivery_semantics": "STRICT_EVENT"},
+            {"v2_delivery_semantics": None},
+            {"v2_execution_eligible": False},
+            {"v2_session_state": "DISCONNECTED"},
+            {"v2_session_liveness_ms": 45_001},
+            {"v2_gap_open": True},
+            {"v2_complete": False},
+        ):
+            with self.subTest(fields=fields):
+                self.assertFalse(
+                    v2_observation_is_current(requirement, replace(observation, **fields))
+                )
+
     def test_compact_quality_does_not_discard_session_or_make_quiet_data_executable(self):
         quality = SimpleNamespace(freshness_ms=12000, gap_open=False, state="LIVE",
             provider_session_state="LIVE", provider_session_liveness_ms=900,
@@ -68,6 +90,19 @@ class ReleaseSessionObservationTests(unittest.TestCase):
         self.assertEqual(evidence["source_age_ms"], 12000)
         self.assertEqual(evidence["provider_session_liveness_ms"], 900)
         self.assertFalse(evidence["execution_eligible"])
+
+    def test_compact_quality_preserves_on_change_delivery_provenance(self):
+        quality = SimpleNamespace(
+            freshness_ms=12000, gap_open=False, state="LIVE",
+            provider_session_state="LIVE", provider_session_liveness_ms=900,
+            complete=True, execution_eligible=True,
+            flags=("LAST_EVENT_STALE", "DELIVERY_ON_CHANGE"),
+        )
+        evidence = compact_view_quality(
+            SimpleNamespace(quality=quality, received_at_ns=1000000),
+            observed_at_ns=13000000,
+        )
+        self.assertEqual(evidence["delivery_semantics"], "ON_CHANGE")
 
     def test_typed_evidence_rejects_bad_types_and_extra_fields(self):
         for fields in ({"v2_session_liveness_ms": True}, {"v2_complete": 1},

@@ -16,6 +16,7 @@ import yaml
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.adapters.vn import build_dnse_bar_raw_envelope
+from qdl.query import FeedType, StalePolicy
 from qdl.stream import requirement_from_proto
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 from qdl.runtime.stable_vn_edge import StableDnseVendorEdge
@@ -185,6 +186,82 @@ class StableDeploymentContractTests(unittest.TestCase):
                 self.assertTrue(manifest.requirement_allowed(requirement))
                 self.assertEqual(requirement.event_recency_policy.value, "OBSERVE")
                 self.assertEqual(requirement.max_session_liveness_ms, 45_000)
+
+    def test_trading_paper_quote_routes_are_exact_native_on_change_bbo(self):
+        manifest = ConsumerManifestLoader.load(
+            ROOT / "consumers/stable/trading-system-paper.yaml"
+        )
+        acquisition_by_id = {
+            item.binding_id: item for item in self.acquisition.bindings
+        }
+        quote_requirements = tuple(
+            item for item in manifest.requirements if item.feed is FeedType.QUOTE
+        )
+        self.assertEqual(len(quote_requirements), 10)
+        expected = {
+            ("BINANCE", symbol)
+            for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT")
+        } | {
+            ("OKX", symbol)
+            for symbol in (
+                "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+                "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+            )
+        }
+        observed = set()
+        for requirement in quote_requirements:
+            with self.subTest(instrument_uid=requirement.instrument_uid):
+                binding = self.catalog.binding_for(requirement)
+                acquisition = acquisition_by_id[binding.binding_id]
+                observed.add((
+                    binding.instrument.identity.venue,
+                    binding.instrument.native_symbol,
+                ))
+                self.assertIs(requirement.effective_event_recency_policy, StalePolicy.OBSERVE)
+                self.assertEqual(requirement.max_session_liveness_ms, 2_000)
+                self.assertEqual(binding.delivery_semantics, "ON_CHANGE")
+                self.assertEqual(acquisition.mode, "RUST_NATIVE")
+                self.assertIn(
+                    acquisition.provider_kind,
+                    {"binance_usdm_bbo", "okx_bbo"},
+                )
+                if acquisition.runtime == "BINANCE":
+                    self.assertTrue(acquisition.native_channel.endswith("@bookTicker"))
+                else:
+                    self.assertEqual(acquisition.native_channel, "bbo-tbt")
+        self.assertEqual(observed, expected)
+        on_change = {
+            (
+                item.instrument.identity.venue,
+                item.instrument.identity.market,
+                item.instrument.native_symbol,
+            )
+            for item in self.catalog.bindings
+            if item.delivery_semantics == "ON_CHANGE"
+        }
+        self.assertEqual(
+            on_change,
+            {
+                (venue, "USDM" if venue == "BINANCE" else "SWAP", symbol)
+                for venue, symbol in expected
+            },
+        )
+        self.assertEqual(
+            next(
+                item.delivery_semantics
+                for item in self.catalog.bindings
+                if item.binding_id == "binance-spot-btcusdt-quote"
+            ),
+            "STRICT_EVENT",
+        )
+        self.assertEqual(
+            next(
+                item.delivery_semantics
+                for item in self.catalog.bindings
+                if item.binding_id == "okx-spot-btcusdt-quote"
+            ),
+            "STRICT_EVENT",
+        )
 
     def test_tls_generator_covers_all_published_ingress_aliases(self):
         script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(
@@ -1171,6 +1248,41 @@ class StableDeploymentContractTests(unittest.TestCase):
         primary["public_write_allowed"] = True
         with self.assertRaisesRegex(ValueError, "not an isolated shared Rust"):
             self.acquisition.core_config(catalog=self.catalog, authority=primary)
+
+    def test_on_change_delivery_cannot_escape_catalog_or_native_bbo_validation(self):
+        catalog_payload = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
+        trade = next(
+            item for item in catalog_payload["bindings"]
+            if item["binding_id"] == "binance-usdm-btcusdt-trade"
+        )
+        trade["quality"]["delivery_semantics"] = "ON_CHANGE"
+        with self.assertRaisesRegex(ValueError, "reserved for native BBO QUOTE"):
+            StableSourceCatalog.from_mapping(catalog_payload)
+
+        payload = yaml.safe_load(ACQUISITION_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="qdl-on-change-acquisition-") as directory:
+            path = Path(directory) / "candidate.yaml"
+            wrong_mode = copy.deepcopy(payload)
+            bbo = next(
+                item for item in wrong_mode["bindings"]
+                if item["binding_id"] == "okx-swap-btcusdt-quote"
+            )
+            bbo["mode"] = "PYTHON_REST"
+            bbo["websocket_url"] = None
+            bbo["business_websocket_url"] = None
+            path.write_text(yaml.safe_dump(wrong_mode, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "on-change delivery requires"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
+
+            wrong_channel = copy.deepcopy(payload)
+            bbo = next(
+                item for item in wrong_channel["bindings"]
+                if item["binding_id"] == "binance-usdm-btcusdt-quote"
+            )
+            bbo["native_channel"] = "btcusdt@trade"
+            path.write_text(yaml.safe_dump(wrong_channel, sort_keys=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "on-change delivery channel"):
+                StableAcquisitionPlan.load(path, catalog=self.catalog)
 
     def test_hot_l2_materialization_is_core_only_and_keeps_provider_refresh(self):
         core = self.acquisition.core_config(

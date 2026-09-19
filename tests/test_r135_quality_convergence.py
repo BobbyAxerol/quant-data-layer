@@ -48,6 +48,10 @@ class BindingQualityGoldenTests(unittest.TestCase):
                 decision = evaluate_binding_quality(BindingQualityInput(**raw))
                 expected = case["expected"]
                 self.assertEqual(decision.semantics.value, expected["semantics"])
+                self.assertEqual(
+                    decision.delivery_semantics,
+                    expected.get("delivery_semantics", "STRICT_EVENT"),
+                )
                 self.assertEqual(decision.availability.value, expected["availability"])
                 self.assertEqual(decision.state, expected["state"])
                 self.assertEqual(
@@ -75,6 +79,35 @@ class BindingQualityGoldenTests(unittest.TestCase):
         self.assertEqual(decision.semantics.value, "STRICT_EVENT")
         self.assertEqual(decision.state, "STALE")
         self.assertFalse(decision.execution_eligible)
+
+    def test_on_change_quote_requires_source_semantics_and_live_fences(self) -> None:
+        source_authorized = next(
+            case for case in self.fixture["cases"]
+            if case["name"] == "on_change_quote_live_session"
+        )
+        raw = dict(source_authorized["input"])
+        raw["components"] = tuple(
+            ComponentEvidence(**component) for component in raw["components"]
+        )
+        raw["flags"] = tuple(raw["flags"])
+        self.assertTrue(
+            evaluate_binding_quality(BindingQualityInput(**raw)).execution_eligible
+        )
+        for field, value in (
+            ("delivery_semantics", "STRICT_EVENT"),
+            ("allow_quiet_execution", False),
+            ("generation_matches", False),
+            ("config_matches", False),
+            ("gap_open", True),
+        ):
+            with self.subTest(field=field):
+                candidate = dict(raw)
+                candidate[field] = value
+                self.assertFalse(
+                    evaluate_binding_quality(
+                        BindingQualityInput(**candidate)
+                    ).execution_eligible
+                )
 
     def test_query_admission_matches_quality_metadata_without_erasing_gap(self) -> None:
         requirement = DataRequirement(
