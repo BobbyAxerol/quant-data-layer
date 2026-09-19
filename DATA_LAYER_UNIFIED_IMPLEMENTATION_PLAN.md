@@ -44751,6 +44751,25 @@ latency matrix and exact runtime/image/bundle provenance.
 any acceptance invariant fails. Do not retry for luck or widen a freshness
 budget. Only B2 pass permits Phase 3.
 
+**B2 packet preflight (2026-09-19; no runtime mutation).** `R1.35-B1` source
+is sealed at `6be8d54`; the reader candidate will be built from that code as
+one immutable Python image. Read-only container inspection found two distinct
+active rollback coordinates: `query_v2_1` and `query_v2_2` use
+`sha256:1ad34175322f2f8eec34b3e772e3935d999248e40432ecf5852f832df1dfa88d`
+(`58998ae`), while `stream_v2_active` and `stream_v2_passive` use
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`
+(`40a1155`). The packet therefore records rollback per role rather than
+pretending one historical Python image covers all readers. A new private,
+reader-only runtime directory will copy the currently mounted non-secret
+runtime files byte-for-byte, preserve authority/core/ingestor/acquisition
+lineage, and replace only the signed source catalog plus release-routing
+copies required by manifest revision `10`. Core and ingestor roles retain the
+current runtime directory; no shared runtime inode is edited. Before any
+recreate, the packet must prove those preservation hashes, candidate image
+digest, source/catalog/manifest/route hash chain, compose render and exact
+four-role rollback map. This preparation is not a rollout and does not grant
+Phase 3.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
