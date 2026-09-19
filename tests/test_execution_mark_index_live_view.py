@@ -10,6 +10,8 @@ import asyncio
 import base64
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -435,6 +437,24 @@ class _LiveReader:
     def stats(self) -> dict[str, int]:
         return {"calls": self.calls, "successes": self.calls if self.status is ReferenceStatus.OK else 0,
                 "failures": 0 if self.status is ReferenceStatus.OK else self.calls}
+
+
+class StableCatalogImportTests(unittest.TestCase):
+    def test_direct_catalog_import_does_not_form_a_runtime_cycle(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from qdl.runtime.stable_catalog import StableSourceCatalog; "
+                "assert StableSourceCatalog.__name__ == 'StableSourceCatalog'",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):

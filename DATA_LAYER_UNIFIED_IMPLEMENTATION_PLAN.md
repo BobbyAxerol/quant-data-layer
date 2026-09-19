@@ -44259,3 +44259,33 @@ MARK/INDEX bindings but predates the signed component cadence. The next
 permitted action is therefore exactly one new sealed runtime revision from
 this source, followed by the approved seven-role rolling packet and one strict
 300-second C2 receipt. R1.34 remains `SOURCE_COMPLETE / RUNTIME_PENDING`.
+
+**Pre-roll validation correction (`IN PROGRESS`, 2026-09-19).** A direct
+`StableSourceCatalog` import exposed a real Python import cycle through a
+type-only MARK/INDEX annotation; the annotation is being made type-check-only
+and a clean-process regression is required. A separate candidate preflight
+also tried to parse the legacy acquisition file mounted under `/runtime`.
+That file is not an active reader input: the standard query/stream roles load
+the signed source and acquisition contracts from their immutable image under
+`/app/config/v2`, while `/runtime` supplies authority/core state. The correct
+response is to keep the acquisition schema strict and remove the attempted
+optional-URL parser relaxation, not to weaken a stable contract. This
+correction is source-only; it changes no demand, provider URL, runtime mount,
+service, image or data-plane state. Exit requires the direct-import regression
+plus the complete existing R1.34 source suite before one final Python reader
+image is built. The previously built pre-correction Python candidate is
+test-only and will not be deployed.
+
+**Correction result (`PASS`, 2026-09-19).** The type-only import now uses
+`TYPE_CHECKING`, and a fresh Python process imports `StableSourceCatalog`
+without a cycle. The strict acquisition parser was retained unchanged: the
+legacy `/runtime/stable-acquisition-bindings.yaml` is not read by standard
+query/stream roles, whose environment explicitly resolves both source and
+acquisition contracts from immutable `/app/config/v2`. A network-isolated,
+read-only image run completed `83/83` tests across the direct-import,
+MARK/INDEX live-view, reference, catalog, V2 API/contract/consumer/SDK and
+end-to-end suites. The only output was an existing TestClient deprecation and
+an expected gRPC task diagnostic; neither failed a test. The final reader
+image must be rebuilt from this corrected source; the Rust binary remains the
+already-tested R1.34 artifact because no Rust source changed after its
+successful format/clippy/test gate.

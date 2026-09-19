@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.query import FeedType
 from qdl.raw.envelope import validate_raw_envelope
-from qdl.runtime.stable_catalog import StableSourceBinding
+
+if TYPE_CHECKING:
+    from qdl.runtime.stable_catalog import StableSourceBinding
 
 
 DERIVED_MARK_INDEX_COMPONENT_V1 = "DERIVED_MARK_INDEX_COMPONENT_V1"
