@@ -43209,3 +43209,57 @@ next measurement, not another attempt.
 
 The `--expected-missing` guard did its job on the way: it refused 30 when the
 true count was 31 and would not run until the number matched.
+
+<a id="dl-v2-r131-interval-audit-20260919"></a>
+#### R1.31 — every interval-bearing endpoint audited, four sites, 5/14 to 12/14 (2026-09-19T07:25Z)
+
+Owner: *"Không chỉ warmup mà tất cả endpoint binding liên quan đến interval thì
+phải cẩn thận làm cho đúng."* The audit found the same rule violated in four
+places, and fixing one at a time made the next one visible.
+
+| # | site | role | before | after |
+|---|---|---|---|---|
+| 1 | `stable_source.history` coverage | query | `len(items) == requested` in `full` | contiguity only |
+| 2 | `query/service` horizon check | query | `len(items) != rows` | `> rows` |
+| 3 | `provider_history` pass-through | query | `len(items) != expected_count` | `>` for rows, exact for a time range |
+| 4 | **`qdl_sdk/client`** | **every consumer** | `response.count != rows` | `> rows` |
+
+Site 4 is why the first deploy looked like a failure: with the server fixed the
+alpha still refused, now as `ContinuityError` raised on its own side. A cap that
+only one end honours is not a cap.
+
+**Audited and deliberately unchanged:** `stable_source.latest` and the stream
+carry no count contract; the bar edge's repair plan compares against what the
+provider confirmed, which is the correct contract for a repair;
+`canary_source.py` has the same pattern but belongs to the beta runtime and is
+not one of the seventeen deployed roles.
+
+#### Measured through the alpha's own certificate, its own manifest, 10,000 rows
+
+| iv | bars | back | ms | coverage | vs venue |
+|---|---|---|---|---|---|
+| 1m | 10,000 | 6.9 d | 6,626 | FULL | OK |
+| 3m | 10,000 | 20.8 d | 6,519 | FULL | OK |
+| 5m | 10,000 | 34.7 d | 6,935 | FULL | OK |
+| 15m | - | - | - | - | **unresolved sequence gap** |
+| 30m | - | - | - | - | **unresolved sequence gap** |
+| 1h | 10,000 | 416.7 d | 6,514 | FULL | OK |
+| 2h | 10,000 | 833.4 d | 6,603 | FULL | OK |
+| 4h | **6,582** | 1,097.1 d | 4,037 | FULL | OK |
+| 6h | **4,388** | 1,097.1 d | 2,711 | FULL | OK |
+| 8h | **3,291** | 1,097.3 d | 2,208 | FULL | OK |
+| 12h | **2,194** | 1,097.3 d | 1,412 | FULL | OK |
+| 1d | **1,097** | 1,097.3 d | 583 | FULL | OK |
+| 3d | **366** | 1,100.3 d | 189 | FULL | OK |
+| 1w | **156** | 1,097.3 d | 75 | FULL | OK |
+
+**12 of 14, up from 5.** Every long interval now returns exactly what 1,095 days
+of bootstrap contains, truncated rather than refused, `coverage: FULL`, and equal
+to Binance's own REST rows for the oldest and newest bar of each series. The
+counts land where the arithmetic said they would - 1w at 156, 1d at 1,097.
+
+15m and 30m still fail, on the interior sequence gap, which is a different defect
+and untouched by any of this.
+
+**Tests:** 20 in `test_dlv2_r131_warmup_is_a_lookback_cap.py`; 106 history/warmup,
+71 pass-through/interval and 9 SDK suites pass; full suite **1,647 OK**.
