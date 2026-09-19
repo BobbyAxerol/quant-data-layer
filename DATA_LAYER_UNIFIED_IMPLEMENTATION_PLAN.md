@@ -42258,3 +42258,69 @@ the subscribed binding rather than the REST row - is now not a preference but th
 only path to the bound, and it is the one piece of R1.31 still unwritten. It
 changes an execution-grade risk input and deserves its own design and rollout,
 not a release-day patch.
+
+<a id="dl-v2-r131-item4-cause-20260919"></a>
+#### R1.31 item 4 — the cause, measured through the adapter's own client (2026-09-19T05:45Z)
+
+Two readings in this section were wrong before this one and are withdrawn.
+
+**Withdrawn 1: "the durable spool is ~2 s behind wall clock."** The newest
+`accepted_at_ns` read from a `mode=ro` SQLite connection in the query container
+is consistently 1.7-2.3 s old, while the projector in the same window reports
+`canonical_age_ms` mean 261.6 and 34 durable appends per ten seconds. A reader
+that cannot see writes another process is making is a property of the read, not
+of the spool. Every age computed against wall clock in this session carries that
+same offset; the endpoint counts are unaffected because they compare each
+partition against the newest event in the same snapshot.
+
+**Withdrawn 2: "the canonical plane is sub-second, so it is the fix" - right
+conclusion, wrong evidence.** The number quoted came from a single event that
+happened to be the newest in a lagging read. The defensible number is internal
+to the envelope: over forty consecutive canonical `mark_index_price` events,
+`received_at_ns - source_event_time_ns` is **min 36, p50 47, max 129 ms**, and
+consecutive events are 87 ms apart at p50. That is a property of the event, not
+of when anyone read it.
+
+#### The measurement that settles it
+
+Run through `OkxRestClient` itself - the adapter's own client, its own buckets,
+the same `asyncio.gather` the `BOTH` branch uses:
+
+| instrument | gather | mark `ts` age | index `ts` age | mark - index |
+|---|---|---|---|---|
+| BTC-USDT-SWAP | 100 ms | 34 ms | **1,133 ms** | 1,099 ms |
+| ETH-USDT-SWAP | 92 ms | 37 ms | **1,414 ms** | 1,377 ms |
+| DOGE-USDT-SWAP | 88 ms | 34 ms | **764 ms** | 730 ms |
+
+**OKX's REST index row is 0.76-1.41 s older than its mark row at the instant
+both are fetched.** The round trip is 90-100 ms, so this is not our transport,
+our buckets or our cache: it is what the venue puts in the field.
+
+That closes the arithmetic the consumer reports. Venue 764-1,414 ms, plus a
+cache of up to 750 ms, plus transport and handling of 100-300 ms, gives
+900-2,460 ms against the 2,088-2,501 ms observed. Every term is now named.
+
+Earlier notes blamed the bucket; that was backwards and is withdrawn too. A
+request delayed in a token bucket is *sent later* and comes back with a
+**fresher** `ts`, not a staler one.
+
+#### What follows
+
+The venue alone can spend 1,414 ms of a 2,000 ms budget on this path, so the
+REST reference path cannot carry an execution-grade mark/index bound whatever
+the cache does. The 750 ms TTL from earlier today is worth keeping - it moved
+the tail by about 580 ms - and it cannot close a gap the venue owns.
+
+The canonical path can: the same pairing arrives **47 ms** behind its own source
+event at p50, roughly twenty times fresher, and `index-tickers` is already
+subscribed for all five OKX instruments. Serving INDEX from that binding is
+therefore not a preference between two equivalent sources; it is the only one
+that fits the bound.
+
+It is still not written. It needs a canonical reader reaching the reference
+adapter, a freshness preference with a REST fallback, and its own rollout,
+because it changes an execution-grade risk input. Landing that at the end of a
+release day is how the two incidents in this journal happened. It is the first
+item of the next block, with the numbers above as its acceptance criteria:
+index component inside 2,000 ms at p99, measured from the consumer's own
+`ages_ms`, with no increase in OKX request rate.
