@@ -42208,3 +42208,53 @@ The projector hang is now the first item, ahead of everything in R1.31 as
 written. A release cut while two of three projectors are hung would certify a
 degraded stack. Then: item 4's real cause, the ten remaining intervals after
 20:00Z, and item 6's merge.
+
+<a id="dl-v2-r131-recovery-20260919"></a>
+#### R1.31 recovery — the projectors, and what the first reading got wrong (2026-09-19T05:35Z)
+
+**The 33-of-188 figure was a draining backlog, not a steady state, and reporting
+it as the stack's condition was wrong.** Measured again while
+`stable-projector-2` was still alone, total group lag had already fallen from
+roughly 60,000 to 2,291, and the endpoint set was back to **188/188 inside their
+own declared `stale_after_ms`**. One projector could carry all six partitions;
+what it could not carry was a second failure.
+
+So the defect was never throughput. It was that two roles were `Up`, silent, and
+doing nothing, with no signal that said so.
+
+`qdl-v2-python:2.0.20-e7fd0c9` carries the bounded close. Rolled to
+`projector_v2` and `projector_v2_3` first - they were doing no work, so there was
+nothing to interrupt - then `projector_v2_2` last, so a working projector existed
+throughout. All three rejoined `stable-projector-v1`, two partitions each, group
+lag **422**.
+
+Final state at 05:35Z: 17/17 roles Up, **4.00 vcore** of the 5.0 budget,
+`quarantines` 0, `scope_quarantines` 0, `raw_age_ms` mean 138 / max 492,
+**188/188 partitions inside their declared bound**.
+
+#### Item 4, with the venue measured properly
+
+Twelve samples through `curl --noproxy '*'` (urllib goes through the host proxy
+and returns HTTP errors - coupling 7, and it cost two wasted runs):
+
+| endpoint | n | min | p50 | p90 | max |
+|---|---|---|---|---|---|
+| `/api/v5/market/index-tickers` | 12 | 96 | 383 | 671 | 1,052 ms |
+| `/api/v5/public/mark-price` | 12 | -195 | -187 | -177 | -174 ms |
+
+Mark's negative age is clock skew: this host runs about 185 ms behind OKX. Skew
+corrected, **the venue's own REST index row is 280-1,240 ms old when mark's is
+zero**. That is the part no cache setting can remove.
+
+Which makes the earlier report of the TTL change unfair to it in one direction
+and too kind in another. It did move the tail - max fell from 3,081 to 2,501 ms,
+about 580 ms - and it did not move p50. Both are true, and neither clears a
+2,000 ms bound once the venue has already spent up to 1,240 ms of it.
+
+**The REST reference path cannot meet this bound, structurally.** The canonical
+plane can: `index-tickers` is already subscribed for all five OKX instruments and
+those partitions are sub-second. The fix named on 2026-09-16 - serve INDEX from
+the subscribed binding rather than the REST row - is now not a preference but the
+only path to the bound, and it is the one piece of R1.31 still unwritten. It
+changes an execution-grade risk input and deserves its own design and rollout,
+not a release-day patch.
