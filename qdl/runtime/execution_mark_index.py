@@ -19,6 +19,11 @@ from typing import Mapping
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from qdl.common.v1 import common_pb2
+from qdl.data_quality.binding_decision import (
+    BindingQualityInput,
+    ComponentEvidence,
+    evaluate_binding_quality,
+)
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query.contracts import FeedType, StalePolicy
 from qdl.runtime.internal_auth import stable_hmac_signature
@@ -378,7 +383,25 @@ class ExecutionMarkIndexLiveView:
         bound_ms = min(max_freshness_ms, record.stale_after_ms)
         event_age_ms = max(0, (now_ns - freshness_anchor_ns) // 1_000_000)
         if event_recency_policy is not StalePolicy.OBSERVE:
-            if event_age_ms > bound_ms:
+            decision = evaluate_binding_quality(BindingQualityInput(
+                binding_id=f"execution-mark-index:{instrument_uid}",
+                instrument_uid=instrument_uid,
+                feed=FeedType.MARK_INDEX_PRICE.value,
+                source_role="PRIMARY",
+                authoritative=True,
+                acquisition_enabled=True,
+                acquisition_mode="RUST_NATIVE",
+                market_open=True,
+                event_present=True,
+                event_age_ms=event_age_ms,
+                event_limit_ms=bound_ms,
+                event_recency_policy=event_recency_policy.value,
+                session_state="NOT_APPLICABLE",
+                session_liveness_ms=None,
+                session_limit_ms=None,
+                watermark_offset=record.spool_watermark_offset or 0,
+            ))
+            if decision.state != "LIVE":
                 return ExecutionMarkIndexRead(None, "STALE")
             return ExecutionMarkIndexRead(record, recency_mode="STRICT_EVENT")
 
@@ -396,12 +419,6 @@ class ExecutionMarkIndexLiveView:
         )
         component_cadence = policy.component_quiet_after_ms
         cadence_by_component = dict(component_cadence)
-        if any(
-            max(0, (now_ns - receipt_ns) // 1_000_000)
-            > cadence_by_component[component]
-            for component, receipt_ns in component_receipts
-        ):
-            return ExecutionMarkIndexRead(None, "COMPONENT_STALE")
         session = self._session_liveness_reader.status(
             venue=record.venue,
             market=record.market,
@@ -410,19 +427,53 @@ class ExecutionMarkIndexLiveView:
             config_revision=record.config_revision,
             now_ns=now_ns,
         )
-        if session.state != "LIVE":
-            return ExecutionMarkIndexRead(None, "SESSION_STATE")
         assert max_session_liveness_ms is not None
-        if (
-            session.liveness_ms is None
-            or session.liveness_ms > max_session_liveness_ms
-        ):
-            return ExecutionMarkIndexRead(None, "SESSION_LIVENESS")
+        decision = evaluate_binding_quality(BindingQualityInput(
+            binding_id=f"execution-mark-index:{instrument_uid}",
+            instrument_uid=instrument_uid,
+            feed=FeedType.MARK_INDEX_PRICE.value,
+            source_role="PRIMARY",
+            authoritative=True,
+            acquisition_enabled=True,
+            acquisition_mode="RUST_NATIVE",
+            market_open=True,
+            event_present=True,
+            event_age_ms=event_age_ms,
+            event_limit_ms=bound_ms,
+            event_recency_policy=event_recency_policy.value,
+            session_state=session.state,
+            session_liveness_ms=session.liveness_ms,
+            session_limit_ms=max_session_liveness_ms,
+            components=tuple(
+                ComponentEvidence(
+                    component,
+                    max(0, (now_ns - receipt_ns) // 1_000_000),
+                    cadence_by_component[component],
+                )
+                for component, receipt_ns in component_receipts
+            ),
+            generation_matches="SOURCE_SESSION_AMBIGUOUS" not in session.flags,
+            config_matches="SOURCE_SESSION_CONFIG_MISMATCH" not in session.flags,
+            watermark_offset=record.spool_watermark_offset or 0,
+            allow_quiet_execution=True,
+            flags=session.flags,
+        ))
+        if decision.state != "LIVE":
+            if any(value.startswith("COMPONENT_") for value in decision.reason_codes):
+                return ExecutionMarkIndexRead(None, "COMPONENT_STALE")
+            if session.state != "LIVE":
+                return ExecutionMarkIndexRead(None, "SESSION_STATE")
+            if (
+                session.liveness_ms is None
+                or session.liveness_ms > max_session_liveness_ms
+            ):
+                return ExecutionMarkIndexRead(None, "SESSION_LIVENESS")
+            return ExecutionMarkIndexRead(None, "STALE")
         return ExecutionMarkIndexRead(
             record,
             recency_mode=(
                 "STRICT_EVENT_SESSION_LIVE"
-                if event_age_ms <= bound_ms
+                if decision.event_recency_state == "LIVE"
                 else "COMPONENT_SESSION_LIVE"
             ),
             session=session,

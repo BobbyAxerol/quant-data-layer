@@ -9,6 +9,10 @@ from qdl.adapters.intervals import (
     latest_closed_boundary_ms,
 )
 from qdl.common.v1 import common_pb2
+from qdl.data_quality.binding_decision import (
+    BindingQualityInput,
+    evaluate_binding_quality,
+)
 from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.quantity import quantity_unit_name
@@ -480,6 +484,7 @@ class StableSpoolQueryBackend:
         envelope: market_data_pb2.EventEnvelope,
         *,
         gap_open: bool,
+        watermark_offset: int,
     ) -> QualityMetadata:
         source_observed_ns = (
             envelope.bar.close_time_ns
@@ -508,11 +513,9 @@ class StableSpoolQueryBackend:
             if requirement.max_freshness_ms is None
             else min(binding.stale_after_ms, requirement.max_freshness_ms)
         )
-        event_stale = freshness_ms > event_limit_ms
         source_value_age_ms = max(
             0, (self._clock_ns() - source_observed_ns) // 1_000_000
         )
-        event_recency_state = "STALE" if event_stale else "LIVE"
         session_state = "NOT_APPLICABLE"
         session_liveness_ms = None
         session_flags: tuple[str, ...] = ()
@@ -548,60 +551,69 @@ class StableSpoolQueryBackend:
         )
         if book_unverified:
             flags = flags + ("BOOK_SEQUENCE_UNVERIFIED",)
-        if market_closed:
-            state = "MARKET_CLOSED"
-        elif gap_open:
-            state = "GAPPED"
-        elif book_unverified:
-            state = "SYNCING"
-        elif session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}:
-            state = "STALE"
-        elif (
-            event_stale
-            and requirement.effective_event_recency_policy
-            in {StalePolicy.BLOCK, StalePolicy.PAUSE}
-        ):
-            state = "STALE"
-        else:
-            state = "LIVE"
-        complete = not gap_open and not book_unverified
-        execution_eligible = (
-            binding.authoritative
-            and binding.source_role == "PRIMARY"
-            and state == "LIVE"
-            and complete
-            and event_recency_state != "STALE"
-            and session_state in {"LIVE", "NOT_APPLICABLE"}
+        now_ns = self._clock_ns()
+        decision = evaluate_binding_quality(
+            BindingQualityInput(
+                binding_id=binding.binding_id,
+                instrument_uid=binding.instrument.instrument_uid,
+                feed=binding.feed.value,
+                source_role=binding.source_role,
+                authoritative=binding.authoritative,
+                # This backend only materializes a record after it has passed
+                # the active acquisition lane.  Expected dark/V1 inventory is
+                # classified by the offline auditor before it reads a record.
+                acquisition_enabled=True,
+                acquisition_mode="RUST_NATIVE",
+                market_open=not market_closed,
+                event_present=True,
+                event_age_ms=int(freshness_ms),
+                event_limit_ms=int(event_limit_ms),
+                event_recency_policy=requirement.effective_event_recency_policy.value,
+                session_state=session_state,
+                session_liveness_ms=session_liveness_ms,
+                session_limit_ms=requirement.max_session_liveness_ms,
+                generation_matches="SOURCE_SESSION_AMBIGUOUS" not in session_flags,
+                config_matches="SOURCE_SESSION_CONFIG_MISMATCH" not in session_flags,
+                gap_open=gap_open,
+                book_verified=not book_unverified,
+                final_bar=(
+                    bool(envelope.bar.is_final)
+                    if envelope.WhichOneof("payload") == "bar"
+                    else True
+                ),
+                require_final_bar=binding.require_final_bar,
+                watermark_offset=watermark_offset,
+                flags=(
+                    flags
+                    + session_flags
+                    + (
+                        ("FRESHNESS_BASIS_PROVIDER_CONFIRMATION",)
+                        if binding.freshness_basis == "PROVIDER_CONFIRMATION"
+                        else ()
+                    )
+                    + (
+                        ("SOURCE_VALUE_TIMESTAMP_OLD",)
+                        if (
+                            binding.freshness_basis == "PROVIDER_CONFIRMATION"
+                            and source_value_age_ms > event_limit_ms
+                        )
+                        else ()
+                    )
+                    + (("MARKET_CLOSED",) if market_closed else ())
+                ),
+            )
         )
         return QualityMetadata(
-            state=state,
+            state=decision.state,
             freshness_ms=int(freshness_ms),
             gap_open=gap_open,
-            complete=complete,
-            execution_eligible=execution_eligible,
+            complete=decision.complete,
+            execution_eligible=decision.execution_eligible,
             policy_id=binding.source_policy_id,
-            flags=(
-                flags
-                + session_flags
-                + (
-                    ("FRESHNESS_BASIS_PROVIDER_CONFIRMATION",)
-                    if binding.freshness_basis == "PROVIDER_CONFIRMATION"
-                    else ()
-                )
-                + (
-                    ("SOURCE_VALUE_TIMESTAMP_OLD",)
-                    if (
-                        binding.freshness_basis == "PROVIDER_CONFIRMATION"
-                        and source_value_age_ms > event_limit_ms
-                    )
-                    else ()
-                )
-                + (("LAST_EVENT_STALE",) if event_stale else ())
-                + (("MARKET_CLOSED",) if market_closed else ())
-            ),
-            event_recency_state=event_recency_state,
-            provider_session_state=session_state,
-            provider_session_liveness_ms=session_liveness_ms,
+            flags=decision.reason_codes,
+            event_recency_state=decision.event_recency_state,
+            provider_session_state=decision.provider_session_state,
+            provider_session_liveness_ms=decision.provider_session_liveness_ms,
         )
 
     def _gaps(
@@ -679,7 +691,13 @@ class StableSpoolQueryBackend:
         gap_open: bool,
     ) -> MarketDataItem:
         payload_name = envelope.WhichOneof("payload")
-        quality = self._quality(requirement, binding, envelope, gap_open=gap_open)
+        quality = self._quality(
+            requirement,
+            binding,
+            envelope,
+            gap_open=gap_open,
+            watermark_offset=stored.cursor.offset,
+        )
         source_role = common_pb2.SourceRole.Name(envelope.source_role).removeprefix(
             "SOURCE_ROLE_"
         )

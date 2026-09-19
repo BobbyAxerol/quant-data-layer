@@ -11,6 +11,7 @@ pub mod l2_book;
 pub mod okx;
 pub mod okx_simulator;
 pub mod provider_admission;
+pub mod quality;
 pub mod rate_limit;
 pub mod supervisor;
 pub mod telemetry;

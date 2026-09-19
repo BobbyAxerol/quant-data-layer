@@ -44538,7 +44538,16 @@ freshness, replay and release evidence.
    packet names an exact role, digest, runtime revision, rollback and blast
    radius.
 
-#### R1.35-A - Quality semantics convergence and audit parity (`PENDING / SOURCE-ONLY`)
+#### R1.35-A - Quality semantics convergence and audit parity (`PASS / SOURCE-CONTRACT`, 2026-09-19)
+
+**Execution record.** Approved scope is limited to a provider-neutral, pure
+quality evaluator; its Rust/Python shared golden corpus; stable Query/SDK
+mapping; and the read-only auditor. No catalog or manifest entitlement, image,
+runtime role, Kafka offset/topology, Redis, SQLite, V1, Trading System, alpha
+or order-path mutation is permitted in this slice. The source-only rollback is
+the pre-slice commit `614b3df`. The next decision boundary is the complete
+Rust/Python/API/SDK test matrix below; a real strict `QUOTE` defect discovered
+there becomes R1.35-B evidence rather than an SLA/configuration change.
 
 **Goal.** Replace the divergent raw spool-age report with a provider-neutral,
 typed quality evaluator whose result is exactly the consumer-facing decision.
@@ -44575,11 +44584,11 @@ any execution quality rule.
   quiet session stopped, component cadence expiry, generation/config mismatch,
   duplicate, open gap, resync, final/not-final BAR, expected V1/dark and
   out-of-session classification.
-- Contract/API/SDK tests proving `FeedStatusResponse` and snapshot admission
-  cannot disagree for the same binding and policy.
-- Read-only matrix over every sealed binding through both query replicas,
-  retaining bounded typed evidence only: no price/book levels, credentials or
-  cursor values.
+- Contract/API/SDK source tests proving `FeedStatusResponse` and snapshot
+  admission cannot disagree for the same binding and policy. The deployed
+  two-query-replica matrix is deliberately executed by R1.35-B: an A
+  source-only slice must not present the still-running older reader image as
+  proof for newly introduced evaluator source.
 - Regression proving a quiet response cannot satisfy a strict `QUOTE` or
   `BOOK_SNAPSHOT` request, and a strict stale result cannot be relabelled
   `LIVE` by the auditor.
@@ -44587,15 +44596,55 @@ any execution quality rule.
   suite, generated-contract drift gate and `git diff --check`.
 
 **Exit gate.** Every binding has one deterministic expected classification;
-both query replicas and the auditor agree on identity/state/reason fields; no
-quiet false-positive or strict false-negative remains; all source tests pass.
-This phase has no runtime rollout. A failed parity case is an in-scope defect,
-not technical debt.
+Rust/Python evaluator, stable Query mapping, SDK contract and auditor agree on
+identity/state/reason fields in the shared source/golden suite; no quiet
+false-positive or strict false-negative remains; all source tests pass. The
+required deployed two-replica matrix is a non-transferable R1.35-B gate and
+cannot be inherited from an older reader image. This phase has no runtime
+rollout. A failed parity case is an in-scope defect, not technical debt.
 
 **Rollback and decision boundary.** Source-only rollback is the prior commit.
 Do not alter a manifest SLA, source binding or runtime role to make this phase
 pass. If the matrix reveals a real strict-feed defect, carry the exact evidence
 into R1.35-B.
+
+**Completion record (2026-09-19).** Implemented one pure,
+provider-neutral `BindingQualityDecision` evaluator in Python and Rust, bound
+through a shared fourteen-case golden corpus. The stable spool Query backend,
+MARK/INDEX bounded live view and Query freshness predicate now use that one
+policy; the SDK remains public-contract compatible and proves the same typed
+quality surface through its existing transport tests. The read-only auditor now
+uses the evaluator and reports three distinct timestamps: event age,
+ingest-to-durable latency and last-durable-append age. It carries the true
+spool logical offset as watermark rather than inventing a zero value.
+
+**Tests actually run.** A disposable, network-disabled Python container ran
+`tests.test_r135_quality_convergence`, `tests.test_dlv2_r1_stale_reason`,
+`tests.test_execution_mark_index_live_view`,
+`tests.test_mark_index_paired_lineage`, `tests.test_qdl_sdk_feed_status`,
+`tests.test_qdl_sdk_stream_projection` and `tests.test_phaseb_stable_edge`:
+`106 passed`, `1 skipped` (`isolated Redis is not configured`). The Rust
+builder ran `cargo fmt --all -- --check`, strict
+`cargo clippy -p qdl-core --all-targets -- -D warnings`, and the shared golden
+test successfully. Buf format/lint/two frozen breaking baselines/generation
+drift passed. `git diff --check` and Python `compileall` passed. No generated
+contract output drifted.
+
+**Read-only inventory evidence.** The new auditor ran outside serving roles
+with the V2 state/runtime mounted read-only against sealed
+`mark-index-r134-58998ae-r3-20260919T172500Z`: `216` catalog bindings,
+`206 ACTIVE`, `6 EXPECTED_DARK`, `4 EXPECTED_V1_PRIMARY`; `191 LIVE`, `15
+STALE`, `10 DISABLED`. The disabled rows are the explicit six dark Spot and
+four V1-primary VN entries. The fifteen active failures are five paired
+MARK/INDEX rows and all ten Binance USD-M/OKX Swap execution `QUOTE` rows for
+BTC/ETH/SOL/DOGE/BNB, each with a live provider session but stale event age.
+This is real B diagnostic evidence, not an A failure or an SLA change.
+
+**Runtime/cleanup.** No runtime image, role, Kafka offset/topology, Redis,
+SQLite, V1, consumer, alpha or order path changed. The read-only test
+containers used `--rm`; no new image or persistent test artifact was created.
+The three pre-existing leaked test containers remain intentionally untouched
+until the separately scoped R1.35-D cleanup gate.
 
 #### R1.35-B - Strict quote root-cause repair and bounded runtime proof (`PENDING / REQUIRES R1.35-A EXIT`)
 

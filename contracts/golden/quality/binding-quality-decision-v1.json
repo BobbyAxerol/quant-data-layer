@@ -1,0 +1,75 @@
+{
+  "schema": "qdl.binding-quality-decision.v1",
+  "cases": [
+    {
+      "name": "strict_quote_fresh",
+      "input": {"binding_id":"binance-btc-quote","instrument_uid":"btc","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":25,"event_limit_ms":2000,"event_recency_policy":"BLOCK","session_state":"LIVE","session_liveness_ms":25,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":7,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"STRICT_EVENT","availability":"ACTIVE","state":"LIVE","event_recency_state":"LIVE","complete":true,"execution_eligible":true,"reason_codes":[]}
+    },
+    {
+      "name": "strict_quote_stale",
+      "input": {"binding_id":"okx-bnb-quote","instrument_uid":"bnb","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":2001,"event_limit_ms":2000,"event_recency_policy":"BLOCK","session_state":"LIVE","session_liveness_ms":20,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":8,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"STRICT_EVENT","availability":"ACTIVE","state":"STALE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE"]}
+    },
+    {
+      "name": "quiet_trade_connected",
+      "input": {"binding_id":"okx-doge-trade","instrument_uid":"doge","feed":"TRADE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":18000,"event_limit_ms":3000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":100,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":9,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"LIVE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE"]}
+    },
+    {
+      "name": "quiet_mark_index_components_live",
+      "input": {"binding_id":"binance-sol-mark-index","instrument_uid":"sol","feed":"MARK_INDEX_PRICE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":4500,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":50,"session_limit_ms":45000,"components":[{"name":"MARK","receipt_age_ms":300,"quiet_after_ms":15000},{"name":"INDEX","receipt_age_ms":1400,"quiet_after_ms":15000}],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":10,"allow_quiet_execution":true,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"LIVE","event_recency_state":"STALE","complete":true,"execution_eligible":true,"reason_codes":["LAST_EVENT_STALE"]}
+    },
+    {
+      "name": "quiet_session_stopped",
+      "input": {"binding_id":"okx-eth-trade","instrument_uid":"eth","feed":"TRADE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":18000,"event_limit_ms":3000,"event_recency_policy":"OBSERVE","session_state":"DISCONNECTED","session_liveness_ms":100,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":11,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"STALE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE","SOURCE_SESSION_DISCONNECTED"]}
+    },
+    {
+      "name": "quiet_component_expired",
+      "input": {"binding_id":"okx-bnb-mark-index","instrument_uid":"bnb","feed":"MARK_INDEX_PRICE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":4500,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":50,"session_limit_ms":45000,"components":[{"name":"MARK","receipt_age_ms":15001,"quiet_after_ms":15000},{"name":"INDEX","receipt_age_ms":100,"quiet_after_ms":15000}],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":12,"allow_quiet_execution":true,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"STALE","event_recency_state":"STALE","complete":true,"execution_eligible":false,"reason_codes":["LAST_EVENT_STALE","COMPONENT_MARK_STALE"]}
+    },
+    {
+      "name": "generation_mismatch",
+      "input": {"binding_id":"binance-eth-book-delta","instrument_uid":"eth","feed":"BOOK_DELTA","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":100,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":10,"session_limit_ms":45000,"components":[],"generation_matches":false,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":13,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"STALE","event_recency_state":"LIVE","complete":true,"execution_eligible":false,"reason_codes":["GENERATION_MISMATCH"]}
+    },
+    {
+      "name": "config_mismatch",
+      "input": {"binding_id":"okx-eth-book-delta","instrument_uid":"eth","feed":"BOOK_DELTA","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":100,"event_limit_ms":2000,"event_recency_policy":"OBSERVE","session_state":"LIVE","session_liveness_ms":10,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":false,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":14,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"ACTIVE","state":"STALE","event_recency_state":"LIVE","complete":true,"execution_eligible":false,"reason_codes":["CONFIG_REVISION_MISMATCH"]}
+    },
+    {
+      "name": "book_gap",
+      "input": {"binding_id":"binance-btc-book-snapshot","instrument_uid":"btc","feed":"BOOK_SNAPSHOT","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":100,"event_limit_ms":2000,"event_recency_policy":"BLOCK","session_state":"LIVE","session_liveness_ms":10,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":true,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":15,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"STRICT_EVENT","availability":"ACTIVE","state":"GAPPED","event_recency_state":"LIVE","complete":false,"execution_eligible":false,"reason_codes":["OPEN_SEQUENCE_GAP"]}
+    },
+    {
+      "name": "book_resync",
+      "input": {"binding_id":"okx-sol-book-snapshot","instrument_uid":"sol","feed":"BOOK_SNAPSHOT","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":100,"event_limit_ms":2000,"event_recency_policy":"BLOCK","session_state":"LIVE","session_liveness_ms":10,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":false,"final_bar":true,"require_final_bar":false,"watermark_offset":16,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"STRICT_EVENT","availability":"ACTIVE","state":"SYNCING","event_recency_state":"LIVE","complete":false,"execution_eligible":false,"reason_codes":["BOOK_SEQUENCE_UNVERIFIED"]}
+    },
+    {
+      "name": "bar_not_final",
+      "input": {"binding_id":"binance-doge-bar-1m","instrument_uid":"doge","feed":"BAR","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":true,"event_age_ms":100,"event_limit_ms":180000,"event_recency_policy":"BLOCK","session_state":"NOT_APPLICABLE","session_liveness_ms":null,"session_limit_ms":null,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":false,"require_final_bar":true,"watermark_offset":17,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"FINAL_SCHEDULED","availability":"ACTIVE","state":"SYNCING","event_recency_state":"LIVE","complete":false,"execution_eligible":false,"reason_codes":["BAR_NOT_FINAL"]}
+    },
+    {
+      "name": "expected_v1_primary",
+      "input": {"binding_id":"dnse-vn30-trade","instrument_uid":"vn30","feed":"TRADE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"PYTHON_VENDOR_SDK","market_open":true,"event_present":false,"event_age_ms":null,"event_limit_ms":15000,"event_recency_policy":"OBSERVE","session_state":"UNKNOWN","session_liveness_ms":null,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":0,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"QUIET_SESSION","availability":"EXPECTED_V1_PRIMARY","state":"DISABLED","event_recency_state":"NOT_APPLICABLE","complete":false,"execution_eligible":false,"reason_codes":["SOURCE_SESSION_UNKNOWN","EXPECTED_V1_PRIMARY"]}
+    },
+    {
+      "name": "expected_dark",
+      "input": {"binding_id":"binance-spot-btc-quote","instrument_uid":"spotbtc","feed":"QUOTE","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":false,"acquisition_mode":"RUST_NATIVE","market_open":true,"event_present":false,"event_age_ms":null,"event_limit_ms":5000,"event_recency_policy":"BLOCK","session_state":"UNKNOWN","session_liveness_ms":null,"session_limit_ms":45000,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":false,"watermark_offset":0,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"STRICT_EVENT","availability":"EXPECTED_DARK","state":"DISABLED","event_recency_state":"NOT_APPLICABLE","complete":false,"execution_eligible":false,"reason_codes":["SOURCE_SESSION_UNKNOWN","EXPECTED_DARK"]}
+    },
+    {
+      "name": "out_of_session",
+      "input": {"binding_id":"vn-bar","instrument_uid":"vn","feed":"BAR","source_role":"PRIMARY","authoritative":true,"acquisition_enabled":true,"acquisition_mode":"RUST_NATIVE","market_open":false,"event_present":false,"event_age_ms":null,"event_limit_ms":180000,"event_recency_policy":"BLOCK","session_state":"NOT_APPLICABLE","session_liveness_ms":null,"session_limit_ms":null,"components":[],"generation_matches":true,"config_matches":true,"gap_open":false,"book_verified":true,"final_bar":true,"require_final_bar":true,"watermark_offset":0,"allow_quiet_execution":false,"flags":[]},
+      "expected": {"semantics":"FINAL_SCHEDULED","availability":"OUT_OF_SESSION","state":"MARKET_CLOSED","event_recency_state":"NOT_APPLICABLE","complete":false,"execution_eligible":false,"reason_codes":["OUT_OF_SESSION"]}
+    }
+  ]
+}

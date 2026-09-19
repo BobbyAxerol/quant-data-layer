@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from qdl.adapters.intervals import canonical_interval_ms
+from qdl.data_quality.binding_decision import freshness_verdict
 from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.instrument import InstrumentRecord
 from qdl.query.contracts import (
@@ -66,26 +67,15 @@ def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
     rule is exactly the one this replaced; only the reason is new.
     """
 
-    if quality.state == "MARKET_CLOSED":
-        return True, None
-    if quality.state in {"STALE", "OFFLINE", "UNAVAILABLE"}:
-        return False, STALE_REASON_EVENT_AGE
-    if quality.provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}:
-        return False, STALE_REASON_SESSION_STATE
-    if requirement.max_session_liveness_ms is not None and not (
-        quality.provider_session_state == "LIVE"
-        and quality.provider_session_liveness_ms is not None
-        and quality.provider_session_liveness_ms <= requirement.max_session_liveness_ms
-    ):
-        return False, STALE_REASON_SESSION_LIVENESS
-    if (
-        requirement.max_freshness_ms is not None
-        and quality.freshness_ms > requirement.max_freshness_ms
-        and requirement.effective_event_recency_policy
-        in {StalePolicy.BLOCK, StalePolicy.PAUSE}
-    ):
-        return False, STALE_REASON_EVENT_AGE
-    return True, None
+    return freshness_verdict(
+        state=quality.state,
+        freshness_ms=quality.freshness_ms,
+        event_recency_policy=requirement.effective_event_recency_policy.value,
+        max_freshness_ms=requirement.max_freshness_ms,
+        provider_session_state=quality.provider_session_state,
+        provider_session_liveness_ms=quality.provider_session_liveness_ms,
+        max_session_liveness_ms=requirement.max_session_liveness_ms,
+    )
 
 
 class QueryServiceError(RuntimeError):
