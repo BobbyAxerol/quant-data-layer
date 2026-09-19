@@ -42776,3 +42776,34 @@ measured. The owner decides whether the measurement is sufficient to reverse it.
 
 What R1.31 contributes is that the question is no longer open: the gate R1.24
 left unanswered and R1.30 restated has a number attached to it now.
+
+<a id="dl-v2-r131-admission-all-thirteen-20260919"></a>
+#### R1.31 item 3 — all thirteen intervals now have their evidence in flight (2026-09-19T06:40Z)
+
+`3d` and `1w` did not need a cron after all; the boundaries were read rather than
+assumed. The live `3d` bar runs 2026-09-17 00:00Z to 2026-09-19 23:59:59Z and the
+live `1w` bar 2026-09-14 to 2026-09-20 23:59:59Z, so they close **tonight at
+00:00Z** and **2026-09-21 00:00Z** - within reach of a waiting listener, not days
+of scheduling.
+
+Six `--rm` containers now cover every interval that was not certified by hand:
+
+| interval | closes | state |
+|---|---|---|
+| 4h, 8h | 08:00Z today | waiting |
+| 12h | 12:00Z today | waiting |
+| 1d, 3d | 00:00Z tonight | waiting |
+| 1w | 2026-09-21 00:00Z | waiting |
+
+Total draw for all six: **0.03 vcore.** Each exits the moment it has its closed
+bar, and `--rm` means none survives its exit. The budget is a ceiling that none
+of them will reach.
+
+**Item 3's evidence is therefore complete or in flight for 13 of 13.** Certified
+by hand: 3m, 5m, 15m, 30m, 1h, 2h, 6h. In flight: 4h, 8h, 12h, 1d, 3d, 1w. The
+lane itself is proven for all thirteen - SUBSCRIBE accepted, 63-64 provisional
+frames each in 45 s, and every long interval's `t`/`T` matching
+`canonical_interval_ms` exactly, with `1w` anchored to Monday.
+
+Nothing about this moves the rollout gate, which remains the date
+**2026-09-19T20:00Z** and an owner-scheduled step after it.
