@@ -42725,3 +42725,54 @@ scheduled days out.
 **Item 3's evidence is therefore complete except for waiting**: the lane is
 proven for 13 of 13, the closed-bar transition for 7 of 13 with 4 more in
 flight, and the two remaining need a calendar entry rather than more work.
+
+<a id="dl-v2-r131-r130-gate-answered-20260919"></a>
+#### R1.31 — R1.30's open gate is answered, and the answer is no (2026-09-19T06:35Z)
+
+R1.30 set one gate for finishing the R1.24 migration:
+
+> Prove the reference path serves `MARK_INDEX_PRICE` for these instruments
+> *before* removing the ingestor bindings - R1.24 already named this as the one
+> real unknown and it is still unproven.
+
+**It is proven now, and it fails.** The reference path does serve
+`MARK_INDEX_PRICE` - the consumer receives it, which is why there are
+`StaleExecutionReferenceError` lines at all - but it cannot serve it inside the
+bound the manifest grants:
+
+| | |
+|---|---|
+| bound the manifest declares | `max_freshness_ms: 2000`, `consumer_grade: EXECUTION`, ten requirements |
+| OKX REST `index-tickers` `ts` lag | **764 - 1,414 ms** at the venue, measured through `OkxRestClient` on a 90-100 ms round trip |
+| what the consumer observes | 2,088 - 2,501 ms, p50 2,212 |
+| canonical binding, end to end | **286 - 418 ms** |
+
+The venue is fast on the socket and slow on the endpoint. No cache setting, lane
+or bucket on our side changes that, because `received_at_ns` and `observed_at_ns`
+are both stamped at fetch and the gap between them is the venue's.
+
+#### What that does to the direction of the migration
+
+R1.24 moved `MARK_INDEX_PRICE` **from the ingestor's canonical path to the
+reference path**, and the catalog describes that destination - which is exactly
+why `stable-source-bindings.yaml` has no binding for it, why
+`StableSpoolQueryBackend.latest()` cannot serve it, and why every regeneration
+drops the ingestor bindings that R1.30 calls a trap.
+
+The measurement says the destination is the slower of the two by a factor of
+three to five, on the one feed that gates Risk. The engineering answer is
+therefore to **reverse R1.24**: keep mark/index canonical, declare the ten
+bindings in the source catalog, and let the spool serve it.
+
+That would also disarm R1.30 at the source rather than at the guard. A
+regeneration drops those bindings *because the catalog does not declare them*;
+declare them and there is nothing to drop. The R1.31 guard stays as the net, not
+as the fix.
+
+**This is not a call to take inside a release.** It reverses a direction the
+system previously chose, on an execution-grade risk input, and R1.24's reasoning
+for choosing it is not re-examined here - only its latency consequence is
+measured. The owner decides whether the measurement is sufficient to reverse it.
+
+What R1.31 contributes is that the question is no longer open: the gate R1.24
+left unanswered and R1.30 restated has a number attached to it now.
