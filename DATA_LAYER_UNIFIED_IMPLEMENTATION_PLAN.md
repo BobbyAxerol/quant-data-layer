@@ -46840,6 +46840,41 @@ unchanged.
   cache `20GB` / `4.067GB` reclaimable. Candidate cleanup is intentionally
   deferred until the single C2 result is resolved.
 
+**R1.35-C bounded reader packet (`PREPARED / RUNTIME NOT STARTED`, 2026-09-20).**
+
+- **Scope:** serially recreate only `query_v2_2`, `query_v2_1`,
+  `stream_v2_active`, and `stream_v2_passive` in the existing
+  `qdl_v2_stable_candidate` Compose project. Each moves to
+  `qdl-v2-python:2.0.26-e4fc241@sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`.
+  The current image for all four roles,
+  `qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`,
+  is the exact named rollback for all four.
+- **Invariant:** preserve the active Compose configuration chain and sealed
+  identity environment
+  `/home/bobby/.local/state/qdl-v2/r135-c-identity-20260920T023708Z/identity-rollout.env`;
+  do not change volumes, runtime directory, TLS, Kafka topology/offsets,
+  Redis, SQLite, V1, Rust core, ingestors, bar edge, projectors, Trading
+  System, alpha, consumer manifests, or any order path. The rollout may
+  create only normal reader process restarts and no provider/order action.
+- **Serial health/rollback:** recreate in the listed order; after each role,
+  verify its exact digest, `healthy` state, no restart/OOM indication and the
+  unchanged companion reader. Any failure immediately recreates only the
+  changed role at the named rollback digest and blocks all later steps.
+- **Fast gates after all four are healthy:** run the source-defined
+  `--read-plane-preflight` over every selected V2 route through both Query
+  replicas, then retain the already-passed targeted quiet/live,
+  disconnect/reconnect, generation, duplicate/gap and projection regression
+  evidence. The real preflight is no-stream, no-fallback, no-provider-direct,
+  no-order, no-signal and no-sizing. It records per-product typed problem code
+  and quality hash. Any failed item blocks C2 and causes one precise repair,
+  not a retry.
+- **Final gate:** only a passed both-replica preflight permits exactly one C2
+  full-scope 300-second real-consumer acceptance. Its result, consumer-call
+  latency and resource observations determine `R1.35-C`; neither health nor
+  source tests alone can certify it. Disposable client/cursor state is removed
+  afterward. Candidate and named rollback images remain until that outcome is
+  reconciled; no broad Docker cleanup is allowed during the packet.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
