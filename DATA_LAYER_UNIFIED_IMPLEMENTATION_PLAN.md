@@ -45179,6 +45179,35 @@ slice only. B2 remains `PENDING` until a bounded four-reader packet completes
 and its single 300-second real-provider C2 evidence passes; Phase C and release
 remain blocked until then.
 
+**B2 replacement packet v2 preflight (2026-09-20; `PREPARED_NOT_ROLLED`).**
+The one sealed packet is
+`/home/bobby/.local/state/qdl-v2/r135-b2-335792a-20260920T015057Z/packet.json`
+(`sha256=f68e56a9c046b4f33594b2390105d3c0eaec3c87a6d8d5b572af92bf13fca2fe`).
+It pins source `335792a582c2a1c8a130c47980ffe6992a22f2a3` and exactly one
+candidate reader image
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`.
+It copies the active runtime into a private directory and changes only
+`stable-source-bindings.yaml`, `stable-acquisition-bindings.yaml`,
+`stable-v2-release-routing.yaml`, and C2's private route projection. Authority,
+all three core files, both ingestor files, promotion scope and crypto demand
+are byte-identical to the currently mounted runtime. The exact candidate scope
+is `query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`;
+rollback restores Query to
+`sha256:1ad34175322f2f8eec34b3e772e3935d999248e40432ecf5852f832df1dfa88d`
+and Stream to
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`.
+Candidate and rollback Compose renders pass. An immutable, network-disabled,
+read-only bundle load passed `catalog=216`, `acquisition=216`, `route=20` and
+all five R1.28 native Binance final `BAR 1m` bindings. The C2 route is mounted
+at `/app/qdl-runtime`, not `/runtime`, because the release-plan loader fences
+all artifact references beneath `/app`; this binds C2 to the exact private
+runtime bundle without weakening its checksum/path validation. Baseline four
+reader roles are all `healthy`, `restart=0`, `OOMKilled=false`. No role has
+been recreated by this packet yet. Its only permitted next action is serial
+four-reader candidate recreation followed by one `require_all=true`, 300-second
+no-order C2 using `executor_network`; a nonzero result restores exactly the
+same four roles and stops B2.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
