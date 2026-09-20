@@ -28,7 +28,7 @@ from qdl.runtime.execution_mark_index import (
     install_execution_mark_index_read,
 )
 from qdl.runtime.internal_auth import is_stable_internal_url
-from qdl.runtime.lease import ActivePassiveGatewayLease, RedisGatewayLeaseStore
+from qdl.runtime.lease import ActivePassiveGatewayLease, GatewayLease, RedisGatewayLeaseStore
 from qdl.runtime.readiness import (
     CallableReadinessProbe,
     ComponentReadiness,
@@ -767,7 +767,20 @@ def create_stable_stream_runtime(
         await gateway.fence_all()
         await execution_mark_index_view.fence_all()
 
+    async def hydrate_gateway_execution_view(lease_record: GatewayLease) -> None:
+        restored = await execution_mark_index_view.hydrate_from_spool(
+            spool=spool,
+            canonical_stream=catalog.canonical_stream,
+            gateway_epoch=lease_record.epoch,
+        )
+        logger.info(
+            "execution MARK/INDEX view hydrated epoch=%s bindings=%s",
+            lease_record.epoch,
+            restored,
+        )
+
     lease.on_fenced = fence_gateway_execution_view
+    lease.on_acquired = hydrate_gateway_execution_view
     query_service, backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,

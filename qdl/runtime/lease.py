@@ -193,6 +193,7 @@ class ActivePassiveGatewayLease:
         ttl_seconds: int = 15,
         renew_interval_seconds: float = 5.0,
         on_fenced: Callable[[], Awaitable[None]] | None = None,
+        on_acquired: Callable[[GatewayLease], Awaitable[None]] | None = None,
         clock_ns=time.time_ns,
     ) -> None:
         if not shard_id.strip() or not owner_id.strip():
@@ -207,6 +208,7 @@ class ActivePassiveGatewayLease:
         self.ttl_seconds = ttl_seconds
         self.renew_interval_seconds = renew_interval_seconds
         self.on_fenced = on_fenced
+        self.on_acquired = on_acquired
         self._clock_ns = clock_ns
         self.lease: GatewayLease | None = None
         self._task: asyncio.Task | None = None
@@ -233,12 +235,31 @@ class ActivePassiveGatewayLease:
             lease = await self.store.acquire(
                 self.shard_id, self.owner_id, self.ttl_seconds
             )
-            self.last_error = None
         except Exception as error:
             self.last_error = f"{type(error).__name__}: {error}"
             lease = None
+        if lease is None:
+            self.lease = None
+            return False
+        previous = self.lease
         self.lease = lease
-        return lease is not None
+        if self.on_acquired is not None and previous != lease:
+            try:
+                await self.on_acquired(lease)
+            except Exception as error:
+                self.lease = None
+                self.last_error = f"activation {type(error).__name__}: {error}"
+                try:
+                    await self.store.release(lease)
+                except Exception as release_error:
+                    self.last_error += (
+                        f"; release {type(release_error).__name__}: {release_error}"
+                    )
+                if self.on_fenced is not None:
+                    await self.on_fenced()
+                return False
+        self.last_error = None
+        return True
 
     async def _lose_lease(self) -> None:
         had_lease = self.lease is not None

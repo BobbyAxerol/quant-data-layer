@@ -45394,6 +45394,78 @@ stream targets, run a 300-second observation, exercise only declared V1
 fallback products, require `BLOCKED` products to remain blocked, and retain
 only payload-free receipt hashes/metrics.
 
+**C first full-C2 result and bounded root-cause decision (2026-09-20;
+`FAIL_CLOSED / SOURCE REPAIR REQUIRED`).** The first all-identity run began
+from the sealed `299`-route scope and stopped at its opening reference sweep;
+it made no provider-direct request, order, alpha signal/sizing, broker or
+runtime-state mutation. Its compact failure was Trading System paper,
+`OKX/SWAP/DOGE-USDT-SWAP/MARK_INDEX_PRICE`, on the secondary query route with
+typed `SOURCE_UNAVAILABLE`. This is not treated as a certificate or retried as
+luck. Read-only spool inspection proved that the exact canonical DOGE
+MARK/INDEX partition contained real committed records throughout the failure
+window. A read-only internal HMAC probe from a current Query replica then
+tested all ten declared Binance USD-M/OKX Swap MARK/INDEX bindings against
+both stream roles: the passive role returned the expected fenced `409`, while
+the active lease holder returned `200` for all ten, including DOGE. No payload,
+credential or provider response was retained.
+
+The root cause is a bounded lifecycle hole: `ExecutionMarkIndexLiveView` is
+memory-only and was populated only by a *new* canonical POST. A freshly
+started or newly promoted active stream gateway can therefore be healthy yet
+have an empty execution view until each on-change provider emits again, even
+though the same exact canonical record is already durably committed. This
+explains the early C2 `NOT_READY` classification and why a later direct probe
+was healthy; it is not a per-symbol or venue exception. The approved repair is
+limited to the existing stream role: on every successfully acquired gateway
+lease, hydrate at most one latest already-committed canonical MARK/INDEX event
+per declared execution binding into the fenced in-memory view. The hydrate
+path reuses the existing exact binding, canonical parser, identity/provenance,
+gap, generation, metadata and session-quality checks; it performs no provider
+call, replay/publication, spool write or timestamp rewrite. A malformed,
+gap-open, identity-mismatched or unavailable durable record leaves the route
+fail-closed. On loss of the lease the existing fence still clears the view.
+
+Source gates before any reader rollout: deterministic startup/promotion
+hydration tests; empty/stale/gap/identity fencing tests; same-epoch ordering
+against a concurrent fresh canonical event; active/passive lease callback
+failure tests; existing Rust/Python execution-MARK quality and SDK tests. The
+only permitted runtime packet after those gates is a serial stream/query
+reader rollout using a newly built immutable Python image with the present
+`335792a` reader image retained as rollback. V1, Rust, ingestors, bar edge,
+projectors, Kafka topology/offsets, Redis, SQLite durable contents, Trading
+System, alpha and order path remain excluded. One fresh full `299`-route,
+four-identity, no-order `300s` C2 follows; it must not inherit this failed
+opening run.
+
+**C hydration source slice (2026-09-20; `IMPLEMENTED / SOURCE GATES PASS`).**
+`ActivePassiveGatewayLease` now has one reusable `on_acquired` initialization
+hook. A callback failure releases the just-acquired lease, invokes the existing
+fence cleanup and leaves the role standby with a bounded diagnostic; it cannot
+serve a partially initialized active gateway. The stable stream wires that hook
+to `ExecutionMarkIndexLiveView.hydrate_from_spool`: at lease acquisition it
+reads at most one latest canonical durable event from each exact declared
+MARK/INDEX partition and submits it through the existing `remember` validator.
+The normal newer-live-event ordering, metadata/source-policy identity, gap and
+generation fences remain authoritative, while the loss-of-lease callback still
+clears the whole view. No public endpoint, SDK schema, provider adapter,
+timestamp, event identity or data-plane write path changed.
+
+The source-only, no-network/read-only test evidence is green: `131/131`
+focused Python tests across execution MARK/INDEX, paired lineage, consumer
+latency, Phase-10.5 identity/C2/fallback, Reference/L2 and stable-deployment
+modules; targeted hydration/lease tests are included in that count. The Rust
+provider-neutral core/realtime suite is also green (`91` passed; one explicit
+isolated-Redis test ignored because no isolated Redis URL was supplied). A
+Python compile check using a tmpfs pycache and `git diff --check` pass. The
+tests cover durable exact-tail hydration, empty/gap/identity fail-closed
+behavior, preserving a newer live event over an older tail, lease activation
+failure/release/fence, existing quiet-session component behavior and existing
+consumer C2/SDK routes. No runtime role, provider connection, durable state,
+order action or cleanup occurred for this source slice. The next action is a
+single immutable Python image build from its committed SHA, then only the
+existing query/stream roles may be serially rolled under the prepared rollback
+packet.
+
 ##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
 
 **Goal.** Close the release without leaving test containers, images, cache,

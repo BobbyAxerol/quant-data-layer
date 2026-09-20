@@ -272,6 +272,30 @@ def _stored(envelope: market_data_pb2.EventEnvelope, *, offset: int) -> StoredEv
     )
 
 
+def _hydration_stored(
+    binding: StableSourceBinding,
+    envelope: market_data_pb2.EventEnvelope,
+    *,
+    offset: int,
+) -> StoredEvent:
+    """One durable canonical row in the exact physical partition under test."""
+
+    payload = envelope.SerializeToString(deterministic=True)
+    event = DurableEvent(
+        stream=STREAM,
+        partition_key=binding.partition_key,
+        event_id=bytes(envelope.event_id),
+        payload=payload,
+        accepted_at_ns=envelope.received_at_ns,
+    )
+    return StoredEvent(
+        event=event,
+        cursor=Cursor(STREAM, event.partition_key, offset),
+        committed_at_ns=envelope.received_at_ns,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+
 class _Gateway:
     def __init__(self, epoch: int = 5) -> None:
         self.epoch = epoch
@@ -603,6 +627,117 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
             )).reason,
             "NOT_READY",
         )
+
+    async def test_durable_hydration_restores_only_the_exact_latest_binding(self):
+        envelope = _envelope(self.binding, sequence=11, generation=4)
+        stored = _hydration_stored(self.binding, envelope, offset=44)
+
+        class _Spool:
+            def __init__(self):
+                self.calls = []
+
+            def read_tail(self, *, stream, partition_key, limit):
+                self.calls.append((stream, partition_key, limit))
+                return [stored]
+
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+        restored = await view.hydrate_from_spool(
+            spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9
+        )
+        self.assertEqual(restored, 1)
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(result.record.delivery_stage, "SPOOL_CONFIRMED")
+        self.assertEqual(result.record.spool_watermark_offset, 44)
+
+    async def test_durable_hydration_preserves_gap_and_identity_fences(self):
+        gap = _envelope(
+            self.binding,
+            sequence=12,
+            generation=4,
+            quality_flags=(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,),
+        )
+        stored = _hydration_stored(self.binding, gap, offset=45)
+
+        class _Spool:
+            def read_tail(self, *, stream, partition_key, limit):
+                return [stored]
+
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+        self.assertEqual(
+            await view.hydrate_from_spool(
+                spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9
+            ),
+            1,
+        )
+        self.assertEqual(
+            (await view.read(
+                instrument_uid=self.record.instrument_uid,
+                instrument_revision=self.record.metadata_revision,
+                source_policy_id="crypto_liquid_v2",
+                max_freshness_ms=2_000,
+                gateway_epoch=9,
+                now_ns=NOW_NS + 500_000_000,
+            )).reason,
+            "GAP_OR_RESYNC",
+        )
+
+    async def test_durable_hydration_never_overwrites_a_newer_live_record(self):
+        durable = _envelope(
+            self.binding,
+            sequence=13,
+            generation=4,
+            received_at_ns=NOW_NS - 100_000_000,
+        )
+        stored = _hydration_stored(self.binding, durable, offset=46)
+
+        class _Spool:
+            def read_tail(self, *, stream, partition_key, limit):
+                return [stored]
+
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+        await view.hydrate_from_spool(
+            spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9
+        )
+        current = _envelope(
+            self.binding,
+            sequence=14,
+            generation=4,
+            received_at_ns=NOW_NS,
+        )
+        await view.remember(
+            binding=self.binding,
+            envelope=current,
+            stored=_hydration_stored(self.binding, current, offset=47),
+            gateway_epoch=9,
+        )
+        await view.hydrate_from_spool(
+            spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9
+        )
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(result.record.event_id, bytes(current.event_id))
 
     async def test_quiet_pair_is_session_bound_and_preserves_component_lineage(self):
         """Only a declared, healthy paired provider session may admit quiet data."""

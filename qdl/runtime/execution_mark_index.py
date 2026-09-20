@@ -36,7 +36,7 @@ from qdl.runtime.session_liveness import (
     StableSessionLivenessReader,
 )
 from qdl.stream import DurableStreamGateway
-from qdl.transport import StoredEvent
+from qdl.transport import SQLiteDurableSpool, StoredEvent
 
 
 _LEGACY_REQUEST_SCHEMA = "qdl.v2.execution-mark-index-read.v1"
@@ -129,15 +129,28 @@ class ExecutionMarkIndexLiveView:
         *,
         quiet_policies: Mapping[str, ExecutionMarkIndexQuietPolicy] | None = None,
         session_liveness_reader: StableSessionLivenessReader | None = None,
+        bindings: Mapping[str, StableSourceBinding] | None = None,
     ) -> None:
         if not allowed_instrument_uids:
             raise ValueError("execution MARK/INDEX view requires allowed bindings")
         policies = dict(quiet_policies or {})
         if not set(policies).issubset(allowed_instrument_uids):
             raise ValueError("execution MARK/INDEX quiet policy is outside allowed bindings")
+        declared_bindings = dict(bindings or {})
+        if declared_bindings and set(declared_bindings) != set(allowed_instrument_uids):
+            raise ValueError("execution MARK/INDEX hydration bindings are incomplete")
+        if any(
+            binding.instrument.instrument_uid != instrument_uid
+            or binding.feed is not FeedType.MARK_INDEX_PRICE
+            or not binding.authoritative
+            or binding.source_role != "PRIMARY"
+            for instrument_uid, binding in declared_bindings.items()
+        ):
+            raise ValueError("execution MARK/INDEX hydration binding is invalid")
         self._allowed_instrument_uids = allowed_instrument_uids
         self._quiet_policies = policies
         self._session_liveness_reader = session_liveness_reader
+        self._bindings = declared_bindings
         self._records: dict[str, ExecutionMarkIndexRecord] = {}
         self._invalid: dict[str, tuple[int, int, str]] = {}
         self._lock = asyncio.Lock()
@@ -159,7 +172,12 @@ class ExecutionMarkIndexLiveView:
                 and binding.source_role == "PRIMARY"
             )
         )
-        allowed = frozenset(binding.instrument.instrument_uid for binding in bindings)
+        bindings_by_uid: dict[str, StableSourceBinding] = {}
+        for binding in bindings:
+            existing = bindings_by_uid.setdefault(binding.instrument.instrument_uid, binding)
+            if existing != binding:
+                raise ValueError("execution MARK/INDEX binding is ambiguous")
+        allowed = frozenset(bindings_by_uid)
         quiet_policies: dict[str, ExecutionMarkIndexQuietPolicy] = {}
         if acquisition is not None:
             acquisitions = {item.binding_id: item for item in acquisition.bindings}
@@ -183,7 +201,58 @@ class ExecutionMarkIndexLiveView:
             allowed,
             quiet_policies=quiet_policies,
             session_liveness_reader=session_liveness_reader,
+            bindings=bindings_by_uid,
         )
+
+    async def hydrate_from_spool(
+        self,
+        *,
+        spool: SQLiteDurableSpool,
+        canonical_stream: str,
+        gateway_epoch: int,
+    ) -> int:
+        """Restore one bounded durable latest record per declared binding.
+
+        A lease acquisition must not wait for a new update-on-change provider
+        frame when the exact canonical event is already durably committed. The
+        restored record still travels through ``remember`` and therefore keeps
+        all normal identity, gap, generation and later session/freshness gates.
+        This method never publishes, replays, rewrites timestamps or contacts a
+        provider.
+        """
+
+        if not canonical_stream.strip() or gateway_epoch < 1:
+            raise ValueError("execution MARK/INDEX hydration scope is invalid")
+        restored = 0
+        for instrument_uid, binding in sorted(self._bindings.items()):
+            records = await asyncio.to_thread(
+                spool.read_tail,
+                stream=canonical_stream,
+                partition_key=binding.partition_key,
+                limit=1,
+            )
+            if not records:
+                continue
+            stored = records[-1]
+            if (
+                stored.event.stream != canonical_stream
+                or stored.cursor.stream != canonical_stream
+                or stored.event.partition_key != binding.partition_key
+                or stored.cursor.partition_key != binding.partition_key
+            ):
+                raise ValueError("execution MARK/INDEX hydration spool identity differs")
+            try:
+                envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+            except DecodeError as error:
+                raise ValueError("execution MARK/INDEX hydration canonical payload is invalid") from error
+            await self.remember(
+                binding=binding,
+                envelope=envelope,
+                stored=stored,
+                gateway_epoch=gateway_epoch,
+            )
+            restored += 1
+        return restored
 
     async def remember(
         self,

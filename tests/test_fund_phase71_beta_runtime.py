@@ -210,6 +210,28 @@ class Phase71LeaseAndGatewayTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(GatewayFenced):
             active.assert_active(first_epoch)
 
+    async def test_lease_acquisition_callback_is_fenced_when_initialization_fails(self):
+        store = InMemoryAsyncGatewayLeaseStore()
+        fenced = []
+
+        async def on_acquired(_lease):
+            raise RuntimeError("durable view unavailable")
+
+        async def on_fenced():
+            fenced.append(True)
+
+        lease = ActivePassiveGatewayLease(
+            store,
+            shard_id="public",
+            owner_id="initializer",
+            on_acquired=on_acquired,
+            on_fenced=on_fenced,
+        )
+        self.assertFalse(await lease.acquire_once())
+        self.assertFalse(lease.active)
+        self.assertEqual(fenced, [True])
+        self.assertIn("activation RuntimeError", lease.last_error)
+
     async def test_replay_registration_barrier_has_no_live_handoff_gap(self):
         replay_started = threading.Event()
         release_replay = threading.Event()
