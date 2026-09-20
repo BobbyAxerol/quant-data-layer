@@ -46507,6 +46507,20 @@ rollback scripts. This is packet-only safety work; it neither changes the
 candidate binary nor supplies C2 evidence. The next permitted action remains
 one fresh serial four-reader rollout, then the one approved C2.
 
+**Hardened retry timing (`FAIL-CLOSED / BASELINE RESTORED`, 2026-09-20).** The
+first hardened retry reached the initially observed standby
+`stream_v2_passive` after the two Query roles, but its `30`-second lease wait
+expired before that new replica advertised the stable pair. It never recreated
+the remaining `stream_v2_active` and never ran C2. Exact rollback restored the
+three changed roles (`query_v2_2`, `query_v2_1`, `stream_v2_passive`); all four
+readers are again healthy on `sha256:8c53d37f...01668c5c`, restart `0`,
+OOM false, with one `READY` and one `STANDBY`. The deployed cooperative lease
+is TTL `15s`, renew `5s`; therefore the packet-only convergence bound is
+increased to `60s` (four TTLs), without changing that runtime configuration,
+the candidate binary, service set, mount, source policy or accepted rollback.
+The next retry remains the same four distinct roles and the same single C2;
+this failed fence supplies no acceptance evidence.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
