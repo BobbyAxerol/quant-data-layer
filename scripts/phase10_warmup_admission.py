@@ -50,7 +50,7 @@ class _AdmissionWork:
 
 
 def _bar_slices(path: Path) -> tuple[DemandSlice, ...]:
-    values = tuple(item for item in _load_slices(path) if item.feed == "BAR")
+    values = _load_slices(path, allowed_feeds=frozenset({"BAR"}))
     if not values or len(values) > MAX_BAR_SLICES:
         raise WarmupAdmissionError("bounded demanded BAR slice count is invalid")
     return values

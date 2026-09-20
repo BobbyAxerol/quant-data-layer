@@ -46673,6 +46673,172 @@ R1.35-D. Then serially recreate the same four reader roles to the existing
 full `299`-product C2 for `300s`. No other role, topology or consumer changes
 are permitted.
 
+**Full-scope C2 result and bounded pre-C2 correction (`FAIL_TYPED_STATUS / ROLLED BACK / SOURCE ONLY NEXT`, 2026-09-20).** The one permitted full C2 started
+with the derived `935s` opening budget, completed opening for all `299`
+V2-primary products in `905.117s`, then completed the required `300.100s`
+observation. Its secondary closing BAR batch returned a generic
+`DataLayerError`; the payload-free status representative was
+`binance-usdm-dogeusdt-bar-12h`, which was itself `LIVE`, complete, gap-free
+and execution-eligible with a valid interval-scaled age. The generic SDK
+exception discarded the server's per-item batch problem, so that receipt is
+not sufficient to attribute the fault to a product or to relax any SLA. The
+packet therefore restored exactly `query_v2_1`, `query_v2_2`,
+`stream_v2_active` and `stream_v2_passive` to
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f...01668c5c`; all four are
+healthy with zero restarts/OOM, and stream dependency lease is `READY/STANDBY`.
+V1, Rust, ingestors, BAR edge, projectors, Kafka, Redis, SQLite, Trading
+System, alpha and the order path were not changed.
+
+One bounded, read-only diagnostic then reissued the exact alpha-Binance final
+BAR closing matrix through both rollback query replicas: `70` products in two
+batches per replica, `partial=false`, zero per-item problems and no payload
+recorded. That validates the interval-scaled final-BAR contract on the known
+rollback coordinate but does **not** make the failed candidate C2 pass.
+
+Before any candidate retry, this phase now adds one source-only
+**pre-C2 read-plane matrix**: it must batch-read every selected V2-primary
+product through both replicas using the same sealed identities and requirements,
+record only per-item identity/problem/quality hashes, and fail if any result is
+partial, stale, gapped, incomplete, non-final, non-authoritative or
+cross-replica inconsistent. It opens no stream, executes no fallback drill,
+creates no provider/order action and stays below each manifest identity's
+declared safe request budget. The C2 closing path must preserve bounded
+per-item failure codes rather than collapsing a partial batch to a generic
+`DataLayerError`. Unit/contract tests cover successful long-interval BAR,
+partial item diagnostics, scope/accounting and quota-bound preflight. Only
+after this matrix passes on the rolled candidate may exactly one new full C2
+run; it remains the sole R1.35-C release exit and no SLA, freshness policy,
+manifest or product scope is loosened.
+
+**Approved threshold semantics and accelerated certification gate (`IN_PROGRESS / SOURCE ONLY`, 2026-09-20).** This corrective slice prevents C2 from
+being used as a debugger while preserving its release authority. It makes the
+following four clocks explicit and forbids substituting one for another:
+
+1. **Acceptance operation budget.** C2 opening time is a manifest-derived
+   orchestration budget: exact selected products, identity request quota,
+   batch shape, bounded concurrency and a fixed observation tail. It is not a
+   provider SLA, consumer freshness limit, retry budget or serving timeout.
+   A fixed `900/1800s` cap is prohibited; the runner must reject a requested
+   concurrency that exceeds the signed identity quota and publish the derived
+   operation plan.
+2. **Provider recovery budget.** External Binance/OKX/DNSE work alone may use
+   provider-shared token pacing/concurrency, documented `Retry-After`/
+   rate-limit signals and bounded jitter. Circuit state is keyed by
+   `provider + declared route/generation`, so a successful route resets only
+   its own failure state and one broken route cannot cool down unrelated
+   products. `INTERNAL_STREAM` is a local authenticated canonical read: it
+   has finite concurrency, one attempt, no external token bucket and only a
+   short route-local failure circuit. It must never inherit an external venue
+   cooldown or retry ladder.
+3. **Binding usability budget.** `max_freshness_ms` is immutable-event age
+   only when a route is `STRICT_EVENT`; `event_recency_policy=OBSERVE` shifts
+   a quiet channel to its independently signed provider-session and component
+   cadence bounds. Sequence/gap, generation/config identity, completeness and
+   execution eligibility remain independent fences. This covers quiet
+   `TRADE`, `BOOK_DELTA`, native on-change `QUOTE` and paired
+   `MARK_INDEX_PRICE` without accepting a disconnected or gapped channel.
+4. **Scheduled final-BAR budget.** A BAR's interval-scaled
+   `max_freshness_ms` is a continuity/dropout horizon, not close-to-usable
+   latency. Finality is proved separately from native final flags or repeated
+   provider settlement; close-to-usable latency is measured separately in the
+   certificate. A late final BAR may never be relabelled fresh merely because
+   its dropout horizon is large.
+
+The source change is limited to the existing C2/quality acceptance tooling,
+the shared bounded Query warmup executor that implements the local
+`INTERNAL_STREAM` boundary, and their tests: validate every selected
+requirement belongs to the correct semantic class; emit its semantic class and
+declared budgets in payload-free evidence; retain exact per-item batch
+problems; reset local failure state by route/generation; and run a fast exact
+read-plane matrix before any full C2. It may not change a consumer manifest,
+runtime authority, provider adapter, C2 product inventory or public schema in
+order to pass. The current BAR continuity values and all provider budgets are
+measured/reported first; a configuration change is permitted only if a
+real-provider measurement proves that its declared contract is wrong.
+
+**Fast gate order and exit.** (a) source unit/contract/golden tests cover
+threshold class, strict/quiet/session/gap/generation and recovery reset; (b)
+the read-plane matrix invokes every selected V2 product through both Query
+replicas with the sealed consumer identity and requirements, retaining only
+identity, typed error code and quality hash; (c) only the affected feed-class
+protocol matrix exercises stream/cursor/reconnect/duplicate/gap/resync; then,
+and only then, one full all-identity C2 observes the real consumer plane for
+`300s`. The fast gates do not certify a release and may not invoke V1,
+provider-direct reads, orders, signals or sizing. A C2 failure must leave a
+typed product-level receipt and route the repair back through (a)-(c), not a
+second blind C2. This slice exits only when the thresholds are classified and
+measured, all fast gates are green on the candidate image, and the next C2 is
+the single final release gate. Its rollback is source-only until that later
+approved four-reader packet; the currently restored `335792a` readers remain
+unchanged.
+
+**Threshold/source checkpoint (`PASS / CANDIDATE IMAGE AND REAL READ-PLANE PENDING`, 2026-09-20).**
+
+- The C2 harness now emits one payload-free timing profile per governed
+  product. `FINAL_SCHEDULED` BAR records its continuity horizon separately
+  from a measured close-to-usable result; `QUIET_SESSION` requires the
+  declared session/gap/generation fences; `STRICT_EVENT_WITH_SESSION` uses
+  both event and declared numeric session bounds; a research-only
+  `STRICT_EVENT` with no numeric session SLA remains event/gap fenced and is
+  never upgraded to quiet execution; and `REFERENCE_SNAPSHOT` records
+  provider-observation freshness, identity, lineage and coverage rather than
+  inventing a stream session.
+- The sealed 299-product C2 scope compiles fully with these exact semantic
+  counts: `FINAL_SCHEDULED=150`, `QUIET_SESSION=60`,
+  `STRICT_EVENT_WITH_SESSION=10`, `STRICT_EVENT=4`,
+  `BOOK_BASELINE=20`, `REFERENCE_SNAPSHOT=10`, and
+  `REFERENCE_CADENCE=45`. Its 20 MARK/INDEX requests split correctly into 10
+  execution `OBSERVE` live-view products with a declared session SLA and 10
+  alpha `BLOCK` reference snapshots without one. This caught and corrected a
+  pre-runtime overconstraint that incorrectly required session liveness for
+  every MARK/INDEX request; no manifest threshold was relaxed or changed.
+- `BoundedWarmupExecutor` keeps external provider semaphore/token limits
+  shared, but keys only circuit/recovery state by `provider + declared
+  route/generation`. `INTERNAL_STREAM` stays one-attempt, finite-concurrency,
+  no-token-rate-limit. A route success clears only its own circuit state.
+  Partial closing batches now preserve each failed product identity, typed
+  problem code and compact quality SHA instead of collapsing to a generic
+  `DataLayerError`.
+- **Tests actually run, source-only:** `python3 -m py_compile` and
+  `git diff --check` passed; isolated, read-only, no-network Python suites
+  passed `86/86` (`test_phase10_universal_warmup`,
+  `test_phase105_identity_acceptance`, `test_r135_quality_convergence`) and
+  `72/72` targeted protocol cases
+  (`test_phase103_consumer_receipt_harness`,
+  `test_qdl_sdk_stream_projection`, `test_r135_quality_convergence`). The
+  protocol set covers quiet/live, disconnect/reconnect, generation,
+  duplicate/gap and stream projection. The existing Rust/Python shared
+  quality golden passed `1/1` in `qdl-core` using a no-network, read-only
+  builder with an executable tmpfs target. All test containers used `--rm`;
+  no provider, role, Kafka, Redis, SQLite, V1, consumer, alpha or order state
+  changed.
+- **Decision boundary:** this is not a certificate and did not measure live
+  latency. The next permitted runtime sequence remains narrowly bounded:
+  build one immutable candidate image from the committed source, roll only
+  the named Query/Stream reader roles with an explicit rollback digest, run
+  the both-replica fast read-plane matrix, then the single final 300-second
+  C2. A failed matrix yields the per-product typed receipt and blocks C2.
+
+**Candidate image admission (`PASS / READER ROLLOUT NOT STARTED`, 2026-09-20).**
+
+- Built exactly one candidate from committed source
+  `c5574bc2e1d4c44d2db65728b9c346793ae0d30`:
+  `qdl-v2-python:2.0.26-c5574bc@sha256:ad89a1dbcc280d84c7b5171b50c1264010278f0338d41b2f9819752403984bd4`.
+  OCI `revision` and `version` labels match that source/release coordinate;
+  the runtime user is `qdl:qdl` (`10001:10001`).
+- The immutable image, with no source mount, `--network none`, read-only root
+  filesystem and tmpfs-only test state, passed the focused C2 timing/identity
+  suite `17/17`. Source-only full regressions remain the proof for the wider
+  matrix above. The candidate is retained solely for this R1.35-C packet;
+  active readers remain
+  `qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`
+  as rollback.
+- No reader was recreated and no provider, Kafka, Redis, SQLite, V1,
+  Trading System, alpha or order path was touched. Docker image inventory
+  after this one build was `26.28GB` total / `12.35GB` reclaimable and
+  BuildKit cache `19.14GB` / `2.496GB` reclaimable. Candidate cleanup is
+  intentionally deferred until the single C2 result is resolved.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

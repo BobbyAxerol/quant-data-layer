@@ -16,7 +16,7 @@ from qdl.certification.phase105_consumer_acceptance import (
 )
 from qdl.certification.phase105_fallback import build_v1_fallback_probes
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
-from qdl.query import DataRequirement, FeedType, RecoveryPolicy
+from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import (
@@ -47,10 +47,12 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _effective_c2_opening_timeout_seconds,
     _identity_files,
     _identity_files_for_consumers,
+    _read_plane_preflight_receipt,
     _route_summary,
     _reference_batch_concurrency,
     _reference_transport_timeout_seconds,
     _run_consumer_groups,
+    _timing_policy,
     _paced_client_factory,
     _wait_for_minimum_observation,
     _v1_base_url,
@@ -59,6 +61,101 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
 
 
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
+    def test_timing_policy_separates_final_bar_continuity_from_quiet_execution(self) -> None:
+        bar = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="bar-uid",
+            feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1m",
+            max_freshness_ms=180_000,
+            require_final_bars=True,
+        ))
+        quiet = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="mark-uid",
+            feed=FeedType.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            event_recency_policy=StalePolicy.OBSERVE,
+            max_session_liveness_ms=45_000,
+        ))
+        quote = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="quote-uid",
+            feed=FeedType.QUOTE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=45_000,
+        ))
+        reference_mark = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="reference-mark-uid",
+            feed=FeedType.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+        ))
+        self.assertEqual(_timing_policy(bar)["semantic_class"], "FINAL_SCHEDULED")
+        self.assertEqual(_timing_policy(bar)["freshness_role"], "CONTINUITY_DROPOUT_HORIZON")
+        self.assertEqual(_timing_policy(bar)["interval_ms"], 60_000)
+        self.assertEqual(_timing_policy(quiet)["semantic_class"], "QUIET_SESSION")
+        self.assertEqual(_timing_policy(quote)["semantic_class"], "STRICT_EVENT_WITH_SESSION")
+        self.assertEqual(_timing_policy(reference_mark)["semantic_class"], "REFERENCE_SNAPSHOT")
+        self.assertEqual(
+            _timing_policy(reference_mark)["freshness_role"], "PROVIDER_OBSERVATION_AGE"
+        )
+
+    def test_timing_policy_fails_closed_for_invalid_bar_or_quiet_session_contract(self) -> None:
+        short_bar = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="bar-uid",
+            feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1m",
+            max_freshness_ms=59_999,
+            require_final_bars=True,
+        ))
+        strict_without_session = SimpleNamespace(requirement=DataRequirement(
+            instrument_uid="trade-uid",
+            feed=FeedType.TRADE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            max_freshness_ms=2_000,
+        ))
+        missing_observed_session = SimpleNamespace(requirement=SimpleNamespace(
+            feed=FeedType.TRADE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            effective_event_recency_policy=StalePolicy.OBSERVE,
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=None,
+            interval=None,
+            require_final_bars=False,
+        ))
+        # The public DataRequirement constructor rejects this malformed shape
+        # first.  Keep a boundary-shaped object here to prove C2 independently
+        # refuses it if a bad serialized/configured requirement reaches the
+        # acceptance harness.
+        missing_execution_mark_session = SimpleNamespace(requirement=SimpleNamespace(
+            feed=FeedType.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.EXECUTION,
+            effective_event_recency_policy=StalePolicy.OBSERVE,
+            max_freshness_ms=2_000,
+            max_session_liveness_ms=None,
+            interval=None,
+            require_final_bars=False,
+        ))
+        with self.assertRaisesRegex(ValueError, "continuity horizon"):
+            _timing_policy(short_bar)
+        self.assertEqual(_timing_policy(strict_without_session)["semantic_class"], "STRICT_EVENT")
+        self.assertEqual(
+            _timing_policy(strict_without_session)["session_contract"],
+            "NOT_DECLARED_STRICT_EVENT",
+        )
+        with self.assertRaisesRegex(ValueError, "session-liveness"):
+            _timing_policy(missing_observed_session)
+        with self.assertRaisesRegex(ValueError, "session-liveness"):
+            _timing_policy(missing_execution_mark_session)
+
     def test_closing_batches_isolate_hot_feeds_without_losing_scope(self) -> None:
         products = tuple(SimpleNamespace(identity=(venue, symbol, feed), feed=Feed(feed))
             for venue in ("BINANCE", "OKX")
@@ -602,6 +699,53 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             _effective_c2_opening_timeout_seconds(plan, 0.0)
         self.assertEqual(raised.exception.evidence["code"], "OPENING_TIMEOUT_NOT_POSITIVE")
 
+    def test_read_plane_preflight_receipt_requires_the_exact_release_scope(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="alpha.binance.paper.stable",
+            instrument_uid="uid-doge",
+            feed=Feed.BAR,
+            interval="12h",
+            source_policy_id="crypto_primary_v2",
+        )
+        scope = SimpleNamespace(products=(product,), sha256="scope-sha")
+        release = SimpleNamespace(digest="release-sha")
+        observation = {
+            "consumer_id": product.consumer_id,
+            "instrument_uid": product.instrument_uid,
+            "feed": "BAR",
+            "interval": product.interval,
+            "source_policy_id": product.source_policy_id,
+            "primary_latency_ms": 11.0,
+            "secondary_latency_ms": 13.0,
+            "timing_policy": {"semantic_class": "FINAL_SCHEDULED"},
+        }
+        receipt = _read_plane_preflight_receipt(
+            scope=scope,
+            release=release,
+            consumer_ids=(product.consumer_id,),
+            observations=[observation],
+            authority_revision=12,
+            elapsed_seconds=0.25,
+            quota_window_wait_seconds=0.0,
+            pacers={product.consumer_id: _C2ConsumerRequestPacer(180)},
+        )
+        self.assertEqual(receipt["status"], "PASS_READ_PLANE_PREFLIGHT")
+        self.assertEqual(receipt["product_count"], 1)
+        self.assertEqual(receipt["feed_counts"], {"BAR": 1})
+        self.assertEqual(receipt["timing_class_counts"], {"FINAL_SCHEDULED": 1})
+        self.assertEqual(receipt["replica_read_count"], 2)
+        with self.assertRaisesRegex(AssertionError, "scope differs"):
+            _read_plane_preflight_receipt(
+                scope=scope,
+                release=release,
+                consumer_ids=(product.consumer_id,),
+                observations=[],
+                authority_revision=12,
+                elapsed_seconds=0.25,
+                quota_window_wait_seconds=0.0,
+                pacers={product.consumer_id: _C2ConsumerRequestPacer(180)},
+            )
+
     async def test_c2_pacer_aligns_then_spaces_requests_below_manifest_quota(self) -> None:
         clock = {"value": 100.0}
         sleeps: list[float] = []
@@ -750,8 +894,8 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 self.calls: list[tuple[object, ...]] = []
 
             async def warmup_batch(self, requirements, *, require_all: bool):
-                if not require_all:
-                    raise AssertionError("closing batch must require every product")
+                if require_all:
+                    raise AssertionError("closing batch must retain typed partial results")
                 self.calls.append(tuple(requirements))
                 return SimpleNamespace(
                     partial=False,
@@ -781,6 +925,9 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "scripts.phase105_consumer_v2_identity_acceptance.compact_view_quality",
             return_value={"state": "LIVE"},
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._timing_policy",
+            return_value={"semantic_class": "QUIET_SESSION"},
         ):
             evidence = await _closing_batch_revalidation(
                 products,
@@ -797,6 +944,107 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item["closing_read"] for item in evidence}, {"BATCH_V2_PRIMARY"})
         self.assertEqual(len(clients), 2)
         self.assertEqual([len(call) for client in clients for call in client.calls], [1, 1, 1, 1])
+
+    async def test_closing_batch_partial_retains_typed_item_problem(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="alpha.binance.paper.stable",
+            instrument_uid="uid-doge",
+            instrument_id="BINANCE.USDM.PERPETUAL.DOGE-USDT",
+            feed=Feed.BAR,
+            interval="12h",
+            source_policy_id="crypto_primary_v2",
+            delivery=DeliveryClass.DURABLE,
+            requirement=object(),
+            identity=("alpha.binance.paper.stable", "uid-doge", "BAR", "12h", "crypto_primary_v2"),
+            evidence=lambda: {
+                "consumer_id": "alpha.binance.paper.stable",
+                "instrument_uid": "uid-doge",
+                "feed": "BAR",
+                "interval": "12h",
+                "source_policy_id": "crypto_primary_v2",
+            },
+        )
+        status = FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": "uid-doge",
+            "feed": "BAR",
+            "quality": {
+                "state": "LIVE",
+                "freshness_ms": 1_500,
+                "event_recency_state": "LIVE",
+                "provider_session_state": "NOT_APPLICABLE",
+                "provider_session_liveness_ms": None,
+                "gap_open": False,
+                "complete": True,
+                "execution_eligible": True,
+                "policy_id": "crypto_primary_v2",
+                "flags": [],
+            },
+        })
+
+        class Client:
+            async def warmup_batch(self, requirements, *, require_all: bool):
+                self.assertFalse(require_all)
+                self.assertEqual(tuple(requirements), (product.requirement,))
+                return SimpleNamespace(
+                    partial=True,
+                    results=[SimpleNamespace(
+                        data=None,
+                        problem=SimpleNamespace(
+                            code=SimpleNamespace(value="DATA_NOT_READY"),
+                            retryable=True,
+                            detail="cache is intentionally omitted from evidence",
+                        ),
+                    )],
+                )
+
+            async def feed_status(self, requirement):
+                self.assertIs(requirement, product.requirement)
+                return status
+
+            async def close(self) -> None:
+                return None
+
+            def assertFalse(self, value):
+                if value:
+                    raise AssertionError("expected false")
+
+            def assertEqual(self, actual, expected):
+                if actual != expected:
+                    raise AssertionError(f"{actual!r} != {expected!r}")
+
+            def assertIs(self, actual, expected):
+                if actual is not expected:
+                    raise AssertionError("objects differ")
+
+        def factory(*args, **kwargs):
+            del args, kwargs
+            return Client()
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
+            return_value=product.requirement,
+        ):
+            with self.assertRaises(C2ClosingBatchError) as raised:
+                await _closing_batch_revalidation(
+                    (product,),
+                    identity=object(),
+                    primary_url="https://primary",
+                    secondary_url="https://secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path("/tmp/phase105-closing"),
+                    timeout_seconds=15.0,
+                    max_batch_items=50,
+                    client_factory=factory,
+                )
+        evidence = raised.exception.evidence
+        self.assertEqual(evidence["transport_error"], "DataLayerError")
+        self.assertEqual(evidence["batch_item_problems"][0]["problem_code"], "DATA_NOT_READY")
+        self.assertTrue(evidence["batch_item_problems"][0]["retryable"])
+        self.assertIn("problem_detail_sha256", evidence["batch_item_problems"][0])
+        self.assertIsInstance(evidence["batch_item_problems"][0]["quality_sha256"], str)
+        self.assertNotIn("cache is intentionally", repr(evidence))
+        self.assertFalse(evidence["payload_recorded"])
 
     async def test_closing_batch_rejects_partial_cardinality(self) -> None:
         product = SimpleNamespace(

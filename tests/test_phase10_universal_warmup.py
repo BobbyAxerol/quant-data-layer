@@ -619,7 +619,7 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         arguments = dict(
             work=fail,
-            identity=lambda value: value,
+            identity=lambda _value: "one-route-generation",
             provider=lambda _: "OKX",
             deadline_ms=lambda _: 1_000,
         )
@@ -629,6 +629,50 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[0].ok)
         self.assertIn("circuit is open", str(result[0].error))
         self.assertEqual(executor.source_calls, 2)
+
+    async def test_internal_stream_circuit_is_route_generation_scoped_and_success_resets_only_that_key(self):
+        now = [0.0]
+        fail_generation_one = [True]
+        executor = BoundedWarmupExecutor[tuple[str, str], tuple[str, str]](
+            provider_policies={
+                "INTERNAL_STREAM": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    circuit_failures=1,
+                    circuit_cooldown_ms=1_000,
+                )
+            },
+            clock=lambda: now[0],
+        )
+
+        async def work(item):
+            if item == ("BTC", "generation-1") and fail_generation_one[0]:
+                raise RetryableWarmupError("local stream route unavailable")
+            return item
+
+        arguments = dict(
+            work=work,
+            identity=lambda item: item,
+            provider=lambda _: "INTERNAL_STREAM",
+            deadline_ms=lambda _: 2_000,
+        )
+        first = await executor.execute((("BTC", "generation-1"),), **arguments)
+        self.assertFalse(first[0].ok)
+        unaffected = await executor.execute((("BTC", "generation-2"),), **arguments)
+        self.assertTrue(unaffected[0].ok)
+        rejected = await executor.execute((("BTC", "generation-1"),), **arguments)
+        self.assertFalse(rejected[0].ok)
+        self.assertIn("circuit is open", str(rejected[0].error))
+
+        now[0] = 1.0
+        fail_generation_one[0] = False
+        recovered = await executor.execute((("BTC", "generation-1"),), **arguments)
+        self.assertTrue(recovered[0].ok)
+        self.assertEqual(
+            executor._circuit[("INTERNAL_STREAM", ("BTC", "generation-1"))],
+            (0, 0.0),
+        )
 
     async def test_deadline_cancels_unshared_underlying_work(self):
         executor = BoundedWarmupExecutor[int, int]()
@@ -1281,10 +1325,16 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([item.status for item in result.results], ["DATA_NOT_READY", "OK"])
         self.assertEqual(service.warmup_executor.circuit_rejections, 0)
-        self.assertEqual(
-            service.warmup_executor._circuit["LOCAL_CANONICAL_CACHE"],
-            (0, 0.0),
-        )
+        circuit_states = {
+            key[1].instrument_uid: state
+            for key, state in service.warmup_executor._circuit.items()
+            if key[0] == "LOCAL_CANONICAL_CACHE"
+        }
+        self.assertEqual(circuit_states[ready_uid], (0, 0.0))
+        # The query service converts this local-cache absence directly to the
+        # typed result; it must neither create nor clear another route's
+        # circuit state.
+        self.assertNotIn(unavailable_uid, circuit_states)
 
     async def test_single_warmup_is_nonblocking_and_reuses_retry_policy(self):
         class Service(V2QueryService):

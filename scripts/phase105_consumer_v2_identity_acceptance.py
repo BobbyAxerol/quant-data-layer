@@ -62,7 +62,9 @@ from qdl.certification.phase105_fallback import (
     validate_v1_provenance,
     validate_v1_runtime_binding,
 )
+from qdl.adapters.intervals import canonical_interval_ms
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
+from qdl.query import ConsumerGrade, StalePolicy
 from qdl.certification.phase105_release_observations import compact_view_quality
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
@@ -101,6 +103,14 @@ _C2_QUOTA_WINDOW_MARGIN_SECONDS = 0.05
 _C2_CLOSING_REVALIDATION_MAX_SECONDS = 120.0
 
 
+def _evidence_sha256(value: Mapping[str, object]) -> str:
+    """Hash already payload-free evidence without retaining its value twice."""
+
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class IdentityFiles:
     certificate: str
@@ -137,6 +147,7 @@ class C2ProductAcceptanceError(RuntimeError):
             "replica": error.replica or "unknown",
             "error_code": error.code,
             "typed_status": error.status_evidence,
+            "quality_sha256": _evidence_sha256(error.status_evidence),
             "payload_recorded": False,
         }
 
@@ -177,6 +188,7 @@ class C2ClosingBatchError(RuntimeError):
         products: tuple[AcceptanceProduct, ...],
         error: Exception,
         status_observations: list[dict[str, object]],
+        batch_item_problems: list[dict[str, object]] | None = None,
     ) -> None:
         if not products or any(item.consumer_id != consumer_id for item in products):
             raise ValueError("Phase 10.5 closing batch failure has an invalid consumer scope")
@@ -199,6 +211,7 @@ class C2ClosingBatchError(RuntimeError):
             "batch_identity_sha256": digest,
             "transport_error": type(error).__name__,
             "typed_status": status_observations,
+            "batch_item_problems": list(batch_item_problems or ()),
             "payload_recorded": False,
         }
 
@@ -522,6 +535,137 @@ def _route_summary(release: StableReleaseRoutePlan, products: tuple[AcceptancePr
         else:
             raise ValueError("Phase 10.5 V2 product has an invalid fallback route")
     return summary
+
+
+def _timing_policy(product) -> dict[str, object]:
+    """Classify a sealed requirement without changing its declared threshold.
+
+    The product requirement remains the source of truth. This only prevents
+    acceptance evidence from describing a continuity/dropout horizon as an
+    execution reaction SLA, or a quiet session as a broken provider because no
+    event was emitted.
+    """
+
+    requirement = product.requirement
+    feed = requirement.feed.value
+    event_policy = requirement.effective_event_recency_policy.value
+    freshness_ms = requirement.max_freshness_ms
+    session_ms = requirement.max_session_liveness_ms
+    common: dict[str, object] = {
+        "feed": feed,
+        "event_recency_policy": event_policy,
+        "declared_max_freshness_ms": freshness_ms,
+        "declared_max_session_liveness_ms": session_ms,
+    }
+    if feed == "BAR":
+        interval = requirement.interval
+        if not interval or not requirement.require_final_bars:
+            raise ValueError("Phase 10.5 final BAR timing requires interval and finality")
+        interval_ms = canonical_interval_ms(interval)
+        if freshness_ms is None or freshness_ms < interval_ms:
+            raise ValueError("Phase 10.5 final BAR continuity horizon is below its interval")
+        return {
+            **common,
+            "semantic_class": "FINAL_SCHEDULED",
+            "finality_required": True,
+            "interval_ms": interval_ms,
+            "freshness_role": "CONTINUITY_DROPOUT_HORIZON",
+            "close_to_usable_sla_ms": None,
+            "required_fences": ["FINALITY", "GAP", "GENERATION", "COMPLETENESS"],
+        }
+    if feed == "MARK_INDEX_PRICE":
+        # MARK/INDEX has two deliberately distinct V2 read contracts.  The
+        # execution OBSERVE form is the current gateway live view, whose
+        # provider session/component evidence makes a quiet market usable.
+        # All other forms are bounded reference snapshots; they must prove
+        # provider-observation freshness and lineage, but cannot invent a
+        # stream session that the product did not declare.
+        execution_live_view = (
+            requirement.consumer_grade is ConsumerGrade.EXECUTION
+            and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+        )
+        if execution_live_view:
+            if session_ms is None:
+                raise ValueError(
+                    "Phase 10.5 execution MARK_INDEX_PRICE timing requires a session-liveness bound"
+                )
+            return {
+                **common,
+                "semantic_class": "QUIET_SESSION",
+                "freshness_role": "EVENT_RECENCY_OBSERVED_NOT_ADMITTED_ALONE",
+                "required_fences": [
+                    "SESSION", "COMPONENT_CADENCE", "GAP", "GENERATION", "COMPLETENESS",
+                ],
+            }
+        if freshness_ms is None:
+            raise ValueError(
+                "Phase 10.5 reference MARK_INDEX_PRICE timing requires a provider-observation bound"
+            )
+        return {
+            **common,
+            "semantic_class": "REFERENCE_SNAPSHOT",
+            "freshness_role": "PROVIDER_OBSERVATION_AGE",
+            "required_fences": ["IDENTITY", "LINEAGE", "COVERAGE", "FRESHNESS"],
+        }
+    if feed in {"TRADE", "BOOK_DELTA"}:
+        if event_policy == "OBSERVE":
+            if session_ms is None:
+                raise ValueError(
+                    f"Phase 10.5 observed {feed} timing requires a session-liveness bound"
+                )
+            return {
+                **common,
+                "semantic_class": "QUIET_SESSION",
+                "freshness_role": "EVENT_RECENCY_OBSERVED_NOT_ADMITTED_ALONE",
+                "required_fences": ["SESSION", "GAP", "GENERATION", "COMPLETENESS"],
+            }
+        if freshness_ms is None:
+            raise ValueError(f"Phase 10.5 strict {feed} timing requires an event-age bound")
+        if session_ms is None:
+            # Some research-only strict routes deliberately do not declare a
+            # numeric session SLA. They remain event-age/gap fenced and cannot
+            # become a quiet execution route merely because a provider has not
+            # emitted a trade during this probe.
+            return {
+                **common,
+                "semantic_class": "STRICT_EVENT",
+                "freshness_role": "EVENT_AGE",
+                "session_contract": "NOT_DECLARED_STRICT_EVENT",
+                "required_fences": ["EVENT_AGE", "GAP", "GENERATION", "COMPLETENESS"],
+            }
+        return {
+            **common,
+            "semantic_class": "STRICT_EVENT_WITH_SESSION",
+            "freshness_role": "EVENT_AGE_AND_SESSION",
+            "required_fences": ["EVENT_AGE", "SESSION", "GAP", "GENERATION", "COMPLETENESS"],
+        }
+    if feed == "QUOTE":
+        if freshness_ms is None or session_ms is None:
+            raise ValueError("Phase 10.5 QUOTE timing requires event-age and session bounds")
+        return {
+            **common,
+            "semantic_class": (
+                "QUIET_SESSION" if event_policy == "OBSERVE" else "STRICT_EVENT_WITH_SESSION"
+            ),
+            "freshness_role": "EVENT_AGE_OR_PROVIDER_ON_CHANGE_WITH_SESSION",
+            "delivery_semantics": "ASSERT_FROM_TYPED_QUALITY",
+            "required_fences": ["SESSION", "GAP", "GENERATION", "COMPLETENESS"],
+        }
+    if feed == "BOOK_SNAPSHOT":
+        if freshness_ms is None:
+            raise ValueError("Phase 10.5 BOOK_SNAPSHOT timing requires a baseline-age bound")
+        return {
+            **common,
+            "semantic_class": "BOOK_BASELINE",
+            "freshness_role": "SNAPSHOT_BASELINE_NOT_DELTA_EXECUTION_AGE",
+            "required_fences": ["GAP", "GENERATION", "COMPLETENESS", "BOOK_VERIFICATION"],
+        }
+    return {
+        **common,
+        "semantic_class": "REFERENCE_CADENCE",
+        "freshness_role": "PUBLISHED_VALUE_CADENCE",
+        "required_fences": ["IDENTITY", "LINEAGE", "COVERAGE"],
+    }
 
 
 def _reference_product(
@@ -869,6 +1013,11 @@ async def _certify_references(
                 "primary": primary_values[product.identity][4],
                 "secondary": secondary_values[product.identity][4],
             },
+            "quality_sha256": {
+                "primary": _evidence_sha256(primary_values[product.identity][4]),
+                "secondary": _evidence_sha256(secondary_values[product.identity][4]),
+            },
+            "timing_policy": _timing_policy(product),
         }
         for product in reference_products
     ]
@@ -1036,15 +1185,45 @@ def _closing_requirement(product: AcceptanceProduct):
     )
 
 
-def _closing_status_representatives(
-    products: tuple[AcceptanceProduct, ...],
-) -> tuple[AcceptanceProduct, ...]:
-    """Keep transport-failure evidence bounded to one identity per feed."""
+def _closing_batch_problem_evidence(
+    products: tuple[AcceptanceProduct, ...], response,
+    *,
+    status_observations: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Retain bounded per-item errors when a successful HTTP batch is partial.
 
-    by_feed: dict[str, AcceptanceProduct] = {}
-    for product in products:
-        by_feed.setdefault(product.feed.value, product)
-    return tuple(by_feed[feed] for feed in sorted(by_feed))
+    The public SDK intentionally raises a generic ``DataLayerError`` for
+    ``require_all=True``. C2 needs the original item identity and typed problem
+    code to distinguish a route defect from a transport failure without writing
+    a market payload into release evidence.
+    """
+
+    results = tuple(getattr(response, "results", ()))
+    if len(results) != len(products):
+        raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
+    quality_by_identity = {
+        tuple(item["product_identity"]): item.get("quality_sha256")
+        for item in status_observations
+        if isinstance(item.get("product_identity"), list)
+    }
+    evidence: list[dict[str, object]] = []
+    for product, item in zip(products, results, strict=True):
+        problem = getattr(item, "problem", None)
+        if problem is None:
+            continue
+        raw_code = getattr(problem, "code", "UNKNOWN")
+        code = getattr(raw_code, "value", raw_code)
+        if not isinstance(code, str) or not code:
+            raise AssertionError("Phase 10.5 closing batch problem code is invalid")
+        detail = str(getattr(problem, "detail", ""))
+        evidence.append({
+            **product.evidence(),
+            "problem_code": code,
+            "retryable": bool(getattr(problem, "retryable", False)),
+            "problem_detail_sha256": hashlib.sha256(detail.encode()).hexdigest(),
+            "quality_sha256": quality_by_identity.get(product.identity),
+        })
+    return evidence
 
 
 async def _closing_failure_status_observations(
@@ -1057,7 +1236,7 @@ async def _closing_failure_status_observations(
 
     timeout = min(5.0, timeout_seconds)
     observations: list[dict[str, object]] = []
-    for product in _closing_status_representatives(products):
+    for product in products:
         try:
             status = await asyncio.wait_for(
                 client.feed_status(_closing_requirement(product)),
@@ -1066,12 +1245,17 @@ async def _closing_failure_status_observations(
         except Exception as error:  # Diagnostic must not hide the primary failure.
             observations.append({
                 **product.evidence(),
+                "product_identity": list(product.identity),
                 "status_transport_error": type(error).__name__,
+                "quality_sha256": None,
             })
         else:
+            quality = compact_feed_status(status)
             observations.append({
                 **product.evidence(),
-                "quality": compact_feed_status(status),
+                "product_identity": list(product.identity),
+                "quality": quality,
+                "quality_sha256": _evidence_sha256(quality),
             })
     return observations
 
@@ -1115,7 +1299,10 @@ async def _closing_batch_revalidation(
                 requirements = tuple(_closing_requirement(item) for item in batch)
                 started = time.perf_counter()
                 try:
-                    response = await client.warmup_batch(requirements, require_all=True)
+                    # Ask the public SDK for the typed partial result, then fail
+                    # closed below. `require_all=True` would collapse the exact
+                    # failing item into a generic DataLayerError.
+                    response = await client.warmup_batch(requirements, require_all=False)
                 except (httpx.HTTPError, TimeoutError, DataLayerError) as error:
                     status_observations = await _closing_failure_status_observations(
                         client,
@@ -1130,8 +1317,36 @@ async def _closing_batch_revalidation(
                         status_observations=status_observations,
                     ) from error
                 latency_ms = (time.perf_counter() - started) * 1_000
-                if response.partial or len(response.results) != len(batch):
+                if len(response.results) != len(batch):
                     raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
+                if response.partial:
+                    failed_products = tuple(
+                        product
+                        for product, item in zip(batch, response.results, strict=True)
+                        if getattr(item, "problem", None) is not None
+                    ) or batch
+                    status_observations = await _closing_failure_status_observations(
+                        client,
+                        failed_products,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    batch_item_problems = _closing_batch_problem_evidence(
+                        batch,
+                        response,
+                        status_observations=status_observations,
+                    )
+                    raise C2ClosingBatchError(
+                        consumer_id=batch[0].consumer_id,
+                        replica=label,
+                        products=batch,
+                        error=DataLayerError(
+                            "PARTIAL_RESULT",
+                            "required closing warmup batch contains item failures",
+                            retryable=any(item["retryable"] for item in batch_item_problems),
+                        ),
+                        status_observations=status_observations,
+                        batch_item_problems=batch_item_problems,
+                    )
                 observed_at_ns = time.time_ns()
                 for product, item in zip(batch, response.results, strict=True):
                     if item.data is None or not item.data.data:
@@ -1193,6 +1408,11 @@ async def _closing_batch_revalidation(
                 "primary": primary["quality"],
                 "secondary": secondary["quality"],
             },
+            "quality_sha256": {
+                "primary": _evidence_sha256(primary["quality"]),
+                "secondary": _evidence_sha256(secondary["quality"]),
+            },
+            "timing_policy": _timing_policy(product),
             "closing_read": "BATCH_V2_PRIMARY",
         }
         if bar_alignment is not None:
@@ -1284,6 +1504,155 @@ async def _closing_revalidate_consumer(
     return [*stream_results, *reference_results]
 
 
+async def _read_plane_preflight(
+    scope,
+    release: StableReleaseRoutePlan,
+    *,
+    consumer_ids: tuple[str, ...],
+    identities: Mapping[str, object],
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    deadline_monotonic: float,
+    concurrency: int,
+    client_factories: Mapping[str, Callable],
+) -> list[dict[str, object]]:
+    """Read every V2 route twice without opening a stream or fallback path.
+
+    This is deliberately a release-candidate debugger, not a substitute for
+    C2: it exercises the same sealed SDK requirements and both query replicas,
+    but omits cursor/reconnect, fallback and the 300-second observation. It
+    catches materialization/quality/replica faults before a full C2 spends its
+    manifest-derived opening window.
+    """
+
+    release_consumers = {item.consumer_id: item for item in release.consumers}
+    reference_semaphore = asyncio.Semaphore(_reference_batch_concurrency(concurrency))
+    native_basis_semaphore = asyncio.Semaphore(1)
+
+    async def revalidate_consumer(consumer_id: str) -> list[dict[str, object]]:
+        products = tuple(item for item in scope.products if item.consumer_id == consumer_id)
+        route = release_consumers.get(consumer_id)
+        if not products or route is None:
+            raise ValueError("Phase 10.5 pre-C2 consumer route is unavailable")
+        return await _closing_revalidate_consumer(
+            consumer_id,
+            products,
+            identity=identities[consumer_id],
+            primary_url=primary_url,
+            secondary_url=secondary_url,
+            grpc_target=grpc_target,
+            state_dir=state_dir / consumer_id.replace(".", "-"),
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+            max_batch_items=route.manifest.quotas.max_batch_items,
+            reference_semaphore=reference_semaphore,
+            native_basis_semaphore=native_basis_semaphore,
+            client_factory=client_factories[consumer_id],
+        )
+
+    groups = await _gather_or_cancel(tuple(
+        asyncio.create_task(revalidate_consumer(consumer_id))
+        for consumer_id in consumer_ids
+    ))
+    return [item for group in groups for item in group]
+
+
+def _read_plane_preflight_receipt(
+    *,
+    scope,
+    release: StableReleaseRoutePlan,
+    consumer_ids: tuple[str, ...],
+    observations: list[dict[str, object]],
+    authority_revision: object,
+    elapsed_seconds: float,
+    quota_window_wait_seconds: float,
+    pacers: Mapping[str, _C2ConsumerRequestPacer],
+) -> dict[str, object]:
+    """Return compact proof that the fast matrix covered the exact route set."""
+
+    expected = {
+        (item.consumer_id, item.instrument_uid, item.feed.value, item.interval or "",
+         item.source_policy_id)
+        for item in scope.products
+    }
+    actual = {
+        (
+            str(item.get("consumer_id")),
+            str(item.get("instrument_uid")),
+            str(item.get("feed")),
+            str(item.get("interval") or ""),
+            str(item.get("source_policy_id")),
+        )
+        for item in observations
+    }
+    if actual != expected or len(observations) != len(expected):
+        raise AssertionError("Phase 10.5 pre-C2 read-plane scope differs from release routes")
+    timing_classes = Counter()
+    for item in observations:
+        timing_policy = item.get("timing_policy")
+        if not isinstance(timing_policy, Mapping):
+            raise AssertionError("Phase 10.5 pre-C2 timing policy is missing")
+        semantic_class = timing_policy.get("semantic_class")
+        if not isinstance(semantic_class, str) or not semantic_class:
+            raise AssertionError("Phase 10.5 pre-C2 timing semantic class is invalid")
+        timing_classes[semantic_class] += 1
+    feed_counts = Counter(str(item[2]) for item in actual)
+    consumer_counts = Counter(str(item[0]) for item in actual)
+    primary_latency = sorted(
+        float(item["primary_latency_ms"])
+        for item in observations
+        if isinstance(item.get("primary_latency_ms"), (int, float))
+    )
+    secondary_latency = sorted(
+        float(item["secondary_latency_ms"])
+        for item in observations
+        if isinstance(item.get("secondary_latency_ms"), (int, float))
+    )
+
+    def percentile(values: list[float], fraction: float) -> float | None:
+        if not values:
+            return None
+        index = min(len(values) - 1, max(0, ceil(len(values) * fraction) - 1))
+        return round(values[index], 3)
+
+    return {
+        "schema": "qdl.phase105.v2-read-plane-preflight.v1",
+        "status": "PASS_READ_PLANE_PREFLIGHT",
+        "mode": "READ_PLANE_ONLY_NO_STREAM_NO_FALLBACK",
+        "release_route_plan_sha256": release.digest,
+        "authority_revision": authority_revision,
+        "scope_sha256": scope.sha256,
+        "product_count": len(observations),
+        "consumer_counts": dict(sorted(consumer_counts.items())),
+        "feed_counts": dict(sorted(feed_counts.items())),
+        "timing_class_counts": dict(sorted(timing_classes.items())),
+        "replica_read_count": 2,
+        "primary_batch_latency_ms": {
+            "p50": percentile(primary_latency, 0.50),
+            "p95": percentile(primary_latency, 0.95),
+            "p99": percentile(primary_latency, 0.99),
+        },
+        "secondary_batch_latency_ms": {
+            "p50": percentile(secondary_latency, 0.50),
+            "p95": percentile(secondary_latency, 0.95),
+            "p99": percentile(secondary_latency, 0.99),
+        },
+        "quota_window_wait_seconds": round(quota_window_wait_seconds, 3),
+        "quota_budget": {
+            consumer_id: pacer.evidence()
+            for consumer_id, pacer in sorted(pacers.items())
+        },
+        "provider_connections": 0,
+        "order_actions": 0,
+        "cursor_directory_removed": True,
+        "payload_recorded": False,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+    }
+
+
 async def _run_consumer_groups(
     consumer_ids: tuple[str, ...],
     run_group,
@@ -1314,6 +1683,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     authority = _authority(args.authority_record)
     consumer_ids = _consumer_ids(args)
     scope, release = _scope(args, consumer_ids)
+    timing_profiles = {
+        product.identity: _timing_policy(product) for product in scope.products
+    }
+    if len(timing_profiles) != len(scope.products):
+        raise AssertionError("Phase 10.5 timing policy duplicated a release product")
     files = _identity_files_for_consumers(args, consumer_ids)
     v1_base_url = _v1_base_url(args.v1_base_url)
     grpc_target = _c2_grpc_targets(args.grpc_target)
@@ -1393,6 +1767,44 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         for consumer_id, pacer in pacers.items()
     }
     release_consumers = {item.consumer_id: item for item in release.consumers}
+
+    if args.read_plane_preflight:
+        # Use the same per-identity 75% quota guard as C2, but only for the
+        # batched current read plane. There is no cursor, stream, fallback or
+        # 300-second observation in this diagnostic mode.
+        quota_window_wait_seconds = await _wait_for_clean_quota_windows(pacers)
+        preflight_started = time.monotonic()
+        try:
+            observations = await asyncio.wait_for(
+                _read_plane_preflight(
+                    scope,
+                    release,
+                    consumer_ids=consumer_ids,
+                    identities=identities,
+                    primary_url=args.primary_url,
+                    secondary_url=args.secondary_url,
+                    grpc_target=grpc_target,
+                    state_dir=temporary / "read-plane-preflight",
+                    timeout_seconds=args.timeout_seconds,
+                    deadline_monotonic=preflight_started + opening_timeout_seconds,
+                    concurrency=args.concurrency,
+                    client_factories=client_factories,
+                ),
+                timeout=opening_timeout_seconds,
+            )
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+        return _read_plane_preflight_receipt(
+            scope=scope,
+            release=release,
+            consumer_ids=consumer_ids,
+            observations=observations,
+            authority_revision=authority.get("revision"),
+            elapsed_seconds=time.monotonic() - preflight_started,
+            quota_window_wait_seconds=quota_window_wait_seconds,
+            pacers=pacers,
+        )
+
     quota_window_wait_seconds = await _wait_for_clean_quota_windows(pacers)
     started = time.monotonic()
     opening_deadline = started + opening_timeout_seconds
@@ -1598,6 +2010,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     if set(initial_by_identity) != set(closing_by_identity) or len(initial_by_identity) != len(scope.products):
         raise AssertionError("Phase 10.5 identity scope changed during the observation window")
     for identity_key, item in initial_by_identity.items():
+        item["timing_policy"] = timing_profiles[identity_key]
         item["closing_v2_read"] = closing_by_identity[identity_key]
     route_summary = _route_summary(release, scope.products)
     return {
@@ -1683,6 +2096,14 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--timeout-seconds", type=float, default=15.0)
     value.add_argument("--concurrency", type=int, default=4)
     value.add_argument("--observation-seconds", type=float, default=300.0)
+    value.add_argument(
+        "--read-plane-preflight",
+        action="store_true",
+        help=(
+            "Batch-read every selected V2 route through both replicas before a "
+            "full C2; it never opens streams, drills V1 fallback or observes data."
+        ),
+    )
     value.add_argument(
         "--opening-timeout-seconds", type=float,
         help=(

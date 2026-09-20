@@ -74,7 +74,11 @@ def _timestamp_ms(value: Any, field: str) -> int:
     return result
 
 
-def _load_slices(path: Path) -> tuple[DemandSlice, ...]:
+def _load_slices(
+    path: Path,
+    *,
+    allowed_feeds: frozenset[str] | None = None,
+) -> tuple[DemandSlice, ...]:
     raw = yaml.safe_load(path.read_bytes())
     if not isinstance(raw, Mapping) or raw.get("schema") != "qdl.v2.production-demand.v1":
         raise ProviderAdmissionError("only qdl.v2.production-demand.v1 demand is supported")
@@ -106,6 +110,12 @@ def _load_slices(path: Path) -> tuple[DemandSlice, ...]:
             except KeyError as error:
                 raise ProviderAdmissionError(f"requirement is missing {error.args[0]}") from error
             if item.venue not in {"BINANCE", "OKX"}:
+                continue
+            # A bounded caller may deliberately certify only one product class
+            # (for example BAR warmup) from the universal demand manifest. It
+            # must filter that declared class before this provider-admission
+            # reader rejects feeds it does not own.
+            if allowed_feeds is not None and item.feed not in allowed_feeds:
                 continue
             if item.feed not in {
                 "TRADE", "QUOTE", "BAR", "BOOK_SNAPSHOT", "BOOK_DELTA",

@@ -152,7 +152,11 @@ class BoundedWarmupExecutor(Generic[T, R]):
         self._inflight_lock = asyncio.Lock()
         self._rate_locks: dict[str, asyncio.Lock] = {}
         self._tokens: dict[str, _TokenState] = {}
-        self._circuit: dict[str, tuple[int, float]] = {}
+        # Quota/concurrency are intentionally provider-wide, but one failing
+        # route must not cool down a different instrument/feed or a newly
+        # materialized generation. ``key`` passed below already carries the
+        # normalized provider and caller-declared route identity.
+        self._circuit: dict[Hashable, tuple[int, float]] = {}
         self._circuit_lock = asyncio.Lock()
         self.source_calls = 0
         self.singleflight_hits = 0
@@ -209,6 +213,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
                             item,
                             work,
                             provider_key,
+                            circuit_key=key,
                             deadline_at=started + deadline_ms / 1000,
                         )
                     )
@@ -281,6 +286,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
         work: Callable[[T], Awaitable[R]],
         provider: str,
         *,
+        circuit_key: Hashable,
         deadline_at: float | None = None,
     ) -> tuple[R, int]:
         policy = self.provider_policies.get(provider, self.default_policy)
@@ -289,18 +295,18 @@ class BoundedWarmupExecutor(Generic[T, R]):
         )
         last_error: BaseException | None = None
         for attempt in range(1, policy.max_attempts + 1):
-            await self._require_closed_circuit(provider)
+            await self._require_closed_circuit(provider, circuit_key)
             try:
                 async with semaphore:
                     await self._acquire_provider_token(provider, policy)
                     self.source_calls += 1
                     value = await work(item)
-                await self._record_success(provider)
+                await self._record_success(circuit_key)
                 return value, attempt
             except RetryableWarmupError as error:
                 error.warmup_attempts = attempt
                 last_error = error
-                open_until = await self._record_failure(provider, policy)
+                open_until = await self._record_failure(circuit_key, policy)
                 if open_until:
                     break
                 if attempt == policy.max_attempts:
@@ -319,9 +325,9 @@ class BoundedWarmupExecutor(Generic[T, R]):
         assert last_error is not None
         raise last_error
 
-    async def _require_closed_circuit(self, provider: str) -> None:
+    async def _require_closed_circuit(self, provider: str, circuit_key: Hashable) -> None:
         async with self._circuit_lock:
-            _, open_until = self._circuit.get(provider, (0, 0.0))
+            _, open_until = self._circuit.get(circuit_key, (0, 0.0))
             now = self._clock()
             if open_until <= now:
                 return
@@ -332,24 +338,24 @@ class BoundedWarmupExecutor(Generic[T, R]):
             retry_after_ms=retry_after_ms,
         )
 
-    async def _record_success(self, provider: str) -> None:
+    async def _record_success(self, circuit_key: Hashable) -> None:
         async with self._circuit_lock:
-            self._circuit[provider] = (0, 0.0)
+            self._circuit[circuit_key] = (0, 0.0)
 
     async def _record_failure(
         self,
-        provider: str,
+        circuit_key: Hashable,
         policy: ProviderBudgetPolicy,
     ) -> float:
         async with self._circuit_lock:
-            failures, open_until = self._circuit.get(provider, (0, 0.0))
+            failures, open_until = self._circuit.get(circuit_key, (0, 0.0))
             if open_until > self._clock():
                 return open_until
             failures += 1
             open_until = 0.0
             if failures >= policy.circuit_failures:
                 open_until = self._clock() + policy.circuit_cooldown_ms / 1000
-            self._circuit[provider] = (failures, open_until)
+            self._circuit[circuit_key] = (failures, open_until)
             return open_until
 
     async def _acquire_provider_token(
