@@ -11,7 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct, DeliveryClass
+from qdl.certification.phase105_consumer_acceptance import (
+    build_release_consumer_acceptance_scope,
+)
+from qdl.certification.phase105_fallback import build_v1_fallback_probes
+from qdl.consumer import StableReleaseRoutePlan, requirement_key
 from qdl.query import DataRequirement, FeedType, RecoveryPolicy
+from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import (
     DataRequirement as SdkDataRequirement,
     Feed,
@@ -24,6 +31,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     C2ProductAcceptanceError,
     C2ReferenceProductError,
     C2ClosingBatchError,
+    C2OpeningCapacityError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
     _PacedStreamTransport,
@@ -34,7 +42,9 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _closing_requirement,
     _c2_grpc_targets,
     _consumer_ids,
+    _build_c2_opening_operation_plan,
     _certify_references,
+    _effective_c2_opening_timeout_seconds,
     _identity_files,
     _identity_files_for_consumers,
     _route_summary,
@@ -451,6 +461,147 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
 
 
 class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_opening_pacer_records_sdk_operation_categories(self) -> None:
+        pacer = _C2ConsumerRequestPacer(
+            180,
+        )
+        await pacer.acquire("QUERY_READ")
+        await pacer.acquire("STREAM_SUBSCRIBE")
+        self.assertEqual(pacer.evidence()["c2_operation_counts"], {
+            "QUERY_READ": 1,
+            "STREAM_SUBSCRIBE": 1,
+        })
+
+    def test_stable_scope_opening_budget_is_manifest_derived_and_bounded(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        catalog = StableSourceCatalog.load(
+            root / "config/v2/stable-source-bindings.yaml"
+        )
+        acquisition = StableAcquisitionPlan.load(
+            root / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog
+        )
+        release = StableReleaseRoutePlan.load(
+            root / "config/v2/stable-v2-release-routing.yaml", manifest_root=root
+        )
+        consumer_ids = (
+            "monitoring.multivenue.stable",
+            "trading-system.paper.stable",
+            "alpha.binance.paper.stable",
+            "alpha.okx.paper.stable",
+        )
+        scope = build_release_consumer_acceptance_scope(
+            release,
+            catalog=catalog,
+            acquisition=acquisition,
+            consumer_ids=consumer_ids,
+        )
+        probes = build_v1_fallback_probes(
+            release,
+            catalog=catalog,
+            products=scope.products,
+            consumer_ids=consumer_ids,
+        )
+        plan = _build_c2_opening_operation_plan(
+            scope.products,
+            release,
+            probes,
+            consumer_ids,
+            generic_timeout_seconds=15.0,
+            reference_now_ns=1_800_000_000_000_000_000,
+        )
+        selected_release_routes = {
+            (consumer.consumer_id, product.requirement_key): product
+            for consumer in release.consumers
+            if consumer.consumer_id in consumer_ids
+            for product in consumer.products
+        }
+        global_release_routes = {
+            (consumer.consumer_id, product.requirement_key): product
+            for consumer in release.consumers
+            for product in consumer.products
+        }
+        expected_v2 = {
+            identity for identity, product in selected_release_routes.items()
+            if product.route == "V2_PRIMARY"
+        }
+        actual_v2 = {
+            (product.consumer_id, requirement_key(product.requirement))
+            for product in scope.products
+        }
+        self.assertEqual(actual_v2, expected_v2)
+        self.assertEqual(plan["global_release_route_count"], len(global_release_routes))
+        self.assertEqual(
+            plan["global_v2_primary_product_count"],
+            sum(product.route == "V2_PRIMARY" for product in global_release_routes.values()),
+        )
+        self.assertEqual(
+            plan["global_v1_primary_route_count"],
+            sum(product.route == "V1_PRIMARY" for product in global_release_routes.values()),
+        )
+        self.assertEqual(
+            plan["selected_release_route_count"], len(selected_release_routes)
+        )
+        self.assertEqual(plan["selected_v2_primary_product_count"], len(actual_v2))
+        self.assertEqual(
+            plan["selected_v1_primary_excluded_count"],
+            sum(product.route == "V1_PRIMARY" for product in selected_release_routes.values()),
+        )
+        self.assertEqual(
+            len(scope.excluded), plan["selected_v1_primary_excluded_count"]
+        )
+        self.assertEqual(plan["global_v2_primary_product_count"], len(actual_v2))
+        self.assertEqual(plan["product_count"], len(scope.products))
+        self.assertEqual(
+            {
+                key: plan[key]
+                for key in (
+                    "global_release_route_count",
+                    "global_v2_primary_product_count",
+                    "global_v1_primary_route_count",
+                    "selected_release_route_count",
+                    "selected_v2_primary_product_count",
+                    "selected_v1_primary_excluded_count",
+                    "minimum_deadline_seconds",
+                )
+            },
+            {
+                "global_release_route_count": 303,
+                "global_v2_primary_product_count": 299,
+                "global_v1_primary_route_count": 4,
+                "selected_release_route_count": 301,
+                "selected_v2_primary_product_count": 299,
+                "selected_v1_primary_excluded_count": 2,
+                "minimum_deadline_seconds": 935.0,
+            },
+        )
+        self.assertEqual(set(plan["consumers"]), set(consumer_ids))
+        self.assertGreater(plan["total_operations"], len(scope.products))
+        self.assertGreater(plan["minimum_deadline_seconds"], 0)
+        for consumer_id, item in plan["consumers"].items():
+            self.assertGreater(item["safe_requests_per_minute"], 0, consumer_id)
+            self.assertGreater(item["max_streams"], 0, consumer_id)
+            self.assertEqual(
+                item["opening_total_operations"],
+                sum(item["opening_operation_budget"].values()),
+                consumer_id,
+            )
+
+    def test_operator_timeout_cannot_undercut_manifest_derived_floor(self) -> None:
+        plan = {
+            "minimum_deadline_seconds": 121.0,
+            "consumers": {},
+        }
+        self.assertEqual(_effective_c2_opening_timeout_seconds(plan, None), 121.0)
+        self.assertEqual(_effective_c2_opening_timeout_seconds(plan, 121.0), 121.0)
+        with self.assertRaises(C2OpeningCapacityError) as raised:
+            _effective_c2_opening_timeout_seconds(plan, 120.0)
+        self.assertEqual(
+            raised.exception.evidence["code"], "OPENING_TIMEOUT_BELOW_DERIVED_MINIMUM"
+        )
+        with self.assertRaises(C2OpeningCapacityError) as raised:
+            _effective_c2_opening_timeout_seconds(plan, 0.0)
+        self.assertEqual(raised.exception.evidence["code"], "OPENING_TIMEOUT_NOT_POSITIVE")
+
     async def test_c2_pacer_aligns_then_spaces_requests_below_manifest_quota(self) -> None:
         clock = {"value": 100.0}
         sleeps: list[float] = []

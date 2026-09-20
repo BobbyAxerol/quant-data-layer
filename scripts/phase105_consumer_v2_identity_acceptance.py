@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import Counter
 import hashlib
 import json
+from math import ceil
 import resource
 import shutil
 import sys
@@ -19,7 +21,7 @@ import tempfile
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -96,7 +98,6 @@ _C2_STREAM_TARGETS = frozenset({
 _MAX_REFERENCE_BATCH_CONCURRENCY = 4
 _C2_REQUEST_QUOTA_FRACTION = 0.75
 _C2_QUOTA_WINDOW_MARGIN_SECONDS = 0.05
-_C2_OPENING_TIMEOUT_SECONDS = 900.0
 _C2_CLOSING_REVALIDATION_MAX_SECONDS = 120.0
 
 
@@ -106,6 +107,19 @@ class IdentityFiles:
     private_key: str
     jwt_private_key: str
     jwt_key_id: str
+
+
+class C2OpeningCapacityError(RuntimeError):
+    """Payload-free evidence when C2 exceeds its declared opening protocol."""
+
+    def __init__(self, code: str, details: Mapping[str, object]) -> None:
+        super().__init__(f"Phase 10.5 C2 opening capacity failure: {code}")
+        self.evidence = {
+            "schema": "qdl.phase105.c2-opening-capacity-failure.v1",
+            "code": code,
+            "details": dict(details),
+            "payload_recorded": False,
+        }
 
 
 class C2ProductAcceptanceError(RuntimeError):
@@ -219,6 +233,7 @@ class _C2ConsumerRequestPacer:
         self._clock = clock
         self._sleep = sleep
         self._lock = asyncio.Lock()
+        self._operation_counts = Counter()
         self._next_at: float | None = None
         self._request_count = 0
         self._wait_seconds = 0.0
@@ -238,14 +253,18 @@ class _C2ConsumerRequestPacer:
             self._window_wait_seconds += wait_seconds
         return wait_seconds
 
-    async def acquire(self) -> None:
+    async def acquire(self, operation: str = "UNSPECIFIED") -> None:
         """Reserve one real REST request without borrowing quota from a peer."""
 
+        operation = str(operation).strip()
+        if not operation:
+            raise ValueError("C2 operation name is required")
         async with self._lock:
             now = self._clock()
             target = now if self._next_at is None else max(now, self._next_at)
             self._next_at = target + self._seconds_per_request
             self._request_count += 1
+            self._operation_counts[operation] += 1
             wait_seconds = max(0.0, target - now)
             self._wait_seconds += wait_seconds
         sleeper = asyncio.sleep if self._sleep is None else self._sleep
@@ -259,6 +278,7 @@ class _C2ConsumerRequestPacer:
             "c2_request_count": self._request_count,
             "c2_pacing_wait_seconds": round(self._wait_seconds, 3),
             "c2_clean_window_wait_seconds": round(self._window_wait_seconds, 3),
+            "c2_operation_counts": dict(sorted(self._operation_counts.items())),
         }
 
 
@@ -270,7 +290,8 @@ class _PacedQueryTransport:
         self._pacer = pacer
 
     async def _call(self, name: str, *args, **kwargs):
-        await self._pacer.acquire()
+        operation = "REFERENCE_BATCH" if name == "reference_batch" else "QUERY_READ"
+        await self._pacer.acquire(operation)
         return await getattr(self._delegate, name)(*args, **kwargs)
 
     async def warmup(self, *args, **kwargs):
@@ -309,7 +330,7 @@ class _PacedStreamTransport:
         # `subscribe` is an async iterator. Reserving at iterator start covers
         # both the initial stream and every SDK reconnect without changing the
         # public stream contract.
-        await self._pacer.acquire()
+        await self._pacer.acquire("STREAM_SUBSCRIBE")
         async for item in self._delegate.subscribe(*args, **kwargs):
             yield item
 
@@ -527,6 +548,213 @@ def _reference_product(
             product.requirement, now_ns=now_ns
         ),
     )
+
+
+def _build_c2_opening_operation_plan(
+    products: tuple[AcceptanceProduct, ...],
+    release: StableReleaseRoutePlan,
+    probes,
+    consumer_ids: tuple[str, ...],
+    *,
+    generic_timeout_seconds: float,
+    reference_now_ns: int | None = None,
+) -> dict[str, object]:
+    """Compile the C2 opening budget from the sealed SDK operation graph.
+
+    The calculation deliberately follows the same helpers C2 later invokes.
+    It does not inspect provider payloads or change a manifest.  Every durable
+    product gets two initial Query reads plus an explicit two-session
+    warmup/cursor handoff; provider pass-through gets only the two Query reads;
+    reference batches and the one documented native-BASIS deferral are counted
+    through their existing batching helper.
+    """
+
+    if not products or not consumer_ids:
+        raise ValueError("C2 opening operation plan requires products and consumers")
+    if generic_timeout_seconds <= 0:
+        raise ValueError("C2 opening operation plan requires a positive timeout")
+    selected = frozenset(consumer_ids)
+    if len(selected) != len(consumer_ids):
+        raise ValueError("C2 opening operation plan duplicates a consumer")
+    if {item.consumer_id for item in products} != selected:
+        raise ValueError("C2 opening operation plan consumer scope is incomplete")
+    routes = {item.consumer_id: item for item in release.consumers}
+    if not selected <= set(routes):
+        raise ValueError("C2 opening operation plan lacks a release consumer")
+    probe_counts = Counter(item.consumer_id for item in probes)
+    if not set(probe_counts) <= selected:
+        raise ValueError("C2 opening operation plan has an out-of-scope fallback probe")
+    now_ns = time.time_ns() if reference_now_ns is None else reference_now_ns
+    plans: dict[str, dict[str, object]] = {}
+    for consumer_id in consumer_ids:
+        consumer_products = tuple(
+            item for item in products if item.consumer_id == consumer_id
+        )
+        on_demand = tuple(
+            item for item in consumer_products
+            if item.delivery is DeliveryClass.ON_DEMAND
+        )
+        streamed = tuple(
+            item for item in consumer_products
+            if item.delivery is not DeliveryClass.ON_DEMAND
+        )
+        durable = tuple(
+            item for item in streamed if item.delivery is DeliveryClass.DURABLE
+        )
+        if any(
+            item.delivery not in {
+                DeliveryClass.DURABLE,
+                DeliveryClass.PROVIDER_PASS_THROUGH,
+                DeliveryClass.ON_DEMAND,
+            }
+            for item in consumer_products
+        ):
+            raise ValueError("C2 opening operation plan has an unknown delivery class")
+        references = tuple(
+            _reference_product(item, now_ns=now_ns) for item in on_demand
+        )
+        reference_batches = reference_acceptance_batches(references)
+        native_basis_batches = tuple(
+            batch for batch in reference_batches
+            if len(batch) == 1 and is_rust_admitted_native_basis(batch[0])
+        )
+        if any(
+            is_rust_admitted_native_basis(item)
+            for batch in reference_batches
+            if len(batch) != 1
+            for item in batch
+        ):
+            raise AssertionError("C2 native BASIS batch lost its singleton boundary")
+        reference_tail_timeout = (
+            _reference_transport_timeout_seconds(
+                references, generic_timeout_seconds=generic_timeout_seconds
+            )
+            if references
+            else generic_timeout_seconds
+        )
+        native_basis_deferral_seconds = sum(
+            2.0 * batch[0].sdk_requirement.deadline_ms / 1_000
+            for batch in native_basis_batches
+        )
+        manifest = routes[consumer_id].manifest
+        safe_rpm = max(
+            1,
+            int(
+                manifest.quotas.requests_per_minute * _C2_REQUEST_QUOTA_FRACTION
+            ),
+        )
+        budget = {
+            # Every stream-capable product reads both Query replicas first;
+            # durable products then do one warmup/snapshot per handoff side.
+            "QUERY_READ": (
+                2 * len(streamed)
+                + 2 * len(durable)
+                # V2 -> V1 -> V2 reads both replicas before and after fallback.
+                + 4 * probe_counts[consumer_id]
+            ),
+            # Both Query replicas read every declared reference batch. Each
+            # native-BASIS replica may use exactly one typed deferral retry.
+            "REFERENCE_BATCH": (
+                2 * len(reference_batches) + 2 * len(native_basis_batches)
+            ),
+            "STREAM_SUBSCRIBE": 2 * len(durable),
+        }
+        budget = {name: count for name, count in budget.items() if count}
+        total = sum(budget.values())
+        plans[consumer_id] = {
+            "requests_per_minute": manifest.quotas.requests_per_minute,
+            "safe_requests_per_minute": safe_rpm,
+            "max_streams": manifest.quotas.max_streams,
+            "opening_operation_budget": budget,
+            "opening_total_operations": total,
+            "opening_pacing_floor_seconds": round(
+                max(0, total - 1) * 60.0 / safe_rpm, 3
+            ),
+            "native_basis_deferral_seconds": round(native_basis_deferral_seconds, 3),
+            "tail_timeout_seconds": round(
+                max(generic_timeout_seconds, reference_tail_timeout), 3
+            ),
+        }
+    global_route_products = tuple(
+        product
+        for consumer in release.consumers
+        for product in consumer.products
+    )
+    selected_route_products = tuple(
+        product
+        for consumer_id in consumer_ids
+        for product in routes[consumer_id].products
+    )
+    selected_v2_identities = {
+        (consumer_id, product.requirement_key)
+        for consumer_id in consumer_ids
+        for product in routes[consumer_id].products
+        if product.route == "V2_PRIMARY"
+    }
+    actual_v2_identities = {
+        (product.consumer_id, requirement_key(product.requirement))
+        for product in products
+    }
+    if actual_v2_identities != selected_v2_identities:
+        raise ValueError("C2 opening operation plan differs from V2 primary routes")
+    pacing_floor = max(float(item["opening_pacing_floor_seconds"]) for item in plans.values())
+    native_basis_deferral = sum(
+        float(item["native_basis_deferral_seconds"]) for item in plans.values()
+    )
+    tail_timeout = max(float(item["tail_timeout_seconds"]) for item in plans.values())
+    return {
+        "schema": "qdl.phase105.c2-opening-operation-plan.v1",
+        "global_release_route_count": len(global_route_products),
+        "global_v2_primary_product_count": sum(
+            product.route == "V2_PRIMARY" for product in global_route_products
+        ),
+        "global_v1_primary_route_count": sum(
+            product.route == "V1_PRIMARY" for product in global_route_products
+        ),
+        "selected_release_route_count": len(selected_route_products),
+        "selected_v2_primary_product_count": len(selected_v2_identities),
+        "selected_v1_primary_excluded_count": sum(
+            product.route == "V1_PRIMARY" for product in selected_route_products
+        ),
+        "product_count": len(products),
+        "total_operations": sum(int(item["opening_total_operations"]) for item in plans.values()),
+        "pacing_floor_seconds": round(pacing_floor, 3),
+        "native_basis_deferral_seconds": round(native_basis_deferral, 3),
+        "tail_timeout_seconds": round(tail_timeout, 3),
+        # The last quota-admitted call still owns its declared typed timeout.
+        "minimum_deadline_seconds": float(
+            ceil(pacing_floor + native_basis_deferral + tail_timeout)
+        ),
+        "consumers": plans,
+    }
+
+
+def _effective_c2_opening_timeout_seconds(
+    operation_plan: Mapping[str, object],
+    requested_seconds: float | None,
+) -> float:
+    """Use the exact derived budget unless an operator declares a larger one."""
+
+    minimum = float(operation_plan["minimum_deadline_seconds"])
+    if requested_seconds is None:
+        return minimum
+    if requested_seconds < 1.0:
+        raise C2OpeningCapacityError(
+            "OPENING_TIMEOUT_NOT_POSITIVE",
+            {
+                "requested_seconds": requested_seconds,
+            },
+        )
+    if requested_seconds < minimum:
+        raise C2OpeningCapacityError(
+            "OPENING_TIMEOUT_BELOW_DERIVED_MINIMUM",
+            {
+                "requested_seconds": requested_seconds,
+                "minimum_deadline_seconds": minimum,
+                "operation_plan": dict(operation_plan),
+            },
+        )
+    return requested_seconds
 
 
 async def _certify_references(
@@ -1105,6 +1333,30 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         products=scope.products,
         consumer_ids=consumer_ids,
     )
+    opening_operation_plan = _build_c2_opening_operation_plan(
+        scope.products,
+        release,
+        probes,
+        consumer_ids,
+        generic_timeout_seconds=args.timeout_seconds,
+    )
+    opening_consumer_plans = opening_operation_plan["consumers"]
+    if not isinstance(opening_consumer_plans, dict):
+        raise AssertionError("C2 opening operation plan has invalid consumers")
+    if any(
+        args.concurrency > int(item["max_streams"])
+        for item in opening_consumer_plans.values()
+    ):
+        raise C2OpeningCapacityError(
+            "OPENING_CONCURRENCY_EXCEEDS_MANIFEST_STREAM_QUOTA",
+            {
+                "requested_concurrency": args.concurrency,
+                "operation_plan": opening_operation_plan,
+            },
+        )
+    opening_timeout_seconds = _effective_c2_opening_timeout_seconds(
+        opening_operation_plan, args.opening_timeout_seconds
+    )
     products_by_identity = {
         (item.consumer_id, requirement_key(item.requirement)): item for item in scope.products
     }
@@ -1143,7 +1395,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     release_consumers = {item.consumer_id: item for item in release.consumers}
     quota_window_wait_seconds = await _wait_for_clean_quota_windows(pacers)
     started = time.monotonic()
-    opening_deadline = started + args.opening_timeout_seconds
+    opening_deadline = started + opening_timeout_seconds
+    print(json.dumps({
+        "stage": "C2_OPENING_OPERATION_PLAN",
+        "operator_timeout_seconds": args.opening_timeout_seconds,
+        "effective_timeout_seconds": opening_timeout_seconds,
+        "plan": opening_operation_plan,
+    }, sort_keys=True, separators=(",", ":")), file=sys.stderr, flush=True)
 
     async def certify(product: AcceptanceProduct) -> dict[str, object]:
         async with product_semaphore:
@@ -1156,11 +1414,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     grpc_target=grpc_target,
                     state_dir=temporary,
                     timeout_seconds=args.timeout_seconds,
-                    stream_open_timeout_seconds=args.opening_timeout_seconds,
+                    stream_open_timeout_seconds=opening_timeout_seconds,
                     client_factory=client_factories[product.consumer_id],
                 )
             except C2StatusEvidenceError as error:
                 raise C2ProductAcceptanceError(product, error) from error
+            except C2OpeningCapacityError:
+                raise
             except asyncio.CancelledError:
                 print(json.dumps({"stage": "C2_ACTIVE_PRODUCT_CANCELLED",
                                   "identity": product.identity}), file=sys.stderr, flush=True)
@@ -1277,9 +1537,22 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         # full proof is complete. Closing rechecks every route with batch V2
         # reads; it deliberately does not create a second stream storm.
         opening_started = time.monotonic()
-        initial_results, initial_fallback_details = await asyncio.wait_for(
-            certify_ordered(), timeout=args.opening_timeout_seconds
-        )
+        try:
+            initial_results, initial_fallback_details = await asyncio.wait_for(
+                certify_ordered(), timeout=opening_timeout_seconds
+            )
+        except TimeoutError as error:
+            raise C2OpeningCapacityError(
+                "OPENING_DEADLINE_EXCEEDED",
+                {
+                    "effective_timeout_seconds": opening_timeout_seconds,
+                    "operation_plan": opening_operation_plan,
+                    "quota_budget": {
+                        consumer_id: pacer.evidence()
+                        for consumer_id, pacer in sorted(pacers.items())
+                    },
+                },
+            ) from error
         opening_seconds = time.monotonic() - opening_started
         print(json.dumps({"stage": "C2_OPENING_PASS", "products": len(initial_results),
                           "seconds": round(opening_seconds, 3)}), file=sys.stderr, flush=True)
@@ -1303,7 +1576,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     rss_bytes = int(max_rss) * 1024
     if elapsed_seconds > (
-        args.opening_timeout_seconds
+        opening_timeout_seconds
         + args.observation_seconds
         + args.closing_timeout_seconds
     ):
@@ -1359,6 +1632,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         "observation_seconds_requested": args.observation_seconds,
         "observation_seconds_actual": round(observation_seconds, 3),
         "opening_product_count": len(initial_results),
+        "opening_operation_plan": opening_operation_plan,
+        "opening_timeout_seconds_operator": args.opening_timeout_seconds,
+        "opening_timeout_seconds_effective": opening_timeout_seconds,
         "closing_product_count": len(closing_results),
         "opening_seconds_actual": round(opening_seconds, 3),
         "closing_seconds_actual": round(closing_seconds, 3),
@@ -1408,8 +1684,11 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--concurrency", type=int, default=4)
     value.add_argument("--observation-seconds", type=float, default=300.0)
     value.add_argument(
-        "--opening-timeout-seconds", type=float, default=_C2_OPENING_TIMEOUT_SECONDS,
-        help="Bound for the full quota-paced opening proof before observation starts.",
+        "--opening-timeout-seconds", type=float,
+        help=(
+            "Optional operator timeout at or above the manifest-derived opening "
+            "budget. When omitted, C2 uses that exact derived deadline."
+        ),
     )
     value.add_argument(
         "--closing-timeout-seconds", type=float,
@@ -1427,13 +1706,26 @@ def main() -> int:
         raise SystemExit("--concurrency must be between 1 and 8")
     if not 30.0 <= args.observation_seconds <= 300.0:
         raise SystemExit("--observation-seconds must be between 30 and 300")
-    if not 60.0 <= args.opening_timeout_seconds <= 1_800.0:
-        raise SystemExit("--opening-timeout-seconds must be between 60 and 1800")
+    if args.opening_timeout_seconds is not None and args.opening_timeout_seconds < 1.0:
+        raise SystemExit("--opening-timeout-seconds must be positive")
     if not 30.0 <= args.closing_timeout_seconds <= 300.0:
         raise SystemExit("--closing-timeout-seconds must be between 30 and 300")
     try:
         result = asyncio.run(run(args))
-    except (C2ProductAcceptanceError, C2ReferenceProductError, C2ClosingBatchError) as error:
+    except C2OpeningCapacityError as error:
+        print(json.dumps({
+            "schema": "qdl.phase105.v2-identity-acceptance.v1",
+            "status": "FAIL_OPENING_CAPACITY",
+            "failure": error.evidence,
+            "order_actions": 0,
+            "payload_recorded": False,
+        }, sort_keys=True, separators=(",", ":")))
+        return 1
+    except (
+        C2ProductAcceptanceError,
+        C2ReferenceProductError,
+        C2ClosingBatchError,
+    ) as error:
         print(json.dumps({
             "schema": "qdl.phase105.v2-identity-acceptance.v1",
             "status": "FAIL_TYPED_STATUS",

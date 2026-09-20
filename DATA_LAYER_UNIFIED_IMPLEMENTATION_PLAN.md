@@ -46570,7 +46570,7 @@ the C2-local `_C2ConsumerRequestPacer` waited for its next permitted request.
 This is not a provider, Query, stream, source-quality, manifest, identity or
 order-path rejection: the probe deliberately serializes every real request per
 consumer at 75 percent of its manifest quota and its fixed opening deadline is
-too small for the complete `303`-route proof. No receipt, fallback success,
+too small for the complete V2-primary proof. No receipt, fallback success,
 provider mutation, order/signal/sizing action or release evidence was emitted.
 The `--rm` client removed itself; its only persisted artifacts are bounded
 stderr, exit code and privilege proof in this packet.
@@ -46580,27 +46580,98 @@ Per the sealed failure policy, rollback exactly the four reader roles to
 an offline, scope-derived C2 opening budget computed from the sealed product
 count, request shape and each real consumer's declared quota at the existing
 75-percent pacer fraction. It may increase the acceptance *deadline* only up
-to the existing parser maximum, never change quota, concurrency, product scope,
-quality SLA, source, route, identity, fallback policy or runtime topology. If
-the calculated proof cannot fit that bound, C remains failed rather than
-relaxing coverage. A new client after the calculation and rollback is a fresh
-acceptance attempt, not inherited evidence.
+to its computed operation budget, never change quota, concurrency, product
+scope, quality SLA, source, route, identity, fallback policy or runtime
+topology. An explicit operator timeout can only be larger than that calculated
+minimum; a smaller value is rejected before any request. A new client after the
+calculation and rollback is a fresh acceptance attempt, not inherited evidence.
 
 **Scope-derived C2 deadline (`IN-SCOPE PACKET CORRECTION`, 2026-09-20).** The
 sealed manifests contain `5` monitoring, `61` Trading System, `125` alpha
-Binance and `110` alpha OKX requirements; the release derives the fixed
-`303`-product C2 scope. Monitoring/alpha Binance/alpha OKX each declare
+Binance and `110` alpha OKX requirements. The release has `303` routes:
+`299 V2_PRIMARY` products and `4 V1_PRIMARY` products. The four C2 consumer
+manifests contain `301` routes, comprising all `299` V2-primary products plus
+two explicitly excluded V1-primary VN routes; the remaining two V1-primary
+routes belong to the out-of-scope `alpha.vn.paper.stable` consumer. This is
+recorded in C2 evidence rather than silently treating `303` as a V2 read set.
+Monitoring/alpha Binance/alpha OKX each declare
 `180 rpm`, so their existing C2 pacers remain `135 rpm` (75 percent); Trading
 System remains `1,125 rpm` from its `1,500 rpm` declaration. The failed run
 proved the alpha OKX lane can consume its legitimate bounded retry/stream
 handoff budget beyond `900s` without any typed product failure. The replacement
-keeps the same four identities, all `303` products, rate fraction, concurrency
+keeps the same four identities, all `299` V2-primary products, rate fraction, concurrency
 `4`, Query/stream targets and `300s` observation, and changes only the
-operator-only `--opening-timeout-seconds` from its fixed default to the
-parser's existing bounded maximum `1,800s`. This is a capacity-correct
-acceptance deadline, not an API/runtime quota change or a reduced test. It
-remains fail-closed; if the same full scope cannot finish by that maximum, C is
-still failed and no quality/SLA/coverage relaxation is permitted.
+opening deadline from a fixed default to the sealed operation budget. This is a
+capacity-correct acceptance deadline, not an API/runtime quota change or a
+reduced test. It remains fail-closed: a requirement-level stale/gap/identity
+failure still fails C2 rather than being converted into a longer deadline.
+
+**C2 operation-budget correction (`IN_PROGRESS / SOURCE-ONLY`, 2026-09-20).**
+The preceding fixed `900s` value and its direct `1,800s` replacement are
+operator containment values, not venue facts or execution-quality SLOs. The
+failed run exposed that the C2 harness has to distinguish certification
+capacity from the market-data product it certifies. Before any further reader
+rollout, C2 will compile a payload-free, deterministic opening-operation plan
+from the sealed acceptance scope and consumer manifest: exact nominal Query and
+stream-open operations per identity, allowed V1 fallback-return operations,
+reference-batch operations, declared per-identity quota and the explicit
+two-session cursor handoff. The plan will derive the smallest safe opening
+deadline from the actual SDK path and emit it in evidence. An optional
+operator-supplied timeout may only be larger; there is no hidden fixed cap.
+It must reject a scope that cannot fit rather than silently lengthening,
+reducing coverage, lowering quota safety,
+or changing a data freshness policy.
+
+This correction is restricted to the C2 source/test harness. It must not alter
+Binance/OKX/DNSE quotas, source bindings, `max_freshness_ms`, quiet/session
+semantics, retry behavior of deployed SDK consumers, runtime images, roles,
+Kafka, Redis, SQLite, V1 or any consumer/order path. Required source gates are
+deterministic nominal-plan, batch/reference, fallback, two-session handoff,
+multi-identity, exact V2/V1 route-accounting and under-budget regressions; the existing C2 correctness
+matrix must remain green. Only after those gates pass may one immutable
+client-only image and the same four-role reader packet be prepared. The replacement C2
+will retain all `299` V2-primary products and its `300s` observation; a full pass remains
+the sole R1.35-C exit evidence.
+
+**C2 operation-budget source exit (`PASS / RUNTIME PACKET NEXT`, 2026-09-20).**
+The C2 harness now compiles its opening budget from the actual sealed SDK
+operation graph and records only aggregate operation counts, quotas and typed
+timing boundaries. The exact full-release reconciliation is: `303` global
+release routes = `299 V2_PRIMARY + 4 V1_PRIMARY`; the selected C2 identities
+own `301` routes = `299 V2_PRIMARY + 2 V1_PRIMARY`, while the other two V1
+routes belong to `alpha.vn.paper.stable` and remain outside the crypto C2 by
+declared policy. The scope builder proves the C2 product identity set equals
+every selected V2-primary route; no V1-primary route can be silently read as
+V2 evidence.
+
+For the current sealed scope, the derived opening deadline is exactly `935s`:
+the slowest declared identity has a `260s` 75-percent-quota pacing floor, the
+single shared Rust-native BASIS lane has at most `600s` of already-contractual
+typed deferral, and the longest declared response tail is `75s`. These values
+are not quote, bar, book or execution freshness values. A caller may supply a
+larger explicit containment timeout, but the harness no longer has an arbitrary
+default cap; a lower value is rejected before opening a request. Retryable
+strict-data failures remain product failures under their own existing
+requirements, rather than being converted into extra certification capacity.
+
+The isolated non-root, read-only, no-network source suite passed
+`28/28` direct C2 tests and `147/147` affected acceptance/quality/reference/
+fallback/route/stable-edge tests, with `1` pre-existing isolated-Redis skip.
+The full-scope compiler independently emitted `1,482` nominal opening
+operations and the count/timing evidence above. `git diff --check` and source
+parse checks pass. All test containers used `--rm`; no persistent test
+container, provider connection, role, image, Kafka/Redis/SQLite/V1, Trading
+System, alpha or order-path state changed.
+
+**Narrow runtime decision.** This source slice changes only the disposable C2
+client harness. It does not justify rebuilding or changing the already-tested
+reader binary `qdl-v2-python:2.0.26-2af2cdd39451@sha256:4f29daaa...98542a9`.
+After this commit, build one immutable *client-only* image from the committed
+source for the exact `--rm` acceptance launcher; retain it only through
+R1.35-D. Then serially recreate the same four reader roles to the existing
+`2af2...` candidate, with the recorded `335792a...` rollback, and run one
+full `299`-product C2 for `300s`. No other role, topology or consumer changes
+are permitted.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
