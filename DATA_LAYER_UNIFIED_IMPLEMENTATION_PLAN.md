@@ -44546,7 +44546,7 @@ freshness, replay and release evidence.
    packet names an exact role, digest, runtime revision, rollback and blast
    radius.
 
-#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`PLANNED / PLAN ONLY`, 2026-09-19)
+#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`IN PROGRESS / B1 PASS / B2 CORRECTION PENDING`, 2026-09-19)
 
 This is the authoritative compact execution map for the remaining R1.35
 closure. It refines, rather than replaces, the detailed B/C/D sections below
@@ -44561,6 +44561,40 @@ a passing process health check as data acceptance.
 | **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PENDING / requires B1 exit and a separate runtime packet` | A sealed reader bundle/image proves all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
 | **3. R1.35-C - Full endpoint, binding and consumer certification** | `PENDING / requires B2 exit` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
 | **R1.35-D - Hygiene, provenance and immutable release** | `PENDING / requires C exit and explicit cleanup/release approvals` | Source, runtime, artifact, rollback, Git lineage and published release are one auditable state; only disposable artifacts are removed. |
+
+**Closure decision record (2026-09-20).** This is still exactly a three-phase
+technical closure plus a hygiene/release phase; the findings below do not
+create a fourth runtime architecture track.
+
+1. The audit's `21` stale rows must first be interpreted through the shared
+   typed contract. `MARK_INDEX_PRICE`, `TRADE` and `BOOK_DELTA` rows declared
+   `QUIET_SESSION` are evaluated by session/component liveness, generation,
+   gap and cadence -- never by raw last-event age alone. The scanner, public
+   SDK status and acceptance verifier must return the same classification.
+   They may not hide a true disconnect, gap, generation change, expired
+   cadence or incomplete view.
+2. Strict-feed evidence remains independently non-negotiable. Before B2 can
+   pass, a read-only two-query-replica status matrix must explicitly classify
+   each active execution `QUOTE`; the currently named strict candidates are
+   Binance USD-M `BNBUSDT` and OKX Swap `ETH-USDT-SWAP`, `BNB-USDT-SWAP` and
+   `DOGE-USDT-SWAP`. The matrix seals the actual binding IDs, routing revision,
+   state/reason, event age, session age, gap/watermark and consumer eligibility
+   at test time. A genuine strict stale result is an in-scope B2 defect: fix
+   its shared source/projection lineage and rerun the matrix; neither relabel
+   it quiet nor widen its SLA.
+3. `lucid_sinoussi`, `youthful_shamir` and `qdl-admit-1d` are non-canonical
+   test containers, not evidence of a serving-role fault. They remain outside
+   B/C data acceptance and are handled only by the exact D cleanup inventory,
+   retention and post-removal health gate. No broad Docker prune is implied.
+
+**Invariant for all three phases.** A measurement must distinguish provider
+event age, session liveness, host receipt, durable projection, and
+consumer-call-to-usable latency. A quiet-channel result is never used to
+upgrade a strict route; a healthy process is never accepted as proof of data
+quality. No phase adds a per-symbol service, container, image or timer, and no
+phase changes V1, Kafka/Redis/SQLite durability, provider quotas, public V2
+schemas, Trading System, alpha or order authority outside an explicitly
+approved reader rollout packet.
 
 ##### Phase 1 - R1.35-B1: Source delivery semantics and quality authority (`PASS / SOURCE ONLY`, 2026-09-19)
 
@@ -44890,6 +44924,27 @@ the C2 directory fell from `53,688` to `7,846` bytes, and no `qdl-r135` test
 container remained. B2 remains blocked pending a narrow typed diagnosis and
 fix for the MARK/INDEX reference freshness path; Phase 3 and release remain
 prohibited.
+
+**B2 corrective source scope (2026-09-20; approved by the existing B2
+boundary).** The failed C2 exposed verifier drift, not a basis to relax a
+freshness SLA: `V2QueryService` already admits an execution
+`MARK_INDEX_PRICE` live-view result under the signed quiet-session/component
+contract, while `reference_quality()` re-applies generic raw
+`source_event_time` freshness to that same returned result. The correction is
+limited to the shared C2/reference acceptance verifier: recognize only the
+existing internal stable-stream execution live-view lineage; preserve raw
+event/confirmation timestamps as evidence; validate live session state,
+checked-at age, generation/gap-fenced response, both component receipt ages
+and their signed cadence; then report those ages separately instead of using
+the raw event age as the acceptance SLA. Generic MARK/INDEX, strict execution
+MARK/INDEX, disconnected/expired session, malformed/missing component evidence
+and expired component cadence must remain fail-closed. Add product-bound C2
+failure evidence so a future reference failure names its exact manifest
+identity without storing a payload. Run focused Python unit/golden acceptance
+tests plus the affected no-network SDK/quality suite; only then build one new
+immutable reader image and request a new exact four-role B2 packet. No runtime
+role, source catalog/manifest/SLA, Rust/provider adapter, V1, Kafka, Redis,
+SQLite, Trading System, alpha or order path changes in this source slice.
 
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
