@@ -46586,6 +46586,22 @@ the calculated proof cannot fit that bound, C remains failed rather than
 relaxing coverage. A new client after the calculation and rollback is a fresh
 acceptance attempt, not inherited evidence.
 
+**Scope-derived C2 deadline (`IN-SCOPE PACKET CORRECTION`, 2026-09-20).** The
+sealed manifests contain `5` monitoring, `61` Trading System, `125` alpha
+Binance and `110` alpha OKX requirements; the release derives the fixed
+`303`-product C2 scope. Monitoring/alpha Binance/alpha OKX each declare
+`180 rpm`, so their existing C2 pacers remain `135 rpm` (75 percent); Trading
+System remains `1,125 rpm` from its `1,500 rpm` declaration. The failed run
+proved the alpha OKX lane can consume its legitimate bounded retry/stream
+handoff budget beyond `900s` without any typed product failure. The replacement
+keeps the same four identities, all `303` products, rate fraction, concurrency
+`4`, Query/stream targets and `300s` observation, and changes only the
+operator-only `--opening-timeout-seconds` from its fixed default to the
+parser's existing bounded maximum `1,800s`. This is a capacity-correct
+acceptance deadline, not an API/runtime quota change or a reduced test. It
+remains fail-closed; if the same full scope cannot finish by that maximum, C is
+still failed and no quality/SLA/coverage relaxation is permitted.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
