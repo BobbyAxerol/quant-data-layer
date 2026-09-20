@@ -46821,9 +46821,9 @@ unchanged.
 
 **Candidate image admission (`PASS / READER ROLLOUT NOT STARTED`, 2026-09-20).**
 
-- Built exactly one candidate from committed source
-  `c5574bc2e1d4c44d2db65728b9c346793ae0d30`:
-  `qdl-v2-python:2.0.26-c5574bc@sha256:ad89a1dbcc280d84c7b5171b50c1264010278f0338d41b2f9819752403984bd4`.
+- Built exactly one retained candidate from committed source
+  `e4fc2418a6e61da578f2cd4691e17918a84e74ce`:
+  `qdl-v2-python:2.0.26-e4fc241@sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`.
   OCI `revision` and `version` labels match that source/release coordinate;
   the runtime user is `qdl:qdl` (`10001:10001`).
 - The immutable image, with no source mount, `--network none`, read-only root
@@ -46832,12 +46832,13 @@ unchanged.
   matrix above. The candidate is retained solely for this R1.35-C packet;
   active readers remain
   `qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`
-  as rollback.
+  as rollback. The brief pre-amend `c5574bc` candidate was never referenced
+  by a container and was removed by exact image ID before this checkpoint.
 - No reader was recreated and no provider, Kafka, Redis, SQLite, V1,
-  Trading System, alpha or order path was touched. Docker image inventory
-  after this one build was `26.28GB` total / `12.35GB` reclaimable and
-  BuildKit cache `19.14GB` / `2.496GB` reclaimable. Candidate cleanup is
-  intentionally deferred until the single C2 result is resolved.
+  Trading System, alpha or order path was touched. After exact cleanup,
+  Docker inventory was `27GB` images / `13.06GB` reclaimable and BuildKit
+  cache `20GB` / `4.067GB` reclaimable. Candidate cleanup is intentionally
+  deferred until the single C2 result is resolved.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
