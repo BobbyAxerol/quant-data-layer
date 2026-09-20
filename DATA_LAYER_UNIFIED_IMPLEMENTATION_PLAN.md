@@ -44596,6 +44596,177 @@ phase changes V1, Kafka/Redis/SQLite durability, provider quotas, public V2
 schemas, Trading System, alpha or order authority outside an explicitly
 approved reader rollout packet.
 
+##### R1.35 closure charter - three technical phases plus hygiene/release (`PLANNED / NO NEW RUNTIME AUTHORITY`, 2026-09-20)
+
+This charter is the single execution order for the remaining release closure.
+It reconciles the older `R1.35-A/B/C/D` records below without opening another
+architecture program: **A** maps to the shared quality/auditor source contract,
+**B** to the strict-QUOTE reader correction and C2 proof, **C** to the complete
+public endpoint/consumer certificate, and **D** to cleanup and immutable
+publication. Detailed design remains governed by
+`upgrade/quant-data-layer-fund-grade-upgrade-architecture.md` sections
+3.2-3.8, 4.1-4.3, 9.4-9.10, 13.1-13.7, 16.1-16.4, 17.1-17.7, 18.1-18.7,
+19.1-19.5 and 24-25.
+
+**Common invariants and exclusions.** Every phase uses the sealed,
+manifest-derived active inventory rather than an assumed BTC-only universe.
+`EXPECTED_V1_PRIMARY`, `EXPECTED_DARK`, `OUT_OF_SESSION` and no-active-ingestor
+rows are explicit exclusions with a named reason; they are neither V2-ready nor
+generic test failures. Real acceptance reads only via public V2 SDK with the
+declared workload identity, mTLS/JWT and signed cursor. It makes no direct
+venue request and performs no order, signal, sizing, Trading System, alpha or
+broker mutation. The work may not change provider timestamps, widen a freshness
+budget, reinterpret a strict route as quiet, create a per-symbol worker/service
+or use V1/REST as an unrecorded execution substitute.
+
+###### A. Typed quality semantics and stale-inventory convergence (`PASS / SOURCE-CONTRACT; runtime proof belongs to B`)
+
+**Goal.** Give Rust core, Query, SDK and the read-only auditor one
+provider-neutral quality decision so raw event age is not mistakenly treated as
+the liveness test for an explicitly quiet feed, while strict market data remains
+strict. This phase covers the observed `MARK_INDEX_PRICE`, `TRADE` and
+`BOOK_DELTA` stale rows and prevents their scanner-only false positives from
+being confused with real execution degradation.
+
+**Required implementation and tests.** The shared decision must preserve exact
+instrument/feed/venue identity, immutable source/receipt timestamps, event age,
+session liveness, component cadence, generation/config revision, watermark,
+completeness and gap/resync state. It must classify `STRICT_EVENT`,
+`QUIET_SESSION`, `FINAL_SCHEDULED`, expected V1/dark and out-of-session states
+once and identically across Rust/Python/SDK/auditor. Golden and contract suites
+must cover quiet-but-connected, stopped heartbeat, disconnect, changed
+generation/configuration, cadence expiry, duplicate, out-of-order, open gap,
+resync, final/non-final BAR, cross-symbol/venue mix and missing lineage. A
+quiet result must never satisfy `QUOTE`, `BOOK_SNAPSHOT` or final-BAR strict
+requirements.
+
+**A exit gate.** The inventory count and every expected classification are
+sealed; Rust/Python/Query/SDK/auditor parity has zero disagreement; all source
+format, Clippy, Rust/Python golden, contract/SDK and generated-contract drift
+tests pass. This is source-only: its rollback is the preceding source commit;
+it authorizes neither an image build nor a role recreate. A discovered strict
+route remains a B defect, never an A exception or an SLA change.
+
+###### B. Strict QUOTE lineage repair and bounded reader acceptance (`IN PROGRESS / REQUIRES A EXIT`)
+
+**Goal.** Resolve actual strict `QUOTE` health for every active Binance USD-M
+and OKX Swap execution BBO binding, beginning with Binance `BNBUSDT` and OKX
+`ETH-USDT-SWAP`, `BNB-USDT-SWAP`, `DOGE-USDT-SWAP`. The result must distinguish
+a quiet but live native BBO lane from a genuinely stale, disconnected, gapped or
+mis-materialized view. `ON_CHANGE` admission is permitted only when the signed
+source binding and exact consumer requirement authorize it; all other quotes
+remain `STRICT_EVENT`.
+
+**Required evidence and repair discipline.** First collect a bounded,
+payload-free typed-status matrix from both V2 query replicas for the full
+manifest-derived execution quote set and control feeds (`TRADE`, `BOOK_DELTA`,
+`BOOK_SNAPSHOT`, `MARK_INDEX_PRICE`). Record state/reason, eligibility, raw
+event age, session/component age, generation/config revision, gap, completeness,
+watermark, source lineage and consumer-call-to-usable timing. If a strict route
+fails, repair only the proven shared provider admission, canonical
+materialization, latest-view or Query projection boundary. Do not hard-code a
+symbol, add a timer, poll venue REST for execution or weaken the 2-second
+quote policy. Deterministic/replay tests cover connected quiet delivery,
+disconnect, expired heartbeat, generation swap, duplicate, gap/resync,
+cross-identity mixing and replica parity.
+
+**B runtime packet and test gate.** After source gates pass, seal one immutable
+reader image, exact catalog/acquisition/manifest/routing hashes, TLS/identity
+revision and per-role rollback pair. Recreate only the roles proven affected,
+normally `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`, one at a time. Preserve V1, Kafka topology/offsets, Redis,
+SQLite, Rust cores, ingestors, projectors, Trading System, alpha and order path.
+Run exactly one public-SDK `require_all=true`, no-order C2 window for at least
+300 seconds. It must test both replicas, signed cursor/reconnect and the full
+quote set, while observing the control feeds. Any unexpected strict rejection,
+V1/direct-provider fallback, gap, duplicate, cross-mix, restart/OOM or resource
+breach stops the packet and rolls back only its named roles/image/config pair.
+
+**B exit gate.** Every sealed strict quote is complete, identity-correct,
+gap-free and inside its signed bound on both replicas; quiet routes carry their
+typed liveness proof without rewritten source timestamps; no fallback is hidden;
+and the C2 receipt contains per-binding consumer latency plus resource evidence.
+No C work or release is allowed from a source-only pass or a partial C2.
+
+###### C. Complete endpoint, binding and consumer latency certification (`PENDING / REQUIRES B EXIT`)
+
+**Goal.** Certify the data products actually consumable today, not merely the
+new MARK/INDEX or BBO path. The certificate is manifest-derived and reports
+coverage and exclusions separately, so it cannot overclaim a broad universe or
+unbound reference/L2 capability.
+
+**Coverage and test matrix.** Through both query replicas and public SDK,
+exercise every active entitled route for catalog/identity resolution, snapshot
+and pagination; `TRADE`, `QUOTE`, `MARK_INDEX_PRICE`, `BOOK_SNAPSHOT`,
+`BOOK_DELTA`; final BAR/history/warmup/batch warmup; entitled reference batch
+(funding, OI, long/short, taker flow, mark/index, metadata and native/continuous
+basis); and stream/replay/signed-cursor/reconnect. Verify decimal/unit/timezone,
+venue/instrument isolation, finality/revision, ordering, book depth/sequence/
+checksum, missing-value behavior, maxlen `700/2500/5000/10000`, duplicate/gap/
+resync, active/passive handoff, latest-view versus durable replay parity,
+allowed V1 fallback versus `BLOCKED`, and zero direct venue connections by the
+consumer.
+
+**Required measured evidence.** One bounded report must enumerate every active
+binding, endpoint family and replica with sample count, typed outcome/error and
+p50/p95/p99/max for: venue event to host receipt; receipt to Kafka; Kafka to
+canonical; canonical to durable spool and latest view; SDK request start to
+usable response; stream event to consumer receipt; final close to usable BAR;
+and signed cursor/reconnect completion. Provider event age, session age,
+durable-projection delay and consumer-call-to-usable latency are separate
+columns. The scanner must use the A quality decision: quiet `MARK_INDEX_PRICE`,
+`TRADE` and `BOOK_DELTA` are not false-positive stale, but strict `QUOTE`,
+`BOOK_SNAPSHOT` and final BAR failures remain visible. Record queue/lag,
+reconnect, dropped-message, CPU/RSS, disk/I/O, restart and OOM counters for the
+same window.
+
+**C exit gate.** All active entitled products pass their declared policy on both
+replicas, with no unexplained loss, duplication, gap, cross-identity mix, strict
+stale execution data, resource breach or unapproved fallback. Every excluded
+V1/dark/VN route remains named in the certificate. A defect in an active
+endpoint is fixed and retested inside C; it is not deferred as release debt.
+
+###### D. Scoped hygiene, provenance reconciliation and immutable release (`PENDING / REQUIRES C EXIT AND RELEASE APPROVAL`)
+
+**Goal.** Publish a release whose Git commit, manifest/catalog/API/Proto,
+immutable image digest, standard runtime role set, rollback coordinates and
+consumer latency certificate are one auditable object, while removing only
+disposable test artifacts.
+
+**Required cleanup and release sequence.**
+
+1. Seal bounded evidence only: route inventory, hashes/digests, test command
+   result/count, latency/resource aggregates, rollback map and no-order proof.
+   Exclude provider payloads, credentials, JWTs, cursors, caches and unbounded
+   logs from Git and release artefacts.
+2. Inventory canonical containers/images, explicit rollback images, stopped
+   test containers, BuildKit cache, disk and inode usage. Prove
+   `lucid_sinoussi`, `youthful_shamir` and `qdl-admit-1d` are not mounted or
+   referenced by a standard service before a separately scoped removal. Retain
+   active production images and one named rollback image per changed role;
+   remove only unreferenced R1.35 test/client images and matching unused build
+   cache. No broad prune, volume/network deletion, Kafka offset reset, Redis
+   flush or SQLite deletion is part of D.
+3. Run `git diff --check`, verify the user's Git identity, inspect staged scope,
+   commit coherent tested slices, push the feature branch and require green CI
+   on a PR into `dev`. After approved merge, rebuild and attest from the exact
+   `dev` SHA, roll only the already-approved role/digest set and repeat affected
+   C2/latency checks. A new binary or image invalidates inherited runtime
+   evidence.
+4. Only after the `dev` certificate and V1 rollback drill pass, merge `dev` to
+   `main`, tag the exact main SHA with the next semantic version, build/attest
+   the tag image, publish release notes/certificate and synchronize canonical
+   local `dev` and `main` from remote. Verify feature containment, then remove
+   the merged feature worktree and local branch. Record pre/post disk and inode
+   values plus post-cleanup standard-service health.
+
+**D final release gate.** A/B/C are all `PASS`; CI and release provenance are
+green; runtime uses the attested tag digest; the public endpoint/latency matrix
+matches the sealed inventory; V1 rollback is proven; cleanup retained only the
+declared active/rollback artefacts; and no in-scope quality, binding, runtime,
+cleanup or provenance gap is carried as technical debt. Until then the result is
+`NOT CERTIFIED`, regardless of a green health endpoint.
+
 ##### Phase 1 - R1.35-B1: Source delivery semantics and quality authority (`PASS / SOURCE ONLY`, 2026-09-19)
 
 **Goal.** Repair the real false-positive class without weakening genuine
