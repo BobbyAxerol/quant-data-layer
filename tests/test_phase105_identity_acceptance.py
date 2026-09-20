@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import asyncio
 import httpx
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -351,6 +352,10 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
                 for item in batch
             ]
 
+        bar_consumers = [
+            consumer_id for consumer_id in consumer_ids if consumer_id != non_bar_consumer
+        ]
+        preferred_consumer_id = bar_consumers[-1]
         evidence = asyncio.run(_strict_bar_collocation_matrix(
             scope,
             release,
@@ -362,11 +367,26 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             state_dir=Path("/tmp"),
             timeout_seconds=5.0,
             client_factories={consumer_id: object() for consumer_id in consumer_ids},
+            preferred_consumer_id=preferred_consumer_id,
             revalidate=revalidate,
         ))
-        bar_consumers = [consumer_id for consumer_id in consumer_ids if consumer_id != non_bar_consumer]
-        self.assertCountEqual(calls, [(consumer_id, 50, 50) for consumer_id in bar_consumers])
-        self.assertEqual(len(evidence["executed"]), len(bar_consumers))
+        call_counts = Counter(consumer_id for consumer_id, _size, _limit in calls)
+        ordered = [preferred_consumer_id, *sorted(
+            consumer_id for consumer_id in bar_consumers
+            if consumer_id != preferred_consumer_id
+        )]
+        self.assertEqual(call_counts, Counter({
+            consumer_id: len(ordered) - index
+            for index, consumer_id in enumerate(ordered)
+        }))
+        self.assertEqual(
+            [item["parallel_lanes"] for item in evidence["waves"]],
+            [1, 2, 3],
+        )
+        self.assertEqual(
+            [item["consumer_ids"] for item in evidence["waves"]],
+            [ordered[:size] for size in [1, 2, 3]],
+        )
         self.assertEqual(evidence["not_applicable"], [{
             "consumer_id": non_bar_consumer,
             "status": "NOT_APPLICABLE_NO_DURABLE_BAR",

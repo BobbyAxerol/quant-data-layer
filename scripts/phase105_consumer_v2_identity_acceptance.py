@@ -1763,9 +1763,10 @@ async def _strict_bar_collocation_matrix(
     state_dir: Path,
     timeout_seconds: float,
     client_factories: Mapping[str, Callable],
+    preferred_consumer_id: str,
     revalidate=None,
 ) -> dict[str, object]:
-    """Reproduce only shared local-lane contention across governed identities."""
+    """Measure deterministic local-lane saturation without hiding its threshold."""
 
     runner = _closing_batch_revalidation if revalidate is None else revalidate
     routes = {item.consumer_id: item for item in release.consumers}
@@ -1792,6 +1793,10 @@ async def _strict_bar_collocation_matrix(
             max_batch_items=route.manifest.quotas.max_batch_items,
         )
         selected.append((consumer_id, len(batch), batch))
+
+    selected.sort(key=lambda item: (item[0] != preferred_consumer_id, item[0]))
+    if selected and selected[0][0] != preferred_consumer_id:
+        raise ValueError("Phase 10.5 preferred BAR consumer is not entitled")
 
     async def run_one(consumer_id: str, shape: int, batch: tuple[AcceptanceProduct, ...]):
         try:
@@ -1821,16 +1826,26 @@ async def _strict_bar_collocation_matrix(
             window_index=0,
         )
 
-    executed = (
-        list(await _gather_or_cancel(tuple(
-            asyncio.create_task(run_one(consumer_id, shape, batch))
-            for consumer_id, shape, batch in selected
-        )))
-        if selected
-        else []
-    )
+    waves: list[dict[str, object]] = []
+    for parallel_lanes in range(1, len(selected) + 1):
+        lane = tuple(selected[:parallel_lanes])
+        try:
+            executed = list(await _gather_or_cancel(tuple(
+                asyncio.create_task(run_one(consumer_id, shape, batch))
+                for consumer_id, shape, batch in lane
+            )))
+        except C2BatchShapeError as error:
+            error.evidence["completed_collocation_waves"] = waves
+            error.evidence["failed_parallel_lanes"] = parallel_lanes
+            raise
+        waves.append({
+            "parallel_lanes": parallel_lanes,
+            "consumer_ids": [consumer_id for consumer_id, _shape, _batch in lane],
+            "observations": executed,
+            "payload_recorded": False,
+        })
     return {
-        "executed": executed,
+        "waves": waves,
         "not_applicable": not_applicable,
         "payload_recorded": False,
     }
@@ -2127,18 +2142,23 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 max_batch_items=route.manifest.quotas.max_batch_items,
                 client_factory=client_factories[consumer_id],
             )
-            collocated = await _strict_bar_collocation_matrix(
-                scope,
-                release,
-                consumer_ids=consumer_ids,
-                identities=identities,
-                primary_url=args.primary_url,
-                secondary_url=args.secondary_url,
-                grpc_target=grpc_target,
-                state_dir=temporary / "strict-bar-batch" / "collocated",
-                timeout_seconds=args.timeout_seconds,
-                client_factories=client_factories,
-            )
+            try:
+                collocated = await _strict_bar_collocation_matrix(
+                    scope,
+                    release,
+                    consumer_ids=consumer_ids,
+                    identities=identities,
+                    primary_url=args.primary_url,
+                    secondary_url=args.secondary_url,
+                    grpc_target=grpc_target,
+                    state_dir=temporary / "strict-bar-batch" / "collocated",
+                    timeout_seconds=args.timeout_seconds,
+                    client_factories=client_factories,
+                    preferred_consumer_id=consumer_id,
+                )
+            except C2BatchShapeError as error:
+                error.evidence["isolated"] = isolated
+                raise
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
         exact_max = next(

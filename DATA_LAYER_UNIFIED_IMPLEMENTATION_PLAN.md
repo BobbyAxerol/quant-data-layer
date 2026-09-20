@@ -47127,6 +47127,17 @@ unchanged.
   removed; no Query/Stream role, Kafka, Redis, SQLite, V1, consumer, alpha,
   order or provider path changed. The actual matrix has not yet produced a
   data receipt and C2 remains unconsumed.
+- **Saturation-threshold evidence (`PASS / SOURCE-ONLY / REAL MATRIX RETRY`,
+  2026-09-20).** Collocation is now a deterministic ladder rather than one
+  opaque fan-out: it runs the affected entitled consumer alone, then with two
+  and finally with every entitled durable-BAR lane. Each successful wave keeps
+  compact batch/quality hashes and latency percentiles; a later failure retains
+  completed lower-lane waves and the exact failed parallel-lane count. This
+  distinguishes a true local canonical-cache capacity/fairness threshold from
+  an isolated batch defect without changing any manifest quota, deadline,
+  freshness rule, external-provider limiter or `INTERNAL_STREAM` policy.
+  Source-only `tests.test_phase105_identity_acceptance` passed `37/37` after
+  the ladder regression; the full runtime matrix remains the next gate.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
