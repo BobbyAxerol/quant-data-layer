@@ -46926,6 +46926,23 @@ unchanged.
   read-plane preflight. The active reader rollback stays `335792a`; no durable
   system component is changed by this source repair.
 
+**Strict client image admission (`PASS / REAL READ-PLANE NEXT`, 2026-09-20).**
+
+- Built one immutable client-only candidate from committed
+  `37c5acbfe38533900abf7fac55e2cdacbf542981`:
+  `qdl-v2-python:2.0.26-37c5acb@sha256:e77572ca7d3daf57b6400fcd5b0795ca7eee8eaf1fae9a7596ae5e1c4023f33f`.
+  OCI revision/version labels match; it runs as `qdl:qdl`.
+- With no source mount, no network, read-only root and tmpfs-only test state,
+  the image passed focused timing/identity/quality regressions `38/38`.
+  This image is bound only to the disposable matrix/C2 launcher. The active
+  reader roles remain the separately attested
+  `qdl-v2-python:2.0.26-e4fc241@sha256:f248...6ad7`; they were not recreated
+  for this client-only repair.
+- Next permitted action: one all-scope, both-query-replica read-plane
+  preflight using this client image. A typed failure blocks C2. A pass permits
+  exactly one 300-second C2 with this same client image and the unchanged
+  reader digest.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
