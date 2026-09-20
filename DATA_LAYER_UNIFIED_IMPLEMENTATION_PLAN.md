@@ -47310,6 +47310,24 @@ unchanged.
   path changed in this gate. The next permitted mutation is a serial recreate
   of only `query_v2_1`, then `query_v2_2`, followed by one strict batch ladder;
   all-scope preflight and C2 remain blocked on its result.
+- **Query rollout and C2 identity-harness repair (`IN_PROGRESS / BATCH NOT YET EXECUTED`, 2026-09-20).**
+  The bounded packet serially recreated only `query_v2_1` and `query_v2_2`
+  onto the `e905747` candidate; both are healthy with `restart=0`,
+  `OOMKilled=false` and the unchanged runtime mount. The Stream pair remained
+  `READY/STANDBY`; V1, Rust, ingestors, projectors, Kafka, Redis, SQLite,
+  Trading System, alpha and order paths were untouched. Its first batch
+  invocation stopped before issuing any Query request because the legacy C2
+  bootstrap silently lost root-owned alpha-OKX identity files under Docker
+  user-namespace permissions. The packet now contains an ephemeral,
+  read-only, UID-`10001` identity/provenance copy with `0700` directories and
+  `0600` files; source identities were not changed or printed. Bootstrap was
+  made fail-closed by materializing tar archives before extraction rather than
+  relying on a masking shell pipeline. An isolated no-network probe proved all
+  22 required identity/provenance files extract for the unprivileged client.
+  This is a harness correction, not a batch retry: no matrix request, stream,
+  fallback, provider-direct call, order or durable-data mutation happened in
+  the failed attempt. The permitted next action is exactly one strict batch
+  ladder using this corrected packet; preflight and C2 remain unconsumed.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
