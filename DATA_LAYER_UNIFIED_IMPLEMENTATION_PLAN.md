@@ -46475,6 +46475,23 @@ The same approval permits exactly one isolated no-order `303`-route C2 for
 offsets, Redis, SQLite, Trading System, alpha and the order path remain
 excluded.
 
+**Packet orchestration interruption (`FAIL-CLOSED / NO C2`, 2026-09-20).** The
+first approved invocation recreated `query_v2_2`, `query_v2_1` and the initially
+observed standby `stream_v2_active`, then stopped before C2 with
+`stream_v2_passive` still on rollback image. No C2 client, provider call,
+order/signal/sizing action, V1, durable store, offset, manifest or consumer
+mutation occurred. The packet, not the reader binary or data plane, was wrong:
+after the new standby acquired the cooperative lease it recomputed "leader" by
+current status and could select that same role again instead of the remaining
+old-image peer. The in-scope recovery is to rollback exactly those three changed
+roles, then correct only the operator packet to capture two distinct roles
+before either recreate, wait boundedly for one `READY` plus one `STANDBY` after
+each role, and explicitly rollback every changed role on any fence failure.
+This preserves the approved four-role/image/mount boundary; it changes no
+source image, contract, topology, data or consumer policy. A fresh serial
+preflight and the one approved C2 are still required after the baseline is
+restored.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
