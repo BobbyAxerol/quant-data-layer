@@ -64,7 +64,7 @@ from qdl.certification.phase105_fallback import (
 )
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.consumer import StableReleaseRoutePlan, requirement_key
-from qdl.query import ConsumerGrade, StalePolicy
+from qdl.query import ConsumerGrade, FeedType, StalePolicy
 from qdl.certification.phase105_release_observations import compact_view_quality
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
@@ -101,6 +101,7 @@ _MAX_REFERENCE_BATCH_CONCURRENCY = 4
 _C2_REQUEST_QUOTA_FRACTION = 0.75
 _C2_QUOTA_WINDOW_MARGIN_SECONDS = 0.05
 _C2_CLOSING_REVALIDATION_MAX_SECONDS = 120.0
+_STRICT_BAR_BATCH_SHAPES = (1, 8, 16, 32)
 
 
 def _evidence_sha256(value: Mapping[str, object]) -> str:
@@ -217,6 +218,50 @@ class C2ClosingBatchError(RuntimeError):
             ).hexdigest(),
             "typed_status": status_observations,
             "batch_item_problems": list(batch_item_problems or ()),
+            "payload_recorded": False,
+        }
+
+
+class C2BatchShapeError(RuntimeError):
+    """Add batch-shape context to one bounded, payload-free V2 failure."""
+
+    def __init__(
+        self,
+        error: Exception,
+        *,
+        stage: str,
+        batch_shape: int,
+        window_index: int,
+        products: tuple[AcceptanceProduct, ...],
+    ) -> None:
+        if batch_shape < 1 or window_index < 0 or not products:
+            raise ValueError("Phase 10.5 batch-shape failure context is invalid")
+        if isinstance(error, C2ClosingBatchError):
+            source = dict(error.evidence)
+        else:
+            source = {
+                "consumer_id": products[0].consumer_id,
+                "replica": "both",
+                "batch_size": len(products),
+                "batch_identity_sha256": _batch_identity_sha256(products),
+                "transport_error": type(error).__name__,
+                "transport_error_code": getattr(error, "code", None),
+                "transport_retryable": bool(getattr(error, "retryable", False)),
+                "transport_detail_sha256": hashlib.sha256(str(error).encode()).hexdigest(),
+                "typed_status": [],
+                "batch_item_problems": [],
+                "payload_recorded": False,
+            }
+        super().__init__(
+            "Phase 10.5 strict BAR batch-shape matrix failed "
+            f"stage={stage} shape={batch_shape} window={window_index}"
+        )
+        self.evidence = {
+            **source,
+            "schema": "qdl.phase105.strict-bar-batch-shape-failure.v1",
+            "stage": stage,
+            "batch_shape": batch_shape,
+            "window_index": window_index,
             "payload_recorded": False,
         }
 
@@ -1519,6 +1564,260 @@ async def _closing_revalidate_consumer(
     return [*stream_results, *reference_results]
 
 
+def _batch_identity_sha256(products: tuple[AcceptanceProduct, ...]) -> str:
+    """Fingerprint an exact batch without persisting product data or payloads."""
+
+    return hashlib.sha256(
+        json.dumps(
+            [item.identity for item in products],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _manifest_maximum_bar_batch(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    max_batch_items: int,
+) -> tuple[AcceptanceProduct, ...]:
+    """Return the exact first manifest-maximum BAR partition."""
+
+    if not 1 <= max_batch_items <= 100:
+        raise ValueError("Phase 10.5 batch-shape maximum exceeds the V2 contract")
+    bar_batches = tuple(
+        batch
+        for batch in _closing_batches(products, max_batch_items)
+        if batch and batch[0].feed is FeedType.BAR
+    )
+    exact = next((batch for batch in bar_batches if len(batch) == max_batch_items), None)
+    if exact is None:
+        raise ValueError("Phase 10.5 batch-shape matrix lacks a manifest-maximum BAR partition")
+    return exact
+
+
+def _largest_bar_batch(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    max_batch_items: int,
+) -> tuple[AcceptanceProduct, ...]:
+    """Return the largest declared BAR batch for a collocated consumer lane."""
+
+    if not 1 <= max_batch_items <= 100:
+        raise ValueError("Phase 10.5 collocation batch maximum exceeds the V2 contract")
+    batches = tuple(
+        batch
+        for batch in _closing_batches(products, max_batch_items)
+        if batch and batch[0].feed is FeedType.BAR
+    )
+    if not batches:
+        raise ValueError("Phase 10.5 collocation has no BAR partition")
+    return max(batches, key=len)
+
+
+def _strict_bar_batch_windows(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    max_batch_items: int,
+) -> tuple[tuple[int, int, tuple[AcceptanceProduct, ...]], ...]:
+    """Select boundary windows plus the exact maximum BAR partition.
+
+    The existing failed receipt already bisected every member of the selected
+    maximum batch. This matrix diagnoses batch cardinality and queue position,
+    so smaller shapes test deterministic first/last windows while the maximum
+    shape always exercises every item of the exact manifest partition.
+    """
+
+    exact = _manifest_maximum_bar_batch(
+        products, max_batch_items=max_batch_items
+    )
+    windows: list[tuple[int, int, tuple[AcceptanceProduct, ...]]] = []
+    for shape in (*_STRICT_BAR_BATCH_SHAPES, max_batch_items):
+        if shape > len(exact):
+            continue
+        candidates = (exact[:shape],) if shape == len(exact) else (exact[:shape], exact[-shape:])
+        seen: set[str] = set()
+        for candidate in candidates:
+            digest = _batch_identity_sha256(candidate)
+            if digest in seen:
+                continue
+            seen.add(digest)
+            windows.append((shape, len(seen) - 1, candidate))
+    if not windows or windows[-1][0] != max_batch_items:
+        raise AssertionError("Phase 10.5 batch-shape matrix omitted the maximum BAR batch")
+    return tuple(windows)
+
+
+def _batch_shape_observation(
+    products: tuple[AcceptanceProduct, ...],
+    observations: list[dict[str, object]],
+    *,
+    batch_shape: int,
+    window_index: int,
+) -> dict[str, object]:
+    """Reduce a validated dual-replica batch to bounded diagnostic evidence."""
+
+    expected = {item.identity for item in products}
+    actual = {
+        (
+            str(item.get("consumer_id")),
+            str(item.get("instrument_uid")),
+            str(item.get("feed")),
+            str(item.get("interval") or ""),
+            str(item.get("source_policy_id")),
+        )
+        for item in observations
+    }
+    if actual != expected or len(observations) != len(expected):
+        raise AssertionError("Phase 10.5 batch-shape result differs from its exact manifest partition")
+    primary_latency = sorted(float(item["primary_latency_ms"]) for item in observations)
+    secondary_latency = sorted(float(item["secondary_latency_ms"]) for item in observations)
+    quality = [
+        {
+            "identity": item.identity,
+            "primary": observation["quality_sha256"]["primary"],
+            "secondary": observation["quality_sha256"]["secondary"],
+            "primary_content": observation["primary_content_sha256"],
+            "secondary_content": observation["secondary_content_sha256"],
+        }
+        for item, observation in zip(products, observations, strict=True)
+    ]
+    return {
+        "batch_shape": batch_shape,
+        "window_index": window_index,
+        "batch_size": len(products),
+        "batch_identity_sha256": _batch_identity_sha256(products),
+        "primary_latency_ms": {
+            "p50": round(primary_latency[max(0, ceil(len(primary_latency) * 0.50) - 1)], 3),
+            "p95": round(primary_latency[max(0, ceil(len(primary_latency) * 0.95) - 1)], 3),
+        },
+        "secondary_latency_ms": {
+            "p50": round(secondary_latency[max(0, ceil(len(secondary_latency) * 0.50) - 1)], 3),
+            "p95": round(secondary_latency[max(0, ceil(len(secondary_latency) * 0.95) - 1)], 3),
+        },
+        "quality_content_sha256": hashlib.sha256(
+            json.dumps(quality, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "payload_recorded": False,
+    }
+
+
+async def _strict_bar_batch_shape_matrix(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    max_batch_items: int,
+    client_factory,
+    revalidate=None,
+) -> list[dict[str, object]]:
+    """Exercise exact strict BAR shapes without stream/fallback/provider reads."""
+
+    runner = _closing_batch_revalidation if revalidate is None else revalidate
+    evidence: list[dict[str, object]] = []
+    for shape, window_index, window in _strict_bar_batch_windows(
+        products, max_batch_items=max_batch_items
+    ):
+        try:
+            observations = await runner(
+                window,
+                identity=identity,
+                primary_url=primary_url,
+                secondary_url=secondary_url,
+                grpc_target=grpc_target,
+                state_dir=state_dir / f"shape-{shape}-{window_index}",
+                timeout_seconds=timeout_seconds,
+                max_batch_items=shape,
+                client_factory=client_factory,
+            )
+        except Exception as error:
+            raise C2BatchShapeError(
+                error,
+                stage="ISOLATED",
+                batch_shape=shape,
+                window_index=window_index,
+                products=window,
+            ) from error
+        evidence.append(_batch_shape_observation(
+            window,
+            observations,
+            batch_shape=shape,
+            window_index=window_index,
+        ))
+    return evidence
+
+
+async def _strict_bar_collocation_matrix(
+    scope,
+    release: StableReleaseRoutePlan,
+    *,
+    consumer_ids: tuple[str, ...],
+    identities: Mapping[str, object],
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    client_factories: Mapping[str, Callable],
+    revalidate=None,
+) -> list[dict[str, object]]:
+    """Reproduce only shared local-lane contention across governed identities."""
+
+    runner = _closing_batch_revalidation if revalidate is None else revalidate
+    routes = {item.consumer_id: item for item in release.consumers}
+    selected: list[tuple[str, int, tuple[AcceptanceProduct, ...]]] = []
+    for consumer_id in consumer_ids:
+        route = routes.get(consumer_id)
+        if route is None:
+            raise ValueError("Phase 10.5 collocation route is unavailable")
+        stream_products = tuple(
+            item for item in scope.products
+            if item.consumer_id == consumer_id and item.delivery is not DeliveryClass.ON_DEMAND
+        )
+        batch = _largest_bar_batch(
+            stream_products,
+            max_batch_items=route.manifest.quotas.max_batch_items,
+        )
+        selected.append((consumer_id, len(batch), batch))
+
+    async def run_one(consumer_id: str, shape: int, batch: tuple[AcceptanceProduct, ...]):
+        try:
+            observations = await runner(
+                batch,
+                identity=identities[consumer_id],
+                primary_url=primary_url,
+                secondary_url=secondary_url,
+                grpc_target=grpc_target,
+                state_dir=state_dir / consumer_id.replace(".", "-"),
+                timeout_seconds=timeout_seconds,
+                max_batch_items=shape,
+                client_factory=client_factories[consumer_id],
+            )
+        except Exception as error:
+            raise C2BatchShapeError(
+                error,
+                stage="COLLOCATED",
+                batch_shape=shape,
+                window_index=0,
+                products=batch,
+            ) from error
+        return _batch_shape_observation(
+            batch,
+            observations,
+            batch_shape=shape,
+            window_index=0,
+        )
+
+    return list(await _gather_or_cancel(tuple(
+        asyncio.create_task(run_one(consumer_id, shape, batch))
+        for consumer_id, shape, batch in selected
+    )))
+
+
 async def _read_plane_preflight(
     scope,
     release: StableReleaseRoutePlan,
@@ -1782,6 +2081,75 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         for consumer_id, pacer in pacers.items()
     }
     release_consumers = {item.consumer_id: item for item in release.consumers}
+
+    if args.batch_shape_matrix:
+        consumer_id = args.batch_shape_consumer_id
+        if consumer_id not in consumer_ids:
+            raise ValueError("Phase 10.5 batch-shape consumer is outside the selected scope")
+        route = release_consumers.get(consumer_id)
+        if route is None:
+            raise ValueError("Phase 10.5 batch-shape consumer route is unavailable")
+        selected_products = tuple(
+            item for item in scope.products
+            if item.consumer_id == consumer_id and item.delivery is not DeliveryClass.ON_DEMAND
+        )
+        if not selected_products:
+            raise ValueError("Phase 10.5 batch-shape consumer has no durable products")
+        quota_window_wait_seconds = await _wait_for_clean_quota_windows(pacers)
+        matrix_started = time.monotonic()
+        try:
+            isolated = await _strict_bar_batch_shape_matrix(
+                selected_products,
+                identity=identities[consumer_id],
+                primary_url=args.primary_url,
+                secondary_url=args.secondary_url,
+                grpc_target=grpc_target,
+                state_dir=temporary / "strict-bar-batch" / "isolated",
+                timeout_seconds=args.timeout_seconds,
+                max_batch_items=route.manifest.quotas.max_batch_items,
+                client_factory=client_factories[consumer_id],
+            )
+            collocated = await _strict_bar_collocation_matrix(
+                scope,
+                release,
+                consumer_ids=consumer_ids,
+                identities=identities,
+                primary_url=args.primary_url,
+                secondary_url=args.secondary_url,
+                grpc_target=grpc_target,
+                state_dir=temporary / "strict-bar-batch" / "collocated",
+                timeout_seconds=args.timeout_seconds,
+                client_factories=client_factories,
+            )
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+        exact_max = next(
+            item for item in isolated
+            if item["batch_shape"] == route.manifest.quotas.max_batch_items
+        )
+        return {
+            "schema": "qdl.phase105.strict-bar-batch-shape.v1",
+            "status": "PASS_STRICT_BAR_BATCH_SHAPE",
+            "mode": "READ_PLANE_ONLY_NO_STREAM_NO_FALLBACK",
+            "release_route_plan_sha256": release.digest,
+            "authority_revision": authority.get("revision"),
+            "scope_sha256": scope.sha256,
+            "consumer_id": consumer_id,
+            "manifest_max_batch_items": route.manifest.quotas.max_batch_items,
+            "exact_maximum_batch_identity_sha256": exact_max["batch_identity_sha256"],
+            "isolated": isolated,
+            "collocated": collocated,
+            "quota_window_wait_seconds": round(quota_window_wait_seconds, 3),
+            "quota_budget": {
+                item_consumer_id: pacer.evidence()
+                for item_consumer_id, pacer in sorted(pacers.items())
+            },
+            "provider_connections": 0,
+            "order_actions": 0,
+            "cursor_directory_removed": True,
+            "payload_recorded": False,
+            "elapsed_seconds": round(time.monotonic() - matrix_started, 3),
+        }
 
     if args.read_plane_preflight:
         # Use the same per-identity 75% quota guard as C2, but only for the
@@ -2120,6 +2488,20 @@ def parser() -> argparse.ArgumentParser:
         ),
     )
     value.add_argument(
+        "--batch-shape-matrix",
+        action="store_true",
+        help=(
+            "Run the bounded strict local-BAR batch-shape/collocation matrix "
+            "before the full all-scope read-plane preflight."
+        ),
+    )
+    value.add_argument(
+        "--batch-shape-consumer-id",
+        choices=tuple(IDENTITY_PREFIXES),
+        default="alpha.okx.paper.stable",
+        help="Governed consumer whose manifest-maximum BAR batch is diagnosed.",
+    )
+    value.add_argument(
         "--opening-timeout-seconds", type=float,
         help=(
             "Optional operator timeout at or above the manifest-derived opening "
@@ -2142,6 +2524,8 @@ def main() -> int:
         raise SystemExit("--concurrency must be between 1 and 8")
     if not 30.0 <= args.observation_seconds <= 300.0:
         raise SystemExit("--observation-seconds must be between 30 and 300")
+    if args.batch_shape_matrix and args.read_plane_preflight:
+        raise SystemExit("--batch-shape-matrix and --read-plane-preflight are exclusive")
     if args.opening_timeout_seconds is not None and args.opening_timeout_seconds < 1.0:
         raise SystemExit("--opening-timeout-seconds must be positive")
     if not 30.0 <= args.closing_timeout_seconds <= 300.0:
@@ -2161,6 +2545,7 @@ def main() -> int:
         C2ProductAcceptanceError,
         C2ReferenceProductError,
         C2ClosingBatchError,
+        C2BatchShapeError,
     ) as error:
         print(json.dumps({
             "schema": "qdl.phase105.v2-identity-acceptance.v1",

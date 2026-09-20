@@ -32,6 +32,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     C2ProductAcceptanceError,
     C2ReferenceProductError,
     C2ClosingBatchError,
+    C2BatchShapeError,
     C2OpeningCapacityError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
@@ -42,6 +43,10 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _closing_batch_revalidation,
     _closing_batches,
     _closing_requirement,
+    _manifest_maximum_bar_batch,
+    _strict_bar_batch_shape_matrix,
+    _strict_bar_batch_windows,
+    _strict_bar_collocation_matrix,
     _c2_grpc_targets,
     _consumer_ids,
     _build_c2_opening_operation_plan,
@@ -173,6 +178,187 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
                 bound = limit if batch[0].feed is Feed.BAR else min(limit, 8)
                 self.assertLessEqual(len(batch), bound)
         self.assertEqual(tuple(_closing_batches((), 50)), ())
+
+    def test_strict_bar_batch_windows_keep_the_exact_manifest_maximum(self) -> None:
+        consumer_id = "alpha.okx.paper.stable"
+        products = tuple(
+            SimpleNamespace(
+                consumer_id=consumer_id,
+                instrument_uid=f"bar-{index}",
+                feed=FeedType.BAR,
+                interval=f"{index + 1}m",
+                source_policy_id="crypto_primary_v2",
+                identity=(
+                    consumer_id,
+                    f"bar-{index}",
+                    "BAR",
+                    f"{index + 1}m",
+                    "crypto_primary_v2",
+                ),
+            )
+            for index in range(70)
+        )
+
+        maximum = _manifest_maximum_bar_batch(products, max_batch_items=50)
+        windows = _strict_bar_batch_windows(products, max_batch_items=50)
+
+        self.assertEqual(len(maximum), 50)
+        self.assertEqual([item[0] for item in windows], [1, 1, 8, 8, 16, 16, 32, 32, 50])
+        self.assertEqual(windows[-1][2], maximum)
+        self.assertEqual({item.identity for item in windows[-1][2]}, {
+            item.identity for item in maximum
+        })
+
+    def test_strict_bar_batch_shape_matrix_is_strict_and_payload_free(self) -> None:
+        consumer_id = "alpha.okx.paper.stable"
+        products = tuple(
+            SimpleNamespace(
+                consumer_id=consumer_id,
+                instrument_uid=f"bar-{index}",
+                feed=FeedType.BAR,
+                interval=f"{index + 1}m",
+                source_policy_id="crypto_primary_v2",
+                identity=(
+                    consumer_id,
+                    f"bar-{index}",
+                    "BAR",
+                    f"{index + 1}m",
+                    "crypto_primary_v2",
+                ),
+            )
+            for index in range(50)
+        )
+        calls = []
+
+        async def revalidate(batch, **kwargs):
+            calls.append((len(batch), kwargs["max_batch_items"]))
+            return [
+                {
+                    "consumer_id": item.consumer_id,
+                    "instrument_uid": item.instrument_uid,
+                    "feed": item.feed.value,
+                    "interval": item.interval,
+                    "source_policy_id": item.source_policy_id,
+                    "primary_latency_ms": 1.0,
+                    "secondary_latency_ms": 2.0,
+                    "primary_content_sha256": f"primary-{item.instrument_uid}",
+                    "secondary_content_sha256": f"secondary-{item.instrument_uid}",
+                    "quality_sha256": {"primary": "quality-primary", "secondary": "quality-secondary"},
+                }
+                for item in batch
+            ]
+
+        evidence = asyncio.run(_strict_bar_batch_shape_matrix(
+            products,
+            identity=object(),
+            primary_url="https://primary.invalid",
+            secondary_url="https://secondary.invalid",
+            grpc_target="unused:8210",
+            state_dir=Path("/tmp"),
+            timeout_seconds=5.0,
+            max_batch_items=50,
+            client_factory=object(),
+            revalidate=revalidate,
+        ))
+
+        self.assertEqual(calls, [(1, 1), (1, 1), (8, 8), (8, 8), (16, 16), (16, 16), (32, 32), (32, 32), (50, 50)])
+        self.assertEqual(evidence[-1]["batch_size"], 50)
+        self.assertTrue(all(item["payload_recorded"] is False for item in evidence))
+
+    def test_strict_bar_batch_shape_matrix_keeps_typed_failure_context(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="alpha.okx.paper.stable",
+            instrument_uid="bar-0",
+            feed=FeedType.BAR,
+            interval="1m",
+            source_policy_id="crypto_primary_v2",
+            identity=("alpha.okx.paper.stable", "bar-0", "BAR", "1m", "crypto_primary_v2"),
+        )
+
+        async def failing(batch, **kwargs):
+            raise C2ClosingBatchError(
+                consumer_id=product.consumer_id,
+                replica="secondary",
+                products=batch,
+                error=DataLayerError("PARTIAL_RESULT", "injected strict batch failure", retryable=True),
+                status_observations=[],
+            )
+
+        with self.assertRaises(C2BatchShapeError) as raised:
+            asyncio.run(_strict_bar_batch_shape_matrix(
+                (product,),
+                identity=object(),
+                primary_url="https://primary.invalid",
+                secondary_url="https://secondary.invalid",
+                grpc_target="unused:8210",
+                state_dir=Path("/tmp"),
+                timeout_seconds=5.0,
+                max_batch_items=1,
+                client_factory=object(),
+                revalidate=failing,
+            ))
+        self.assertEqual(raised.exception.evidence["stage"], "ISOLATED")
+        self.assertEqual(raised.exception.evidence["transport_error_code"], "PARTIAL_RESULT")
+        self.assertFalse(raised.exception.evidence["payload_recorded"])
+
+    def test_strict_bar_collocation_matrix_uses_one_maximum_batch_per_consumer(self) -> None:
+        consumer_ids = tuple(IDENTITY_PREFIXES)
+        products = tuple(
+            SimpleNamespace(
+                consumer_id=consumer_id,
+                instrument_uid=f"{consumer_id}-{index}",
+                feed=FeedType.BAR,
+                interval=f"{index + 1}m",
+                source_policy_id="crypto_primary_v2",
+                delivery=DeliveryClass.DURABLE,
+                identity=(consumer_id, f"{consumer_id}-{index}", "BAR", f"{index + 1}m", "crypto_primary_v2"),
+            )
+            for consumer_id in consumer_ids
+            for index in range(50)
+        )
+        scope = SimpleNamespace(products=products)
+        release = SimpleNamespace(consumers=tuple(
+            SimpleNamespace(
+                consumer_id=consumer_id,
+                manifest=SimpleNamespace(quotas=SimpleNamespace(max_batch_items=50)),
+            )
+            for consumer_id in consumer_ids
+        ))
+        calls = []
+
+        async def revalidate(batch, **kwargs):
+            calls.append((batch[0].consumer_id, len(batch), kwargs["max_batch_items"]))
+            return [
+                {
+                    "consumer_id": item.consumer_id,
+                    "instrument_uid": item.instrument_uid,
+                    "feed": item.feed.value,
+                    "interval": item.interval,
+                    "source_policy_id": item.source_policy_id,
+                    "primary_latency_ms": 1.0,
+                    "secondary_latency_ms": 2.0,
+                    "primary_content_sha256": f"primary-{item.instrument_uid}",
+                    "secondary_content_sha256": f"secondary-{item.instrument_uid}",
+                    "quality_sha256": {"primary": "quality-primary", "secondary": "quality-secondary"},
+                }
+                for item in batch
+            ]
+
+        evidence = asyncio.run(_strict_bar_collocation_matrix(
+            scope,
+            release,
+            consumer_ids=consumer_ids,
+            identities={consumer_id: object() for consumer_id in consumer_ids},
+            primary_url="https://primary.invalid",
+            secondary_url="https://secondary.invalid",
+            grpc_target="unused:8210",
+            state_dir=Path("/tmp"),
+            timeout_seconds=5.0,
+            client_factories={consumer_id: object() for consumer_id in consumer_ids},
+            revalidate=revalidate,
+        ))
+        self.assertCountEqual(calls, [(consumer_id, 50, 50) for consumer_id in consumer_ids])
+        self.assertEqual(len(evidence), len(consumer_ids))
 
     def test_typed_c2_product_failure_keeps_status_without_market_payload(self) -> None:
         status = FeedStatusResponse.model_validate({

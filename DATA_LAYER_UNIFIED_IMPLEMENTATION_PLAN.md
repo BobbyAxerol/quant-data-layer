@@ -47057,6 +47057,62 @@ unchanged.
   typed failure returns to the relevant fast gate, while a pass permits exactly
   one final C2 observation.
 
+**Strict local-BAR batch-shape closure (`IN_PROGRESS / PRE-C2 / SOURCE-ONLY DIAGNOSTIC`, 2026-09-20).**
+
+- **Trigger and exact finding.** The real all-scope preflight stopped before
+  C2 on one `alpha.okx.paper.stable` secondary-Query strict `BAR` batch at the
+  manifest maximum `50` items: public V2 returned retryable `PARTIAL_RESULT`,
+  while all 50 compact status rows were `LIVE` and subsequent strict leaf reads
+  did not reproduce an item failure. `FIELD_MISSING` records the documented
+  absence of a native OKX candle trade-count and is preserved as provenance; it
+  is not assumed to be the batch failure cause. No C2 observation, stream,
+  fallback, provider-direct request, order, signal or sizing action occurred.
+- **Approved scope and invariant.** Add one manifest-derived, V2-only
+  batch-shape matrix for the exact affected consumer/feed/batch partition. It
+  must issue strict `require_all=True` reads through both Query replicas at
+  bounded shapes `1`, `8`, `16`, `32`, and the signed manifest maximum, using
+  the existing sealed identity and the same closing requirements. Evidence may
+  retain only product/batch identity hashes, replica, shape, typed error code,
+  retryability, compact quality hashes and latency percentiles. It may not
+  lower the manifest batch limit, substitute isolated successes for a failed
+  maximum batch, relax BAR finality/freshness, call V1/provider-direct, open a
+  stream, alter a consumer manifest or change provider quotas.
+- **Decision boundary.** If the manifest-maximum shape fails, diagnose whether
+  the common `LOCAL_CANONICAL_CACHE` executor has bounded-capacity/deadline or
+  scheduling loss. Repair only that shared local lane, preserving finite
+  concurrency, strict all-or-nothing semantics, route-local circuit state and
+  every external Binance/OKX/DNSE policy. Add deterministic saturation,
+  deadline, fairness and no-external-token regression. If all shapes pass, the
+  receipt identifies a preflight orchestration collision and the repair stays
+  in the harness scheduler; it may not reclassify the failure as a provider
+  success. A source repair that changes Query runtime requires a separately
+  attested image and rolling only `query_v2_1`/`query_v2_2` with the current
+  reader image as rollback; a client-only repair changes no reader role.
+- **Exit sequence.** Source/contract tests, real batch-shape matrix and the
+  already scoped affected-feed protocol matrix must pass before exactly one
+  rerun of the all-scope both-replica preflight. Only that green preflight
+  authorizes the single final C2 `300s` certificate. No blind C2 retry is
+  allowed. The resulting release report must include endpoint inventory,
+  per-feed consumer-call-to-usable latency, quality/freshness/session gates,
+  resource observations, rollback coordinate and remaining explicit product
+  exclusions before release approval.
+- **Source implementation checkpoint (`PASS / REAL MATRIX NEXT`, 2026-09-20).**
+  The existing C2 client harness now has `--batch-shape-matrix`: it derives
+  the current `alpha.okx.paper.stable` manifest-maximum `BAR` partition rather
+  than naming symbols, tests strict boundary shapes `1/8/16/32/max` through
+  both replicas, and runs one collocated largest-BAR read per governed
+  identity to distinguish isolated local-cache capacity from cross-consumer
+  scheduler contention. Every read reuses the public V2 SDK,
+  `require_all=True`, the closing final-BAR validator, sealed identity and
+  quota pacer. The receipt contains only batch identity/quality-content hashes,
+  latency percentiles and typed failure context; it creates no cursor,
+  stream, fallback or provider connection. Deterministic regressions cover the
+  exact maximum partition, boundary windows, strict typed failure receipt and
+  four-identity collocation. `python3 -m py_compile`, `git diff --check`, and
+  the read-only/network-disabled `tests.test_phase105_identity_acceptance` +
+  `tests.test_phase10_universal_warmup` suite passed `86/86`. No runtime role,
+  Kafka, Redis, SQLite, V1, consumer, alpha or order state changed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
