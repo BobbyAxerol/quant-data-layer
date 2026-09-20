@@ -45364,6 +45364,20 @@ The next bounded action is a serial recreation of exactly those four readers;
 any health/OOM failure invokes that packet's exact reader/trust rollback before
 the all-identity C2 starts.
 
+**C identity rollout result (2026-09-20; `PASS`).** The packet atomically
+replaced only `query/client-ca-bundle.crt` and
+`stream/client-ca-bundle.crt`, then serially recreated exactly
+`stream_v2_passive`, `query_v2_1`, `query_v2_2` and `stream_v2_active`.
+All four are `healthy`, `restart=0`, `OOMKilled=false`, retain the B2 runtime
+mount and retain image `sha256:8c53d37f...01668c5c`. Both live trust files now
+hash to `6fbfb41e...6dd1`; all four reader keyrings report the new Monitoring
+and Alpha-OKX public-key fingerprints `8e38d04e...f698` and
+`8769b86a...171c`. The public-key changes are identical across query and
+stream replicas. V1, Rust cores, ingestors, projectors, bar edge, Kafka,
+Redis, SQLite, consumer manifests/routes, Trading System, alpha and order
+paths were not recreated or changed. The exact old trust/env files remain in
+the packet's rollback directory. Full all-identity C2 is now unblocked.
+
 ##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
 
 **Goal.** Close the release without leaving test containers, images, cache,
