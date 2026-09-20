@@ -44699,7 +44699,7 @@ temporary storage; it left no container, image, volume, cache, provider data
 or runtime mutation to clean. The sealed source commit is `6be8d54`
 (`fix(quality): authorize native BBO on-change delivery`).
 
-##### Phase 2 - R1.35-B2: Bounded reader rollout and strict quote C2 (`PENDING / REQUIRES B1 EXIT`)
+##### Phase 2 - R1.35-B2: Bounded reader rollout and strict quote C2 (`FAIL-CLOSED / ROLLED BACK / REQUIRES CORRECTION`)
 
 **Goal.** Prove the B1 contract against real Binance USD-M and OKX Swap data,
 from an external authenticated consumer through both existing V2 query
@@ -44850,6 +44850,46 @@ Compose renders both passed with `config --quiet`; no role has been recreated
 and no data-plane state has changed. The next action is the declared
 four-role rolling B2 acceptance packet, followed by exactly one strict C2;
 Phase 3 remains blocked until that C2 result.
+
+**B2 replacement rollout and C2 result (2026-09-20; FAIL-CLOSED / rolled
+back).** The sealed replacement packet rolled exactly four reader roles, one
+at a time: `query_v2_1`, `query_v2_2`, `stream_v2_active`, then
+`stream_v2_passive`. Each reached candidate image
+`sha256:c8177013b6fce1d9cf32c08acf847a3101745f9803965f54f571306ddbd4d4f3`,
+healthy with `restart=0`; no projector, Rust core, ingestor, V1, Kafka
+topology/offset, Redis, SQLite, Trading System, alpha or order-path object was
+changed. The exact packet and non-secret evidence are under
+`/home/bobby/.local/state/qdl-v2/r135-b2-onchange-2ce8f1d-20260920T001000Z/`.
+
+The sole strict public-SDK C2 used the Trading System workload identity with
+mTLS/JWT, public V2 Query pair, both stream targets, the real sealed
+catalog/acquisition/release routing, and only manifest-authorized V1 fallback
+readback. Its bootstrap verified UID `10001`, empty effective/inheritable/
+ambient capabilities and `NoNewPrivs=1`. It started the opening proof but
+failed before the 300-second observation window at reference validation:
+`ValueError: reference response exceeds its governed freshness bound`.
+The receipt is intentionally empty because opening did not complete; bounded
+stderr SHA-256 is
+`800bf648d08cf2c397129ffc416d4d55b17edb88299cece0e9dc58c00ba7906a`.
+There were zero order actions, no provider connection by the consumer client,
+no cursor retained and no alpha/Trading-System mutation. This is a real B2
+gate failure, not a retry or an SLA relaxation opportunity.
+
+As required by this phase, the helper then restored only those four roles to
+their exact pre-packet coordinates: both Query roles are healthy at
+`sha256:1ad34175322f2f8eec34b3e772e3935d999248e40432ecf5852f832df1dfa88d`;
+both stream roles are healthy at
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`;
+each has `restart=0`. The failed candidate is not serving authority. Two
+post-rollback generic status probes were discarded as harness-invalid because
+they targeted the rollback runtime with manifest revision `10` while that
+runtime correctly requires its prior revision; they are not data-quality
+evidence. Temporary staged identity material, invalid diagnostic output and
+client bytecode were removed exactly after the bounded C2 evidence was sealed:
+the C2 directory fell from `53,688` to `7,846` bytes, and no `qdl-r135` test
+container remained. B2 remains blocked pending a narrow typed diagnosis and
+fix for the MARK/INDEX reference freshness path; Phase 3 and release remain
+prohibited.
 
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
