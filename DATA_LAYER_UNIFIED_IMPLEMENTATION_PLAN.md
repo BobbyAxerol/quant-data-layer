@@ -47296,6 +47296,20 @@ unchanged.
   runtime role or durable/data-plane state changed in this source gate. The
   next permitted mutation is one new immutable Query image, then the same
   two-role packet rollout and exact strict batch ladder; C2 remains unconsumed.
+- **Fair-admission immutable candidate (`PASS / QUERY-ONLY ROLLOUT NEXT`, 2026-09-20).**
+  Built `qdl-v2-python:2.0.26-e905747` from code commit
+  `e9057475774aed4da1e263333c7f5fcf22a5a629`; immutable digest
+  `sha256:5541a3348ac0d4af83de8710b7ee68ce7826fe9fc417295dee45d70937983536`.
+  A packaged-image, network-disabled, read-only-root, non-root run with only
+  tmpfs scratch state passed `168/168` across warmup, identity acceptance,
+  receipt, SDK stream projection and R1.35 quality tests. The active Query
+  readers were independently re-inventoried before the packet: both remain
+  healthy at `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`
+  (`qdl-v2-python:2.0.26-e4fc241`), which is the exact rollback coordinate.
+  No runtime role, durable state, provider, V1, Trading System, alpha or order
+  path changed in this gate. The next permitted mutation is a serial recreate
+  of only `query_v2_1`, then `query_v2_2`, followed by one strict batch ladder;
+  all-scope preflight and C2 remain blocked on its result.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
