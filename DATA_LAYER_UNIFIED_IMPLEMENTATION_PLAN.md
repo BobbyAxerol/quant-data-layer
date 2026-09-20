@@ -47168,6 +47168,68 @@ unchanged.
   compact product identity only when needed. The source regression passed
   `38/38`, proving successful and partial responses retain no market payload,
   and the next real matrix will use the same strict `require_all=True` call.
+- **Capacity root cause and approved local-lane repair (`IN_PROGRESS /
+  SOURCE-ONLY`, 2026-09-20).** The retained real receipt from client image
+  `68115d5` identifies the failing boundary without exposing market payloads:
+  on the primary Query replica, the second concurrent `50`-BAR lane returned
+  `12` successes and `38` retryable `DEPENDENCY_UNAVAILABLE` results at
+  ordinals `12..49`. Each affected binding remained independently `LIVE`; the
+  local stable backend declares every warmup local, so no Binance/OKX provider
+  request, provider quota, stream, fallback or data-plane write participated.
+  The common executor starts its fixed item deadline at enqueue time, before
+  waiting for the finite eight-slot `LOCAL_CANONICAL_CACHE` semaphore. This is
+  a local admission/deadline bug, not stale data or a provider failure.
+- **Repair scope/invariants.** For `LOCAL_CANONICAL_CACHE` only, retain finite
+  execution concurrency and add bounded pending admission. Start the existing
+  per-item read/retry deadline only after a local worker owns a cache slot, so
+  valid work is not relabelled as a dependency outage merely because another
+  manifest-legal batch was ahead of it. A full local pending queue must return
+  a typed retryable capacity result rather than grow unboundedly. The existing
+  external-provider end-to-end deadline, token buckets, retry/cooldown and
+  circuit semantics remain byte-for-byte behaviorally unchanged; so do
+  `INTERNAL_STREAM`, public schemas, manifest limits, BAR finality/freshness,
+  V1 and all runtime/data-plane authority.
+- **Required source gates before any reader rollout.** Deterministic tests must
+  prove two collocated maximum local batches complete without an internal queue
+  deadline loss, work execution itself still fails at its declared deadline,
+  queue saturation fails typed/bounded, cancellation leaves no admission leak,
+  route singleflight and per-route circuits remain scoped, and Binance/OKX/DNSE
+  provider token/retry behavior is unchanged. Then run the existing source
+  suite and only the affected `QUOTE`, `TRADE`, `MARK_INDEX`, `BOOK_DELTA` and
+  final-BAR protocol matrices. A source pass authorizes one immutable Query
+  image and a bounded serial recreate of only `query_v2_1` and `query_v2_2`
+  with the current `sha256:f2489160...e957b6ad7` reader image as rollback. The
+  real strict batch ladder, all-scope two-replica fast preflight, and one final
+  C2 `300s` remain subsequent gates; none is consumed by this source repair.
+- **Local admission repair result (`PASS / SOURCE-ONLY / QUERY ROLLOUT NEXT`,
+  2026-09-20).** `BoundedWarmupExecutor` now has an explicit local-only policy
+  for finite pending admission (`128` outstanding reads) and starts a local
+  read's declared deadline after it owns one of the existing eight worker
+  permits. A true admitted read still times out typed; a full queue fails typed
+  without unbounded task growth; cancellation drains its reservation; and
+  route singleflight/circuits remain unchanged. All other lanes retain their
+  prior end-to-end deadline semantics, including external token/retry behavior
+  and the `INTERNAL_STREAM` one-attempt policy. The V2 Query integration
+  regression proves two collocated local batches retain each item read budget;
+  no query response can be silently promoted from partial to success.
+- **Tests actually run.** Disposable, read-only, `--network none` containers
+  using `qdl-v2-python:2.0.26-68115d5` passed `21/21` focused executor/Query
+  cases, `93/93` across `tests.test_phase10_universal_warmup` and
+  `tests.test_phase105_identity_acceptance`, and `72/72` targeted receipt,
+  SDK stream and R1.35 quality protocol cases. `py_compile` for the changed
+  modules passed. The first Query-level timing test used a `100ms` artificial
+  read budget and was too close to debug-runner thread startup; it was replaced
+  by a deterministically wider `150ms` work / `400ms` admitted-read relation that
+  still fails under the old enqueue-deadline behavior but does not encode any
+  product SLA. `git diff --check` passed before this journal update. No image,
+  reader role, runtime directory, provider request, Kafka/Redis/SQLite state,
+  V1, consumer, alpha, signal, sizing or order state changed.
+- **Next decision boundary.** Build one immutable Python Query candidate from
+  the committed source. If its image-level source suite passes, serially
+  recreate only `query_v2_1` and `query_v2_2` under the already-approved
+  bounded packet, retaining `sha256:f2489160...e957b6ad7` as exact rollback.
+  Then rerun only the strict local-BAR ladder, the two-replica all-scope fast
+  preflight and, only if both pass, one final C2 `300s`.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 

@@ -437,6 +437,187 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(executor.provider_policies["OKX"].requests_per_second, 5.0)
         self.assertEqual(executor.provider_policies["BINANCE"].requests_per_second, 8.0)
 
+    async def test_local_cache_collocated_batches_start_read_deadline_after_admission(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=4,
+                    deadline_starts_after_admission=True,
+                )
+            }
+        )
+
+        async def work(value):
+            await asyncio.sleep(0.02)
+            return value
+
+        arguments = dict(
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 40,
+        )
+        first = asyncio.create_task(executor.execute((1, 2), **arguments))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(executor.execute((3, 4), **arguments))
+        one, two = await asyncio.gather(first, second)
+
+        self.assertEqual([item.value for item in one + two], [1, 2, 3, 4])
+        self.assertTrue(all(item.ok for item in one + two))
+        # At least one item necessarily waited behind another read. Its elapsed
+        # request time can exceed 40ms, but its admitted cache read must retain
+        # its own 40ms execution budget.
+        self.assertGreater(max(item.elapsed_ms for item in one + two), 40.0)
+        self.assertEqual(executor._pending, {})
+
+    async def test_local_cache_execution_deadline_still_fails_after_admission(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=1,
+                    deadline_starts_after_admission=True,
+                )
+            }
+        )
+
+        async def work(_value):
+            await asyncio.sleep(0.03)
+            return 1
+
+        result = await executor.execute(
+            (1,),
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 10,
+        )
+        self.assertFalse(result[0].ok)
+        self.assertIsInstance(result[0].error, RetryableWarmupError)
+        self.assertIn("execution deadline", str(result[0].error))
+        self.assertEqual(executor._pending, {})
+
+    async def test_local_cache_pending_capacity_fails_typed_without_unbounded_queue(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=1,
+                    deadline_starts_after_admission=True,
+                )
+            }
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work(value):
+            started.set()
+            await release.wait()
+            return value
+
+        arguments = dict(
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 1_000,
+        )
+        first = asyncio.create_task(executor.execute((1,), **arguments))
+        await started.wait()
+        rejected = await executor.execute((2,), **arguments)
+        self.assertFalse(rejected[0].ok)
+        self.assertIsInstance(rejected[0].error, RetryableWarmupError)
+        self.assertIn("admission capacity", str(rejected[0].error))
+        self.assertEqual(executor.stats()["admission_rejections"], 1)
+        release.set()
+        completed = await first
+        self.assertTrue(completed[0].ok)
+        self.assertEqual(executor._pending, {})
+
+    async def test_local_cache_cancellation_releases_pending_admission(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=1,
+                    deadline_starts_after_admission=True,
+                )
+            }
+        )
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def blocking(_value):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        task = asyncio.create_task(executor.execute(
+            (1,),
+            work=blocking,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 1_000,
+        ))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        self.assertEqual(executor._pending, {})
+
+        resumed = await executor.execute(
+            (2,),
+            work=lambda value: asyncio.sleep(0, result=value),
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 1_000,
+        )
+        self.assertTrue(resumed[0].ok)
+
+    async def test_external_provider_deadline_still_includes_queue_admission(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "BINANCE": ProviderBudgetPolicy(
+                    max_concurrency=1,
+                    requests_per_second=None,
+                    max_attempts=1,
+                )
+            }
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work(value):
+            if value == 1:
+                started.set()
+                await release.wait()
+            return value
+
+        arguments = dict(
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "BINANCE",
+        )
+        first = asyncio.create_task(executor.execute((1,), deadline_ms=lambda _: 1_000, **arguments))
+        await started.wait()
+        queued = await executor.execute((2,), deadline_ms=lambda _: 10, **arguments)
+        self.assertFalse(queued[0].ok)
+        self.assertIn("deadline exceeded", str(queued[0].error))
+        release.set()
+        completed = await first
+        self.assertTrue(completed[0].ok)
+
     async def test_internal_stream_has_bounded_concurrency_without_external_pacing_or_retry(self):
         sleeps = []
         running = 0
@@ -1271,6 +1452,64 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
                 requirement, purpose=AccessPurpose.INTERNAL_ALPHA), "warmup-ok")
             self.assertEqual(set(service.warmup_executor._semaphores), {expected})
             self.assertEqual(set(service.warmup_executor._tokens), set() if local else {"OKX"})
+
+    async def test_query_local_batch_collocation_keeps_each_cache_read_deadline(self):
+        class Service(V2QueryService):
+            def __init__(self):
+                self.instruments = SimpleNamespace(get=lambda _: SimpleNamespace(
+                    identity=SimpleNamespace(venue="OKX")
+                ))
+                self.backend = SimpleNamespace(warmup_is_local=lambda _: True)
+                self.warmup_executor = BoundedWarmupExecutor(
+                    provider_policies={
+                        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                            max_concurrency=1,
+                            requests_per_second=None,
+                            max_attempts=1,
+                            max_pending=4,
+                            deadline_starts_after_admission=True,
+                        )
+                    }
+                )
+                self.last_batch_evidence = {}
+
+            def warmup(self, requirement, *, purpose, request_id=None):
+                del requirement, purpose, request_id
+                time.sleep(0.15)
+                return "warmup-ok"
+
+        def requirement(instrument_uid: str) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1, deadline_ms=400),
+            )
+
+        service = Service()
+        first = asyncio.create_task(service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="local-batch-a",
+                requirements=(requirement("local-a-1"), requirement("local-a-2")),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        ))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="local-batch-b",
+                requirements=(requirement("local-b-1"), requirement("local-b-2")),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        ))
+        first_result, second_result = await asyncio.gather(first, second)
+        self.assertEqual(
+            [item.status for item in first_result.results + second_result.results],
+            ["OK", "OK", "OK", "OK"],
+        )
+        self.assertEqual(service.warmup_executor._pending, {})
 
     async def test_retryable_local_cache_error_does_not_open_shared_circuit(self):
         unavailable_uid = BINANCE_ETH

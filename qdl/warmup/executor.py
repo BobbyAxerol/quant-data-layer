@@ -32,6 +32,13 @@ class ProviderBudgetPolicy:
     max_attempts: int = 4
     circuit_failures: int = 5
     circuit_cooldown_ms: int = 30_000
+    # Local durable-cache reads may wait for bounded CPU/SQLite admission before
+    # they begin useful work. Keep that queue finite, then measure the existing
+    # read deadline from admission rather than falsely calling queued work a
+    # provider outage. External providers intentionally retain end-to-end
+    # deadlines because their queue/pacing time is part of the venue boundary.
+    max_pending: int | None = None
+    deadline_starts_after_admission: bool = False
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
@@ -42,6 +49,8 @@ class ProviderBudgetPolicy:
             raise ValueError("provider attempts must be between 1 and 10")
         if self.circuit_failures < 1 or self.circuit_cooldown_ms < 1:
             raise ValueError("provider circuit policy values must be positive")
+        if self.max_pending is not None and not self.max_concurrency <= self.max_pending <= 8_192:
+            raise ValueError("provider pending admission must be between concurrency and 8192")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +87,11 @@ class BoundedWarmupExecutor(Generic[T, R]):
             max_concurrency=8,
             requests_per_second=None,
             max_attempts=1,
+            # Two manifest-legal maximum batches contain one hundred local
+            # reads. 128 bounds resident queue work while leaving headroom for
+            # one collocated consumer; excess work returns typed backpressure.
+            max_pending=128,
+            deadline_starts_after_admission=True,
         ),
         # A stable-stream read is already canonical, authenticated and local to
         # the V2 data plane. It still needs finite admission, but external
@@ -152,6 +166,8 @@ class BoundedWarmupExecutor(Generic[T, R]):
         self._inflight_lock = asyncio.Lock()
         self._rate_locks: dict[str, asyncio.Lock] = {}
         self._tokens: dict[str, _TokenState] = {}
+        self._pending: dict[str, int] = {}
+        self._pending_lock = asyncio.Lock()
         # Quota/concurrency are intentionally provider-wide, but one failing
         # route must not cool down a different instrument/feed or a newly
         # materialized generation. ``key`` passed below already carries the
@@ -162,6 +178,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
         self.singleflight_hits = 0
         self.retry_count = 0
         self.circuit_rejections = 0
+        self.admission_rejections = 0
 
     async def execute(
         self,
@@ -202,6 +219,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
         deadline_ms: int,
     ) -> WarmupExecution[T, R]:
         started = self._clock()
+        policy = self.provider_policies.get(provider_key, self.default_policy)
         shared = False
         attempts = 0
         try:
@@ -214,6 +232,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
                             work,
                             provider_key,
                             circuit_key=key,
+                            deadline_ms=deadline_ms,
                             deadline_at=started + deadline_ms / 1000,
                         )
                     )
@@ -225,9 +244,12 @@ class BoundedWarmupExecutor(Generic[T, R]):
                     self.singleflight_hits += 1
                 task = inflight.task
             try:
-                value, attempts = await asyncio.wait_for(
-                    asyncio.shield(task), timeout=deadline_ms / 1000
-                )
+                if policy.deadline_starts_after_admission:
+                    value, attempts = await asyncio.shield(task)
+                else:
+                    value, attempts = await asyncio.wait_for(
+                        asyncio.shield(task), timeout=deadline_ms / 1000
+                    )
                 return WarmupExecution(
                     item, value, None, attempts, shared,
                     (self._clock() - started) * 1000,
@@ -287,43 +309,91 @@ class BoundedWarmupExecutor(Generic[T, R]):
         provider: str,
         *,
         circuit_key: Hashable,
+        deadline_ms: int,
         deadline_at: float | None = None,
     ) -> tuple[R, int]:
         policy = self.provider_policies.get(provider, self.default_policy)
         semaphore = self._semaphores.setdefault(
             provider, asyncio.Semaphore(policy.max_concurrency)
         )
-        last_error: BaseException | None = None
-        for attempt in range(1, policy.max_attempts + 1):
-            await self._require_closed_circuit(provider, circuit_key)
-            try:
-                async with semaphore:
-                    await self._acquire_provider_token(provider, policy)
-                    self.source_calls += 1
-                    value = await work(item)
-                await self._record_success(circuit_key)
-                return value, attempt
-            except RetryableWarmupError as error:
-                error.warmup_attempts = attempt
-                last_error = error
-                open_until = await self._record_failure(circuit_key, policy)
-                if open_until:
-                    break
-                if attempt == policy.max_attempts:
-                    break
-                provider_delay = (error.retry_after_ms or 0) / 1000
-                exponential = min(4.0, 0.1 * (2 ** (attempt - 1)))
-                delay = max(provider_delay, exponential) + self._random() * 0.05
-                if deadline_at is not None and self._clock() + delay >= deadline_at:
-                    raise RetryableWarmupError(
-                        "provider retry delay exceeds the remaining bounded deadline",
-                        retry_after_ms=error.retry_after_ms,
-                        cause=error,
-                    ) from error
-                self.retry_count += 1
-                await self._sleep(delay)
-        assert last_error is not None
-        raise last_error
+        reserved = await self._reserve_pending(provider, policy)
+        execution_deadline_at: float | None = None
+        try:
+            last_error: BaseException | None = None
+            for attempt in range(1, policy.max_attempts + 1):
+                await self._require_closed_circuit(provider, circuit_key)
+                try:
+                    async with semaphore:
+                        if (
+                            policy.deadline_starts_after_admission
+                            and execution_deadline_at is None
+                        ):
+                            execution_deadline_at = self._clock() + deadline_ms / 1000
+                        await self._acquire_provider_token(provider, policy)
+                        self.source_calls += 1
+                        if execution_deadline_at is None:
+                            value = await work(item)
+                        else:
+                            remaining = execution_deadline_at - self._clock()
+                            if remaining <= 0:
+                                raise RetryableWarmupError(
+                                    f"warmup execution deadline exceeded after {deadline_ms}ms"
+                                )
+                            try:
+                                value = await asyncio.wait_for(work(item), timeout=remaining)
+                            except asyncio.TimeoutError as error:
+                                raise RetryableWarmupError(
+                                    f"warmup execution deadline exceeded after {deadline_ms}ms",
+                                    cause=error,
+                                ) from error
+                    await self._record_success(circuit_key)
+                    return value, attempt
+                except RetryableWarmupError as error:
+                    error.warmup_attempts = attempt
+                    last_error = error
+                    open_until = await self._record_failure(circuit_key, policy)
+                    if open_until:
+                        break
+                    if attempt == policy.max_attempts:
+                        break
+                    provider_delay = (error.retry_after_ms or 0) / 1000
+                    exponential = min(4.0, 0.1 * (2 ** (attempt - 1)))
+                    delay = max(provider_delay, exponential) + self._random() * 0.05
+                    active_deadline_at = execution_deadline_at or deadline_at
+                    if active_deadline_at is not None and self._clock() + delay >= active_deadline_at:
+                        raise RetryableWarmupError(
+                            "provider retry delay exceeds the remaining bounded deadline",
+                            retry_after_ms=error.retry_after_ms,
+                            cause=error,
+                        ) from error
+                    self.retry_count += 1
+                    await self._sleep(delay)
+            assert last_error is not None
+            raise last_error
+        finally:
+            if reserved:
+                await self._release_pending(provider)
+
+    async def _reserve_pending(self, provider: str, policy: ProviderBudgetPolicy) -> bool:
+        if policy.max_pending is None:
+            return False
+        async with self._pending_lock:
+            pending = self._pending.get(provider, 0)
+            if pending >= policy.max_pending:
+                self.admission_rejections += 1
+                raise RetryableWarmupError(
+                    f"bounded admission capacity is exhausted for {provider}"
+                )
+            self._pending[provider] = pending + 1
+        return True
+
+    async def _release_pending(self, provider: str) -> None:
+        async with self._pending_lock:
+            pending = self._pending.get(provider, 0)
+            if pending <= 1:
+                self._pending.pop(provider, None)
+            else:
+                self._pending[provider] = pending - 1
 
     async def _require_closed_circuit(self, provider: str, circuit_key: Hashable) -> None:
         async with self._circuit_lock:
@@ -395,4 +465,5 @@ class BoundedWarmupExecutor(Generic[T, R]):
             "singleflight_hits": self.singleflight_hits,
             "retry_count": self.retry_count,
             "circuit_rejections": self.circuit_rejections,
+            "admission_rejections": self.admission_rejections,
         }
