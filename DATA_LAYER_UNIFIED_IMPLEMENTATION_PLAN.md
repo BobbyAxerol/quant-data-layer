@@ -46199,6 +46199,72 @@ runtime restart/OOM or unbounded resource growth remains. The certificate must
 state limits honestly: DNSE/VN remains V1-primary until its market-hours
 certificate, and dark Spot/catalog entries are not V2 execution coverage.
 
+**C2 replacement source and bounded runtime decision (2026-09-20; prepared,
+not executed).** The first full C2 stopped fail-closed before its observation
+window when the secondary Query returned `SOURCE_UNAVAILABLE` for the entitled
+`OKX/SWAP/DOGE-USDT-SWAP/MARK_INDEX_PRICE` product. Read-only durable evidence
+showed a current canonical row and a direct authenticated active-stream probe
+served all ten declared Binance/OKX mark/index bindings. The defect is therefore
+the active-stream lease/promotion lifecycle: an empty in-memory execution view
+can exist until a later provider update even though the exact durable canonical
+row is available. It is not a DOGE exception, provider fallback, stale-policy
+relaxation, timestamp rewrite or manifest change.
+
+Source commit `1a9da358c853c224bdba517f791d309b774bdee1` hydrates only the
+exact declared MARK_INDEX bindings from the existing canonical spool when a
+stream newly acquires its lease. Hydration reuses normal identity/generation/
+gap/watermark validation, never publishes, calls a provider, rewrites source
+time, or writes spool state. Callback failure fences/releases the lease
+fail-closed. Source proof: `131` affected Python tests passed, Rust core/realtime
+tests passed `91` with one pre-existing optional Redis integration skip,
+`compileall` and `git diff --check` passed. The immutable candidate is
+`qdl-v2-python:2.0.26-1a9da35@sha256:c062ded23350de63661e6f93dc1c2ace7caa6d913a47ee7e18654050e8828b72`.
+
+The prepared replacement packet may recreate only, serially,
+`stream_v2_passive`, `query_v2_1`, `query_v2_2`, and `stream_v2_active`. It
+retains the exact existing sealed runtime
+`/home/bobby/.local/state/qdl-v2/r135-b2-335792a-20260920T015057Z/runtime`,
+identity/trust extension, TLS and state volumes, Kafka topology/offsets, Redis,
+SQLite, V1, Rust cores, ingestors, bar edge, projectors, Trading System, alpha
+and every order path. The exact rollback for each changed reader is
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`
+with the same runtime/config mounts. After each recreate require `healthy`,
+`restart=0`, `OOM=false`, a healthy unchanged peer, and an authenticated
+ten-binding mark/index active/passive preflight. Then run one new isolated,
+no-order, `require_all=true` C2 for the sealed `303` routes for `300` seconds.
+Any preflight/C2 failure stops the packet and rolls back only reader roles
+already changed; it cannot be relabelled C pass or trigger an unplanned repair.
+
+**C2 replacement execution (`FAIL-CLOSED / ROLLBACK REQUIRED`, 2026-09-20).**
+The first invocation of the disposable client was rejected before it reached
+any Data Layer endpoint because the copied harness had an unreadable
+drop-privilege script and a malformed local heredoc. The harness-only defect
+was corrected in the disposable packet; no route, provider, consumer or
+runtime service result was inherited from that invocation. The replacement
+client then ran with the candidate reader image and the four readers stayed
+`healthy`, `restart=0`, `OOM=false`. It stopped during the opening exhaustive
+product read, before the 300-second observation, at the independent product
+`alpha.okx.paper.stable / OKX.SWAP.PERPETUAL.DOGE-USDT / BAR / 12h` because the
+SDK correctly returned `required feed has an unresolved sequence gap`.
+
+This is a genuine full-C2 failure, not a MARK/INDEX hydration regression,
+timeout, quota error, fallback, direct-provider request or order mutation. The
+acceptance cancelled its remaining active products and emitted no success
+certificate. The evidence is bounded at
+`/home/bobby/.local/state/qdl-v2/r135-c-hydrate-1a9da35-20260920T033124Z/c2-full/evidence/`.
+Per the sealed rollback policy, the four reader roles must return to
+`sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`
+before any read-only investigation of the exact BAR sequence/generation state.
+R1.35-C remains `IN_PROGRESS`; no release, merge or cleanup is permitted from
+this result.
+
+**Rollback confirmation.** The packet restored exactly `stream_v2_passive`,
+`query_v2_1`, `query_v2_2` and `stream_v2_active` to the recorded
+`sha256:8c53d...168c5c` image. Each is `healthy`, `restart=0`, `OOM=false` and
+again mounts the unchanged sealed runtime directory. No other named service was
+recreated and no durable store, offset, credential, manifest, consumer, alpha
+or order state was modified.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
