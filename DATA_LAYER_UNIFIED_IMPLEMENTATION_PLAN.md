@@ -46548,6 +46548,19 @@ alpha and order path remain untouched. C2 has not run. The next and only
 remaining acceptance action in this packet is the approved disposable,
 no-order, `303`-route, `require_all=true` observation for `300` seconds.
 
+**C2 bootstrap permission fence (`FAIL-CLOSED / NO ROUTE EXECUTED`, 2026-09-20).**
+The disposable client exited `2` before the acceptance process began. Its
+root bootstrap correctly dropped to UID/GID `10001`, but the mounted
+`/run-c2-full.sh` packet script was not readable by that non-root identity;
+the original runner reported `cannot open /run-c2-full.sh: Permission denied`.
+There is no acceptance receipt, provider request, order/signal/sizing action,
+or runtime mutation from this attempt. The in-scope packet repair is only to
+make that reviewed, secret-free shell script readable (`0644`) while identities
+remain copied only inside the client tmpfs and all secret mounts remain
+read-only/non-printed. The four candidate readers remain healthy. A new C2
+client after that bootstrap repair is the first actual `300`-second observation;
+the rejected bootstrap is not counted as a C2 retry.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
