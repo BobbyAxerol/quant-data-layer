@@ -44829,6 +44829,28 @@ previous unused B1 candidate image and the failed B2 packet are retained only
 until a replacement candidate passes, then enter the exact R1.35-D cleanup
 inventory; no broad prune is authorized.
 
+**B2 replacement packet preflight (2026-09-20; PASS / not rolled).** Built
+the one replacement Python reader image from source commit
+`2ce8f1da2767c9cca8c0a0291019492c164876b5`:
+`qdl-v2-python:2.0.26-2ce8f1d@sha256:c8177013b6fce1d9cf32c08acf847a3101745f9803965f54f571306ddbd4d4f3`.
+Its non-root, read-only, no-network packaged-config smoke passed with
+`catalog=216`, `acquisition=216`, `scope=206`, `route=20`. The sealed packet
+is `/home/bobby/.local/state/qdl-v2/r135-b2-onchange-2ce8f1d-20260920T001000Z`;
+its `packet.json` records no secret values and an exact per-role rollback map.
+It copies the active runtime as baseline, retains byte-identical
+authority/core/ingestor/acquisition/promotion/demand files, and changes only
+the B1 catalog plus stable/C2 routing files. Candidate scope is exactly
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`.
+Rollback is exact: Query roles restore
+`sha256:1ad34175322f2f8eec34b3e772e3935d999248e40432ecf5852f832df1dfa88d`
+and stream roles restore
+`sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`,
+all against the current active runtime directory. Candidate and rollback
+Compose renders both passed with `config --quiet`; no role has been recreated
+and no data-plane state has changed. The next action is the declared
+four-role rolling B2 acceptance packet, followed by exactly one strict C2;
+Phase 3 remains blocked until that C2 result.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
