@@ -45208,6 +45208,35 @@ four-reader candidate recreation followed by one `require_all=true`, 300-second
 no-order C2 using `executor_network`; a nonzero result restores exactly the
 same four roles and stops B2.
 
+**B2 first C2 attempt and rollback (2026-09-20; launcher evidence only,
+`NOT AN ACCEPTANCE RECEIPT`).** The four readers were serially recreated to the
+candidate and each reached `healthy`, `restart=0`, `OOMKilled=false`, then the
+disposable client reached the unprivileged boundary (`uid=10001`, empty
+effective/permitted/inheritable/ambient capabilities, `NoNewPrivs=1`). It
+stopped before the 300-second observation with
+`workload token verification failed`; the compact stderr hash is
+`368126f737990b7ad894c0eb30c5ceeda543d639293f9e1bad66ebc9c5a2fa0f` and
+there is no acceptance payload. Read-only public-key fingerprints identified
+the packet error: its historical identity extension signed
+`stable-trading-system-rs256-v1` with `92ba5cb8...e83433`, while both Query
+keyrings trust the canonical current Trading System key
+`e922a8da...4a0683`. The canonical bundle's private/public pair matches that
+trusted fingerprint exactly. This is identity-selection/provenance error in
+the disposable packet, not a reader, provider, quote-quality or data-plane
+failure. The packet immediately restored exactly the four named readers to
+their prior images/runtime mounts; each is healthy, `restart=0`,
+`OOMKilled=false`. No V1/Rust/ingestor/projector/Kafka/Redis/SQLite/Trading
+System/alpha/order object changed, no provider credential was mounted, and no
+order/signal/sizing mutation occurred.
+
+The replacement launcher now mounts only the canonical matching identity. A
+network-disabled bootstrap proof with that same root-only bootstrap boundary
+has passed; its child is UID `10001`, capability-empty and
+`NoNewPrivs=1`. It made no endpoint request. This permits one replacement B2
+rolling/C2 packet on the unchanged image/runtime candidate; it is not a
+luck-based repeat because the authenticated identity presented to the server is
+different and now fingerprint-bound to the server's configured public key.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
