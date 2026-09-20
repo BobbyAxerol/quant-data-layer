@@ -46561,6 +46561,31 @@ read-only/non-printed. The four candidate readers remain healthy. A new C2
 client after that bootstrap repair is the first actual `300`-second observation;
 the rejected bootstrap is not counted as a C2 retry.
 
+**C2 opening-budget failure (`FAIL-CLOSED / ROLLBACK REQUIRED`, 2026-09-20).**
+The first actual client ran, retained the privilege-drop proof, then exited `1`
+before `C2_OPENING_PASS`; `acceptance.json` is empty and the bounded stderr
+shows `asyncio.TimeoutError` at the sealed `900s` opening deadline. The
+cancelled tail was `alpha.okx.paper.stable` `TRADE`/`QUOTE`, specifically while
+the C2-local `_C2ConsumerRequestPacer` waited for its next permitted request.
+This is not a provider, Query, stream, source-quality, manifest, identity or
+order-path rejection: the probe deliberately serializes every real request per
+consumer at 75 percent of its manifest quota and its fixed opening deadline is
+too small for the complete `303`-route proof. No receipt, fallback success,
+provider mutation, order/signal/sizing action or release evidence was emitted.
+The `--rm` client removed itself; its only persisted artifacts are bounded
+stderr, exit code and privilege proof in this packet.
+
+Per the sealed failure policy, rollback exactly the four reader roles to
+`sha256:8c53d37f...01668c5c` before any retry. The only admitted correction is
+an offline, scope-derived C2 opening budget computed from the sealed product
+count, request shape and each real consumer's declared quota at the existing
+75-percent pacer fraction. It may increase the acceptance *deadline* only up
+to the existing parser maximum, never change quota, concurrency, product scope,
+quality SLA, source, route, identity, fallback policy or runtime topology. If
+the calculated proof cannot fit that bound, C remains failed rather than
+relaxing coverage. A new client after the calculation and rollback is a fresh
+acceptance attempt, not inherited evidence.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
