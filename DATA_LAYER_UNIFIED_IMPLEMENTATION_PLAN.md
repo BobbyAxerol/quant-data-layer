@@ -45338,6 +45338,32 @@ consumer routes, provider credentials, alpha, Trading System or the order
 path. The next C evidence must then cover all `299` V2-primary routes under
 their own identities on both replicas.
 
+**C identity packet preflight (2026-09-20; `PREPARED_NOT_ROLLED`).** The
+sealed state-only packet is
+`/home/bobby/.local/state/qdl-v2/r135-c-identity-20260920T023708Z/`. It uses
+the active reader image
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`
+and the current B2 runtime directory unchanged. It generates an external CA
+and exactly Monitoring/Alpha-OKX client/JWT identities; its generator deletes
+the external CA private key before return. The preflight records only hashes:
+trust `441af369...e874 -> 6fbfb41e...6dd1`, rollout environment
+`66b5fce5...b99a -> 2333afeb...acc5`, and replacement public-key fingerprints
+for `stable-monitoring-rs256-v1` and `stable-alpha-okx-rs256-v1`. Existing
+Trading System, Alpha-Binance and Reference-L2 key entries are byte-preserved.
+The exact rollback retains the old environment and query/stream client trust
+bundles in the same protected packet.
+
+The generated `roll-readers.sh` and `rollback-readers.sh` passed `bash -n`.
+An exact Compose render over the currently deployed 22-file configuration
+chain proves that, for `query_v2_1`, `query_v2_2`, `stream_v2_active` and
+`stream_v2_passive`, the candidate changes only
+`QDL_DATA_JWT_KEYS_JSON`; image, command, user, runtime mount, state/TLS
+volumes, network, healthcheck and CPU/RAM limits are identical. No provider,
+runtime, container, trust volume or consumer request has yet been changed.
+The next bounded action is a serial recreation of exactly those four readers;
+any health/OOM failure invokes that packet's exact reader/trust rollback before
+the all-identity C2 starts.
+
 ##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
 
 **Goal.** Close the release without leaving test containers, images, cache,
