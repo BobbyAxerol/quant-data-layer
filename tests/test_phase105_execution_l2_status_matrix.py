@@ -17,37 +17,52 @@ from scripts.phase105_execution_l2_status_matrix import (
     execution_book_products,
     ready_book_row,
     replica_parity,
+    source_pair_ready,
     _read_one,
 )
 
 
-def _ready_row(*, source_id: str = "source-1", native_symbol: str = "BTCUSDT") -> dict[str, object]:
+def _ready_row(
+    *,
+    source_id: str = "source-1",
+    native_symbol: str = "BTCUSDT",
+    feed: str = "BOOK_SNAPSHOT",
+    generation: int = 1,
+) -> dict[str, object]:
+    view = {
+        "feed": feed,
+        "sequence_verified": True,
+        "book_generation": generation,
+        "watermark_offset": 12,
+        "complete": True,
+        "gap_open": False,
+        "execution_eligible": True,
+        "sequence_present": True,
+    }
+    if feed == "BOOK_SNAPSHOT":
+        view["depth"] = 100
+    else:
+        view["reset"] = False
     return {
         "instrument_uid": "instrument-1",
         "venue": "BINANCE",
         "market": "USDM",
         "native_symbol": native_symbol,
-        "feed": "BOOK_SNAPSHOT",
+        "feed": feed,
         "source_policy_id": "crypto_primary_v2",
         "source_id": source_id,
-        "depth": 100,
         "typed_status": {
             "quality": {
                 "state": "LIVE",
                 "complete": True,
                 "gap_open": False,
                 "execution_eligible": True,
-            }
+                "provider_session_state": "LIVE",
+                "provider_session_liveness_ms": 1,
+            },
+            "flags": [],
         },
-        "snapshot": {
-            "sequence_verified": True,
-            "book_generation": 1,
-            "depth": 100,
-            "watermark_offset": 12,
-            "complete": True,
-            "gap_open": False,
-            "execution_eligible": True,
-        },
+        "view": view,
     }
 
 
@@ -57,14 +72,14 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
         cls.catalog = StableSourceCatalog.load(DEFAULT_CATALOG)
         cls.acquisition = StableAcquisitionPlan.load(DEFAULT_ACQUISITION, catalog=cls.catalog)
 
-    def test_declared_execution_matrix_is_exactly_ten_physical_books(self) -> None:
+    def test_declared_execution_matrix_is_exactly_ten_snapshot_delta_pairs(self) -> None:
         products = execution_book_products(
             catalog=self.catalog,
             acquisition=self.acquisition,
             execution_demand=DEFAULT_EXECUTION_DEMAND,
             trading_manifest=DEFAULT_TRADING_MANIFEST,
         )
-        self.assertEqual(len(products), 10)
+        self.assertEqual(len(products), 20)
         self.assertEqual(
             {(item.venue, item.native_symbol) for item in products},
             {
@@ -80,6 +95,18 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
                     "DOGE-USDT-SWAP",
                     "BNB-USDT-SWAP",
                 )
+            },
+        )
+        self.assertEqual(
+            {(item.venue, item.native_symbol, item.feed.value) for item in products},
+            {
+                (venue, symbol, feed)
+                for venue, symbols in {
+                    "BINANCE": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"),
+                    "OKX": ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", "BNB-USDT-SWAP"),
+                }.items()
+                for symbol in symbols
+                for feed in ("BOOK_SNAPSHOT", "BOOK_DELTA")
             },
         )
 
@@ -98,8 +125,11 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
                     }
                 },
             ),
-            ("snapshot", {**row["snapshot"], "sequence_verified": False}),
-            ("snapshot", {**row["snapshot"], "book_generation": 0}),
+            ("view", {**row["view"], "sequence_verified": False}),
+            ("view", {**row["view"], "book_generation": 0}),
+            ("typed_status", {
+                **row["typed_status"], "flags": ["SOURCE_SESSION_UNAVAILABLE"],
+            }),
         ):
             with self.subTest(field=field):
                 changed = dict(row)
@@ -112,6 +142,36 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
         self.assertTrue(replica_parity(primary, duplicate_ready))
         cross_book = _ready_row(source_id="source-other", native_symbol="ETHUSDT")
         self.assertFalse(replica_parity(primary, cross_book))
+
+    def test_source_pair_rejects_missing_delta_or_generation_mismatch(self) -> None:
+        snapshot = _ready_row(feed="BOOK_SNAPSHOT")
+        delta = _ready_row(feed="BOOK_DELTA")
+        self.assertTrue(source_pair_ready((snapshot, delta)))
+        self.assertFalse(source_pair_ready((snapshot,)))
+        self.assertFalse(source_pair_ready((snapshot, _ready_row(
+            feed="BOOK_DELTA", generation=2,
+        ))))
+        self.assertFalse(source_pair_ready((snapshot, _ready_row(
+            feed="BOOK_DELTA", source_id="other-source",
+        ))))
+
+    def test_quiet_live_delta_remains_continuity_ready_but_disconnect_blocks(self) -> None:
+        delta = _ready_row(feed="BOOK_DELTA")
+        delta["typed_status"]["quality"].update({
+            "event_recency_state": "STALE",
+            "execution_eligible": False,
+        })
+        delta["view"]["execution_eligible"] = False
+        self.assertTrue(ready_book_row(delta))
+        blocked = dict(delta)
+        blocked["typed_status"] = {
+            **delta["typed_status"],
+            "quality": {
+                **delta["typed_status"]["quality"],
+                "provider_session_state": "DISCONNECTED",
+            },
+        }
+        self.assertFalse(ready_book_row(blocked))
 
 
 class ExecutionL2StatusMatrixReadTests(unittest.IsolatedAsyncioTestCase):
@@ -154,7 +214,7 @@ class ExecutionL2StatusMatrixReadTests(unittest.IsolatedAsyncioTestCase):
             "detail": "query replica unavailable",
         })
         self.assertIsNone(row["typed_status"])
-        self.assertIsNone(row["snapshot"])
+        self.assertIsNone(row["view"])
         self.assertFalse(ready_book_row(row))
         self.assertFalse(row["payload_recorded"])
 

@@ -46943,6 +46943,101 @@ unchanged.
   exactly one 300-second C2 with this same client image and the unchanged
   reader digest.
 
+**L2 fast-matrix closure (`IN_PROGRESS / PRE-C2 / NO RUNTIME MUTATION`, 2026-09-20).**
+
+- The corrected client image ran the real both-replica preflight. It did not
+  reach C2. The bounded receipt identified one strict `PARTIAL_RESULT` in the
+  `trading-system.paper.stable` secondary `BOOK_DELTA` batch: the current
+  `OKX.SWAP.PERPETUAL.ETH-USDT` row reported
+  `SOURCE_SESSION_UNAVAILABLE`/`SOURCE_SESSION_UNKNOWN`, `gap_open=false`.
+  The isolated leaf read recovered before diagnosis, so this is neither a
+  proven provider outage nor evidence that a partial response was used.
+- A control-plane inspection shows both Query replicas share the same
+  `stable_state` liveness volume. An OKX lane had rolled to a newer source
+  session/generation while the durable latest delta still named the preceding
+  session. The existing fail-closed result is correct: a pre-reconnect book
+  may not inherit liveness from a new session. What remains to prove is that
+  the shared materializer promptly publishes a verified current-generation
+  snapshot/delta pair rather than leaving a replica intermittently stuck.
+- **Bounded source scope:** extend the existing execution-L2 fast matrix from
+  ten `BOOK_SNAPSHOT` rows to the exact manifest-derived ten physical
+  snapshot/delta pairs, through both Query replicas. It records only product
+  identity, feed, source identity, generation/sequence verification, compact
+  session/gap/quality state and hashes; it never retains levels, prices,
+  credentials or cursors. The matrix must reject cross-book identity, an
+  unknown/disconnected/stale session, old generation, duplicate/gap/resync,
+  incomplete depth or replica disagreement. `BOOK_SNAPSHOT` is the
+  price-bearing execution view and must be execution eligible; `BOOK_DELTA`
+  is continuity/sequence evidence and may be quiet while its session remains
+  live, verified and gap-free. It must not change the declared
+  provider refresh cadence, loosen a liveness/freshness policy, add topology,
+  open a stream, invoke V1/provider-direct reads, or issue an order.
+- **Fast gates:** (1) deterministic Python/Rust-facing tests cover
+  quiet/live, disconnect, reconnect generation change, duplicate/gap/resync,
+  source-pair identity and both-replica parity for all ten logical books;
+  (2) one bounded real read-only stability window samples the twenty logical
+  L2 rows through both replicas several times after the current session
+  generation has settled; (3) rerun the all-scope read-plane preflight once.
+  A typed failure carries product identity, code, flags and quality hash and
+  routes to the owning layer. Only all three green gates permit the one final
+  C2 300-second consumer certificate.
+- **Exit/rollback:** no runtime image or durable-state mutation is authorized
+  by this source diagnostic. If current-generation materialization does not
+  settle, C2 remains blocked and the repair targets the shared Rust/core
+  lineage or liveness projection with a separate bounded packet; retrying C2
+  or relaxing a session SLA is forbidden.
+
+**L2 fast-matrix evidence checkpoint (`PASS / ALL-SCOPE PREFLIGHT STILL REQUIRED`, 2026-09-20).**
+
+- The matrix now derives all ten manifest-backed physical books as twenty
+  typed products (`BOOK_SNAPSHOT` plus `BOOK_DELTA` for each source), rejects
+  a missing/mismatched pair or generation, and retains only compact control
+  facts. Its source regressions plus adjacent identity/SDK projection coverage
+  passed `49/49`; the targeted L2 protocol suite passed `81/81`; the Rust
+  `qdl-realtime-core` L2 gap/resync/materialization suite passed `8/8` in an
+  isolated, network-disabled, one-job, `1.5 GiB`-capped disposable builder.
+- A real no-stream/no-fallback/no-order matrix used the sealed Trading System
+  V2 identity and both active Query replicas. It passed `3/3` two-second
+  rounds for all ten physical pairs (`20` products, two replicas), including
+  the formerly failing OKX ETH `BOOK_DELTA`: both replicas reported a verified
+  current generation, `LIVE` session and no gap. The corresponding
+  `BOOK_SNAPSHOT` was execution-eligible; delta is recorded as continuity
+  evidence rather than a price-bearing execution view. The bounded receipt is
+  retained only under the existing R1.35 packet evidence namespace; it
+  contains no levels, prices, credentials or cursors.
+- This proves the observed transition settled correctly; it does not erase
+  the earlier typed failure or certify C2. Remaining source gate: rerun the
+  compact diagnostic, build one immutable disposable client image from that
+  commit, then run the all-scope two-replica read-plane preflight once. The
+  affected C2/quality/receipt suite passed `161/161` in the same immutable,
+  network-disabled test environment. A preflight pass alone unlocks the
+  single final C2 300-second run.
+
+**L2 quiet-feed semantics and fast-gate regression (`PASS / PRE-C2`, 2026-09-20).**
+
+- The fast matrix now enforces the declared product semantics rather than one
+  generic event-age rule: `BOOK_SNAPSHOT` must be a depth-`>=100`, verified,
+  gap-free and execution-eligible price view; `BOOK_DELTA` must be a verified,
+  same-generation, gap-free, non-reset continuity view with a `LIVE` bounded
+  provider session. A quiet delta may have `event_recency_state=STALE` and
+  remain continuity-ready; a disconnected, unknown or generation-mismatched
+  session remains fail-closed. This does not weaken execution-price policy.
+- The compact pre-C2 matrix now reads both feed halves for every manifest
+  execution-L2 source through both Query replicas over several rounds. It
+  rejects a missing pair, identity cross-mix, generation disagreement,
+  duplicate/gap/resync, session loss and replica disagreement before C2. It
+  retains only product identity, typed code/flags, compact quality facts and
+  a quality hash; it never opens a consumer stream, calls a provider directly,
+  falls back to V1, retains book payload or emits an order.
+- In the disposable `37c5acb` client image with source mounted read-only,
+  network disabled, tmpfs-only bytecode state and no runtime mutation:
+  `py_compile` plus the matrix/identity/SDK projection/L2 protocol/C2
+  quality/receipt/warmup suite passed `199/199`. This is the fast diagnostic
+  gate replacing speculative C2 retries. The next source action is to commit
+  this matrix-only slice, bind one immutable disposable client image to it,
+  then run one all-scope preflight. Only a green preflight permits the single
+  final `C2 300s` certificate.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
