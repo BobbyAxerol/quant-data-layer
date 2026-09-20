@@ -46451,6 +46451,19 @@ its rollback guard invokes rollback only for roles actually recreated. This
 packet has not run `up`, did not restart a role, and does not authorize the
 following `300`-second C2 itself.
 
+**C2 runner preflight (`PASS / NOT RUN`, 2026-09-20).** The same operator-only
+packet now contains one exact no-order C2 client launcher. Its packet descriptor
+SHA-256 is `46690e2724af60431ea50daced7edfe5b385f879f098045e44b6a51fcfa6dc64`.
+The C2 bootstrap and acceptance command are byte-identical to the prior
+reviewed runner; only the candidate image/digest, packet path, evidence
+namespace and disposable client container name differ. Static shell checks
+passed for packet scripts, and C2 preserves four identities, both query
+replicas, both stream endpoints, V1 fallback policy, signed cursor/reconnect,
+`require_all=true`, the full `303`-route scope and an observation of exactly
+`300` seconds. It mounts identities/runtime read-only, drops privileges before
+the client, creates no order/signal/sizing mutation, and removes its client
+container on exit. It has not been executed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
