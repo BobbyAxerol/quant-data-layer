@@ -1764,12 +1764,13 @@ async def _strict_bar_collocation_matrix(
     timeout_seconds: float,
     client_factories: Mapping[str, Callable],
     revalidate=None,
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
     """Reproduce only shared local-lane contention across governed identities."""
 
     runner = _closing_batch_revalidation if revalidate is None else revalidate
     routes = {item.consumer_id: item for item in release.consumers}
     selected: list[tuple[str, int, tuple[AcceptanceProduct, ...]]] = []
+    not_applicable: list[dict[str, object]] = []
     for consumer_id in consumer_ids:
         route = routes.get(consumer_id)
         if route is None:
@@ -1778,6 +1779,14 @@ async def _strict_bar_collocation_matrix(
             item for item in scope.products
             if item.consumer_id == consumer_id and item.delivery is not DeliveryClass.ON_DEMAND
         )
+        if not any(item.feed is FeedType.BAR for item in stream_products):
+            not_applicable.append({
+                "consumer_id": consumer_id,
+                "status": "NOT_APPLICABLE_NO_DURABLE_BAR",
+                "read_actions": 0,
+                "payload_recorded": False,
+            })
+            continue
         batch = _largest_bar_batch(
             stream_products,
             max_batch_items=route.manifest.quotas.max_batch_items,
@@ -1812,10 +1821,19 @@ async def _strict_bar_collocation_matrix(
             window_index=0,
         )
 
-    return list(await _gather_or_cancel(tuple(
-        asyncio.create_task(run_one(consumer_id, shape, batch))
-        for consumer_id, shape, batch in selected
-    )))
+    executed = (
+        list(await _gather_or_cancel(tuple(
+            asyncio.create_task(run_one(consumer_id, shape, batch))
+            for consumer_id, shape, batch in selected
+        )))
+        if selected
+        else []
+    )
+    return {
+        "executed": executed,
+        "not_applicable": not_applicable,
+        "payload_recorded": False,
+    }
 
 
 async def _read_plane_preflight(

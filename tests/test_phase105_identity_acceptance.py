@@ -301,17 +301,24 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
         self.assertEqual(raised.exception.evidence["transport_error_code"], "PARTIAL_RESULT")
         self.assertFalse(raised.exception.evidence["payload_recorded"])
 
-    def test_strict_bar_collocation_matrix_uses_one_maximum_batch_per_consumer(self) -> None:
+    def test_strict_bar_collocation_matrix_skips_consumers_without_durable_bar(self) -> None:
         consumer_ids = tuple(IDENTITY_PREFIXES)
+        non_bar_consumer = consumer_ids[0]
         products = tuple(
             SimpleNamespace(
                 consumer_id=consumer_id,
                 instrument_uid=f"{consumer_id}-{index}",
-                feed=FeedType.BAR,
+                feed=(FeedType.QUOTE if consumer_id == non_bar_consumer else FeedType.BAR),
                 interval=f"{index + 1}m",
                 source_policy_id="crypto_primary_v2",
                 delivery=DeliveryClass.DURABLE,
-                identity=(consumer_id, f"{consumer_id}-{index}", "BAR", f"{index + 1}m", "crypto_primary_v2"),
+                identity=(
+                    consumer_id,
+                    f"{consumer_id}-{index}",
+                    "QUOTE" if consumer_id == non_bar_consumer else "BAR",
+                    f"{index + 1}m",
+                    "crypto_primary_v2",
+                ),
             )
             for consumer_id in consumer_ids
             for index in range(50)
@@ -357,8 +364,15 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
             client_factories={consumer_id: object() for consumer_id in consumer_ids},
             revalidate=revalidate,
         ))
-        self.assertCountEqual(calls, [(consumer_id, 50, 50) for consumer_id in consumer_ids])
-        self.assertEqual(len(evidence), len(consumer_ids))
+        bar_consumers = [consumer_id for consumer_id in consumer_ids if consumer_id != non_bar_consumer]
+        self.assertCountEqual(calls, [(consumer_id, 50, 50) for consumer_id in bar_consumers])
+        self.assertEqual(len(evidence["executed"]), len(bar_consumers))
+        self.assertEqual(evidence["not_applicable"], [{
+            "consumer_id": non_bar_consumer,
+            "status": "NOT_APPLICABLE_NO_DURABLE_BAR",
+            "read_actions": 0,
+            "payload_recorded": False,
+        }])
 
     def test_typed_c2_product_failure_keeps_status_without_market_payload(self) -> None:
         status = FeedStatusResponse.model_validate({

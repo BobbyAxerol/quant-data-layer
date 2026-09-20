@@ -47113,6 +47113,21 @@ unchanged.
   `tests.test_phase10_universal_warmup` suite passed `86/86`. No runtime role,
   Kafka, Redis, SQLite, V1, consumer, alpha or order state changed.
 
+- **Harness applicability correction (`PASS / SOURCE-ONLY / REAL MATRIX RETRY`,
+  2026-09-20).** The first client launch reached the new collocation phase and
+  exposed a harness assumption, not a Query/data result: one governed identity
+  has no durable `BAR` entitlement, so an unconditional “one BAR lane per
+  identity” raised before a receipt could be emitted. The matrix now executes
+  only identities with an entitled durable BAR lane and records every other
+  identity as `NOT_APPLICABLE_NO_DURABLE_BAR` with `read_actions=0`; it neither
+  substitutes a feed nor weakens the affected `alpha.okx.paper.stable` exact
+  `50`-BAR test. Read-only, network-disabled
+  `tests.test_phase105_identity_acceptance` passed `37/37`, including the
+  no-BAR collocation regression. The discarded named bootstrap diagnostic was
+  removed; no Query/Stream role, Kafka, Redis, SQLite, V1, consumer, alpha,
+  order or provider path changed. The actual matrix has not yet produced a
+  data receipt and C2 remains unconsumed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
