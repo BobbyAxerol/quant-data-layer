@@ -46521,6 +46521,19 @@ the candidate binary, service set, mount, source policy or accepted rollback.
 The next retry remains the same four distinct roles and the same single C2;
 this failed fence supplies no acceptance evidence.
 
+**Operator transport correction (`IN_PROGRESS / SAME PACKET`, 2026-09-20).**
+The execution shell used for the packet terminates a foreground orchestration
+process at its short tool window and does not preserve detached host children;
+the trace stopped during a normal `starting` health poll and the detached
+wrapper left no exit file. This is not a reader, lease, image or data-plane
+failure. The all-rollback baseline is again confirmed. The same approved packet
+will therefore be executed as four individual Compose recreates with the same
+override chain, candidate digest, role order, mount checks and rollback digest;
+after every recreate a separate bounded health/lease observation is recorded.
+No extra role, image, service, topology or C2 invocation is introduced. The
+final C2 will likewise use a disposable Docker-contained client so its
+300-second observation is not subject to the host shell window.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
