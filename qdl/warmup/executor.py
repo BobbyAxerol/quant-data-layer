@@ -39,6 +39,10 @@ class ProviderBudgetPolicy:
     # deadlines because their queue/pacing time is part of the venue boundary.
     max_pending: int | None = None
     deadline_starts_after_admission: bool = False
+    # A request-local gate stops one legal large local-cache batch from
+    # monopolising every global worker before a collocated batch gets a turn.
+    # It is intentionally absent from external provider lanes.
+    max_batch_concurrency: int | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
@@ -51,6 +55,11 @@ class ProviderBudgetPolicy:
             raise ValueError("provider circuit policy values must be positive")
         if self.max_pending is not None and not self.max_concurrency <= self.max_pending <= 8_192:
             raise ValueError("provider pending admission must be between concurrency and 8192")
+        if (
+            self.max_batch_concurrency is not None
+            and not 1 <= self.max_batch_concurrency <= self.max_concurrency
+        ):
+            raise ValueError("provider batch concurrency must be between 1 and concurrency")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +101,10 @@ class BoundedWarmupExecutor(Generic[T, R]):
             # one collocated consumer; excess work returns typed backpressure.
             max_pending=128,
             deadline_starts_after_admission=True,
+            # Reserve four of the eight global permits for a second legal
+            # local batch. This is a request-local fairness gate, not a venue
+            # quota or a new data-plane queue.
+            max_batch_concurrency=4,
         ),
         # A stable-stream read is already canonical, authenticated and local to
         # the V2 data plane. It still needs finite admission, but external
@@ -191,14 +204,23 @@ class BoundedWarmupExecutor(Generic[T, R]):
     ) -> tuple[WarmupExecution[T, R], ...]:
         values = tuple(items)
         tasks = []
+        batch_gates: dict[str, asyncio.Semaphore] = {}
         for item in values:
             provider_key = provider(item).upper()
+            policy = self.provider_policies.get(provider_key, self.default_policy)
+            batch_gate = None
+            if policy.max_batch_concurrency is not None:
+                batch_gate = batch_gates.setdefault(
+                    provider_key,
+                    asyncio.Semaphore(policy.max_batch_concurrency),
+                )
             tasks.append(asyncio.create_task(self._one(
                 item,
                 work=work,
                 key=(provider_key, identity(item)),
                 provider_key=provider_key,
                 deadline_ms=deadline_ms(item),
+                batch_gate=batch_gate,
             )))
         tasks = tuple(tasks)
         try:
@@ -217,6 +239,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
         key: Hashable,
         provider_key: str,
         deadline_ms: int,
+        batch_gate: asyncio.Semaphore | None,
     ) -> WarmupExecution[T, R]:
         started = self._clock()
         policy = self.provider_policies.get(provider_key, self.default_policy)
@@ -234,6 +257,7 @@ class BoundedWarmupExecutor(Generic[T, R]):
                             circuit_key=key,
                             deadline_ms=deadline_ms,
                             deadline_at=started + deadline_ms / 1000,
+                            batch_gate=batch_gate,
                         )
                     )
                     inflight = _Inflight(task=task, waiters=1)
@@ -311,14 +335,19 @@ class BoundedWarmupExecutor(Generic[T, R]):
         circuit_key: Hashable,
         deadline_ms: int,
         deadline_at: float | None = None,
+        batch_gate: asyncio.Semaphore | None = None,
     ) -> tuple[R, int]:
         policy = self.provider_policies.get(provider, self.default_policy)
         semaphore = self._semaphores.setdefault(
             provider, asyncio.Semaphore(policy.max_concurrency)
         )
         reserved = await self._reserve_pending(provider, policy)
+        batch_admitted = False
         execution_deadline_at: float | None = None
         try:
+            if batch_gate is not None:
+                await batch_gate.acquire()
+                batch_admitted = True
             last_error: BaseException | None = None
             for attempt in range(1, policy.max_attempts + 1):
                 await self._require_closed_circuit(provider, circuit_key)
@@ -371,6 +400,8 @@ class BoundedWarmupExecutor(Generic[T, R]):
             assert last_error is not None
             raise last_error
         finally:
+            if batch_admitted:
+                batch_gate.release()
             if reserved:
                 await self._release_pending(provider)
 

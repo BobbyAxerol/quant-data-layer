@@ -473,6 +473,91 @@ class WarmupExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(max(item.elapsed_ms for item in one + two), 40.0)
         self.assertEqual(executor._pending, {})
 
+    async def test_local_batch_gate_gives_a_collocated_batch_a_worker_turn(self):
+        executor = BoundedWarmupExecutor[str, str](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=2,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=8,
+                    deadline_starts_after_admission=True,
+                    max_batch_concurrency=1,
+                )
+            }
+        )
+        started: list[str] = []
+        both_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work(value: str) -> str:
+            started.append(value)
+            if len(started) == 2:
+                both_started.set()
+            await release.wait()
+            return value
+
+        arguments = dict(
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 1_000,
+        )
+        first = asyncio.create_task(executor.execute(("a1", "a2"), **arguments))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(executor.execute(("b1", "b2"), **arguments))
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+
+        # The first batch cannot reserve both global workers while the second
+        # legal batch is waiting. This is a local fairness contract, not a
+        # provider pacing policy.
+        self.assertEqual(set(started[:2]), {"a1", "b1"})
+        release.set()
+        first_result, second_result = await asyncio.gather(first, second)
+        self.assertTrue(all(item.ok for item in first_result + second_result))
+        self.assertEqual(executor._pending, {})
+
+    async def test_local_batch_gate_wait_does_not_spend_admitted_read_deadline(self):
+        executor = BoundedWarmupExecutor[int, int](
+            provider_policies={
+                "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                    max_concurrency=2,
+                    requests_per_second=None,
+                    max_attempts=1,
+                    max_pending=8,
+                    deadline_starts_after_admission=True,
+                    max_batch_concurrency=1,
+                )
+            }
+        )
+
+        async def work(value: int) -> int:
+            await asyncio.sleep(0.02)
+            return value
+
+        arguments = dict(
+            work=work,
+            identity=lambda value: value,
+            provider=lambda _: "LOCAL_CANONICAL_CACHE",
+            deadline_ms=lambda _: 30,
+        )
+        first = asyncio.create_task(executor.execute((1, 2), **arguments))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(executor.execute((3, 4), **arguments))
+        one, two = await asyncio.gather(first, second)
+
+        self.assertTrue(all(item.ok for item in one + two))
+        self.assertGreater(max(item.elapsed_ms for item in one + two), 30.0)
+        self.assertEqual(executor._pending, {})
+
+    def test_local_batch_gate_must_fit_inside_global_concurrency(self):
+        with self.assertRaisesRegex(ValueError, "batch concurrency"):
+            ProviderBudgetPolicy(
+                max_concurrency=2,
+                requests_per_second=None,
+                max_batch_concurrency=3,
+            )
+
     async def test_local_cache_execution_deadline_still_fails_after_admission(self):
         executor = BoundedWarmupExecutor[int, int](
             provider_policies={

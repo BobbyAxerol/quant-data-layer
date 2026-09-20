@@ -47231,6 +47231,72 @@ unchanged.
   Then rerun only the strict local-BAR ladder, the two-replica all-scope fast
   preflight and, only if both pass, one final C2 `300s`.
 
+- **Immutable candidate gate (`PASS / QUERY-ONLY ROLLOUT NEXT`, 2026-09-20).**
+  Built `qdl-v2-python:2.0.26-48e26be` from the sealed source commit
+  `48e26be5a00bb9c2ee080effa810bcb16770fcb5`; its immutable image digest is
+  `sha256:f201fab0b0055e32cca4b4256db881cbc91a7fc952cecb370d89e83f7dd0730d`.
+  In packaged-image, network-disabled, read-only-root, non-root containers
+  with tmpfs-only bytecode state, the local admission/consumer acceptance
+  suite passed `93/93` and the affected receipt/SDK projection/R1.35 quality
+  protocol suite passed `72/72`. No source mount, runtime role, provider,
+  durable state, V1, Trading System, alpha or order path participated. The
+  only authorized runtime mutation is now a serial recreate of
+  `query_v2_1`, then `query_v2_2`, using the current reader image
+  `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`
+  as the exact rollback coordinate.
+
+- **First bounded rollout and strict-ladder result (`FAIL-CLOSED / ROLLED BACK / SOURCE REPAIR REQUIRED`, 2026-09-20).**
+  The candidate was serially applied only to `query_v2_1` and `query_v2_2`
+  under packet
+  `/home/bobby/.local/state/qdl-v2/r135-local-admission-48e26be-20260920T131024Z`.
+  Both became healthy with `restart=0` and `OOMKilled=false`; the unchanged
+  Stream pair remained `READY/STANDBY`. The real V2-only ladder then proved
+  every isolated `1/8/16/32/50` BAR shape for the affected consumer through
+  both replicas. The exact isolated `50`-BAR request measured primary
+  `10,370.625ms`, secondary `10,819.703ms`. At the first two-consumer legal
+  collocation wave, the secondary Query request for
+  `alpha.binance.paper.stable` ended in `ReadTimeout`; its compact post-failure
+  status probe saw `47` `LIVE` rows and `3` probe timeouts. No partial data was
+  accepted, no provider/direct/fallback/stream/order action occurred, and no
+  C2 was consumed. This is a real local Query throughput defect because the
+  public SDK default request timeout is `10s`; it is not repaired by raising
+  a harness timeout. The packet rolled exactly the two Query roles back to
+  `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`,
+  both healthy with zero restart/OOM; every other role and durable component
+  remained untouched.
+- **Next in-scope source slice: fair local batch admission.** The current
+  global eight-slot local executor queues all 50 tasks from the first HTTP
+  batch before a second legal batch gets an admission turn. Add a
+  `LOCAL_CANONICAL_CACHE`-only per-batch gate below the existing global bound,
+  so collocated batches share finite worker ownership instead of one batch
+  monopolizing the queue. Batch-gate waiting must stay outside a local item
+  execution deadline; global pending capacity, cancellation cleanup,
+  per-route singleflight and strict all-or-nothing batch semantics remain
+  intact. External Binance/OKX/DNSE and `INTERNAL_STREAM` policies must remain
+  byte-for-byte behaviorally unchanged. Required source gates: deterministic
+  two-batch fairness/order, no deadline loss while waiting, true admitted-work
+  deadline, finite queue rejection, cancellation leak, route isolation and
+  unchanged external token/retry coverage. Only a new immutable Query image
+  after those gates may repeat the same two-role rollout and one strict ladder.
+- **Fair local batch admission source result (`PASS / IMAGE BUILD NEXT`, 2026-09-20).**
+  `ProviderBudgetPolicy` now supports an explicit request-local
+  `max_batch_concurrency`; `LOCAL_CANONICAL_CACHE` uses four batch permits
+  beneath its unchanged eight global worker permits and bounded `128` pending
+  admission. Pending capacity is reserved before the batch gate, so a flood of
+  request-local waiters cannot bypass the global bound; the local read deadline
+  still starts only after the global worker permit, not while waiting at either
+  queue. External policies, `INTERNAL_STREAM`, global singleflight, route
+  circuits, strict batch response handling and public schemas are unchanged.
+  Deterministic regressions prove a second legal local batch receives a global
+  worker before the first batch can consume both, batch-gate waiting preserves
+  each item's admitted execution deadline, queue state drains, and invalid
+  batch-vs-global policy is rejected. Read-only, network-disabled containers
+  passed `24/24` focused executor/query tests and `168/168` affected warmup,
+  identity acceptance, receipt, SDK projection and R1.35 quality tests. No
+  runtime role or durable/data-plane state changed in this source gate. The
+  next permitted mutation is one new immutable Query image, then the same
+  two-role packet rollout and exact strict batch ladder; C2 remains unconsumed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
