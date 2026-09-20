@@ -45169,12 +45169,15 @@ Actual no-network, read-only, disposable-container evidence:
    checkpoint logs in those suites were asserted negative paths, not runtime
    events.
 
-No image was built, no container/runtime/config bundle was recreated, and no
-Kafka, Redis, SQLite, V1, consumer, alpha or provider state changed. This
-closes the B2 *source correction* only. B2 remains `PENDING` until a single
-immutable reader image is sealed, the bounded four-reader packet completes,
-and its 300-second real-provider C2 evidence passes; Phase C and release remain
-blocked until then.
+The correction was then sealed into exactly one immutable reader candidate:
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`,
+whose OCI revision label is
+`335792a582c2a1c8a130c47980ffe6992a22f2a3`. The build changes no running
+container, runtime/config bundle, Kafka, Redis, SQLite, V1, consumer, alpha or
+provider state. This closes the B2 *source correction and candidate-build*
+slice only. B2 remains `PENDING` until a bounded four-reader packet completes
+and its single 300-second real-provider C2 evidence passes; Phase C and release
+remain blocked until then.
 
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
