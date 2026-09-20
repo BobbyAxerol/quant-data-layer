@@ -1,5 +1,5 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 7
+revision: 8
 binding_ids:
 - binance-usdm-bnbusdt-bar-12h
 - binance-usdm-bnbusdt-bar-15m
@@ -17,6 +17,7 @@ binding_ids:
 - binance-usdm-bnbusdt-bar-8h
 - binance-usdm-bnbusdt-book_delta
 - binance-usdm-bnbusdt-book_snapshot
+- binance-usdm-bnbusdt-mark_index_price
 - binance-usdm-bnbusdt-quote
 - binance-usdm-bnbusdt-trade
 - binance-usdm-btcusdt-260925-book_delta
@@ -39,6 +40,7 @@ binding_ids:
 - binance-usdm-btcusdt-bar-8h
 - binance-usdm-btcusdt-book_delta
 - binance-usdm-btcusdt-book_snapshot
+- binance-usdm-btcusdt-mark_index_price
 - binance-usdm-btcusdt-quote
 - binance-usdm-btcusdt-trade
 - binance-usdm-dogeusdt-bar-12h
@@ -57,6 +59,7 @@ binding_ids:
 - binance-usdm-dogeusdt-bar-8h
 - binance-usdm-dogeusdt-book_delta
 - binance-usdm-dogeusdt-book_snapshot
+- binance-usdm-dogeusdt-mark_index_price
 - binance-usdm-dogeusdt-quote
 - binance-usdm-dogeusdt-trade
 - binance-usdm-ethusdt-260925-book_delta
@@ -79,6 +82,7 @@ binding_ids:
 - binance-usdm-ethusdt-bar-8h
 - binance-usdm-ethusdt-book_delta
 - binance-usdm-ethusdt-book_snapshot
+- binance-usdm-ethusdt-mark_index_price
 - binance-usdm-ethusdt-quote
 - binance-usdm-ethusdt-trade
 - binance-usdm-solusdt-bar-12h
@@ -97,6 +101,7 @@ binding_ids:
 - binance-usdm-solusdt-bar-8h
 - binance-usdm-solusdt-book_delta
 - binance-usdm-solusdt-book_snapshot
+- binance-usdm-solusdt-mark_index_price
 - binance-usdm-solusdt-quote
 - binance-usdm-solusdt-trade
 - okx-futures-btc-usd-261225-book_delta
@@ -123,6 +128,7 @@ binding_ids:
 - okx-swap-bnb-usdt-swap-bar-6h
 - okx-swap-bnb-usdt-swap-book_delta
 - okx-swap-bnb-usdt-swap-book_snapshot
+- okx-swap-bnb-usdt-swap-mark_index_price
 - okx-swap-bnb-usdt-swap-quote
 - okx-swap-bnb-usdt-swap-trade
 - okx-swap-btc-usdt-swap-bar-12h
@@ -140,6 +146,7 @@ binding_ids:
 - okx-swap-btc-usdt-swap-bar-6h
 - okx-swap-btc-usdt-swap-book_delta
 - okx-swap-btc-usdt-swap-book_snapshot
+- okx-swap-btc-usdt-swap-mark_index_price
 - okx-swap-btcusdt-bar-1m
 - okx-swap-btcusdt-quote
 - okx-swap-btcusdt-trade
@@ -159,6 +166,7 @@ binding_ids:
 - okx-swap-doge-usdt-swap-bar-6h
 - okx-swap-doge-usdt-swap-book_delta
 - okx-swap-doge-usdt-swap-book_snapshot
+- okx-swap-doge-usdt-swap-mark_index_price
 - okx-swap-doge-usdt-swap-quote
 - okx-swap-doge-usdt-swap-trade
 - okx-swap-eth-usdt-swap-bar-12h
@@ -177,6 +185,7 @@ binding_ids:
 - okx-swap-eth-usdt-swap-bar-6h
 - okx-swap-eth-usdt-swap-book_delta
 - okx-swap-eth-usdt-swap-book_snapshot
+- okx-swap-eth-usdt-swap-mark_index_price
 - okx-swap-eth-usdt-swap-quote
 - okx-swap-eth-usdt-swap-trade
 - okx-swap-sol-usdt-swap-bar-12h
@@ -195,5 +204,6 @@ binding_ids:
 - okx-swap-sol-usdt-swap-bar-6h
 - okx-swap-sol-usdt-swap-book_delta
 - okx-swap-sol-usdt-swap-book_snapshot
+- okx-swap-sol-usdt-swap-mark_index_price
 - okx-swap-sol-usdt-swap-quote
 - okx-swap-sol-usdt-swap-trade

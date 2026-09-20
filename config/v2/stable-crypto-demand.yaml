@@ -5,41 +5,6 @@ consumers:
   consumer_grade: EXECUTION
   requirements:
   - venue: BINANCE
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTCUSDT
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTCUSDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTCUSDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: BTCUSDT
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: BTCUSDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
     market: USDM
     product_type: PERPETUAL
     native_symbol: BTCUSDT
@@ -50,8 +15,15 @@ consumers:
     market: USDM
     product_type: PERPETUAL
     native_symbol: ETHUSDT
-    feed: BAR
-    interval: 1m
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: QUOTE
+    interval: null
     source_policy_id: crypto_primary_v2
   - venue: BINANCE
     market: USDM
@@ -63,107 +35,16 @@ consumers:
   - venue: BINANCE
     market: USDM
     product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
     native_symbol: ETHUSDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: SOLUSDT
     feed: BAR
     interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: SOLUSDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: SOLUSDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: DOGEUSDT
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: DOGEUSDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: DOGEUSDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: BNBUSDT
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: BNBUSDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: BINANCE
-    market: USDM
-    product_type: PERPETUAL
-    native_symbol: BNBUSDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: OKX
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTC-USDT
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: OKX
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTC-USDT
-    feed: QUOTE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: OKX
-    market: SPOT
-    product_type: SPOT
-    native_symbol: BTC-USDT
-    feed: TRADE
-    interval: null
-    source_policy_id: crypto_primary_v2
-  - venue: OKX
-    market: SWAP
-    product_type: PERPETUAL
-    native_symbol: BTC-USDT-SWAP
-    feed: BAR
-    interval: 1m
-    source_policy_id: crypto_primary_v2
-  - venue: OKX
-    market: SWAP
-    product_type: PERPETUAL
-    native_symbol: BTC-USDT-SWAP
-    feed: QUOTE
-    interval: null
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
@@ -176,8 +57,15 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: ETH-USDT-SWAP
-    feed: BAR
-    interval: 1m
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: QUOTE
+    interval: null
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
@@ -189,10 +77,27 @@ consumers:
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
-    native_symbol: ETH-USDT-SWAP
-    feed: TRADE
-    interval: null
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 1m
     source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: null
   - venue: BINANCE
     market: USDM
     product_type: PERPETUAL
@@ -217,6 +122,16 @@ consumers:
     market: USDM
     product_type: PERPETUAL
     native_symbol: ETHUSDT
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: null
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -237,6 +152,16 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: BTC-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: BTC-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -257,6 +182,16 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: ETH-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ETH-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -277,6 +212,16 @@ consumers:
     market: USDM
     product_type: PERPETUAL
     native_symbol: SOLUSDT
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: null
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -297,6 +242,16 @@ consumers:
     market: USDM
     product_type: PERPETUAL
     native_symbol: DOGEUSDT
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: null
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -317,6 +272,16 @@ consumers:
     market: USDM
     product_type: PERPETUAL
     native_symbol: BNBUSDT
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: null
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -337,6 +302,16 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: SOL-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: SOL-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -357,6 +332,16 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: DOGE-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: DOGE-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -377,6 +362,16 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: BNB-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: BNB-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
     feed: BOOK_SNAPSHOT
     interval: null
     source_policy_id: crypto_liquid_v2
@@ -393,12 +388,75 @@ consumers:
     depth_per_side: 100
     max_freshness_ms: 2000
     require_live: true
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
     native_symbol: SOL-USDT-SWAP
-    feed: BAR
-    interval: 1m
+    feed: TRADE
+    interval: null
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
@@ -411,15 +469,15 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: SOL-USDT-SWAP
-    feed: TRADE
-    interval: null
+    feed: BAR
+    interval: 1m
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
     native_symbol: DOGE-USDT-SWAP
-    feed: BAR
-    interval: 1m
+    feed: TRADE
+    interval: null
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
@@ -432,15 +490,15 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: DOGE-USDT-SWAP
-    feed: TRADE
-    interval: null
+    feed: BAR
+    interval: 1m
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
     product_type: PERPETUAL
     native_symbol: BNB-USDT-SWAP
-    feed: BAR
-    interval: 1m
+    feed: TRADE
+    interval: null
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP
@@ -453,8 +511,8 @@ consumers:
     market: SWAP
     product_type: PERPETUAL
     native_symbol: BNB-USDT-SWAP
-    feed: TRADE
-    interval: null
+    feed: BAR
+    interval: 1m
     source_policy_id: crypto_primary_v2
   - venue: BINANCE
     market: USDM
@@ -1309,6 +1367,1062 @@ consumers:
     native_symbol: BNB-USDT-SWAP
     feed: BAR
     interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 2d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+- consumer_id: alpha.binance.paper.stable
+  consumer_grade: ALPHA
+  requirements:
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 8h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BTCUSDT
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 8h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: ETHUSDT
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 8h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: SOLUSDT
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 8h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: DOGEUSDT
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 8h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    native_symbol: BNBUSDT
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+- consumer_id: alpha.okx.paper.stable
+  consumer_grade: ALPHA
+  requirements:
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: TRADE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 1m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 1h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 2d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BTC-USDT-SWAP
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 2d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ETH-USDT-SWAP
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 2d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SOL-USDT-SWAP
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 30m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 2h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 4h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 6h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 12h
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 1d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 2d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 3d
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: DOGE-USDT-SWAP
+    feed: BAR
+    interval: 1w
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 3m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 5m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 15m
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BNB-USDT-SWAP
+    feed: BAR
+    interval: 30m
     source_policy_id: crypto_primary_v2
   - venue: OKX
     market: SWAP

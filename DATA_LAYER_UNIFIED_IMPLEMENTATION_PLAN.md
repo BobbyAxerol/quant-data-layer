@@ -44770,6 +44770,65 @@ digest, source/catalog/manifest/route hash chain, compose render and exact
 four-role rollback map. This preparation is not a rollout and does not grant
 Phase 3.
 
+**B2 provenance correction (2026-09-20; no runtime mutation).** The first
+candidate preflight correctly failed closed before any role recreate:
+`StableAcquisitionPlan` rejected the copied source catalog because it had 206
+bindings while the active declared acquisition plan had 216. The ten active
+only bindings are exactly the Binance USD-M and OKX Swap `MARK_INDEX_PRICE`
+routes for BTC, ETH, SOL, DOGE and BNB. The same active-only set is absent from
+the checked-in acquisition plan and authority-promotion scope; the active
+crypto-demand declaration also contains the two approved alpha consumers that
+the checked-in declaration lacks. This is source/runtime provenance drift, not
+a provider, latency, quality or reader defect. The failed candidate never
+mounted a serving role and remains non-authoritative evidence.
+
+**Corrected B2 source boundary.** Before rebuilding one replacement reader
+candidate, recover the active non-secret catalog, acquisition, promotion and
+crypto-demand declarations into source as the exact baseline; retain their
+deployed revisions and all existing binding behavior; then apply only B1's
+signed `ON_CHANGE` semantics to the exact ten native BBO `QUOTE` bindings.
+Regenerate release routing from that recovered source with a new revision and
+the already sealed manifest revision `10`. A no-network equivalence probe must
+prove that the recovered source differs from the active baseline only in the
+declared B1 BBO delivery semantics and routing provenance. No runtime role,
+image, mount, offset, cache, topic, V1 consumer, Trading System, alpha or
+order path is changed by this correction. The replacement image and packet
+remain B2 gates; Phase 3 is still prohibited until strict C2 passes.
+
+**B2 provenance-recovery source result (2026-09-20; PASS / source only).**
+Recovered the active non-secret `stable-source-bindings`,
+`stable-acquisition-bindings`, `stable-authority-promotion-scope` and
+`stable-crypto-demand` declarations into source. The source now records the
+serving 216 catalog/acquisition bindings, 206 promoted Binance/OKX bindings,
+and three active demand consumers (`trading-system.paper.stable` 190 routes,
+`alpha.binance.paper.stable` 75, `alpha.okx.paper.stable` 75). The source
+catalog remains deployed revision `9`; acquisition remains `17`; promotion
+scope remains `8`; demand remains `6`. The only semantic delta versus the
+active catalog is `delivery_semantics: ON_CHANGE` on the exact ten certified
+native BBO `QUOTE` bindings. Release routing is revision `20`, binds catalog
+SHA-256 `2072202c76683788cf1d59905038787e4db194209df8266b5da44b6487f4947e`,
+the recovered demand SHA-256
+`9ace71cd3e4ed6e224151e31699cfc3fe57ba2a6c17664c832da07eb1c6aa30f`, and
+the already sealed Trading System manifest revision `10`.
+
+Added a regression that requires every one of the ten Binance/OKX execution
+`MARK_INDEX_PRICE` bindings to remain present in catalog, acquisition,
+promotion and Trading System demand; it also asserts the two approved alpha
+demand declarations remain present. An isolated, read-only, no-network source
+container ran 47 affected deployment/consumer/quality/observation tests with
+no failure or skip. Expected fixture error lines for missing CLI scope,
+incomplete BAR catch-up and bounded DNSE queue fencing were asserted by those
+tests. A separate read-only active-runtime equivalence probe passed: all three
+recovered declarations were byte-identical to the active runtime; all 216
+catalog records matched after removing only the ten declared B1 fields; and
+the sole route delta was the stated revision/hash/manifest provenance. Loader
+validation passed (`catalog=216`, `acquisition=216`, `scope=206`,
+`route_revision=20`). No image, container, runtime directory, provider call,
+Kafka/Redis/SQLite state, V1, consumer, alpha or order path changed. The
+previous unused B1 candidate image and the failed B2 packet are retained only
+until a replacement candidate passes, then enter the exact R1.35-D cleanup
+inventory; no broad prune is authorized.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the

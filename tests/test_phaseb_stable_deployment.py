@@ -263,6 +263,63 @@ class StableDeploymentContractTests(unittest.TestCase):
             "STRICT_EVENT",
         )
 
+    def test_execution_mark_index_bindings_remain_acquired_promoted_and_demanded(self):
+        """Keep the active MARK/INDEX plane coupled to its declared readers."""
+        expected = {
+            f"binance-usdm-{symbol.lower()}-mark_index_price"
+            for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT")
+        } | {
+            f"okx-swap-{symbol.lower()}-mark_index_price"
+            for symbol in (
+                "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+                "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+            )
+        }
+        catalog_by_id = {item.binding_id: item for item in self.catalog.bindings}
+        acquisition_ids = {item.binding_id for item in self.acquisition.bindings}
+        self.assertTrue(expected <= set(catalog_by_id))
+        self.assertTrue(expected <= acquisition_ids)
+        self.assertTrue(expected <= set(self.promotion_scope.binding_ids))
+        self.assertTrue(all(
+            catalog_by_id[binding_id].feed is FeedType.MARK_INDEX_PRICE
+            and catalog_by_id[binding_id].freshness_basis == "PROVIDER_CONFIRMATION"
+            for binding_id in expected
+        ))
+
+        demand = yaml.safe_load(
+            (ROOT / "config/v2/stable-crypto-demand.yaml").read_text(encoding="utf-8")
+        )
+        consumers = {item["consumer_id"]: item for item in demand["consumers"]}
+        self.assertEqual(
+            set(consumers),
+            {
+                "trading-system.paper.stable",
+                "alpha.binance.paper.stable",
+                "alpha.okx.paper.stable",
+            },
+        )
+        marks = {
+            (
+                requirement["venue"],
+                requirement["native_symbol"],
+            )
+            for requirement in consumers["trading-system.paper.stable"]["requirements"]
+            if requirement["feed"] == "MARK_INDEX_PRICE"
+        }
+        self.assertEqual(
+            marks,
+            {
+                ("BINANCE", symbol)
+                for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT")
+            } | {
+                ("OKX", symbol)
+                for symbol in (
+                    "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+                    "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+                )
+            },
+        )
+
     def test_tls_generator_covers_all_published_ingress_aliases(self):
         script = (ROOT / "scripts/phase80_generate_tls.sh").read_text(
             encoding="utf-8"
@@ -462,6 +519,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 "BAR": "LOSSLESS",
                 "TRADE": "LOSSLESS",
                 "QUOTE": "LATEST_STATE",
+                "MARK_INDEX": "LATEST_STATE",
                 "BOOK": "LOSSLESS",
             },
         )
@@ -686,7 +744,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 {item["feed"] for item in okx["bindings"]},
-                {"BAR", "TRADE", "QUOTE", "BOOK"},
+                {"BAR", "TRADE", "QUOTE", "MARK_INDEX", "BOOK"},
             )
             expected_okx_native = sum(
                 1

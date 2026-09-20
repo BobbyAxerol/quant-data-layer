@@ -13,8 +13,8 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
-  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
+  market_websocket_url: wss://stream.binance.com:9443/ws
 - binding_id: binance-spot-btcusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -23,8 +23,8 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
-  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
+  market_websocket_url: wss://stream.binance.com:9443/ws
 - binding_id: binance-spot-btcusdt-trade
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -33,8 +33,8 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://stream.binance.com:9443/ws
   business_websocket_url: null
-  market_websocket_url: wss://stream.binance.com:9443/ws
   enabled: false
+  market_websocket_url: wss://stream.binance.com:9443/ws
 - binding_id: binance-usdm-bnbusdt-bar-12h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -72,14 +72,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1m
-  mode: RUST_NATIVE
+  mode: PYTHON_REST
   runtime: BINANCE
-  provider_kind: binance_usdm_bar
-  native_channel: bnbusdt@kline_1m
+  provider_kind: binance_usdm_rest_bar
+  native_channel: rest-klines/1m
   sequence_policy: NONE
-  websocket_url: wss://fstream.binance.com/public/ws
+  websocket_url: null
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
+  market_websocket_url: null
 - binding_id: binance-usdm-bnbusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -169,13 +169,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-bnbusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -184,13 +184,27 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
+- binding_id: binance-usdm-bnbusdt-mark_index_price
+  mode: RUST_NATIVE
+  runtime: BINANCE
+  provider_kind: binance_usdm_mark_index
+  native_channel: bnbusdt@markPrice@1s
+  sequence_policy: NONE
+  websocket_url: wss://fstream.binance.com/public/ws
+  business_websocket_url: null
+  mark_index:
+    provider_protocol: BINANCE_MARK_PRICE
+    index_native_symbol: null
+    component_quiet_after_ms:
+      BOTH: 5000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-bnbusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -217,12 +231,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-260925-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -231,12 +245,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-261225-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -245,12 +259,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-261225-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -259,12 +273,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-bar-12h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -302,14 +316,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1m
-  mode: RUST_NATIVE
+  mode: PYTHON_REST
   runtime: BINANCE
-  provider_kind: binance_usdm_bar
-  native_channel: btcusdt@kline_1m
+  provider_kind: binance_usdm_rest_bar
+  native_channel: rest-klines/1m
   sequence_policy: NONE
-  websocket_url: wss://fstream.binance.com/public/ws
+  websocket_url: null
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
+  market_websocket_url: null
 - binding_id: binance-usdm-btcusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -399,13 +413,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -414,13 +428,27 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
+- binding_id: binance-usdm-btcusdt-mark_index_price
+  mode: RUST_NATIVE
+  runtime: BINANCE
+  provider_kind: binance_usdm_mark_index
+  native_channel: btcusdt@markPrice@1s
+  sequence_policy: NONE
+  websocket_url: wss://fstream.binance.com/public/ws
+  business_websocket_url: null
+  mark_index:
+    provider_protocol: BINANCE_MARK_PRICE
+    index_native_symbol: null
+    component_quiet_after_ms:
+      BOTH: 5000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -476,14 +504,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1m
-  mode: RUST_NATIVE
+  mode: PYTHON_REST
   runtime: BINANCE
-  provider_kind: binance_usdm_bar
-  native_channel: dogeusdt@kline_1m
+  provider_kind: binance_usdm_rest_bar
+  native_channel: rest-klines/1m
   sequence_policy: NONE
-  websocket_url: wss://fstream.binance.com/public/ws
+  websocket_url: null
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
+  market_websocket_url: null
 - binding_id: binance-usdm-dogeusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -573,13 +601,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-dogeusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -588,13 +616,27 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
+- binding_id: binance-usdm-dogeusdt-mark_index_price
+  mode: RUST_NATIVE
+  runtime: BINANCE
+  provider_kind: binance_usdm_mark_index
+  native_channel: dogeusdt@markPrice@1s
+  sequence_policy: NONE
+  websocket_url: wss://fstream.binance.com/public/ws
+  business_websocket_url: null
+  mark_index:
+    provider_protocol: BINANCE_MARK_PRICE
+    index_native_symbol: null
+    component_quiet_after_ms:
+      BOTH: 5000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-dogeusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -621,12 +663,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-260925-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -635,12 +677,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-261225-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -649,12 +691,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-261225-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -663,12 +705,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-bar-12h
   mode: PYTHON_REST
   runtime: BINANCE
@@ -706,14 +748,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1m
-  mode: RUST_NATIVE
+  mode: PYTHON_REST
   runtime: BINANCE
-  provider_kind: binance_usdm_bar
-  native_channel: ethusdt@kline_1m
+  provider_kind: binance_usdm_rest_bar
+  native_channel: rest-klines/1m
   sequence_policy: NONE
-  websocket_url: wss://fstream.binance.com/public/ws
+  websocket_url: null
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
+  market_websocket_url: null
 - binding_id: binance-usdm-ethusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -803,13 +845,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -818,13 +860,27 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
+- binding_id: binance-usdm-ethusdt-mark_index_price
+  mode: RUST_NATIVE
+  runtime: BINANCE
+  provider_kind: binance_usdm_mark_index
+  native_channel: ethusdt@markPrice@1s
+  sequence_policy: NONE
+  websocket_url: wss://fstream.binance.com/public/ws
+  business_websocket_url: null
+  mark_index:
+    provider_protocol: BINANCE_MARK_PRICE
+    index_native_symbol: null
+    component_quiet_after_ms:
+      BOTH: 5000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -880,14 +936,14 @@ bindings:
   business_websocket_url: null
   market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1m
-  mode: RUST_NATIVE
+  mode: PYTHON_REST
   runtime: BINANCE
-  provider_kind: binance_usdm_bar
-  native_channel: solusdt@kline_1m
+  provider_kind: binance_usdm_rest_bar
+  native_channel: rest-klines/1m
   sequence_policy: NONE
-  websocket_url: wss://fstream.binance.com/public/ws
+  websocket_url: null
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
+  market_websocket_url: null
 - binding_id: binance-usdm-solusdt-bar-1w
   mode: PYTHON_REST
   runtime: BINANCE
@@ -977,13 +1033,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-solusdt-book_snapshot
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -992,13 +1048,27 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://fstream.binance.com/public/ws
   business_websocket_url: null
-  market_websocket_url: wss://fstream.binance.com/market/ws
   l2:
     provider_protocol: BINANCE_DIFF_DEPTH
     depth_per_side: 100
     rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: wss://fstream.binance.com/market/ws
+- binding_id: binance-usdm-solusdt-mark_index_price
+  mode: RUST_NATIVE
+  runtime: BINANCE
+  provider_kind: binance_usdm_mark_index
+  native_channel: solusdt@markPrice@1s
+  sequence_policy: NONE
+  websocket_url: wss://fstream.binance.com/public/ws
+  business_websocket_url: null
+  mark_index:
+    provider_protocol: BINANCE_MARK_PRICE
+    index_native_symbol: null
+    component_quiet_after_ms:
+      BOTH: 5000
+  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-solusdt-quote
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -1061,12 +1131,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-btc-usd-261225-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1075,12 +1145,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-btc-usd-270326-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1089,12 +1159,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-btc-usd-270326-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1103,12 +1173,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-eth-usd-261225-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1117,12 +1187,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-eth-usd-261225-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1131,12 +1201,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-eth-usd-270326-book_delta
   mode: RUST_NATIVE
   runtime: OKX
@@ -1145,12 +1215,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-futures-eth-usd-270326-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1159,12 +1229,12 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
+  market_websocket_url: null
 - binding_id: okx-spot-btcusdt-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1173,8 +1243,8 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   enabled: false
+  market_websocket_url: null
 - binding_id: okx-spot-btcusdt-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1183,8 +1253,8 @@ bindings:
   sequence_policy: NONE
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   enabled: false
+  market_websocket_url: null
 - binding_id: okx-spot-btcusdt-trade
   mode: RUST_NATIVE
   runtime: OKX
@@ -1193,8 +1263,8 @@ bindings:
   sequence_policy: MONOTONIC
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   enabled: false
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-bar-12h
   mode: RUST_NATIVE
   runtime: OKX
@@ -1329,13 +1399,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1344,13 +1414,28 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-bnb-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: BNB-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+  market_websocket_url: null
 - binding_id: okx-swap-bnb-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1494,13 +1579,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
 - binding_id: okx-swap-btc-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1509,13 +1594,28 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-btc-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: BTC-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+  market_websocket_url: null
 - binding_id: okx-swap-btcusdt-bar-1m
   mode: RUST_NATIVE
   runtime: OKX
@@ -1677,13 +1777,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1692,13 +1792,28 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-doge-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: DOGE-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+  market_websocket_url: null
 - binding_id: okx-swap-doge-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -1851,13 +1966,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -1866,13 +1981,28 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-eth-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ETH-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+  market_websocket_url: null
 - binding_id: okx-swap-eth-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
@@ -2025,13 +2155,13 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-book_snapshot
   mode: RUST_NATIVE
   runtime: OKX
@@ -2040,13 +2170,28 @@ bindings:
   sequence_policy: CONTIGUOUS
   websocket_url: wss://ws.okx.com:8443/ws/v5/public
   business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
-  market_websocket_url: null
   l2:
     provider_protocol: OKX_PUBLIC_BOOKS
     depth_per_side: 100
     rest_snapshot_url: null
     snapshot_refresh_seconds: 30
     materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-sol-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com:8443/ws/v5/public
+  business_websocket_url: wss://ws.okx.com:8443/ws/v5/business
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: SOL-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+  market_websocket_url: null
 - binding_id: okx-swap-sol-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
