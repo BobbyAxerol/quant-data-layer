@@ -45259,7 +45259,7 @@ bar edge, projectors, Kafka topology/offsets, Redis, SQLite, Trading System,
 alpha and the order path remain unchanged. This closes R1.35-B; only now may
 R1.35-C begin.
 
-##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
+##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`IN_PROGRESS / R1.35-B EXIT`, 2026-09-20)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
 whole currently active V2 consumer surface, rather than extrapolating from
@@ -45307,6 +45307,36 @@ execution data, cross-identity mix, restart/OOM or unapproved fallback. If a
 new in-scope endpoint defect appears, fix and retest it in C before release.
 DNSE/VN `V1_PRIMARY` and explicit dark Spot rows remain stated release
 exclusions, not technical debt hidden in the certificate.
+
+**C kickoff and sealed inventory (2026-09-20; no runtime mutation).** B2's
+single Trading System receipt remains valid evidence for its exact `60`
+V2-primary product routes only; it is not being extrapolated into this phase.
+The sealed routing revision `20` has `303` consumer product routes: `299`
+V2-primary routes (`235` distinct requirement keys) across
+`monitoring.multivenue.stable` (`4`), `alpha.binance.paper.stable` (`125`),
+`alpha.okx.paper.stable` (`110`) and `trading-system.paper.stable` (`60`).
+The remaining four routes are explicit V1-primary exclusions: one monitoring
+VN BAR, two alpha-VN routes and one Trading System VN TRADE. The V2 feed
+inventory is BAR `150`, TRADE `24`, QUOTE `20`, MARK_INDEX_PRICE `20`,
+BOOK_SNAPSHOT `20`, BOOK_DELTA `20`, FUNDING_RATE `10`, OPEN_INTEREST `10`,
+CONTRACT_METADATA `10`, BASIS `5`, LONG_SHORT_RATIO `5` and TAKER_FLOW `5`.
+
+Reader preflight found a concrete authentication coverage gap before any broad
+certificate run: the active query/stream client trust bundle is present and the
+current Trading System and Alpha-Binance private identities match the active
+JWT keyring, but the only retained Monitoring/Alpha-OKX external private
+identities do not match their active keyring public-key fingerprints. Running
+a full C2 with them would only create a false negative unrelated to market
+data. C will generate one additive, short-lived external identity extension
+for exactly Monitoring and Alpha-OKX, append only its client CA and replace
+only those two public-key entries in the query/stream reader keyring, then
+recreate only the four existing reader roles with the same `335792a` image and
+the exact current runtime bundle. The packet will retain the present trust/key
+files and reader environment as rollback. It will not change V1, Rust core,
+ingestors, projectors, bar edge, Kafka, Redis, SQLite, consumer manifests,
+consumer routes, provider credentials, alpha, Trading System or the order
+path. The next C evidence must then cover all `299` V2-primary routes under
+their own identities on both replicas.
 
 ##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
 
@@ -45977,7 +46007,7 @@ it cannot add a service, provider REST fallback, relaxed external quota, new
 consumer identity or runtime topology. A fresh sealed bundle and a query/
 stream-only packet will be prepared only after source parity passes.
 
-#### R1.35-C - Full endpoint, binding and consumer release certification (`PENDING / REQUIRES R1.35-B EXIT`)
+#### R1.35-C - Full endpoint, binding and consumer release certification (`IN_PROGRESS / R1.35-B EXIT`, 2026-09-20)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
 V2 binding and public V2 transport that the current release actually exposes.
