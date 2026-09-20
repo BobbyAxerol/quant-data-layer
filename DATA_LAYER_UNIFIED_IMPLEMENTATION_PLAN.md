@@ -46492,6 +46492,21 @@ source image, contract, topology, data or consumer policy. A fresh serial
 preflight and the one approved C2 are still required after the baseline is
 restored.
 
+**Rollback and packet correction (`PASS / RETRY READY`, 2026-09-20).** The
+rollback restored exactly `query_v2_2`, `query_v2_1`, `stream_v2_active` and
+the subsequently observed changed `stream_v2_passive` to
+`sha256:8c53d37f...01668c5c`. All four are `healthy`, `restart=0`,
+`OOMKilled=false`, retain the sealed runtime mount, and the stream pair is one
+`READY` plus one `STANDBY`. The corrected external operator runner is
+SHA-256 `63da98e540ce0f097b4e6d8ebc10c2775d6cbf41b012663bcab2818221c0ad4f`;
+it captures two distinct stream roles before either recreate, waits up to
+30 seconds for lease convergence after each step, verifies the remaining peer
+is still on rollback image before its recreate, and explicitly rolls every
+changed role back on an error. `bash -n` passed for preflight, rollout and
+rollback scripts. This is packet-only safety work; it neither changes the
+candidate binary nor supplies C2 evidence. The next permitted action remains
+one fresh serial four-reader rollout, then the one approved C2.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
