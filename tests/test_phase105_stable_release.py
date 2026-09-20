@@ -201,16 +201,25 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             shutil.copytree(ROOT / "consumers", temporary_root / "consumers")
             demand_path = temporary_root / "config/v2/stable-crypto-demand.yaml"
             demand = yaml.safe_load(demand_path.read_text(encoding="utf-8"))
-            requirements = demand["consumers"][0]["requirements"]
-            removed = next(
-                item for item in requirements
-                if item["venue"] == "BINANCE"
-                and item["market"] == "USDM"
-                and item["native_symbol"] == "BTCUSDT"
-                and item["feed"] == "BAR"
-                and item["interval"] == "1m"
-            )
-            requirements.remove(removed)
+            def is_btc_1m_bar(item):
+                return (
+                    item["venue"] == "BINANCE"
+                    and item["market"] == "USDM"
+                    and item["native_symbol"] == "BTCUSDT"
+                    and item["feed"] == "BAR"
+                    and item["interval"] == "1m"
+                )
+
+            # A demand key may be shared by multiple declared consumers. Remove
+            # every declaration of this key so the release validator is tested
+            # against an actually absent materialized product, not one still
+            # requested by a different paper consumer.
+            removed = 0
+            for consumer in demand["consumers"]:
+                prior = consumer["requirements"]
+                consumer["requirements"] = [item for item in prior if not is_btc_1m_bar(item)]
+                removed += len(prior) - len(consumer["requirements"])
+            self.assertGreaterEqual(removed, 2)
             demand_path.write_text(
                 yaml.safe_dump(demand, sort_keys=False), encoding="utf-8"
             )

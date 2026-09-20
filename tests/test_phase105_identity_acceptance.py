@@ -22,6 +22,7 @@ from qdl_sdk import (
 from scripts.phase103_consumer_receipt_acceptance import C2StatusEvidenceError
 from scripts.phase105_consumer_v2_identity_acceptance import (
     C2ProductAcceptanceError,
+    C2ReferenceProductError,
     C2ClosingBatchError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
@@ -33,6 +34,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _closing_requirement,
     _c2_grpc_targets,
     _consumer_ids,
+    _certify_references,
     _identity_files,
     _identity_files_for_consumers,
     _route_summary,
@@ -95,6 +97,93 @@ class Phase105IdentityAcceptanceTests(unittest.TestCase):
         self.assertEqual(failure.evidence["typed_status"]["quality"]["state"], "GAPPED")
         self.assertFalse(failure.evidence["payload_recorded"])
         self.assertNotIn("levels", repr(failure.evidence))
+
+    def test_typed_c2_reference_failure_keeps_product_identity_without_payload(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="trading-system.paper.stable",
+            instrument_id="OKX.SWAP.PERPETUAL.DOGE-USDT",
+            requirement=SimpleNamespace(feed=Feed.MARK_INDEX_PRICE),
+            evidence=lambda: {
+                "instrument_uid": "mark-uid",
+                "feed": "MARK_INDEX_PRICE",
+            },
+        )
+        failure = C2ReferenceProductError(
+            product,
+            replica="primary",
+            error=ValueError("quiet execution MARK/INDEX component exceeded its cadence"),
+        )
+        self.assertEqual(failure.evidence["replica"], "primary")
+        self.assertEqual(failure.evidence["product"]["instrument_uid"], "mark-uid")
+        self.assertFalse(failure.evidence["payload_recorded"])
+        self.assertNotIn("price", repr(failure.evidence))
+
+    def test_reference_batch_failure_is_bound_to_exact_product_and_replica(self) -> None:
+        product = SimpleNamespace(consumer_id="trading-system.paper.stable")
+        reference_product = SimpleNamespace(
+            consumer_id="trading-system.paper.stable",
+            instrument_id="OKX.SWAP.PERPETUAL.DOGE-USDT",
+            requirement=SimpleNamespace(feed=Feed.MARK_INDEX_PRICE),
+            identity=("trading-system.paper.stable", "mark-uid", "MARK_INDEX_PRICE", "", "crypto"),
+            evidence=lambda: {"instrument_uid": "mark-uid", "feed": "MARK_INDEX_PRICE"},
+        )
+        response = SimpleNamespace(results=(object(),))
+
+        class Client:
+            def __init__(self, replica: str) -> None:
+                self.replica = replica
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        clients = []
+
+        def client_factory(_identity, *, base_url, **_kwargs):
+            client = Client("primary" if base_url == "https://primary" else "secondary")
+            clients.append(client)
+            return client
+
+        async def batch_for_c2(client, *_args, **_kwargs):
+            if client.replica == "secondary":
+                await asyncio.sleep(0.01)
+            return response, 1, 0
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._reference_product",
+            return_value=reference_product,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._reference_transport_timeout_seconds",
+            return_value=1.0,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.reference_acceptance_batches",
+            return_value=((reference_product,),),
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._reference_batch_for_c2",
+            side_effect=batch_for_c2,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.reference_evidence",
+            side_effect=ValueError("quiet execution MARK/INDEX provenance is invalid"),
+        ):
+            with self.assertRaises(C2ReferenceProductError) as raised:
+                asyncio.run(_certify_references(
+                    (product,),
+                    identity=object(),
+                    primary_url="https://primary",
+                    secondary_url="https://secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path("/tmp"),
+                    timeout_seconds=1.0,
+                    deadline_monotonic=10.0,
+                    semaphore=asyncio.Semaphore(1),
+                    native_basis_semaphore=asyncio.Semaphore(1),
+                    client_factory=client_factory,
+                ))
+        self.assertEqual(raised.exception.evidence["replica"], "primary")
+        self.assertEqual(
+            raised.exception.evidence["product"]["instrument_uid"], "mark-uid",
+        )
+        self.assertTrue(all(client.closed for client in clients))
 
     def test_closing_bar_requirement_keeps_policy_and_reduces_only_history_rows(self) -> None:
         requirement = SdkDataRequirement(

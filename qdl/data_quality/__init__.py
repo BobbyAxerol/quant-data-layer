@@ -20,6 +20,10 @@ from qdl.data_quality.binding_decision import (
     freshness_verdict,
     semantics_for,
 )
+from qdl.data_quality.execution_mark_index import (
+    QuietExecutionMarkIndexEvidence,
+    validate_quiet_execution_mark_index_evidence,
+)
 from qdl.data_quality.source_authority import (
     AuthorityAction,
     SourceAuthorityController,
@@ -35,6 +39,7 @@ __all__ = [
     "BindingQualityInput",
     "ComponentEvidence",
     "FeedSemantics",
+    "QuietExecutionMarkIndexEvidence",
     "AuthorityAction",
     "FeedKey",
     "FeedQualityLedger",
@@ -51,4 +56,5 @@ __all__ = [
     "evaluate_binding_quality",
     "freshness_verdict",
     "semantics_for",
+    "validate_quiet_execution_mark_index_evidence",
 ]

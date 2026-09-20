@@ -45117,6 +45117,65 @@ immutable reader image and request a new exact four-role B2 packet. No runtime
 role, source catalog/manifest/SLA, Rust/provider adapter, V1, Kafka, Redis,
 SQLite, Trading System, alpha or order path changes in this source slice.
 
+**B2 source-regression correction (2026-09-20; source-only, before the next
+reader image).** The recovered acquisition declaration in `2ce8f1d` correctly
+restored the active MARK/INDEX set but inadvertently changed the five already
+admitted Binance USD-M final `BAR 1m` bindings (`BTC/ETH/SOL/DOGE/BNB`) from
+the R1.28 `RUST_NATIVE` `/market` kline contract back to `PYTHON_REST`.
+`tests/test_phaseb_stable_deployment.py` and the R1.28 generator contract
+exposed the contradiction. This is a source provenance defect, not a decision
+to withdraw the native final-BAR route: restore exactly those five acquisition
+records to `RUST_NATIVE`, `binance_usdm_bar`, `{symbol}@kline_1m` and their
+routed public/market WebSocket endpoints, leaving every other Binance interval
+on REST and retaining acquisition revision `17`, the revision which originally
+admitted this exact five-binding move. Add the current `bindings` property to
+the minimal projector catalog test double so it models the real catalog API
+introduced by watermark prewarm; it must not weaken the production projector's
+catalog requirement. Run the R1.28 native-BAR scope suite and the affected
+deployment/projector suites. This source correction creates no runtime change:
+the later C source/runtime reconciliation must explicitly prove the deployed
+ingestor/core/bar-edge bundle has the same five native owners before a release
+certificate can cover final BAR.
+
+**B2 corrective implementation and source evidence (2026-09-20; source-only
+PASS / runtime still unchanged).** Implemented the one pure shared
+`qdl.data_quality.execution_mark_index` evidence validator and made the Query
+service and C2 reference verifier use it, so an exact signed execution
+MARK/INDEX live view is accepted only from the internal stable-stream lineage
+with current session, checked-at, generation/gap, source/confirmation and both
+component-cadence fences. Raw timestamps remain visible; generic/strict
+MARK/INDEX, absent/zero/future fences, expired component cadence and malformed
+lineage continue to fail closed. The C2 identity wrapper now emits a bounded
+product/replica error without persisting a response payload. The five R1.28
+Binance USD-M `BAR 1m` acquisition declarations were restored exactly as
+specified above. Regression assertions now distinguish the ten sealed
+execution BBO `ON_CHANGE + OBSERVE` routes from all alpha/generic strict quote
+routes, inventory the ten MARK/INDEX bindings explicitly, remove a shared
+demand key across every consumer when testing release rejection, and pin the
+two intentionally namespaced public stale-policy schemas rather than a stale
+schema count.
+
+Actual no-network, read-only, disposable-container evidence:
+
+1. `tests.test_phase105_consumer_acceptance` plus
+   `tests.test_phaseb_stable_edge`: `67` passed, `1` pre-existing isolated
+   Redis skip.
+2. Phase105/R1.35 release, fallback, handoff, identity, native-basis and
+   final-BAR matrix: `91` passed.
+3. Projector/WAL/stale/SDK/reference-L2/quality matrix: `214` passed, `1`
+   same pre-existing isolated Redis skip.
+4. `git diff --check` passed before and after the source changes. Expected
+   injected backpressure, invalid-argument, stale-BAR, DNSE queue and poisoned
+   checkpoint logs in those suites were asserted negative paths, not runtime
+   events.
+
+No image was built, no container/runtime/config bundle was recreated, and no
+Kafka, Redis, SQLite, V1, consumer, alpha or provider state changed. This
+closes the B2 *source correction* only. B2 remains `PENDING` until a single
+immutable reader image is sealed, the bounded four-reader packet completes,
+and its 300-second real-provider C2 evidence passes; Phase C and release remain
+blocked until then.
+
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the

@@ -170,7 +170,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             },
         )
 
-    def test_paper_quote_routes_keep_strict_freshness_and_session_sla(self):
+    def test_paper_quote_routes_limit_on_change_semantics_to_execution_bbo(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
             catalog=self.catalog,
@@ -179,11 +179,29 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
         )
         quotes = [item for item in scope.products if item.feed is FeedType.QUOTE]
         self.assertEqual(len(quotes), 20)
+        execution_quotes = [
+            item
+            for item in quotes
+            if item.consumer_id == "trading-system.paper.stable"
+        ]
+        alpha_quotes = [
+            item
+            for item in quotes
+            if item.consumer_id != "trading-system.paper.stable"
+        ]
+        self.assertEqual(len(execution_quotes), 10)
+        self.assertEqual(len(alpha_quotes), 10)
+        self.assertTrue(all(
+            item.requirement.event_recency_policy is StalePolicy.OBSERVE
+            and item.requirement.max_session_liveness_ms == 2_000
+            and item.requirement.stale_policy is StalePolicy.BLOCK
+            for item in execution_quotes
+        ))
         self.assertTrue(all(
             item.requirement.event_recency_policy is None
             and item.requirement.max_session_liveness_ms == 45_000
             and item.requirement.stale_policy is StalePolicy.BLOCK
-            for item in quotes
+            for item in alpha_quotes
         ))
         self.assertEqual(
             Counter((

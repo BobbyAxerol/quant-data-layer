@@ -190,6 +190,10 @@ class _Catalog:
 
     def __init__(self, binding):
         self.binding = binding
+        # StableProjectorEngine prewarms declared final-BAR partitions before
+        # polling. This fixture only models its MARK/INDEX lookup contract, so
+        # it declares no final-BAR partitions for that independent prewarm.
+        self.bindings = ()
 
     def binding_for_envelope(self, _envelope):
         return self.binding

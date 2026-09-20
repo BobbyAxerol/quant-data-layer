@@ -24,10 +24,11 @@ from qdl.certification.reference_l2_acceptance import (
     reference_request_for_requirement,
 )
 from qdl.certification.phase103_consumer_acceptance import _validate_payload
-from qdl.query import ConsumerGrade, FeedType
+from qdl.query import ConsumerGrade, FeedType, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
+from qdl_sdk.models import StalePolicy as SdkStalePolicy
 from qdl_sdk.reference import ReferenceProduct, ReferenceRequirement
 from scripts.phasec36_reference_l2_consumer_acceptance import _reference_batch_until_terminal
 
@@ -240,6 +241,144 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(request.consumer_grade, Grade.EXECUTION)
         self.assertEqual((request.limit, request.page_size, request.max_pages), (1, 1, 1))
         self.assertTrue(request.require_full_coverage)
+
+    def _execution_mark_index_product(self):
+        product = next(
+            item for item in self.scope.references
+            if item.requirement.feed is FeedType.MARK_INDEX_PRICE
+        )
+        return replace(
+            product,
+            requirement=replace(
+                product.requirement,
+                consumer_grade=ConsumerGrade.EXECUTION,
+                event_recency_policy=StalePolicy.OBSERVE,
+                max_freshness_ms=2_000,
+                max_session_liveness_ms=45_000,
+            ),
+            sdk_requirement=product.sdk_requirement.model_copy(update={
+                "consumer_grade": Grade.EXECUTION,
+                "event_recency_policy": SdkStalePolicy.OBSERVE,
+                "max_freshness_ms": 2_000,
+                "max_session_liveness_ms": 45_000,
+                "limit": 1,
+                "page_size": 1,
+                "max_pages": 1,
+            }),
+        )
+
+    @staticmethod
+    def _quiet_execution_mark_index_item(product, *, source_age_ms: int = 60_000):
+        source_event_ns = NOW_NS - source_age_ms * _MILLISECOND_NS
+        field = SimpleNamespace(
+            name="mark_price",
+            unit="QUOTE_PRICE",
+            value=SimpleNamespace(source_text="101.25", coefficient="10125", scale=2),
+        )
+        labels = {
+            "execution_view": "STABLE_STREAM_GATEWAY",
+            "freshness_basis": "PROVIDER_CONFIRMATION",
+            "source_event_time_ns": str(source_event_ns),
+            "provider_confirmation_ns": str(source_event_ns),
+            "connection_generation": "1",
+            "gateway_lease_epoch": "1",
+            "delivery_stage": "CANONICAL_READ_COMMITTED",
+            "spool_watermark_offset": "PENDING",
+            "event_recency_policy": "OBSERVE",
+            "recency_mode": "COMPONENT_SESSION_LIVE",
+            "provider_session_state": "LIVE",
+            "provider_session_liveness_ms": "4",
+            "provider_session_checked_at_ns": str(NOW_NS - 1 * _MILLISECOND_NS),
+            "component_mark_received_at_ns": str(NOW_NS - 10_000 * _MILLISECOND_NS),
+            "component_index_received_at_ns": str(NOW_NS - 60_000 * _MILLISECOND_NS),
+            "component_mark_quiet_after_ms": "15000",
+            "component_index_quiet_after_ms": "70000",
+        }
+        observation = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            observed_at_ns=source_event_ns,
+            fields=[field],
+            labels=labels,
+        )
+        data = SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            received_at_ns=source_event_ns,
+            coverage=SimpleNamespace(
+                complete_left=True,
+                complete_right=True,
+                truncated=False,
+                terminal_reason="LIVE_EXECUTION_VIEW",
+            ),
+            lineage=[SimpleNamespace(
+                provider="BINANCE_USDM",
+                provider_endpoint=(
+                    "qdl://stable-stream/internal/v2/execution/mark-index/latest"
+                ),
+                capability_name="mark_index_price",
+                source_role="REFERENCE",
+            )],
+            observations=[observation],
+        )
+        return SimpleNamespace(
+            instrument_uid=product.instrument_uid,
+            product=product.sdk_requirement.product,
+            status="OK",
+            problem=None,
+            data=data,
+        )
+
+    def test_quiet_execution_mark_index_quality_uses_session_and_component_evidence(self):
+        product = self._execution_mark_index_product()
+        item = self._quiet_execution_mark_index_item(product)
+
+        quality = reference_quality(product, item, observed_at_ns=NOW_NS)
+
+        self.assertEqual(quality["source_age_ms"], 60_000)
+        self.assertEqual(quality["session_liveness_ms"], 4)
+        self.assertEqual(quality["component_mark_age_ms"], 10_000)
+        self.assertEqual(quality["component_index_age_ms"], 60_000)
+        self.assertFalse(quality["gap_open"])
+        self.assertEqual(len(reference_evidence(product, item, observed_at_ns=NOW_NS)), 64)
+
+    def test_quiet_execution_mark_index_quality_fails_closed_outside_exact_contract(self):
+        product = self._execution_mark_index_product()
+        strict_product = replace(
+            product,
+            requirement=replace(
+                product.requirement,
+                event_recency_policy=StalePolicy.BLOCK,
+            ),
+            sdk_requirement=product.sdk_requirement.model_copy(update={
+                "event_recency_policy": SdkStalePolicy.BLOCK,
+            }),
+        )
+        with self.assertRaisesRegex(ValueError, "governed freshness"):
+            reference_quality(
+                strict_product,
+                self._quiet_execution_mark_index_item(strict_product),
+                observed_at_ns=NOW_NS,
+            )
+
+        cases = (
+            ("session", lambda item: item.data.observations[0].labels.__setitem__(
+                "provider_session_state", "DISCONNECTED"), "session evidence"),
+            ("component", lambda item: item.data.observations[0].labels.__setitem__(
+                "component_index_received_at_ns", str(NOW_NS - 70_001 * _MILLISECOND_NS)), "component exceeded"),
+            ("missing", lambda item: item.data.observations[0].labels.pop(
+                "component_mark_received_at_ns"), "evidence is malformed"),
+            ("zero-fence", lambda item: item.data.observations[0].labels.__setitem__(
+                "gateway_lease_epoch", "0"), "provenance is invalid"),
+            ("lineage", lambda item: setattr(
+                item.data.lineage[0], "provider_endpoint", "https://provider.invalid"), "live-view lineage"),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(case=name):
+                item = self._quiet_execution_mark_index_item(product)
+                mutate(item)
+                with self.assertRaisesRegex(ValueError, expected):
+                    reference_quality(product, item, observed_at_ns=NOW_NS)
 
     def test_reference_quality_uses_provider_observation_not_local_receive_time(self):
         product = next(

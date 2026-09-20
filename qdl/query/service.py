@@ -9,6 +9,9 @@ from typing import Callable
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.data_quality.binding_decision import freshness_verdict
+from qdl.data_quality.execution_mark_index import (
+    validate_quiet_execution_mark_index_evidence,
+)
 from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.instrument import InstrumentRecord
 from qdl.query.contracts import (
@@ -1001,70 +1004,20 @@ class V2QueryService:
         cadences fail-closed at the outer admission boundary as well.
         """
 
-        if requirement.max_session_liveness_ms is None or len(result.observations) != 1:
+        if len(result.observations) != 1:
             return QueryProblem(
                 CanonicalErrorCode.DATA_STALE,
                 "quiet execution MARK/INDEX contract is incomplete",
                 True,
             )
-        labels = dict(result.observations[0].labels)
-        if (
-            labels.get("event_recency_policy") != StalePolicy.OBSERVE.value
-            or labels.get("recency_mode")
-            not in {"STRICT_EVENT_SESSION_LIVE", "COMPONENT_SESSION_LIVE"}
-            or labels.get("provider_session_state") != "LIVE"
-        ):
-            return QueryProblem(
-                CanonicalErrorCode.DATA_STALE,
-                "quiet execution MARK/INDEX session evidence is not live",
-                True,
-            )
         try:
-            session_liveness_ms = int(labels["provider_session_liveness_ms"])
-            session_checked_at_ns = int(labels["provider_session_checked_at_ns"])
-            components = tuple(
-                (
-                    int(labels[f"component_{name.lower()}_received_at_ns"]),
-                    int(labels[f"component_{name.lower()}_quiet_after_ms"]),
-                )
-                for name in ("MARK", "INDEX")
+            validate_quiet_execution_mark_index_evidence(
+                dict(result.observations[0].labels),
+                at_ns=at_ns,
+                max_session_liveness_ms=requirement.max_session_liveness_ms,
             )
-        except (KeyError, TypeError, ValueError):
-            return QueryProblem(
-                CanonicalErrorCode.DATA_STALE,
-                "quiet execution MARK/INDEX evidence is malformed",
-                True,
-            )
-        if (
-            session_liveness_ms < 0
-            or session_checked_at_ns <= 0
-            or session_checked_at_ns > at_ns
-        ):
-            return QueryProblem(
-                CanonicalErrorCode.DATA_STALE,
-                "quiet execution MARK/INDEX session clock is invalid",
-                True,
-            )
-        elapsed_ms = (at_ns - session_checked_at_ns) // 1_000_000
-        if session_liveness_ms + elapsed_ms > requirement.max_session_liveness_ms:
-            return QueryProblem(
-                CanonicalErrorCode.DATA_STALE,
-                "quiet execution MARK/INDEX provider session exceeded its SLA",
-                True,
-            )
-        for receipt_ns, cadence_ms in components:
-            if (
-                receipt_ns <= 0
-                or cadence_ms < 250
-                or cadence_ms > 120_000
-                or receipt_ns > at_ns
-                or (at_ns - receipt_ns) // 1_000_000 > cadence_ms
-            ):
-                return QueryProblem(
-                    CanonicalErrorCode.DATA_STALE,
-                    "quiet execution MARK/INDEX component exceeded its cadence",
-                    True,
-                )
+        except ValueError as error:
+            return QueryProblem(CanonicalErrorCode.DATA_STALE, str(error), True)
         return None
 
     def status(self, requirement: DataRequirement) -> QualityMetadata:

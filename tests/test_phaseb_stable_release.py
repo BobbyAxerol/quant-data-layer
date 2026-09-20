@@ -321,10 +321,16 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         # ``reference:batch`` is a governed V2 public path in the checked-in
-        # router and snapshot; keep this count as a regression guard rather
-        # than silently accepting a stale release assertion.
+        # router and snapshot. The two namespaced stale-policy schemas are
+        # intentional: Query accepts UNSPECIFIED internally while the public
+        # SDK only exposes concrete policy values. Keep both the count and the
+        # identity fence so a future generator collision cannot look harmless.
         self.assertEqual(len(generated["paths"]), 11)
-        self.assertEqual(len(generated["components"]["schemas"]), 67)
+        schemas = generated["components"]["schemas"]
+        self.assertEqual(len(schemas), 68)
+        self.assertNotIn("StalePolicy", schemas)
+        self.assertIn("qdl__query__contracts__StalePolicy", schemas)
+        self.assertIn("qdl_sdk__models__StalePolicy", schemas)
 
 
 if __name__ == "__main__":

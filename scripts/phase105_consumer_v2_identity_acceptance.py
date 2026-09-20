@@ -127,6 +127,31 @@ class C2ProductAcceptanceError(RuntimeError):
         }
 
 
+class C2ReferenceProductError(RuntimeError):
+    """One compact, payload-free reference failure for an operator C2 receipt."""
+
+    def __init__(
+        self,
+        product: ReferenceAcceptanceProduct,
+        *,
+        replica: str,
+        error: ValueError,
+    ) -> None:
+        super().__init__(
+            "Phase 10.5 V2 reference receipt failed "
+            f"consumer={product.consumer_id} instrument={product.instrument_id} "
+            f"feed={product.requirement.feed.value} replica={replica}"
+        )
+        self.evidence = {
+            "schema": "qdl.phase105.c2-reference-product-failure.v1",
+            "product": product.evidence(),
+            "replica": replica,
+            "error_type": type(error).__name__,
+            "reason": str(error)[:240],
+            "payload_recorded": False,
+        }
+
+
 class C2ClosingBatchError(RuntimeError):
     """Compact, payload-free evidence for a closing batch transport failure."""
 
@@ -550,11 +575,21 @@ async def _certify_references(
                 )
                 latency_ms = (time.perf_counter() - started) * 1_000
                 observed_at_ns = time.time_ns()
-                hashes = tuple(
-                    reference_evidence(item, result, observed_at_ns=observed_at_ns)
-                    for item, result in zip(batch, response.results, strict=True)
-                )
-                for item, result, content_hash in zip(batch, response.results, hashes, strict=True):
+                values_for_batch = []
+                for item, result in zip(batch, response.results, strict=True):
+                    try:
+                        content_hash = reference_evidence(
+                            item, result, observed_at_ns=observed_at_ns,
+                        )
+                        quality = reference_quality(
+                            item, result, observed_at_ns=observed_at_ns,
+                        )
+                    except ValueError as error:
+                        raise C2ReferenceProductError(
+                            item, replica=label, error=error,
+                        ) from error
+                    values_for_batch.append((item, content_hash, quality))
+                for item, content_hash, quality in values_for_batch:
                     if item.identity in values:
                         raise AssertionError("Phase 10.5 reference batch duplicated a product")
                     values[item.identity] = (
@@ -562,7 +597,7 @@ async def _certify_references(
                         latency_ms,
                         attempts,
                         deferred_ms,
-                        reference_quality(item, result, observed_at_ns=observed_at_ns),
+                        quality,
                     )
         finally:
             await client.close()
@@ -1398,7 +1433,7 @@ def main() -> int:
         raise SystemExit("--closing-timeout-seconds must be between 30 and 300")
     try:
         result = asyncio.run(run(args))
-    except (C2ProductAcceptanceError, C2ClosingBatchError) as error:
+    except (C2ProductAcceptanceError, C2ReferenceProductError, C2ClosingBatchError) as error:
         print(json.dumps({
             "schema": "qdl.phase105.v2-identity-acceptance.v1",
             "status": "FAIL_TYPED_STATUS",

@@ -308,7 +308,10 @@ class StableCatalogContractTests(unittest.TestCase):
         # The fixed non-crypto capability plane has 10 rows. Each of the five
         # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
         # QUOTE and every provider-native BAR interval. C3.6 adds the declared
-        # 18 physical L2 books as 36 snapshot/delta logical bindings.
+        # 18 physical L2 books as 36 snapshot/delta logical bindings. The same
+        # ten crypto instruments each have one official mark/index binding;
+        # keep that inventory explicit so a count change cannot hide a missing
+        # execution reference route or an unrelated catalog expansion.
         from qdl.adapters.intervals import (
             BINANCE_USDM_NATIVE_INTERVALS,
             OKX_NATIVE_INTERVALS,
@@ -322,17 +325,45 @@ class StableCatalogContractTests(unittest.TestCase):
             item for item in catalog.bindings
             if item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}
         ]
+        mark_index_bindings = [
+            item for item in catalog.bindings
+            if item.feed.value == "MARK_INDEX_PRICE"
+        ]
         self.assertEqual(len(l2_bindings), 36)
-        self.assertEqual(len(catalog.bindings), baseline + len(l2_bindings))
+        self.assertEqual(len(mark_index_bindings), 10)
+        self.assertEqual(
+            len(catalog.bindings),
+            baseline + len(l2_bindings) + len(mark_index_bindings),
+        )
         self.assertEqual(
             {(item.instrument.identity.venue, item.feed.value) for item in catalog.bindings},
             {
                 ("BINANCE", "TRADE"), ("BINANCE", "QUOTE"), ("BINANCE", "BAR"),
                 ("BINANCE", "BOOK_SNAPSHOT"), ("BINANCE", "BOOK_DELTA"),
+                ("BINANCE", "MARK_INDEX_PRICE"),
                 ("OKX", "TRADE"), ("OKX", "QUOTE"), ("OKX", "BAR"),
                 ("OKX", "BOOK_SNAPSHOT"), ("OKX", "BOOK_DELTA"),
+                ("OKX", "MARK_INDEX_PRICE"),
                 ("HNX", "TRADE"), ("HNX", "BAR"),
                 ("HOSE", "TRADE"), ("HOSE", "BAR"),
+            },
+        )
+        self.assertEqual(
+            {
+                (item.instrument.identity.venue, item.instrument.native_symbol)
+                for item in mark_index_bindings
+            },
+            {
+                ("BINANCE", "BTCUSDT"),
+                ("BINANCE", "ETHUSDT"),
+                ("BINANCE", "SOLUSDT"),
+                ("BINANCE", "DOGEUSDT"),
+                ("BINANCE", "BNBUSDT"),
+                ("OKX", "BTC-USDT-SWAP"),
+                ("OKX", "ETH-USDT-SWAP"),
+                ("OKX", "SOL-USDT-SWAP"),
+                ("OKX", "DOGE-USDT-SWAP"),
+                ("OKX", "BNB-USDT-SWAP"),
             },
         )
         for binding in catalog.bindings:

@@ -19,7 +19,10 @@ from qdl.certification.phase103_consumer_acceptance import (
     _decimal_value,
 )
 from qdl.consumer.manifest import ConsumerManifest, ConsumerManifestLoader
-from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy
+from qdl.data_quality.execution_mark_index import (
+    validate_quiet_execution_mark_index_evidence,
+)
+from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
@@ -51,6 +54,13 @@ _REFERENCE_ACCEPTANCE_BATCH_SIZE = 12
 _STRICT_MARK_FRESHNESS_MS = 2_000
 _ACCEPTANCE_TRANSPORT_MARGIN_SECONDS = 15.0
 _ACCEPTANCE_TRANSPORT_MAX_SECONDS = 90.0
+_EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
+    "qdl://stable-stream/internal/v2/execution/mark-index/latest"
+)
+_EXECUTION_MARK_INDEX_DELIVERY_STAGES = frozenset({
+    "CANONICAL_READ_COMMITTED",
+    "SPOOL_CONFIRMED",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,6 +499,21 @@ def reference_quality(
         raise ValueError("reference response timing is in the future")
     source_age_ms = (observed_at_ns - newest_observed_ns) // _MILLISECOND_NS
     receive_age_ms = (observed_at_ns - received_at_ns) // _MILLISECOND_NS
+    quiet_execution_evidence = _quiet_execution_mark_index_evidence(
+        product,
+        item,
+        observed_at_ns=observed_at_ns,
+    )
+    if quiet_execution_evidence is not None:
+        return {
+            "source_age_ms": int(source_age_ms),
+            "receive_age_ms": int(receive_age_ms),
+            "session_liveness_ms": quiet_execution_evidence.session_liveness_ms,
+            "session_checked_age_ms": quiet_execution_evidence.session_checked_age_ms,
+            "component_mark_age_ms": quiet_execution_evidence.component_mark_age_ms,
+            "component_index_age_ms": quiet_execution_evidence.component_index_age_ms,
+            "gap_open": False,
+        }
     if source_age_ms > (request.max_freshness_ms or 86_400_000):
         raise ValueError("reference response exceeds its governed freshness bound")
     return {
@@ -496,6 +521,75 @@ def reference_quality(
         "receive_age_ms": int(receive_age_ms),
         "gap_open": False,
     }
+
+
+def _quiet_execution_mark_index_evidence(
+    product,
+    item,
+    *,
+    observed_at_ns: int,
+):
+    """Recognize only the existing internal execution live-view response."""
+
+    requirement = product.requirement
+    request = product.sdk_requirement
+    if not (
+        requirement.feed is FeedType.MARK_INDEX_PRICE
+        and requirement.consumer_grade is ConsumerGrade.EXECUTION
+        and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+        and request.product is ReferenceProduct.MARK_INDEX_PRICE
+        and request.consumer_grade is Grade.EXECUTION
+        and request.event_recency_policy is not None
+        and request.event_recency_policy.value == StalePolicy.OBSERVE.value
+        and request.start_time_ns is None
+        and request.end_time_ns is None
+        and request.max_session_liveness_ms is not None
+        and request.max_session_liveness_ms == requirement.max_session_liveness_ms
+    ):
+        return None
+    data = item.data
+    if (
+        data is None
+        or len(data.observations) != 1
+        or len(data.lineage) != 1
+        or data.lineage[0].provider_endpoint != _EXECUTION_MARK_INDEX_LIVE_ENDPOINT
+        or data.lineage[0].source_role != "REFERENCE"
+        or data.coverage.terminal_reason != "LIVE_EXECUTION_VIEW"
+    ):
+        raise ValueError("quiet execution MARK/INDEX live-view lineage is invalid")
+    observation = data.observations[0]
+    labels = observation.labels
+    try:
+        source_event_time_ns = int(labels["source_event_time_ns"])
+        provider_confirmation_ns = int(labels["provider_confirmation_ns"])
+        connection_generation = int(labels["connection_generation"])
+        gateway_lease_epoch = int(labels["gateway_lease_epoch"])
+        spool_watermark = labels["spool_watermark_offset"]
+        spool_watermark_offset = (
+            None if spool_watermark == "PENDING" else int(spool_watermark)
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("quiet execution MARK/INDEX provenance labels are malformed") from error
+    if (
+        labels.get("execution_view") != "STABLE_STREAM_GATEWAY"
+        or labels.get("freshness_basis") not in {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"}
+        or labels.get("delivery_stage") not in _EXECUTION_MARK_INDEX_DELIVERY_STAGES
+        or source_event_time_ns != observation.observed_at_ns
+        or provider_confirmation_ns != data.received_at_ns
+        or source_event_time_ns <= 0
+        or provider_confirmation_ns <= 0
+        or source_event_time_ns > provider_confirmation_ns
+        or provider_confirmation_ns > observed_at_ns
+        or connection_generation < 1
+        or gateway_lease_epoch < 1
+        or (spool_watermark_offset is not None and spool_watermark_offset < 0)
+    ):
+        raise ValueError("quiet execution MARK/INDEX provenance is invalid")
+    return validate_quiet_execution_mark_index_evidence(
+        labels,
+        at_ns=observed_at_ns,
+        max_session_liveness_ms=request.max_session_liveness_ms,
+    )
 
 
 def validate_reference_batch(
