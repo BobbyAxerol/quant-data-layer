@@ -46265,6 +46265,86 @@ again mounts the unchanged sealed runtime directory. No other named service was
 recreated and no durable store, offset, credential, manifest, consumer, alpha
 or order state was modified.
 
+**C2 BAR-history investigation and bounded repair decision (`IN_PROGRESS`,
+2026-09-20).** The first read-only scanner used a `10,000` *logical-offset*
+tail. That is not the Query path: Query reads the bounded `12,064` physical
+tail, orders BARs by market open, and then selects the consumer's market-time
+window. Its apparent `55` affected bindings therefore included harmless
+late-backfill history omitted by the diagnostic's shorter logical tail. That
+reading is withdrawn, not used as a repair scope.
+
+The corrected disposable verifier used the exact shared physical capacity
+(`12,064`) and scanned all `144` active BAR bindings / `893,360` retained rows.
+It found no sequence flags and exactly `25` real recent continuity gaps, all on
+the five OKX Swap symbols: `1h` (`25` missing final bars), `2h` (`15`), `4h`
+(`10`), `6h` (`5`) and `12h` (`5`). The `12h` gap is the one that stopped C2 at
+`OKX/SWAP/DOGE-USDT`; it is neither a MARK/INDEX hydration regression nor a
+false sequence-flag interpretation. The scanner changed no canonical, spool,
+provider, consumer or runtime state.
+
+The only approved in-scope correction is the existing
+`scripts/repair_stable_final_bar_history.py` path, invoked serially per
+affected binding with a bounded `700`-BAR provider window: first record its
+provider-backed dry-run's exact missing count, then publish only the matching
+real final envelopes through normal V2 Kafka/canonical/projector flow. The
+active writer already uses the shared `10,000 + 2,064` physical capacity. The
+repair's own convergence check protects the requested market-time window; a
+physical append tail is not itself a public warmup contract. The script
+validates the count before write and never fabricates a candle, rewrites a
+timestamp, resets checkpoint/offset, flushes Redis, deletes SQLite or recreates
+a serving role. V1, Rust, ingestors, projectors, readers, Trading System, alpha
+and order paths remain unchanged. If a provider cannot supply the exact bounded
+history or an expected window cannot converge, repair and C2 stop fail-closed;
+no SLA, warmup, gap policy or manifest route may be relaxed.
+
+**Repair/C2 exit and rollback.** After each real-provider repair, verify the
+same provider-confirmed market-time window has zero remaining opens; then run a
+read-only semantic scan matching Query's physical-read / market-time-tail logic
+for each declared `700`, `2,500`, `5,000` and `10,000` BAR boundary. Every
+consumer-visible requested window must be gap-free before the already-built
+reader candidate is retried. The only later reader mutation remains the
+previously sealed four-reader candidate packet with its exact old-image
+rollback. A repair failure is recovered by leaving existing durable data intact
+and recording the provider limitation; no broad rollback or deletion is
+allowed.
+
+**OKX bounded repair dry-run (`PASS / APPLY COUNT-FENCED`, 2026-09-20).** The
+existing repair client ran serially for all `25` affected OKX bindings with
+`rows=700` and the exact per-binding count fence derived from the corrected
+physical verifier. Every invocation returned `DRY_RUN`; all `25` provider
+windows were complete and the aggregate missing count was exactly `60` final
+BARs (`1h=25`, `2h=15`, `4h=10`, `6h=5`, `12h=5`). There were zero production
+mutations and no stderr. The active bar edge remained `running`, `restart=0`,
+`OOMKilled=false`. Evidence is bounded at
+`/home/bobby/.local/state/qdl-v2/r135-c-hydrate-1a9da35-20260920T033124Z/c2-full/evidence/okx-bar-repair-dry-run.jsonl`.
+
+The next permitted action is one serial apply over precisely these same `25`
+bindings, each with its same count fence, `180s` convergence limit and normal
+Kafka -> Rust canonical -> existing projector/cache path. A count change,
+generation fence, provider failure or non-converged binding stops the serial
+run immediately and blocks C2; it does not widen scope or retry blindly.
+
+**OKX bounded repair and semantic-window exit (`PASS / C2 RETRY PERMITTED`,
+2026-09-20).** The serial apply completed all `25/25` count-fenced bindings.
+It published exactly `60` provider-confirmed final BARs, every invocation
+reported `CONVERGED`, and every `remaining_rows` value is zero; stderr is empty.
+The post-repair disposable verifier then executed Query's actual physical-read,
+market-time-sort and bounded-tail semantics for all `144` BAR bindings at
+`700`, `2,500`, `5,000` and `10,000` rows. It found `0` duplicate opens,
+sequence flags or interior continuity failures across every consumer-visible
+window. This deliberately replaces the withdrawn logical-tail inventory, not
+the public no-gap rule. The active bar edge remained `running`, `restart=0`,
+`OOMKilled=false`, about `135 MiB / 512 MiB`; host free disk remained `166 GB`.
+Evidence: `okx-bar-repair-apply.jsonl`,
+`bar-semantic-window-scan.json` and their bounded stderr files under the C2
+evidence directory above.
+
+The BAR continuity blocker is closed. The next permitted R1.35-C action is the
+already-sealed, serial four-reader candidate retry followed by exactly one
+`require_all=true`, no-order C2 observation of `300` seconds. It must produce
+a new certificate; this repair result does not inherit success from the earlier
+failed C2.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
