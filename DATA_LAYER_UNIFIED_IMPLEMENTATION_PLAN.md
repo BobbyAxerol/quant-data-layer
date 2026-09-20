@@ -47038,6 +47038,25 @@ unchanged.
   then run one all-scope preflight. Only a green preflight permits the single
   final `C2 300s` certificate.
 
+**Paired-L2 client artifact admission (`PASS / REAL PREFLIGHT NEXT`, 2026-09-20).**
+
+- Committed matrix-only source `1f7e0a523dd7c7f2b493aa0bb7ab45da769e0bdf`
+  as `test(certification): add paired l2 fast matrix`, using the configured
+  `BobbyAxerol <vugioan11022002@gmail.com>` identity. `git diff --check` was
+  clean before the commit.
+- Built one new disposable client image only:
+  `qdl-v2-python:2.0.26-1f7e0a5@sha256:33f06873d6d2fa24f06f5d512dbf60bc4d8c57c7b26fbf421d9c22fce289a7d2`.
+  OCI revision is the full committed SHA, version is `2.0.26-1f7e0a5`, and it
+  runs as non-root `qdl:qdl`. Its packaged, no-source-mount, network-disabled,
+  read-only-root fast-gate command exited successfully for the same `199` test
+  cases; all bytecode state was tmpfs-only.
+- No reader, stream, provider, Kafka, Redis, SQLite, V1, Trading System,
+  alpha or order component was recreated or changed. The only next mutation is
+  packet-local: bind this disposable image to the existing read-only
+  preflight/C2 launcher. First run the all-scope two-replica preflight; a
+  typed failure returns to the relevant fast gate, while a pass permits exactly
+  one final C2 observation.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
