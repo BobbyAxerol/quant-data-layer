@@ -46464,6 +46464,17 @@ replicas, both stream endpoints, V1 fallback policy, signed cursor/reconnect,
 the client, creates no order/signal/sizing mutation, and removes its client
 container on exit. It has not been executed.
 
+**Runtime approval (`APPROVED`, 2026-09-20).** The operator explicitly
+approved the packet above: serially recreate only `query_v2_2`, `query_v2_1`,
+the observed stream standby and then the observed stream leader to candidate
+`sha256:4f29daaa89da74e916739cf367592f94c6f06c50829dc2a8b72bde7cb98542a9`;
+retain runtime/TLS/state mounts and current Compose selectors; rollback only
+changed roles to `sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`.
+The same approval permits exactly one isolated no-order `303`-route C2 for
+`300` seconds. V1, Rust, ingestors, bar edge, projectors, Kafka topology/
+offsets, Redis, SQLite, Trading System, alpha and the order path remain
+excluded.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
