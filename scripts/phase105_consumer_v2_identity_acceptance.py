@@ -210,6 +210,11 @@ class C2ClosingBatchError(RuntimeError):
             "batch_size": len(products),
             "batch_identity_sha256": digest,
             "transport_error": type(error).__name__,
+            "transport_error_code": getattr(error, "code", None),
+            "transport_retryable": bool(getattr(error, "retryable", False)),
+            "transport_detail_sha256": hashlib.sha256(
+                str(getattr(error, "detail", error)).encode()
+            ).hexdigest(),
             "typed_status": status_observations,
             "batch_item_problems": list(batch_item_problems or ()),
             "payload_recorded": False,
@@ -1185,41 +1190,71 @@ def _closing_requirement(product: AcceptanceProduct):
     )
 
 
-def _closing_batch_problem_evidence(
-    products: tuple[AcceptanceProduct, ...], response,
+async def _closing_batch_problem_evidence(
+    client,
+    products: tuple[AcceptanceProduct, ...],
     *,
+    error: Exception,
     status_observations: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Retain bounded per-item errors when a successful HTTP batch is partial.
+    """Locate typed item failures without weakening execution batch semantics.
 
-    The public SDK intentionally raises a generic ``DataLayerError`` for
-    ``require_all=True``. C2 needs the original item identity and typed problem
-    code to distinguish a route defect from a transport failure without writing
-    a market payload into release evidence.
+    A public execution-grade batch must use ``require_all=True``. The SDK then
+    deliberately raises a generic ``PARTIAL_RESULT`` rather than returning a
+    partially usable response. Only after that fail-closed batch result do we
+    bisect it with the same strict batch API, then issue a single public
+    ``warmup`` for each failing leaf to retain its server typed code. The all-
+    pass path stays batched; this diagnostic never turns a partial response into
+    usable execution data or records its payload.
     """
 
-    results = tuple(getattr(response, "results", ()))
-    if len(results) != len(products):
-        raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
+    if not isinstance(error, DataLayerError) or error.code != "PARTIAL_RESULT":
+        return []
     quality_by_identity = {
         tuple(item["product_identity"]): item.get("quality_sha256")
         for item in status_observations
         if isinstance(item.get("product_identity"), list)
     }
+
+    async def failed_leaves(
+        group: tuple[AcceptanceProduct, ...],
+    ) -> tuple[AcceptanceProduct, ...]:
+        if len(group) == 1:
+            return group
+        midpoint = len(group) // 2
+        children = (group[:midpoint], group[midpoint:])
+        leaves: list[AcceptanceProduct] = []
+        for child in children:
+            try:
+                await client.warmup_batch(
+                    tuple(_closing_requirement(product) for product in child),
+                    require_all=True,
+                )
+            except (httpx.HTTPError, TimeoutError, DataLayerError, ValueError):
+                leaves.extend(await failed_leaves(child))
+        return tuple(leaves)
+
+    leaves = await failed_leaves(products)
     evidence: list[dict[str, object]] = []
-    for product, item in zip(products, results, strict=True):
-        problem = getattr(item, "problem", None)
-        if problem is None:
-            continue
-        raw_code = getattr(problem, "code", "UNKNOWN")
-        code = getattr(raw_code, "value", raw_code)
-        if not isinstance(code, str) or not code:
-            raise AssertionError("Phase 10.5 closing batch problem code is invalid")
-        detail = str(getattr(problem, "detail", ""))
+    for product in leaves:
+        try:
+            await client.warmup(_closing_requirement(product))
+        except DataLayerError as leaf_error:
+            code = leaf_error.code
+            retryable = leaf_error.retryable
+            detail = leaf_error.detail
+        except (httpx.HTTPError, TimeoutError, ValueError) as leaf_error:
+            code = f"DIAGNOSTIC_{type(leaf_error).__name__.upper()}"
+            retryable = False
+            detail = str(leaf_error)
+        else:
+            code = "BATCH_FAILURE_NOT_REPRODUCED"
+            retryable = True
+            detail = "strict batch failure was not reproduced by its isolated V2 read"
         evidence.append({
             **product.evidence(),
             "problem_code": code,
-            "retryable": bool(getattr(problem, "retryable", False)),
+            "retryable": retryable,
             "problem_detail_sha256": hashlib.sha256(detail.encode()).hexdigest(),
             "quality_sha256": quality_by_identity.get(product.identity),
         })
@@ -1299,15 +1334,18 @@ async def _closing_batch_revalidation(
                 requirements = tuple(_closing_requirement(item) for item in batch)
                 started = time.perf_counter()
                 try:
-                    # Ask the public SDK for the typed partial result, then fail
-                    # closed below. `require_all=True` would collapse the exact
-                    # failing item into a generic DataLayerError.
-                    response = await client.warmup_batch(requirements, require_all=False)
-                except (httpx.HTTPError, TimeoutError, DataLayerError) as error:
+                    response = await client.warmup_batch(requirements, require_all=True)
+                except (httpx.HTTPError, TimeoutError, DataLayerError, ValueError) as error:
                     status_observations = await _closing_failure_status_observations(
                         client,
                         batch,
                         timeout_seconds=timeout_seconds,
+                    )
+                    batch_item_problems = await _closing_batch_problem_evidence(
+                        client,
+                        batch,
+                        error=error,
+                        status_observations=status_observations,
                     )
                     raise C2ClosingBatchError(
                         consumer_id=batch[0].consumer_id,
@@ -1315,37 +1353,14 @@ async def _closing_batch_revalidation(
                         products=batch,
                         error=error,
                         status_observations=status_observations,
+                        batch_item_problems=batch_item_problems,
                     ) from error
                 latency_ms = (time.perf_counter() - started) * 1_000
                 if len(response.results) != len(batch):
                     raise AssertionError("Phase 10.5 closing V2 batch cardinality differs")
                 if response.partial:
-                    failed_products = tuple(
-                        product
-                        for product, item in zip(batch, response.results, strict=True)
-                        if getattr(item, "problem", None) is not None
-                    ) or batch
-                    status_observations = await _closing_failure_status_observations(
-                        client,
-                        failed_products,
-                        timeout_seconds=timeout_seconds,
-                    )
-                    batch_item_problems = _closing_batch_problem_evidence(
-                        batch,
-                        response,
-                        status_observations=status_observations,
-                    )
-                    raise C2ClosingBatchError(
-                        consumer_id=batch[0].consumer_id,
-                        replica=label,
-                        products=batch,
-                        error=DataLayerError(
-                            "PARTIAL_RESULT",
-                            "required closing warmup batch contains item failures",
-                            retryable=any(item["retryable"] for item in batch_item_problems),
-                        ),
-                        status_observations=status_observations,
-                        batch_item_problems=batch_item_problems,
+                    raise AssertionError(
+                        "Phase 10.5 public strict warmup batch returned partial"
                     )
                 observed_at_ns = time.time_ns()
                 for product, item in zip(batch, response.results, strict=True):

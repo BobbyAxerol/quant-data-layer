@@ -46875,6 +46875,57 @@ unchanged.
   afterward. Candidate and named rollback images remain until that outcome is
   reconciled; no broad Docker cleanup is allowed during the packet.
 
+**Fast-gate live launcher finding (`FAIL_PRE_C2 / SOURCE REPAIR REQUIRED`, 2026-09-20).**
+
+- The four named reader roles rolled serially to the candidate and each proved
+  the exact `f248...6ad7` digest, `healthy`, restart `0`, OOM `false`, preserved
+  `/runtime`, and the stream pair remained `READY/STANDBY`. No other role or
+  durable dependency changed.
+- The disposable no-order preflight then stopped before its first product
+  receipt: the acceptance helper called public
+  `AsyncDataLayerClient.warmup_batch(..., require_all=False)` for a batch that
+  contains execution-grade requirements. The SDK correctly rejected that with
+  `ValueError: execution-grade warmup batch must require all items`.
+  This is an acceptance-tool violation of the existing public contract, not a
+  provider, binding, freshness or replica result. It consumed no C2 window,
+  opened no stream and performed no fallback, provider-direct or order action.
+- Required narrow repair: all execution-grade batches must use
+  `require_all=True`. If one fails, the tool may perform bounded per-item V2
+  reads under the same identity solely to identify the exact typed error and
+  quality hash; all success-path batches stay batched and fast. It must never
+  weaken the SDK guard, use a partial execution response as usable data, or
+  rerun C2. Regression must prove public SDK compatibility, fast all-pass
+  batching, failure-only individual diagnostics, no payload evidence and typed
+  receipt. The current candidate is not certified; it is retained only until
+  the corrected immutable candidate is built and the same four-reader packet
+  is re-run. The named `335792a` rollback remains valid.
+
+**Strict execution-batch repair (`PASS / CLIENT-ONLY IMAGE PENDING`, 2026-09-20).**
+
+- The acceptance helper now uses public strict `warmup_batch(...,
+  require_all=True)` for every durable/execution batch. It preserves the SDK's
+  no-partial execution invariant. On a `PARTIAL_RESULT` only, it bisects the
+  failed strict batch and calls public `warmup` only for the failing leaf/leaves
+  to retain their server code, retryability, detail hash and matching status
+  quality hash. A transport/non-partial failure stays batch-scoped with its
+  code/detail hash and status matrix; it is never mislabelled as a product
+  failure. A leaf which becomes readable during diagnosis is explicitly marked
+  `BATCH_FAILURE_NOT_REPRODUCED` and still blocks C2.
+- `C2ClosingBatchError` now retains bounded batch transport code/retryability/
+  detail hash in addition to per-item evidence. No market payload is retained.
+  Regressions prove strict all-pass batching, no `require_all=False` execution
+  call, bisection of only the failed leaf, typed leaf diagnostic, status quality
+  hash and pre-existing quiet/session/gap/replica checks. Source-only,
+  read-only/no-network Python regression passed for the affected timing,
+  warmup, quality, receipt and stream-projection suites; `py_compile` and
+  `git diff --check` also passed.
+- This repair changes only the disposable C2 client harness. The four reader
+  roles already on `f248...6ad7` remain healthy and need no second recreate.
+  Build one immutable client image from the repaired commit, replace only the
+  disposable `--rm` client image in this packet, then run the exact two-replica
+  read-plane preflight. The active reader rollback stays `335792a`; no durable
+  system component is changed by this source repair.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

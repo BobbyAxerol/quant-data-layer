@@ -20,6 +20,7 @@ from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy, 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import (
+    DataLayerError,
     DataRequirement as SdkDataRequirement,
     Feed,
     FeedStatusResponse,
@@ -37,6 +38,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _PacedStreamTransport,
     IDENTITY_PREFIXES,
     _authority,
+    _closing_batch_problem_evidence,
     _closing_batch_revalidation,
     _closing_batches,
     _closing_requirement,
@@ -894,8 +896,8 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 self.calls: list[tuple[object, ...]] = []
 
             async def warmup_batch(self, requirements, *, require_all: bool):
-                if require_all:
-                    raise AssertionError("closing batch must retain typed partial results")
+                if not require_all:
+                    raise AssertionError("execution closing batch must require all items")
                 self.calls.append(tuple(requirements))
                 return SimpleNamespace(
                     partial=False,
@@ -937,13 +939,69 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 grpc_target="stream:8210",
                 state_dir=Path("/tmp/phase105-closing"),
                 timeout_seconds=15.0,
-                max_batch_items=1,
+                max_batch_items=2,
                 client_factory=factory,
             )
         self.assertEqual(len(evidence), 2)
         self.assertEqual({item["closing_read"] for item in evidence}, {"BATCH_V2_PRIMARY"})
         self.assertEqual(len(clients), 2)
-        self.assertEqual([len(call) for client in clients for call in client.calls], [1, 1, 1, 1])
+        self.assertEqual([len(call) for client in clients for call in client.calls], [2, 2])
+
+    async def test_partial_batch_bisects_only_failing_leaf_for_typed_diagnostic(self) -> None:
+        class Product:
+            def __init__(self, name: str) -> None:
+                self.requirement = name
+                self.identity = ("alpha.binance.paper.stable", f"uid-{name}", "TRADE", "", "crypto")
+
+            def evidence(self) -> dict[str, object]:
+                return {"instrument_uid": self.identity[1], "feed": "TRADE"}
+
+        good, bad = Product("good"), Product("bad")
+
+        class Client:
+            def __init__(self) -> None:
+                self.batch_calls: list[tuple[str, ...]] = []
+                self.warmup_calls: list[str] = []
+
+            async def warmup_batch(self, requirements, *, require_all: bool):
+                self.assert_true(require_all)
+                values = tuple(requirements)
+                self.batch_calls.append(values)
+                if bad.requirement in values:
+                    raise DataLayerError("PARTIAL_RESULT", "one item failed", retryable=True)
+                return SimpleNamespace(partial=False, results=[])
+
+            async def warmup(self, requirement):
+                self.warmup_calls.append(requirement)
+                if requirement == bad.requirement:
+                    raise DataLayerError("DATA_STALE", "only the bad leaf is stale", retryable=True)
+                raise AssertionError("successful leaf must not receive an individual diagnostic read")
+
+            @staticmethod
+            def assert_true(value):
+                if not value:
+                    raise AssertionError("strict batch expected")
+
+        client = Client()
+        observations = [
+            {"product_identity": list(good.identity), "quality_sha256": "a" * 64},
+            {"product_identity": list(bad.identity), "quality_sha256": "b" * 64},
+        ]
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
+            side_effect=lambda product: product.requirement,
+        ):
+            evidence = await _closing_batch_problem_evidence(
+                client,
+                (good, bad),
+                error=DataLayerError("PARTIAL_RESULT", "strict root failure", retryable=True),
+                status_observations=observations,
+            )
+        self.assertEqual(client.batch_calls, [(good.requirement,), (bad.requirement,)])
+        self.assertEqual(client.warmup_calls, [bad.requirement])
+        self.assertEqual([item["instrument_uid"] for item in evidence], ["uid-bad"])
+        self.assertEqual(evidence[0]["problem_code"], "DATA_STALE")
+        self.assertEqual(evidence[0]["quality_sha256"], "b" * 64)
 
     async def test_closing_batch_partial_retains_typed_item_problem(self) -> None:
         product = SimpleNamespace(
@@ -984,18 +1042,20 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
 
         class Client:
             async def warmup_batch(self, requirements, *, require_all: bool):
-                self.assertFalse(require_all)
+                self.assertTrue(require_all)
                 self.assertEqual(tuple(requirements), (product.requirement,))
-                return SimpleNamespace(
-                    partial=True,
-                    results=[SimpleNamespace(
-                        data=None,
-                        problem=SimpleNamespace(
-                            code=SimpleNamespace(value="DATA_NOT_READY"),
-                            retryable=True,
-                            detail="cache is intentionally omitted from evidence",
-                        ),
-                    )],
+                raise DataLayerError(
+                    "PARTIAL_RESULT",
+                    "required warmup batch contains one or more explicit failures",
+                    retryable=True,
+                )
+
+            async def warmup(self, requirement):
+                self.assertIs(requirement, product.requirement)
+                raise DataLayerError(
+                    "DATA_NOT_READY",
+                    "cache is intentionally omitted from evidence",
+                    retryable=True,
                 )
 
             async def feed_status(self, requirement):
@@ -1008,6 +1068,10 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             def assertFalse(self, value):
                 if value:
                     raise AssertionError("expected false")
+
+            def assertTrue(self, value):
+                if not value:
+                    raise AssertionError("expected true")
 
             def assertEqual(self, actual, expected):
                 if actual != expected:
@@ -1039,6 +1103,7 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 )
         evidence = raised.exception.evidence
         self.assertEqual(evidence["transport_error"], "DataLayerError")
+        self.assertEqual(evidence["transport_error_code"], "PARTIAL_RESULT")
         self.assertEqual(evidence["batch_item_problems"][0]["problem_code"], "DATA_NOT_READY")
         self.assertTrue(evidence["batch_item_problems"][0]["retryable"])
         self.assertIn("problem_detail_sha256", evidence["batch_item_problems"][0])
