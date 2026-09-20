@@ -45378,6 +45378,22 @@ Redis, SQLite, consumer manifests/routes, Trading System, alpha and order
 paths were not recreated or changed. The exact old trust/env files remain in
 the packet's rollback directory. Full all-identity C2 is now unblocked.
 
+**C full-C2 preflight (2026-09-20; `PREPARED_NOT_RUN`).** The same protected
+packet now contains one disposable `qdl-r135-c-full-c2` launcher. It mounts
+the unchanged B2 runtime, the existing Trading System/Alpha-Binance private
+identities and the new Monitoring/Alpha-OKX extension separately, copies them
+only into a `tmpfs` input directory as UID `10001` with empty capabilities and
+`NoNewPrivs=1`, and self-removes on exit. It has no Docker socket, provider
+credential, order path or mutable runtime mount. The source C2 parser passed
+offline in the exact immutable reader image; launcher scripts pass `sh -n` /
+`bash -n`. An offline scope build from the mounted runtime resolves exactly
+`299` V2-primary products: `234` durable and `65` on-demand, with the four
+consumer counts and feed inventory recorded above, scope digest
+`66e158b4...3d87`. The one real run will use both query replicas and both
+stream targets, run a 300-second observation, exercise only declared V1
+fallback products, require `BLOCKED` products to remain blocked, and retain
+only payload-free receipt hashes/metrics.
+
 ##### R1.35-D: Hygiene, provenance and immutable release (`PENDING / REQUIRES PHASE 3 EXIT`)
 
 **Goal.** Close the release without leaving test containers, images, cache,
