@@ -47400,6 +47400,27 @@ unchanged.
   source revision; only a green ladder permits the one all-scope two-replica
   fast preflight and then the one final C2 `300s`.
 
+- **Strict batch materialization immutable candidate (`PASS / QUERY-ONLY
+  ROLLOUT NEXT`, 2026-09-20).** Committed source
+  `1d81becb0739159089ba94400b6c32d569be03b4` built as exactly one retained
+  candidate: `qdl-v2-python:2.0.26-1d81bec` at
+  `sha256:05ee5702cae9fa8aa07fc48a289a5f711c0aa8401f64ca08c150e8cc8e5de60e`.
+  OCI revision is the full committed SHA, OCI version is `2.0.26-1d81bec`,
+  and the configured runtime user is `qdl:qdl`. The packaged artifact, with
+  no source mount, `--network none`, a read-only root, tmpfs-only test state
+  and UID/GID `10001`, passed the exact selected `160/160` source matrix.
+  The isolated containers removed themselves after the runs; no candidate
+  container, source mount, provider request, runtime role, V1, Kafka, Redis,
+  SQLite, Trading System, alpha or order path changed. The only retained
+  reader rollback remains active `qdl-v2-python:2.0.26-e4fc241` at
+  `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`.
+
+  The next permitted mutation is the already-approved serial replacement of
+  only `query_v2_1`, then `query_v2_2`, with that exact rollback. It must run
+  the strict `1/8/16/32/50` both-replica BAR ladder first. Only a green ladder
+  permits one all-scope fast preflight and then exactly one C2 `300s`; neither
+  acceptance has been consumed by this image gate.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
