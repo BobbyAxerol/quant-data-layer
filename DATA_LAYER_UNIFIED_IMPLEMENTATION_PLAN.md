@@ -46436,6 +46436,21 @@ rollback for every one of those roles is
 No C2 retry, release, cleanup, V1/Rust/Kafka/Redis/SQLite change, or consumer/
 order-path mutation is authorized by this source/image evidence alone.
 
+**Reader packet preflight (`PASS / NOT ROLLED`, 2026-09-20).** The bounded
+packet is stored outside Git at
+`/home/bobby/.local/state/qdl-v2/r135-c-on-change-2af2cdd-20260920T051916Z/`.
+It contains only a payload-free packet descriptor, the four-image candidate
+override, the exact four-image rollback override and executable operator-only
+preflight/roll/rollback scripts. It names no secret values. Script syntax and
+packet schema passed; the preflight rendered the complete existing Compose
+chain without mutation, verified each reader at the recorded rollback digest
+and runtime mount, and observed exactly one cooperative stream lease:
+`stream_v2_active=STANDBY`, `stream_v2_passive=READY`. The rollout script rolls
+the standby before the current leader and recomputes the lease between steps;
+its rollback guard invokes rollback only for roles actually recreated. This
+packet has not run `up`, did not restart a role, and does not authorize the
+following `300`-second C2 itself.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
