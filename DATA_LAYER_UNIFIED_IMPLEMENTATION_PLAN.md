@@ -46534,6 +46534,20 @@ No extra role, image, service, topology or C2 invocation is introduced. The
 final C2 will likewise use a disposable Docker-contained client so its
 300-second observation is not subject to the host shell window.
 
+**Four-reader rollout (`PASS / C2 READY`, 2026-09-20).** From the restored
+rollback baseline, the exact approved roles were recreated serially through the
+sealed Compose chain: `query_v2_2`, `query_v2_1`, then observed standby
+`stream_v2_passive`, then its retained peer `stream_v2_active`. After each
+step, the recreated role reached `healthy`, `restart=0`, `OOMKilled=false` and
+the unchanged sealed `/runtime` mount before the next step. The final state is
+all four roles at candidate
+`sha256:4f29daaa89da74e916739cf367592f94c6f06c50829dc2a8b72bde7cb98542a9`,
+with one stream `READY` and one `STANDBY`. No other role was recreated; V1,
+Rust, ingestors, bar edge, projectors, Kafka, Redis, SQLite, Trading System,
+alpha and order path remain untouched. C2 has not run. The next and only
+remaining acceptance action in this packet is the approved disposable,
+no-order, `303`-route, `require_all=true` observation for `300` seconds.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
