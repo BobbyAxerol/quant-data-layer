@@ -46414,6 +46414,28 @@ This build may create an image/cache only; it does not authorize Compose,
 runtime/bundle/TLS changes, or a reader recreate. Its digest and image-local
 tests must be recorded before a new exact four-role packet is requested.
 
+**Immutable-reader build and image-local gate (`PASS / NOT ROLLED`,
+2026-09-20).** The sealed code revision
+`2af2cdd394514387923bee89eaf6bdd841bee4d8` built as
+`qdl-v2-python:2.0.26-2af2cdd39451@sha256:4f29daaa89da74e916739cf367592f94c6f06c50829dc2a8b72bde7cb98542a9`.
+Its OCI revision and release labels are respectively that full SHA and
+`2.0.26-2af2cdd39451`; the runtime user is `qdl:qdl` (`10001:10001`). With no
+source mount or network, the same affected quality/query/audit/C2/stable-edge/
+deployment/session matrix passed `123`, with the one pre-existing isolated
+Redis skip. The exact `qdl-r135-image-matrix` test container was removed after
+exit `0`. This image is a candidate only, not an active role image; the
+documentation commit that records this evidence is intentionally a descendant
+of the built source SHA and does not alter the candidate's code provenance.
+
+**Next packet boundary.** The only permitted runtime change is a serial
+recreate of `query_v2_2`, `query_v2_1`, `stream_v2_active` and
+`stream_v2_passive` to this exact candidate digest, retaining their existing
+runtime/TLS/state mounts and all other Compose configuration. The exact
+rollback for every one of those roles is
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`.
+No C2 retry, release, cleanup, V1/Rust/Kafka/Redis/SQLite change, or consumer/
+order-path mutation is authorized by this source/image evidence alone.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
