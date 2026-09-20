@@ -217,6 +217,7 @@ def decision_row(
             session_state=session_state,
             session_liveness_ms=session_liveness_ms,
             session_limit_ms=session_limit_ms,
+            delivery_semantics=binding.delivery_semantics,
             components=components,
             generation_matches=generation_matches,
             config_matches=config_matches,

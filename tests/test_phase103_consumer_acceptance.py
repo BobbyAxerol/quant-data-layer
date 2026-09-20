@@ -416,6 +416,55 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider session"):
             validate_product_view(product, disconnected)
 
+    def test_on_change_quote_uses_session_only_when_query_proves_price_eligibility(self):
+        product = next(
+            item
+            for item in self.scope().products
+            if (
+                item.consumer_id == "trading-system.paper.stable"
+                and item.binding_id == "okx-swap-bnb-usdt-swap-quote"
+            )
+        )
+        quiet = self._view(
+            product,
+            freshness_ms=product.requirement.max_freshness_ms + 1,
+            execution_eligible=True,
+        ).model_copy(
+            update={
+                "quality": self._view(
+                    product,
+                    freshness_ms=product.requirement.max_freshness_ms + 1,
+                    execution_eligible=True,
+                ).quality.model_copy(
+                    update={
+                        "event_recency_state": "STALE",
+                        "provider_session_state": "LIVE",
+                        "provider_session_liveness_ms": 1,
+                        "flags": ("LAST_EVENT_STALE", "DELIVERY_ON_CHANGE"),
+                    }
+                )
+            }
+        )
+        validate_product_view(product, quiet)
+
+        for fields in (
+            {"flags": ("LAST_EVENT_STALE",)},
+            {"execution_eligible": False},
+            {"provider_session_state": "DISCONNECTED"},
+            {"provider_session_liveness_ms": product.requirement.max_session_liveness_ms + 1},
+            {"gap_open": True},
+        ):
+            with self.subTest(fields=fields):
+                with self.assertRaises(ValueError):
+                    validate_product_view(
+                        product,
+                        quiet.model_copy(
+                            update={
+                                "quality": quiet.quality.model_copy(update=fields)
+                            }
+                        ),
+                    )
+
     def test_state_replay_keeps_identity_and_gap_checks_but_defers_old_session_quality(self):
         product = self._quiet_book_delta_product()
         stale = self._view(

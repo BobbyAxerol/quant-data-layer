@@ -21,6 +21,7 @@ from qdl.query import DataRequirement
 from qdl.query.contracts import ConsumerGrade, FeedType, StalePolicy
 from qdl.query.results import QualityMetadata
 from qdl.query.service import _freshness_verdict
+from scripts.report_binding_liveness import decision_row
 
 
 FIXTURE = (
@@ -143,6 +144,43 @@ class BindingQualityGoldenTests(unittest.TestCase):
             ),
             (True, None),
         )
+
+    def test_liveness_audit_preserves_declared_on_change_quote_semantics(self) -> None:
+        binding = type("Binding", (), {
+            "binding_id": "okx-swap-bnb-usdt-swap-quote",
+            "instrument": type("Instrument", (), {
+                "instrument_uid": "bnb",
+                "session_calendar_id": "CRYPTO_24_7",
+            })(),
+            "feed": type("Feed", (), {"value": "QUOTE"})(),
+            "source_role": "PRIMARY",
+            "authoritative": True,
+            "continuous_calendar": True,
+            "stale_after_ms": 5_000,
+            "freshness_basis": "SOURCE_EVENT",
+            "require_final_bar": False,
+            "delivery_semantics": "ON_CHANGE",
+        })()
+        acquisition = type("Acquisition", (), {
+            "enabled": True,
+            "mode": "RUST_NATIVE",
+            "mark_index": None,
+        })()
+        requirement = type("Requirement", (), {
+            "effective_event_recency_policy": type("Policy", (), {"value": "OBSERVE"})(),
+            "max_session_liveness_ms": 2_000,
+            "max_freshness_ms": 2_000,
+        })()
+        row = decision_row(
+            binding=binding,
+            acquisition=acquisition,
+            requirement=requirement,
+            stored=None,
+            now_ns=1_000_000_000,
+            session_reader=object(),
+        )
+        self.assertEqual(row["delivery_semantics"], "ON_CHANGE")
+        self.assertEqual(row["semantics"], "QUIET_SESSION")
 
 
 if __name__ == "__main__":  # pragma: no cover

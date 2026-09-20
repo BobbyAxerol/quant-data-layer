@@ -46345,6 +46345,75 @@ already-sealed, serial four-reader candidate retry followed by exactly one
 a new certificate; this repair result does not inherit success from the earlier
 failed C2.
 
+**C2 retry quote-semantic finding and bounded correction (`IN_PROGRESS`,
+2026-09-20).** The approved retry ran the four candidate reader roles and then
+stopped fail-closed during its exhaustive opening read at
+`trading-system.paper.stable / OKX.SWAP.PERPETUAL.BNB-USDT / QUOTE`: the
+acceptance validator reported `V2 receipt exceeds the governed freshness
+bound`. The packet immediately restored exactly the same four readers to
+`sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`;
+each is healthy, restart `0`, and not OOM-killed. No V1, durable store, offset,
+identity, consumer, alpha, Trading System or order-path object changed.
+
+Read-only evidence rules out a provider disconnect: all five OKX native BBO
+quote bindings had a `LIVE` source session (about `960 ms`), complete retained
+lineage and no gap, while their last *on-change* BBO frame was about `3.3 s`
+old. That is valid documented BBO behavior when bid/ask is unchanged. The
+sealed catalog already declares those bindings `delivery_semantics: ON_CHANGE`;
+the failure is shared evidence logic: the offline auditor omitted that field
+when invoking the quality reducer, and the C2 receipt validator did not admit a
+declared, execution-eligible, session-live `QUOTE` through the same quiet
+semantic already implemented by Query. It is not a BNB exception, a freshness
+SLA relaxation, a provider fallback, a timestamp rewrite, or a market-data
+repair.
+
+**Approved source-only repair scope and exit.** Propagate the declared
+`ON_CHANGE` semantic into the audit reducer and extend C2's quiet receipt
+predicate only for an execution-eligible `QUOTE` carrying the authoritative
+`DELIVERY_ON_CHANGE` receipt flag. Add Python/Rust/golden-compatible regression
+coverage for on-change quiet/live, generic strict quote, session loss,
+heartbeat expiry, generation/config mismatch and gap-open rejection. The exact
+source gate is all affected quality, Query, audit and C2 tests passing with no
+semantic drift. A fresh immutable reader image and a new exact four-reader
+packet require a separately recorded digest/config rollback before any runtime
+retry; the prior `c062...` approval does not authorize a changed binary.
+
+**Source correction and verification (`PASS / NOT ROLLED`, 2026-09-20).** The
+audit now passes the catalog-declared `delivery_semantics` into the same
+provider-neutral reducer used by Rust and Query. The C2 validator now admits a
+stale `QUOTE` only when its governed requirement is `OBSERVE`, its Query-issued
+receipt carries `DELIVERY_ON_CHANGE`, and that receipt is already
+`execution_eligible`; the existing state, session-liveness, completeness,
+gap, lineage, durable-primary and replica checks remain mandatory. The new
+regression uses the exact `trading-system.paper.stable` OKX BNB BBO product and
+rejects absent on-change authority, non-eligible price, disconnected/expired
+session and an open gap. It does not alter provider timestamps, source quotas,
+manifest freshness values or fallback policy.
+
+Source-only evidence, all with read-only source/no network and no runtime data
+mutation: focused quality/C2 tests `25 passed`; full affected
+quality/query/audit/C2/stable-edge/deployment/session matrix `123 passed, 1
+pre-existing isolated-Redis skip`; Rust `qdl-core`
+`rust_matches_shared_binding_quality_golden_corpus` exited `0`. The named
+`qdl-r135-source-matrix` test container and all `--rm` Rust test containers
+were removed after their result. `git diff --check` passes. The active runtime
+remains the exact four-reader rollback image
+`sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`;
+no V1, Kafka, Redis, SQLite, core, ingestor, Trading System, alpha or order
+path object changed. A new immutable reader image, an exact four-role packet
+and a fresh `require_all=true` C2 observation remain the next decision
+boundary; this source result alone is not a certificate.
+
+**Immutable-reader build preflight (`APPROVED SOURCE / NO RUNTIME MUTATION`,
+2026-09-20).** Build exactly one candidate from the sealed current feature
+tree as `qdl-v2-python:2.0.26-<git-sha>`, with its full OCI revision and
+release string recorded after the immutable build. The Docker context excludes
+Git, `data`, logs and caches. The sole retained reader rollback coordinate is
+`qdl-v2-python:2.0.26-335792a@sha256:8c53d37f6e9d5dd8efddcd61948f57e1e56ad55e4fbf245eabf90e9f01668c5c`.
+This build may create an image/cache only; it does not authorize Compose,
+runtime/bundle/TLS changes, or a reader recreate. Its digest and image-local
+tests must be recorded before a new exact four-role packet is requested.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

@@ -593,10 +593,24 @@ def validate_product_view(
     # provider session. The latter is admitted only through an explicit
     # session SLA. BOOK_DELTA remains non-price continuity/replay evidence:
     # callers must use a fresh BOOK_SNAPSHOT/QUOTE/MARK read to choose a price.
-    observed_quiet_continuity = (
-        product.feed in {FeedType.TRADE, FeedType.BOOK_DELTA}
+    # Native BBO QUOTE is the narrow price-bearing exception: a signed source
+    # binding may explicitly declare it ON_CHANGE, and Query must have already
+    # made that exact receipt execution eligible. A generic stale QUOTE cannot
+    # self-upgrade through this path.
+    quiet_on_change_quote = (
+        product.feed is FeedType.QUOTE
         and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
-        and view.quality.event_recency_state == "STALE"
+        and "DELIVERY_ON_CHANGE" in view.quality.flags
+        and view.quality.execution_eligible
+    )
+    observed_quiet_continuity = (
+        (
+            product.feed in {FeedType.TRADE, FeedType.BOOK_DELTA}
+            and requirement.effective_event_recency_policy is StalePolicy.OBSERVE
+        )
+        or quiet_on_change_quote
+    ) and (
+        view.quality.event_recency_state == "STALE"
         and view.quality.provider_session_state == "LIVE"
     )
     # The session is the authority for an observed quiet continuity channel.
