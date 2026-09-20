@@ -44546,7 +44546,7 @@ freshness, replay and release evidence.
    packet names an exact role, digest, runtime revision, rollback and blast
    radius.
 
-#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`IN PROGRESS / B1 PASS / B2 CORRECTION PENDING`, 2026-09-19)
+#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`B PASS / C READY`, 2026-09-20)
 
 This is the authoritative compact execution map for the remaining R1.35
 closure. It refines, rather than replaces, the detailed B/C/D sections below
@@ -44558,7 +44558,7 @@ a passing process health check as data acceptance.
 | Delivery phase | Status | Outcome required before the next phase |
 | --- | --- | --- |
 | **1. R1.35-B1 - Source delivery semantics and quality authority** | `PASS / source-only` | One Rust/Python/query decision for `STRICT_EVENT` versus signed `ON_CHANGE` BBO delivery, with exact manifest authorization and no false live result. |
-| **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PENDING / requires B1 exit and a separate runtime packet` | A sealed reader bundle/image proves all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
+| **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PASS / runtime-certified` | A sealed reader bundle/image proved all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
 | **3. R1.35-C - Full endpoint, binding and consumer certification** | `PENDING / requires B2 exit` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
 | **R1.35-D - Hygiene, provenance and immutable release** | `PENDING / requires C exit and explicit cleanup/release approvals` | Source, runtime, artifact, rollback, Git lineage and published release are one auditable state; only disposable artifacts are removed. |
 
@@ -45236,6 +45236,28 @@ has passed; its child is UID `10001`, capability-empty and
 rolling/C2 packet on the unchanged image/runtime candidate; it is not a
 luck-based repeat because the authenticated identity presented to the server is
 different and now fingerprint-bound to the server's configured public key.
+
+**B2 replacement rollout and C2 exit (2026-09-20; `PASS / R1.35-C UNBLOCKED`).**
+The unchanged sealed candidate was again rolled serially to exactly
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, `stream_v2_passive`; all four
+are currently `healthy`, `restart=0`, `OOMKilled=false`, mounted at the private
+packet runtime and pinned to `sha256:8c53d37f...01668c5c`. The one replacement
+authenticated C2 completed with receipt SHA-256
+`f8c86c0ae25c8a1e8c7a86d95a3b2d5dbfe2fdb2adaa386a3954cdc362649516` and
+status `PASS_V2_DATA_PLANE_ONLY`: `60/60` opening and closing products,
+`BINANCE=30`, `OKX=30`, and exactly ten each of `TRADE`, `QUOTE`,
+`MARK_INDEX_PRICE`, `BOOK_SNAPSHOT`, `BOOK_DELTA`, and final `BAR`. It observed
+for `300.1s` (`300s` requested), recorded `provider_connections=0`,
+`order_actions=0`, no fallback detail, and removed its signed-cursor directory.
+The feed delivery receipt reports `50` durable and `10` legitimate on-demand
+views; all 60 retain closing V2 reads. Capture resource context was `18`
+millicores and `245800960` RSS bytes. The disposable client self-removed, and
+post-C2 bounded reader logs contain no fatal/TLS/catalog/lineage/OOM record.
+The prior rejected identity receipt and network-none launcher evidence remain
+as compact packet provenance, not release evidence. V1, Rust cores, ingestors,
+bar edge, projectors, Kafka topology/offsets, Redis, SQLite, Trading System,
+alpha and the order path remain unchanged. This closes R1.35-B; only now may
+R1.35-C begin.
 
 ##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PENDING / REQUIRES B2 EXIT`)
 
