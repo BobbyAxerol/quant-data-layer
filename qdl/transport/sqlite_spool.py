@@ -656,6 +656,94 @@ class SQLiteDurableSpool:
             ).fetchall()
         return [self._stored_event(row) for row in reversed(rows)]
 
+    def read_tails(
+        self,
+        *,
+        requests: tuple[tuple[str, str, int], ...] | list[tuple[str, str, int]],
+    ) -> dict[tuple[str, str], tuple[StoredEvent, ...]]:
+        """Read bounded tails for up to one public query batch in one snapshot.
+
+        This is an internal local-cache primitive, not a replay API.  A single
+        SQL statement gives every selected partition one SQLite-consistent
+        view, avoids one lock acquisition per item, and preserves the logical
+        ordering returned by :meth:`read_tail`.  Multiple callers may request
+        the same physical partition with different limits; the largest bounded
+        tail is read once and callers select their own logical windows above
+        this transport boundary.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        normalized: dict[tuple[str, str], int] = {}
+        for stream, partition_key, limit in requests:
+            if not stream.strip() or not partition_key.strip():
+                raise ValueError("tail stream and partition_key are required")
+            if limit <= 0 or limit > max_tail_rows:
+                raise ValueError(f"limit must be between 1 and {max_tail_rows}")
+            key = (stream, partition_key)
+            normalized[key] = max(normalized.get(key, 0), int(limit))
+        if len(normalized) > 100:
+            raise ValueError("batch tail read exceeds the public request bound")
+        if not normalized:
+            return {}
+
+        values = ", ".join("(?, ?, ?)" for _ in normalized)
+        parameters = tuple(
+            value
+            for (stream, partition_key), limit in normalized.items()
+            for value in (stream, partition_key, limit)
+        )
+        # ``ROW_NUMBER`` ranks the retained rows within each requested
+        # partition. The events primary key already provides this order, while
+        # the outer ordering keeps the established chronological tail contract.
+        statement = f"""
+            WITH requested(stream, partition_key, tail_limit) AS (VALUES {values}),
+            ranked AS (
+                SELECT
+                    events.stream,
+                    events.partition_key,
+                    events.logical_offset,
+                    events.event_id,
+                    events.payload,
+                    events.payload_sha256,
+                    events.accepted_at_ns,
+                    events.committed_at_ns,
+                    events.content_type,
+                    events.headers_json,
+                    requested.tail_limit,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY events.stream, events.partition_key
+                        ORDER BY events.logical_offset DESC
+                    ) AS tail_rank
+                FROM events
+                JOIN requested
+                  ON requested.stream = events.stream
+                 AND requested.partition_key = events.partition_key
+            )
+            SELECT
+                stream,
+                partition_key,
+                logical_offset,
+                event_id,
+                payload,
+                payload_sha256,
+                accepted_at_ns,
+                committed_at_ns,
+                content_type,
+                headers_json
+            FROM ranked
+            WHERE tail_rank <= tail_limit
+            ORDER BY stream ASC, partition_key ASC, logical_offset ASC
+        """
+        grouped: dict[tuple[str, str], list[StoredEvent]] = {
+            key: [] for key in normalized
+        }
+        with self._lock:
+            rows = self._connection.execute(statement, parameters).fetchall()
+        for row in rows:
+            key = (str(row["stream"]), str(row["partition_key"]))
+            grouped[key].append(self._stored_event(row))
+        return {key: tuple(value) for key, value in grouped.items()}
+
     def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
         with self._lock:
             row = self._connection.execute(

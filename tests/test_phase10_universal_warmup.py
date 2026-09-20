@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 import time
+import threading
 from types import SimpleNamespace
 import unittest
 
@@ -1595,6 +1596,141 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
             ["OK", "OK", "OK", "OK"],
         )
         self.assertEqual(service.warmup_executor._pending, {})
+
+    async def test_query_local_batch_shares_one_snapshot_and_keeps_item_failure_typed(self):
+        first_uid = "local-batch-history-a"
+        second_uid = "local-batch-history-b"
+
+        class Backend:
+            def __init__(self):
+                self.history_many_calls = 0
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                self.history_many_calls += 1
+                return {
+                    requirements[0]: "history-a",
+                    requirements[1]: QueryServiceError(
+                        QueryProblem(
+                            CanonicalErrorCode.DATA_NOT_READY,
+                            "injected local cache absence",
+                            True,
+                        ),
+                        request_id="batch-snapshot",
+                    ),
+                }
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = BoundedWarmupExecutor(
+                    provider_policies={
+                        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                            max_concurrency=2,
+                            requests_per_second=None,
+                            max_attempts=1,
+                            max_pending=4,
+                            deadline_starts_after_admission=True,
+                            max_batch_concurrency=2,
+                        )
+                    }
+                )
+                self.last_batch_evidence = {}
+
+            def warmup(self, *_args, **_kwargs):
+                raise AssertionError("local batch must use its shared snapshot")
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        def requirement(instrument_uid: str) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1),
+            )
+
+        service = Service()
+        result = await service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="phase10-local-batch-snapshot",
+                requirements=(requirement(first_uid), requirement(second_uid)),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+
+        self.assertEqual([item.status for item in result.results], ["OK", "DATA_NOT_READY"])
+        self.assertEqual(service.backend.history_many_calls, 1)
+        self.assertTrue(service.last_batch_evidence["local_batch_snapshot"])
+        self.assertEqual(service.last_batch_evidence["local_batch_items"], 2)
+        self.assertEqual(service.warmup_executor._pending, {})
+
+    async def test_query_local_batch_snapshot_cancellation_releases_admission(self):
+        class Backend:
+            def __init__(self):
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                self.started.set()
+                self.release.wait(timeout=1)
+                return {requirement: "history" for requirement in requirements}
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = BoundedWarmupExecutor(
+                    provider_policies={
+                        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                            max_concurrency=1,
+                            requests_per_second=None,
+                            max_attempts=1,
+                            max_pending=1,
+                            deadline_starts_after_admission=True,
+                        )
+                    }
+                )
+                self.last_batch_evidence = {}
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        requirement = DataRequirement(
+            instrument_uid="local-batch-cancel",
+            feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1m",
+            warmup=WarmupSpecification.for_rows(1, deadline_ms=1_000),
+        )
+        service = Service()
+        task = asyncio.create_task(service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="phase10-local-batch-cancel",
+                requirements=(requirement,),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        ))
+        self.assertTrue(await asyncio.to_thread(service.backend.started.wait, 1))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(service.warmup_executor._pending, {})
+        service.backend.release.set()
 
     async def test_retryable_local_cache_error_does_not_open_shared_circuit(self):
         unavailable_uid = BINANCE_ETH

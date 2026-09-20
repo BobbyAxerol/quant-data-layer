@@ -47328,6 +47328,77 @@ unchanged.
   fallback, provider-direct call, order or durable-data mutation happened in
   the failed attempt. The permitted next action is exactly one strict batch
   ladder using this corrected packet; preflight and C2 remain unconsumed.
+- **Strict batch materialization finding and bounded repair (`IN_PROGRESS / PRE-C2`, 2026-09-20).**
+  With identity extraction corrected, the real ladder executed rather than
+  stopping in the harness. Isolated strict shapes `1/8/16/32/50` passed both
+  Query replicas; the maximum `50` took about `11.0s` primary and `11.4s`
+  secondary. The two-lane collocation then correctly failed the public SDK's
+  `10s` request boundary with `ReadTimeout`, while the first legal lane was
+  complete. The fair-admission candidate was rolled back immediately and only
+  `query_v2_1`/`query_v2_2` returned to
+  `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`;
+  both are healthy, zero-restart and non-OOM. No C2 was consumed and no
+  provider/direct, stream, V1 fallback, order or durable-data mutation occurred.
+
+  The source inspection identifies the remaining local bottleneck precisely:
+  each cache-backed BAR item takes the shared SQLite spool lock independently
+  and reparses the same bounded protobuf rows in record selection, lineage
+  validation, gap detection and projection. Fair worker admission prevents a
+  queue-attribution error but cannot make `50 x 700` repeated local
+  materializations fit the public request contract. The approved P0 repair is
+  a bounded local-batch snapshot path only: read declared cache tails as one
+  consistent local snapshot, parse each selected envelope once, and reuse the
+  same filtering, lineage, gap, finality, coverage, quality, cursor and strict
+  all-or-nothing result functions as single reads. One admitted request may
+  share its immutable batch result; it must not create a cross-consumer cache,
+  weaken finite admission, alter provider quotas, call a venue, lower the
+  manifest maximum, raise the SDK timeout, alter public schemas or bypass V1
+  policy. Required source gates are single-vs-batch parity for normal,
+  late-backfill, missing/gap and failure cases; one-snapshot/no-cross-mix
+  regression; bounded concurrent-request/cancellation behavior; and unchanged
+  external/`INTERNAL_STREAM` policy tests. Only then may a new Query image
+  repeat the one strict ladder; green ladder then permits one all-scope
+  preflight and one final C2.
+
+- **Strict batch materialization source slice (`PASS / IMAGE BUILD NEXT`,
+  2026-09-20).** `SQLiteDurableSpool.read_tails()` now reads at most the public
+  `100` requested physical tails through one bounded SQL snapshot; duplicate
+  physical requests take the largest declared tail once and callers retain
+  their own logical cap. `StableSpoolQueryBackend.history_many()` decodes each
+  selected canonical envelope once, then calls the same private history
+  builder used by single reads for exact feed/interval selection, lineage,
+  late-backfill market order, gap/coverage, finality, quality, cursor and
+  watermark semantics. `RoutedQueryBackend` exposes this only when every route
+  is already authoritative-local; a pass-through-eligible recovery route
+  fails closed rather than being silently downgraded. `V2QueryService` starts
+  the shared snapshot only after a local executor item is admitted, shares it
+  only inside that request, preserves per-item typed failures, and cancels the
+  request task on outer cancellation. No cross-consumer result cache, external
+  provider call, provider/`INTERNAL_STREAM` policy change, timeout increase,
+  schema/manifest change or durable write was introduced.
+
+  Tests actually run in disposable `--network none`, read-only, non-root
+  containers using the existing `qdl-v2-python:2.0.26-e4fc241` image:
+  `51/51` focused transport/stable-query/executor/routed tests passed,
+  including the public fifty-partition SQL shape, bounded snapshot isolation,
+  single-vs-batch parity, late-backfill, missing/gap, per-item typed failure,
+  request-local sharing and cancellation admission drain. A separate `109/109`
+  affected identity/readiness/mark-index/query-stream/pass-through matrix also
+  passed with network disabled, for `160/160` completed source cases across the
+  two bounded matrices.
+  `python3 -m compileall` for every changed production/test module and
+  `git diff --check` passed. A subsequent unbounded `unittest discover` was
+  intentionally stopped after it entered unrelated integration/gRPC cases
+  outside this source-only gate; it is not counted as evidence and its two
+  verified read-only test containers (`jovial_stonebraker`,
+  `amazing_dubinsky`) were removed. No V2 runtime role, V1, Kafka, Redis,
+  SQLite, provider, Trading System, alpha or order path changed.
+
+  The next permitted action is one immutable Python Query image from this
+  source slice, followed by a serial recreate of only `query_v2_1` and
+  `query_v2_2`. The strict `1/8/16/32/50` ladder remains unconsumed for this
+  source revision; only a green ladder permits the one all-scope two-replica
+  fast preflight and then the one final C2 `300s`.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 

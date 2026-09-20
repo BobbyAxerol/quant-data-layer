@@ -112,6 +112,21 @@ class RoutedQueryBackend:
                 return None
             raise QueryBackendError(error.problem) from error
 
+    def history_many(
+        self,
+        requirements: tuple[DataRequirement, ...],
+    ) -> dict[DataRequirement, HistoryResult | None | Exception]:
+        """Expose the spool's one-snapshot batch path only for local routes.
+
+        A pass-through-eligible requirement must retain its ordinary per-item
+        provider path.  This guard keeps local batch acceleration from silently
+        turning a declared recovery policy into a cache-only answer.
+        """
+
+        if not all(self.warmup_is_local(requirement) for requirement in requirements):
+            raise ValueError("batch history acceleration requires local authoritative routes")
+        return self.spool.history_many(requirements)
+
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         if not self.routes_to_pass_through(requirement):
             item = self.spool.latest(requirement)

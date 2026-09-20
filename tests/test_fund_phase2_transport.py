@@ -147,6 +147,69 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 [row.event.payload for row in latest], [b"event-4", b"event-5"]
             )
 
+    def test_batch_tails_use_one_bounded_snapshot_without_cross_partition_mix(self):
+        with self.spool(max_records=10) as spool:
+            stream = event(1).stream
+            primary = event(1).partition_key
+            secondary = "instrument/bar/source"
+            spool.append_many([
+                event(index)
+                for index in range(1, 4)
+            ])
+            spool.append_many([
+                DurableEvent(
+                    stream=stream,
+                    partition_key=secondary,
+                    event_id=(100 + index).to_bytes(16, "big"),
+                    payload=f"secondary-{index}".encode(),
+                    accepted_at_ns=1_800_000_000_000_000_100 + index,
+                    headers={"schema": "qdl.marketdata.bar/2"},
+                )
+                for index in range(1, 4)
+            ])
+
+            tails = spool.read_tails(requests=(
+                (stream, primary, 2),
+                (stream, secondary, 1),
+                # The largest duplicate request wins at the physical reader;
+                # callers retain their narrower logical tail above it.
+                (stream, primary, 1),
+            ))
+
+            self.assertEqual(
+                [row.cursor.offset for row in tails[(stream, primary)]], [2, 3]
+            )
+            self.assertEqual(
+                [row.event.payload for row in tails[(stream, secondary)]],
+                [b"secondary-3"],
+            )
+
+    def test_batch_tails_support_the_public_fifty_partition_shape(self):
+        with self.spool(max_records=100) as spool:
+            stream = event(1).stream
+            requests = []
+            events = []
+            for index in range(50):
+                partition = f"instrument-{index}/bar/source"
+                events.append(DurableEvent(
+                    stream=stream,
+                    partition_key=partition,
+                    event_id=(1_000 + index).to_bytes(16, "big"),
+                    payload=f"batch-{index}".encode(),
+                    accepted_at_ns=1_800_000_000_000_001_000 + index,
+                    headers={"schema": "qdl.marketdata.bar/2"},
+                ))
+                requests.append((stream, partition, 1))
+            spool.append_many(events)
+
+            tails = spool.read_tails(requests=tuple(requests))
+
+            self.assertEqual(len(tails), 50)
+            self.assertEqual(
+                [row.event.payload for row in tails[(stream, "instrument-49/bar/source")]],
+                [b"batch-49"],
+            )
+
     def test_tail_allows_only_configured_internal_partition_headroom(self):
         with self.spool(max_partition_records=10_064) as spool:
             self.assertEqual(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from qdl.adapters.intervals import (
     canonical_interval_ms,
@@ -165,6 +165,14 @@ def bar_item_fields(
     }
 
 
+@dataclass(frozen=True)
+class _ParsedStoredEvent:
+    """One immutable durable row with its envelope decoded exactly once."""
+
+    stored: StoredEvent
+    envelope: market_data_pb2.EventEnvelope
+
+
 class StableSpoolQueryBackend:
     """Provider-neutral stable query view over a Kafka-rebuildable SQLite cache."""
 
@@ -224,27 +232,144 @@ class StableSpoolQueryBackend:
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
         binding = self.catalog.binding_for(requirement)
-        # A provider history repair can be appended after newer live BARs. Read
-        # the bounded retained BAR window before selecting the market-time tail;
-        # selecting logical append offsets first can manufacture a false gap.
-        read_limit = (
-            STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-            if start_ns is not None or binding.feed is FeedType.BAR
-            else requested
+        all_records = self._records(
+            requirement,
+            limit=self._history_read_limit(binding, requested, start_ns),
         )
-        all_records = self._records(requirement, limit=read_limit)
+        return self._history_from_records(
+            requirement,
+            binding,
+            all_records,
+            requested=requested,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            expected_opens=expected_opens,
+        )
+
+    def history_many(
+        self,
+        requirements: tuple[DataRequirement, ...],
+    ) -> dict[DataRequirement, HistoryResult | None | Exception]:
+        """Materialize one bounded local-cache batch from one SQLite snapshot.
+
+        The normal single-read history builder remains the authority for
+        selection, lineage, coverage, quality, cursor and finality semantics.
+        This method only shares the physical tail read and protobuf decode for
+        one already-admitted query batch. It neither caches across consumers
+        nor reaches a provider.
+        """
+
+        if len(requirements) > 100:
+            raise ValueError("stable history batch exceeds the public request bound")
+        plans: list[tuple[
+            DataRequirement,
+            StableSourceBinding,
+            int,
+            int | None,
+            int | None,
+            tuple[int, ...] | None,
+            int,
+            int,
+        ]] = []
+        tail_requests: list[tuple[str, str, int]] = []
+        results: dict[DataRequirement, HistoryResult | None | Exception] = {}
+        for requirement in requirements:
+            try:
+                requested, start_ns, end_ns, expected_opens = self._requested_window(
+                    requirement
+                )
+                binding = self.catalog.binding_for(requirement)
+                read_limit = self._history_read_limit(binding, requested, start_ns)
+                physical_limit = self._physical_read_limit(binding, read_limit)
+            except Exception as error:
+                results[requirement] = error
+                continue
+            plans.append((
+                requirement,
+                binding,
+                requested,
+                start_ns,
+                end_ns,
+                expected_opens,
+                read_limit,
+                physical_limit,
+            ))
+            tail_requests.append((
+                binding.canonical_stream,
+                binding.partition_key,
+                physical_limit,
+            ))
+        if not plans:
+            return results
+
+        parsed_tails: dict[tuple[str, str], tuple[_ParsedStoredEvent, ...] | Exception] = {}
+        try:
+            tails = self.spool.read_tails(requests=tail_requests)
+        except Exception as error:
+            for requirement, *_rest in plans:
+                results[requirement] = error
+            return results
+        for key, rows in tails.items():
+            try:
+                parsed_tails[key] = self._parse_records(rows)
+            except Exception as error:
+                parsed_tails[key] = error
+
+        for (
+            requirement,
+            binding,
+            requested,
+            start_ns,
+            end_ns,
+            expected_opens,
+            read_limit,
+            physical_limit,
+        ) in plans:
+            tail = parsed_tails.get((binding.canonical_stream, binding.partition_key), ())
+            if isinstance(tail, Exception):
+                results[requirement] = tail
+                continue
+            try:
+                # The physical tail can be larger because another declared
+                # logical feed shares it. Slice before filtering so each route
+                # retains exactly the same bounded semantics as ``history``.
+                all_records = self._select_records(
+                    binding,
+                    tail[-physical_limit:],
+                    limit=read_limit,
+                )
+                results[requirement] = self._history_from_records(
+                    requirement,
+                    binding,
+                    all_records,
+                    requested=requested,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    expected_opens=expected_opens,
+                )
+            except Exception as error:
+                results[requirement] = error
+        return results
+
+    def _history_from_records(
+        self,
+        requirement: DataRequirement,
+        binding: StableSourceBinding,
+        all_records: tuple[_ParsedStoredEvent, ...],
+        *,
+        requested: int,
+        start_ns: int | None,
+        end_ns: int | None,
+        expected_opens: tuple[int, ...] | None,
+    ) -> HistoryResult | None:
         if not all_records:
             return None
         records = all_records
         if start_ns is not None:
             records = tuple(
-                stored
-                for stored in all_records
-                if start_ns
-                <= market_data_pb2.EventEnvelope.FromString(
-                    stored.event.payload
-                ).bar.open_time_ns
-                < end_ns
+                parsed
+                for parsed in all_records
+                if start_ns <= parsed.envelope.bar.open_time_ns < end_ns
             )
         records = records[-requested:]
         if not records:
@@ -256,10 +381,10 @@ class StableSpoolQueryBackend:
         # provider backfill may legitimately append older final bars after live
         # ones, so the handoff cursor must fence the greatest durable offset
         # while the returned BAR window stays ordered by open time.
-        last = max(records, key=lambda item: item.cursor.offset)
+        last = max(records, key=lambda item: item.stored.cursor.offset)
         snapshot_hash = hashlib.sha256(
-            f"{last.cursor.stream}|{last.cursor.partition_key}|{last.cursor.offset}|"
-            f"{last.event.event_id.hex()}".encode()
+            f"{last.stored.cursor.stream}|{last.stored.cursor.partition_key}|"
+            f"{last.stored.cursor.offset}|{last.stored.event.event_id.hex()}".encode()
         ).hexdigest()
         exact_boundary = True
         if start_ns is not None and items:
@@ -294,7 +419,7 @@ class StableSpoolQueryBackend:
             coverage=CoverageStatus.FULL if full else CoverageStatus.PARTIAL,
             snapshot_id=f"qdl-v2-{snapshot_hash[:32]}",
             stream_cursor="CONSUMER_CURSOR_PENDING",
-            watermark_offset=last.cursor.offset,
+            watermark_offset=last.stored.cursor.offset,
             data_as_of_ns=(
                 int(items[-1].payload["close_time_ns"])
                 if binding.feed is FeedType.BAR
@@ -309,7 +434,7 @@ class StableSpoolQueryBackend:
     def open_gaps(self) -> tuple[GapRecord, ...]:
         gaps = []
         for binding in self.catalog.bindings:
-            records = tuple(self.spool.read_tail(
+            records = self._parse_records(self.spool.read_tail(
                 stream=binding.canonical_stream,
                 partition_key=binding.partition_key,
                 limit=(
@@ -326,38 +451,28 @@ class StableSpoolQueryBackend:
         binding = self.catalog.binding_for(requirement)
         rows = self._records(
             requirement,
-            limit=(
-                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-                if start_ns is not None or binding.feed is FeedType.BAR
-                else requested
-            ),
+            limit=self._history_read_limit(binding, requested, start_ns),
         )
         if start_ns is None:
             selected = rows[-requested:]
         else:
             selected = tuple(
-                stored
-                for stored in rows
-                if start_ns
-                <= market_data_pb2.EventEnvelope.FromString(
-                    stored.event.payload
-                ).bar.open_time_ns
-                < end_ns
+                parsed
+                for parsed in rows
+                if start_ns <= parsed.envelope.bar.open_time_ns < end_ns
             )
         self._validate_records(binding, selected)
-        return selected
+        return tuple(item.stored for item in selected)
 
     def _validate_records(
         self,
         binding: StableSourceBinding,
-        records: tuple[StoredEvent, ...],
+        records: tuple[_ParsedStoredEvent, ...],
     ) -> None:
         """Fail closed on lineage mismatch within the returned data window."""
 
-        for stored in records:
-            resolved = self.catalog.binding_for_envelope(
-                market_data_pb2.EventEnvelope.FromString(stored.event.payload)
-            )
+        for parsed in records:
+            resolved = self.catalog.binding_for_envelope(parsed.envelope)
             if resolved.binding_id != binding.binding_id:
                 raise ValueError("canonical event resolves to a different stable binding")
 
@@ -407,56 +522,88 @@ class StableSpoolQueryBackend:
             raise ValueError("stable spool time range exceeds bounded query rows")
         return rows, start_ns, end_ns, expected_opens
 
-    def _records(
-        self, requirement: DataRequirement, *, limit: int
-    ) -> tuple[StoredEvent, ...]:
-        binding = self.catalog.binding_for(requirement)
+    @staticmethod
+    def _history_read_limit(
+        binding: StableSourceBinding,
+        requested: int,
+        start_ns: int | None,
+    ) -> int:
+        # A provider history repair can be appended after newer live BARs. Read
+        # the bounded retained BAR window before selecting the market-time tail;
+        # selecting logical append offsets first can manufacture a false gap.
+        return (
+            STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+            if start_ns is not None or binding.feed is FeedType.BAR
+            else requested
+        )
+
+    @staticmethod
+    def _physical_read_limit(binding: StableSourceBinding, limit: int) -> int:
         # BOOK_SNAPSHOT and BOOK_DELTA deliberately share one physical
-        # partition for replay ordering.  A one-row ``latest`` read can
-        # therefore land on a delta and incorrectly report that the most
-        # recent verified snapshot does not exist.  Scan a bounded physical
-        # tail before applying the public logical-feed filter.  The runtime
-        # refreshes Binance anchors at most every 30 seconds and this cap is
-        # explicit; it is not an unbounded recovery scan.
-        physical_limit = limit
+        # partition for replay ordering. A one-row ``latest`` read can land on
+        # the other logical feed, so bounded physical headroom is required
+        # before the public logical-feed filter.
         if binding.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}:
-            physical_limit = min(
+            return min(
                 STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
                 max(limit, limit * 512),
             )
-        rows = self.spool.read_tail(
+        return limit
+
+    @staticmethod
+    def _parse_records(
+        rows: tuple[StoredEvent, ...] | list[StoredEvent],
+    ) -> tuple[_ParsedStoredEvent, ...]:
+        return tuple(
+            _ParsedStoredEvent(
+                stored=row,
+                envelope=market_data_pb2.EventEnvelope.FromString(row.event.payload),
+            )
+            for row in rows
+        )
+
+    def _records(
+        self, requirement: DataRequirement, *, limit: int
+    ) -> tuple[_ParsedStoredEvent, ...]:
+        binding = self.catalog.binding_for(requirement)
+        rows = self._parse_records(self.spool.read_tail(
             stream=binding.canonical_stream,
             partition_key=binding.partition_key,
-            limit=physical_limit,
-        )
-        selected = []
-        for row in rows:
-            envelope = market_data_pb2.EventEnvelope.FromString(row.event.payload)
+            limit=self._physical_read_limit(binding, limit),
+        ))
+        return self._select_records(binding, rows, limit=limit)
+
+    @staticmethod
+    def _select_records(
+        binding: StableSourceBinding,
+        rows: tuple[_ParsedStoredEvent, ...],
+        *,
+        limit: int,
+    ) -> tuple[_ParsedStoredEvent, ...]:
+        selected = [
+            parsed
+            for parsed in rows
             # BOOK_SNAPSHOT and BOOK_DELTA intentionally share a durable
-            # partition.  Keep the public logical feed exact at the query
-            # boundary so a snapshot read can never return a delta (or vice
-            # versa) merely because both belong to the same physical book.
+            # partition. Keep the public logical feed exact at the query
+            # boundary so a snapshot can never return a delta (or vice versa).
             if (
-                envelope.WhichOneof("payload") == binding.feed.value.lower()
-                and canonical_payload_interval(envelope) == binding.interval
-            ):
-                selected.append(row)
+                parsed.envelope.WhichOneof("payload") == binding.feed.value.lower()
+                and canonical_payload_interval(parsed.envelope) == binding.interval
+            )
+        ]
         if binding.feed is FeedType.BAR:
-            selected.sort(key=lambda item: (
-                market_data_pb2.EventEnvelope.FromString(
-                    item.event.payload
-                ).bar.open_time_ns,
-                item.cursor.offset,
+            selected.sort(key=lambda parsed: (
+                parsed.envelope.bar.open_time_ns,
+                parsed.stored.cursor.offset,
             ))
-        # ``read_tail`` is chronological. Keep only the requested logical
-        # tail after filtering the shared physical book partition so callers
-        # retain the same bounded/latest semantics as every other feed.
+        # ``read_tail`` is chronological. Keep only the requested logical tail
+        # after the exact feed filter, preserving the public bounded contract.
         return tuple(selected[-limit:])
 
     def _items(
         self,
         requirement: DataRequirement,
-        records: tuple[StoredEvent, ...],
+        records: tuple[_ParsedStoredEvent, ...],
         *,
         gap_open: bool | None = None,
     ) -> tuple[MarketDataItem, ...]:
@@ -470,11 +617,11 @@ class StableSpoolQueryBackend:
             self._item(
                 requirement,
                 binding,
-                stored,
-                market_data_pb2.EventEnvelope.FromString(stored.event.payload),
+                parsed.stored,
+                parsed.envelope,
                 effective_gap,
             )
-            for stored in records
+            for parsed in records
         )
 
     def _quality(
@@ -629,12 +776,12 @@ class StableSpoolQueryBackend:
     def _gaps(
         self,
         binding: StableSourceBinding,
-        records: tuple[StoredEvent, ...],
+        records: tuple[_ParsedStoredEvent, ...],
     ) -> tuple[GapRecord, ...]:
         detected_at_ns = self._clock_ns()
         result = []
-        for stored in records:
-            envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+        for parsed in records:
+            envelope = parsed.envelope
             if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
                 result.append(self._gap(
                     binding,
@@ -644,10 +791,7 @@ class StableSpoolQueryBackend:
                 ))
         if binding.feed is not FeedType.BAR:
             return tuple(result)
-        opens = sorted({
-            market_data_pb2.EventEnvelope.FromString(item.event.payload).bar.open_time_ns
-            for item in records
-        })
+        opens = sorted({item.envelope.bar.open_time_ns for item in records})
         if not opens:
             return tuple(result)
         step = _interval_ns(binding.interval or "")

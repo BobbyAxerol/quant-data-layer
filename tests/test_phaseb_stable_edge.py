@@ -22,6 +22,7 @@ from qdl.canonical.market import (
     canonicalize_binance_usdm_bbo,
     canonicalize_binance_usdm_rest_bar,
     canonicalize_dnse_bar,
+    canonicalize_okx_bar,
     canonicalize_okx_bbo,
 )
 from qdl.canonical.trade import (
@@ -98,6 +99,8 @@ def _canonicalizer(name: str):
         return canonicalize_dnse_trade if name.startswith("dnse") else canonicalize_binance_usdm_trade
     if "bbo" in name:
         return canonicalize_okx_bbo if name.startswith("okx") else canonicalize_binance_usdm_bbo
+    if name.startswith("okx"):
+        return canonicalize_okx_bar
     if name.startswith("dnse"):
         return canonicalize_dnse_bar
     return canonicalize_binance_usdm_rest_bar
@@ -522,6 +525,105 @@ class StableQueryContractTests(unittest.TestCase):
         history = backend.history(_requirement(binding))
         self.assertIsNotNone(history)
         self.assertEqual(history.data_as_of_ns, event.bar.close_time_ns)
+
+    def test_history_many_matches_single_reads_from_one_snapshot(self):
+        bindings_and_fixtures = (
+            ("binance-usdm-btcusdt-bar-1m", "binance_usdm_rest_bar.json"),
+            ("okx-swap-btcusdt-bar-1m", "okx_bar.json"),
+        )
+        bindings = tuple(
+            next(
+                item
+                for item in self.catalog.bindings
+                if item.binding_id == binding_id
+            )
+            for binding_id, _fixture in bindings_and_fixtures
+        )
+        events = tuple(
+            _stable_event(self.catalog, fixture, binding.binding_id)
+            for binding, (_binding_id, fixture) in zip(bindings, bindings_and_fixtures)
+        )
+        for event in events:
+            _append(self.spool, self.catalog, event)
+        now_ns = max(event.bar.close_time_ns for event in events) + 1_000_000
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: now_ns,
+        )
+        requirements = tuple(_requirement(binding) for binding in bindings)
+        expected = {
+            requirement: backend.history(requirement) for requirement in requirements
+        }
+        snapshots = []
+        read_tails = self.spool.read_tails
+
+        def tracked_read_tails(*, requests):
+            snapshots.append(tuple(requests))
+            return read_tails(requests=requests)
+
+        self.spool.read_tails = tracked_read_tails
+        actual = backend.history_many(requirements)
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(len(snapshots[0]), 2)
+        self.assertEqual(actual, expected)
+        self.assertEqual(
+            actual[requirements[0]].items[-1].instrument_uid,
+            bindings[0].instrument.instrument_uid,
+        )
+        self.assertEqual(
+            actual[requirements[1]].items[-1].instrument_uid,
+            bindings[1].instrument.instrument_uid,
+        )
+
+    def test_history_many_preserves_late_backfill_gap_and_missing_item_results(self):
+        btc = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        eth = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-ethusdt-bar-1m"
+        )
+        first = _stable_event(self.catalog, "binance_usdm_rest_bar.json", btc.binding_id)
+        late = type(first)()
+        late.CopyFrom(first)
+        late.event_id = hashlib.sha256(b"batch-history-gap-late").digest()[:16]
+        late.raw_capture_id = hashlib.sha256(b"batch-history-gap-late-raw").digest()[:16]
+        # Offset order is intentionally the inverse of market order and leaves
+        # exactly one governed minute missing. The batch path must preserve the
+        # single-read PARTIAL outcome instead of hiding it behind its snapshot.
+        late.bar.open_time_ns += 120 * 1_000_000_000
+        late.bar.close_time_ns += 120 * 1_000_000_000
+        late.source_event_time_ns += 120 * 1_000_000_000
+        late.received_at_ns += 120 * 1_000_000_000
+        late.normalized_at_ns += 120 * 1_000_000_000
+        late.published_at_ns += 120 * 1_000_000_000
+        late.source_sequence = "batch-history-gap-late"
+        _append(self.spool, self.catalog, late)
+        _append(self.spool, self.catalog, first)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: late.bar.close_time_ns + 1_000_000,
+        )
+        btc_requirement = _requirement(btc, warmup=2)
+        eth_requirement = _requirement(eth, warmup=2)
+        expected = {
+            btc_requirement: backend.history(btc_requirement),
+            eth_requirement: backend.history(eth_requirement),
+        }
+
+        actual = backend.history_many((btc_requirement, eth_requirement))
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual[btc_requirement].coverage.value, "PARTIAL")
+        self.assertIsNone(actual[eth_requirement])
 
     def test_late_bar_backfill_keeps_market_order_and_fences_max_offset(self):
         binding = next(

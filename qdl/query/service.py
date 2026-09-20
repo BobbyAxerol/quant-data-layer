@@ -272,6 +272,29 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
             ) from error
+        return self._warmup_from_history(
+            requirement,
+            history,
+            purpose=purpose,
+            request_id=request_id,
+        )
+
+    def _warmup_from_history(
+        self,
+        requirement: DataRequirement,
+        history: HistoryResult | None,
+        *,
+        purpose: AccessPurpose,
+        request_id: str,
+    ) -> WarmupResult:
+        """Apply the public warmup contract to an already-read history view.
+
+        Both one-item and bounded local batch reads deliberately reach this
+        exact method. Batch materialization may change SQLite read shape, but
+        it cannot change readiness, coverage, quality, cursor or execution
+        eligibility semantics.
+        """
+
         if history is None or not history.items:
             self._raise_not_ready(requirement, request_id)
         quality = history.items[-1].quality
@@ -372,8 +395,43 @@ class V2QueryService:
             except KeyError:
                 return "UNKNOWN"
 
+        local_requirements = tuple(
+            requirement
+            for requirement in batch.requirements
+            if provider(requirement) == "LOCAL_CANONICAL_CACHE"
+        )
+        history_many = getattr(self.backend, "history_many", None)
+        local_history_lock = asyncio.Lock()
+        local_histories_task = None
+
+        async def local_history(requirement: DataRequirement):
+            """Share one immutable local snapshot after an item is admitted."""
+
+            nonlocal local_histories_task
+            async with local_history_lock:
+                if local_histories_task is None:
+                    local_histories_task = asyncio.create_task(
+                        asyncio.to_thread(history_many, local_requirements)
+                    )
+                task = local_histories_task
+            histories = await asyncio.shield(task)
+            return histories[requirement]
+
         async def work(requirement: DataRequirement) -> WarmupResult:
             try:
+                if (
+                    provider(requirement) == "LOCAL_CANONICAL_CACHE"
+                    and callable(history_many)
+                ):
+                    history = await local_history(requirement)
+                    if isinstance(history, Exception):
+                        raise history
+                    return self._warmup_from_history(
+                        requirement,
+                        history,
+                        purpose=purpose,
+                        request_id=request_id,
+                    )
                 return await asyncio.to_thread(
                     self.warmup,
                     requirement,
@@ -396,13 +454,18 @@ class V2QueryService:
             specification = requirement.warmup_specification
             return specification.deadline_ms if specification else 20_000
 
-        executions = await self.warmup_executor.execute(
-            batch.requirements,
-            work=work,
-            identity=lambda requirement: requirement,
-            provider=provider,
-            deadline_ms=deadline,
-        )
+        try:
+            executions = await self.warmup_executor.execute(
+                batch.requirements,
+                work=work,
+                identity=lambda requirement: requirement,
+                provider=provider,
+                deadline_ms=deadline,
+            )
+        finally:
+            if local_histories_task is not None and not local_histories_task.done():
+                local_histories_task.cancel()
+                await asyncio.gather(local_histories_task, return_exceptions=True)
         results = []
         for execution in executions:
             requirement = execution.item
@@ -475,6 +538,10 @@ class V2QueryService:
                 if cache_lookups
                 else 0.0
             ),
+            "local_batch_snapshot": bool(
+                callable(history_many) and local_requirements
+            ),
+            "local_batch_items": len(local_requirements),
             **executor_delta,
             **backend_delta,
         }
