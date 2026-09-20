@@ -47138,6 +47138,36 @@ unchanged.
   freshness rule, external-provider limiter or `INTERNAL_STREAM` policy.
   Source-only `tests.test_phase105_identity_acceptance` passed `37/37` after
   the ladder regression; the full runtime matrix remains the next gate.
+- **Real batch-ladder receipt (`FAIL_TYPED_STATUS / PRE-C2`, 2026-09-20).**
+  The V2-only matrix reached the actual capacity boundary without a provider,
+  stream, fallback, order or data-plane mutation. The affected exact `50`-BAR
+  partition passed isolated with primary/secondary p95 `11,486.286ms` and
+  `12,162.344ms`; the one-lane collocation repeated that pass at
+  `11,493.378ms` and `12,152.250ms`. At two concurrent entitled `50`-BAR
+  lanes, primary returned strict retryable `PARTIAL_RESULT` for
+  `alpha.okx.paper.stable`; the SDK's all-or-nothing boundary intentionally
+  hides item payloads, while bounded status reads still reported all 50 rows
+  `LIVE` with the documented `FIELD_MISSING` provenance flag. This proves a
+  local batch concurrency/response-path issue, not provider freshness, but
+  does not yet identify whether an internal item deadline, executor queue or
+  serialization step produced the partial result. C2 remains unconsumed.
+- **Next narrow diagnostic.** Preserve strict `require_all=True` and capture
+  only the server response's per-item `status`, canonical problem code,
+  retryability and identity hash inside the existing paced test transport
+  before the public SDK converts the partial response into `DataLayerError`.
+  Add source regressions for success/partial sanitization and then rerun only
+  the same batch ladder. No production endpoint, provider policy, local-cache
+  concurrency, deadline, manifest, reader role or runtime state changes until
+  that receipt identifies the failing internal boundary.
+- **Strict-response evidence instrumentation (`PASS / SOURCE-ONLY / MATRIX
+  RETRY`, 2026-09-20).** The paced query transport now snapshots only response
+  shape before the public SDK raises on strict partial: aggregate counts plus
+  ordinal `status`, canonical problem code and retryability for failing items.
+  It explicitly excludes response data, instrument strings and problem detail;
+  the closing error maps a failing ordinal back to the already-authorized
+  compact product identity only when needed. The source regression passed
+  `38/38`, proving successful and partial responses retain no market payload,
+  and the next real matrix will use the same strict `require_all=True` call.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 

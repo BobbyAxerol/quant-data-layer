@@ -37,6 +37,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     C2OpeningCapacityError,
     _C2ConsumerRequestPacer,
     _PacedQueryTransport,
+    _compact_strict_batch_response,
     _PacedStreamTransport,
     IDENTITY_PREFIXES,
     _authority,
@@ -1041,6 +1042,51 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream_delegate.calls, 1)
         self.assertEqual(sleeps, [30.0])
         self.assertEqual(pacer.evidence()["c2_request_count"], 2)
+
+    async def test_paced_strict_batch_summary_is_payload_free(self) -> None:
+        class QueryDelegate:
+            async def warmup_batch(self, *args, **kwargs):
+                del args, kwargs
+                return {
+                    "partial": True,
+                    "success_count": 1,
+                    "error_count": 1,
+                    "results": [
+                        {
+                            "instrument_uid": "private-instrument",
+                            "status": "DATA_STALE",
+                            "data": {"market_payload": "must-not-be-recorded"},
+                            "problem": {
+                                "code": "DATA_STALE",
+                                "retryable": True,
+                                "detail": "must-not-be-recorded",
+                            },
+                        },
+                        {"instrument_uid": "private-ok", "status": "OK", "data": {"price": "1"}},
+                    ],
+                }
+
+            async def close(self) -> None:
+                return None
+
+        transport = _PacedQueryTransport(QueryDelegate(), _C2ConsumerRequestPacer(60))
+        await transport.warmup_batch(object())
+        summary = transport.last_warmup_batch_summary()
+        self.assertEqual(summary, {
+            "partial": True,
+            "success_count": 1,
+            "error_count": 1,
+            "result_count": 2,
+            "problem_outcomes": [{
+                "index": 0,
+                "status": "DATA_STALE",
+                "problem_code": "DATA_STALE",
+                "retryable": True,
+            }],
+            "payload_recorded": False,
+        })
+        self.assertNotIn("private", json.dumps(summary, sort_keys=True))
+        self.assertIsNone(_compact_strict_batch_response({"partial": True}))
 
     async def test_stream_open_failure_remains_fail_closed(self) -> None:
         class StreamDelegate:

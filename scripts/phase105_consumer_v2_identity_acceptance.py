@@ -190,6 +190,7 @@ class C2ClosingBatchError(RuntimeError):
         error: Exception,
         status_observations: list[dict[str, object]],
         batch_item_problems: list[dict[str, object]] | None = None,
+        transport_batch_summary: Mapping[str, object] | None = None,
     ) -> None:
         if not products or any(item.consumer_id != consumer_id for item in products):
             raise ValueError("Phase 10.5 closing batch failure has an invalid consumer scope")
@@ -204,6 +205,22 @@ class C2ClosingBatchError(RuntimeError):
             "Phase 10.5 V2 closing batch failed "
             f"consumer={consumer_id} replica={replica} size={len(products)}"
         )
+        summary = dict(transport_batch_summary or {})
+        raw_outcomes = summary.get("problem_outcomes")
+        server_problem_outcomes = []
+        if isinstance(raw_outcomes, list):
+            for outcome in raw_outcomes:
+                if not isinstance(outcome, Mapping):
+                    continue
+                index = outcome.get("index")
+                if not isinstance(index, int) or not 0 <= index < len(products):
+                    continue
+                server_problem_outcomes.append({
+                    **products[index].evidence(),
+                    "status": str(outcome.get("status") or "UNKNOWN"),
+                    "problem_code": str(outcome.get("problem_code") or "UNKNOWN"),
+                    "retryable": bool(outcome.get("retryable", False)),
+                })
         self.evidence = {
             "schema": "qdl.phase105.c2-closing-batch-failure.v1",
             "consumer_id": consumer_id,
@@ -218,6 +235,8 @@ class C2ClosingBatchError(RuntimeError):
             ).hexdigest(),
             "typed_status": status_observations,
             "batch_item_problems": list(batch_item_problems or ()),
+            "server_batch_summary": summary or None,
+            "server_problem_outcomes": server_problem_outcomes,
             "payload_recorded": False,
         }
 
@@ -345,12 +364,45 @@ class _C2ConsumerRequestPacer:
         }
 
 
+def _compact_strict_batch_response(payload: object) -> dict[str, object] | None:
+    """Keep only response-shape diagnostics before SDK enforces strict failure."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    raw_results = payload.get("results")
+    if not isinstance(raw_results, list):
+        return None
+    problems = []
+    for index, item in enumerate(raw_results):
+        if not isinstance(item, Mapping):
+            continue
+        problem = item.get("problem")
+        code = problem.get("code") if isinstance(problem, Mapping) else None
+        if code is None and str(item.get("status") or "OK") == "OK":
+            continue
+        problems.append({
+            "index": index,
+            "status": str(item.get("status") or "UNKNOWN"),
+            "problem_code": str(code or "UNKNOWN"),
+            "retryable": bool(problem.get("retryable", False)) if isinstance(problem, Mapping) else False,
+        })
+    return {
+        "partial": bool(payload.get("partial", False)),
+        "success_count": int(payload.get("success_count", 0)),
+        "error_count": int(payload.get("error_count", 0)),
+        "result_count": len(raw_results),
+        "problem_outcomes": problems,
+        "payload_recorded": False,
+    }
+
+
 class _PacedQueryTransport:
     """Acceptance-only adapter that charges every C2 REST call to one pacer."""
 
     def __init__(self, delegate, pacer: _C2ConsumerRequestPacer) -> None:
         self._delegate = delegate
         self._pacer = pacer
+        self._last_warmup_batch_summary: dict[str, object] | None = None
 
     async def _call(self, name: str, *args, **kwargs):
         operation = "REFERENCE_BATCH" if name == "reference_batch" else "QUERY_READ"
@@ -361,7 +413,14 @@ class _PacedQueryTransport:
         return await self._call("warmup", *args, **kwargs)
 
     async def warmup_batch(self, *args, **kwargs):
-        return await self._call("warmup_batch", *args, **kwargs)
+        response = await self._call("warmup_batch", *args, **kwargs)
+        self._last_warmup_batch_summary = _compact_strict_batch_response(response)
+        return response
+
+    def last_warmup_batch_summary(self) -> dict[str, object] | None:
+        if self._last_warmup_batch_summary is None:
+            return None
+        return json.loads(json.dumps(self._last_warmup_batch_summary, sort_keys=True))
 
     async def reference_batch(self, *args, **kwargs):
         return await self._call("reference_batch", *args, **kwargs)
@@ -1381,6 +1440,14 @@ async def _closing_batch_revalidation(
                 try:
                     response = await client.warmup_batch(requirements, require_all=True)
                 except (httpx.HTTPError, TimeoutError, DataLayerError, ValueError) as error:
+                    summary_getter = getattr(
+                        getattr(client, "query_transport", None),
+                        "last_warmup_batch_summary",
+                        None,
+                    )
+                    transport_batch_summary = (
+                        summary_getter() if callable(summary_getter) else None
+                    )
                     status_observations = await _closing_failure_status_observations(
                         client,
                         batch,
@@ -1399,6 +1466,7 @@ async def _closing_batch_revalidation(
                         error=error,
                         status_observations=status_observations,
                         batch_item_problems=batch_item_problems,
+                        transport_batch_summary=transport_batch_summary,
                     ) from error
                 latency_ms = (time.perf_counter() - started) * 1_000
                 if len(response.results) != len(batch):
