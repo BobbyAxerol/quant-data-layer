@@ -108,6 +108,25 @@ class SpoolReadiness:
     payload_bytes: int
 
 
+@dataclass(frozen=True)
+class FinalBarTailWindow:
+    """One exact, bounded final-BAR lookup inside a spool read snapshot.
+
+    This is deliberately transport-private.  Callers must validate the
+    returned canonical rows and request the normal retained tail when the
+    exact window is incomplete or ambiguous.
+    """
+
+    interval_ns: int
+    rows: int
+
+    def __post_init__(self) -> None:
+        if self.interval_ns <= 0:
+            raise ValueError("final BAR interval must be positive")
+        if self.rows not in {1, 2}:
+            raise ValueError("final BAR exact lookup supports one or two rows")
+
+
 class SQLiteDurableSpool:
     """Bounded, fsync-backed migration bridge with portable logical cursors.
 
@@ -723,6 +742,119 @@ class SQLiteDurableSpool:
                 raise
             else:
                 self._connection.execute("COMMIT")
+
+    def visit_final_bar_windows(
+        self,
+        *,
+        requests: tuple[tuple[str, str, int], ...] | list[tuple[str, str, int]],
+        windows: dict[tuple[str, str], FinalBarTailWindow],
+        visit: Callable[[tuple[str, str], tuple[StoredEvent, ...], tuple[int, ...]], bool],
+    ) -> None:
+        """Visit exact final-BAR windows with retained-tail fallback in one snapshot.
+
+        A final watermark identifies the current one/two closed BARs without
+        decoding the full retained partition.  The visitor is the semantic
+        authority: it returns ``True`` only after it accepts the exact rows.
+        Missing, duplicate, revised or otherwise ambiguous rows therefore use
+        the existing physical-tail path under the same SQLite read transaction.
+        """
+
+        normalized = self._normalized_tail_requests(requests)
+        if not normalized:
+            return
+        unknown = set(windows) - set(normalized)
+        if unknown:
+            raise ValueError("final BAR window is not part of the tail request")
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                for key, limit in normalized.items():
+                    window = windows.get(key)
+                    if window is not None:
+                        exact = self._final_bar_window_rows_locked(
+                            stream=key[0],
+                            partition_key=key[1],
+                            window=window,
+                        )
+                        if exact is not None:
+                            rows, expected_closes = exact
+                            if visit(key, rows, expected_closes):
+                                continue
+                    rows = self._read_tail_rows_locked(
+                        stream=key[0], partition_key=key[1], limit=limit
+                    )
+                    visit(key, rows, ())
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+
+    def _final_bar_window_rows_locked(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        window: FinalBarTailWindow,
+    ) -> tuple[tuple[StoredEvent, ...], tuple[int, ...]] | None:
+        watermark = self._connection.execute(
+            """
+            SELECT close_time_ns FROM final_bar_watermarks
+            WHERE stream = ? AND partition_key = ?
+            """,
+            (stream, partition_key),
+        ).fetchone()
+        if watermark is None:
+            return None
+        latest_close_ns = int(watermark["close_time_ns"])
+        if latest_close_ns <= 0:
+            raise PayloadCorruption("final BAR watermark is invalid")
+        expected_closes = tuple(
+            latest_close_ns - window.interval_ns * offset
+            for offset in range(window.rows - 1, -1, -1)
+        )
+        if any(value <= 0 for value in expected_closes):
+            raise PayloadCorruption("final BAR watermark window is invalid")
+        placeholders = ",".join("?" for _ in expected_closes)
+        try:
+            rows = self._connection.execute(
+                f"""
+                SELECT * FROM events
+                WHERE stream = ? AND partition_key = ?
+                  AND CAST(json_extract(
+                    headers_json, '$."qdl.final_bar_close_time_ns"'
+                  ) AS INTEGER) IN ({placeholders})
+                ORDER BY logical_offset ASC
+                """,
+                (stream, partition_key, *expected_closes),
+            ).fetchall()
+        except sqlite3.OperationalError as error:
+            # JSON extraction is an optimization only.  Older SQLite builds or
+            # malformed legacy metadata must retain the authoritative tail path.
+            if "json" in str(error).lower():
+                return None
+            raise
+        return (
+            tuple(self._stored_event(row) for row in rows),
+            expected_closes,
+        )
+
+    def _read_tail_rows_locked(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        limit: int,
+    ) -> tuple[StoredEvent, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM events
+            WHERE stream = ? AND partition_key = ?
+            ORDER BY logical_offset DESC LIMIT ?
+            """,
+            (stream, partition_key, limit),
+        ).fetchall()
+        return tuple(self._stored_event(row) for row in reversed(rows))
 
     def _normalized_tail_requests(
         self,

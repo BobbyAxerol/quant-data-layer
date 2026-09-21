@@ -25,6 +25,7 @@ from qdl.canonical.market import (
     canonicalize_okx_bar,
     canonicalize_okx_bbo,
 )
+from qdl.adapters.intervals import canonical_interval_ms
 from qdl.canonical.trade import (
     TradeContext,
     canonicalize_binance_usdm_trade,
@@ -84,7 +85,13 @@ from qdl.runtime.stable_source import (
 )
 from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import DurableStreamGateway
-from qdl.transport import BackpressureRequired, DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport import (
+    BackpressureRequired,
+    DurableEvent,
+    FINAL_BAR_CLOSE_TIME_NS_HEADER,
+    SQLiteDurableSpool,
+    SpoolConfig,
+)
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
@@ -258,28 +265,33 @@ def _broker_records(binding, raw, event, *, raw_offset=0, canonical_offset=0):
     return raw_topic, canonical_topic, raw_record, canonical_record
 
 
-def _append(spool, catalog, event):
+def _append(spool, catalog, event, *, final_bar_watermark=False):
     binding = catalog.binding_for_envelope(event)
-    return _append_unvalidated(spool, binding, event)
+    return _append_unvalidated(
+        spool, binding, event, final_bar_watermark=final_bar_watermark
+    )
 
 
-def _append_unvalidated(spool, binding, event):
+def _append_unvalidated(spool, binding, event, *, final_bar_watermark=False):
     """Persist a controlled legacy-row fixture without catalog admission.
 
     Production ingestion always resolves the envelope through the catalog. This
     helper exists solely to model old retained rows whose lineage was valid at
     the time they were written but has since been retired.
     """
+    headers = {
+        "raw_stream": "md.raw.v1.phase-b",
+        "raw_event_id": event.raw_capture_id.hex(),
+    }
+    if final_bar_watermark:
+        headers[FINAL_BAR_CLOSE_TIME_NS_HEADER] = str(event.bar.close_time_ns)
     durable = DurableEvent(
         stream=binding.canonical_stream,
         partition_key=binding.partition_key,
         event_id=bytes(event.event_id),
         payload=event.SerializeToString(deterministic=True),
         accepted_at_ns=event.received_at_ns,
-        headers={
-            "raw_stream": "md.raw.v1.phase-b",
-            "raw_event_id": event.raw_capture_id.hex(),
-        },
+        headers=headers,
     )
     return spool.append(durable)
 
@@ -293,6 +305,43 @@ def _requirement(binding, *, grade=ConsumerGrade.ALPHA, warmup=1):
         source_policy_id=binding.source_policy_id,
         warmup_limit=warmup,
     )
+
+
+def _final_bar_at(catalog, binding, fixture_name, *, offset: int, label: str):
+    """Build one catalog-valid final-BAR fixture at a deterministic market time."""
+
+    fixture_binding_id = (
+        "okx-swap-btcusdt-bar-1m"
+        if fixture_name.startswith("okx")
+        else "binance-usdm-btcusdt-bar-1m"
+    )
+    event = market_data_pb2.EventEnvelope()
+    event.CopyFrom(_stable_event(catalog, fixture_name, fixture_binding_id))
+    event.instrument_uid = binding.instrument.instrument_uid
+    event.instrument_id = binding.instrument.instrument_id
+    event.instrument_revision = binding.instrument.metadata_revision
+    event.venue = binding.instrument.identity.venue
+    event.market = binding.instrument.identity.market
+    event.product_type = binding.instrument.identity.product_type.value
+    event.native_symbol = binding.instrument.native_symbol
+    event.provider = binding.provider
+    event.source_id = binding.source_id
+    event.source_role = getattr(common_pb2, f"SOURCE_ROLE_{binding.source_role}")
+    event.adapter_version = binding.adapter_version
+    event.normalizer_version = binding.normalizer_version
+    interval_ns = canonical_interval_ms(binding.interval) * 1_000_000
+    event.event_id = hashlib.sha256(label.encode()).digest()[:16]
+    event.raw_capture_id = hashlib.sha256(f"{label}-raw".encode()).digest()[:16]
+    event.bar.open_time_ns += offset * interval_ns
+    event.bar.close_time_ns += offset * interval_ns
+    event.source_event_time_ns = event.bar.close_time_ns
+    event.received_at_ns = event.bar.close_time_ns + 1
+    event.normalized_at_ns = event.received_at_ns + 1
+    event.published_at_ns = event.received_at_ns + 2
+    event.source_sequence = label
+    event.partition_sequence = abs(offset) + 1
+    event.correlation_id = label
+    return event
 
 
 class StableCatalogContractTests(unittest.TestCase):
@@ -667,6 +716,218 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(actual[btc_requirement].coverage.value, "PARTIAL")
         self.assertIsNone(actual[eth_requirement])
+
+    def test_history_many_exact_final_window_matches_full_tail_without_fallback(self):
+        bindings_and_fixtures = (
+            ("binance-usdm-btcusdt-bar-1m", "binance_usdm_rest_bar.json"),
+            ("okx-swap-btcusdt-bar-1m", "okx_bar.json"),
+        )
+        bindings = tuple(
+            next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            for binding_id, _fixture in bindings_and_fixtures
+        )
+        newest = []
+        for binding, (_binding_id, fixture_name) in zip(bindings, bindings_and_fixtures):
+            older = _final_bar_at(
+                self.catalog, binding, fixture_name,
+                offset=-1, label=f"exact-final-{binding.binding_id}-older",
+            )
+            current = _final_bar_at(
+                self.catalog, binding, fixture_name,
+                offset=0, label=f"exact-final-{binding.binding_id}-current",
+            )
+            _append(self.spool, self.catalog, current, final_bar_watermark=True)
+            # A provider repair may arrive after the live final BAR. The exact
+            # lookup must still return the market-time tail, not append order.
+            _append(self.spool, self.catalog, older, final_bar_watermark=True)
+            newest.append(current)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        requirements = tuple(_requirement(binding, warmup=2) for binding in bindings)
+        expected = {requirement: backend.history(requirement) for requirement in requirements}
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        actual = backend.history_many(requirements)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(fallback_reads, [])
+
+    def test_history_many_final_window_falls_back_for_missing_gap_or_revision(self):
+        cases = (
+            ("binance-usdm-btcusdt-bar-1m", "missing", (0,)),
+            ("binance-usdm-ethusdt-bar-1m", "gap", (0, 2)),
+            ("binance-usdm-solusdt-bar-1m", "duplicate", (0, 1)),
+        )
+        requirements = []
+        newest = []
+
+        for binding_id, shape, offsets in cases:
+            binding = next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            values = []
+            for offset in offsets:
+                event = _final_bar_at(
+                    self.catalog, binding, "binance_usdm_rest_bar.json",
+                    offset=offset, label=f"final-fallback-{shape}-{offset}",
+                )
+                _append(self.spool, self.catalog, event, final_bar_watermark=True)
+                values.append(event)
+            if shape == "duplicate":
+                revised = _final_bar_at(
+                    self.catalog, binding, "binance_usdm_rest_bar.json",
+                    offset=offsets[-1], label="final-fallback-duplicate-revised",
+                )
+                revised.bar.revision = 1
+                revised.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+                revised.bar.supersedes_event_id = values[-1].event_id
+                _append(self.spool, self.catalog, revised, final_bar_watermark=True)
+                values.append(revised)
+            newest.extend(values)
+            requirements.append(_requirement(binding, warmup=2))
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        expected = {requirement: backend.history(requirement) for requirement in requirements}
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        actual = backend.history_many(tuple(requirements))
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(fallback_reads), 3)
+        self.assertEqual(actual[requirements[1]].coverage.value, "PARTIAL")
+
+    def test_history_many_hybrid_final_window_uses_one_sqlite_snapshot(self):
+        binance = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        okx = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "okx-swap-btcusdt-bar-1m"
+        )
+        newest = []
+        for binding, fixture_name, watermarked in (
+            (binance, "binance_usdm_rest_bar.json", True),
+            (okx, "okx_bar.json", False),
+        ):
+            for offset in (-1, 0):
+                event = _final_bar_at(
+                    self.catalog, binding, fixture_name,
+                    offset=offset, label=f"hybrid-{binding.binding_id}-{offset}",
+                )
+                _append(self.spool, self.catalog, event, final_bar_watermark=watermarked)
+                newest.append(event)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="c" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        requirements = (_requirement(binance, warmup=2), _requirement(okx, warmup=2))
+        expected = {requirement: backend.history(requirement) for requirement in requirements}
+        statements = []
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        self.spool._connection.set_trace_callback(statements.append)
+        try:
+            actual = backend.history_many(requirements)
+        finally:
+            self.spool._connection.set_trace_callback(None)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(fallback_reads), 1)
+        self.assertEqual(sum(statement == "BEGIN" for statement in statements), 1)
+        self.assertEqual(sum(statement == "COMMIT" for statement in statements), 1)
+
+    def test_history_many_invalid_final_watermark_keeps_retained_tail_authority(self):
+        binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        newest = None
+        for offset in (-1, 0):
+            event = _final_bar_at(
+                self.catalog, binding, "binance_usdm_rest_bar.json",
+                offset=offset, label=f"invalid-watermark-{offset}",
+            )
+            _append(self.spool, self.catalog, event, final_bar_watermark=True)
+            newest = event
+        self.spool._connection.execute(
+            """
+            UPDATE final_bar_watermarks SET close_time_ns = 0
+            WHERE stream = ? AND partition_key = ?
+            """,
+            (binding.canonical_stream, binding.partition_key),
+        )
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="d" * 64,
+            clock_ns=lambda: newest.bar.close_time_ns + 1_000_000,
+        )
+        requirement = _requirement(binding, warmup=2)
+
+        def unexpected_final_window(**_kwargs):
+            raise AssertionError("invalid watermark must use retained-tail materialization")
+
+        self.spool.visit_final_bar_windows = unexpected_final_window
+        self.assertEqual(
+            backend.history_many((requirement,))[requirement],
+            backend.history(requirement),
+        )
+
+    def test_history_many_large_row_warmups_keep_retained_tail_path(self):
+        binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        for offset in (-1, 0):
+            event = _final_bar_at(
+                self.catalog, binding, "binance_usdm_rest_bar.json",
+                offset=offset, label=f"large-row-{offset}",
+            )
+            _append(self.spool, self.catalog, event, final_bar_watermark=True)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="d" * 64,
+            clock_ns=lambda: _stable_event(
+                self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+            ).bar.close_time_ns + 1_000_000,
+        )
+
+        def unexpected_final_window(**_kwargs):
+            raise AssertionError("large row warmup must use retained-tail materialization")
+
+        self.spool.visit_final_bar_windows = unexpected_final_window
+        requirements = tuple(_requirement(binding, warmup=rows) for rows in (2500, 5000, 10000))
+        result = backend.history_many(requirements)
+
+        self.assertTrue(all(result[requirement] is not None for requirement in requirements))
 
     def test_late_bar_backfill_keeps_market_order_and_fences_max_offset(self):
         binding = next(

@@ -47870,6 +47870,97 @@ unchanged.
   BAR/preflight/C2 gate was consumed. The stated rollback and all no-mutation
   invariants remain unchanged.
 
+  **Projector-capacity runtime result (`PASS / STRICT READ-PLANE RECHECK`,
+  2026-09-21).** The approved packet was rendered against its exact sealed
+  Compose chain, then added members `4..6` and serially recreated the original
+  three only. All six `stable-projector-v1` members now run the immutable
+  `987b1a2` image `sha256:d724764b17dc9f21e681c2ebeac4fb48588d45010b0f1ff3a00b6cfa408f2a3b`,
+  report their individual heartbeat healthchecks, have `restart=0` and no OOM
+  kill. The unchanged Kafka group converged in three explicit observations:
+  total/per-partition lag was `273/74`, `112/28`, then `350/146`, within the
+  declared `<=500` total and `<=250` per-partition gate. Projector working
+  sets remained below `162 MiB` of their `768 MiB` caps during catch-up. This
+  proves generic six-way ownership and bounded durable catch-up; it does not
+  alter a topic, offset, Redis key, SQLite file, V1, Rust, ingestor, reader,
+  Trading System, alpha or order path.
+
+  **Strict BAR ladder result after capacity (`FAIL-CLOSED / QUERY SOURCE
+  REPAIR`, 2026-09-21).** The capacity fix removed the prior projected-cache
+  lag. The read-only strict `1/8/16/32/50` matrix then passed every isolated
+  shape through both Query replicas. A legal two-lane `50`-BAR collocation
+  still timed out on the second lane: every batch alone completed in about
+  `13s`, while one Query reader deliberately serializes fully-local batches
+  and the second caller crosses its public deadline. The receipt is
+  `/home/bobby/.local/state/qdl-v2/r135-projector-capacity-987b1a2-20260921T103546Z/evidence/strict-bar-batch`;
+  it records `FAIL_TYPED_STATUS`, zero order actions, no provider-direct
+  request, no stream/fallback action and no durable mutation. Kafka group lag
+  was already within the capacity gate during this check, so this is not a
+  provider, DOGE, Kafka or freshness finding. All-scope preflight and the one
+  final C2 remain unconsumed.
+
+  **P0 final-BAR local-read diagnosis and approved narrow repair (`IN
+  PROGRESS / SOURCE ONLY`, 2026-09-21).** A disposable `--network none`,
+  read-only, `1 CPU/512 MiB` profile mounted the live cache read-only and used
+  only materialized OKX BAR bindings. It measured the actual current
+  `StableSpoolQueryBackend.history_many()` path for one legal `50`-BAR,
+  two-row batch at `10,188.713 ms` with `50/50` successful results. The
+  immutable durable header `qdl.final_bar_close_time_ns` and the existing
+  `final_bar_watermarks` table identify the current one/two final BARs without
+  parsing every retained tail: the same profile found the exact final rows in
+  `587.442 ms` across the 50 physical tails. This is a measurement, not a
+  runtime fast path yet. Some long-history tails did not contain an immediately
+  preceding exact close, so a correct implementation must **fall back to the
+  existing full one-snapshot scan** for any absent, duplicate, revision-ambiguous,
+  non-continuous-calendar or otherwise non-exact tail.
+
+  The approved source scope is a private, provider-neutral SQLite transport
+  helper plus the local `history_many()` planner: only a fully-local,
+  row-bounded, continuous-calendar final-BAR request for one or two rows may
+  use the durable header lookup. It must run all fast and fallback tails under
+  one SQLite read transaction; validate exact binding/close/open identity,
+  finality, unique market-time rows and normal history/quality/gap semantics;
+  and use the existing full tail materialization for every non-eligible or
+  uncertain request. No provider call, public schema/SDK change, timeout
+  increase, manifest/SLA change, cache migration, topology change or new
+  service is permitted. Required source evidence is fast-vs-full parity for
+  normal, late-backfill, missing, duplicate/revision and gap cases; one shared
+  snapshot for hybrid fast/fallback batches; unchanged `2500/5000/10000` warmup
+  behavior; cancellation/admission bounds; and a two legal maximum-batch
+  regression completing under the unchanged public deadline. Only one newly
+  attested Query image and a two-reader-only rollout may repeat the strict
+  ladder after those gates pass.
+
+  **P0 exact final-BAR source repair (`PASS / QUERY-ONLY IMAGE NEXT`,
+  2026-09-21).** `SQLiteDurableSpool.visit_final_bar_windows()` now reads a
+  one/two-row, watermark-derived window and lets the stable query layer accept
+  it only after exact binding, interval, final lifecycle, unique market-close
+  and canonical open/close duration validation. Every missing predecessor,
+  duplicate/revised close, gap, invalid optimization watermark, non-continuous
+  calendar, time-range or `2500/5000/10000` request takes the unchanged
+  retained-tail path. Fast and fallback physical tails remain inside one
+  deferred SQLite read transaction; no provider request, cache/schema/index
+  change, public endpoint/SDK/manifest change, timeout increase, durable write
+  or runtime mutation occurred.
+
+  The isolated `qdl-v2-python:2.0.26-e8394ff` source-mount suite ran with
+  `--network none`, read-only root/source and tmpfs scratch: transport,
+  stable edge and universal warmup passed `162`, with `1` pre-existing isolated
+  Redis skip. Focused stable-query coverage was `18/18`, including normal and
+  late-backfill parity, missing/gap/revision fallback, corrupt watermark
+  fallback, hybrid single-snapshot behavior and unchanged large warmups.
+  `py_compile` and `git diff --check` passed. A disposable read-only profile
+  against the live durable cache, under `1 CPU/512 MiB`, returned `50/50`
+  two-row histories in `720.491 ms` for OKX and `820.615 ms` for Binance;
+  both had zero errors. The 11/50 long-interval incomplete windows were
+  deliberately full-tail fallback, not a partial promotion. Bounded evidence:
+  `/home/bobby/.local/state/qdl-v2/r135-projector-capacity-987b1a2-20260921T103546Z/evidence/final-bar-fastpath-source-profile-20260921T123235Z.json`.
+
+  **Next permitted action.** Commit this source/journal slice, build exactly
+  one immutable Query image, then serially recreate only `query_v2_1` and
+  `query_v2_2` with the current `e8394ff` reader image as rollback. Run the
+  strict two-lane BAR ladder, then the all-scope two-replica preflight. The
+  single C2 `300s` remains unconsumed until both pass.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

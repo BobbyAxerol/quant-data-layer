@@ -19,6 +19,7 @@ from qdl.domain.quantity import quantity_unit_name
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
+    BarRevisionPolicy,
     BarLifecycle,
     ContractMetadata,
     ConsumerGrade,
@@ -51,6 +52,7 @@ from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
 from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
+from qdl.transport.sqlite_spool import FinalBarTailWindow
 
 
 def _decimal_text(value) -> str:
@@ -321,6 +323,47 @@ class StableSpoolQueryBackend:
                 (binding.canonical_stream, binding.partition_key), []
             ).append(plan)
 
+        final_windows: dict[tuple[str, str], FinalBarTailWindow] = {}
+        watermark_reader = getattr(self.spool, "final_bar_watermark", None)
+        final_window_visitor = getattr(self.spool, "visit_final_bar_windows", None)
+        if callable(watermark_reader) and callable(final_window_visitor):
+            for key, physical_plans in plans_by_physical_tail.items():
+                if len(physical_plans) != 1:
+                    continue
+                (
+                    requirement,
+                    binding,
+                    requested,
+                    start_ns,
+                    end_ns,
+                    expected_opens,
+                    _read_limit,
+                    _physical_limit,
+                ) = physical_plans[0]
+                window = self._final_bar_window(
+                    requirement=requirement,
+                    binding=binding,
+                    requested=requested,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    expected_opens=expected_opens,
+                )
+                # Keep the existing visitor for caches without a durable final
+                # watermark. This preserves the full-tail semantics and test
+                # doubles used by historical/replay coverage.
+                if window is not None:
+                    try:
+                        watermark_present = watermark_reader(
+                            stream=key[0], partition_key=key[1]
+                        ) is not None
+                    except Exception:
+                        # A corrupt/missing optimization watermark cannot make
+                        # historical reads fail. The retained tail remains the
+                        # authority for that partition.
+                        watermark_present = False
+                    if watermark_present:
+                        final_windows[key] = window
+
         def materialize_tail(
             key: tuple[str, str], rows: tuple[StoredEvent, ...],
         ) -> None:
@@ -363,13 +406,129 @@ class StableSpoolQueryBackend:
                     )
                 except Exception as error:
                     results[requirement] = error
+
+        def materialize_final_bar_tail(
+            key: tuple[str, str],
+            rows: tuple[StoredEvent, ...],
+            expected_closes: tuple[int, ...],
+        ) -> bool:
+            """Accept an exact final window only when it is fully unambiguous."""
+
+            physical_plans = plans_by_physical_tail[key]
+            if not expected_closes or len(physical_plans) != 1:
+                materialize_tail(key, rows)
+                return True
+            (
+                requirement,
+                binding,
+                requested,
+                start_ns,
+                end_ns,
+                expected_opens,
+                read_limit,
+                physical_limit,
+            ) = physical_plans[0]
+            try:
+                parsed_tail = self._parse_records(rows)
+                all_records = self._select_records(
+                    binding,
+                    parsed_tail[-physical_limit:],
+                    limit=read_limit,
+                )
+                if not self._exact_final_bar_window(
+                    binding=binding,
+                    records=all_records,
+                    requested=requested,
+                    expected_closes=expected_closes,
+                ):
+                    return False
+                history = self._history_from_records(
+                    requirement,
+                    binding,
+                    all_records,
+                    requested=requested,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    expected_opens=expected_opens,
+                )
+                if history is None or history.coverage is not CoverageStatus.FULL:
+                    return False
+            except Exception:
+                # This is an optimization boundary.  The existing retained-tail
+                # materializer remains authoritative for any uncertainty.
+                return False
+            results[requirement] = history
+            return True
         try:
-            self.spool.visit_tails(requests=tail_requests, visit=materialize_tail)
+            if final_windows:
+                final_window_visitor(
+                    requests=tail_requests,
+                    windows=final_windows,
+                    visit=materialize_final_bar_tail,
+                )
+            else:
+                self.spool.visit_tails(requests=tail_requests, visit=materialize_tail)
         except Exception as error:
             for requirement, *_rest in plans:
                 results[requirement] = error
             return results
         return results
+
+    @staticmethod
+    def _final_bar_window(
+        *,
+        requirement: DataRequirement,
+        binding: StableSourceBinding,
+        requested: int,
+        start_ns: int | None,
+        end_ns: int | None,
+        expected_opens: tuple[int, ...] | None,
+    ) -> FinalBarTailWindow | None:
+        """Return the only row-window shape safe for exact final lookup."""
+
+        if (
+            binding.feed is not FeedType.BAR
+            or not binding.require_final_bar
+            or not binding.continuous_calendar
+            or not requirement.require_final_bars
+            or requirement.bar_revision_policy is not BarRevisionPolicy.LATEST
+            or requested not in {1, 2}
+            or start_ns is not None
+            or end_ns is not None
+            or expected_opens is not None
+        ):
+            return None
+        return FinalBarTailWindow(
+            interval_ns=_interval_ns(binding.interval or ""),
+            rows=requested,
+        )
+
+    @staticmethod
+    def _exact_final_bar_window(
+        *,
+        binding: StableSourceBinding,
+        records: tuple[_ParsedStoredEvent, ...],
+        requested: int,
+        expected_closes: tuple[int, ...],
+    ) -> bool:
+        """Validate header-indexed BAR rows before bypassing the retained tail."""
+
+        if len(records) != requested or len(expected_closes) != requested:
+            return False
+        interval_ns = _interval_ns(binding.interval or "")
+        observed_closes = tuple(int(item.envelope.bar.close_time_ns) for item in records)
+        if observed_closes != expected_closes or len(set(observed_closes)) != requested:
+            return False
+        return all(
+            item.envelope.bar.is_final
+            and item.envelope.bar.lifecycle in {
+                market_data_pb2.BAR_LIFECYCLE_FINAL,
+                market_data_pb2.BAR_LIFECYCLE_REVISED,
+            }
+            and int(item.envelope.bar.close_time_ns)
+            == int(item.envelope.bar.open_time_ns) + interval_ns - 1_000_000
+            for item in records
+        )
 
     def _history_from_records(
         self,
