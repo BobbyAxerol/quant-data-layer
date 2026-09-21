@@ -49018,6 +49018,19 @@ disposable, `--network none`, read-only, non-root image test
 It created no Compose service, provider session, durable data, runtime change
 or order action. The full GitHub unit suite remains the release authority.
 
+**Full source CI result (`PASS / RELEASE-IMAGE NEXT`, 2026-09-21).** GitHub
+Actions run `35657755130` for source `580ce7d6ff05dae2f5accb6a5e3ba8102911554e`
+completed successfully. `unit-tests`, `contract-tests`, and `sdk-python310`
+are all green; the unit job completed all declared checks, including the
+`1793`-test unit suite, V2 contract/SDK and shadow-consumer gates, Phase 6/7
+gates, isolated PostgreSQL/Redis recovery, bounded replica/load regressions,
+immutable Rust replay build/provider fixtures, Trivy, secret scan and immutable
+SBOM/release-manifest rehearsal. This proves the source/CI boundary only. It
+does not alter the active reader image, consume a second C2, or certify a new
+runtime image. Next is one immutable reader image built from the exact merged
+`dev` source lineage, followed by the already-scoped four-reader rollout and
+one affected no-order acceptance.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,
