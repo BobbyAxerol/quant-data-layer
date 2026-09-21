@@ -47713,6 +47713,130 @@ unchanged.
   C2 has occurred. The sole next mutation after commit is one immutable Query
   candidate build, followed by a two-reader packet with `5761cc9` as rollback.
 
+  **Candidate packet lineage correction (`PASS / NO RUNTIME MUTATION`,
+  2026-09-21).** The packaged candidate
+  `qdl-v2-python:2.0.26-e8394ff`
+  (`sha256:0919ef66877d6d622d4f3d69ca6d4cf6b959e929e2f3d92b9befef1d0ec50e92`)
+  passed the same immutable-image matrix `167/167`. Its first two-reader packet
+  exited before any recreate because a mechanically copied assertion still
+  expected the predecessor `3beb1e9` Compose chain. Read-only inspection proved
+  both current readers remained on `5761cc9` (`5490db...a81fb`), healthy,
+  restart `0`, OOM `false`, with the exact current chain
+  `049314...191ebe16`; the unaffected active/passive stream pair remained
+  healthy. No role, provider, durable store, consumer or order path changed.
+  The packet now asserts that actual current chain and its newline-inclusive
+  candidate chain `e71e00...29f0de4`, while retaining `5761cc9` as rollback.
+  This is a rollout metadata correction only; source/image/evidence and C2
+  status are unchanged. The next permitted action is the same exact two-reader
+  serial packet, then the one strict batch ladder.
+
+  **Candidate Compose-chain repair (`IN PROGRESS / PACKET ONLY`,
+  2026-09-21).** The corrected first assertion permitted the two-reader roll to
+  `e8394ff`; both readers became healthy with restart `0` and OOM `false`.
+  Before the strict client started, its candidate assertion failed closed:
+  the copied packet's `compose_current` list had omitted the live `5761cc9`
+  image override, so the newly recreated readers had the intended new image
+  but an incomplete Compose provenance chain `bdd3c2...517d99`. This changed
+  no runtime behavior beyond the approved two-reader recreation and made no
+  provider/client/data/order request; the strict ladder, all-scope preflight
+  and C2 remain unconsumed. The same packet now restores that `5761cc9`
+  override in both candidate and rollback composition, recognizes only this
+  one bounded interim chain as its apply start, and will recreate the same two
+  readers once more into the exact candidate chain `e71e00...29f0de4`. Its
+  rollback chain remains `5761cc9`/`049314...191ebe16`. No source, image,
+  topology, data-plane, V1, stream, consumer or order-path change is involved.
+
+  **P0 strict 50-BAR capacity diagnosis (`FAIL-CLOSED / SOURCE REPAIR`,
+  2026-09-21).** The repaired `e8394ff` Query readers are both healthy on
+  `sha256:0919ef66877d6d622d4f3d69ca6d4cf6b959e929e2f3d92b9befef1d0ec50e92`,
+  `restart=0`, `OOMKilled=false`; the original collocated HTTP response timeout
+  is no longer the observed failure. The strict read-only ladder instead
+  returned one typed `DATA_STALE/LAST_EVENT_STALE` for
+  `OKX/SWAP/DOGE-USDT-SWAP/BAR/1m`, while its eight sibling DOGE BAR routes were
+  `LIVE`. No provider-direct request, fallback, stream subscription, order
+  action, Kafka offset mutation, Redis/SQLite mutation, all-scope preflight or
+  C2 was performed by that ladder.
+
+  Read-only Kafka and cache inspection identified a real projection-capacity
+  defect rather than a provider or manifest defect. `stable-projector-v1` has
+  six canonical Kafka partitions but only three generic projector consumers,
+  pairing partitions `0/1`, `2/3` and `4/5`. At observation, lag was
+  `93/50/13079/532985/234488/627784` respectively. A 15.088-second direct
+  read-only Kafka sample measured `17,328` real canonical events (`1,148.5/s`):
+  `0:1248`, `1:1457`, `2:1915`, `3:6685`, `4:2313`, `5:3710`. The hot records
+  are real demanded Binance/OKX `TRADE`, `QUOTE`, `BOOK_DELTA` and
+  `MARK_INDEX_PRICE` bindings. In particular, BTC `*-stable-001` and the
+  BTC/ETH dated-book bindings are referenced by active consumer manifests; they
+  are not stale test debris and must not be silently removed to make a gate
+  pass. The shared cache remains a rebuildable projection behind Kafka's
+  durable authority; an isolated benchmark measured `25.5k-29.3k events/s` for
+  its local SQLite append path, so changing SQLite durability or deleting
+  events is neither justified nor approved.
+
+  **Approved source scope and invariants.** Keep one provider-neutral
+  `stable-projector-v1` consumer group, the existing six Kafka partitions,
+  unchanged source timestamps/event IDs, all active bindings, `FULL` SQLite
+  durability, bounded `8 MiB` fetches and the existing active/passive Stream
+  writer lease. Correct capacity by making projector ownership one generic
+  replica per existing canonical partition and using the already bounded
+  `512`-record commit turn. This is not a per-symbol service, a Kafka topology
+  change, a new provider path, a quality/SLA relaxation or a replay/reset. The
+  source gate must add regressions for six-way generic ownership, FIFO/no
+  cross-partition starvation, bounded pending bytes/records and unchanged
+  downstream-before-checkpoint ordering; it must retain all prior query,
+  external-provider and `INTERNAL_STREAM` policies.
+
+  **Decision boundary.** Source/config tests and an immutable image may proceed
+  without runtime mutation. Only if they pass may a separately enumerated
+  packet roll the existing three projector roles and add the three generic
+  projector replicas, preserving Kafka offsets/topology, Redis, SQLite, V1,
+  Rust cores, ingestors, Query/Stream readers, Trading System, alpha and order
+  path. It must prove a bounded live-lag window before retrying the strict
+  `1/8/16/32/50` BAR ladder. A green ladder alone permits one all-scope
+  two-replica preflight; only that green preflight permits the one final C2
+  `300s` run. Cleanup, push, merge and release remain blocked.
+
+  **P0 projector-capacity source/config gate (`PASS / RUNTIME PACKET NEXT`,
+  2026-09-21).** The stable Compose now has six identical generic
+  `stable-projector-v1` members, one for each existing `md.canonical.v2`
+  partition, with unique instance/client/audit identities and no public ports.
+  It retains the same shared durable cache, active/passive Stream endpoints,
+  `2048` pending-record and `32 MiB` pending-byte ceilings, `512` fetched
+  records and `8 MiB` fetched bytes. Each complete bounded fetch is now one
+  `512`-record commit turn. This amortizes the existing durable SQLite
+  transaction under its existing `FULL` durability; it neither raises an
+  external-provider/`INTERNAL_STREAM` quota nor changes event IDs, source
+  timestamps, topic partitions, consumer group, offsets, quality semantics,
+  V1, Rust, ingest, Query/Stream contract or binding set.
+
+  The new six-partition regression proves a full two-turn selection visits each
+  partition before returning to any of them, preserves each partition's
+  `0,1,...` FIFO prefix and does not mutate queued values. The Compose contract
+  now requires exactly six projector services for Kafka's six partitions,
+  one consumer group, six unique clients/audit paths and the same bounded
+  `512/8 MiB/2048/32 MiB` policy for every member. The pre-existing commit
+  ordering tests continue to prove downstream durable append/projection before
+  Kafka checkpoint. In the immutable `qdl-v2-python:2.0.26-e8394ff` image with
+  network disabled, source mounted read-only and tmpfs-only scratch,
+  `StableComposeAndBundleTests.test_compose_is_isolated_bounded_nonroot_and_has_no_v1_route`,
+  `StableProjectorRecoveryTests` and `StableRuntimeBoundaryTests` passed
+  `36/36` in `12.373s`. `docker compose ... config --no-interpolate --quiet`,
+  test-module syntax compilation with bytecode redirected to tmpfs and
+  `git diff --check` passed. No runtime role, image, provider, Kafka offset,
+  Redis, SQLite, V1, Trading System, alpha or order path changed.
+
+  **Remaining bounded runtime proof.** Build one immutable candidate from the
+  committed source, then serially recreate `projector_v2`, `projector_v2_2`
+  and `projector_v2_3` into this exact configuration and add only
+  `projector_v2_4`, `projector_v2_5` and `projector_v2_6`. Rollback stops the
+  three new members and recreates the original three with their exact old image,
+  runtime mount and `128`-record commit setting. It must not reset/reseek
+  Kafka, flush Redis, delete SQLite, alter V1/Rust/ingestor/Query/Stream,
+  change a binding or use provider replay. The live proof is a bounded
+  per-partition lag/age window, followed in order by the strict
+  `1/8/16/32/50` BAR ladder, all-scope two-replica preflight and one C2
+  `300s`; a failed earlier gate consumes neither later gate.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

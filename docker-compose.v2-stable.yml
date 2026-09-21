@@ -447,7 +447,10 @@ services:
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
-      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "128"
+      # One shared consumer owns one of the six existing canonical partitions.
+      # A complete bounded fetch is committed in one turn so the single durable
+      # SQLite transaction is amortized without exceeding the 512/8 MiB bounds.
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
@@ -489,7 +492,7 @@ services:
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
-      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "128"
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
@@ -531,7 +534,127 @@ services:
       QDL_STABLE_MAX_PENDING_BYTES: "33554432"
       QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
       QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
-      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "128"
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  # Kafka assigns one of its six existing canonical partitions to each generic
+  # projector in this single consumer group. These are shared capacity replicas,
+  # not symbol-, interval-, venue- or alpha-specific services.
+  projector_v2_4:
+    <<: *python
+    cpus: 1.00
+    mem_limit: 768m
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-4
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-4-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-4
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  projector_v2_5:
+    <<: *python
+    cpus: 1.00
+    mem_limit: 768m
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-5
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-5-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-5
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
+    volumes:
+      - stable_state:/var/lib/qdl-stable
+      - stable_tls:/stable-certs:ro
+      - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    depends_on:
+      stable_tls_init: {condition: service_completed_successfully}
+      stable_state_init: {condition: service_completed_successfully}
+      kafka1: {condition: service_healthy}
+      kafka2: {condition: service_healthy}
+      kafka3: {condition: service_healthy}
+      stable_redis: {condition: service_healthy}
+      stream_v2_active: {condition: service_started}
+      stream_v2_passive: {condition: service_started}
+
+  projector_v2_6:
+    <<: *python
+    cpus: 1.00
+    mem_limit: 768m
+    command: [python, -m, app.entrypoints.projector_v2_stable]
+    environment:
+      <<: *stable-env
+      QDL_STABLE_INSTANCE_ID: stable-projector-6
+      QDL_STABLE_CONSUMER_GROUP: stable-projector-v1
+      QDL_STABLE_HTTP_PORT: "8230"
+      QDL_STABLE_GRPC_PORT: "8231"
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-6-audit.jsonl
+      QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-6
+      QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
+      QDL_STABLE_KAFKA_CERT_ROOT: /stable-certs/projector
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/projector/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/projector/client.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/projector/client.key
+      QDL_STABLE_STREAM_INGEST_URLS_JSON: '["https://stream_v2_active:8200","https://stream_v2_passive:8200"]'
+      QDL_STABLE_MAX_PENDING_RECORDS: "2048"
+      QDL_STABLE_MAX_PENDING_BYTES: "33554432"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS: "512"
+      QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES: "8388608"
+      QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS: "512"
     volumes:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro

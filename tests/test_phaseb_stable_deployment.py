@@ -1483,7 +1483,13 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 self.assertEqual(healthcheck["interval"], "5s")
                 self.assertEqual(healthcheck["timeout"], "3s")
                 self.assertEqual(healthcheck["retries"], 20)
-        projector_names = ("projector_v2", "projector_v2_2", "projector_v2_3")
+        projector_names = (
+            "projector_v2", "projector_v2_2", "projector_v2_3",
+            "projector_v2_4", "projector_v2_5", "projector_v2_6",
+        )
+        self.assertEqual(
+            len(projector_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]
+        )
         for name in projector_names:
             self.assertNotIn("ports", services[name])
             self.assertEqual(services[name]["networks"], ["stable_internal"])
@@ -1499,7 +1505,10 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 services[name]["environment"]["QDL_STABLE_KAFKA_CLIENT_ID"]
                 for name in projector_names
             },
-            {"stable-projector-1", "stable-projector-2", "stable-projector-3"},
+            {
+                "stable-projector-1", "stable-projector-2", "stable-projector-3",
+                "stable-projector-4", "stable-projector-5", "stable-projector-6",
+            },
         )
         self.assertEqual(
             {
@@ -1514,6 +1523,20 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 for name in projector_names
             },
             {"33554432"},
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"]
+                for name in projector_names
+            },
+            {"512"},
+        )
+        self.assertEqual(
+            {
+                services[name]["environment"]["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"]
+                for name in projector_names
+            },
+            {"512"},
         )
         for name in ("query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive"):
             self.assertNotIn("QDL_STABLE_MAX_PENDING_RECORDS", services[name]["environment"])
@@ -1694,6 +1717,7 @@ class StableComposeAndBundleTests(unittest.TestCase):
         for name in (
             "query_v2_1", "query_v2_2", "stream_v2_active", "stream_v2_passive",
             "projector_v2", "projector_v2_2", "projector_v2_3",
+            "projector_v2_4", "projector_v2_5", "projector_v2_6",
         ):
             with self.subTest(authority_reader=name):
                 self.assertEqual(

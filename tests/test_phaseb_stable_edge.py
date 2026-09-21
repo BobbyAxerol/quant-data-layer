@@ -1778,6 +1778,48 @@ class StableProjectorRecoveryTests(unittest.IsolatedAsyncioTestCase):
             [40, 41],
         )
 
+    def test_projector_six_partition_turn_preserves_fifo_and_no_partition_starves(self):
+        def record(partition: int, offset: int) -> KafkaProjectorRecord:
+            return KafkaProjectorRecord(
+                topic="qdl.stable.canonical.phase-b.v2",
+                partition=partition,
+                offset=offset,
+                key=f"fixture/{partition}",
+                event_id=(partition.to_bytes(1) + offset.to_bytes(15, "big")),
+                payload=b"fixture",
+                accepted_at_ns=1,
+            )
+
+        queues = {
+            ("qdl.stable.canonical.phase-b.v2", partition): deque(
+                record(partition, offset) for offset in range(3)
+            )
+            for partition in range(6)
+        }
+
+        selected = StableProjectorEngine._round_robin_candidates(queues, 12)
+
+        self.assertEqual(
+            [(record.partition, record.offset) for _partition, record in selected],
+            [(partition, offset) for offset in range(2) for partition in range(6)],
+        )
+        for partition in range(6):
+            with self.subTest(partition=partition):
+                self.assertEqual(
+                    [
+                        record.offset
+                        for queue, record in selected
+                        if queue[1] == partition
+                    ],
+                    [0, 1],
+                )
+                self.assertEqual(
+                    [record.offset for record in queues[(
+                        "qdl.stable.canonical.phase-b.v2", partition
+                    )]],
+                    [0, 1, 2],
+                )
+
     async def test_supervisor_recreates_poisoned_generation_with_bounded_backoff(self):
         stopped = [False]
         sleeps = []
@@ -3309,7 +3351,7 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
                 "QDL_STABLE_MAX_PENDING_BYTES": "33554432",
                 "QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS": "512",
                 "QDL_STABLE_PROJECTOR_MAX_BATCH_BYTES": "8388608",
-                "QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS": "128",
+                "QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS": "512",
             })
             bounded_projector = StableRuntimeConfig.from_environment(
                 "projector_v2", values
@@ -3318,7 +3360,7 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             self.assertEqual(bounded_projector.max_pending_bytes, 33_554_432)
             self.assertEqual(bounded_projector.projector_max_batch_records, 512)
             self.assertEqual(bounded_projector.projector_max_batch_bytes, 8_388_608)
-            self.assertEqual(bounded_projector.projector_max_commit_records, 128)
+            self.assertEqual(bounded_projector.projector_max_commit_records, 512)
             values["QDL_STABLE_PROJECTOR_MAX_BATCH_RECORDS"] = "1001"
             with self.assertRaisesRegex(ValueError, "projector batch bound"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
@@ -3326,7 +3368,7 @@ class StableRuntimeBoundaryTests(unittest.TestCase):
             values["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"] = "513"
             with self.assertRaisesRegex(ValueError, "commit batch bound"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
-            values["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"] = "128"
+            values["QDL_STABLE_PROJECTOR_MAX_COMMIT_RECORDS"] = "512"
             values["QDL_STABLE_MAX_PENDING_RECORDS"] = "64"
             with self.assertRaisesRegex(ValueError, "pending records"):
                 StableRuntimeConfig.from_environment("projector_v2", values)
