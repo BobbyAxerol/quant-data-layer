@@ -403,6 +403,50 @@ def _warmup(result) -> WarmupResponse:
     )
 
 
+def _warmup_batch_response(
+    request: Request,
+    access: DataPlaneAccess,
+    result,
+    requirements: tuple[DataRequirement, ...],
+) -> BatchResponse:
+    """Build the public batch contract before a local batch lease is released."""
+
+    items = []
+    for item, requirement in zip(result.results, requirements, strict=True):
+        problem = None
+        if item.problem is not None:
+            problem = _problem(QueryServiceError(
+                item.problem,
+                request_id=result.request_id,
+                instrument_uid=item.instrument_uid,
+            ))
+        warmup_data = None
+        if item.result is not None:
+            bound = type(item.result)(
+                item.result.request_id,
+                _bind_history_cursor(
+                    request,
+                    access,
+                    requirement,
+                    item.result.history,
+                ),
+            )
+            warmup_data = _warmup(bound)
+        items.append(BatchItemResponse(
+            instrument_uid=item.instrument_uid,
+            status=item.status,
+            data=warmup_data,
+            problem=problem,
+        ))
+    return BatchResponse(
+        request_id=result.request_id,
+        partial=result.partial,
+        success_count=result.success_count,
+        error_count=result.error_count,
+        results=items,
+    )
+
+
 def _reference_data(result) -> dict:
     """Serialize provider-authentic reference data without float coercion."""
 
@@ -797,41 +841,19 @@ async def warmup_batch(
         requirements,
         require_all=body.require_all,
     )
-    result = await service.warmup_batch_async(batch, purpose=purpose)
-    items = []
-    for item, requirement in zip(result.results, requirements, strict=True):
-        problem = None
-        if item.problem is not None:
-            problem = _problem(QueryServiceError(
-                item.problem,
-                request_id=result.request_id,
-                instrument_uid=item.instrument_uid,
-            ))
-        warmup_data = None
-        if item.result is not None:
-            bound = type(item.result)(
-                item.result.request_id,
-                _bind_history_cursor(
-                    request,
-                    access,
-                    requirement,
-                    item.result.history,
-                ),
-            )
-            warmup_data = _warmup(bound)
-        items.append(BatchItemResponse(
-            instrument_uid=item.instrument_uid,
-            status=item.status,
-            data=warmup_data,
-            problem=problem,
-        ))
-    return BatchResponse(
-        request_id=result.request_id,
-        partial=result.partial,
-        success_count=result.success_count,
-        error_count=result.error_count,
-        results=items,
-    )
+
+    async def render(result):
+        response = _warmup_batch_response(request, access, result, requirements)
+        # Returning an already-rendered Response prevents FastAPI from doing a
+        # second Pydantic walk after the fully-local service lease is released.
+        return JSONResponse(content=response.model_dump(mode="json", by_alias=True))
+
+    complete = getattr(service, "warmup_batch_completed_async", None)
+    if callable(complete):
+        return await complete(batch, purpose=purpose, completion=render)
+    # Focused service doubles predating the internal completion hook retain the
+    # old public service protocol. Production V2QueryService always uses it.
+    return await render(await service.warmup_batch_async(batch, purpose=purpose))
 
 
 @router.post("/market-data/reference:batch", response_model=ReferenceBatchResponse)

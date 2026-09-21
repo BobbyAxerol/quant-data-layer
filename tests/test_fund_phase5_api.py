@@ -8,6 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
+from qdl.api_v2.models import BatchResponse
 from qdl.consumer import ConsumerManifestLoader
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
@@ -337,6 +338,41 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 400)
         self.assertEqual(denied.headers["content-type"], "application/problem+json")
         self.assertEqual(denied.json()["code"], "INVALID_ARGUMENT")
+
+    def test_batch_completion_returns_the_validated_public_json_contract(self):
+        requirement = self.requirement.__dict__ | {
+            "consumer_grade": "ALPHA",
+            "feed": "BAR",
+            "stale_policy": "BLOCK",
+            "gap_policy": "BLOCK",
+            "recovery": "SNAPSHOT_AND_REPLAY",
+            "bar_revision_policy": "LATEST",
+        }
+        original = self.service.warmup_batch_completed_async
+        completed = []
+
+        async def instrumented(*args, **kwargs):
+            response = await original(*args, **kwargs)
+            completed.append(response)
+            return response
+
+        with patch.object(self.service, "warmup_batch_completed_async", instrumented):
+            response = self.client.post(
+                "/v2/market-data/warmup:batch",
+                json={
+                    "consumer_id": self.consumer_id,
+                    "require_all": True,
+                    "requirements": [requirement],
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].media_type, "application/json")
+        validated = BatchResponse.model_validate_json(response.content)
+        self.assertEqual(
+            validated.model_dump(mode="json", by_alias=True),
+            response.json(),
+        )
 
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(

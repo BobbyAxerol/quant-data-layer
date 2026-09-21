@@ -1924,6 +1924,183 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(admission.stats()["active"], 0)
         self.assertEqual(admission.stats()["pending"], 0)
 
+    async def test_query_local_batch_holds_admission_through_http_completion(self):
+        class Backend:
+            def __init__(self):
+                self.calls = 0
+                self.second_started = threading.Event()
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                self.calls += 1
+                if self.calls > 1:
+                    self.second_started.set()
+                return {requirement: "history" for requirement in requirements}
+
+        class Executor:
+            @staticmethod
+            def stats():
+                return {}
+
+            async def execute(self, items, *, work, identity, provider, deadline_ms):
+                del identity, provider, deadline_ms
+                executions = []
+                for item in items:
+                    executions.append(
+                        WarmupExecution(item, await work(item), None, 1, False, 0.0)
+                    )
+                return tuple(executions)
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = Executor()
+                self.last_batch_evidence = {}
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        def requirement(instrument_uid: str) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1, deadline_ms=1_000),
+            )
+
+        completion_started = asyncio.Event()
+        release_completion = asyncio.Event()
+        completion_calls = 0
+
+        async def completion(result):
+            nonlocal completion_calls
+            completion_calls += 1
+            if completion_calls == 1:
+                completion_started.set()
+                await release_completion.wait()
+            return result
+
+        service = Service()
+        first = asyncio.create_task(service.warmup_batch_completed_async(
+            BatchRequirement(
+                consumer_id="local-http-completion-a",
+                requirements=(requirement("http-a"),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+            completion=completion,
+        ))
+        await asyncio.wait_for(completion_started.wait(), timeout=1)
+        second = asyncio.create_task(service.warmup_batch_completed_async(
+            BatchRequirement(
+                consumer_id="local-http-completion-b",
+                requirements=(requirement("http-b"),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+            completion=completion,
+        ))
+        admission = service._local_batch_admission_for()
+
+        async def wait_for_queued_second():
+            while admission.stats()["pending"] != 2:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_queued_second(), timeout=1)
+        self.assertEqual(service.backend.calls, 1)
+        self.assertFalse(service.backend.second_started.is_set())
+        release_completion.set()
+        first_result, second_result = await asyncio.gather(first, second)
+        self.assertEqual(
+            [item.status for item in first_result.results + second_result.results],
+            ["OK", "OK"],
+        )
+        self.assertEqual(service.backend.calls, 2)
+        self.assertEqual(admission.stats()["active"], 0)
+        self.assertEqual(admission.stats()["pending"], 0)
+
+    async def test_query_local_batch_cancellation_keeps_http_completion_lease_until_drain(self):
+        class Backend:
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            @staticmethod
+            def history_many(requirements):
+                return {requirement: "history" for requirement in requirements}
+
+        class Executor:
+            @staticmethod
+            def stats():
+                return {}
+
+            async def execute(self, items, *, work, identity, provider, deadline_ms):
+                del identity, provider, deadline_ms
+                executions = []
+                for item in items:
+                    executions.append(
+                        WarmupExecution(item, await work(item), None, 1, False, 0.0)
+                    )
+                return tuple(executions)
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = Executor()
+                self.last_batch_evidence = {}
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        requirement = DataRequirement(
+            instrument_uid="local-http-completion-cancel",
+            feed=FeedType.BAR,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2",
+            interval="1m",
+            warmup=WarmupSpecification.for_rows(1, deadline_ms=1_000),
+        )
+        completion_started = asyncio.Event()
+        release_completion = asyncio.Event()
+
+        async def completion(result):
+            completion_started.set()
+            await release_completion.wait()
+            return result
+
+        service = Service()
+        task = asyncio.create_task(service.warmup_batch_completed_async(
+            BatchRequirement(
+                consumer_id="local-http-completion-cancel",
+                requirements=(requirement,),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+            completion=completion,
+        ))
+        await asyncio.wait_for(completion_started.wait(), timeout=1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        admission = service._local_batch_admission_for()
+        self.assertEqual(admission.stats()["active"], 1)
+        self.assertEqual(admission.stats()["pending"], 1)
+        release_completion.set()
+
+        async def wait_for_drain():
+            while admission.stats()["pending"]:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_drain(), timeout=1)
+        self.assertEqual(admission.stats()["active"], 0)
+        self.assertEqual(admission.stats()["pending"], 0)
+
     async def test_query_local_batch_cancellation_keeps_assembly_lease_until_drain(self):
         class Backend:
             @staticmethod

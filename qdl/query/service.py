@@ -5,7 +5,7 @@ import math
 import uuid
 import time
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Awaitable, Callable, TypeVar
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.data_quality.binding_decision import freshness_verdict
@@ -58,6 +58,9 @@ from qdl.reference.contracts import (
 _EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
     "qdl://stable-stream/internal/v2/execution/mark-index/latest"
 )
+
+
+_BatchCompletion = TypeVar("_BatchCompletion")
 
 
 def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
@@ -467,6 +470,33 @@ class V2QueryService:
         request_id: str | None = None,
     ) -> BatchQueryResult:
         """Execute a batch concurrently without hiding item-level failures."""
+
+        async def return_result(result: BatchQueryResult) -> BatchQueryResult:
+            return result
+
+        return await self.warmup_batch_completed_async(
+            batch,
+            purpose=purpose,
+            completion=return_result,
+            request_id=request_id,
+        )
+
+    async def warmup_batch_completed_async(
+        self,
+        batch: BatchRequirement,
+        *,
+        purpose: AccessPurpose,
+        completion: Callable[[BatchQueryResult], Awaitable[_BatchCompletion]],
+        request_id: str | None = None,
+    ) -> _BatchCompletion:
+        """Run an internal response completion under a fully-local batch lease.
+
+        The public batch method retains its ``BatchQueryResult`` contract.  The
+        REST router alone supplies a completion that binds cursors and renders
+        its public JSON before this finite canonical-cache lane is released.
+        That prevents a second large local HTTP response from overlapping the
+        first response's CPU-heavy conversion after the cache read is done.
+        """
         request_id = request_id or self.request_id()
         executor_before = self.warmup_executor.stats()
         backend_before = self._warmup_backend_stats()
@@ -558,10 +588,100 @@ class V2QueryService:
                 deadline_ms=deadline,
             )
 
+        def assemble_batch(executions) -> BatchQueryResult:
+            results = []
+            for execution in executions:
+                requirement = execution.item
+                if execution.ok:
+                    assert execution.value is not None
+                    results.append(
+                        BatchItemResult(
+                            requirement.instrument_uid,
+                            "OK",
+                            result=execution.value,
+                        )
+                    )
+                    continue
+                error = execution.error
+                if isinstance(error, RetryableWarmupError) and isinstance(
+                    error.cause, QueryServiceError
+                ):
+                    problem = error.cause.problem
+                elif isinstance(error, QueryServiceError):
+                    problem = error.problem
+                elif isinstance(error, RetryableWarmupError):
+                    problem = QueryProblem(
+                        CanonicalErrorCode.DEPENDENCY_UNAVAILABLE,
+                        str(error),
+                        True,
+                        error.retry_after_ms,
+                    )
+                else:
+                    problem = QueryProblem(
+                        CanonicalErrorCode.INTERNAL_ERROR,
+                        "warmup batch item failed inside the bounded executor",
+                        False,
+                    )
+                results.append(
+                    BatchItemResult(
+                        requirement.instrument_uid,
+                        problem.code.value,
+                        problem=problem,
+                    )
+                )
+            elapsed = sorted(execution.elapsed_ms for execution in executions)
+            percentile = lambda fraction: (
+                elapsed[min(len(elapsed) - 1, max(0, math.ceil(len(elapsed) * fraction) - 1))]
+                if elapsed
+                else 0.0
+            )
+            executor_after = self.warmup_executor.stats()
+            backend_after = self._warmup_backend_stats()
+            executor_delta = {
+                f"executor_{key}": executor_after.get(key, 0) - executor_before.get(key, 0)
+                for key in executor_after
+            }
+            backend_delta = {
+                key: backend_after.get(key, 0) - backend_before.get(key, 0)
+                for key in backend_after
+                if key != "cache_entries"
+            }
+            cache_lookups = backend_delta.get("cache_hits", 0) + backend_delta.get(
+                "cache_misses", 0
+            )
+            self.last_batch_evidence = {
+                "request_id": request_id,
+                "item_count": len(executions),
+                "success_count": sum(item.problem is None for item in results),
+                "error_count": sum(item.problem is not None for item in results),
+                "p50_ms": percentile(0.50),
+                "p95_ms": percentile(0.95),
+                "cache_hit_rate": (
+                    backend_delta.get("cache_hits", 0) / cache_lookups
+                    if cache_lookups
+                    else 0.0
+                ),
+                "local_batch_snapshot": bool(
+                    callable(history_many) and local_requirements
+                ),
+                "local_batch_items": len(local_requirements),
+                "local_batch_admission": (
+                    self._local_batch_admission_for().stats()
+                    if local_requirements
+                    else None
+                ),
+                **executor_delta,
+                **backend_delta,
+            }
+            return BatchQueryResult(request_id, tuple(results))
+
+        async def complete(executions) -> _BatchCompletion:
+            return await completion(assemble_batch(executions))
+
         if fully_local_batch:
             admission = self._local_batch_admission_for()
 
-            async def execute_whole_local_batch():
+            async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories
                 try:
                     prefetched_local_histories = await asyncio.to_thread(
@@ -571,17 +691,17 @@ class V2QueryService:
                     prefetched_local_histories = {
                         requirement: error for requirement in local_requirements
                     }
-                return await execute_items()
+                return await complete(await execute_items())
 
             local_batch_task = asyncio.create_task(
                 admission.run(execute_whole_local_batch)
             )
             try:
-                executions = await asyncio.shield(local_batch_task)
+                return await asyncio.shield(local_batch_task)
             except asyncio.CancelledError:
-                # The caller may disappear while a SQLite tail read or response
-                # assembly is still using this reader's finite CPU budget. Keep
-                # the whole request-local lease until it drains naturally.
+                # The caller may disappear while a SQLite tail read, item work
+                # or HTTP response serialization holds this reader's finite
+                # CPU budget. Keep the request-local lease until it drains.
                 local_batch_task.add_done_callback(self._consume_detached_local_batch)
                 raise
             except _LocalBatchAdmissionRejected:
@@ -599,99 +719,15 @@ class V2QueryService:
                     )
                     for requirement in local_requirements
                 }
-                executions = await execute_items()
-        else:
-            try:
-                executions = await execute_items()
-            finally:
-                if local_histories_task is not None and not local_histories_task.done():
-                    local_histories_task.cancel()
-                    await asyncio.gather(local_histories_task, return_exceptions=True)
-        results = []
-        for execution in executions:
-            requirement = execution.item
-            if execution.ok:
-                assert execution.value is not None
-                results.append(
-                    BatchItemResult(
-                        requirement.instrument_uid,
-                        "OK",
-                        result=execution.value,
-                    )
-                )
-                continue
-            error = execution.error
-            if isinstance(error, RetryableWarmupError) and isinstance(
-                error.cause, QueryServiceError
-            ):
-                problem = error.cause.problem
-            elif isinstance(error, QueryServiceError):
-                problem = error.problem
-            elif isinstance(error, RetryableWarmupError):
-                problem = QueryProblem(
-                    CanonicalErrorCode.DEPENDENCY_UNAVAILABLE,
-                    str(error),
-                    True,
-                    error.retry_after_ms,
-                )
-            else:
-                problem = QueryProblem(
-                    CanonicalErrorCode.INTERNAL_ERROR,
-                    "warmup batch item failed inside the bounded executor",
-                    False,
-                )
-            results.append(
-                BatchItemResult(
-                    requirement.instrument_uid,
-                    problem.code.value,
-                    problem=problem,
-                )
-            )
-        elapsed = sorted(execution.elapsed_ms for execution in executions)
-        percentile = lambda fraction: (
-            elapsed[min(len(elapsed) - 1, max(0, math.ceil(len(elapsed) * fraction) - 1))]
-            if elapsed
-            else 0.0
-        )
-        executor_after = self.warmup_executor.stats()
-        backend_after = self._warmup_backend_stats()
-        executor_delta = {
-            f"executor_{key}": executor_after.get(key, 0) - executor_before.get(key, 0)
-            for key in executor_after
-        }
-        backend_delta = {
-            key: backend_after.get(key, 0) - backend_before.get(key, 0)
-            for key in backend_after
-            if key != "cache_entries"
-        }
-        cache_lookups = backend_delta.get("cache_hits", 0) + backend_delta.get(
-            "cache_misses", 0
-        )
-        self.last_batch_evidence = {
-            "request_id": request_id,
-            "item_count": len(executions),
-            "success_count": sum(item.problem is None for item in results),
-            "error_count": sum(item.problem is not None for item in results),
-            "p50_ms": percentile(0.50),
-            "p95_ms": percentile(0.95),
-            "cache_hit_rate": (
-                backend_delta.get("cache_hits", 0) / cache_lookups
-                if cache_lookups
-                else 0.0
-            ),
-            "local_batch_snapshot": bool(
-                callable(history_many) and local_requirements
-            ),
-            "local_batch_items": len(local_requirements),
-            "local_batch_admission": (
-                self._local_batch_admission_for().stats()
-                if local_requirements
-                else None
-            ),
-            **executor_delta,
-            **backend_delta,
-        }
-        return BatchQueryResult(request_id, tuple(results))
+                return await complete(await execute_items())
+
+        try:
+            executions = await execute_items()
+        finally:
+            if local_histories_task is not None and not local_histories_task.done():
+                local_histories_task.cancel()
+                await asyncio.gather(local_histories_task, return_exceptions=True)
+        return await complete(executions)
 
     def _warmup_backend_stats(self) -> dict[str, int]:
         stats = getattr(self.backend, "warmup_stats", None)

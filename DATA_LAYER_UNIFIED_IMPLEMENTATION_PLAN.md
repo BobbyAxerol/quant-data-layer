@@ -47647,6 +47647,72 @@ unchanged.
   build from its committed SHA, then an exact two-reader rollout with the
   current `3beb1e9` candidate image as rollback.
 
+  **REST response-boundary finding (`IN PROGRESS / PRE-C2`, 2026-09-21).**
+  Commit `5761cc9` correctly extended the fully-local admission through the
+  service's bounded executor and `BatchQueryResult` construction. Its
+  immutable Query-only candidate
+  `qdl-v2-python:2.0.26-5761cc9`
+  (`sha256:5490db55234902966c06caaca803396f0a7a09d1638b9c0f74310462a95a81fb`)
+  then rolled only `query_v2_1` and `query_v2_2`; both readers are healthy,
+  restart `0`, OOM `false`. The exact real strict ladder still failed only for
+  the second lane of two collocated 50-item OKX final-BAR reads on secondary
+  Query with client `ReadTimeout`: every isolated shape `1/8/16/32/50` and the
+  first 50-item lane passed, while neither all-scope preflight nor C2 was
+  started. It made no provider-direct, fallback, stream, order or durable
+  write.
+
+  The remaining critical boundary is now identified precisely: the REST router
+  receives `BatchQueryResult` after the service lease has been released, then
+  builds fifty nested `WarmupResponse`/`BatchItemResponse` models and FastAPI
+  serializes that public response. A second request can overlap that CPU-heavy
+  response conversion even though the cache snapshot and executor are
+  serialized. The next approved source correction remains P0-only: expose an
+  internal completion hook that retains the existing fully-local canonical
+  cache lease until the router has built and JSON-serialized the unchanged
+  `BatchResponse`. It applies only to a fully-local `history_many` batch;
+  mixed/non-local requests, public path/schema, status/partial semantics,
+  cursor/quality/finality, provider policies, `INTERNAL_STREAM`, timeout,
+  manifest and every durable/topology component remain unchanged. Cancellation
+  must keep the detached completion holding the finite lease until it drains.
+
+  Required gates before another image are: exact public JSON/SDK decode parity;
+  two collocated full local REST batches proving the second cannot begin cache,
+  executor or response serialization early; partial/error parity; cancellation
+  drain; capacity/recovery; and unchanged mixed/external behavior. The existing
+  focused module, targeted route/SDK/quality matrix, `py_compile` and
+  `git diff --check` must pass in an immutable read-only/no-network image.
+  Only then may one new Query image roll exactly the same two readers with
+  `5761cc9` as rollback and repeat the strict ladder. All-scope preflight and
+  the single final C2 remain blocked until that ladder passes. Cleanup, push,
+  merge and release remain explicitly deferred.
+
+  **REST response-boundary source gate (`PASS / IMAGE BUILD NEXT`,
+  2026-09-21).** `V2QueryService.warmup_batch_async()` remains source/API
+  compatible and returns the same `BatchQueryResult`. Its new internal
+  `warmup_batch_completed_async()` runs a router-supplied completion under the
+  already-bounded local lease only for a fully-local batch. The V2 router now
+  binds signed cursors, builds the existing validated `BatchResponse`, and
+  creates its `JSONResponse` inside that completion. Thus FastAPI cannot make
+  a second response-model/JSON pass after the local lease is released. Existing
+  focused service doubles retain their old method through an explicit fallback;
+  production `V2QueryService` always takes the bounded path. The contract,
+  JSON aliases/null behavior, typed partial/error results, cursors, quality,
+  finality and all non-local lanes are unchanged.
+
+  **Tests actually run.** In an immutable existing Data Layer image with
+  `--network none`, read-only source/root and tmpfs-only scratch:
+  `SingleWarmupExecutionTests` plus `Phase5ApiTests` passed `23/23`; the
+  complete universal-warmup/API/routed-query/identity/consumer/SDK/L2/quality
+  matrix passed `167/167` in `27.282s`; and `python -B -m py_compile` passed
+  for all four changed Python modules. New regressions prove a second local
+  batch cannot start history work while the first is inside an async HTTP
+  completion, cancellation retains then drains that completion lease, and the
+  HTTP response validates back to the exact public `BatchResponse` contract.
+  `git diff --check` passes. This is source-only evidence: no new image,
+  reader recreation, provider call, durable mutation, all-scope preflight or
+  C2 has occurred. The sole next mutation after commit is one immutable Query
+  candidate build, followed by a two-reader packet with `5761cc9` as rollback.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
