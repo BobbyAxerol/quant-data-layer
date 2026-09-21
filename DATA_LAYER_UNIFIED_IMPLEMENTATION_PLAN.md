@@ -48945,6 +48945,32 @@ removed automatically; post-check found neither. No serving image, container,
 role, provider, Kafka/Redis/SQLite object, V1, consumer, alpha or order path
 changed. The clean GitHub runner remains the release authority.
 
+**Pinned Rust advisory-policy runner correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-21).** The subsequent remote run `35655156356` passed schema format,
+breaking checks, generated Python/Rust contracts, Rust format/Clippy and every
+locked Rust test. Its `cargo-deny` step did not reach license/source/advisory
+policy: GitHub-host Rustup attempted to re-install the `1.82` Clippy component
+and failed on an existing `bin/cargo-clippy` conflict. This is host-toolchain
+drift, not a Rust dependency finding. The narrow correction runs the already
+checksum-verified static `cargo-deny` binary in the same pinned
+`rust:1.82-slim` container used for the preceding Rust contract gate, mounting
+the workspace and extracted binary read-only and installing only `git` in that
+ephemeral runner because the reviewed policy explicitly sets
+`git-fetch-with-cli=true`. It preserves the actual `cargo-deny check` policy
+and fails closed on any advisory/license/source/bans result. No Rust
+dependency, lockfile, provider, runtime or data-plane code changes.
+Required exit: the exact containerized check passes locally, then the clean
+GitHub runner passes the complete contract job.
+
+**Pinned Rust advisory-policy runner test (`PASS / REMOTE CI NEXT`,
+2026-09-21).** The checksum-verified `cargo-deny 0.20.2` command ran in the
+ephemeral pinned Rust `1.82` container with a read-only workspace and passed
+all four policy sections: `advisories`, `bans`, `licenses`, and `sources`.
+The lockfile reports three duplicate-version warnings that the existing policy
+intentionally classifies as warnings; no exception or ignore was added. The
+temporary downloaded binary directory was removed on exit. No image, source
+dependency, runtime role or data-plane state changed in this check.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,

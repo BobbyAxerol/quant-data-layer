@@ -77,7 +77,11 @@ jobs:
             --output "${archive}"
           echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
           tar --no-same-owner -xzf "${archive}"
-          "./${directory}/cargo-deny" check
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            -v "$PWD/${directory}:/tools/cargo-deny:ro" \
+            -w /workspace rust:1.82-slim \
+            sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends git >/dev/null && /tools/cargo-deny/cargo-deny check'
 
   sdk-python310:
     runs-on: ubuntu-latest
