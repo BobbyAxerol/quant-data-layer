@@ -47517,6 +47517,62 @@ unchanged.
   passed `162/162` in the same no-network, read-only-root test environment;
   syntax compilation and `git diff --check` passed before commit.
 
+  **Whole-local-batch admission finding (`FAIL_TYPED_STATUS / PRE-C2`,
+  2026-09-21).** The newly rolled `331d3ff` readers are healthy, non-OOM and
+  zero-restart. Its strict ladder proved all nine isolated `1/8/16/32/50`
+  windows through both replicas, including the original 50-item OKX BAR
+  partition. The deterministic two-consumer collocation then failed on the
+  secondary reader with `ReadTimeout`: `42/50` compact status reads remained
+  `LIVE` and the remaining eight timed out while the cancelled request's
+  in-process SQLite/protobuf work was still draining. No provider/direct,
+  fallback, stream, order or durable-data action occurred. This is therefore
+  not a stale-provider conclusion and does not consume all-scope preflight or
+  C2.
+
+  The exact capacity shape is a legal heavy warmup (`50` requirements, each
+  with a declared maximum of `10,000` BAR rows) on one `1 CPU / 512 MiB` Query
+  reader. The current per-item local executor admits the first items from two
+  whole batches at once; each then starts a shared batch materialization while
+  the single SQLite spool connection serializes its full physical-tail scan.
+  The correction is confined to the local canonical-cache batch boundary:
+  admit one whole local batch per reader, bound its pending queue, preserve the
+  lease until its thread-backed materialization drains on caller cancellation,
+  and begin item execution only after that admission. It must retain exact
+  batch payload/quality/finality semantics and fail closed with a typed local
+  capacity result when the queue is full. It must not alter any Binance/OKX/DNSE
+  provider quota, `INTERNAL_STREAM` policy, public endpoint/schema, manifest,
+  cache, topology or non-local request behavior. Required regressions cover
+  serial admission, bounded rejection, cancellation/non-leak, post-success
+  fairness, and existing per-item parity. Only after source/image proof may
+  the two Query readers repeat the one strict ladder.
+
+  **Whole-local-batch admission source gate (`PASS / CANDIDATE BUILD
+  PENDING`, 2026-09-21).** `V2QueryService` now treats a fully local
+  `history_many()` batch as one canonical-cache materialization unit: exactly
+  one active batch may decode retained SQLite/protobuf BAR tails per Query
+  reader and exactly one additional batch may wait. A saturated lane yields a
+  per-item retryable `RATE_LIMITED` result before provider or executor work;
+  it does not borrow or modify the Binance, OKX, DNSE or `INTERNAL_STREAM`
+  budgets. `asyncio.shield` retains the bounded lease when an HTTP caller
+  disconnects while a thread-backed SQLite read drains, and the detached task
+  retrieves its terminal result to avoid an orphan-task warning. Existing
+  mixed local/provider and non-local paths are unchanged.
+
+  The no-network/read-only regression suite explicitly proves: a collocated
+  local batch cannot start a second `history_many()` sweep before the first
+  finishes; queue exhaustion is typed and performs no second cache read;
+  cancellation retains then drains the admission lease; the next legal batch
+  succeeds; and an item-level local cache absence remains typed. The focused
+  `SingleWarmupExecutionTests` passed `8/8`; the complete warmup module passed
+  `62/62`; and the selected Query/route/readiness/API/SDK/identity matrix
+  passed `188/188` using the Data Layer image entrypoint with network disabled,
+  a read-only repository mount and a temporary bytecode cache. Syntax
+  compilation and `git diff --check` passed. The source gate does not consume
+  the all-scope preflight or C2 and performs no runtime, provider, durable-data
+  or order mutation. The next permitted step is one immutable Python candidate
+  build, followed by a narrow two-Query-reader packet with the currently active
+  `331d3ff` image as rollback.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
