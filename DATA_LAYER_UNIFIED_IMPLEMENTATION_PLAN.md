@@ -48778,6 +48778,55 @@ merge occurred, and no role, data-plane, credential, state, V1, broker or
 consumer object changed in this source-only slice. The next gate is CI on the
 committed feature SHA, followed by the normal feature -> `dev` release PR.
 
+**CI diagnostic and narrow correction (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-21).** PR `#20` for `fix/mark-index-live-view` reached the normal
+feature -> `dev` CI gate. `sdk-python310` passed; `contract-tests` stopped at
+the pinned Rust 1.82 Clippy step before contract publication, and `unit-tests`
+stopped in its runtime dependency audit before any unit suite ran. Reproducing
+the exact contract command locally isolates the first issue to a test-only
+assertion in `rust/qdl-realtime-core/src/lib.rs`: `ProcessBatch` stores
+`Option<&'static str>`, so calling `as_deref()` is a no-op that Clippy rejects
+under `-D warnings`. The bounded correction replaces only that no-op assertion
+expression, then re-runs the pinned format/Clippy/test command. It changes no
+provider, contract, runtime, image, manifest, C2 result or data-plane state.
+The dependency-audit failure is investigated separately with the CI's exact
+runtime image and must be resolved or explicitly pinned before CI/release may
+continue; no later unit/contract gate is treated as passed until then.
+
+The CI audit identifies `anyio 4.13.0` only, with `CVE-2026-63374` and
+`CVE-2026-64847`, both fixed by `4.14.2`. `fastapi 0.136.1` and
+`starlette 1.6.0` already constrain AnyIO to the compatible `<5` line, so the
+approved source-only security correction is a lockfile refresh from `4.13.0`
+to a fixed supported release using the Dockerfile-pinned Poetry `2.3.4`
+environment. The resolver selected `anyio 4.15.1` and its compatible
+transitive `typing-extensions 4.16.0`; no direct application constraint
+changed. It must not change any runtime role, image or live state. The exact
+CI dependency audit and relevant Python/Rust tests must pass before this
+correction is committed.
+
+**Local CI correction evidence (`PASS / REMOTE CI NEXT`, 2026-09-21).** A
+Dockerfile-equivalent temporary image built from the corrected lockfile and
+passed the exact runtime dependency audit: Poetry/venv has no Poetry binary,
+the Uvicorn shebang remains `/opt/venv/bin/python`, `msgpack >= 1.2.1`,
+`setuptools >= 78.1.1`, `anyio >= 4.14.2`, and `pip-audit` returns no known
+vulnerability. The pinned Rust 1.82 builder passed format, `clippy -D
+warnings`, and the locked workspace test command after the one assertion
+correction. An isolated `qdl-r135-ci` invocation of CI's full unittest command
+ran to automatic `--rm` completion; the local Compose client did not retain an
+exit receipt after auto-removal, so it is explicitly not counted as a local
+full-suite PASS. The authoritative full suite remains the pending GitHub CI
+rerun. Its still-running dependency containers are isolated under the exact
+`qdl-r135-ci` project and await explicit cleanup authorization.
+
+Because this is a runtime lockfile change, the previously certified
+`sha256:0a69fbf0...2107a545` reader remains a valid pre-security-fix rollback
+and functional baseline, but cannot be the final release image. Once remote CI
+is green, build one immutable reader image from the corrected commit, roll only
+`query_v2_1`, `query_v2_2`, `stream_v2_active`, and `stream_v2_passive` with
+the current image as rollback, run the affected no-order acceptance, and only
+then tag/publish `v2.0.26`. This does not reopen data correctness discovery or
+alter Rust/ingestors/projectors/V1/Kafka/Redis/SQLite/Trading System/alpha.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,

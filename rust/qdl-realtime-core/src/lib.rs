@@ -2040,7 +2040,7 @@ mod tests {
         assert!(expired.canonical.is_empty());
         assert_eq!(expired.filtered, 1);
         assert_eq!(
-            expired.filtered_outcome.as_deref(),
+            expired.filtered_outcome,
             Some("MARK_INDEX_COMPONENT_EXPIRED")
         );
     }
