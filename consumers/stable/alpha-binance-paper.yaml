@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-binance-stable
   environment: paper
-  revision: 10
+  revision: 12
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -54,6 +54,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
     feed: BAR
@@ -258,13 +259,13 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
-    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
     feed: TRADE
@@ -294,6 +295,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
     feed: BAR
@@ -498,13 +500,13 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
-    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: TRADE
@@ -534,6 +536,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: b2d78145-b541-58e2-941b-06c44c65e45f
     feed: BAR
@@ -738,13 +741,13 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
-    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
     feed: TRADE
@@ -774,6 +777,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: e4ce7249-a4e8-5073-beb8-dab908596c34
     feed: BAR
@@ -978,13 +982,13 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
-    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: TRADE
@@ -1014,6 +1018,7 @@ spec:
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
     feed: BAR
@@ -1218,13 +1223,13 @@ spec:
     interval: null
     warmup_limit: 0
     max_freshness_ms: 2000
-    event_recency_policy: OBSERVE
     require_full_coverage: true
     require_final_bars: false
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
+    event_recency_policy: OBSERVE
     max_session_liveness_ms: 45000
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a
     feed: BASIS

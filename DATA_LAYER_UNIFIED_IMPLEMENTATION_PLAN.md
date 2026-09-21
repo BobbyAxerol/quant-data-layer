@@ -48345,6 +48345,103 @@ unchanged.
   Query-only image followed by a serial two-reader packet retaining `a7a16ac`
   as rollback; all-scope preflight and C2 remain unconsumed.
 
+  **Five-slot immutable image gate (`PASS / TWO-READER PACKET NEXT`,
+  2026-09-21).** Exactly one candidate image was built from committed source
+  `ed164a91dde453f5bbe57bdd2fb6ca88b089b06a`:
+  `qdl-v2-python:2.0.26-ed164a9`
+  `sha256:3b06543620dda25ab70db566d808841e137dfa55e54bd5bc366a372cf665c6ee`.
+  Its OCI revision and release labels match that source and it runs as
+  `qdl:qdl`. With no source mount, `--network none`, read-only root, tmpfs
+  `/tmp` and non-root UID/GID, the same complete affected matrix passed
+  `178/178` with one existing Redis-dependent skip in `38.214s`. The expected
+  `a7a16ac` Query image
+  `sha256:fb351505dc205dcac48e16148b50424b064e817305053ab2dbb01850017f9984`
+  remains the exact rollback coordinate. Next is a provenance-checked serial
+  recreate of only `query_v2_1` then `query_v2_2`; no other role, state,
+  topology, V1 route, consumer, alpha or order path is in scope.
+
+  **All-scope preflight after five-slot rollout (`FAIL-CLOSED / DECLARED QUOTE
+  SEMANTIC CORRECTION NEXT`, 2026-09-21).** Both Query readers reached
+  `ed164a9` healthy with `restart=0` and no OOM, then the single all-scope
+  no-order preflight stopped before C2 with `0` order actions. The typed leaf
+  receipt identifies `alpha.binance.paper.stable` `QUOTE` rows BTC, ETH and
+  BNB as `DATA_STALE`: their immutable BBO events were `5.7-6.3s` old but all
+  three source sessions were `LIVE` under `1s`, complete and gap-free. This is
+  neither a provider/session failure nor an SLA relaxation opportunity.
+
+  The source inventory proves the same compiler defect affects all ten alpha
+  `QUOTE` routes (five Binance USD-M and five OKX Swap): the stable catalog
+  correctly declares native BBO `delivery_semantics: ON_CHANGE`, but
+  `phase533_materialize_alpha_runtime_entitlements.py` applies observed
+  recency only to `TRADE`. It thereby emits strict-event alpha quote
+  requirements despite the declared source contract. The in-scope correction
+  derives `event_recency_policy: OBSERVE` only when the exact QUOTE binding
+  declares `ON_CHANGE`; generic strict quotes remain strict. It must render
+  the two alpha manifests, their sealed route hashes/revisions and primary
+  routing revision through the existing materializer, then prove all declared
+  on-change alpha quotes have a session SLA/OBSERVE policy while a synthetic
+  strict quote cannot acquire that policy. No provider quota, freshness limit,
+  event timestamp, route fallback, topology, durable state or order path may
+  change. A new image/two-reader packet and one fresh preflight are required
+  before the still-unconsumed C2.
+
+  **Materializer union precondition (`IN_PROGRESS / SOURCE-ONLY`,
+  2026-09-21).** Rendering the two corrected alpha manifests exposed a second
+  compiler defect before any generated artifact or runtime state changed. The
+  production demand declares `330` realtime rows but only `180` physical
+  identities; `150` identities appear exactly twice, once for the Trading
+  System paper consumer and once for the matching alpha consumer. Compact
+  comparison found `0` conflicting duplicate payloads. That is the expected
+  shared-feed union, not an ambiguous consumer request. The current alpha
+  materializer incorrectly rejects it before generation. The bounded repair is
+  to canonicalize identical rows by the existing physical identity and to
+  continue fail-closed if two rows with that identity differ in any declared
+  field. Required source proof: identical duplicate union, conflicting
+  duplicate rejection, all ten declared ON_CHANGE quote requirements render
+  `OBSERVE`, synthetic strict QUOTE remains blocking, and the pre-existing
+  manifest/release-route idempotency proof. No runtime, image, manifest file,
+  provider, quota, freshness, route, durable state, topology or C2 action is
+  permitted until the source gate passes.
+
+  The first generated-diff inspection also caught a preservation hazard before
+  any candidate was built: replacing managed realtime requirements would have
+  removed the existing `OBSERVE` policy from all ten `BOOK_DELTA` requirements.
+  `BOOK_DELTA` is already a declared quiet-session feed in the shared quality
+  decision and its prior alpha policy is intentional; losing it would turn a
+  quiet but gap-free verified book into a false stale result. The same bounded
+  compiler patch must therefore preserve `OBSERVE` for `TRADE` and
+  `BOOK_DELTA`, derive it for QUOTE only when the exact binding declares
+  `ON_CHANGE`, and prove all three cases in the materializer regression. This
+  is preservation of the current contract, not a freshness/SLA relaxation or
+  a source-catalog/routing change.
+
+  **Declared QUOTE compiler source gate (`PASS / COMMIT AND QUERY-ONLY BUILD
+  NEXT`, 2026-09-21).** The compiler now unions only byte-equivalent shared
+  physical demand rows, rejects a conflicting row under the same identity,
+  preserves `OBSERVE` for the existing TRADE/BOOK_DELTA quiet-session contracts,
+  and derives it for QUOTE only from a catalog-declared `ON_CHANGE` binding.
+  The final generator materialized only its four governed artifacts:
+  `alpha-binance-paper` manifest `12`, `alpha-okx-paper` manifest `11`, stable
+  release route `22`, and primary route `6`; the sealed manifest SHA values in
+  the route were regenerated by the generator. A subsequent non-networked,
+  non-root read-only dry-run reported `manifest_changed=false` and
+  `release_route_changed=false`.
+
+  Source evidence was run inside the existing immutable `ed164a9` image with
+  the worktree mounted read-only, `--network none`, read-only root and tmpfs:
+  `py_compile` passed; focused materializer tests passed `7/7`; the final
+  routing/identity/fallback/release matrix passed `117/117` in `58.398s`; and
+  the targeted QUOTE/TRADE/BOOK_DELTA/MARK_INDEX/final-BAR/SDK/query quality
+  matrix passed `177/177` with one existing Redis-dependent skip in `41.861s`.
+  The test fixtures deliberately emit provider/backpressure failure messages;
+  neither suite performed provider I/O, stream/fallback action, order action or
+  durable mutation. `git diff --check` passed. No new image, runtime role,
+  provider quota, freshness limit, route policy, V1 path, Kafka/Redis/SQLite
+  state or C2 action has occurred in this source gate. The only next mutation
+  is one immutable Query image from the committed source, a serial
+  two-reader-only packet retaining `ed164a9` as rollback, then one all-scope
+  fast preflight; C2 remains unconsumed until that preflight passes.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

@@ -164,7 +164,7 @@ def _demand_rows(
         str(instrument["product_type"]).upper(),
         str(instrument["native_symbol"]).upper(),
     )
-    values: list[Mapping[str, Any]] = []
+    values: dict[tuple[str, str, str, str, str, str | None, str], Mapping[str, Any]] = {}
     for consumer in demand.get("consumers", []):
         if not isinstance(consumer, Mapping):
             continue
@@ -178,8 +178,22 @@ def _demand_rows(
                 str(row.get("native_symbol", "")).upper(),
             )
             if identity == expected:
-                values.append(row)
-    return values
+                key = _identity(row)
+                incumbent = values.get(key)
+                if incumbent is None:
+                    values[key] = row
+                elif dict(incumbent) != dict(row):
+                    raise ValueError(
+                        "stable crypto demand has conflicting shared runtime identity: "
+                        f"{key}"
+                    )
+    return [
+        values[key]
+        for key in sorted(
+            values,
+            key=lambda identity: tuple("" if value is None else value for value in identity),
+        )
+    ]
 
 
 def _manifest_requirement(
@@ -210,7 +224,10 @@ def _manifest_requirement(
         "recovery": "SNAPSHOT_AND_REPLAY",
         "bar_revision_policy": "EMIT_REVISIONS" if feed == "BAR" else "LATEST",
     }
-    if feed == "TRADE":
+    if feed in {"TRADE", "BOOK_DELTA"} or (
+        feed == "QUOTE"
+        and str(quality.get("delivery_semantics", "STRICT_EVENT")).upper() == "ON_CHANGE"
+    ):
         result["event_recency_policy"] = "OBSERVE"
     if feed in {"TRADE", "QUOTE", "BOOK_SNAPSHOT", "BOOK_DELTA"}:
         result["max_session_liveness_ms"] = 45_000
@@ -229,9 +246,6 @@ def _realtime_templates(
     for uid in _target_uids(manifest, target=target, instruments=instruments):
         instrument = instruments[uid]
         source_rows = _demand_rows(demand, instrument=instrument)
-        keys = {_identity(row) for row in source_rows}
-        if len(keys) != len(source_rows):
-            raise ValueError("stable crypto demand has duplicate alpha runtime identities")
         expected = {
             "TRADE": 1,
             "QUOTE": 1,

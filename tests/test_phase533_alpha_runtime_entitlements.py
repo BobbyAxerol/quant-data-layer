@@ -8,7 +8,7 @@ import unittest
 import yaml
 
 from qdl.consumer import ConsumerManifestLoader, requirement_key
-from qdl.query import ConsumerGrade, FeedType
+from qdl.query import ConsumerGrade, FeedType, StalePolicy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +105,13 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
             self.assertTrue(all(item.recovery.value == "SNAPSHOT_AND_REPLAY" for item in manifest.requirements if item.feed is FeedType.BAR))
             self.assertTrue(all(item.require_final_bars for item in manifest.requirements if item.feed is FeedType.BAR))
             self.assertTrue(all(item.max_session_liveness_ms == 45_000 for item in manifest.requirements if item.feed in {FeedType.TRADE, FeedType.QUOTE, FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}))
+            self.assertTrue(
+                all(
+                    item.effective_event_recency_policy is StalePolicy.OBSERVE
+                    for item in manifest.requirements
+                    if item.feed in {FeedType.TRADE, FeedType.BOOK_DELTA}
+                )
+            )
 
     def test_native_identity_interval_and_venue_never_cross_mix(self) -> None:
         catalog_by_uid = {
@@ -125,6 +132,86 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
                     bars_by_uid.setdefault(requirement.instrument_uid, set()).add(requirement.interval)
             self.assertEqual(len(bars_by_uid), 5)
             self.assertTrue(all(len(intervals) == 14 for intervals in bars_by_uid.values()))
+
+    def test_declared_on_change_quotes_use_session_semantics_only(self) -> None:
+        bindings = {
+            (
+                item["instrument_uid"],
+                item["feed"],
+                item.get("interval"),
+                item["source"]["source_policy_id"],
+            ): item
+            for item in self.catalog["bindings"]
+        }
+        observed = 0
+        for payload in self.rendered.values():
+            manifest = ConsumerManifestLoader.from_mapping(payload)
+            for requirement in manifest.requirements:
+                if requirement.feed is not FeedType.QUOTE:
+                    continue
+                binding = bindings[(
+                    requirement.instrument_uid,
+                    requirement.feed.value,
+                    requirement.interval,
+                    requirement.source_policy_id,
+                )]
+                semantics = binding["quality"].get("delivery_semantics", "STRICT_EVENT")
+                if semantics == "ON_CHANGE":
+                    observed += 1
+                    self.assertEqual(requirement.effective_event_recency_policy, StalePolicy.OBSERVE)
+                    self.assertEqual(requirement.max_session_liveness_ms, 45_000)
+                else:
+                    self.assertEqual(requirement.effective_event_recency_policy, StalePolicy.BLOCK)
+        self.assertEqual(observed, 10)
+
+        strict_quote = self.tool._manifest_requirement(
+            {
+                "feed": "QUOTE",
+                "source_policy_id": "strict-test",
+                "interval": None,
+            },
+            instrument_uid="strict-quote",
+            binding={
+                "quality": {
+                    "stale_after_ms": 5_000,
+                    "require_final_bar": False,
+                    "delivery_semantics": "STRICT_EVENT",
+                },
+            },
+        )
+        self.assertNotIn("event_recency_policy", strict_quote)
+
+    def test_identical_shared_realtime_demand_is_unioned_by_physical_identity(self) -> None:
+        instrument = next(
+            item
+            for item in self.catalog["instruments"]
+            if item["venue"] == "BINANCE"
+            and item["market"] == "USDM"
+            and item["native_symbol"] == "BTCUSDT"
+        )
+        rows = self.tool._demand_rows(self.demand, instrument=instrument)
+        self.assertEqual(len(rows), 18)
+        self.assertEqual(len({self.tool._identity(row) for row in rows}), 18)
+
+    def test_conflicting_shared_realtime_demand_fails_closed(self) -> None:
+        conflicting = deepcopy(self.demand)
+        for consumer in conflicting["consumers"]:
+            if consumer["consumer_id"] != "alpha.binance.paper.stable":
+                continue
+            for row in consumer["requirements"]:
+                if row.get("native_symbol") == "BTCUSDT" and row.get("feed") == "TRADE":
+                    row["max_freshness_ms"] = 4_999
+                    break
+            break
+        with self.assertRaisesRegex(ValueError, "conflicting shared runtime identity"):
+            self.tool.build_documents(
+                catalog=self.catalog,
+                demand=conflicting,
+                reference_manifest=self.reference,
+                alpha_manifests=self.manifests,
+                release_route=self.release,
+                primary_route=self.primary,
+            )
 
     def test_release_routes_are_complete_and_only_trade_can_fallback(self) -> None:
         routes = {

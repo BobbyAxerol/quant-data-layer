@@ -170,7 +170,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             },
         )
 
-    def test_paper_quote_routes_limit_on_change_semantics_to_execution_bbo(self):
+    def test_paper_quote_routes_apply_declared_on_change_session_semantics(self):
         scope = build_release_consumer_acceptance_scope(
             self.release,
             catalog=self.catalog,
@@ -198,10 +198,14 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in execution_quotes
         ))
         self.assertTrue(all(
-            item.requirement.event_recency_policy is None
+            item.requirement.event_recency_policy is StalePolicy.OBSERVE
             and item.requirement.max_session_liveness_ms == 45_000
             and item.requirement.stale_policy is StalePolicy.BLOCK
             for item in alpha_quotes
+        ))
+        self.assertTrue(all(
+            self.catalog.binding_for(item.requirement).delivery_semantics == "ON_CHANGE"
+            for item in quotes
         ))
         self.assertEqual(
             Counter((
