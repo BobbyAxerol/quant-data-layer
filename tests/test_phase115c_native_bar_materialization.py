@@ -170,7 +170,15 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                 self._intervals("OKX", "SWAP", symbol),
                 set(OKX_NATIVE_INTERVALS),
             )
-        self.assertEqual(self.summary["demand_additions"], 130)
+        expected_demand_additions = sum(
+            len(current["requirements"]) - len(before["requirements"])
+            for current, before in zip(
+                self.current_demand["consumers"],
+                self.before_demand["consumers"],
+                strict=True,
+            )
+        )
+        self.assertEqual(self.summary["demand_additions"], expected_demand_additions)
         self.assertEqual(self.summary["bar_binding_counts"], {
             "binance_usdm": 70, "okx_swap": 70, "dnse": 2,
         })

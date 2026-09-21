@@ -11,7 +11,7 @@ from qdl.runtime.stable_deployment import (
     stable_authority_record,
     write_stable_runtime_bundle,
 )
-from scripts.refresh_v2_native_ingestor_runtime import TARGETS, refresh
+from scripts.refresh_v2_native_ingestor_runtime import REALTIME_FEEDS, TARGETS, refresh
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +74,15 @@ class NativeIngestorRuntimeRefreshTests(unittest.TestCase):
             apply=apply,
             state_root=root / "state",
         )
+
+    def _expected_realtime_count(self, lane: str) -> int:
+        catalog = StableSourceCatalog.load(CATALOG)
+        acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+        generated = acquisition.native_ingestor_configs(
+            catalog=catalog,
+            authority=self._authority(),
+        )[lane]["bindings"]
+        return sum(item["feed"] in REALTIME_FEEDS for item in generated)
 
     def test_dry_run_adds_only_the_three_declared_l2_books_per_venue(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -141,8 +150,22 @@ class NativeIngestorRuntimeRefreshTests(unittest.TestCase):
                     oct(before_modes[file_name]),
                 )
                 payload = json.loads((runtime / file_name).read_text(encoding="utf-8"))
-                self.assertEqual(len(payload["bindings"]), 19)
+                lane = next(name for name, value in TARGETS.items() if value == file_name)
+                self.assertEqual(
+                    len(payload["bindings"]),
+                    self._expected_realtime_count(lane),
+                )
                 self.assertFalse(any(item["feed"] == "BAR" for item in payload["bindings"]))
+                mark_index = [
+                    item for item in payload["bindings"] if item["feed"] == "MARK_INDEX"
+                ]
+                self.assertEqual(
+                    len({
+                        (item["subscription_id"], item["native_symbol"], item["native_channel"])
+                        for item in mark_index
+                    }),
+                    len(mark_index),
+                )
 
             repeated = refresh(
                 runtime_dir=runtime,

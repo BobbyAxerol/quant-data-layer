@@ -13,6 +13,7 @@ from qdl.runtime.stable_deployment import (
     write_stable_runtime_bundle,
 )
 from qdl.runtime.execution_l2 import execution_l2_materialization_plan
+from qdl.runtime.core_binding_identity import core_binding_map
 from scripts.refresh_v2_l2_core_runtime import (
     CORE_FILES,
     refresh,
@@ -34,6 +35,11 @@ def _execution_l2_source_ids() -> frozenset[str]:
         catalog=catalog,
         acquisition=acquisition,
     ).source_ids)
+
+
+@lru_cache(maxsize=1)
+def _catalog_revision() -> int:
+    return StableSourceCatalog.load(CATALOG).catalog_revision
 
 
 class L2CoreRuntimeRefreshTests(unittest.TestCase):
@@ -99,7 +105,7 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                     item["before_binding_count"],
                 )
                 self.assertEqual(item["before_catalog_revisions"], [7])
-                self.assertEqual(item["after_catalog_revisions"], [8])
+                self.assertEqual(item["after_catalog_revisions"], [_catalog_revision()])
                 self.assertEqual(set(item["added_book_source_ids"]), _execution_l2_source_ids())
             self.assertEqual({name: (runtime / name).read_bytes() for name in CORE_FILES}, before)
 
@@ -125,8 +131,8 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                 self.assertEqual((runtime / file_name).stat().st_mode & 0o777, modes[file_name])
                 active = json.loads(before[file_name])["core"]["bindings"]
                 updated = json.loads((runtime / file_name).read_text(encoding="utf-8"))["core"]["bindings"]
-                active_by_id = {item["source_id"]: item for item in active}
-                updated_by_id = {item["source_id"]: item for item in updated}
+                active_by_id = core_binding_map(active, field="active test core")
+                updated_by_id = core_binding_map(updated, field="updated test core")
                 self.assertTrue(set(active_by_id).issubset(updated_by_id))
                 self.assertTrue(all(
                     {
@@ -142,11 +148,15 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
                     for key in active_by_id
                 ))
                 self.assertTrue(all(
-                    updated_by_id[key]["instrument_catalog_revision"] == 8
+                    updated_by_id[key]["instrument_catalog_revision"] == _catalog_revision()
                     for key in active_by_id
                 ))
                 self.assertEqual(
-                    set(updated_by_id) - set(active_by_id),
+                    {
+                        item["source_id"]
+                        for identity, item in updated_by_id.items()
+                        if identity not in active_by_id
+                    },
                     _execution_l2_source_ids(),
                 )
 
@@ -228,8 +238,11 @@ class L2CoreRuntimeRefreshTests(unittest.TestCase):
             runtime = self._runtime(root)
             path = runtime / "core-002.json"
             payload = json.loads(path.read_text(encoding="utf-8"))
-            extra = dict(payload["core"]["bindings"][0])
+            extra = dict(next(
+                item for item in payload["core"]["bindings"] if item.get("l2") is not None
+            ))
             extra["source_id"] = "unknown-book-source"
+            extra["native_channel"] = "unknown-book@100ms"
             payload["core"]["bindings"].append(extra)
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "absent from current catalog"):

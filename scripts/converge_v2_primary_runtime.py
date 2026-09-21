@@ -38,6 +38,11 @@ from qdl.runtime.stable_deployment import (
     validate_shared_authority_record,
     write_stable_runtime_bundle,
 )
+from qdl.runtime.core_binding_identity import (
+    core_binding_map,
+    format_core_binding_identity,
+    native_ingestor_binding_identity,
+)
 
 
 CONFIRM = "CONVERGE_QDL_V2_PRIMARY_RUNTIME"
@@ -108,21 +113,20 @@ def _without(value: Mapping[str, Any], *fields: str) -> dict[str, Any]:
     return result
 
 
-def _binding_map(
+def _ingestor_binding_map(
     bindings: object,
     *,
-    key_field: str,
     field: str,
-) -> dict[str, dict[str, Any]]:
+) -> dict[tuple[str, ...], dict[str, Any]]:
     if not isinstance(bindings, list) or not bindings:
         raise ValueError(f"{field} bindings are invalid")
-    result: dict[str, dict[str, Any]] = {}
+    result: dict[tuple[str, ...], dict[str, Any]] = {}
     for item in bindings:
         if not isinstance(item, dict):
             raise ValueError(f"{field} has a non-object binding")
-        key = item.get(key_field)
-        if not isinstance(key, str) or not key or key in result:
-            raise ValueError(f"{field} has an invalid/duplicate {key_field}")
+        key = native_ingestor_binding_identity(item, field=field)
+        if key in result:
+            raise ValueError(f"{field} has a duplicate physical subscription")
         result[key] = dict(item)
     return result
 
@@ -180,38 +184,43 @@ def _validate_core(
     ):
         raise ValueError(f"{file_name} has an unsupported dedup transition")
 
-    active_bindings = _binding_map(
-        active_core.get("bindings"), key_field="source_id", field=f"active {file_name}"
+    active_bindings = core_binding_map(
+        active_core.get("bindings"), field=f"active {file_name}"
     )
-    expected_bindings = _binding_map(
-        expected_core.get("bindings"), key_field="source_id", field=f"expected {file_name}"
+    expected_bindings = core_binding_map(
+        expected_core.get("bindings"), field=f"expected {file_name}"
     )
-    unknown = sorted(active_bindings.keys() - expected_bindings.keys())
+    unknown = sorted(
+        format_core_binding_identity(identity)
+        for identity in active_bindings.keys() - expected_bindings.keys()
+    )
     if unknown:
         raise ValueError(f"{file_name} has bindings absent from canonical catalog: {unknown}")
     drift = sorted(
-        source_id
-        for source_id, binding in active_bindings.items()
-        if not _lineage_equal(binding, expected_bindings[source_id])
+        format_core_binding_identity(identity)
+        for identity, binding in active_bindings.items()
+        if not _lineage_equal(binding, expected_bindings[identity])
     )
     if drift:
         raise ValueError(f"{file_name} has retained binding semantic drift: {drift}")
     added = sorted(expected_bindings.keys() - active_bindings.keys())
-    missing_liquid_books = sorted(
-        _FIVE_LIQUID_PERPETUAL_BOOK_IDS - expected_bindings.keys()
-    )
+    expected_source_ids = {str(binding["source_id"]) for binding in expected_bindings.values()}
+    missing_liquid_books = sorted(_FIVE_LIQUID_PERPETUAL_BOOK_IDS - expected_source_ids)
     if missing_liquid_books:
         raise ValueError(f"{file_name} lacks five-liquid perpetual L2 scope: {missing_liquid_books}")
     return {
         "before_binding_count": len(active_bindings),
         "after_binding_count": len(expected_bindings),
         "added_binding_count": len(added),
-        "added_five_liquid_book_source_ids": sorted(
-            _FIVE_LIQUID_PERPETUAL_BOOK_IDS & set(added)
-        ),
+        "added_five_liquid_book_source_ids": sorted({
+            str(expected_bindings[identity]["source_id"])
+            for identity in added
+            if str(expected_bindings[identity]["source_id"])
+            in _FIVE_LIQUID_PERPETUAL_BOOK_IDS
+        }),
         "retained_lineage_update_count": sum(
-            active_bindings[source_id] != expected_bindings[source_id]
-            for source_id in active_bindings
+            active_bindings[identity] != expected_bindings[identity]
+            for identity in active_bindings
         ),
         "dedup_capacity": {"before": active_dedup, "after": expected_dedup},
     }
@@ -243,11 +252,11 @@ def _validate_ingestor(
     ):
         raise ValueError(f"{file_name} lacks bounded session-liveness configuration")
 
-    active_bindings = _binding_map(
-        active.get("bindings"), key_field="subscription_id", field=f"active {file_name}"
+    active_bindings = _ingestor_binding_map(
+        active.get("bindings"), field=f"active {file_name}"
     )
-    expected_bindings = _binding_map(
-        expected.get("bindings"), key_field="subscription_id", field=f"expected {file_name}"
+    expected_bindings = _ingestor_binding_map(
+        expected.get("bindings"), field=f"expected {file_name}"
     )
     unknown = sorted(active_bindings.keys() - expected_bindings.keys())
     if unknown:
@@ -273,7 +282,11 @@ def _validate_ingestor(
         "before_binding_count": len(active_bindings),
         "after_binding_count": len(expected_bindings),
         "added_binding_count": len(added),
-        "added_book_subscription_ids": sorted(book_ids & set(added)),
+        "added_book_subscription_ids": sorted({
+            str(expected_bindings[identity]["subscription_id"])
+            for identity in added
+            if expected_bindings[identity].get("feed") == "BOOK"
+        }),
         "retained_lineage_update_count": sum(
             active_bindings[subscription_id] != expected_bindings[subscription_id]
             for subscription_id in active_bindings

@@ -119,6 +119,7 @@ def _load_slices(
                 continue
             if item.feed not in {
                 "TRADE", "QUOTE", "BAR", "BOOK_SNAPSHOT", "BOOK_DELTA",
+                "MARK_INDEX_PRICE",
             }:
                 raise ProviderAdmissionError(f"unsupported Phase 10.1 feed: {item.feed}")
             slices[item.key] = item
@@ -143,6 +144,10 @@ def _endpoint(slice_: DemandSlice) -> tuple[str, dict[str, str]]:
             # remains a Rust WebSocket/core responsibility, but both public
             # products must prove the same venue-owned depth source exists.
             return f"{base}/depth", {"symbol": symbol, "limit": "100"}
+        if slice_.feed == "MARK_INDEX_PRICE":
+            if slice_.market != "USDM":
+                raise ProviderAdmissionError("Binance MARK_INDEX requires USD-M")
+            return f"{base}/premiumIndex", {"symbol": symbol}
         return f"{base}/klines", {"symbol": symbol, "interval": slice_.interval or "", "limit": "3"}
     if slice_.venue == "OKX":
         if slice_.market not in {"SWAP", "SPOT"}:
@@ -154,8 +159,39 @@ def _endpoint(slice_: DemandSlice) -> tuple[str, dict[str, str]]:
             return f"{base}/books", {"instId": symbol, "sz": "1"}
         if slice_.feed in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
             return f"{base}/books", {"instId": symbol, "sz": "100"}
+        if slice_.feed == "MARK_INDEX_PRICE":
+            # A single logical execution reference is paired from OKX's
+            # separate mark and index endpoints; `_mark_index_endpoints`
+            # carries the two bounded reads below.
+            raise ProviderAdmissionError("OKX MARK_INDEX requires paired endpoints")
         return f"{base}/candles", {"instId": symbol, "bar": slice_.interval or "", "limit": "3"}
     raise ProviderAdmissionError(f"unsupported venue: {slice_.venue}")
+
+
+def _okx_index_symbol(native_symbol: str) -> str:
+    suffix = "-SWAP"
+    if not native_symbol.endswith(suffix):
+        raise ProviderAdmissionError("OKX MARK_INDEX requires a SWAP native symbol")
+    return native_symbol[: -len(suffix)]
+
+
+def _mark_index_endpoints(slice_: DemandSlice) -> tuple[tuple[str, dict[str, str]], ...]:
+    if slice_.feed != "MARK_INDEX_PRICE":
+        raise ProviderAdmissionError("paired endpoints require MARK_INDEX_PRICE")
+    if slice_.venue == "BINANCE":
+        return (_endpoint(slice_),)
+    if slice_.venue == "OKX" and slice_.market == "SWAP":
+        return (
+            (
+                "https://www.okx.com/api/v5/public/mark-price",
+                {"instType": "SWAP", "instId": slice_.native_symbol},
+            ),
+            (
+                "https://www.okx.com/api/v5/market/index-tickers",
+                {"instId": _okx_index_symbol(slice_.native_symbol)},
+            ),
+        )
+    raise ProviderAdmissionError("MARK_INDEX provider pairing is unsupported for this slice")
 
 
 def _first_mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -245,6 +281,32 @@ def _validate_okx(slice_: DemandSlice, payload: Any, received_ms: int) -> int:
     return timestamp
 
 
+def _validate_mark_index(
+    slice_: DemandSlice,
+    payloads: tuple[Any, ...],
+    received_ms: int,
+) -> int:
+    if slice_.venue == "BINANCE":
+        if len(payloads) != 1 or not isinstance(payloads[0], Mapping):
+            raise ProviderAdmissionError("binance mark/index response is invalid")
+        payload = payloads[0]
+        _positive_decimal(payload.get("markPrice"), "binance mark price")
+        _positive_decimal(payload.get("indexPrice"), "binance index price")
+        return _timestamp_ms(payload.get("time"), "binance mark/index time")
+    if slice_.venue == "OKX":
+        if len(payloads) != 2:
+            raise ProviderAdmissionError("OKX mark/index response pair is incomplete")
+        mark = _first_mapping(_okx_data(payloads[0], "okx mark"), "okx mark")
+        index = _first_mapping(_okx_data(payloads[1], "okx index"), "okx index")
+        _positive_decimal(mark.get("markPx"), "okx mark price")
+        _positive_decimal(index.get("idxPx"), "okx index price")
+        return min(
+            _timestamp_ms(mark.get("ts"), "okx mark time"),
+            _timestamp_ms(index.get("ts"), "okx index time"),
+        )
+    raise ProviderAdmissionError("MARK_INDEX provider pairing is unsupported for this venue")
+
+
 def _validate(slice_: DemandSlice, payload: Any, received_ms: int) -> int:
     if slice_.venue == "BINANCE":
         return _validate_binance(slice_, payload, received_ms)
@@ -262,17 +324,25 @@ def run(
     slices = _load_slices(demand_path)
     results: list[dict[str, Any]] = []
     for slice_ in slices:
-        url, params = _endpoint(slice_)
         received_ms = int(time.time() * 1_000)
-        response = get(
-            url,
-            params=params,
-            timeout=timeout_seconds,
-            headers={"User-Agent": "qdl-phase10-read-only-admission/1.0"},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        provider_time_ms = _validate(slice_, payload, received_ms)
+        if slice_.feed == "MARK_INDEX_PRICE":
+            endpoints = _mark_index_endpoints(slice_)
+        else:
+            endpoints = (_endpoint(slice_),)
+        payloads = []
+        for url, params in endpoints:
+            response = get(
+                url,
+                params=params,
+                timeout=timeout_seconds,
+                headers={"User-Agent": "qdl-phase10-read-only-admission/1.0"},
+            )
+            response.raise_for_status()
+            payloads.append(response.json())
+        if slice_.feed == "MARK_INDEX_PRICE":
+            provider_time_ms = _validate_mark_index(slice_, tuple(payloads), received_ms)
+        else:
+            provider_time_ms = _validate(slice_, payloads[0], received_ms)
         results.append(
             {
                 "slice": slice_.key,
@@ -280,7 +350,7 @@ def run(
                 "provider_time_ms": provider_time_ms,
                 "received_at_ms": received_ms,
                 "payload_sha256": hashlib.sha256(
-                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                    json.dumps(payloads, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest(),
             }
         )

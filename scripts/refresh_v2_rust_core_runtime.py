@@ -39,6 +39,7 @@ from qdl.runtime.execution_l2 import (
     ExecutionL2MaterializationPlan,
     execution_l2_materialization_plan,
 )
+from qdl.runtime.core_binding_identity import core_binding_map
 
 
 CONFIRM = "REFRESH_QDL_V2_RUST_CORE_RUNTIME"
@@ -87,17 +88,10 @@ def _bindings(value: Mapping[str, Any], *, field: str) -> tuple[dict[str, Any], 
     bindings = core.get("bindings") if isinstance(core, Mapping) else None
     if not isinstance(bindings, list) or not bindings:
         raise ValueError(f"{field} lacks core bindings")
-    result: list[dict[str, Any]] = []
-    source_ids: set[str] = set()
-    for item in bindings:
-        if not isinstance(item, dict):
-            raise ValueError(f"{field} contains a non-object binding")
-        source_id = item.get("source_id")
-        if not isinstance(source_id, str) or not source_id or source_id in source_ids:
-            raise ValueError(f"{field} contains an invalid/duplicate source_id")
-        source_ids.add(source_id)
-        result.append(item)
-    return tuple(result)
+    # Keep emitted order for the bounded cadence comparison below, but validate
+    # the same MARK+INDEX source identity rule as the Rust core first.
+    core_binding_map(bindings, field=field)
+    return tuple(dict(item) for item in bindings)
 
 
 def _without_bindings_and_dedup_capacity(value: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
@@ -135,9 +129,9 @@ def _validate_only_materialized_snapshot_interval(
         raise ValueError(f"{file_name} has an invalid bounded dedup transition")
     before = _bindings(active, field=f"active {file_name}")
     after = _bindings(expected, field=f"expected {file_name}")
-    before_ids = [str(item["source_id"]) for item in before]
-    after_ids = [str(item["source_id"]) for item in after]
-    if before_ids != after_ids:
+    before_identities = list(core_binding_map(list(before), field=f"active {file_name}"))
+    after_identities = list(core_binding_map(list(after), field=f"expected {file_name}"))
+    if before_identities != after_identities:
         raise ValueError(f"{file_name} changes binding order or membership")
 
     l2_sources: list[str] = []

@@ -518,13 +518,11 @@ class UniversalDemandTests(unittest.TestCase):
         self.assertEqual(
             {(item.venue, item.market, item.native_symbol) for item in slices},
             {
-                ("BINANCE", "SPOT", "BTCUSDT"),
                 ("BINANCE", "USDM", "BTCUSDT"),
                 ("BINANCE", "USDM", "ETHUSDT"),
                 ("BINANCE", "USDM", "SOLUSDT"),
                 ("BINANCE", "USDM", "DOGEUSDT"),
                 ("BINANCE", "USDM", "BNBUSDT"),
-                ("OKX", "SPOT", "BTC-USDT"),
                 ("OKX", "SWAP", "BTC-USDT-SWAP"),
                 ("OKX", "SWAP", "ETH-USDT-SWAP"),
                 ("OKX", "SWAP", "SOL-USDT-SWAP"),
@@ -545,6 +543,8 @@ class UniversalDemandTests(unittest.TestCase):
 
         def fake_get(url, **_):
             if "binance.com" in url:
+                if url.endswith("/premiumIndex"):
+                    return Response({"markPrice": "1", "indexPrice": "1", "time": 1_000})
                 if url.endswith("/trades"):
                     return Response([{"id": 1, "price": "1", "qty": "1", "time": 1_000}])
                 if url.endswith("/ticker/bookTicker"):
@@ -556,6 +556,10 @@ class UniversalDemandTests(unittest.TestCase):
                         "asks": [["2", "1"]],
                     })
                 return Response([[0, "1", "2", "1", "1", "1", 1_000]])
+            if url.endswith("/mark-price"):
+                return Response({"code": "0", "data": [{"markPx": "1", "ts": "1000"}]})
+            if url.endswith("/index-tickers"):
+                return Response({"code": "0", "data": [{"idxPx": "1", "ts": "1000"}]})
             if url.endswith("/trades"):
                 return Response({"code": "0", "data": [{"px": "1", "sz": "1", "tradeId": "1", "ts": "1000"}]})
             if url.endswith("/books"):

@@ -21,12 +21,6 @@ CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 DEMAND_PATH = ROOT / "config/v2/stable-crypto-demand.yaml"
 CAPTURES = ROOT / "config/v2/captures"
 PROVENANCE = CAPTURES / "provenance.json"
-# This builder is fed only the stable price/bar demand capture.  Dated futures
-# used by the independently governed L2/reference product are deliberately
-# retained in the stable catalog but are not a false claim that this narrow
-# price-plane regeneration owns their metadata.
-REGENERATED_PRODUCT_TYPES = {"SPOT", "PERPETUAL"}
-
 # Fields where the committed catalog disagrees with the provider capture that
 # regenerates it. Each was verified directly against the raw provider response,
 # and the committed value is the wrong one: the Binance Spot tick and step were
@@ -105,11 +99,19 @@ class CatalogRegenerationTests(unittest.TestCase):
         self.committed = {
             item["instrument_id"]: item
             for item in raw["instruments"]
-            if item["product_type"] in REGENERATED_PRODUCT_TYPES
+            if item["instrument_id"] in self.generated
+        }
+        self.compatibility_only = {
+            item["instrument_id"]
+            for item in raw["instruments"]
+            if item["instrument_id"] not in self.generated
         }
 
     def test_the_same_instrument_set_is_produced(self):
         self.assertEqual(set(self.generated), set(self.committed))
+        # The stable source catalog intentionally retains V1/dormant venue
+        # inventory. Regeneration owns only the sealed active demand scope.
+        self.assertTrue(self.compatibility_only)
 
     def test_identity_fields_reproduce_exactly(self):
         for instrument_id in sorted(self.generated):

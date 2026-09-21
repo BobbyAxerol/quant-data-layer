@@ -48836,6 +48836,70 @@ the current image as rollback, run the affected no-order acceptance, and only
 then tag/publish `v2.0.26`. This does not reopen data correctness discovery or
 alter Rust/ingestors/projectors/V1/Kafka/Redis/SQLite/Trading System/alpha.
 
+**Full-suite source-contract reconciliation (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-21).** The first remote CI rerun after the audit and Buf-token fixes
+passed `contract-tests` and `sdk-python310`, then ran the full unit suite and
+reported `10` failures plus `11` errors. This is a release-blocking source
+consistency finding, not a new provider, C2, freshness, routing or runtime
+failure. Inspection narrows it to three shared declaration/tooling mismatches:
+
+1. The stable compiler legitimately emits two physical OKX `MARK_INDEX`
+   components (`MARK` and `INDEX`) under one logical `source_id`. Rust
+   `RealtimeCoreConfig::validate` admits this exact pair while rejecting a
+   duplicate component or ordinary/mark-index source collision. Three Python
+   runtime-refresh/convergence scripts still require every `source_id` to be
+   globally unique, so their own current compiler output fails their safety
+   checks.
+2. The native-ingestor compiler already emits `MARK_INDEX` rows and active
+   ingestor runtime contains them, but the refresh utility's stale allow-list
+   rejects that feed before it can validate an otherwise unchanged config.
+3. Historical tests still assert a six-slice/Spot inventory and a literal
+   `130` materialization count. The sealed current demand is intentionally
+   derivative-only for five Binance USD-M plus five OKX Swap symbols; the
+   retained broader catalog is capability/compatibility inventory, not an
+   instruction to activate Spot.
+
+Approved implementation is limited to: one shared Python representation of
+the Rust core binding identity/duplicate rule, use of that rule by the three
+offline refresh/convergence tools, the native-ingestor feed projection, and
+tests derived from the sealed demand rather than historic literals. It must
+not alter catalog/demand/runtime files, public endpoints, provider adapters,
+Rust serving behavior, images, roles, quotas, V1, Kafka, Redis, SQLite,
+consumers, orders or credentials. Required exit gates are focused semantic
+regressions (including MARK+INDEX accepted; repeated component and
+ordinary/collision rejected), the affected deployment/catalog/demand suites,
+then the full CI suite. A later immutable reader image and affected C2 remain
+required because the already committed dependency-lock security correction
+changes the released Python artifact; this source slice itself does not roll
+anything.
+
+**Source-contract correction and focused matrix (`PASS / FULL CI NEXT`,
+2026-09-21).** Added the small shared Python core-binding identity validator
+used only by offline runtime-refresh/convergence tooling. It preserves Rust's
+physical-key uniqueness, ordinary/mark-index source exclusion and exact
+`BOTH` versus `MARK`+`INDEX` component-completeness rule. The three rollout
+tools now use that identity instead of global `source_id` uniqueness; native
+ingestor identity remains logical for ordinary feeds and physical for the
+paired `MARK_INDEX` feed, so a changed TRADE/QUOTE channel is still semantic
+drift rather than a hidden new subscription. The Phase 10 read-only admission
+fixture now validates a Binance paired mark/index response and both real OKX
+mark/index endpoint shapes under one logical requirement. Catalog and demand
+regressions now compare the active sealed derivative scope with the retained
+capability inventory instead of treating inactive Spot rows or a historic
+`130` count as activation.
+
+In the existing CI image with read-only source mount, `--network none`,
+non-root UID, tmpfs `/tmp` and automatic removal, the focused source matrix
+passed `64/64`: core identity `4`, Rust refresh `5`, L2 refresh `7`, native
+ingestor refresh `5`, primary convergence `3`, catalog/demand `17`, native
+BAR materialization `10`, and Phase 10 universal/provider-admission `13`.
+Host Python lacks the repository's runtime dependencies and was used only for
+syntax checks; it is explicitly not evidence. No image, runtime role,
+provider connection, Kafka/Redis/SQLite state, V1, consumer, alpha or order
+path changed. Next is one fresh isolated CI image build followed by the full
+CI unittest suite; only a green full suite permits feature-branch commit/CI
+publication and the later four-reader release packet.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,

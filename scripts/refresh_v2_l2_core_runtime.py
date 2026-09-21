@@ -37,6 +37,10 @@ from qdl.runtime.execution_l2 import (
     ExecutionL2MaterializationPlan,
     execution_l2_materialization_plan,
 )
+from qdl.runtime.core_binding_identity import (
+    core_binding_map,
+    format_core_binding_identity,
+)
 
 
 CONFIRM = "REFRESH_QDL_V2_L2_CORE_RUNTIME"
@@ -69,17 +73,7 @@ def _bindings(value: Mapping[str, Any], *, field: str) -> tuple[dict[str, Any], 
     bindings = core.get("bindings") if isinstance(core, Mapping) else None
     if not isinstance(bindings, list) or not bindings:
         raise ValueError(f"{field} lacks core bindings")
-    result: list[dict[str, Any]] = []
-    source_ids: set[str] = set()
-    for item in bindings:
-        if not isinstance(item, dict):
-            raise ValueError(f"{field} has a non-object binding")
-        source_id = item.get("source_id")
-        if not isinstance(source_id, str) or not source_id or source_id in source_ids:
-            raise ValueError(f"{field} has an invalid/duplicate source_id")
-        source_ids.add(source_id)
-        result.append(item)
-    return tuple(result)
+    return tuple(core_binding_map(bindings, field=field).values())
 
 
 def _without_catalog_revision(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -130,33 +124,39 @@ def _validate_and_render(
         raise ValueError(f"{file_name} changes non-binding core configuration")
     active_bindings = _bindings(active, field=f"active {file_name}")
     expected_bindings = _bindings(expected, field=f"expected {file_name}")
-    active_by_id = {str(item["source_id"]): item for item in active_bindings}
-    expected_by_id = {str(item["source_id"]): item for item in expected_bindings}
-    unknown = sorted(active_by_id.keys() - expected_by_id.keys())
+    active_by_id = core_binding_map(list(active_bindings), field=f"active {file_name}")
+    expected_by_id = core_binding_map(list(expected_bindings), field=f"expected {file_name}")
+    unknown = sorted(
+        format_core_binding_identity(identity)
+        for identity in active_by_id.keys() - expected_by_id.keys()
+    )
     if unknown:
         raise ValueError(f"{file_name} contains bindings absent from current catalog: {unknown}")
 
-    for source_id, current in active_by_id.items():
-        generated = expected_by_id[source_id]
+    for identity, current in active_by_id.items():
+        generated = expected_by_id[identity]
         if _without_catalog_revision(current) != _without_catalog_revision(generated):
-            raise ValueError(f"{file_name} has semantic drift for {source_id}")
+            raise ValueError(
+                f"{file_name} has semantic drift for "
+                f"{format_core_binding_identity(identity)}"
+            )
 
     declared_book_source_ids = frozenset(execution_l2.source_ids)
     added_ids = expected_by_id.keys() - active_by_id.keys()
-    if added_ids and not added_ids.issubset(declared_book_source_ids):
+    additions = [
+        expected_by_id[identity]
+        for identity in expected_by_id
+        if identity in added_ids
+    ]
+    added_source_ids = {str(item["source_id"]) for item in additions}
+    if additions and not added_source_ids.issubset(declared_book_source_ids):
         raise ValueError(
             f"{file_name} additive BOOK scope differs from the execution demand: "
-            f"{sorted(added_ids)}"
+            f"{sorted(added_source_ids)}"
         )
-    if not declared_book_source_ids.issubset(expected_by_id):
+    expected_source_ids = {str(item["source_id"]) for item in expected_bindings}
+    if not declared_book_source_ids.issubset(expected_source_ids):
         raise ValueError(f"{file_name} generated BOOK scope is incomplete")
-    if not declared_book_source_ids.issubset(expected_by_id.keys() | active_by_id.keys()):
-        raise ValueError(f"{file_name} active/generated BOOK scope is incomplete")
-    additions = [
-        expected_by_id[str(item["source_id"])]
-        for item in expected_bindings
-        if str(item["source_id"]) in added_ids
-    ]
     for item in additions:
         source_id = str(item["source_id"])
         if (
@@ -169,10 +169,10 @@ def _validate_and_render(
             raise ValueError(f"{file_name} has an invalid declared L2 addition: {source_id}")
 
     revision_updates = [
-        source_id
-        for source_id, current in active_by_id.items()
+        identity
+        for identity, current in active_by_id.items()
         if current.get("instrument_catalog_revision")
-        != expected_by_id[source_id].get("instrument_catalog_revision")
+        != expected_by_id[identity].get("instrument_catalog_revision")
     ]
     if not revision_updates:
         raise ValueError(f"{file_name} has no catalog revision lineage update")
@@ -183,7 +183,7 @@ def _validate_and_render(
         raise ValueError(f"{file_name} lacks mutable core configuration")
     # Use the generated binding set, rather than preserving stale active
     # metadata, because Rust verifies raw.instrument_catalog_revision exactly.
-    core["bindings"] = copy.deepcopy(expected_bindings)
+    core["bindings"] = [copy.deepcopy(item) for item in expected_bindings]
     return result, {
         "file": file_name,
         "before_binding_count": len(active_bindings),
@@ -196,7 +196,7 @@ def _validate_and_render(
             int(item["instrument_catalog_revision"]) for item in expected_bindings
         }),
         "declared_book_source_ids": sorted(declared_book_source_ids),
-        "added_book_source_ids": sorted(added_ids),
+        "added_book_source_ids": sorted(added_source_ids),
         "added_book_symbols": sorted(str(item["native_symbol"]) for item in additions),
     }
 

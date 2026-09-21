@@ -102,26 +102,22 @@ class CommittedDemandManifestTests(unittest.TestCase):
         catalog = self._catalog_crypto_keys()
         self.assertTrue(demand <= catalog)
 
-        # Dated contracts are pre-registered for the shared Rust L2 core, but
-        # only the ten five-liquid perpetuals are active execution demand. A
-        # new dormant capability must still be an L2 book on a dated leg; no
-        # price/bar product may silently fall outside the active inventory.
+        # The stable catalog is a capability/compatibility inventory. Its
+        # retained Spot, dated, VN and V1 rows are not an activation request;
+        # only the sealed derivative demand below is V2-primary scope.
         dormant = catalog - demand
         self.assertTrue(dormant)
-        self.assertTrue(all(
-            feed in {FeedType.BOOK_SNAPSHOT.value, FeedType.BOOK_DELTA.value}
-            and (market == "FUTURES" or "_" in native_symbol)
-            for _venue, market, native_symbol, feed, _interval in dormant
-        ))
+        self.assertTrue(any(market == "SPOT" for _venue, market, _symbol, _feed, _interval in dormant))
+        self.assertTrue(any(market == "FUTURES" for _venue, market, _symbol, _feed, _interval in dormant))
 
     def test_every_crypto_family_in_the_catalog_is_expressible(self):
         families = {
             (item.venue, item.market, item.product_type) for item in self.manifest.demands
         }
-        self.assertIn(("BINANCE", "SPOT", "SPOT"), families)
-        self.assertIn(("BINANCE", "USDM", "PERPETUAL"), families)
-        self.assertIn(("OKX", "SPOT", "SPOT"), families)
-        self.assertIn(("OKX", "SWAP", "PERPETUAL"), families)
+        self.assertEqual(
+            families,
+            {("BINANCE", "USDM", "PERPETUAL"), ("OKX", "SWAP", "PERPETUAL")},
+        )
 
     def test_execution_l2_demand_is_bounded_and_live(self):
         books = [

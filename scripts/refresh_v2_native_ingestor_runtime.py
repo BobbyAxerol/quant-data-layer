@@ -3,7 +3,7 @@
 
 The stable BAR edge owns every final BAR bootstrap and recurring provider poll.
 This compiler intentionally refreshes only the physical realtime inputs of the
-two existing shared Rust ingestors: TRADE, QUOTE and coalesced BOOK.  It never
+two existing shared Rust ingestors: TRADE, QUOTE, MARK_INDEX and coalesced BOOK. It never
 turns catalog BAR rows into native subscriptions, changes authority, creates a
 symbol worker, or edits a Compose environment file.
 """
@@ -29,6 +29,7 @@ from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
     validate_shared_authority_record,
 )
+from qdl.runtime.core_binding_identity import native_ingestor_binding_identity
 
 
 CONFIRM = "REFRESH_QDL_V2_NATIVE_INGESTOR_RUNTIME"
@@ -37,7 +38,7 @@ TARGETS = {
     "binance-usdm": "ingestor-binance-usdm.json",
     "okx-swap": "ingestor-okx-swap.json",
 }
-REALTIME_FEEDS = frozenset({"TRADE", "QUOTE", "BOOK"})
+REALTIME_FEEDS = frozenset({"TRADE", "QUOTE", "MARK_INDEX", "BOOK"})
 
 
 def _sha256(value: bytes) -> str:
@@ -61,24 +62,23 @@ def _read_json(path: Path, *, field: str) -> dict[str, Any]:
     return value
 
 
-def _binding_key(binding: Mapping[str, Any]) -> tuple[str, str]:
+def _binding_key(binding: Mapping[str, Any]) -> tuple[str, ...]:
     feed = binding.get("feed")
-    subscription = binding.get("subscription_id")
     if not isinstance(feed, str) or feed not in REALTIME_FEEDS:
         raise ValueError("native ingestor binding feed is invalid")
-    if not isinstance(subscription, str) or not subscription:
-        raise ValueError("native ingestor binding subscription_id is invalid")
-    return feed, subscription
+    # OKX MARK_INDEX is a paired physical input under one logical source ID;
+    # the native channel is part of the physical subscription identity.
+    return native_ingestor_binding_identity(binding, field="native ingestor binding")
 
 
 def _binding_map(
     bindings: object,
     *,
     field: str,
-) -> dict[tuple[str, str], dict[str, Any]]:
+) -> dict[tuple[str, ...], dict[str, Any]]:
     if not isinstance(bindings, list) or not bindings:
         raise ValueError(f"{field} bindings are invalid")
-    result: dict[tuple[str, str], dict[str, Any]] = {}
+    result: dict[tuple[str, ...], dict[str, Any]] = {}
     for item in bindings:
         if not isinstance(item, dict):
             raise ValueError(f"{field} binding is not an object")
