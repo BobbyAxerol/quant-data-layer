@@ -417,17 +417,17 @@ class V2QueryService:
 
     @staticmethod
     def _consume_detached_local_batch(task: asyncio.Task) -> None:
-        """Drain a shielded SQLite worker after its HTTP caller went away."""
+        """Drain a shielded local batch after its HTTP caller went away."""
 
         try:
             task.result()
         except asyncio.CancelledError:
-            # The original caller has already observed cancellation.  The task
-            # owns its admission lease until the underlying thread finishes.
+            # The original caller has already observed cancellation. The task
+            # owns its admission lease until its bounded local work finishes.
             pass
         except Exception:
             # The original caller has already observed cancellation.  The task
-            # owns its admission lease until the underlying thread finishes;
+            # owns its admission lease until its bounded local work finishes;
             # retrieving the terminal result prevents an orphan warning.
             pass
 
@@ -486,54 +486,14 @@ class V2QueryService:
             if provider(requirement) == "LOCAL_CANONICAL_CACHE"
         )
         history_many = getattr(self.backend, "history_many", None)
-        local_history_lock = asyncio.Lock()
-        local_histories_task = None
-        prefetched_local_histories = None
-
-        # A fully-local request is one bounded cache materialization.  Admit it
-        # before per-item execution so queue time cannot consume the item
-        # deadline and a second legal consumer cannot start an overlapping
-        # SQLite/protobuf sweep.  Mixed local/provider batches retain their
-        # existing per-item provider semantics below.
-        if (
+        fully_local_batch = bool(
             local_requirements
             and len(local_requirements) == len(batch.requirements)
             and callable(history_many)
-        ):
-            admission = self._local_batch_admission_for()
-
-            async def materialize_local_batch():
-                return await admission.run(
-                    lambda: asyncio.to_thread(history_many, local_requirements)
-                )
-
-            local_histories_task = asyncio.create_task(materialize_local_batch())
-            try:
-                prefetched_local_histories = await asyncio.shield(local_histories_task)
-            except asyncio.CancelledError:
-                # ``asyncio.to_thread`` cannot stop an already-running SQLite
-                # read.  Keep its bounded lease until it naturally drains.
-                local_histories_task.add_done_callback(
-                    self._consume_detached_local_batch
-                )
-                raise
-            except _LocalBatchAdmissionRejected:
-                prefetched_local_histories = {
-                    requirement: QueryServiceError(
-                        QueryProblem(
-                            CanonicalErrorCode.RATE_LIMITED,
-                            "local canonical-cache batch admission is at capacity",
-                            True,
-                        ),
-                        request_id=request_id,
-                        instrument_uid=requirement.instrument_uid,
-                    )
-                    for requirement in local_requirements
-                }
-            except Exception as error:
-                prefetched_local_histories = {
-                    requirement: error for requirement in local_requirements
-                }
+        )
+        local_history_lock = asyncio.Lock()
+        local_histories_task = None
+        prefetched_local_histories = None
 
         async def local_history(requirement: DataRequirement):
             """Share one immutable local snapshot after an item is admitted."""
@@ -541,6 +501,8 @@ class V2QueryService:
             nonlocal local_histories_task
             if prefetched_local_histories is not None:
                 return prefetched_local_histories[requirement]
+            if fully_local_batch:
+                raise RuntimeError("fully-local batch reached item work before materialization")
             async with local_history_lock:
                 if local_histories_task is None:
                     local_histories_task = asyncio.create_task(
@@ -587,18 +549,64 @@ class V2QueryService:
             specification = requirement.warmup_specification
             return specification.deadline_ms if specification else 20_000
 
-        try:
-            executions = await self.warmup_executor.execute(
+        async def execute_items():
+            return await self.warmup_executor.execute(
                 batch.requirements,
                 work=work,
                 identity=lambda requirement: requirement,
                 provider=provider,
                 deadline_ms=deadline,
             )
-        finally:
-            if local_histories_task is not None and not local_histories_task.done():
-                local_histories_task.cancel()
-                await asyncio.gather(local_histories_task, return_exceptions=True)
+
+        if fully_local_batch:
+            admission = self._local_batch_admission_for()
+
+            async def execute_whole_local_batch():
+                nonlocal prefetched_local_histories
+                try:
+                    prefetched_local_histories = await asyncio.to_thread(
+                        history_many, local_requirements
+                    )
+                except Exception as error:
+                    prefetched_local_histories = {
+                        requirement: error for requirement in local_requirements
+                    }
+                return await execute_items()
+
+            local_batch_task = asyncio.create_task(
+                admission.run(execute_whole_local_batch)
+            )
+            try:
+                executions = await asyncio.shield(local_batch_task)
+            except asyncio.CancelledError:
+                # The caller may disappear while a SQLite tail read or response
+                # assembly is still using this reader's finite CPU budget. Keep
+                # the whole request-local lease until it drains naturally.
+                local_batch_task.add_done_callback(self._consume_detached_local_batch)
+                raise
+            except _LocalBatchAdmissionRejected:
+                # A third collocated heavy batch must fail typed before it can
+                # create cache work or borrow an external-provider budget.
+                prefetched_local_histories = {
+                    requirement: QueryServiceError(
+                        QueryProblem(
+                            CanonicalErrorCode.RATE_LIMITED,
+                            "local canonical-cache batch admission is at capacity",
+                            True,
+                        ),
+                        request_id=request_id,
+                        instrument_uid=requirement.instrument_uid,
+                    )
+                    for requirement in local_requirements
+                }
+                executions = await execute_items()
+        else:
+            try:
+                executions = await execute_items()
+            finally:
+                if local_histories_task is not None and not local_histories_task.done():
+                    local_histories_task.cancel()
+                    await asyncio.gather(local_histories_task, return_exceptions=True)
         results = []
         for execution in executions:
             requirement = execution.item

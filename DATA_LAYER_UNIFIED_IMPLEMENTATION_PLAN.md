@@ -47573,6 +47573,80 @@ unchanged.
   build, followed by a narrow two-Query-reader packet with the currently active
   `331d3ff` image as rollback.
 
+  **Candidate packet fence repair (`FAIL-CLOSED / RESTORED`, 2026-09-21).**
+  The first narrow candidate attempt recreated only `query_v2_1`; it reached
+  `healthy`, restart `0` and non-OOM on the unchanged runtime mount, but the
+  packet's candidate compose-chain hash had been computed from an obsolete
+  label serialization. The assertion failed before `query_v2_2`, the strict
+  ladder, all-scope preflight or C2 could start. A second packet defect was
+  exposed by that fail-closed path: Bash `ERR` did not propagate through the
+  helper function, and the rollback assertion checked Docker health before its
+  normal startup window elapsed. The reader was immediately restored to the
+  exact active `331d3ff` image and pre-existing compose chain; both readers
+  then verified `healthy`, restart `0`, non-OOM, with the stream pair unchanged
+  as `READY/STANDBY`.
+
+  The runtime-only packet now fences its observed candidate chain, explicitly
+  invokes rollback on every failed reader/stream assertion, and waits a bounded
+  health window before accepting or restoring a reader. It changes no source
+  contract or data-plane behavior. The repaired packet has passed `bash -n`
+  and config-only validation; its one permitted retry remains two Query readers
+  only, with the exact `331d3ff` image/runtime chain as rollback. No acceptance
+  gate has been consumed by this packet repair.
+
+  **Collocated local response-assembly correction (`IN PROGRESS / SOURCE
+  ONLY`, 2026-09-21).** The retried candidate made the intended whole-batch
+  SQLite admission observable, but the real two-lane ladder still returned a
+  typed `ReadTimeout` on secondary: every isolated `1/8/16/32/50` shape and the
+  first 50-BAR lane passed, while the second legal 50-BAR lane crossed the
+  public `30s` client boundary. This is not a provider, provenance or
+  freshness failure. The current lease protects `history_many()` only; it is
+  released before the first batch completes the CPU-heavy per-item history
+  validation and response assembly. The second request can therefore begin a
+  new 50-tail decode while the first is still consuming the single reader CPU.
+
+  The approved P0 source correction is deliberately narrower than a cache or
+  scheduler redesign: retain the existing one-active/one-waiting
+  `LOCAL_CANONICAL_CACHE` lease across one fully-local batch's immutable
+  materialization **and** bounded per-item warmup execution. Mixed and
+  non-local batches remain on their existing paths. Cancellation must retain
+  the lease until the full in-process batch drains; a full pending lane remains
+  per-item typed `RATE_LIMITED`. No timeout increase, manifest change,
+  provider/`INTERNAL_STREAM` limiter change, external call, public schema,
+  durable write or topology change is permitted. Required source gates are
+  lease coverage through response assembly, two legal collocated maximum
+  batches, queue rejection/recovery, cancellation drain, normal/error parity
+  and unchanged external policies. Only a new immutable Query image after
+  those gates may re-run the already-authorized two-reader ladder; the
+  all-scope preflight and one final C2 remain unconsumed.
+
+  **Collocated response-assembly source gate (`PASS / IMAGE BUILD NEXT`,
+  2026-09-21).** `V2QueryService` now holds the same bounded local admission
+  lease from one fully-local `history_many()` snapshot through the existing
+  bounded per-item executor and response construction. A second legal local
+  batch therefore waits without starting another SQLite/protobuf sweep while
+  the first still owns the reader CPU; a third remains per-item retryable
+  `RATE_LIMITED`. The work is still subject to the unchanged item executor,
+  route singleflight, circuit and content/finality/quality validators. Mixed
+  local/provider and non-local batches retain their previous path exactly.
+  An outer caller cancellation leaves the shielded request-local task owning
+  its lease until response assembly drains, then releases it without orphan
+  task warnings.
+
+  **Tests actually run:** an immutable existing Data Layer image with
+  `--network none`, read-only source/root and tmpfs-only scratch passed
+  `SingleWarmupExecutionTests 10/10`, the full
+  `tests.test_phase10_universal_warmup 64/64`, and the targeted
+  Query/route/identity/consumer/SDK/L2/quality matrix `154/154`. The new
+  behavioral regressions specifically hold the first batch in response
+  assembly, prove the second cannot begin `history_many()`, and prove
+  cancellation in that phase retains then drains the lease. `py_compile` and
+  `git diff --check` pass. No image was built, no role/runtime/provider/durable
+  component was changed, and no preflight or C2 attempt was consumed by this
+  source slice. The next permitted operation is one immutable Query candidate
+  build from its committed SHA, then an exact two-reader rollout with the
+  current `3beb1e9` candidate image as rollback.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
