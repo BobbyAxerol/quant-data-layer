@@ -7,6 +7,9 @@ venv
 data
 logs
 target
+# Historical certification artifacts stay in Git/source-mounted test runs, not
+# in serving images where package scanners treat old SBOMs as live dependencies.
+upgrade/evidence/
 *.parquet
 *.csv
 *.gz

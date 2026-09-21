@@ -48900,6 +48900,51 @@ path changed. Next is one fresh isolated CI image build followed by the full
 CI unittest suite; only a green full suite permits feature-branch commit/CI
 publication and the later four-reader release packet.
 
+**CI scanner image-provenance correction (`IMPLEMENTED / REMOTE CI NEXT`,
+2026-09-21).** Remote run `35652804355` on source `dd7cc6d` completed every
+unit, contract, SDK, migration, replay, performance and release-manifest gate
+successfully. Its sole failure was the final Trivy image scan, which reported
+`anyio 4.13.0` even though the exact PR merge-tree lockfile, Docker build log,
+and a fresh local image inspection all prove `anyio 4.15.1`; the builder log
+explicitly installs `anyio 4.15.1`. An exact local Trivy `0.70.0` reproduction
+identified the real cause: the final image contains archived historical SBOMs
+under `/app/upgrade/evidence/`, and two of those records still describe the
+old `anyio 4.13.0` release. Runtime package metadata contains only
+`anyio-4.15.1.dist-info`. This is neither a runtime CVE waiver nor a mutable
+tag explanation.
+
+The narrow repair excludes `upgrade/evidence/` from the runtime Docker build
+context; source-mounted tests and offline certification scripts retain those
+Git-tracked records, while serving images no longer carry obsolete test/release
+metadata. The image produced immediately after CI build also receives a unique
+`data-layer-ci:${GITHUB_SHA}` local tag, verifies the fixed AnyIO floor from
+that exact image, and makes both Trivy and the ephemeral SBOM/release rehearsal
+use that SHA-bound tag. The mutable compatibility tag remains available for
+legacy test scripts only. No vulnerability is ignored, no dependency is
+downgraded, and no provider/runtime/catalog/consumer/data-plane behavior
+changes. The required evidence is a rebuilt local scan with no high/critical
+finding, then one green GitHub rerun where the image audit, Trivy,
+secret/misconfiguration scan, and release rehearsal all complete from the same
+SHA-bound image. Only then may R1.35-D progress to the separately approved
+four-reader image packet.
+
+**CI scanner image-provenance source check (`PASS / REMOTE CI NEXT`,
+2026-09-21).** The workflow tag/audit edit parsed with PyYAML,
+`git diff --check` passed, and the exact runtime assertion returned
+`anyio=4.15.1`; the independent Trivy reproduction then correctly prevented a
+false closure by showing the stale SBOM files were still in the image. The
+`.dockerignore` change is deliberately limited to historical evidence.
+
+**CI scanner rebuilt-image test (`PASS / REMOTE CI NEXT`, 2026-09-21).** A
+disposable `qdl-r135-scan:ci-evidence-closure` image was built from this exact
+source context after the evidence exclusion. It proved `/app/upgrade/evidence`
+absent, runtime `anyio=4.15.1`, and Trivy `0.70.0` reported `0`
+high/critical findings (the language-metadata target count fell from four to
+two). The exact test image and its temporary Trivy binary/cache directory were
+removed automatically; post-check found neither. No serving image, container,
+role, provider, Kafka/Redis/SQLite object, V1, consumer, alpha or order path
+changed. The clean GitHub runner remains the release authority.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,
