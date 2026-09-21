@@ -49074,3 +49074,92 @@ risk and broker certification remains a separate program.
 **Status and debt.** `PENDING`. No R1.35 phase may close with an in-scope
 quality, latency, binding, test-cleanup or provenance gap. Intentional product
 exclusions are release-boundary declarations, not hidden technical debt.
+
+**R1.35-D reader candidate C2 closing transition finding (`IN PROGRESS / NO
+ORDER OR DATA-PLANE MUTATION`, 2026-09-21).** Candidate reader image
+`qdl-v2-python:2.0.26-657e86f@sha256:c8d7458e57d62d6fb2d6366f42911d86085918f6f6939d624c61494798dac2ab`
+was rolled serially to only `query_v2_1`, `query_v2_2`,
+`stream_v2_active`, and `stream_v2_passive`; each remained healthy with
+`restart=0` and `OOMKilled=false`. The first two attempted C2 launchers
+aborted before any data-plane operation because respectively a stale runtime
+release-routing artifact and an unreadable non-root launcher mode were used.
+Those abort receipts are retained as provenance and are not acceptance runs.
+
+The corrected no-order C2 then passed the full opening scope (`299/299` in
+`900.21s`) and the declared `300.10s` observation, with no provider-direct or
+order path action, but its closing L2 status/snapshot revalidation failed
+closed for `OKX.SWAP.PERPETUAL.DOGE-USDT` `BOOK_SNAPSHOT` on the secondary
+Query replica. The typed status was event-recent, complete and gap-free, but
+reported `SOURCE_SESSION_UNAVAILABLE` / session `UNKNOWN`; it was therefore
+correctly ineligible and no book payload was consumed. Read-only lineage
+inspection found the exact OKX public BOOK renewal generation can move while
+the per-lane liveness file and a replica's latest canonical envelope have not
+yet converged. This is a bounded session-transition/recovery correctness
+question, not a freshness-SLA relaxation, provider failure, quota failure or
+permission to retry C2 blindly.
+
+Approved narrow next slice: measure exact generation/liveness convergence on
+the live `BTC/ETH/SOL/DOGE/BNB` Binance/OKX L2 scope; then implement the
+smallest shared Rust or acceptance recovery correction justified by that
+measurement. It must preserve fail-closed behavior for disconnect, gap,
+generation mismatch and persistent missing liveness; use no synthetic market
+data; retain source event timestamps; add regression coverage for rollover,
+old-frame/inflight publication, reconnect and replica parity; and run one
+replacement C2 only after source and targeted real-provider checks pass.
+No V1, Kafka topology/offsets, Redis flush, SQLite deletion, Trading System,
+alpha, broker or order-path action is in this scope. Rollback remains reader
+digest `sha256:0a69fbf0c883cad27a433ea529555269ab7386706de6e1c635fa5fef2107a545`
+until the corrected candidate is certified.
+
+**R1.35-D L2 transition measurement and correction decision (`APPROVED /
+RUST SOURCE NEXT`, 2026-09-21).** A 75-second, indexed, read-only sample of
+the ten active perpetual execution books crossed two renewal boundaries. All
+five Binance USD-M books were `LIVE` for `75/75` samples. Every five-symbol
+OKX Swap book cohort was `LIVE` for `72-73/75`, then synchronously exposed one
+`DISCONNECTED` sample and one or two `UNKNOWN/SOURCE_SESSION_UNAVAILABLE`
+samples at the existing 30-second renewal boundary before recovering. There
+were no missing partitions. The evidence is
+`/home/bobby/.local/state/qdl-v2/releases/v2.0.26-657e86f/evidence/l2-transition/indexed-sample.json`.
+
+This proves an implementation defect rather than an isolated DOGE or Query
+replica problem: `run_okx_service` deliberately closes an otherwise healthy
+isolated BOOK WebSocket every `snapshot_refresh_seconds`, while Binance uses a
+non-disruptive REST anchor. Current OKX V5 documentation defines `books` as an
+initial full WebSocket snapshot followed by sequence-validated incremental
+updates; resync is required on actual gap/reconnect, not as a timer-driven
+connection cut. The approved correction is therefore narrow: Rust native OKX
+BOOK lanes use `INITIAL_SNAPSHOT_AND_GAP_RESYNC`; the existing 30-second value
+continues to bound raw Kafka delivery but no longer triggers a healthy-session
+rotation. Explicit socket disconnect, provider notice, sequence gap or core
+resync remain fail-closed and reconnect through the existing path. Required
+tests: Rust policy/renewal regression, existing sequence/gap/resync tests,
+targeted real 10-book transition sample with no periodic `UNKNOWN` or
+`DISCONNECTED`, then one replacement C2. No config relaxation, synthetic
+event, consumer fallback, or new service/container/symbol worker is allowed.
+
+**R1.35-D Rust source correction (`PASS / IMMUTABLE INGESTOR BUILD NEXT`,
+2026-09-21).** `qdl-native-raw-ingestor` now has an explicit provider-neutral
+BOOK session policy. Binance `BINANCE_DIFF_DEPTH` retains
+`PeriodicRestAnchor(30s)` for its REST snapshot/delta bridge. OKX
+`OKX_PUBLIC_BOOKS` instead uses `InitialSnapshotAndGapResync`: a healthy
+WebSocket receives its initial native snapshot and ordered deltas without a
+timer-driven close. The required `snapshot_refresh_seconds` remains present
+and continues to bound raw Kafka delivery; it no longer has two incompatible
+meanings. Existing disconnect, provider-notice, heartbeat timeout and
+sequence-gap/resync paths are unchanged and fail closed. The policy regression
+proves no mixed trade/quote lane inherits a BOOK rule, no OKX BOOK lane can
+select a periodic REST-anchor, and Binance retains its bounded anchor.
+
+Source-only verification used the pinned Rust `1.82.0` CI builder with source
+mounted read-only and target/cache under `/tmp`: `cargo fmt --all -- --check`;
+`cargo test -p qdl-kafka --bin qdl-native-raw-ingestor --locked` (`22/22`);
+`cargo clippy -p qdl-kafka --bin qdl-native-raw-ingestor --locked -- -D
+warnings`; `cargo test -p qdl-core l2_ --locked` (`10/10`); and `cargo test
+-p qdl-realtime-core --locked` (`42/42`, `1` pre-existing ignored). An initial
+disposable build invocation lacked CI's `pkg-config/libssl-dev` dependencies
+and stopped before compiling source; rerunning with the exact CI dependency
+set passed. No provider session, runtime container, Kafka/Redis/SQLite state,
+V1, consumer, alpha, broker or order path changed. Next scope is one immutable
+Rust image and a serial recreate of only `ingestor_okx_swap`, retaining its
+current digest/runtime mount as rollback; targeted real-provider transition
+evidence must pass before the one replacement C2.

@@ -839,6 +839,12 @@ impl RawPublisher {
 
 type RawPublishFuture = Pin<Box<dyn Future<Output = Result<(), KafkaTransportError>> + Send>>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BookSessionBootstrap {
+    PeriodicRestAnchor(Duration),
+    InitialSnapshotAndGapResync,
+}
+
 fn raw_publish_future(delivery: PendingKafkaAppend, deadline: Option<Instant>) -> RawPublishFuture {
     Box::pin(async move {
         if let Some(deadline) = deadline {
@@ -1095,6 +1101,30 @@ fn book_snapshot_renewal_period(bindings: &HashMap<String, RawBinding>) -> Optio
         .map(Duration::from_secs)
 }
 
+fn book_session_bootstrap(
+    runtime: ProviderRuntime,
+    bindings: &HashMap<String, RawBinding>,
+) -> Option<BookSessionBootstrap> {
+    if bindings.is_empty()
+        || bindings
+            .values()
+            .any(|binding| binding.feed != RawFeed::Book)
+    {
+        return None;
+    }
+    match runtime {
+        // Binance diff-depth requires a periodic REST anchor to maintain the
+        // documented snapshot/delta bridge for an otherwise healthy socket.
+        ProviderRuntime::Binance => {
+            book_snapshot_renewal_period(bindings).map(BookSessionBootstrap::PeriodicRestAnchor)
+        }
+        // OKX `books` sends an initial WebSocket snapshot followed by ordered
+        // deltas. A healthy session stays open; only a real disconnect, notice
+        // or sequence-gap path may cause resync/reconnect.
+        ProviderRuntime::Okx => Some(BookSessionBootstrap::InitialSnapshotAndGapResync),
+    }
+}
+
 #[derive(Default)]
 struct LatestStateBuffer {
     frames: BTreeMap<String, PendingRawFrame>,
@@ -1320,7 +1350,13 @@ async fn run_binance_connection(
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
         .build()?;
-    let snapshot_period = book_snapshot_renewal_period(&bindings);
+    let snapshot_period = match book_session_bootstrap(ProviderRuntime::Binance, &bindings) {
+        Some(BookSessionBootstrap::PeriodicRestAnchor(period)) => Some(period),
+        Some(BookSessionBootstrap::InitialSnapshotAndGapResync) => {
+            return Err("Binance BOOK lane cannot use an OKX session policy".into())
+        }
+        None => None,
+    };
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -1896,16 +1932,13 @@ async fn run_okx_service(
                     tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
                 latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 latest_tick.tick().await;
-                let snapshot_period = book_snapshot_renewal_period(&binding_map);
-                let mut snapshot_tick = snapshot_period.map(tokio::time::interval);
-                if let Some(tick) = snapshot_tick.as_mut() {
-                    // The initial provider subscription already requested the
-                    // authoritative snapshot. Consume interval's immediate
-                    // tick so renewal only occurs after the declared bound.
-                    tick.tick().await;
+                match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
+                    Some(BookSessionBootstrap::InitialSnapshotAndGapResync) | None => {}
+                    Some(BookSessionBootstrap::PeriodicRestAnchor(_)) => {
+                        return Err("OKX BOOK lane cannot use a periodic REST-anchor policy".into())
+                    }
                 }
                 let mut disconnected = false;
-                let mut snapshot_renewal = false;
                 let mut publish_error = None;
                 let mut exhausted = false;
                 while let Some(frame) = pre_ack_frames.pop_front() {
@@ -1965,22 +1998,6 @@ async fn run_okx_service(
                             }
                             failures = 0;
                             continue;
-                        }
-                        _ = async {
-                            match snapshot_tick.as_mut() {
-                                Some(tick) => {
-                                    tick.tick().await;
-                                }
-                                None => std::future::pending::<()>().await,
-                            }
-                        }, if snapshot_period.is_some() => {
-                            // OKX books can only establish a new executable
-                            // state from its documented websocket snapshot.
-                            // Rotate the isolated BOOK lane so a core restart
-                            // obtains that snapshot without touching trade,
-                            // quote or bar sessions.
-                            snapshot_renewal = true;
-                            break;
                         }
                         result = &mut read => Some(result),
                         completed = inflight.next(), if !inflight.is_empty() => {
@@ -2100,22 +2117,6 @@ async fn run_okx_service(
                 liveness.disconnected(&session_id, generation, now_ns()?)?;
                 if let Some(error) = publish_error {
                     return Err(error.into());
-                }
-                if snapshot_renewal && !should_stop(&stopped, &accepted, config.max_events, expires)
-                {
-                    failures = 0;
-                    println!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "qdl_native_book_snapshot_renewal",
-                            "runtime": "OKX",
-                            "service": format!("{:?}", service).to_ascii_uppercase(),
-                            "generation": generation,
-                            "bindings": binding_map.len(),
-                            "snapshot_refresh_seconds": snapshot_period.map(|value| value.as_secs()),
-                        }))?
-                    );
-                    continue;
                 }
                 if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
                     failures = failures.saturating_add(1);
@@ -2368,12 +2369,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        authority_mode_name, book_delivery_remaining_ns, book_snapshot_renewal_period,
-        feed_lane_name, next_connection_generation, partition_binance_bindings,
-        partition_binance_route, partition_bindings, partition_okx_bindings, pending_binance_frame,
-        pending_okx_frame, AuthorityMode, BinanceRoute, DeliveryClass, KafkaTransportError,
-        LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
-        SessionLivenessWriter,
+        authority_mode_name, book_delivery_remaining_ns, book_session_bootstrap,
+        book_snapshot_renewal_period, feed_lane_name, next_connection_generation,
+        partition_binance_bindings, partition_binance_route, partition_bindings,
+        partition_okx_bindings, pending_binance_frame, pending_okx_frame, AuthorityMode,
+        BinanceRoute, BookSessionBootstrap, DeliveryClass, KafkaTransportError, LatestStateBuffer,
+        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed, SessionLivenessWriter,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2675,7 +2676,7 @@ mod tests {
     }
 
     #[test]
-    fn okx_book_lane_renews_without_rotating_trade_or_quote_lanes() {
+    fn okx_book_lane_uses_initial_snapshot_and_gap_resync_without_timer_renewal() {
         let mut book = binding(RawFeed::Book, DeliveryClass::Lossless);
         book.provider = "OKX_DIRECT".into();
         book.venue = "OKX".into();
@@ -2714,8 +2715,26 @@ mod tests {
             .map(|item| (item.key(), item))
             .collect::<HashMap<_, _>>();
         assert_eq!(
-            book_snapshot_renewal_period(&books),
-            Some(Duration::from_secs(30))
+            book_session_bootstrap(ProviderRuntime::Okx, &books),
+            Some(BookSessionBootstrap::InitialSnapshotAndGapResync)
+        );
+        assert_eq!(book_session_bootstrap(ProviderRuntime::Okx, &mixed), None);
+
+        let mut binance_book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        binance_book.l2 = Some(super::RawL2Config {
+            provider_protocol: "BINANCE_DIFF_DEPTH".into(),
+            depth_per_side: 100,
+            rest_snapshot_url: Some("https://fapi.binance.com/fapi/v1/depth".into()),
+            snapshot_refresh_seconds: Some(30),
+        });
+        let binance_books = [(binance_book.key(), binance_book)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            book_session_bootstrap(ProviderRuntime::Binance, &binance_books),
+            Some(BookSessionBootstrap::PeriodicRestAnchor(
+                Duration::from_secs(30)
+            ))
         );
         assert_eq!(book_snapshot_renewal_period(&mixed), None);
     }
