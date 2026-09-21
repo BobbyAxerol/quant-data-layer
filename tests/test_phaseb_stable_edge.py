@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import tempfile
+from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 import unittest
@@ -42,6 +43,7 @@ from qdl.domain.instrument import (
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.query import (
     AccessPurpose,
+    BarRevisionPolicy,
     ConsumerGrade,
     DataRequirement,
     InstrumentQuery,
@@ -761,6 +763,88 @@ class StableQueryContractTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
         self.assertEqual(fallback_reads, [])
+
+    def test_history_many_exact_final_window_supports_emit_revisions_when_unique(self):
+        binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        newest = None
+        for offset in (-1, 0):
+            event = _final_bar_at(
+                self.catalog, binding, "binance_usdm_rest_bar.json",
+                offset=offset, label=f"emit-revisions-unique-{offset}",
+            )
+            _append(self.spool, self.catalog, event, final_bar_watermark=True)
+            newest = event
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: newest.bar.close_time_ns + 1_000_000,
+        )
+        requirement = replace(
+            _requirement(binding, warmup=2),
+            bar_revision_policy=BarRevisionPolicy.EMIT_REVISIONS,
+        )
+        expected = backend.history(requirement)
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        actual = backend.history_many((requirement,))[requirement]
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(fallback_reads, [])
+
+    def test_history_many_emit_revisions_duplicate_uses_retained_tail(self):
+        binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        values = []
+        for offset in (-1, 0):
+            event = _final_bar_at(
+                self.catalog, binding, "binance_usdm_rest_bar.json",
+                offset=offset, label=f"emit-revisions-duplicate-{offset}",
+            )
+            _append(self.spool, self.catalog, event, final_bar_watermark=True)
+            values.append(event)
+        revised = _final_bar_at(
+            self.catalog, binding, "binance_usdm_rest_bar.json",
+            offset=0, label="emit-revisions-duplicate-revised",
+        )
+        revised.bar.revision = 1
+        revised.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+        revised.bar.supersedes_event_id = values[-1].event_id
+        _append(self.spool, self.catalog, revised, final_bar_watermark=True)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: revised.bar.close_time_ns + 1_000_000,
+        )
+        requirement = replace(
+            _requirement(binding, warmup=2),
+            bar_revision_policy=BarRevisionPolicy.EMIT_REVISIONS,
+        )
+        expected = backend.history(requirement)
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        actual = backend.history_many((requirement,))[requirement]
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(fallback_reads), 1)
 
     def test_history_many_final_window_falls_back_for_missing_gap_or_revision(self):
         cases = (

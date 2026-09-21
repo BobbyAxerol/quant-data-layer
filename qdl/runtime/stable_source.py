@@ -19,7 +19,6 @@ from qdl.domain.quantity import quantity_unit_name
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
     AccessPurpose,
-    BarRevisionPolicy,
     BarLifecycle,
     ContractMetadata,
     ConsumerGrade,
@@ -491,13 +490,16 @@ class StableSpoolQueryBackend:
             or not binding.require_final_bar
             or not binding.continuous_calendar
             or not requirement.require_final_bars
-            or requirement.bar_revision_policy is not BarRevisionPolicy.LATEST
             or requested not in {1, 2}
             or start_ns is not None
             or end_ns is not None
             or expected_opens is not None
         ):
             return None
+        # Both LATEST and EMIT_REVISIONS retain the normal history semantics.
+        # The exact reader accepts only one unambiguous row per expected close;
+        # revised/duplicate closes are rejected by _exact_final_bar_window and
+        # return to the retained-tail authority inside the same transaction.
         return FinalBarTailWindow(
             interval_ns=_interval_ns(binding.interval or ""),
             rows=requested,

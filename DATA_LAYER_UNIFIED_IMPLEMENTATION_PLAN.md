@@ -47961,6 +47961,45 @@ unchanged.
   strict two-lane BAR ladder, then the all-scope two-replica preflight. The
   single C2 `300s` remains unconsumed until both pass.
 
+  **Strict C2 revision-policy discrepancy (`FAIL-CLOSED / NARROW SOURCE
+  REPAIR`, 2026-09-21).** The immutable `b7d4f1d` Query image
+  `sha256:d1abb81d6deb8401c6bba22dfa4bd91264ad068b5df9fa64d469e752af4a912c`
+  was serially applied only to `query_v2_1` and `query_v2_2`; both retained the
+  exact runtime mount, became `healthy`, have `restart=0`, and have no OOM.
+  The strict ladder then correctly failed before preflight/C2: its C2 closing
+  requirement preserves the declared `EMIT_REVISIONS` BAR policy, while the
+  new exact-window planner admitted only `LATEST`. It therefore took the
+  retained-tail path and the second two-lane 50-BAR read crossed the public
+  deadline after the first completed in about `13s`. This is an in-scope
+  source-policy omission, not a provider, Kafka, cache, data-quality or
+  manifest failure; no provider-direct, fallback, stream, order or durable
+  write occurred.
+
+  The sole follow-up repair remains private and provider-neutral: admit
+  `EMIT_REVISIONS` only when the header-indexed rows already prove the exact
+  same unique final-close window that the retained-tail selector would return.
+  Any duplicate/revised close, missing predecessor, gap, invalid watermark or
+  ambiguity continues to fall back inside the same SQLite snapshot. Required
+  regressions are normal `EMIT_REVISIONS` fast-path parity and duplicate/revised
+  `EMIT_REVISIONS` full-tail parity. No public contract, manifest/SLA, timeout,
+  provider policy, cache schema, topology or service count may change. A new
+  Query image and the same two-reader-only packet are required before retrying
+  the still-unconsumed ladder/preflight/C2 sequence.
+
+  **EMIT_REVISIONS exact-window source gate (`PASS / REBUILD QUERY ONLY`,
+  2026-09-21).** The planner now admits both declared revision policies only
+  after the existing exact unique-final-close proof. A normal two-row
+  `EMIT_REVISIONS` request takes the header-indexed path and is byte-for-byte
+  equal to retained-tail history; a duplicate revised close deterministically
+  takes the retained-tail path and remains equal to it. The focused stable
+  query class passed `20/20`. The isolated, network-disabled, read-only
+  affected suite passed `164` with `1` existing Redis-dependent skip. This
+  source-only repair made no runtime, provider, durable-data, consumer or
+  order mutation. The rolled `b7d4f1d` readers remain healthy but are not a
+  certificate candidate for this follow-up source; build one replacement
+  Query image from the committed repair, update the same two-reader packet's
+  candidate/rollback chain, then repeat the strict ladder exactly once.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
