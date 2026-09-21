@@ -48656,6 +48656,39 @@ unchanged.
 revision, and remove only disposable test artifacts without touching market
 data durability or active consumers.
 
+**Scoped test-container cleanup packet (`APPROVED / PRE-MUTATION`, 2026-09-21).**
+The post-C2 inventory found exactly two leaked disposable source-test
+containers: `lucid_sinoussi` and `youthful_shamir`. Both are `restart=no`,
+read-only, `network=none`, mount only
+`/home/bobby/.worktrees/data-layer-mark-index-live-view:/src`, and have been
+stuck running their isolated Python unittest commands for about two days. They
+are not Compose services, carry no volume/state mount, and are not in the
+canonical V2 service set. `qdl-admit-1d` is already absent. Pre-cleanup Docker
+inventory is `67` images / `41.34GB` (`27.4GB` reclaimable), `59` containers,
+`16` volumes / `86.84GB`, and BuildKit `35.08GB` (`5.529GB` reclaimable).
+
+The approved mutation is only `docker rm -f lucid_sinoussi youthful_shamir`.
+It stops/removes neither image nor volume/network; in particular the old
+`qdl-v2-python:2.0.20-95d9595` image remains retained because active
+`binance_bar_edge` still references it. Retain active reader
+`sha256:0a69fbf0...2107a545`, Query rollback `sha256:3b065436...665c6ee` and
+Stream rollback `sha256:f2489160...957b6ad7`. No `system prune`, image removal,
+BuildKit prune, Compose down, V1/Kafka/Redis/SQLite/runtime configuration or
+serving-role action is authorized by this packet. After removal, re-read the
+four readers and disk inventory before deciding any further cleanup.
+
+**Scoped test-container cleanup result (`PASS`, 2026-09-21).** Exactly the two
+approved containers were stopped and removed. A post-action lookup returns no
+matching container. All four reader roles remain `healthy`, restart `0` and
+not OOM-killed on `sha256:0a69fbf0...2107a545`; no serving role was recreated.
+Docker container inventory changed only from `59` to `57`; images remained
+`67` / `41.34GB` with `27.4GB` reclaimable, and BuildKit remained `35.08GB`
+with `5.529GB` reclaimable. The tiny test container writable layers were not a
+meaningful disk source; no image, cache, volume, network, V1 or runtime state
+was removed. Further cleanup is intentionally deferred until active-image and
+override provenance is normalized, so no named rollback artifact is mistaken
+for disposable cache.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,
