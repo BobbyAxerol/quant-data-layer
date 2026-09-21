@@ -47421,6 +47421,52 @@ unchanged.
   permits one all-scope fast preflight and then exactly one C2 `300s`; neither
   acceptance has been consumed by this image gate.
 
+- **Strict batch candidate runtime finding (`IN_PROGRESS / SOURCE REPAIR`,
+  2026-09-21).** The Query-only candidate was rolled only after its exact
+  active Compose chain and rollback digest were checked. Both readers reached
+  `1d81bec` healthy with zero restart/OOM; V1 and every other role remained
+  unchanged. The first strict ladder reached a real local `BAR` batch of
+  shape `8` on the primary replica and returned eight typed
+  `INTERNAL_ERROR` items, which the public strict contract correctly surfaced
+  as `PARTIAL_RESULT`. Individual typed status for the same eight OKX DOGE
+  bars was `LIVE`, so this is neither a provider/staleness diagnosis nor an
+  allowed reason to weaken strictness. The client bootstrap initially had a
+  read-mode error and was corrected before the real request; that failed
+  bootstrap made no Query call and did not consume a ladder result.
+
+  A disposable no-network, read-only reproduction of the exact manifest
+  requirements reached the same shared `history_many()` branch and recorded
+  `sqlite3.OperationalError: database or disk is full` per item. Host disk and
+  inode headroom are healthy (`142 GiB` free; `5%` inode use); SQLite reports
+  default temp-store behavior over the multi-gigabyte canonical cache. The
+  current `ROW_NUMBER` CTE ranks the event table before it can retain each
+  requested tail, creating an unbounded planner-temp shape. The approved
+  in-scope repair replaces only that transport implementation with one locked
+  read transaction containing at most `100` indexed partition-tail scans.
+  It retains one SQLite-consistent snapshot, exact chronological ordering,
+  physical-tail deduplication, per-route logical caps and every query-quality
+  semantic, while avoiding a full-table window sort. It does not change
+  provider/`INTERNAL_STREAM` policy, timeout, public API, manifest, durable
+  state or any service topology. The current candidate is not certified;
+  all-scope preflight and C2 remain unconsumed.
+
+  **Repair evidence (`PASS / NEXT: QUERY-ONLY CANDIDATE`, 2026-09-21).**
+  `read_tails()` now opens one SQLite read transaction and performs at most
+  one primary-key ordered tail lookup for each deduplicated physical
+  partition. The focused transport/order/snapshot suite passed `3/3`; the
+  selected source regression matrix passed `161/161` in a no-network,
+  read-only-root container with tmpfs-only test state. `git diff --check` and
+  Python compilation of the changed transport/test files passed. A second
+  disposable no-network, read-only reproduction mounted the live canonical
+  cache and exact sealed runtime bindings; all eight formerly failing OKX
+  DOGE BAR requirements (`12h`, `15m`, `1d`, `1h`, `1m`, `1w`, `2d`, `2h`)
+  returned `HistoryResult` without an SQLite error. This is real-cache
+  transport evidence only: it did not call a provider, mutate the cache,
+  invoke Query, change runtime roles, consume preflight/C2, or perform an
+  order action. The next permitted action is one newly attested Python image,
+  serial rolling replacement of only the two Query readers, the strict
+  `1/8/16/32/50` ladder, then the already-defined preflight/C2 sequence.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

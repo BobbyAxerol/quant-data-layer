@@ -184,6 +184,47 @@ class SQLiteDurableSpoolTests(unittest.TestCase):
                 [b"secondary-3"],
             )
 
+    def test_batch_tails_use_indexed_reads_inside_one_snapshot(self):
+        with self.spool(max_records=10) as spool:
+            stream = event(1).stream
+            first = event(1).partition_key
+            second = "instrument/quote/source"
+            spool.append_many([event(index) for index in range(1, 4)])
+            spool.append_many([
+                DurableEvent(
+                    stream=stream,
+                    partition_key=second,
+                    event_id=(200 + index).to_bytes(16, "big"),
+                    payload=f"quote-{index}".encode(),
+                    accepted_at_ns=1_800_000_000_000_000_200 + index,
+                    headers={"schema": "qdl.marketdata.quote/2"},
+                )
+                for index in range(1, 4)
+            ])
+            statements: list[str] = []
+            spool._connection.set_trace_callback(statements.append)
+            try:
+                tails = spool.read_tails(requests=(
+                    (stream, first, 2),
+                    (stream, second, 1),
+                ))
+            finally:
+                spool._connection.set_trace_callback(None)
+
+            self.assertEqual(
+                [row.event.payload for row in tails[(stream, first)]],
+                [b"event-2", b"event-3"],
+            )
+            self.assertEqual(
+                [row.event.payload for row in tails[(stream, second)]],
+                [b"quote-3"],
+            )
+            trace = "\n".join(statements).upper()
+            self.assertIn("BEGIN", trace)
+            self.assertIn("COMMIT", trace)
+            self.assertNotIn("ROW_NUMBER", trace)
+            self.assertEqual(trace.count("SELECT * FROM EVENTS"), 2)
+
     def test_batch_tails_support_the_public_fifty_partition_shape(self):
         with self.spool(max_records=100) as spool:
             stream = event(1).stream

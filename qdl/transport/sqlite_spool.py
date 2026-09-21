@@ -686,62 +686,36 @@ class SQLiteDurableSpool:
         if not normalized:
             return {}
 
-        values = ", ".join("(?, ?, ?)" for _ in normalized)
-        parameters = tuple(
-            value
-            for (stream, partition_key), limit in normalized.items()
-            for value in (stream, partition_key, limit)
-        )
-        # ``ROW_NUMBER`` ranks the retained rows within each requested
-        # partition. The events primary key already provides this order, while
-        # the outer ordering keeps the established chronological tail contract.
-        statement = f"""
-            WITH requested(stream, partition_key, tail_limit) AS (VALUES {values}),
-            ranked AS (
-                SELECT
-                    events.stream,
-                    events.partition_key,
-                    events.logical_offset,
-                    events.event_id,
-                    events.payload,
-                    events.payload_sha256,
-                    events.accepted_at_ns,
-                    events.committed_at_ns,
-                    events.content_type,
-                    events.headers_json,
-                    requested.tail_limit,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY events.stream, events.partition_key
-                        ORDER BY events.logical_offset DESC
-                    ) AS tail_rank
-                FROM events
-                JOIN requested
-                  ON requested.stream = events.stream
-                 AND requested.partition_key = events.partition_key
-            )
-            SELECT
-                stream,
-                partition_key,
-                logical_offset,
-                event_id,
-                payload,
-                payload_sha256,
-                accepted_at_ns,
-                committed_at_ns,
-                content_type,
-                headers_json
-            FROM ranked
-            WHERE tail_rank <= tail_limit
-            ORDER BY stream ASC, partition_key ASC, logical_offset ASC
-        """
         grouped: dict[tuple[str, str], list[StoredEvent]] = {
             key: [] for key in normalized
         }
         with self._lock:
-            rows = self._connection.execute(statement, parameters).fetchall()
-        for row in rows:
-            key = (str(row["stream"]), str(row["partition_key"]))
-            grouped[key].append(self._stored_event(row))
+            # One read transaction gives every partition a consistent cache
+            # generation.  Do not use a window-function CTE here: on a large
+            # spool SQLite may sort the whole events table into temp storage
+            # before applying each tail cap.  These are bounded index-tail
+            # reads under one lock/snapshot, so the public 100-item batch
+            # bound remains finite without turning a local read into a disk
+            # pressure incident.
+            self._connection.execute("BEGIN")
+            try:
+                for (stream, partition_key), limit in normalized.items():
+                    rows = self._connection.execute(
+                        """
+                        SELECT * FROM events
+                        WHERE stream = ? AND partition_key = ?
+                        ORDER BY logical_offset DESC LIMIT ?
+                        """,
+                        (stream, partition_key, limit),
+                    ).fetchall()
+                    grouped[(stream, partition_key)].extend(
+                        self._stored_event(row) for row in reversed(rows)
+                    )
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
         return {key: tuple(value) for key, value in grouped.items()}
 
     def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
