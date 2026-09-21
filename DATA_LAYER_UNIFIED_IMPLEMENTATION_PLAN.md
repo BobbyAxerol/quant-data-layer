@@ -44546,7 +44546,7 @@ freshness, replay and release evidence.
    packet names an exact role, digest, runtime revision, rollback and blast
    radius.
 
-#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`B PASS / C READY`, 2026-09-20)
+#### R1.35 Closure Delivery Map - Three technical phases plus hygiene/release (`B/C PASS / D PENDING`, 2026-09-21)
 
 This is the authoritative compact execution map for the remaining R1.35
 closure. It refines, rather than replaces, the detailed B/C/D sections below
@@ -44559,7 +44559,7 @@ a passing process health check as data acceptance.
 | --- | --- | --- |
 | **1. R1.35-B1 - Source delivery semantics and quality authority** | `PASS / source-only` | One Rust/Python/query decision for `STRICT_EVENT` versus signed `ON_CHANGE` BBO delivery, with exact manifest authorization and no false live result. |
 | **2. R1.35-B2 - Bounded reader rollout and strict quote C2** | `PASS / runtime-certified` | A sealed reader bundle/image proved all ten current Binance USD-M/OKX Swap execution BBO routes through both query replicas for 300 seconds without stale false rejects or hidden fallback. |
-| **3. R1.35-C - Full endpoint, binding and consumer certification** | `PENDING / requires B2 exit` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
+| **3. R1.35-C - Full endpoint, binding and consumer certification** | `PASS / runtime-certified` | Every currently active, entitled V2 product has per-binding consumer evidence, typed status parity and bounded latency/resource evidence. |
 | **R1.35-D - Hygiene, provenance and immutable release** | `PENDING / requires C exit and explicit cleanup/release approvals` | Source, runtime, artifact, rollback, Git lineage and published release are one auditable state; only disposable artifacts are removed. |
 
 **Closure decision record (2026-09-20).** This is still exactly a three-phase
@@ -45259,7 +45259,7 @@ bar edge, projectors, Kafka topology/offsets, Redis, SQLite, Trading System,
 alpha and the order path remain unchanged. This closes R1.35-B; only now may
 R1.35-C begin.
 
-##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`IN_PROGRESS / R1.35-B EXIT`, 2026-09-20)
+##### Phase 3 - R1.35-C: Full endpoint, binding and consumer certification (`PASS / RUNTIME-CERTIFIED`, 2026-09-21)
 
 **Goal.** Turn a successful BBO correction into a release certificate for the
 whole currently active V2 consumer surface, rather than extrapolating from
@@ -46135,7 +46135,7 @@ it cannot add a service, provider REST fallback, relaxed external quota, new
 consumer identity or runtime topology. A fresh sealed bundle and a query/
 stream-only packet will be prepared only after source parity passes.
 
-#### R1.35-C - Full endpoint, binding and consumer release certification (`IN_PROGRESS / R1.35-B EXIT`, 2026-09-20)
+#### R1.35-C - Full endpoint, binding and consumer release certification (`PASS / RUNTIME-CERTIFIED`, 2026-09-21)
 
 **Goal.** Produce one reproducible, consumer-side certificate for every active
 V2 binding and public V2 transport that the current release actually exposes.
@@ -48503,6 +48503,152 @@ unchanged.
   were observed only inside the disposable source-test process. Next: inspect
   and commit this source-only slice, then run one all-scope fast preflight
   against the already healthy two Query readers. C2 remains unconsumed.
+
+  **All-scope read-plane preflight (`PASS / C2 FINAL GATE NEXT`, 2026-09-21).**
+  Committed source `e72905e` was mounted read-only over only the client harness
+  in an ephemeral `--rm` launcher; the two running readers remained on
+  `qdl-v2-python:2.0.26-137633b@sha256:0a69fbf0c883cad27a433ea529555269ab7386706de6e1c635fa5fef2107a545`,
+  healthy with `restart=0`, `OOMKilled=false` and the unchanged runtime mount
+  `r135-b2-335792a-20260920T015057Z/runtime`. The real, authenticated,
+  two-replica preflight returned `PASS_READ_PLANE_PREFLIGHT` for all `299`
+  active products, `exit_code=0`, `provider_connections=0`, `order_actions=0`
+  and `cursor_directory_removed=true`. Evidence is bounded under
+  `/home/bobby/.local/state/qdl-v2/r135-lossless-l2-e72905e-20260921T181741Z/evidence/read-plane/`.
+  It opened no stream, invoked no fallback/provider-direct call, recreated no
+  role and changed no V1/Kafka/Redis/SQLite/market-data/order state. The one
+  remaining R1.35-C action is exactly one C2 300-second no-order acceptance
+  using this committed harness and the same reader runtime; failure remains
+  fail-closed and does not permit a retry without a distinct typed cause.
+
+  **C2 launcher provenance abort (`NO DATA-PLANE ACTION`, 2026-09-21).** The
+  first foreground launcher exited before authentication, Query, Stream,
+  fallback or observation because its historical command selected
+  `/app/qdl-runtime/stable-v2-release-routing.yaml`, whose manifest binding no
+  longer matches the active image source. Its bounded stderr ended at
+  `stable release consumer manifest/demand binding differs`; `acceptance.json`
+  was empty, the `--rm` client was absent afterward, and no order/provider/data
+  action occurred. This is a launcher provenance mismatch, not a second C2
+  result or a market-data failure. The passed all-scope preflight already used
+  the matching active-image route
+  `/app/config/v2/stable-v2-release-routing.yaml`; the one replacement C2
+  launcher must use exactly that route while retaining every other identity,
+  runtime, timeout, no-order and cleanup invariant. No role/image/runtime
+  change is needed.
+
+  **C2 identity provenance abort (`NO ACCEPTANCE RESULT / NO DATA-PLANE
+  ACTION`, 2026-09-21).** The corrected route launcher derived its real
+  manifest budget (`935s`, not a literal `1800s`) and began opening the scope,
+  but the historical `r135-c-on-change` identity composition supplied an old
+  `alpha-binance` workload signing material. Stream correctly rejected it with
+  `UNAUTHENTICATED: workload token is not bound to the active consumer manifest
+  revision`; sibling opening tasks were cancelled, `acceptance.json` remained
+  empty, and no observation/certificate was produced. This is not a product,
+  freshness, L2, fallback or provider failure. The already-passed all-scope
+  preflight used the current `r135-local-batch-fair` identity/acceptance-input
+  bundle instead. Before the one replacement C2, the launcher must reuse that
+  exact bundle and run a bounded current-identity Stream authentication probe;
+  only if all four governed identities are accepted may the single 300-second
+  acceptance consume its observation window. No service, runtime, route,
+  manifest, V1, Kafka, Redis, SQLite or order-path mutation is required.
+
+  **Stream revision skew (`P0 RUNTIME CORRECTION REQUIRED`, 2026-09-21).**
+  Read-only provenance inspection established the actual cause of the Stream
+  rejection: both Query roles run
+  `qdl-v2-python:2.0.26-137633b@sha256:0a69fbf0...2107a545`, whose embedded
+  `alpha.binance.paper.stable` route is manifest revision `12`; both Stream
+  roles remain on `qdl-v2-python:2.0.26-e4fc241@sha256:f2489160...957b6ad7`,
+  whose embedded route is revision `10`. They share the same runtime mount,
+  but public data-plane authorization is image/config-derived, so accepting a
+  revision-12 token in Query cannot make the revision-10 Stream accept it.
+  This is an incomplete reader rollout and must be repaired before certification.
+
+  **Approved bounded correction.** Serially recreate only
+  `stream_v2_active`, then `stream_v2_passive`, using the exact healthy Query
+  digest `sha256:0a69fbf0c883cad27a433ea529555269ab7386706de6e1c635fa5fef2107a545`,
+  retaining the same Compose base, runtime/TLS/state mounts, ports, network and
+  environment. Verify each role is healthy, `restart=0`, `OOMKilled=false` and
+  advertises revision `12` before moving to the next. Rollback is each role
+  alone to `sha256:f2489160923d65c076b7cadc8c9bba2da6e9c862567428ce87ab264e957b6ad7`
+  with its existing configuration. Do not change Query, Rust, ingestors,
+  projectors, V1, Kafka offsets/topology, Redis, SQLite, Trading System, alpha
+  or order path. The replacement client uses the same current identity bundle
+  that passed preflight; this correction is prerequisite to the single valid
+  C2 result, not a new certification phase.
+
+  **Serial Stream convergence (`PASS / VALID C2 NEXT`, 2026-09-21).** The
+  guarded packet first ran Compose `config --quiet` using the sealed existing
+  env-file, then recreated only `stream_v2_active` followed by
+  `stream_v2_passive`. Both now run
+  `sha256:0a69fbf0c883cad27a433ea529555269ab7386706de6e1c635fa5fef2107a545`,
+  remain `healthy`, `restart=0`, `OOMKilled=false`, retain the exact
+  `r135-b2-335792a-20260920T015057Z/runtime` mount, and expose
+  `alpha.binance.paper.stable` revision `12`. Before/after provenance is under
+  `.../r135-lossless-l2-e72905e-20260921T181741Z/evidence/stream-roll/`.
+  Compose warned about three existing orphan projector containers but the packet
+  did not pass `--remove-orphans` and did not touch them. The image-only
+  override is retained at `/tmp/qdl-r135-e72905e-stream-revision.override.yml`
+  until R1.35-D replaces it with a durable release-config path; it must not be
+  removed while the two active Stream roles still reference it. Next: use the
+  current `r135-local-batch-fair` identity/acceptance-input bootstrap and run
+  the single valid C2 300-second no-order acceptance. No further preflight or
+  retry is authorized before that result.
+
+  **Final all-scope C2 (`PASS / R1.35-C EXIT`, 2026-09-21).** The one valid
+  foreground, authenticated, no-order acceptance used the exact current
+  identity/bootstrap bundle, the active-image route
+  `/app/config/v2/stable-v2-release-routing.yaml`, public V2 Query/Stream SDK
+  paths and the committed `e72905e` lossless-L2 harness mounted read-only. It
+  returned `PASS_V2_DATA_PLANE_ONLY` for all `299` active V2 products: `234`
+  durable and `65` on-demand, with `157` Binance USD-M and `142` OKX Swap
+  products. Opening covered `299/299` products in `903.722s` inside its
+  manifest-derived `935s` budget; observation was `300.089s` for the declared
+  `300s`; closing read `299/299` completed in `30.111s`; total elapsed was
+  `1233.925s`, including `34.165s` of manifest quota-window pacing.
+
+  The receipt records `order_actions=0`, `provider_connections=0`, no direct
+  provider/fallback action, no alpha signal/sizing or broker mutation,
+  `cursor_directory_removed=true`, `secret_values_recorded=false` and
+  `test_provenance=false`. Its bounded fallback drill passed all seven
+  manifest-permitted `TRADE` routes through `V2_PRIMARY -> V1_FALLBACK ->
+  V2_PRIMARY`, with zero order/provider action and cursor cleanup; no
+  `BLOCKED` route was downgraded. Closing used `BATCH_V2_PRIMARY` for `194`
+  history/latest products and `L2_STATUS_SNAPSHOT` for all `40` lossless L2
+  products. The remaining `65` on-demand rows correctly have no closing
+  durable-read transport.
+
+  Consumer-call-to-SDK-usable latency is retained per binding/replica in the
+  receipt (hash `6cbbbac45c7f8f9e321677499dc698addd5cce62f74201f261a1dce68a5b53aa`).
+  The compact per-feed values below are `p50/p95/p99/max` milliseconds for
+  Query primary then secondary under the 299-product concurrent C2 workload;
+  they are request latency, not venue event age or final-bar close latency:
+
+  | Feed | n | Primary ms | Secondary ms |
+  | --- | ---: | --- | --- |
+  | `BAR` | 150 | 1830.597 / 3179.390 / 3489.862 / 3812.450 | 1245.510 / 2023.475 / 2192.539 / 2301.537 |
+  | `BASIS` | 5 | 886.705 / 888.447 / 888.447 / 893.538 | 891.183 / 893.159 / 893.159 / 1334.722 |
+  | `BOOK_DELTA` | 20 | 883.495 / 1339.858 / 1339.858 / 4021.283 | 445.496 / 1514.821 / 1514.821 / 1538.067 |
+  | `BOOK_SNAPSHOT` | 20 | 821.371 / 1484.512 / 1484.512 / 1569.164 | 433.237 / 1580.740 / 1580.740 / 1846.667 |
+  | `CONTRACT_METADATA` | 10 | 1499.290 / 1681.382 / 1681.382 / 1681.382 | 1502.754 / 1811.357 / 1811.357 / 1811.357 |
+  | `FUNDING_RATE` | 10 | 1499.290 / 1681.382 / 1681.382 / 1681.382 | 1502.754 / 1811.357 / 1811.357 / 1811.357 |
+  | `LONG_SHORT_RATIO` | 5 | 942.118 / 1499.290 / 1499.290 / 1499.290 | 937.146 / 1502.754 / 1502.754 / 1502.754 |
+  | `MARK_INDEX_PRICE` | 20 | 295.827 / 1681.382 / 1681.382 / 1681.382 | 223.773 / 1811.357 / 1811.357 / 1811.357 |
+  | `OPEN_INTEREST` | 10 | 1499.290 / 1681.382 / 1681.382 / 1681.382 | 1502.754 / 1811.357 / 1811.357 / 1811.357 |
+  | `QUOTE` | 20 | 675.120 / 1632.278 / 1632.278 / 1714.665 | 617.633 / 1779.428 / 1779.428 / 1781.658 |
+  | `TAKER_FLOW` | 5 | 942.118 / 1499.290 / 1499.290 / 1499.290 | 937.146 / 1502.754 / 1502.754 / 1502.754 |
+  | `TRADE` | 24 | 1170.872 / 1681.358 / 1737.660 / 1793.812 | 889.734 / 1777.627 / 1778.117 / 1778.972 |
+
+  At completion the C2 client captured `94` millicores and `261300224` bytes
+  RSS. The two Query and two Stream readers all run
+  `qdl-v2-python:2.0.26-137633b@sha256:0a69fbf0c883cad27a433ea529555269ab7386706de6e1c635fa5fef2107a545`,
+  are `healthy`, restart `0`, not OOM-killed and retain the sealed
+  `r135-b2-335792a-20260920T015057Z/runtime` mount. Bounded evidence is under
+  `/home/bobby/.local/state/qdl-v2/r135-lossless-l2-e72905e-20260921T181741Z/evidence/c2-valid/`.
+  The two launcher/provenance aborts above remain explicitly non-acceptance
+  provenance; the receipt here is the only C2 certificate. R1.35-C is closed:
+  no further data correctness matrix or C2 retry is required. The sole
+  remaining release work is R1.35-D: durable replacement of the temporary
+  Stream override, scoped test-artifact inventory/cleanup, source-image
+  reconciliation, CI/PR and an explicitly approved release packet.
 
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
