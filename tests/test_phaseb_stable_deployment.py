@@ -1490,9 +1490,22 @@ class StableComposeAndBundleTests(unittest.TestCase):
         self.assertEqual(
             len(projector_names), compose["x-kafka-env"]["KAFKA_NUM_PARTITIONS"]
         )
-        for name in projector_names:
+        for ordinal, name in enumerate(projector_names, start=1):
             self.assertNotIn("ports", services[name])
             self.assertEqual(services[name]["networks"], ["stable_internal"])
+            heartbeat = (
+                f"/var/lib/qdl-stable/runtime/heartbeat/projector-{ordinal}.json"
+            )
+            self.assertEqual(
+                services[name]["environment"]["QDL_STABLE_HEARTBEAT_PATH"],
+                heartbeat,
+            )
+            healthcheck = services[name]["healthcheck"]
+            self.assertIn(heartbeat, " ".join(healthcheck["test"]))
+            self.assertEqual(healthcheck["interval"], "20s")
+            self.assertEqual(healthcheck["timeout"], "5s")
+            self.assertEqual(healthcheck["retries"], 3)
+            self.assertEqual(healthcheck["start_period"], "60s")
         self.assertEqual(
             {
                 services[name]["environment"]["QDL_STABLE_CONSUMER_GROUP"]

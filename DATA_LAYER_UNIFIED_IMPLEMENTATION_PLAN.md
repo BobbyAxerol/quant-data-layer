@@ -47837,6 +47837,39 @@ unchanged.
   `1/8/16/32/50` BAR ladder, all-scope two-replica preflight and one C2
   `300s`; a failed earlier gate consumes neither later gate.
 
+  **R1.35-C projector-capacity runtime packet (`READY / APPROVED`,
+  2026-09-21).** Candidate source `987b1a2` was built as immutable
+  `sha256:d724764b17dc9f21e681c2ebeac4fb48588d45010b0f1ff3a00b6cfa408f2a3b`
+  (`qdl-v2-python:2.0.26-987b1a2`). Packet
+  `/home/bobby/.local/state/qdl-v2/r135-projector-capacity-987b1a2-20260921T103546Z`
+  uses the active sealed runtime chain and changes only six generic members of
+  `stable-projector-v1`: serially replace the three current members and add
+  members `4..6`. Its exact rollback is image
+  `sha256:1329c9d7692b207c1aecd3cd562c0ba4b35638160e167132bb06fcba687ebe06`
+  plus the previous `128`-record commit window on only members `1..3`, after
+  stopping only `4..6`. It has no Kafka topology/offset reset, Redis flush,
+  SQLite deletion, V1, Rust, ingestor, Query/Stream, Trading System, alpha or
+  order-path scope. Render must pass before serial rollout; a live lag/age
+  receipt is required before any BAR ladder, all-scope preflight or C2.
+
+  **Replica-health correction (`IN PROGRESS / SAME RUNTIME SCOPE`,
+  2026-09-21).** The first addition of generic member `4` stopped before any
+  old member was recreated: it was processing canonical events but had no
+  Docker healthcheck because the historical liveness override named only
+  members `1..3`. This is a Compose-contract omission, not a projector crash,
+  Kafka loss or provider fault. The canonical Compose contract now assigns
+  every generic member a unique `QDL_STABLE_HEARTBEAT_PATH` and the same
+  bounded `30s` loop-turn check; the regression asserts all six paths and
+  healthcheck parameters. The packet must re-render and recreate member `4`
+  with this canonical health contract before continuing `5`, `6`, then `1..3`.
+  The source gate passed `48/48` targeted recovery, boundary, Compose and
+  heartbeat tests in the immutable `e8394ff` image with network disabled,
+  read-only source and tmpfs-only scratch; Compose render and `git diff --check`
+  also passed. Only member `4` was started before this correction; it processed
+  real canonical events, but no existing projector was recreated and no later
+  BAR/preflight/C2 gate was consumed. The stated rollback and all no-mutation
+  invariants remain unchanged.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

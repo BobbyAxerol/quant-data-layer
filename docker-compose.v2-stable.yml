@@ -433,6 +433,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-1-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-1.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-1
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -455,6 +456,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-1.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -480,6 +487,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-2-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-2.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-2
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -497,6 +505,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-2.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -522,6 +536,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-3-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-3.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-3
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -539,6 +554,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-3.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -564,6 +585,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-4-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-4.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-4
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -581,6 +603,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-4.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -603,6 +631,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-5-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-5.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-5
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -620,6 +649,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-5.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
@@ -642,6 +677,7 @@ services:
       QDL_STABLE_HTTP_PORT: "8230"
       QDL_STABLE_GRPC_PORT: "8231"
       QDL_STABLE_AUDIT_PATH: /var/lib/qdl-stable/runtime/stable-projector-6-audit.jsonl
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-stable/runtime/heartbeat/projector-6.json
       QDL_STABLE_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
       QDL_STABLE_KAFKA_CLIENT_ID: stable-projector-6
       QDL_STABLE_KAFKA_CANONICAL_TOPIC: md.canonical.v2
@@ -659,6 +695,12 @@ services:
       - stable_state:/var/lib/qdl-stable
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
+    healthcheck:
+      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-6.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       stable_tls_init: {condition: service_completed_successfully}
       stable_state_init: {condition: service_completed_successfully}
