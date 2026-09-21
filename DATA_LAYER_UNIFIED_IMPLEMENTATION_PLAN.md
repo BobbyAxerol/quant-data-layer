@@ -48994,6 +48994,30 @@ mount, all previously affected frozen-evidence modules passed `55/55` in
 overlaid `/app`, no service started, and no serving role, provider, durable
 state, V1, consumer, alpha or order path changed.
 
+**CI fixture-contract assertion repair (`APPROVED / SOURCE-ONLY`,
+2026-09-21).** Remote run `35656395049` executed `1793` tests and failed only
+`ReleaseBundleTests.test_runtime_image_is_non_root_and_trivy_waiver_is_narrow`:
+the legacy test counts raw `volumes: !reset []` YAML tokens and still expects
+four, while the deliberate `test_runner` fixture uses Compose `!override` to
+replace its inherited volume list with exactly the frozen evidence mount. The
+approved narrow repair changes that assertion to verify the intended Compose
+semantics: the three non-runner test services retain reset volumes and
+`test_runner` has the one read-only `./upgrade/evidence` fixture mount. It does
+not weaken image isolation, re-add evidence to serving images, change a runtime
+role, or consume C2. Exit: the focused test and resolved Compose contract pass
+locally, then one full GitHub CI run is green.
+
+**CI fixture-contract assertion result (`PASS / REMOTE CI NEXT`,
+2026-09-21).** The test now asserts the actual Compose contract rather than a
+legacy raw-token count: exactly three non-runner CI services reset inherited
+volumes, while `test_runner` uses `!override` and exposes only
+`./upgrade/evidence:/app/upgrade/evidence:ro`. `docker compose -f
+docker-compose.yml -f docker-compose.ci.yml config --quiet` passed; the
+disposable, `--network none`, read-only, non-root image test
+`python -m unittest tests.test_fund_phase6_release` passed `3/3` in `0.135s`.
+It created no Compose service, provider session, durable data, runtime change
+or order action. The full GitHub unit suite remains the release authority.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,

@@ -64,7 +64,16 @@ class ReleaseBundleTests(unittest.TestCase):
         ci_compose = (ROOT / "docker-compose.ci.yml").read_text(encoding="utf-8")
         self.assertGreaterEqual(ci_compose.count("container_name: !reset null"), 5)
         self.assertIn("ports: !reset []", ci_compose)
-        self.assertGreaterEqual(ci_compose.count("volumes: !reset []"), 4)
+        self.assertEqual(ci_compose.count("volumes: !reset []"), 3)
+        test_runner = ci_compose.split("  test_runner:\n", 1)[1].split(
+            "\n  data_source_checker:", 1
+        )[0]
+        self.assertIn("volumes: !override", test_runner)
+        self.assertIn(
+            "./upgrade/evidence:/app/upgrade/evidence:ro",
+            test_runner,
+        )
+        self.assertNotIn("volumes: !reset []", test_runner)
         ignored = {
             line.strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
