@@ -302,53 +302,73 @@ class StableSpoolQueryBackend:
         if not plans:
             return results
 
-        parsed_tails: dict[tuple[str, str], tuple[_ParsedStoredEvent, ...] | Exception] = {}
+        plans_by_physical_tail: dict[
+            tuple[str, str],
+            list[tuple[
+                DataRequirement,
+                StableSourceBinding,
+                int,
+                int | None,
+                int | None,
+                tuple[int, ...] | None,
+                int,
+                int,
+            ]],
+        ] = {}
+        for plan in plans:
+            binding = plan[1]
+            plans_by_physical_tail.setdefault(
+                (binding.canonical_stream, binding.partition_key), []
+            ).append(plan)
+
+        def materialize_tail(
+            key: tuple[str, str], rows: tuple[StoredEvent, ...],
+        ) -> None:
+            physical_plans = plans_by_physical_tail[key]
+            try:
+                parsed_tail = self._parse_records(rows)
+            except Exception as error:
+                for requirement, *_rest in physical_plans:
+                    results[requirement] = error
+                return
+            for (
+                requirement,
+                binding,
+                requested,
+                start_ns,
+                end_ns,
+                expected_opens,
+                read_limit,
+                physical_limit,
+            ) in physical_plans:
+                try:
+                    # The physical tail can be larger because another declared
+                    # logical feed shares it. Slice before filtering so each
+                    # route retains exactly the same bounded semantics as
+                    # ``history``. The next physical tail is not retained
+                    # while this one is decoded/materialized.
+                    all_records = self._select_records(
+                        binding,
+                        parsed_tail[-physical_limit:],
+                        limit=read_limit,
+                    )
+                    results[requirement] = self._history_from_records(
+                        requirement,
+                        binding,
+                        all_records,
+                        requested=requested,
+                        start_ns=start_ns,
+                        end_ns=end_ns,
+                        expected_opens=expected_opens,
+                    )
+                except Exception as error:
+                    results[requirement] = error
         try:
-            tails = self.spool.read_tails(requests=tail_requests)
+            self.spool.visit_tails(requests=tail_requests, visit=materialize_tail)
         except Exception as error:
             for requirement, *_rest in plans:
                 results[requirement] = error
             return results
-        for key, rows in tails.items():
-            try:
-                parsed_tails[key] = self._parse_records(rows)
-            except Exception as error:
-                parsed_tails[key] = error
-
-        for (
-            requirement,
-            binding,
-            requested,
-            start_ns,
-            end_ns,
-            expected_opens,
-            read_limit,
-            physical_limit,
-        ) in plans:
-            tail = parsed_tails.get((binding.canonical_stream, binding.partition_key), ())
-            if isinstance(tail, Exception):
-                results[requirement] = tail
-                continue
-            try:
-                # The physical tail can be larger because another declared
-                # logical feed shares it. Slice before filtering so each route
-                # retains exactly the same bounded semantics as ``history``.
-                all_records = self._select_records(
-                    binding,
-                    tail[-physical_limit:],
-                    limit=read_limit,
-                )
-                results[requirement] = self._history_from_records(
-                    requirement,
-                    binding,
-                    all_records,
-                    requested=requested,
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    expected_opens=expected_opens,
-                )
-            except Exception as error:
-                results[requirement] = error
         return results
 
     def _history_from_records(

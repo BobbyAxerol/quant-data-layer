@@ -672,31 +672,37 @@ class SQLiteDurableSpool:
         this transport boundary.
         """
 
-        max_tail_rows = max(10_000, self.config.max_partition_records)
-        normalized: dict[tuple[str, str], int] = {}
-        for stream, partition_key, limit in requests:
-            if not stream.strip() or not partition_key.strip():
-                raise ValueError("tail stream and partition_key are required")
-            if limit <= 0 or limit > max_tail_rows:
-                raise ValueError(f"limit must be between 1 and {max_tail_rows}")
-            key = (stream, partition_key)
-            normalized[key] = max(normalized.get(key, 0), int(limit))
-        if len(normalized) > 100:
-            raise ValueError("batch tail read exceeds the public request bound")
-        if not normalized:
-            return {}
+        grouped: dict[tuple[str, str], list[StoredEvent]] = {}
 
-        grouped: dict[tuple[str, str], list[StoredEvent]] = {
-            key: [] for key in normalized
-        }
+        def collect(key: tuple[str, str], rows: tuple[StoredEvent, ...]) -> None:
+            grouped[key] = list(rows)
+
+        self.visit_tails(requests=requests, visit=collect)
+        return {key: tuple(value) for key, value in grouped.items()}
+
+    def visit_tails(
+        self,
+        *,
+        requests: tuple[tuple[str, str, int], ...] | list[tuple[str, str, int]],
+        visit: Callable[[tuple[str, str], tuple[StoredEvent, ...]], None],
+    ) -> None:
+        """Visit each deduplicated indexed tail under one read snapshot.
+
+        The callback runs before the next physical partition is read.  This is
+        intentionally separate from :meth:`read_tails`: large callers can
+        materialize a result and release a physical tail before reading the
+        next one, while preserving the same SQLite snapshot for every route in
+        the public batch.
+        """
+
+        normalized = self._normalized_tail_requests(requests)
+        if not normalized:
+            return
         with self._lock:
-            # One read transaction gives every partition a consistent cache
-            # generation.  Do not use a window-function CTE here: on a large
-            # spool SQLite may sort the whole events table into temp storage
-            # before applying each tail cap.  These are bounded index-tail
-            # reads under one lock/snapshot, so the public 100-item batch
-            # bound remains finite without turning a local read into a disk
-            # pressure incident.
+            # A deferred read transaction keeps one consistent generation
+            # without blocking WAL writers.  Do not use a window-function CTE
+            # here: on a large spool SQLite may sort the whole events table
+            # into temp storage before applying each tail cap.
             self._connection.execute("BEGIN")
             try:
                 for (stream, partition_key), limit in normalized.items():
@@ -708,15 +714,32 @@ class SQLiteDurableSpool:
                         """,
                         (stream, partition_key, limit),
                     ).fetchall()
-                    grouped[(stream, partition_key)].extend(
-                        self._stored_event(row) for row in reversed(rows)
+                    visit(
+                        (stream, partition_key),
+                        tuple(self._stored_event(row) for row in reversed(rows)),
                     )
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
             else:
                 self._connection.execute("COMMIT")
-        return {key: tuple(value) for key, value in grouped.items()}
+
+    def _normalized_tail_requests(
+        self,
+        requests: tuple[tuple[str, str, int], ...] | list[tuple[str, str, int]],
+    ) -> dict[tuple[str, str], int]:
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        normalized: dict[tuple[str, str], int] = {}
+        for stream, partition_key, limit in requests:
+            if not stream.strip() or not partition_key.strip():
+                raise ValueError("tail stream and partition_key are required")
+            if limit <= 0 or limit > max_tail_rows:
+                raise ValueError(f"limit must be between 1 and {max_tail_rows}")
+            key = (stream, partition_key)
+            normalized[key] = max(normalized.get(key, 0), int(limit))
+        if len(normalized) > 100:
+            raise ValueError("batch tail read exceeds the public request bound")
+        return normalized
 
     def find_event(self, *, stream: str, event_id: bytes) -> StoredEvent | None:
         with self._lock:

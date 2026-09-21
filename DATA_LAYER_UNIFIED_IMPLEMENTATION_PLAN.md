@@ -47467,6 +47467,56 @@ unchanged.
   serial rolling replacement of only the two Query readers, the strict
   `1/8/16/32/50` ladder, then the already-defined preflight/C2 sequence.
 
+  **Candidate ladder diagnostic (`IN_PROGRESS / SECOND SOURCE REPAIR`,
+  2026-09-21).** Candidate `9c205e5` was built with immutable digest
+  `sha256:3c8d245e7ecd51d3d4a87b2ddaa741e832a7436167ba542c0899caf27272f961`
+  and rolled serially to only `query_v2_1` and `query_v2_2`; both reached
+  healthy, non-OOM state on the unchanged runtime mount. The first real ladder
+  no longer produced SQLite `INTERNAL_ERROR`, but its primary `16`-BAR window
+  returned `ConnectError` immediately after both Query processes restarted.
+  The receipt is retained under the scoped runtime packet and reports zero
+  order actions; it is not a C2 run. Docker's live cgroup counters show no
+  OOM kill, so the exact simultaneous process restart is not attributed to a
+  provider, a stale route, or this source patch without evidence.
+
+  Independently, code inspection found a boundedness defect that the 50-route
+  gate is designed to expose: `history_many()` still retained raw rows and
+  decoded protobufs for every physical BAR partition before materializing any
+  result. With the governed physical window of `12,064` records, a maximum
+  batch can create an unnecessary whole-batch memory peak. The next in-scope
+  source repair preserves the one SQLite read snapshot but visits one indexed
+  partition tail at a time and immediately materializes its logical results.
+  It changes neither public batch shape, data quality/finality, provider
+  policy, quota, timeout nor fallback behavior. New regressions must prove
+  one-snapshot semantics, physical-tail deduplication, per-item parity and
+  bounded traversal before one fresh candidate/ladder attempt. Preflight and
+  C2 remain unconsumed.
+
+  **Bounded traversal evidence (`PASS / FINAL SOURCE REGRESSION NEXT`,
+  2026-09-21).** The transport now exposes a private callback traversal under
+  one deferred SQLite read snapshot; `history_many()` parses and materializes
+  one deduplicated physical tail before advancing to the next. It keeps the
+  full `12,064` BAR physical window, including authentic late-backfill
+  headroom, rather than using an incomplete header-derived shortcut: live
+  cache inspection showed only `1,951/12,064` rows in one retained legacy
+  partition carry the newer final-BAR header. The targeted suite passed `5/5`
+  for snapshot, ordering, 50-partition transport bound, per-item parity, late
+  gap/missing behavior and sequential tail visitation.
+
+  A disposable no-network/read-only run against the real canonical cache and
+  the exact sealed `alpha.okx.paper.stable` BAR partition passed all
+  `16/16` and `50/50` histories under the same `512 MiB` memory limit as a
+  Query reader: shape `16` took `3,563.012 ms` at `228,052 KiB` peak RSS, and
+  shape `50` took `10,534.067 ms` at `229,032 KiB`. It made no provider call,
+  cache write, runtime mutation or order action. The current runtime readers
+  remain the prior candidate until this final source slice is committed,
+  rebuilt and rolled narrowly; the failed transport attempt remains retained
+  as typed evidence and has not been overwritten.
+
+  The complete selected transport/query/readiness/identity regression matrix
+  passed `162/162` in the same no-network, read-only-root test environment;
+  syntax compilation and `git diff --check` passed before commit.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

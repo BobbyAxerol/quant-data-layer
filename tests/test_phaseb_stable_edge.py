@@ -557,13 +557,13 @@ class StableQueryContractTests(unittest.TestCase):
             requirement: backend.history(requirement) for requirement in requirements
         }
         snapshots = []
-        read_tails = self.spool.read_tails
+        visit_tails = self.spool.visit_tails
 
-        def tracked_read_tails(*, requests):
+        def tracked_visit_tails(*, requests, visit):
             snapshots.append(tuple(requests))
-            return read_tails(requests=requests)
+            return visit_tails(requests=requests, visit=visit)
 
-        self.spool.read_tails = tracked_read_tails
+        self.spool.visit_tails = tracked_visit_tails
         actual = backend.history_many(requirements)
 
         self.assertEqual(len(snapshots), 1)
@@ -577,6 +577,49 @@ class StableQueryContractTests(unittest.TestCase):
             actual[requirements[1]].items[-1].instrument_uid,
             bindings[1].instrument.instrument_uid,
         )
+
+    def test_history_many_visits_one_physical_tail_at_a_time(self):
+        bindings_and_fixtures = (
+            ("binance-usdm-btcusdt-bar-1m", "binance_usdm_rest_bar.json"),
+            ("okx-swap-btcusdt-bar-1m", "okx_bar.json"),
+        )
+        bindings = tuple(
+            next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            for binding_id, _fixture in bindings_and_fixtures
+        )
+        events = tuple(
+            _stable_event(self.catalog, fixture, binding.binding_id)
+            for binding, (_binding_id, fixture) in zip(bindings, bindings_and_fixtures)
+        )
+        for event in events:
+            _append(self.spool, self.catalog, event)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: max(event.bar.close_time_ns for event in events) + 1_000_000,
+        )
+        requirements = tuple(_requirement(binding) for binding in bindings)
+        observed: list[tuple[str, tuple[str, str]]] = []
+        visit_tails = self.spool.visit_tails
+
+        def tracked_visit_tails(*, requests, visit):
+            def tracked_visit(key, rows):
+                observed.append(("start", key))
+                visit(key, rows)
+                observed.append(("end", key))
+
+            return visit_tails(requests=requests, visit=tracked_visit)
+
+        self.spool.visit_tails = tracked_visit_tails
+        result = backend.history_many(requirements)
+
+        self.assertTrue(all(result[item] is not None for item in requirements))
+        self.assertEqual(
+            [marker for marker, _key in observed],
+            ["start", "end", "start", "end"],
+        )
+        self.assertNotEqual(observed[0][1], observed[2][1])
 
     def test_history_many_preserves_late_backfill_gap_and_missing_item_results(self):
         btc = next(
