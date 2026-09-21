@@ -48971,6 +48971,29 @@ intentionally classifies as warnings; no exception or ignore was added. The
 temporary downloaded binary directory was removed on exit. No image, source
 dependency, runtime role or data-plane state changed in this check.
 
+**Runtime-image versus CI-fixture separation (`IN PROGRESS / SOURCE-ONLY`,
+2026-09-21).** The same run showed `19` unit-test errors after the serving
+image correctly excluded `upgrade/evidence/`: legacy frozen-evidence contract
+tests deliberately read those Git-tracked fixtures from `/app/upgrade/evidence`.
+The failure proves the final image is leaner, not that a product contract is
+invalid. The repair keeps evidence excluded from all serving image contexts and
+adds one read-only bind of exactly `./upgrade/evidence` to the CI
+`test_runner`; it does not mount source over application code, add the
+directory to Query/Stream roles, or change any runtime Compose service. The
+exit gate is resolved Compose mount identity plus targeted frozen-evidence
+contract tests against an evidence-free disposable image; full CI then remains
+the authority.
+
+**Runtime-image versus CI-fixture separation test (`PASS / REMOTE CI NEXT`,
+2026-09-21).** Compose `config --quiet` passed and resolves `test_runner` with
+exactly one bind: this worktree's `upgrade/evidence` to
+`/app/upgrade/evidence`, read-only. A disposable image built after the
+evidence exclusion proved the directory absent before the mount; with only that
+mount, all previously affected frozen-evidence modules passed `55/55` in
+`1.367s`. The exact test image was removed after the run. No source mount
+overlaid `/app`, no service started, and no serving role, provider, durable
+state, V1, consumer, alpha or order path changed.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,

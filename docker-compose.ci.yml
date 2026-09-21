@@ -14,7 +14,10 @@ services:
 
   test_runner:
     container_name: !reset null
-    volumes: !reset []
+    # Evidence remains outside serving images. Contract tests receive only the
+    # frozen fixture directory and never a writable application-source mount.
+    volumes: !override
+      - ./upgrade/evidence:/app/upgrade/evidence:ro
 
   data_source_checker:
     container_name: !reset null
