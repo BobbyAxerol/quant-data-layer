@@ -190,11 +190,13 @@ class _LocalBatchAdmission:
     one cache/materialization unit, not fifty independent provider calls, so
     per-item executor permits cannot provide a meaningful fairness boundary.
     The pending count includes the active batch and is intentionally small:
-    one running batch plus one legitimate collocated consumer is enough for
-    the stable reader while preventing abandoned client work from piling up.
+    one running batch plus two declared collocated consumer lanes is enough
+    for the stable reader while preventing abandoned client work from piling
+    up.  A queued lane still has a finite admission wait, derived from the
+    request's declared work deadline; it is never provider pacing.
     """
 
-    def __init__(self, *, max_active: int = 1, max_pending: int = 2) -> None:
+    def __init__(self, *, max_active: int = 1, max_pending: int = 3) -> None:
         if max_active != 1:
             raise ValueError("local canonical batch admission currently requires one active lane")
         if max_pending < max_active:
@@ -206,8 +208,11 @@ class _LocalBatchAdmission:
         self._active = 0
         self._admitted = 0
         self._rejected = 0
+        self._queue_wait_timeouts = 0
 
-    async def run(self, work):
+    async def run(self, work, *, wait_timeout_ms: int | None = None):
+        if wait_timeout_ms is not None and wait_timeout_ms < 1:
+            raise ValueError("local canonical batch admission wait must be positive")
         async with self._lock:
             if self._pending >= self._max_pending:
                 self._rejected += 1
@@ -217,7 +222,18 @@ class _LocalBatchAdmission:
             self._pending += 1
         acquired = False
         try:
-            await self._gate.acquire()
+            try:
+                if wait_timeout_ms is None:
+                    await self._gate.acquire()
+                else:
+                    await asyncio.wait_for(
+                        self._gate.acquire(), timeout=wait_timeout_ms / 1_000
+                    )
+            except asyncio.TimeoutError as error:
+                self._queue_wait_timeouts += 1
+                raise _LocalBatchAdmissionRejected(
+                    "local canonical-cache batch admission wait exceeded the declared deadline"
+                ) from error
             acquired = True
             self._active += 1
             self._admitted += 1
@@ -235,6 +251,7 @@ class _LocalBatchAdmission:
             "pending": self._pending,
             "admitted": self._admitted,
             "rejected": self._rejected,
+            "queue_wait_timeouts": self._queue_wait_timeouts,
         }
 
 
@@ -588,6 +605,15 @@ class V2QueryService:
                 deadline_ms=deadline,
             )
 
+        # One whole-local batch has one deterministic admission budget.  The
+        # constituent work may have different declared deadlines, so a queue
+        # cannot wait longer than the most restrictive consumer item.  Its
+        # execution deadline remains owned by the local warmup executor after
+        # this gate admits the batch.
+        local_admission_wait_ms = min(
+            deadline(requirement) for requirement in local_requirements
+        ) if local_requirements else None
+
         def assemble_batch(executions) -> BatchQueryResult:
             results = []
             for execution in executions:
@@ -694,7 +720,10 @@ class V2QueryService:
                 return await complete(await execute_items())
 
             local_batch_task = asyncio.create_task(
-                admission.run(execute_whole_local_batch)
+                admission.run(
+                    execute_whole_local_batch,
+                    wait_timeout_ms=local_admission_wait_ms,
+                )
             )
             try:
                 return await asyncio.shield(local_batch_task)
@@ -704,14 +733,14 @@ class V2QueryService:
                 # CPU budget. Keep the request-local lease until it drains.
                 local_batch_task.add_done_callback(self._consume_detached_local_batch)
                 raise
-            except _LocalBatchAdmissionRejected:
-                # A third collocated heavy batch must fail typed before it can
-                # create cache work or borrow an external-provider budget.
+            except _LocalBatchAdmissionRejected as error:
+                # A bounded queued lane must fail typed before it can create
+                # cache work or borrow an external-provider budget.
                 prefetched_local_histories = {
                     requirement: QueryServiceError(
                         QueryProblem(
                             CanonicalErrorCode.RATE_LIMITED,
-                            "local canonical-cache batch admission is at capacity",
+                            str(error),
                             True,
                         ),
                         request_id=request_id,

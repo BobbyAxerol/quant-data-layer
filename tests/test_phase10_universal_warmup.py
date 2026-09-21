@@ -2254,6 +2254,190 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service._local_batch_admission.stats()["active"], 0)
         self.assertEqual(service._local_batch_admission.stats()["pending"], 0)
 
+    async def test_query_local_batch_default_admission_serves_three_lanes_fifo(self):
+        class Backend:
+            def __init__(self):
+                self.calls = 0
+                self.active = 0
+                self.peak = 0
+                self.lock = threading.Lock()
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                with self.lock:
+                    self.calls += 1
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                    if self.calls == 1:
+                        self.started.set()
+                self.release.wait(timeout=1)
+                time.sleep(0.01)
+                with self.lock:
+                    self.active -= 1
+                return {requirement: "history" for requirement in requirements}
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = BoundedWarmupExecutor()
+                self.last_batch_evidence = {}
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        def requirement(instrument_uid: str) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1, deadline_ms=1_000),
+            )
+
+        service = Service()
+        tasks = tuple(
+            asyncio.create_task(service.warmup_batch_async(
+                BatchRequirement(
+                    consumer_id=f"local-batch-default-{index}",
+                    requirements=(requirement(f"default-{index}"),),
+                ),
+                purpose=AccessPurpose.INTERNAL_ALPHA,
+            ))
+            for index in range(3)
+        )
+        self.assertTrue(await asyncio.to_thread(service.backend.started.wait, 1))
+        admission = service._local_batch_admission_for()
+
+        async def wait_for_three_lanes():
+            while admission.stats()["pending"] != 3:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_three_lanes(), timeout=1)
+        rejected = await service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="local-batch-default-overflow",
+                requirements=(requirement("default-overflow"),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertEqual([item.status for item in rejected.results], ["RATE_LIMITED"])
+        self.assertEqual(service.backend.calls, 1)
+        self.assertEqual(admission.stats()["rejected"], 1)
+        service.backend.release.set()
+        results = await asyncio.gather(*tasks)
+        self.assertTrue(all(item.status == "OK" for result in results for item in result.results))
+        self.assertEqual(service.backend.calls, 3)
+        self.assertEqual(service.backend.peak, 1)
+        self.assertEqual(admission.stats()["active"], 0)
+        self.assertEqual(admission.stats()["pending"], 0)
+
+    async def test_query_local_batch_queue_wait_expiry_is_typed_and_drains(self):
+        class Backend:
+            def __init__(self):
+                self.calls = 0
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                self.calls += 1
+                if self.calls == 1:
+                    self.started.set()
+                    self.release.wait(timeout=1)
+                return {requirement: "history" for requirement in requirements}
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = BoundedWarmupExecutor()
+                self.last_batch_evidence = {}
+                self._local_batch_admission = _LocalBatchAdmission(max_pending=2)
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        def requirement(instrument_uid: str, deadline_ms: int) -> DataRequirement:
+            return DataRequirement(
+                instrument_uid=instrument_uid,
+                feed=FeedType.BAR,
+                consumer_grade=ConsumerGrade.ALPHA,
+                source_policy_id="crypto_primary_v2",
+                interval="1m",
+                warmup=WarmupSpecification.for_rows(1, deadline_ms=deadline_ms),
+            )
+
+        service = Service()
+        first = asyncio.create_task(service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="local-batch-wait-a",
+                requirements=(requirement("wait-a", 1_000),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        ))
+        self.assertTrue(await asyncio.to_thread(service.backend.started.wait, 1))
+        expired = await service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="local-batch-wait-b",
+                requirements=(requirement("wait-b", 100),),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertEqual([item.status for item in expired.results], ["RATE_LIMITED"])
+        self.assertIn("declared deadline", expired.results[0].problem.detail)
+        admission = service._local_batch_admission_for()
+        self.assertEqual(admission.stats()["queue_wait_timeouts"], 1)
+        self.assertEqual(admission.stats()["pending"], 1)
+        service.backend.release.set()
+        first_result = await first
+        self.assertEqual([item.status for item in first_result.results], ["OK"])
+        self.assertEqual(admission.stats()["active"], 0)
+        self.assertEqual(admission.stats()["pending"], 0)
+
+    async def test_local_batch_admission_queued_cancellation_releases_capacity(self):
+        admission = _LocalBatchAdmission()
+        active_started = asyncio.Event()
+        release_active = asyncio.Event()
+
+        async def active_work():
+            active_started.set()
+            await release_active.wait()
+            return "active"
+
+        async def queued_work():
+            return "queued"
+
+        active = asyncio.create_task(admission.run(active_work, wait_timeout_ms=1_000))
+        await asyncio.wait_for(active_started.wait(), timeout=1)
+        queued = asyncio.create_task(admission.run(queued_work, wait_timeout_ms=1_000))
+
+        async def wait_for_queue():
+            while admission.stats()["pending"] != 2:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_queue(), timeout=1)
+        queued.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await queued
+        self.assertEqual(admission.stats()["active"], 1)
+        self.assertEqual(admission.stats()["pending"], 1)
+        release_active.set()
+        self.assertEqual(await active, "active")
+        self.assertEqual(admission.stats()["active"], 0)
+        self.assertEqual(admission.stats()["pending"], 0)
+
     async def test_retryable_local_cache_error_does_not_open_shared_circuit(self):
         unavailable_uid = BINANCE_ETH
         ready_uid = "ee93fabf-68df-5b50-8924-51bf25a5a758"

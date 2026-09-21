@@ -48000,6 +48000,56 @@ unchanged.
   Query image from the committed repair, update the same two-reader packet's
   candidate/rollback chain, then repeat the strict ladder exactly once.
 
+  **Three-consumer local-admission finding and approved narrow repair (`IN
+  PROGRESS / SOURCE ONLY`, 2026-09-21).** The replacement `3aa7048` Query
+  image was serially applied only to `query_v2_1` and `query_v2_2`; both are
+  healthy, restart-free and non-OOM. The read-only strict ladder now proves
+  the `EMIT_REVISIONS` exact-final path itself: the first 50-BAR OKX lane
+  completed on both replicas in about `0.9s/1.5s`, and the two-lane
+  Binance/OKX step completed under its unchanged `30s` deadline. The third
+  declared consumer lane (`trading-system.paper.stable`, ten BAR requests)
+  was instead returned as typed `RATE_LIMITED` before a cache read, provider
+  call, stream/fallback action or durable mutation. The direct cause is the
+  private `_LocalBatchAdmission(max_active=1, max_pending=2)` guard: it
+  accepts one active and one queued whole-local batch, while the actual C2
+  consumer graph has three bounded local batch lanes.
+
+  The only permitted follow-up is a provider-neutral Query admission repair.
+  It keeps exactly one expensive SQLite/history-materialization lane active,
+  bounds the global resident batch count at three (one active plus two queued),
+  and bounds each queued admission wait by the smallest declared batch work
+  deadline. A fourth collocated lane or an expired queued request remains a
+  typed local-capacity rejection; cancellation must drain its pending count.
+  It must not raise external provider concurrency/rate limits, relax any
+  freshness/finality policy, change public API/SDK/manifest/cache schema,
+  create a worker/service, or start C2. Required tests are FIFO three-lane
+  admission, fourth-lane rejection, admission-wait expiry, cancellation
+  cleanup, and preservation of one-active history work. After source gates,
+  build exactly one Query image, roll only the same two Query readers with
+  `3aa7048` as rollback, then repeat the strict ladder once.
+
+  **Three-consumer local-admission source gate (`PASS / BUILD QUERY ONLY`,
+  2026-09-21).** The shared local gate now retains one active SQLite/history
+  lane, admits two finite FIFO waiters, and rejects a fourth lane before it
+  reads cache data. Each queued lane uses the minimum declared work deadline
+  as its admission-wait bound; once admitted, the existing local executor
+  retains the unchanged per-item execution deadline. A timed-out waiter is a
+  typed local `RATE_LIMITED` result, and a cancelled waiter drains without
+  leaking a permit. The local lane still never applies venue token pacing,
+  provider retry or external circuit policy.
+
+  A network-disabled, read-only, non-root container ran the focused
+  `SingleWarmupExecutionTests` `15/15`; this includes the three-lane FIFO,
+  fourth-lane typed rejection, wait-expiry and queued-cancellation regressions.
+  The complete affected source matrix (`test_phase10_universal_warmup`,
+  `test_phase105_identity_acceptance`, `test_phaseb_stable_edge`) contains
+  `178` cases and completed with exit `0` in the same container discipline.
+  `py_compile` and `git diff --check` passed. No runtime role, provider,
+  durable state, V1, consumer, alpha or order path changed. The next permitted
+  action is one immutable Query image built from this source, a serial
+  two-reader-only rollout with `3aa7048` as rollback, and one repeat of the
+  strict ladder; all-scope preflight and C2 remain unconsumed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
