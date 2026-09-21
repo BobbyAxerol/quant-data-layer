@@ -48804,6 +48804,15 @@ changed. It must not change any runtime role, image or live state. The exact
 CI dependency audit and relevant Python/Rust tests must pass before this
 correction is committed.
 
+The first CI rerun also exposed a workflow-only infrastructure failure before
+any contract command: `bufbuild/buf-setup-action` resolved its pinned Buf
+binary anonymously and GitHub returned API rate-limit exhaustion. The narrow
+correction passes the ephemeral built-in `${{ github.token }}` through the
+action's supported `github_token` input. It does not add a repository secret,
+relax Buf format/lint/breaking/generation/Rust gates, alter contracts or change
+runtime behavior. The workflow's normal token scope is read-only for this
+download operation.
+
 **Local CI correction evidence (`PASS / REMOTE CI NEXT`, 2026-09-21).** A
 Dockerfile-equivalent temporary image built from the corrected lockfile and
 passed the exact runtime dependency audit: Poetry/venv has no Poetry binary,
