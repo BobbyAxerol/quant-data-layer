@@ -2254,7 +2254,7 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service._local_batch_admission.stats()["active"], 0)
         self.assertEqual(service._local_batch_admission.stats()["pending"], 0)
 
-    async def test_query_local_batch_default_admission_serves_three_lanes_fifo(self):
+    async def test_query_local_batch_default_admission_serves_four_manifest_lanes_fifo(self):
         class Backend:
             def __init__(self):
                 self.calls = 0
@@ -2303,24 +2303,30 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         service = Service()
+        consumer_ids = (
+            "monitoring.multivenue.stable",
+            "trading-system.paper.stable",
+            "alpha.binance.paper.stable",
+            "alpha.okx.paper.stable",
+        )
         tasks = tuple(
             asyncio.create_task(service.warmup_batch_async(
                 BatchRequirement(
-                    consumer_id=f"local-batch-default-{index}",
+                    consumer_id=consumer_id,
                     requirements=(requirement(f"default-{index}"),),
                 ),
                 purpose=AccessPurpose.INTERNAL_ALPHA,
             ))
-            for index in range(3)
+            for index, consumer_id in enumerate(consumer_ids)
         )
         self.assertTrue(await asyncio.to_thread(service.backend.started.wait, 1))
         admission = service._local_batch_admission_for()
 
-        async def wait_for_three_lanes():
-            while admission.stats()["pending"] != 3:
+        async def wait_for_four_lanes():
+            while admission.stats()["pending"] != 4:
                 await asyncio.sleep(0)
 
-        await asyncio.wait_for(wait_for_three_lanes(), timeout=1)
+        await asyncio.wait_for(wait_for_four_lanes(), timeout=1)
         rejected = await service.warmup_batch_async(
             BatchRequirement(
                 consumer_id="local-batch-default-overflow",
@@ -2334,7 +2340,7 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         service.backend.release.set()
         results = await asyncio.gather(*tasks)
         self.assertTrue(all(item.status == "OK" for result in results for item in result.results))
-        self.assertEqual(service.backend.calls, 3)
+        self.assertEqual(service.backend.calls, 4)
         self.assertEqual(service.backend.peak, 1)
         self.assertEqual(admission.stats()["active"], 0)
         self.assertEqual(admission.stats()["pending"], 0)

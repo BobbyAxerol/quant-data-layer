@@ -48050,6 +48050,184 @@ unchanged.
   two-reader-only rollout with `3aa7048` as rollback, and one repeat of the
   strict ladder; all-scope preflight and C2 remain unconsumed.
 
+  **Packet-chain defect detected before acceptance (`FAIL-CLOSED / RESTORE
+  KNOWN READER PAIR`, 2026-09-21).** The first `feba690` packet application
+  did not reach the strict ladder. Its copied rollback script omitted the
+  active `3aa7048` image override from the Compose *rollback* file chain.
+  When its candidate assertion failed, the error trap restored
+  `query_v2_1` to the older terminal `b7d4f1d` override while
+  `query_v2_2` remained on `3aa7048`; both containers were healthy, but the
+  pair was no longer homogeneous. This is an operator-packet provenance bug,
+  not a Query, provider, Kafka, cache, data-quality or consumer finding. No
+  C2, preflight, provider-direct request, fallback, stream, order or durable
+  mutation occurred.
+
+  The immediate bounded correction is to restore the reader pair's known
+  `3aa7048` image and exact recorded Compose chain. `query_v2_2` already has
+  that coordinate and therefore is inspected but not needlessly recreated;
+  only the drifted `query_v2_1` is recreated serially. All other roles remain
+  untouched. The replacement candidate packet must derive both its candidate
+  and rollback chains explicitly from the restored reader labels, validate
+  those chains before apply, and retain the current image as its only rollback.
+  No further candidate rollout or ladder may run until that repair is verified.
+
+  **Corrected Query rollout and strict BAR ladder (`PASS / ALL-SCOPE
+  PREFLIGHT NEXT`, 2026-09-21).** The pair was first restored to homogeneous
+  `3aa7048`, then the corrected packet preserved that override in both
+  candidate and rollback chains and serially recreated only `query_v2_1` and
+  `query_v2_2` to immutable `feba690`
+  `sha256:d36cf8c25048a2e330c4580bb9f1a2681cda84a282fdee260b958cf7c1fcba3b`.
+  Both are `healthy`, `restart=0`, `OOMKilled=false`, with matching config
+  provenance; adjacent V2 roles were inspected and remained running. Packet
+  evidence is bounded under
+  `/home/bobby/.local/state/qdl-v2/r135-local-admission-feba690-20260921T134700Z/`.
+
+  Its read-only strict `1/8/16/32/50` BAR matrix passed through both replicas,
+  including three concurrent declared consumer lanes. Isolated 50-BAR latency
+  was `1059.029ms` primary and `1734.505ms` secondary. The three-lane wave
+  returned all `50 + 50 + 10` BAR reads: primary `2304.655ms`, `1030.282ms`,
+  `1426.253ms`; secondary `2062.450ms`, `2947.207ms`, `795.035ms`.
+  The earlier third-lane `RATE_LIMITED` is closed. The receipt reports
+  `PASS_STRICT_BAR_BATCH_SHAPE`, `order_actions=0`, `provider_connections=0`
+  and cleaned cursor state. This is real durable V2 data but not C2, and it
+  does not certify the release. The next allowed gate is the one all-scope
+  two-replica read-plane preflight; C2 remains unconsumed.
+
+  **All-scope MARK/INDEX diagnostic (`IN_PROGRESS / PRE-C2 / NO POLICY
+  RELAXATION`, 2026-09-21).** The first all-scope public-SDK preflight stopped
+  before C2 at the strict execution requirement
+  `trading-system.paper.stable/OKX/SWAP/PERPETUAL/DOGE-USDT-SWAP/MARK_INDEX_PRICE`
+  on secondary Query. Its leaf diagnosis was typed `SOURCE_UNAVAILABLE`; the
+  active stream gateway returned `COMPONENT_STALE` and the passive gateway
+  returned its expected writer-fence response. There was no consumer direct
+  provider call, V1 fallback, stream subscription, order action, Kafka offset,
+  Redis or SQLite mutation from that diagnosis.
+
+  Read-only evidence narrows the event without inventing a new SLA: all five
+  OKX session files were `LIVE`; the sampled DOGE pair had an old provider
+  confirmation (`476.881s`) which reached the durable cache only `7.393s`
+  before the read. A bounded primary-key inspection of the next 4,096 canonical
+  DOGE pairs then showed normal recovery: MARK maximum inter-update gap
+  `283ms`, INDEX `1,997ms`, pair maximum `282ms`, and `0` pair records over the
+  existing `15s` MARK / `70s` INDEX component cadence. The sample therefore
+  proves a transient materialization/component incident recovered; it does not
+  prove that changing the cadence, hiding `COMPONENT_STALE`, polling venue REST
+  or hard-coding DOGE would be correct. Rust's existing component fence remains
+  the authority. The required next gate is the all-scope two-replica fast
+  preflight again; a typed failure returns to the exact source/projection
+  boundary, while a pass alone authorizes the single final C2 300-second run.
+
+  **Canonical hot-partition receipt (`IN_PROGRESS / PRE-C2 / DRAIN BEFORE
+  RETRY`, 2026-09-21).** The subsequent all-scope recheck did not expose a
+  provider outage or an invalid MARK/INDEX contract. Read-only real-provider
+  probes received all five demanded symbols from both venues: Binance USD-M
+  `BTCUSDT/ETHUSDT/SOLUSDT/DOGEUSDT/BNBUSDT` emitted 25--26 mark frames per
+  symbol in 25 seconds, and OKX Swap emitted 77--144 INDEX and 124--126 MARK
+  frames per corresponding `*-USDT-SWAP` product in the same bounded window.
+  The corrected OKX probe used a valid WebSocket request identifier; no
+  provider fallback, order, stream subscription, cache, Redis, SQLite or Kafka
+  mutation was made by either probe.
+
+  A read-only exact-ten cache/query matrix then found current durable receipts
+  for Binance `BTC/ETH/SOL/BNB` and OKX `BTC/DOGE/BNB`, while Binance `DOGE` and
+  OKX `ETH/SOL` could still surface old provider receipts through the active
+  gateway. Kafka group evidence identifies the common cause: consumer group
+  `stable-projector-v1` owns all six existing `md.canonical.v2` partitions, but
+  partition `3` is assigned to `stable-projector-4` and had lag `78,183`, later
+  `60,552`; the other five partitions were only `71--340`. Projector-4 has no
+  restart/OOM/error and is draining in order: its observed canonical age fell
+  from about `470s` to `181s`. Its bounded spans show broker polling and
+  checkpointing are low-cost; durable append plus compatibility projection are
+  the limiting turn. This is a live catch-up after the approved six-way
+  capacity rollout, not a reason to relax freshness or introduce a venue REST
+  shortcut.
+
+  **Invariant and next gate.** Keep the current six Kafka partitions, offsets,
+  shared SQLite/Redis state, V1, Rust cores, ingestors, readers, Trading System,
+  alpha and order path unchanged. First obtain two bounded zero/near-zero lag
+  samples after the active backlog drains, then run the exact-ten MARK/INDEX
+  matrix and the already-authorized all-scope two-replica preflight. Only a
+  green preflight consumes the final C2 `300s` gate. If partition `3` fails to
+  reach or maintain the declared live-lag window, profile and repair its
+  bounded append/projection turn with FIFO/checkpoint regressions before any
+  C2 retry; do not add a service, alter Kafka topology, reset offsets, delete
+  cache state or lower data-quality policy to force a pass.
+
+  **Exact-ten recovery and all-scope preflight (`MARK/INDEX PASS; PREFLIGHT
+  FAIL-CLOSED AT BOOK_DELTA`, 2026-09-21).** Two later read-only group samples
+  showed the partition-3 catch-up reached steady state (`422`, then `393`)
+  alongside partitions `53--285`. A disposable, read-only Query-identity
+  probe then read the exact ten execution MARK/INDEX products through the
+  active V2 gateway: all `10/10` returned one complete `OK` observation; the
+  active Stream returned `200` and the passive writer correctly returned
+  `409` fenced for every product. The client was removed and its temporary
+  host environment file was deleted. This closes the MARK/INDEX backlog
+  symptom without a policy or provider change.
+
+  The one permitted all-scope no-stream/no-fallback preflight was then run
+  through both Query replicas using the four governed identities and real
+  manifest scope. It stopped before C2 at a strict eight-item
+  `trading-system.paper.stable` `BOOK_DELTA` batch on the secondary replica:
+  all eight results were typed `RATE_LIMITED`/`PARTIAL_RESULT`. Its bounded
+  leaf receipt records no provider payload, no order actions, no cursor
+  persistence and no fallback. Several leaves also retained correctly
+  fail-closed `LAST_EVENT_STALE` evidence while their provider sessions were
+  `LIVE`; this is not permission to treat the batch as usable. The disposable
+  client exited and was removed; readers, streams, six projectors, Kafka
+  offsets/topology, Redis, SQLite, V1, Trading System, alpha and order path
+  remain unchanged. C2 remains unconsumed.
+
+  **Narrow diagnostic boundary.** Determine whether the batch entered an
+  external-provider limiter despite declared durable delivery, or whether the
+  bounded local cache/history executor emitted a false `RATE_LIMITED` under
+  the exact `BOOK_DELTA` shape. Required evidence is the exact secondary
+  Query logs/config path, the per-item local/cache state and a source
+  regression that preserves external Binance/OKX/DNSE limits and all existing
+  fail-closed freshness/gap behavior. Do not retry preflight/C2, relax the
+  BOOK_DELTA SLA, call venue REST or change topology until that boundary is
+  proven.
+
+  **Four-consumer local admission correction (`IN PROGRESS / SOURCE-ONLY`,
+  2026-09-21).** Source inspection now establishes the boundary without a
+  provider hypothesis: `BOOK_DELTA` uses the fully local canonical-cache
+  history path, while read-plane preflight starts the four governed consumer
+  coroutines concurrently. The default `_LocalBatchAdmission` admits only
+  three resident whole batches (one active plus two FIFO waiters), so the
+  fourth legal consumer batch is returned as typed `RATE_LIMITED` before any
+  cache or provider work. This exactly explains the all-eight-item secondary
+  `PARTIAL_RESULT`; provider labels in the receipt are binding provenance, not
+  a venue request.
+
+  The approved repair is deliberately bounded: admit the four manifest-declared
+  local lanes (one active plus three FIFO waiters), retain one active SQLite
+  materialization, and reject a fifth lane before cache work. Add an exact
+  four-consumer FIFO/overflow regression plus existing cancellation and
+  deadline coverage. Do not alter Binance/OKX/DNSE or `INTERNAL_STREAM`
+  budgets, freshness/gap/session semantics, public contract, manifest, Kafka,
+  Redis, SQLite, topology or any order path. Source tests must pass before one
+  Query-only candidate image, a two-reader rolling packet, one all-scope
+  preflight, and only then the single final C2 `300s` certificate.
+
+  **Four-consumer admission source result (`PASS / QUERY-ONLY BUILD NEXT`,
+  2026-09-21).** The default bound now retains exactly one active
+  materialization plus three finite FIFO waiters. The regression uses the four
+  actual governed consumer identities, proves all four drain in FIFO order
+  without overlapping `history_many()`, and proves a fifth lane is typed
+  `RATE_LIMITED` before cache work. Existing deadline-expiry and cancellation
+  regressions continue to prove no pending/permit leak. `git diff --check` and
+  `py_compile` passed. In the existing non-root, read-only-root, network-disabled
+  Query image, focused `SingleWarmupExecutionTests` passed `15/15`; the affected
+  source matrix `test_phase10_universal_warmup`,
+  `test_phase105_identity_acceptance`, and `test_phaseb_stable_edge` passed
+  `178/178` with one existing Redis-dependent skip. No provider, runtime role,
+  Kafka, Redis, SQLite, V1, consumer, alpha or order action participated.
+
+  The next permitted action is one immutable Query reader image from this
+  source, then a serial two-reader rollout retaining the active `feba690`
+  digest as rollback. Only the exact all-scope no-stream/no-fallback preflight
+  may follow a healthy reader pair; C2 remains unconsumed until that preflight
+  passes.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable
