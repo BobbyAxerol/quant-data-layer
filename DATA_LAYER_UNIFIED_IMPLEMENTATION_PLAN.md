@@ -48740,6 +48740,44 @@ was never used and none was touched. This does not alter the C2 certificate or
 require another C2 because the resolved service definitions were byte-identical
 and only the external source filename changed.
 
+**Component-source reconciliation and release-artifact scope (`APPROVED /
+SOURCE-ONLY`, 2026-09-21).** The proposed stable coordinate is `v2.0.26`,
+matching the immutable V2 reader/projector image family already certified in
+this closure. This is intentionally a component-attested release, not a
+pointless full-image rebuild: active Query/Stream image source `137633b` is an
+ancestor of the candidate branch, and `137633b..HEAD` changes only the
+lossless-L2 acceptance harness, its tests and this journal. It contains no
+`qdl/`, `qdl_sdk/`, Rust, config, contract, consumer or Compose serving-code
+change. The active Rust core remains `f1c9e1d`; its later Rust delta is only
+the pure `qdl-core::quality` golden/parity module. `qdl-realtime-core` and
+provider admission source have no post-image delta and do not call that module
+at runtime. The current Python projector source is `987b1a2` and its own
+entrypoint/projector implementation has no later serving delta; the Binance
+bar-edge entrypoint/path remains unchanged after `95d9595`.
+
+The source-only artifact slice adds a bounded `v2.0.26` release certificate,
+notes and scope summary containing only release coordinate, component image
+digests/source revisions, C2 receipt hash/counts/latency semantics, declared
+V1 exclusions and rollback references. It must not copy runtime evidence,
+credentials, raw market data, book levels, external state or mutable logs into
+Git. Validate JSON/Markdown structure and the release workflow's required
+`status=PASS` and notes paths before committing. No image build, tag, push,
+merge, runtime mutation, cleanup or broker/consumer action belongs to this
+source-only slice; CI and remote release await its committed SHA.
+
+**Component-attested release artifact result (`PASS / CI NEXT`, 2026-09-21).**
+Added `upgrade/evidence/releases/v2.0.26/certificate.json`,
+`scope-evidence.json` and `RELEASE_NOTES.md`. The machine certificate records
+only the exact `299`-product C2 receipt hash, component image/source digests,
+two named reader rollback digests, bounded resource/fallback facts and declared
+DNSE/Spot boundaries. Both JSON documents passed `python3 -m json.tool`; the
+same local condition enforced by the release workflow passed: certificate
+`status=PASS` and release notes are present. Component-diff checks confirmed
+the source reconciliation stated above. No new image was built, no tag/push/
+merge occurred, and no role, data-plane, credential, state, V1, broker or
+consumer object changed in this source-only slice. The next gate is CI on the
+committed feature SHA, followed by the normal feature -> `dev` release PR.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,
