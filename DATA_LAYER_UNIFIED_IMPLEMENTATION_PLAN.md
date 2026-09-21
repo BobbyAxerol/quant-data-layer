@@ -48228,6 +48228,123 @@ unchanged.
   may follow a healthy reader pair; C2 remains unconsumed until that preflight
   passes.
 
+  **Four-lane packet provenance failure and recovery (`FAIL-CLOSED / REPAIRED
+  BEFORE RETRY`, 2026-09-21).** Candidate image
+  `qdl-v2-python:2.0.26-a7a16ac`
+  `sha256:fb351505dc205dcac48e16148b50424b064e817305053ab2dbb01850017f9984`
+  built from `a7a16ac` and passed the same immutable-image `178/178` source
+  matrix. Its first two-reader packet stopped after the first reader before
+  any acceptance gate: the copied template omitted the active additive
+  `feba690` override from its *base* Compose list, even though the live
+  container label correctly included it. Candidate-chain assertion therefore
+  failed, and the old rollback helper silently tolerated a failed restore,
+  leaving `query_v2_1` at `3aa7048` while `query_v2_2` remained at `feba690`.
+  No provider, data-plane, C2, cursor, fallback or order action occurred.
+
+  Recovery recreated only `query_v2_1` from the exact healthy
+  `query_v2_2` Compose-chain label, returning both readers to `feba690`,
+  `healthy`, `restart=0`, `OOMKilled=false` and the same read-only runtime
+  mount. The replacement packet adds the current `feba690` override to the
+  base chain, records only redacted container summaries, and treats a rollback
+  failure as terminal rather than swallowing it. Its syntax, JSON and
+  read-only Compose/provenance verification passed. The candidate was not
+  applied after that correction yet. The next permitted mutation remains a
+  serial recreate of only the two Query readers; all named durable state and
+  adjacent roles remain unchanged.
+
+  **Four-lane reader rollout and all-scope preflight (`FAIL-CLOSED / DIAGNOSIS
+  NEXT`, 2026-09-21).** The repaired packet serially recreated only
+  `query_v2_1` and `query_v2_2` into the immutable `a7a16ac` candidate
+  `sha256:fb351505dc205dcac48e16148b50424b064e817305053ab2dbb01850017f9984`.
+  Both are `healthy`, `restart=0`, `OOMKilled=false`, retain the same
+  read-only runtime revision and retain `feba690`
+  `sha256:d36cf8c25048a2e330c4580bb9f1a2681cda84a282fdee260b958cf7c1fcba3b`
+  as their exact rollback image. No other role, durable state, V1 route,
+  provider connection, consumer, alpha or order path changed.
+
+  The one permitted all-scope, no-stream/no-fallback/no-order preflight then
+  ran through an ephemeral non-root, read-only client and removed that client
+  at exit. It correctly cleared the prior local-admission `RATE_LIMITED`
+  result, but stopped fail-closed at `trading-system.paper.stable` on
+  `OKX.SWAP.PERPETUAL.BTC-USDT` `BOOK_DELTA`: `DATA_STALE` with
+  `LAST_EVENT_STALE`, `SOURCE_SESSION_UNAVAILABLE` and
+  `SOURCE_SESSION_UNKNOWN` (provider liveness absent). The adjacent
+  `OKX BNB BOOK_DELTA` observation was session `LIVE` with an older on-change
+  event, so it must not be conflated with the BTC session failure. This is a
+  typed quality/projection finding, not a quota, manifest, fallback or
+  provider-direct failure. `C2` remains unconsumed. The next action is a
+  bounded read-only ten-book/two-replica status matrix, followed by a narrow
+  shared projection or session-lineage repair only if that matrix proves one;
+  no SLA relaxation or acceptance retry is permitted first.
+
+  **Execution-L2 typed recovery matrix (`PASS / ALL-SCOPE PREFLIGHT NEXT`,
+  2026-09-21).** The bounded no-stream status matrix read all five execution
+  symbols on Binance USD-M and OKX Swap as both `BOOK_SNAPSHOT` and
+  `BOOK_DELTA`, through both Query replicas, for three consecutive rounds.
+  All `10` physical books / `20` products were `LIVE`, complete, gap-free,
+  sequence-verified and replica-parity matched; every delta had a matching
+  `LIVE` provider session and every snapshot met depth `100`. The matrix used
+  an ephemeral non-root/read-only client, made `0` provider connections and
+  `0` order actions, and removed its cursor directory. The earlier BTC/OKX
+  `UNKNOWN` therefore was a real, fail-closed transient during session/event
+  recovery, not evidence for a source mapping defect or a reason to relax the
+  policy. Evidence:
+  `/home/bobby/.local/state/qdl-v2/r135-four-lane-a7a16ac-20260921T163500Z/evidence/l2-status/`.
+  The single next gate is the existing all-scope two-replica read-plane
+  preflight; C2 remains unconsumed.
+
+  **All-scope preflight after L2 recovery (`FAIL-CLOSED / LOCAL BATCH
+  DIAGNOSIS NEXT`, 2026-09-21).** The one permitted all-scope preflight was
+  run exactly once after the L2 matrix, through the same ephemeral non-root
+  and read-only client. It made `0` order actions and stopped before C2.
+  `monitoring.multivenue.stable` received typed `PARTIAL_RESULT` for its
+  four-item durable `TRADE` batch: Binance BTC, Binance ETH, OKX BTC and OKX
+  ETH were all returned as `RATE_LIMITED`. The receipt records individual
+  identity, consumer, source-policy and typed status without payloads; the
+  three inspected non-timeout feed statuses were independently `LIVE`,
+  complete and execution-eligible. This is therefore not a provider outage,
+  a stale-data policy failure, a manifest entitlement error or an L2 defect;
+  it is an unresolved local Query batch-admission/scheduling boundary.
+  Evidence:
+  `/home/bobby/.local/state/qdl-v2/r135-four-lane-a7a16ac-20260921T163500Z/evidence/read-plane/`.
+  Do not rerun preflight or C2. The permitted next action is source inspection
+  and a targeted batch-shape/concurrency regression that reproduces this
+  exact four-item durable request, then the smallest policy correction if
+  proven.
+
+  **Five-slot local admission correction (`APPROVED SCOPE / SOURCE NEXT`,
+  2026-09-21).** Inspection proves the `RATE_LIMITED` response came from the
+  fully-local batch admission, not the HTTP request boundary or Redis identity
+  quota: the endpoint returned a typed four-item partial response rather than
+  one HTTP `429`. The previous `max_pending=4` includes its active batch, so it
+  only works if the reader is idle when the four governed consumers begin.
+  One normal in-flight cache request plus monitoring, Trading System,
+  alpha-Binance and alpha-OKX creates five legitimate, finite whole-batch
+  lanes and rejects the fourth governed request. The approved minimal repair
+  is `max_pending=5`, preserving one active SQLite materialization, FIFO
+  serialization, per-request deadlines and an explicit sixth-lane rejection.
+  Add an exact regression for incumbent + four declared lanes and sixth-lane
+  overflow; do not change external provider quotas, `INTERNAL_STREAM`, HTTP
+  request bounds, manifests, routes, topology or data state.
+
+  **Five-slot local admission source result (`PASS / QUERY-ONLY IMAGE NEXT`,
+  2026-09-21).** Query now admits exactly five finite local-cache batch slots:
+  one incumbent reader batch plus the four named stable consumer lanes. The
+  regression holds the incumbent materialization, admits monitoring, Trading
+  System, alpha-Binance and alpha-OKX, proves exactly one active
+  `history_many()` materialization, rejects a sixth lane as typed
+  `RATE_LIMITED`, then drains all five without a pending or permit leak.
+  `py_compile` and `git diff --check` passed. In the immutable predecessor
+  Query image with the source mounted read-only, non-root and `--network none`,
+  the exact regression passed `1/1`; the focused suite passed `124` with one
+  existing Redis-dependent skip; the complete affected
+  `test_phase10_universal_warmup`, `test_phase105_identity_acceptance` and
+  `test_phaseb_stable_edge` matrix passed `178/178` with that same one
+  existing skip. No runtime role/image/provider/durable state/consumer/alpha
+  or order path changed. The next permitted mutation is one immutable
+  Query-only image followed by a serial two-reader packet retaining `a7a16ac`
+  as rollback; all-scope preflight and C2 remain unconsumed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

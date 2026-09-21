@@ -190,13 +190,13 @@ class _LocalBatchAdmission:
     one cache/materialization unit, not fifty independent provider calls, so
     per-item executor permits cannot provide a meaningful fairness boundary.
     The pending count includes the active batch and is intentionally small:
-    one running batch plus three declared collocated consumer lanes is enough
-    for the stable reader while preventing abandoned client work from piling
-    up. A queued lane still has a finite admission wait, derived from the
-    request's declared work deadline; it is never provider pacing.
+    one incumbent batch plus the four declared stable consumer lanes fits in
+    the reader while preventing abandoned client work from piling up. A queued
+    lane still has a finite admission wait, derived from the request's
+    declared work deadline; it is never provider pacing.
     """
 
-    def __init__(self, *, max_active: int = 1, max_pending: int = 4) -> None:
+    def __init__(self, *, max_active: int = 1, max_pending: int = 5) -> None:
         if max_active != 1:
             raise ValueError("local canonical batch admission currently requires one active lane")
         if max_pending < max_active:
