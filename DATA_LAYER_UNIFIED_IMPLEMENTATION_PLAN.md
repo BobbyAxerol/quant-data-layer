@@ -48689,6 +48689,57 @@ was removed. Further cleanup is intentionally deferred until active-image and
 override provenance is normalized, so no named rollback artifact is mistaken
 for disposable cache.
 
+**Durable Stream override reconciliation packet (`APPROVED / PRE-MUTATION`,
+2026-09-21).** Both active Stream roles are healthy on the same `137633b`
+digest as Query, but Docker labels show their last image override at temporary
+`/tmp/qdl-r135-e72905e-stream-revision.override.yml`. Its content is only the
+two exact Stream image pins and its SHA-256 is
+`01e341ecb94a9b037500d49f0c76d22fcda5f771d28194a5abb4a4fb911c3711`; it holds
+no environment value, credential, volume or topology change. Leaving an active
+runtime dependent on `/tmp` violates release provenance even though the data
+plane is currently healthy.
+
+The bounded repair copies that exact file, mode `0644`, to the external durable
+release-state path
+`/home/bobby/.local/state/qdl-v2/releases/r1.35-137633b/stream-reader-image.override.yml`.
+It then resolves the existing Compose chain with only that final filename
+substituted and requires `docker compose config --quiet` success plus equality
+of the two resolved Stream service definitions apart from compose-label source
+path. Serially recreate only `stream_v2_active`, then `stream_v2_passive`,
+using the existing sealed env-file, all existing durable override files and the
+same active image `sha256:0a69fbf0...2107a545`. Verify per role: exact digest,
+same mounts/ports/TLS/runtime, `healthy`, restart `0`, not OOM-killed and
+revision `12`; verify the untouched peer before moving on. A failed check
+recreates only the changed Stream role with the retained temporary override and
+same `0a69...` image, then blocks release. This is a path/provenance repair,
+not a binary or behavior change, so it does not consume another C2.
+
+Do not alter Query, Rust core, ingestors, bar edge, projectors, V1, Kafka
+topology/offsets, Redis, SQLite, Trading System, alpha, identities or order
+path. Retain the temporary file until both roles pass; only then remove it and
+write the durable file hash/config-hash into the release ledger. No broad
+historical override consolidation is in this packet: existing state paths are
+already durable and their full ordered chain remains recorded in Docker labels
+and the final release provenance inventory.
+
+**Durable Stream override reconciliation result (`PASS`, 2026-09-21).** The
+durable file was copied byte-for-byte with the expected SHA-256
+`01e341ecb94a9b037500d49f0c76d22fcda5f771d28194a5abb4a4fb911c3711`. A
+read-only Compose resolution using the existing 24-file chain and only the
+final filename substitution passed `config --quiet`; the normalized two-Service
+definition hash was equal before/after:
+`83ce54046e48575504a6a8bd6c565f7c58d04ce61b37a4b9cf139bf4512062cc`.
+Exactly `stream_v2_active` then `stream_v2_passive` were serially recreated.
+Both retain the same sealed env-file, mounts, TLS/runtime directory and
+`sha256:0a69fbf0...2107a545` image, are `healthy`, restart `0` and not
+OOM-killed; their Docker labels now name the durable release-state file and no
+container label names the former `/tmp` path. The temporary file was then
+removed. The unchanged Query pair also remains `healthy`, restart `0` and not
+OOM-killed. Compose reported existing projector orphans but `--remove-orphans`
+was never used and none was touched. This does not alter the C2 certificate or
+require another C2 because the resolved service definitions were byte-identical
+and only the external source filename changed.
+
 **Required closure sequence.**
 
 1. Record each R1.35 phase result, exact commands, test counts, evidence paths,
