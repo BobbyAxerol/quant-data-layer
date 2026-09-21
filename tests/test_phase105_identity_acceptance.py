@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
 import asyncio
@@ -33,6 +34,7 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     C2ProductAcceptanceError,
     C2ReferenceProductError,
     C2ClosingBatchError,
+    C2ClosingL2Error,
     C2BatchShapeError,
     C2OpeningCapacityError,
     _C2ConsumerRequestPacer,
@@ -65,11 +67,52 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
     _paced_client_factory,
     _wait_for_minimum_observation,
     _v1_base_url,
+    main,
     parser,
 )
 
 
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
+    def test_main_emits_typed_l2_closing_failure(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="trading-system.paper.stable",
+            feed=FeedType.BOOK_DELTA,
+            evidence=lambda: {"feed": "BOOK_DELTA", "instrument_uid": "book-uid"},
+        )
+        error = C2ClosingL2Error(
+            product=product,
+            replica="primary",
+            operation="FEED_STATUS",
+            error=DataLayerError("DATA_STALE", "injected stale L2", retryable=False),
+            status_evidence={"quality": {"state": "STALE"}},
+        )
+        output = io.StringIO()
+        fake_args = SimpleNamespace(
+            timeout_seconds=15.0,
+            concurrency=4,
+            observation_seconds=300.0,
+            batch_shape_matrix=False,
+            read_plane_preflight=False,
+            opening_timeout_seconds=None,
+            closing_timeout_seconds=120.0,
+        )
+        fake_parser = SimpleNamespace(parse_args=lambda: fake_args)
+        async def failing_run(_args):
+            raise error
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.parser",
+            return_value=fake_parser,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.run",
+            new=failing_run,
+        ), patch("sys.stdout", output):
+            self.assertEqual(main(), 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "FAIL_TYPED_STATUS")
+        self.assertEqual(payload["failure"]["operation"], "FEED_STATUS")
+        self.assertFalse(payload["failure"]["payload_recorded"])
+
     def test_timing_policy_separates_final_bar_continuity_from_quiet_execution(self) -> None:
         bar = SimpleNamespace(requirement=DataRequirement(
             instrument_uid="bar-uid",
@@ -1212,6 +1255,209 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item["closing_read"] for item in evidence}, {"BATCH_V2_PRIMARY"})
         self.assertEqual(len(clients), 2)
         self.assertEqual([len(call) for client in clients for call in client.calls], [2, 2])
+
+    async def test_closing_l2_uses_status_and_snapshot_not_history_batch(self) -> None:
+        class Product:
+            def __init__(self, feed: FeedType) -> None:
+                self.consumer_id = "trading-system.paper.stable"
+                self.instrument_uid = f"uid-{feed.value.lower()}"
+                self.instrument_id = f"BINANCE.USDM.PERPETUAL.{feed.value}"
+                self.feed = feed
+                self.interval = None
+                self.source_policy_id = "crypto_liquid_v2"
+                self.delivery = DeliveryClass.DURABLE
+                self.requirement = SimpleNamespace(max_session_liveness_ms=45_000)
+                self.identity = (
+                    self.consumer_id,
+                    self.instrument_uid,
+                    feed.value,
+                    "",
+                    self.source_policy_id,
+                )
+
+            def evidence(self) -> dict[str, object]:
+                return {
+                    "consumer_id": self.consumer_id,
+                    "instrument_uid": self.instrument_uid,
+                    "feed": self.feed.value,
+                    "interval": None,
+                    "source_policy_id": self.source_policy_id,
+                }
+
+        products = (Product(FeedType.BOOK_SNAPSHOT), Product(FeedType.BOOK_DELTA))
+
+        def status_for(product: Product) -> FeedStatusResponse:
+            return FeedStatusResponse.model_validate({
+                "schema": "qdl.feed-status.v2",
+                "instrument_uid": product.instrument_uid,
+                "feed": product.feed.value,
+                "quality": {
+                    "state": "LIVE",
+                    "freshness_ms": 12,
+                    "event_recency_state": "STALE" if product.feed is FeedType.BOOK_DELTA else "LIVE",
+                    "provider_session_state": "LIVE",
+                    "provider_session_liveness_ms": 4,
+                    "gap_open": False,
+                    "complete": True,
+                    "execution_eligible": True,
+                    "policy_id": product.source_policy_id,
+                    "flags": [],
+                },
+            })
+
+        class Client:
+            def __init__(self, label: str) -> None:
+                self.label = label
+                self.status_calls: list[object] = []
+                self.snapshot_calls: list[object] = []
+                self.warmup_calls: list[object] = []
+
+            async def feed_status(self, requirement):
+                self.status_calls.append(requirement)
+                return status_for(requirement)
+
+            async def snapshot(self, requirement):
+                self.snapshot_calls.append(requirement)
+                return SimpleNamespace(data=SimpleNamespace())
+
+            async def warmup_batch(self, *_args, **_kwargs):
+                self.warmup_calls.append(True)
+                raise AssertionError("lossless L2 must not enter warmup_batch")
+
+            async def close(self) -> None:
+                return None
+
+        clients = []
+
+        def factory(_identity, *, base_url, **_kwargs):
+            client = Client(base_url)
+            clients.append(client)
+            return client
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
+            side_effect=lambda product: product,
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.validate_product_view",
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.validate_replica_views",
+            return_value=("a" * 64, "b" * 64),
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance.compact_view_quality",
+            return_value={"state": "LIVE"},
+        ), patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._timing_policy",
+            return_value={"semantic_class": "LOSSLESS_L2"},
+        ):
+            evidence = await _closing_batch_revalidation(
+                products,
+                identity=object(),
+                primary_url="https://primary",
+                secondary_url="https://secondary",
+                grpc_target="stream:8210",
+                state_dir=Path("/tmp/phase105-closing-l2"),
+                timeout_seconds=15.0,
+                max_batch_items=8,
+                client_factory=factory,
+            )
+        self.assertEqual(len(clients), 2)
+        self.assertTrue(all(len(client.status_calls) == 2 for client in clients))
+        self.assertTrue(all(len(client.snapshot_calls) == 2 for client in clients))
+        self.assertTrue(all(not client.warmup_calls for client in clients))
+        self.assertEqual(
+            {item["closing_read"] for item in evidence},
+            {"L2_STATUS_SNAPSHOT"},
+        )
+        self.assertEqual([item["feed"] for item in evidence], [
+            "BOOK_SNAPSHOT", "BOOK_DELTA",
+        ])
+
+    async def test_closing_l2_fails_with_typed_status_before_snapshot(self) -> None:
+        product = SimpleNamespace(
+            consumer_id="trading-system.paper.stable",
+            instrument_uid="uid-book",
+            instrument_id="OKX.SWAP.PERPETUAL.BTC-USDT",
+            feed=FeedType.BOOK_DELTA,
+            interval=None,
+            source_policy_id="crypto_liquid_v2",
+            delivery=DeliveryClass.DURABLE,
+            requirement=SimpleNamespace(max_session_liveness_ms=45_000),
+            identity=(
+                "trading-system.paper.stable", "uid-book", "BOOK_DELTA", "",
+                "crypto_liquid_v2",
+            ),
+            evidence=lambda: {
+                "consumer_id": "trading-system.paper.stable",
+                "instrument_uid": "uid-book",
+                "feed": "BOOK_DELTA",
+                "interval": None,
+                "source_policy_id": "crypto_liquid_v2",
+            },
+        )
+        stale = FeedStatusResponse.model_validate({
+            "schema": "qdl.feed-status.v2",
+            "instrument_uid": "uid-book",
+            "feed": "BOOK_DELTA",
+            "quality": {
+                "state": "STALE",
+                "freshness_ms": 2_001,
+                "event_recency_state": "STALE",
+                "provider_session_state": "LIVE",
+                "provider_session_liveness_ms": 3,
+                "gap_open": False,
+                "complete": True,
+                "execution_eligible": False,
+                "policy_id": "crypto_liquid_v2",
+                "flags": ["EVENT_STALE"],
+            },
+        })
+
+        class Client:
+            snapshot_calls = 0
+
+            async def feed_status(self, requirement):
+                self.assertIs(requirement, product)
+                return stale
+
+            async def snapshot(self, _requirement):
+                self.snapshot_calls += 1
+                raise AssertionError("stale L2 status must block before snapshot")
+
+            async def close(self) -> None:
+                return None
+
+            @staticmethod
+            def assertIs(actual, expected):
+                if actual is not expected:
+                    raise AssertionError("requirements differ")
+
+        clients = []
+
+        def factory(*_args, **_kwargs):
+            client = Client()
+            clients.append(client)
+            return client
+
+        with patch(
+            "scripts.phase105_consumer_v2_identity_acceptance._closing_requirement",
+            return_value=product,
+        ):
+            with self.assertRaises(C2ClosingL2Error) as raised:
+                await _closing_batch_revalidation(
+                    (product,),
+                    identity=object(),
+                    primary_url="https://primary",
+                    secondary_url="https://secondary",
+                    grpc_target="stream:8210",
+                    state_dir=Path("/tmp/phase105-closing-l2"),
+                    timeout_seconds=15.0,
+                    max_batch_items=8,
+                    client_factory=factory,
+                )
+        self.assertEqual(raised.exception.evidence["operation"], "FEED_STATUS")
+        self.assertEqual(raised.exception.evidence["typed_status"]["quality"]["state"], "STALE")
+        self.assertFalse(raised.exception.evidence["payload_recorded"])
+        self.assertTrue(all(client.snapshot_calls == 0 for client in clients))
 
     async def test_partial_batch_bisects_only_failing_leaf_for_typed_diagnostic(self) -> None:
         class Product:

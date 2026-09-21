@@ -48442,6 +48442,68 @@ unchanged.
   two-reader-only packet retaining `ed164a9` as rollback, then one all-scope
   fast preflight; C2 remains unconsumed until that preflight passes.
 
+  **Lossless L2 transport correction (`APPROVED SCOPE / SOURCE-ONLY`,
+  2026-09-21).** The subsequent `137633b` Query-only rollout was healthy on
+  both readers, but its one all-scope preflight stopped before C2 at an
+  eight-item `BOOK_DELTA` `warmup:batch` with typed `RATE_LIMITED`. This is a
+  local `history_many()` scheduling outcome: BOOK snapshot and delta share one
+  physical SQLite partition, so a generic historical batch must scan bounded
+  physical tails before it can select each logical feed. It is not an OKX or
+  Binance request, provider quota, stale-data waiver, manifest entitlement, or
+  L2 sequence failure.
+
+  More importantly, the generic closing/preflight transport was wrong for this
+  product class. `BOOK_DELTA` is declared lossless and is useful only after a
+  verified snapshot plus signed stream/replay cursor; a latest-history batch is
+  not its execution handoff. The existing bounded L2 matrix already proved the
+  correct no-stream read plane for all ten physical execution books: typed
+  `feed_status` plus one exact `snapshot` for both logical products through
+  both Query replicas, three consecutive rounds, with complete, gap-free,
+  sequence-verified depth-100 views and replica parity. C2 opening separately
+  proves signed cursor/reconnect/replay for each stream product.
+
+  The narrow repair changes the acceptance harness only: split lossless L2
+  products from generic closing `warmup:batch`; for each replica, read the
+  sealed SDK `feed_status` and `snapshot`, retain the same exact
+  identity/freshness/gap/quality/replica checks, and record a transport class
+  of `L2_STATUS_SNAPSHOT`. BAR and other history products retain existing
+  batch behavior. No Query/Stream/Rust runtime, provider limiter, freshness
+  threshold, catalog/manifest/route, V1 policy, Kafka, Redis, SQLite or order
+  path changes in this slice. Required source gates are: all L2 products never
+  enter `warmup_batch`; each remains cardinality-complete across both replicas;
+  snapshot/delta typed failures preserve product identity; generic BAR batch
+  behavior is unchanged; and the existing fast L2 status matrix remains the
+  independent sequence/generation oracle. If the corrected preflight cannot
+  establish a current snapshot or C2 opening cannot establish lossless replay,
+  it fails closed and a data-plane repair must be proposed separately; no
+  deadline/SLA relaxation is allowed. C2 remains unconsumed until all source
+  and all-scope preflight gates pass.
+
+  **Source implementation and focused gate (`PASS / NO RUNTIME MUTATION`,
+  2026-09-21).** The C2 closing harness now dispatches only `BOOK_SNAPSHOT`
+  and `BOOK_DELTA` through `L2_STATUS_SNAPSHOT`: each exact logical demand
+  reads typed status and a bounded snapshot on both replicas, verifies
+  identity, `LIVE`, complete, gap-free, source policy, declared session bound
+  and replica content parity, then records only hashes and compact quality
+  evidence. The generic strict history batch explicitly rejects lossless L2,
+  while C2 opening remains responsible for signed delta cursor/reconnect/replay.
+  New regressions prove both logical L2 feeds never reach `warmup_batch`, a
+  typed stale status fails before a snapshot/payload can be used, and the CLI
+  emits that failure as compact `FAIL_TYPED_STATUS` evidence rather than a
+  traceback. `py_compile` passed. In the existing immutable
+  `qdl-v2-python:2.0.26-137633b` image with a read-only source mount, non-root
+  UID, `--network none`, tmpfs-only test state and `--rm`, the three targeted
+  regressions passed `3/3`; the affected C2/L2/SDK matrix passed `73/73` in
+  `4.760s`. The expected gRPC shutdown GOAWAY was emitted by an isolated test
+  transport after its calls completed; no provider, durable state, runtime
+  role, image, container, order or consumer mutation occurred. The bounded
+  wider matrix then passed `213`, skipped `1` pre-existing isolated-Redis case
+  (`214` total) in `39.016s`, with `RuntimeWarning` promoted to an error. Its
+  deliberately injected projector backpressure/recovery and gRPC shutdown logs
+  were observed only inside the disposable source-test process. Next: inspect
+  and commit this source-only slice, then run one all-scope fast preflight
+  against the already healthy two Query readers. C2 remains unconsumed.
+
 #### R1.35-D - Hygiene, source reconciliation and immutable stable release (`PENDING / REQUIRES R1.35-C EXIT`)
 
 **Goal.** Make source, runtime and published release refer to one auditable

@@ -102,6 +102,7 @@ _C2_REQUEST_QUOTA_FRACTION = 0.75
 _C2_QUOTA_WINDOW_MARGIN_SECONDS = 0.05
 _C2_CLOSING_REVALIDATION_MAX_SECONDS = 120.0
 _STRICT_BAR_BATCH_SHAPES = (1, 8, 16, 32)
+_LOSSLESS_L2_FEEDS = frozenset({FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA})
 
 
 def _evidence_sha256(value: Mapping[str, object]) -> str:
@@ -237,6 +238,41 @@ class C2ClosingBatchError(RuntimeError):
             "batch_item_problems": list(batch_item_problems or ()),
             "server_batch_summary": summary or None,
             "server_problem_outcomes": server_problem_outcomes,
+            "payload_recorded": False,
+        }
+
+
+class C2ClosingL2Error(RuntimeError):
+    """Compact typed evidence for one lossless-L2 closing read failure."""
+
+    def __init__(
+        self,
+        *,
+        product: AcceptanceProduct,
+        replica: str,
+        operation: str,
+        error: Exception,
+        status_evidence: Mapping[str, object] | None,
+    ) -> None:
+        if operation not in {"FEED_STATUS", "SNAPSHOT", "REPLICA_PARITY"}:
+            raise ValueError("Phase 10.5 L2 closing failure operation is invalid")
+        super().__init__(
+            "Phase 10.5 V2 lossless L2 closing read failed "
+            f"consumer={product.consumer_id} replica={replica} "
+            f"feed={product.feed.value} operation={operation}"
+        )
+        self.evidence = {
+            "schema": "qdl.phase105.c2-closing-l2-failure.v1",
+            "product": product.evidence(),
+            "replica": replica,
+            "operation": operation,
+            "transport_error": type(error).__name__,
+            "transport_error_code": getattr(error, "code", None),
+            "transport_retryable": bool(getattr(error, "retryable", False)),
+            "transport_detail_sha256": hashlib.sha256(
+                str(getattr(error, "detail", error)).encode()
+            ).hexdigest(),
+            "typed_status": dict(status_evidence) if status_evidence is not None else None,
             "payload_recorded": False,
         }
 
@@ -1399,7 +1435,7 @@ async def _closing_failure_status_observations(
     return observations
 
 
-async def _closing_batch_revalidation(
+async def _closing_history_batch_revalidation(
     products: tuple[AcceptanceProduct, ...],
     *,
     identity,
@@ -1411,7 +1447,7 @@ async def _closing_batch_revalidation(
     max_batch_items: int,
     client_factory,
 ) -> list[dict[str, object]]:
-    """Re-read every durable/pass-through product through both V2 replicas.
+    """Re-read non-L2 durable/pass-through products through both V2 replicas.
 
     C2's opening proof already establishes signed cursor/reconnect per product.
     Closing needs a strict current view for every route, not a second identical
@@ -1421,6 +1457,8 @@ async def _closing_batch_revalidation(
 
     if not products:
         return []
+    if any(_is_lossless_l2_product(product) for product in products):
+        raise ValueError("Phase 10.5 historical closing batch contains lossless L2")
     if not 1 <= max_batch_items <= 100:
         raise ValueError("Phase 10.5 C2 batch size exceeds the V2 contract")
 
@@ -1547,6 +1585,229 @@ async def _closing_batch_revalidation(
             item_evidence["bar_replica_alignment"] = bar_alignment
         evidence.append(item_evidence)
     return evidence
+
+
+def _is_lossless_l2_product(product: AcceptanceProduct) -> bool:
+    """Keep L2 on snapshot/status plus stream-replay, never history batching."""
+
+    feed = getattr(product.feed, "value", product.feed)
+    return str(feed) in {item.value for item in _LOSSLESS_L2_FEEDS}
+
+
+def _validate_l2_status(
+    product: AcceptanceProduct,
+    status_evidence: Mapping[str, object],
+) -> None:
+    """Require the same exact identity and quality fences before snapshot use."""
+
+    expected_feed = str(getattr(product.feed, "value", product.feed))
+    if (
+        status_evidence.get("instrument_uid") != product.instrument_uid
+        or status_evidence.get("feed") != expected_feed
+    ):
+        raise ValueError("Phase 10.5 L2 status identity differs from demand")
+    quality = status_evidence.get("quality")
+    if not isinstance(quality, Mapping):
+        raise ValueError("Phase 10.5 L2 status quality is unavailable")
+    if (
+        quality.get("state") != "LIVE"
+        or quality.get("complete") is not True
+        or quality.get("gap_open") is not False
+        or quality.get("policy_id") != product.source_policy_id
+    ):
+        raise ValueError("Phase 10.5 L2 status is not live, complete and gap-free")
+    requirement = product.requirement
+    if requirement.max_session_liveness_ms is not None and (
+        quality.get("provider_session_state") != "LIVE"
+        or not isinstance(quality.get("provider_session_liveness_ms"), int)
+        or int(quality["provider_session_liveness_ms"])
+        > requirement.max_session_liveness_ms
+    ):
+        raise ValueError("Phase 10.5 L2 status provider session differs from demand")
+
+
+async def _closing_l2_revalidation(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    client_factory,
+) -> list[dict[str, object]]:
+    """Read lossless L2 via status plus snapshot, not generic history batches.
+
+    A snapshot is the bounded bootstrap state; `BOOK_DELTA` continuity and
+    cursor replay are proved in the C2 opening stream path.  This read-only
+    closing/preflight routine validates both public Query replicas without
+    opening an extra stream or treating one latest delta as a warmup history.
+    """
+
+    if not products:
+        return []
+    if any(not _is_lossless_l2_product(product) for product in products):
+        raise ValueError("Phase 10.5 L2 closing read contains a non-L2 product")
+
+    async def read_replica(base_url: str, *, label: str):
+        client = client_factory(
+            identity,
+            base_url=base_url,
+            grpc_target=grpc_target,
+            cursor_path=state_dir / f"closing-l2-{label}.json",
+            timeout_seconds=timeout_seconds,
+        )
+        values: dict[tuple[str, str, str, str, str], dict[str, object]] = {}
+        try:
+            for product in products:
+                requirement = _closing_requirement(product)
+                status_evidence: dict[str, object] | None = None
+                try:
+                    status = await client.feed_status(requirement)
+                    status_evidence = compact_feed_status(status)
+                    _validate_l2_status(product, status_evidence)
+                except (httpx.HTTPError, TimeoutError, DataLayerError, ValueError) as error:
+                    raise C2ClosingL2Error(
+                        product=product,
+                        replica=label,
+                        operation="FEED_STATUS",
+                        error=error,
+                        status_evidence=status_evidence,
+                    ) from error
+                started = time.perf_counter()
+                try:
+                    response = await client.snapshot(requirement)
+                    view = response.data
+                    validate_product_view(product, view)
+                except (httpx.HTTPError, TimeoutError, DataLayerError, ValueError) as error:
+                    raise C2ClosingL2Error(
+                        product=product,
+                        replica=label,
+                        operation="SNAPSHOT",
+                        error=error,
+                        status_evidence=status_evidence,
+                    ) from error
+                if product.identity in values:
+                    raise AssertionError("Phase 10.5 L2 closing read duplicated a product")
+                values[product.identity] = {
+                    "view": view,
+                    "status": status_evidence,
+                    "latency_ms": (time.perf_counter() - started) * 1_000,
+                    "quality": compact_view_quality(view, observed_at_ns=time.time_ns()),
+                }
+        finally:
+            await client.close()
+        if len(values) != len(products):
+            raise AssertionError(f"Phase 10.5 {label} L2 closing read lost a product")
+        return values
+
+    primary_values, secondary_values = await asyncio.gather(
+        read_replica(primary_url, label="primary"),
+        read_replica(secondary_url, label="secondary"),
+    )
+    evidence: list[dict[str, object]] = []
+    for product in products:
+        primary = primary_values[product.identity]
+        secondary = secondary_values[product.identity]
+        try:
+            primary_hash, secondary_hash = validate_replica_views(
+                product, primary["view"], secondary["view"]
+            )
+        except ValueError as error:
+            raise C2ClosingL2Error(
+                product=product,
+                replica="both",
+                operation="REPLICA_PARITY",
+                error=error,
+                status_evidence={
+                    "primary": primary["status"],
+                    "secondary": secondary["status"],
+                },
+            ) from error
+        evidence.append({
+            **product.evidence(),
+            "primary_content_sha256": primary_hash,
+            "secondary_content_sha256": secondary_hash,
+            "primary_latency_ms": round(float(primary["latency_ms"]), 3),
+            "secondary_latency_ms": round(float(secondary["latency_ms"]), 3),
+            "release_quality": {
+                "primary": primary["quality"],
+                "secondary": secondary["quality"],
+            },
+            "status_quality": {
+                "primary": primary["status"],
+                "secondary": secondary["status"],
+            },
+            "quality_sha256": {
+                "primary": _evidence_sha256(primary["quality"]),
+                "secondary": _evidence_sha256(secondary["quality"]),
+            },
+            "timing_policy": _timing_policy(product),
+            "closing_read": "L2_STATUS_SNAPSHOT",
+        })
+    return evidence
+
+
+async def _closing_batch_revalidation(
+    products: tuple[AcceptanceProduct, ...],
+    *,
+    identity,
+    primary_url: str,
+    secondary_url: str,
+    grpc_target: str,
+    state_dir: Path,
+    timeout_seconds: float,
+    max_batch_items: int,
+    client_factory,
+) -> list[dict[str, object]]:
+    """Dispatch every closing product through its declared domain transport."""
+
+    if not products:
+        return []
+    history_products = tuple(
+        product for product in products if not _is_lossless_l2_product(product)
+    )
+    l2_products = tuple(
+        product for product in products if _is_lossless_l2_product(product)
+    )
+    history_task = asyncio.create_task(_closing_history_batch_revalidation(
+        history_products,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "history",
+        timeout_seconds=timeout_seconds,
+        max_batch_items=max_batch_items,
+        client_factory=client_factory,
+    ))
+    l2_task = asyncio.create_task(_closing_l2_revalidation(
+        l2_products,
+        identity=identity,
+        primary_url=primary_url,
+        secondary_url=secondary_url,
+        grpc_target=grpc_target,
+        state_dir=state_dir / "l2",
+        timeout_seconds=timeout_seconds,
+        client_factory=client_factory,
+    ))
+    history_evidence, l2_evidence = await _gather_or_cancel((history_task, l2_task))
+    by_identity = {
+        tuple(item["product_identity"])
+        if isinstance(item.get("product_identity"), list)
+        else (
+            str(item["consumer_id"]),
+            str(item["instrument_uid"]),
+            str(item["feed"]),
+            str(item.get("interval") or ""),
+            str(item["source_policy_id"]),
+        ): item
+        for item in (*history_evidence, *l2_evidence)
+    }
+    if len(by_identity) != len(products):
+        raise AssertionError("Phase 10.5 closing read lost or duplicated a product")
+    return [by_identity[product.identity] for product in products]
 
 
 async def _reference_batch_for_c2(
@@ -2651,6 +2912,7 @@ def main() -> int:
         C2ProductAcceptanceError,
         C2ReferenceProductError,
         C2ClosingBatchError,
+        C2ClosingL2Error,
         C2BatchShapeError,
     ) as error:
         print(json.dumps({
