@@ -49623,3 +49623,20 @@ restart `0`, not OOM-killed. The last ten minutes of Query logs contained no
 `traceback`, `error`, `oom` or `fatal` signal. The final cache/index/C2
 certificate remains valid because cleanup did not recreate a role, alter a
 runtime mount, mutate Kafka/Redis/SQLite, or touch a consumer/order path.
+
+**R1.35-D canonical source cleanup (`PASS WITH REMOTE-REF RETENTION`,
+2026-09-22).** The merged feature worktree
+`/home/bobby/.worktrees/data-layer-mark-index-live-view` and its local branch
+`fix/okx-l2-session-continuity` were removed after their ancestry was verified
+on `main`; the older local `fix/mark-index-live-view` branch was likewise
+verified merged and removed. The canonical checkout is now only
+`/home/bobby/data_layer` on `main`; local `dev` is synchronized to the same
+release-closure commit.
+
+All listed remote feature/ops/hotfix refs are also verified ancestors of
+`main`, with no remote branch left unmerged. Their bulk deletion was not
+executed because the operation-control safety gate requires a fresh explicit
+remote-deletion approval for that broad, reversible-but-costly action. They do
+not affect source selection, release tag, runtime, disk, consumer routing or
+future feature work. Retain them as remote provenance until that separate
+approval is supplied; do not misrepresent this as incomplete runtime cleanup.
