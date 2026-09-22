@@ -50605,3 +50605,85 @@ products. Endpoint operation count and product count are different axes.
   TS image `7d410919...3cba475`, SDK 2.0.3/revision 10 unchanged; actual
   heartbeat recovered READY 60/60. No TS/P18/alpha source edits. No push,
   merge or new release performed for this tooling task.
+
+### Follow-Up: Interval Read Verification And Diagnostic Deferral
+
+**Status: INTERVAL_READ_VERIFICATION_PASS / DIAGNOSTIC_DEFERRAL_CONDITIONAL (2026-09-22).** Owner asks whether
+the diagnostic defect can be deferred and whether BAR intervals/warmup work.
+This is not approval to declare the unsafe endpoint fixed, disable server
+authorization, change manifests or perform a runtime rollout.
+
+- Scope: inspect exact BAR inventory and direct consumer usage of the global
+  gap diagnostic; make bounded authentic V2 snapshot/warmup/history reads only.
+  No global gaps request, C2, stream, fallback, provider-direct connection,
+  order, runtime mutation or credential/permission change.
+- Evidence distinctions: TS has 1m BAR requirements, while both alpha manifests
+  contain 14 intervals over five instruments per venue (140 physical BAR
+  bindings). URL operation and interval-qualified product are different axes.
+  Preserve exact identity/policy/grade/revision. Smaller warmup windows are
+  explicit requests under the registered maximum, never a manifest rewrite.
+- Planned sample: all ten TS 1m instruments on both query replicas; all 14
+  intervals on BTC for each alpha venue, both query replicas, using 100-row
+  windows. The latter is representative interval verification, not all-symbol
+  certification or proof of 10,000-row availability. One request in flight,
+  at most 1 request/s; stop a client on transport/resource failure. Reuse
+  existing immutable image and exact registered consumer credentials.
+- Reuse SDK/schema/product validators; check BAR finality, ordering, interval
+  identity, returned row count, freshness and signed handoff metadata. Keep
+  per-interval/per-operation/per-replica output outside Git, no prices/secrets.
+  Stop/remove only the disposable interval-check clients; preserve runtime,
+  state, all images and existing failed benchmark evidence.
+- Deferral boundary: a diagnostic feature may be deferred, but a shared-query
+  OOM path is an availability risk. Current benchmark guard does not block
+  other authorized callers. Normal TS/alpha read code search found no direct
+  `/v2/data-quality/gaps` call; this is not proof that every external caller or
+  monitoring job is unable to invoke it. No production isolation has been
+  applied and no unconditional operational debt acceptance is recorded.
+- Completed bounded authentic reads: **228/228 PASS**. TS: 10 instruments
+  (BTC/ETH/SOL/DOGE/BNB on both venues), 1m, two query replicas, snapshot +
+  warmup + history = **60/60**, every warmup/history returned **1000/1000** rows.
+  Binance alpha BTC: all 14 intervals, two replicas, three operations =
+  **84/84**. OKX alpha BTC: same = **84/84**. Alpha windows returned **100/100**
+  rows throughout. No missing/duplicate/out-of-order bars, wrong interval,
+  non-final/future bar, stale/lineage rejection or client transport error.
+  Warmup handoff fields passed SDK schema validation; signed stream replay/
+  reconnect and all-symbol long-window certification were NOT part of this run.
+- Exact declared/verified interval lists:
+  Binance `1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w`;
+  OKX `1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,2d,3d,1w`.
+  Each alpha manifest has 70 BAR requirements over five native instruments;
+  this run deliberately samples BTC across all intervals rather than claiming
+  it reran all 140 physical BAR bindings. TS contributes ten 1m consumer
+  requirements over the same physical bindings, not ten extra source feeds.
+- Caller-to-validated-use results (one read/case/replica, pooled medians):
+  TS 1m snapshot 567.947ms (range 396.937-931.046), warmup 1000 rows 1138.676ms
+  (1030.922-1549.156), history 1000 rows 1186.540ms (1002.284-1666.544).
+  Binance BTC across 14 intervals: snapshot median 544.625ms / max 3015.054ms,
+  warmup 100 rows median 478.503ms / max 673.822ms, history median 352.823ms /
+  max 1024.505ms. OKX: snapshot median 449.928ms / max 2600.002ms,
+  warmup median 405.936ms / max 794.057ms, history median 387.251ms /
+  max 888.164ms. The snapshot tail is retained, not hidden behind the median.
+  These measure read usability, not bar-close publication latency or a p99 SLA.
+- Evidence directory outside Git:
+  `/home/bobby/.local/state/qdl-endpoint-benchmark/interval-check-20260922/`.
+  `intervals.md` / `intervals.csv` now separate venue, symbol, interval,
+  operation, replica, requested/returned rows, usable latency and last-open UTC.
+  `summary.json` records runtime before/after and exact pass counts;
+  `latency-summary.json` records pooled operation statistics; three consumer
+  JSON files retain per-read evidence without market prices or secret values.
+  Probe SHA256 `e39e12257dc2b93c59e27c30562d7b7879c3c401e7b26b840636e218327c6886`;
+  `probe.py`/`run_checks.py`/`render.py` are bounded reproducible evidence tools
+  in that directory. Network-disabled OKX inventory dry-run passed first.
+- Runtime guard compared query image/health/restart counts every three
+  seconds and would stop its exact client on a change. Both readers remained
+  healthy with restart=1 before/after, image `579d578e...dcb6aa6c` unchanged.
+  Final actual TS heartbeat: **READY 60/60**, unhealthy=[], age 24.9s.
+  No runtime source/config/manifest/permission mutation, no provider-direct
+  or gap diagnostic call, no stream/order action, no image build or pull.
+- Cleanup: all `qdl-interval-check-*` containers, including dry-run, removed;
+  no image/cache/network/volume created. Existing release/rollback set kept.
+  Host disk after cleanup 124GB used / 167GB available (43%); no reclaimed-byte
+  claim. Canonical feature branch remains `feat/consumer-endpoint-benchmark`,
+  sole checkout `/home/bobby/data_layer`; stable dev/main and published v2.1.0
+  untouched. Only this main-plan journal is committed for the follow-up;
+  no push/merge/release or Trading System/alpha implementation changes.
