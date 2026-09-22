@@ -49644,7 +49644,7 @@ approval is supplied; do not misrepresent this as incomplete runtime cleanup.
 <a id="v2-runtime-readiness-closure-20260922"></a>
 ## Runtime Readiness Closure - Revision, Projector And Consumer Recovery
 
-**Status:** `OWNER_APPROVED / IN_PROGRESS`, 2026-09-22. One bounded repair,
+**Status:** `DATA_PLANE_C2_PASS / CONSUMER_HANDOFF_PENDING`, 2026-09-22. One bounded repair,
 three sequential scopes, one implementation branch `fix/v2-runtime-readiness`
 from `dev@a5304b9` in canonical `/home/bobby/data_layer`. This is a runtime
 incident closure, not a new architecture or a rerun of the upgrade program.
@@ -49856,3 +49856,221 @@ Cleanup checkpoint: no task-created service remains; reusable diagnostic
 scripts/tool await final cleanup. Disk available `174,609,543,168` bytes.
 Docker: 34 images / 19.91GB, 4.85GB BuildKit cache (reported active, not pruned).
 No broad image/volume cleanup; retain active and named rollback artifacts.
+
+**Runtime packet execution checkpoint:** committed source
+`e4a7377c197b16239fb4fdc2f39493d944826b5a`; one dependency-preserving image
+`qdl-v2-python:2.0.28-e4a7377` /
+`sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1`.
+The build context is `git archive` of that commit (no host .env/state), with
+the unchanged certified dependency base `f671...f31b9`; no package upgrades.
+The exact-environment/Compose preflight passes. Apply one projector at a time,
+starting with the already-stalled `projector_v2`, checking loop heartbeat and
+durable progress before proceeding. Same group `stable-projector-v1`, same
+runtime/TLS/state mounts, no offset reset. Rollback uses the prepared old image
+`d724...f2a3b` and old init/health settings. Query/Stream/V1/Rust/ingestors,
+Kafka/Redis and Trading System/alpha/order paths remain untouched.
+
+**Rolling receipt (2026-09-22 07:04 UTC):** all six projectors now run
+`56d331db...bac5f1`, are healthy and have restart count 0. Order was
+`projector_v2`, `_2`, `_5`, `_3`, `_4`, `_6`; the previously hung two resumed
+normal canonical ACKs. The operation guard initially rejected `_5` because
+the older explicit packet named only three replicas. Owner separately
+approved `_4/_5/_6` in this turn; only then did their rolling proceed. No
+indirect bypass. Each deployment checked the exact original environment hash;
+unchanged runtime/TLS/state mounts and Kafka group were preserved. The compact
+Compose file warns that other project services are absent from this packet;
+no `--remove-orphans` was used and those services were not touched.
+
+The candidate image's own (no source mount) recovery/heartbeat tests passed
+`30/30` before rolling. All-scope fast preflight is now running against the
+unchanged Query pair using the last certified catalog/acquisition and routing
+revision 22. C2 has not started; trading consumer revision 9 remains unchanged
+until Data Layer read-plane evidence is obtained.
+
+**Pre-C2 exit (`PASS`, 2026-09-22):** all-scope fast read plane passed
+`299/299` products through both Query replicas in `28.371s` query work, plus
+`42.182s` shared-quota clean-window wait. The wait is harness isolation, not
+consumer request latency. Counts: 150 BAR, 24 TRADE, 20 QUOTE, 20 MARK_INDEX,
+20 BOOK_SNAPSHOT, 20 BOOK_DELTA, 10 funding, 10 OI, 10 contract metadata,
+5 basis, 5 long/short and 5 taker. No direct provider connection, stream,
+fallback or order action. Primary/secondary whole-batch p50 = 1148/1094ms,
+p99 = 3261/3597ms; these are mixed-batch measurements, not per-feed ages.
+The legal strict BAR batch-shape/collocation matrix also passed before C2.
+Kafka group read-only sample showed six assigned projectors, partition lag
+40..212, advancing; no offset reset. All six process health checks are green.
+
+Start exactly one final C2 using this same verified manifest/catalog/identity
+packet and immutable candidate client, 300s observation after governed opening.
+Keep external benchmark traffic and real TS handoff out of that identity/quota
+window. Its receipt will determine certification; preflight is not C2.
+
+**Consumer latency/reporting preparation:** reuse the existing measurement
+script, derive JWT revision from the chosen manifest, label exact product
+identity, and optionally validate each SDK view using the already certified
+release/product validator inside the measured call. No runtime behavior or
+quota changes. Report successful call-to-validated-use separately from errors,
+withhold p99 on small samples, and run only after C2 releases its identity.
+Reference/stream evidence is inherited from this C2, not recertified via a
+second full run. Add focused reporting regressions before measurement.
+
+Read-only TS adapter inspection also found QUOTE requests still use the common
+45s session budget while manifest 10 requires 2s and ON_CHANGE observation.
+Changing JWT revision alone is not a proven safe consumer handoff. Preserve
+the service until exact request-policy compatibility has been checked; no
+engine/alpha/order implementation is authorized by this discovery.
+
+### Final Data-Plane Receipt And Consumer Latency
+
+**Exactly one final C2: PASS**, source `e4a7377`, six deployed projectors
+`56d331db...bac5f1`, unchanged certified Query/Stream/Rust/provider components.
+Evidence root:
+`/home/bobby/.local/state/qdl-v2/runtime-readiness-20260922/evidence`.
+`c2/acceptance.json` SHA-256:
+`bed675bd77bbac258acf308632b2bd8ce1f5535fd4b03b820fb0f010d5469c86`.
+Scope SHA `4ee3fda2...5623c`, release-routing revision 22 / `b4e43688...99afe`.
+Opening 299/299 (`969.418s`); observation `300.100s`; closing 299/299
+(`28.183s`); actual run `1297.704s`, plus quota clean-window wait `36.905s`.
+234 durable requirements proved cursor/handoff/reconnect; remaining 65 are
+on-demand reference requirements, not fabricated durable streams. Seven
+declared V1 fallback routes passed the drill; 292 BLOCKED routes made zero
+V1 requests. Zero order actions, direct-provider connections or secret/payload
+recording. Cursor directory and C2 container auto-removed. This is
+`PASS_V2_DATA_PLANE_ONLY`, NOT mainnet execution or TS deployment adoption.
+
+**Endpoint-family coverage:** 299 requirements across four identities, not
+299 independent physical feeds. These cover Binance USD-M and OKX Swap,
+BTC/ETH/SOL/DOGE/BNB, manifest-selected native BAR intervals and bound
+reference/L2 products. Crypto V1 BAR remains LEGACY/NOT_REQUIRED/BLOCKED;
+the four release-wide V1-primary Spot/VN requirements remain outside this V2
+certificate. No new symbol, venue or endpoint was enabled in this repair.
+
+| Public read plane | Verified behavior / exact measured operation |
+| --- | --- |
+| `GET /v2/market-data/{uid}/snapshot` | TRADE, QUOTE, BOOK_SNAPSHOT, BOOK_DELTA, latest final BAR; typed identity/quality validated at consumer |
+| `GET /v2/market-data/{uid}/warmup` | 1,000 final BAR rows for TS; history rows and latest-row quality validated separately |
+| `POST /v2/market-data/warmup:batch` | Strict legal batches 1/8/16/32/50 on both replicas, including collocated three-consumer traffic; no PARTIAL_RESULT |
+| `POST /v2/market-data/reference:batch` | MARK/INDEX, funding, OI, long/short, taker, metadata, basis: all declared products read through V2, no direct-provider shortcut |
+| `GET /v2/instruments`, `GET /v2/instruments/{identity}` | SDK resolver covers all ten venue-native symbols; instrument endpoint does not supply an execution price |
+| `GET /v2/feeds/{uid}/status` | Governed read-plane/C2 typed status, session/gap/generation/finality checks; no independent endpoint p99 claim |
+| gRPC stream | 234 durable product requirements: signed cursor/replay/reconnect; reference on-demand products have no invented stream handoff |
+| `GET /v2/market-data/{uid}/history`, `/v2/data-quality/gaps`, `/v2/system/readiness`, `POST /v2/system/readiness:check` | Existing public contract retained; no separate direct-path latency/acceptance rerun in this bounded repair. Warmup/typed status proof is not relabelled as a test of every administrative endpoint. |
+
+**Consumer-call-to-validated-use, milliseconds:** disposable consumer outside
+the Data Layer service, real mTLS/JWT revision 10, exact manifest requirements,
+same executor network. TLS/request/SDK decoding and product validation are
+inside the measured boundary. Each row below has 30 successful calls per
+replica (five symbols x two venues x three rounds), zero errors. Pauses between
+calls are excluded. Do not interpret this short observation as a universal
+latency guarantee; p99 withheld because each group has fewer than 100 calls.
+
+| Operation | Query 1 p50 / p95 / max | Query 2 p50 / p95 / max |
+| --- | --- | --- |
+| TRADE snapshot | 7.92 / 10.40 / 139.95 | 8.18 / 10.82 / 154.12 |
+| QUOTE snapshot | 7.89 / 9.12 / 10.32 | 8.25 / 9.39 / 9.77 |
+| BOOK_SNAPSHOT | 54.15 / 117.97 / 128.40 | 50.27 / 131.34 / 137.60 |
+| BOOK_DELTA snapshot | 37.99 / 56.32 / 59.37 | 34.46 / 75.65 / 117.54 |
+| Latest final BAR snapshot | 501.69 / 747.66 / 834.22 | 545.61 / 725.21 / 760.72 |
+| Full 1,000-BAR warmup | 1138.60 / 1430.27 / 1577.66 | 1110.39 / 1292.92 / 1351.22 |
+| Instrument resolve (SDK response, not price eligibility) | 5.36 / 6.71 / 9.53 | 5.07 / 6.38 / 6.54 |
+| MARK/INDEX batch of ten (31 successful batches/replica) | 74.95 / 168.95 / 207.03 | 82.79 / 194.34 / 214.31 |
+
+Separate reference evidence from C2: mixed metadata/funding/OI/ratio/taker
+batch calls took `744..1827ms`; native basis item calls `316..1331ms`.
+Several products share one batch duration: do not multiply those into
+independent samples or manufacture per-metric p99. Full per-product identities,
+timings and quality hashes remain in the receipt. BAR batch matrix max-size
+50, isolated/collocated, stayed below approximately 1s in its sampled calls.
+
+**Freshness is not request latency:** C2 source-age samples included quiet
+QUOTE up to 2480ms, TRADE 2757ms and BOOK_DELTA 3952ms; their exact typed
+session/ON_CHANGE requirements passed. That is not permission to execute on
+an arbitrary stale price. MARK/INDEX provider-confirmation age reached 2181ms;
+component/session lineage determines eligibility, while original timestamps
+remain unchanged. Long BAR source age follows its interval and is NOT
+close-to-delivery delay. This run did not independently benchmark every
+BAR-close-to-consumer transition and makes no such claim.
+
+**Gate values retained:** trade event recency 3s OBSERVE + session 45s;
+QUOTE 2s with explicit ON_CHANGE/OBSERVE + session 2s; MARK/INDEX 2s component
+freshness + governed session 45s; L2 delta 2s OBSERVE + session 45s; L2 snapshot
+60s baseline maximum; BAR 1m dropout budget 180s, not a reaction target.
+Per-route finality/gap/generation/authority remain fail-closed. Projector
+30s health / 120s process watchdog are recovery budgets, not market SLAs.
+
+**Runtime/resource evidence:** six projectors and four readers healthy,
+restart 0 / OOM false throughout the checked window. Six Kafka partition
+offsets advance, lag `14..192` in the later sample. Bounded recent log tails
+contain no repeated database-lock/close/error event. Projector RSS ~91..109MiB
+of 768MiB; Query ~186..189MiB and Stream ~115..161MiB of 512MiB.
+CPU samples: projectors 4..46%, Query active 73%, Stream active 53%, where
+100% means one core. These are point samples, not long-haul resource percentiles.
+SQLite hydration/PASSIVE-close changes are source-tested; unchanged reader
+images have NOT received those optimizations, and no runtime speed claim is
+attributed to them. The deployed fix is projector ownership/process recovery.
+
+**Consumer handoff checkpoint (superseded by the SDK receipt below):** TS source-only fix and 194 regressions are
+recorded in [its main journal](../trading_system/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md#qdl-r10-consumer-handoff-20260922),
+commit `3f23cd4`, existing canonical checkout on a feature branch, no new
+worktree. Candidate `5f892132...bc6b538` changes only two market-data/config
+files on the exact active base. The 60-route binding was rendered from this
+certified release and parsed by the candidate TS image. No TS runtime was
+changed; the first single-service handoff question was sent, but that candidate
+is WITHDRAWN and must not be deployed. The later SDK receipt supersedes it.
+Do not call the real TS consumer ready while it still sends revision 9.
+
+**Reporting-tool tests:** 19 PASS (final offline rerun: 8.998s), including four
+SDK packaging checks plus governed scope, revision mismatch,
+per-product identity, validation inside timing, failed-data exclusion, distinct
+BAR snapshot versus warmup and existing MARK/INDEX consumer measurement.
+The first new test caught a missing catalog argument in the helper and was
+fixed before measurement. No extra runtime image was built for reporting.
+
+**Cleanup checkpoint:** removed task build-source archive (~20MiB), temporary
+diagnostic package (~7.9MiB), empty synthetic DB directory and exactly three
+BuildKit source caches (`blwo...`, `ifi...`, `ptfu...`), reclaiming 16.99MB of
+cache. Retain the active projector image `56d331db...bac5f1` and rollback
+`d724764b...f2a3b`, unchanged active Query/Stream/V1/Rust images, and the named
+TS active/rollback; remove the withdrawn candidate once the corrected package
+is verified. No broad prune, volume deletion,
+Kafka reset, Redis flush or SQLite deletion. Disk available before scoped
+cleanup `175862702080`, later `175974027264` bytes; concurrent runtime writes
+mean the filesystem delta is not an exact reclaimed-byte measurement.
+No Data Layer feature worktree exists: only canonical `/home/bobby/data_layer`
+on `fix/v2-runtime-readiness`; dev/main and released `v2.0.27` are unchanged.
+No push/merge/tag/public release is claimed by this runtime receipt.
+
+**Consumer packaging finding:** actual TS image pins the September-5
+`qdl-sdk==2.0.2` wheel, whose ReferenceRequirement cannot represent the already
+certified quiet MARK/INDEX session fields. The repository SDK gained those
+fields at `f1c9e1d`, but its wheel version was not advanced. Thus the real TS
+adapter probe is deliberately stronger than C2's current-SDK consumer proof.
+Package that existing SDK as patch `2.0.3`, reproducibly, no dependency upgrade,
+wire the vendored artifact/hash into TS and test with Python 3.10 in the actual
+TS base image. Preserve old wheels as release provenance, never overwrite a
+published 2.0.2 artifact. This is binding/SDK convergence, not a new data-plane
+feature or another C2. Withdraw the incomplete first TS candidate; build its
+replacement only after the real read matrix passes with the new wheel.
+
+**SDK convergence result:** TS commits `3f23cd4` and `6b27d8e` preserve the
+pre-existing owner edits. Exact SDK wheel SHA
+`645ab168c4acd57de696c25595476a29b0db9d3976460c7d05941f8496ee347c`;
+Python 3.10 adapter/config/bridge/health/binding regression suite: 199 PASS.
+No third-party lock changes; offline lock check passed. Actual adapter matrix
+latest run: 120/120 reads across the two Query replicas, no order/DB/Redis/
+provider-direct actions. Its preceding run had two unclassified incomplete
+reference results (118/120), retained in TS evidence; a later pass does not
+prove the intermittent refusals fixed. Runtime handoff/observation is still
+pending, not covered by Data Layer's passed C2. Do not repeat the full DL C2
+or label the current revision-9 TS consumer healthy from source tests.
+
+Latest read-only check: all six projectors and all four readers healthy,
+restart 0, OOM false. Projectors use `56d331db...bac5f1`; Query/Stream images
+are unchanged. No release tag, branch merge or runtime authority change.
+
+**Separate TS upgrade resumption (read-only audit):** P18.3C C01-C13 has its
+qualified evidence; P18.3D is owner-deferred outside G1. P18.3E remains
+in progress: actual E02 roster/economic recovery/cleanup, E07 runtime latency,
+E08 reboot/heartbeat proof, E09.1 real mutation-count evidence must be tied to
+the current handoff. Then approved P18.4 representative alpha acceptance
+(adaptive_hma_cpp and bb_salping, Paper Binance/OKX). P19 mainnet is later,
+not a G1 release blocker. This repair does not certify those missing TS gates.

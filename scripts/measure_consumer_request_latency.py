@@ -61,6 +61,19 @@ PER_FEED = int(os.environ.get("QDL_PER_FEED", "2"))
 FEEDS = frozenset(f for f in os.environ.get("QDL_FEEDS", "").split(",") if f)
 
 
+def manifest_revision() -> int:
+    metadata = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))["metadata"]
+    if metadata["id"] != CONSUMER:
+        raise ValueError("latency manifest identity differs from consumer")
+    revision = metadata["revision"]
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise ValueError("latency manifest revision must be a positive integer")
+    configured = os.environ.get("QDL_MANIFEST_REVISION")
+    if configured is not None and int(configured) != revision:
+        raise ValueError("latency JWT revision differs from manifest")
+    return revision
+
+
 def transports():
     # R1.31. The identity directory name was hardcoded to `trading-system`, which
     # made this measurable only for the consumer that reads 1m bars. The alpha
@@ -88,10 +101,7 @@ def transports():
             "QDL_JWT_ROLES",
             "market_data_reader,historical_reader,stream_consumer",
         ).split(",")),
-            # DATA_LAYER_V2_JWT_MANIFEST_REVISION on market_data_service. The data
-        # plane compares this exactly and answers 401 on a mismatch, so it is
-        # read from the environment rather than defaulted to something tidy.
-        consumer_manifest_revision=int(os.environ.get("QDL_MANIFEST_REVISION", "9")),
+        consumer_manifest_revision=manifest_revision(),
     )
     return (
         RestQueryTransport(BASE_URL, timeout_seconds=20.0,
@@ -140,7 +150,7 @@ def requirements() -> list[tuple[str, DataRequirement]]:
                 kwargs[key] = target[str(value)]
             else:
                 kwargs[key] = value
-        out.append((f"{feed}{'/' + str(item['interval']) if item.get('interval') else ''}",
+        out.append((f"{item['instrument_uid']}/{feed}",
                     DataRequirement(**kwargs)))
     return out
 
@@ -153,26 +163,68 @@ def summarise(label: str, call: str, samples: list[float], error: str | None) ->
         "product": label,
         "call": call,
         "n": len(ordered),
+        "samples_ms": [round(sample, 3) for sample in samples],
         "min_ms": round(ordered[0], 1),
         "p50_ms": round(statistics.median(ordered), 1),
         "p95_ms": round(ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))], 1),
         "max_ms": round(ordered[-1], 1),
+        "p99_ms": round(ordered[min(len(ordered) - 1, int(len(ordered) * 0.99))], 1)
+        if len(ordered) >= 100 else None,
         "error": error,
     }
 
 
-async def time_calls(fn, rounds: int) -> tuple[list[float], str | None]:
+async def time_calls(fn, rounds: int, *, validate=None, pause_seconds=0.0) -> tuple[list[float], str | None]:
     samples: list[float] = []
     error: str | None = None
     for _ in range(rounds):
         started = time.perf_counter()
         try:
-            await fn()
+            response = await fn()
+            if validate is not None:
+                validate(response)
         except Exception as exc:                     # noqa: BLE001 - reported, not raised
             error = f"{type(exc).__name__}: {exc}"[:160]
             break
         samples.append((time.perf_counter() - started) * 1000.0)
+        if pause_seconds:
+            await asyncio.sleep(pause_seconds)
     return samples, error
+
+
+def governed_products(routing: Path, catalog: Path, acquisition: Path):
+    from qdl.certification.phase105_consumer_acceptance import build_release_consumer_acceptance_scope
+    from qdl.consumer import StableReleaseRoutePlan
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+    from qdl.runtime.stable_deployment import StableAcquisitionPlan
+
+    loaded_catalog = StableSourceCatalog.load(catalog)
+    scope = build_release_consumer_acceptance_scope(
+        StableReleaseRoutePlan.load(routing, manifest_root=ROOT),
+        catalog=loaded_catalog,
+        acquisition=StableAcquisitionPlan.load(acquisition, catalog=loaded_catalog),
+        consumer_ids=(CONSUMER,),
+    )
+    if any(product.manifest_revision != manifest_revision() for product in scope.products):
+        raise ValueError("latency scope differs from token manifest revision")
+    return {(p.instrument_uid, p.feed.value, p.interval): p for p in scope.products}
+
+
+def validate_read(product, response, *, warmup: bool) -> None:
+    from qdl.certification.phase103_consumer_acceptance import validate_product_view
+
+    if warmup:
+        if not response.data:
+            raise ValueError("latency warmup returned no usable data")
+        for view in response.data[:-1]:
+            validate_product_view(product, view, require_current_quality=False)
+        validate_product_view(product, response.data[-1])
+    else:
+        validate_product_view(product, response.data)
+
+
+def read_operation(requirement, *, bar_snapshot: bool) -> str:
+    return "warmup" if requirement.feed is Feed.BAR and requirement.warmup_limit and not bar_snapshot else "snapshot"
 
 
 async def stream_delivery(client, seconds: float) -> list[dict]:
@@ -218,10 +270,21 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=ROUNDS)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--release-routing", type=Path)
+    parser.add_argument("--catalog", type=Path)
+    parser.add_argument("--acquisition", type=Path)
+    parser.add_argument("--pause-seconds", type=float, default=0.0)
+    parser.add_argument("--bar-snapshot", action="store_true", help="time the latest final bar, not the warmup window")
     parser.add_argument("--stream-seconds", type=float,
                         default=float(os.environ.get("QDL_STREAM_SECONDS", "0")),
                         help="also time live stream delivery per feed, for this long each")
     args = parser.parse_args()
+    if not 1 <= args.rounds <= 1000 or args.pause_seconds < 0:
+        parser.error("rounds must be 1..1000 and pause nonnegative")
+    scope_args = (args.release_routing, args.catalog, args.acquisition)
+    if any(scope_args) and not all(scope_args):
+        parser.error("governed measurement requires routing, catalog and acquisition")
+    products = governed_products(*scope_args) if all(scope_args) else None
 
     query, stream = transports()
     client = AsyncDataLayerClient(
@@ -230,18 +293,28 @@ async def main() -> int:
     results: list[dict] = []
     try:
         for label, requirement in requirements():
-            is_bar = requirement.feed is Feed.BAR
-            call = "warmup" if (is_bar and requirement.warmup_limit) else "snapshot"
+            call = read_operation(requirement, bar_snapshot=args.bar_snapshot)
             fn = (lambda r=requirement: client.warmup(r)) if call == "warmup" \
                 else (lambda r=requirement: client.snapshot(r))
-            samples, error = await time_calls(fn, args.rounds)
-            results.append(summarise(label, call, samples, error))
-        samples, error = await time_calls(
-            lambda: client.resolve_instrument(
-                venue="BINANCE", product_type="PERPETUAL",
-                native_symbol="BTCUSDT", consumer_grade=Grade.EXECUTION, market="USDM",
-            ), args.rounds)
-        results.append(summarise("instrument", "resolve_instrument", samples, error))
+            product = products[(requirement.instrument_uid, requirement.feed.value, requirement.interval)] if products is not None else None
+            validator = (lambda response, p=product: validate_read(p, response, warmup=call == "warmup")) if product is not None else None
+            samples, error = await time_calls(fn, args.rounds, validate=validator, pause_seconds=args.pause_seconds)
+            row = summarise(label, call, samples, error)
+            row["timing"] = "SDK_CALL_TO_VALIDATED_USE" if product is not None else "SDK_RESPONSE_ONLY"
+            row["requested_rounds"] = args.rounds
+            if product is not None:
+                row["identity"] = product.evidence()
+            results.append(row)
+        instruments = {("BINANCE", "USDM", "BTCUSDT")}
+        if products is not None:
+            instruments = {(p.venue, p.market, p.native_symbol) for p in products.values()}
+        for venue, market, symbol in sorted(instruments):
+            samples, error = await time_calls(
+                lambda v=venue, m=market, s=symbol: client.resolve_instrument(
+                    venue=v, product_type="PERPETUAL",
+                    native_symbol=s, consumer_grade=Grade.EXECUTION, market=m,
+                ), args.rounds, pause_seconds=args.pause_seconds)
+            results.append(summarise(f"{venue}/{market}/{symbol}", "resolve_instrument", samples, error))
         if args.stream_seconds:
             results.extend(await stream_delivery(client, args.stream_seconds))
     finally:
