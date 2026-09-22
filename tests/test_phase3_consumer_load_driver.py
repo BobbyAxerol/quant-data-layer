@@ -65,6 +65,7 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertIn("--cpus", command)
         self.assertIn("1.0", command)
         self.assertIn("--pids-limit", command)
+        self.assertIn("PYTHONPATH=/app:/driver", command)
         self.assertNotIn("--privileged", command)
         self.assertFalse(any("docker.sock" in value for value in command))
         self.assertTrue(any(
@@ -110,6 +111,19 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "exactly the four approved"):
                 _MODULE.run_host(args)
+
+    def test_bootstrap_transfers_tmpfs_identity_ownership_before_privilege_drop(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "phase3_consumer_load_bootstrap.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("chown -R 10001:10001 /tmp/identity", script)
+        self.assertIn("chmod -R u=rwX,go= /tmp/identity", script)
+        self.assertLess(
+            script.index("chown -R 10001:10001 /tmp/identity"),
+            script.index("exec setpriv"),
+        )
 
 
 if __name__ == "__main__":

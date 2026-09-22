@@ -297,7 +297,7 @@ def docker_command(
         "--cpus", "1.0",
         "--label", "qdl.phase3.disposable-load=true",
         "--env", "PYTHONDONTWRITEBYTECODE=1",
-        "--env", "PYTHONPATH=/driver",
+        "--env", "PYTHONPATH=/app:/driver",
         "--env", "QDL_PHASE3_LOAD_CONFIG=" + json.dumps(inner, sort_keys=True, separators=(",", ":")),
         "--mount", f"type=bind,src={profile['runtime_dir']},dst=/runtime,readonly",
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",

@@ -51485,6 +51485,24 @@ refinement without the owner's next request.
   an offline import/mount regression; it does not change a runtime image,
   reader, manifest, credential, durable store or policy. The matrix has not
   been retried.
+- 2026-09-22: the repaired matrix again stopped before a Query/Stream request.
+  An exact network-disabled bootstrap trace showed the driver had overwritten
+  the immutable image's `PYTHONPATH=/app` with `/driver`, so the unprivileged
+  child could not import the installed `qdl` package. Preserve `/app` before
+  adding the driver path; this is another disposable-client bootstrap repair,
+  not a Data Layer read-plane defect. Both failed clients were removed, both
+  readers remained healthy, and neither run made an order, V1, provider-direct
+  nor durable-store mutation.
+- 2026-09-22: the final network-disabled bootstrap check found root-owned TLS
+  files after the permitted copy into client tmpfs, so UID/GID `10001` could
+  not read the certificate. The client now sets ownership to that unprivileged
+  runtime identity and restricts copied directories/files to owner-only access
+  before `setpriv`. This closes a local secret-handling defect without widening
+  access: mounted sources stay read-only, copied credentials remain tmpfs-only,
+  and the disposable client still has no Docker socket or write-capable mount.
+  A network-disabled exact bootstrap then passed TLS context, gRPC credential
+  construction and local JWT signing for all four identities under UID `10001`.
+  No Query/Stream request or runtime mutation occurred in either check.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

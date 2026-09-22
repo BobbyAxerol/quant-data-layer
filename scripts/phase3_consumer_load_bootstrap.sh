@@ -11,6 +11,8 @@ for identity in /identity/*; do
     mkdir -p "/tmp/identity/$name"
     tar -C "$identity" -cf - . | tar --no-same-owner -xf - -C "/tmp/identity/$name"
 done
+chown -R 10001:10001 /tmp/identity
+chmod -R u=rwX,go= /tmp/identity
 
 exec setpriv \
     --reuid=10001 \
