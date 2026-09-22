@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter, defaultdict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -71,6 +72,27 @@ def _percentiles(values: list[float]) -> dict[str, float | int | None]:
         "p95_ms": round(ordered[math.ceil(len(ordered) * 0.95) - 1], 3),
         "p99_ms": round(ordered[math.ceil(len(ordered) * 0.99) - 1], 3) if len(ordered) >= 100 else None,
         "max_ms": round(ordered[-1], 3),
+    }
+
+
+def _byte_summary(values: list[int]) -> dict[str, int | None]:
+    if not values:
+        return {
+            "n": 0,
+            "p50_bytes": None,
+            "p95_bytes": None,
+            "p99_bytes": None,
+            "max_bytes": None,
+            "total_bytes": 0,
+        }
+    ordered = sorted(values)
+    return {
+        "n": len(ordered),
+        "p50_bytes": round(statistics.median(ordered)),
+        "p95_bytes": ordered[math.ceil(len(ordered) * 0.95) - 1],
+        "p99_bytes": ordered[math.ceil(len(ordered) * 0.99) - 1] if len(ordered) >= 100 else None,
+        "max_bytes": ordered[-1],
+        "total_bytes": sum(ordered),
     }
 
 
@@ -406,6 +428,11 @@ class _Pacer:
     _next_at: float | None = field(init=False, default=None)
     _wait_ms: float = field(init=False, default=0.0)
     _operations: Counter[str] = field(init=False, default_factory=Counter)
+    _measurement_wait_ms: ContextVar[float] = field(
+        init=False,
+        repr=False,
+        default_factory=lambda: ContextVar("phase3_pacer_measurement_wait_ms", default=0.0),
+    )
 
     def __post_init__(self) -> None:
         if self.spacing_seconds <= 0:
@@ -420,8 +447,19 @@ class _Pacer:
             self._operations[operation] += 1
             wait = max(0.0, target - now)
             self._wait_ms += wait * 1000.0
+            self._measurement_wait_ms.set(
+                self._measurement_wait_ms.get() + wait * 1000.0
+            )
         if wait:
             await asyncio.sleep(wait)
+
+    def begin_measurement(self):
+        return self._measurement_wait_ms.set(0.0)
+
+    def finish_measurement(self, token) -> float:
+        wait_ms = self._measurement_wait_ms.get()
+        self._measurement_wait_ms.reset(token)
+        return wait_ms
 
     def evidence(self) -> dict[str, object]:
         return {
@@ -506,16 +544,26 @@ def _product_group(product, operation: str, replica: str) -> tuple[str, ...]:
 
 
 def _summarize_samples(samples: list[dict[str, object]]) -> list[dict[str, object]]:
-    groups: dict[tuple[str, ...], list[float]] = defaultdict(list)
+    groups: dict[tuple[str, ...], dict[str, list[float] | list[int]]] = defaultdict(
+        lambda: {"usable": [], "queue": [], "bytes": []}
+    )
     for sample in samples:
         latency = sample.get("usable_ms")
         if isinstance(latency, float):
-            groups[tuple(sample["group"])].append(latency)
+            groups[tuple(sample["group"])]["usable"].append(latency)
+        queue_wait = sample.get("queue_wait_ms")
+        if isinstance(queue_wait, float):
+            groups[tuple(sample["group"])]["queue"].append(queue_wait)
+        response_bytes = sample.get("response_payload_bytes")
+        if isinstance(response_bytes, int):
+            groups[tuple(sample["group"])]["bytes"].append(response_bytes)
     return [
         {
             "operation": key[0], "replica": key[1], "venue": key[2],
             "native_symbol": key[3], "feed": key[4], "interval": key[5] or None,
-            "usable_latency": _percentiles(values),
+            "usable_latency": _percentiles(values["usable"]),
+            "client_pacing_wait": _percentiles(values["queue"]),
+            "response_payload": _byte_summary(values["bytes"]),
         }
         for key, values in sorted(groups.items())
     ]
@@ -604,7 +652,29 @@ def _reference_product(product, *, now_ns: int):
     )
 
 
-async def _read_product(client, product) -> None:
+def _response_payload_bytes(response: object) -> int:
+    model_dump = getattr(response, "model_dump", None)
+    payload = model_dump(mode="json") if callable(model_dump) else response
+    return len(
+        json.dumps(payload, default=str, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def _measurement_sample(
+    *, product, operation: str, replica: str, pacer: _Pacer, token,
+    started: float, response: object,
+) -> dict[str, object]:
+    queue_wait_ms = pacer.finish_measurement(token)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return {
+        "group": _product_group(product, operation, replica),
+        "usable_ms": max(0.0, elapsed_ms - queue_wait_ms),
+        "queue_wait_ms": queue_wait_ms,
+        "response_payload_bytes": _response_payload_bytes(response),
+    }
+
+
+async def _read_product(client, product) -> object:
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
     from qdl.certification.reference_l2_acceptance import reference_evidence
 
@@ -614,9 +684,10 @@ async def _read_product(client, product) -> None:
         if response.partial or len(response.results) != 1:
             raise ValueError("PARTIAL_RESULT")
         reference_evidence(reference, response.results[0], observed_at_ns=time.time_ns())
-        return
+        return response
     response = await client.snapshot(sdk_requirement(product))
     validate_product_view(product, response.data, require_current_quality=True)
+    return response
 
 
 def _stream_product(products):
@@ -659,17 +730,30 @@ def _make_client(identity, *, queries, stream_targets, pacer, replicated: bool):
 
 async def _matrix_read(identity, *, product, replica, queries, stream_targets, pacer, samples, errors) -> None:
     client = _make_client(identity, queries=(replica,), stream_targets=stream_targets, pacer=pacer, replicated=False)
+    token = pacer.begin_measurement()
     started = time.perf_counter()
     try:
-        await _read_product(client, product)
-        samples.append({"group": _product_group(product, "REFERENCE_BATCH" if product.delivery.value == "ON_DEMAND" else "SNAPSHOT", replica), "usable_ms": (time.perf_counter() - started) * 1000.0})
+        response = await _read_product(client, product)
+        sample = _measurement_sample(
+            product=product,
+            operation="REFERENCE_BATCH" if product.delivery.value == "ON_DEMAND" else "SNAPSHOT",
+            replica=replica,
+            pacer=pacer,
+            token=token,
+            started=started,
+            response=response,
+        )
+        token = None
+        samples.append(sample)
     except Exception as error:
+        if token is not None:
+            pacer.finish_measurement(token)
         errors.append({"operation": "MATRIX", "replica": replica, "product": _product_evidence(product), "error": _safe_error(error)})
     finally:
         await client.close()
 
 
-async def _run_matrix(*, products_by_consumer, identities, queries, stream_targets, pacers, sessions):
+def _matrix_selection(*, sessions, execution_products):
     selected: dict[tuple[str, tuple[str, str, str, str, str]], object] = {}
     for session in sessions:
         for product in session.products:
@@ -678,7 +762,6 @@ async def _run_matrix(*, products_by_consumer, identities, queries, stream_targe
     # exactly one V2 product per required venue/symbol so every staged matrix
     # proves the declared five-liquid universe without replaying all unchanged
     # manifest products.
-    execution_products = products_by_consumer["trading-system.paper.stable"]
     feed_rank = {"QUOTE": 0, "TRADE": 1, "BAR": 2, "BOOK_SNAPSHOT": 3, "BOOK_DELTA": 4}
     for venue, symbols in sorted(_FIVE_LIQUID.items()):
         for symbol in sorted(symbols):
@@ -693,9 +776,17 @@ async def _run_matrix(*, products_by_consumer, identities, queries, stream_targe
                 key=lambda item: (feed_rank.get(item.feed.value, 99), item.interval or ""),
             )
             selected[(product.consumer_id, product.identity)] = product
+    return tuple(product for _, product in sorted(selected.items(), key=lambda item: item[0]))
+
+
+async def _run_matrix(*, products_by_consumer, identities, queries, stream_targets, pacers, sessions):
+    selected = _matrix_selection(
+        sessions=sessions,
+        execution_products=products_by_consumer["trading-system.paper.stable"],
+    )
     samples: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
-    for (_, _), product in sorted(selected.items(), key=lambda item: item[0]):
+    for product in selected:
         for replica in queries:
             await _matrix_read(
                 identities[product.consumer_id], product=product, replica=replica,
@@ -706,20 +797,34 @@ async def _run_matrix(*, products_by_consumer, identities, queries, stream_targe
                 break
         if errors:
             break
-    return samples, errors, len(selected)
+    return samples, errors, selected
 
 
-async def _poll_worker(*, client, products, deadline: float, samples, errors) -> None:
+async def _poll_worker(*, client, products, pacer, deadline: float, samples, errors) -> None:
     index = 0
+    token = None
     try:
         while time.monotonic() < deadline:
             product = products[index % len(products)]
             index += 1
+            token = pacer.begin_measurement()
             started = time.perf_counter()
-            await _read_product(client, product)
-            samples.append({"group": _product_group(product, "REFERENCE_BATCH" if product.delivery.value == "ON_DEMAND" else "SNAPSHOT", "replicated"), "usable_ms": (time.perf_counter() - started) * 1000.0})
+            response = await _read_product(client, product)
+            sample = _measurement_sample(
+                product=product,
+                operation="REFERENCE_BATCH" if product.delivery.value == "ON_DEMAND" else "SNAPSHOT",
+                replica="replicated",
+                pacer=pacer,
+                token=token,
+                started=started,
+                response=response,
+            )
+            token = None
+            samples.append(sample)
             await asyncio.sleep(0)
     except Exception as error:
+        if token is not None:
+            pacer.finish_measurement(token)
         errors.append({"operation": "POLL", "product": _product_evidence(product), "error": _safe_error(error)})
     finally:
         await client.close()
@@ -892,7 +997,8 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
         poll_tasks = [
             asyncio.create_task(_poll_worker(
                 client=_make_client(identities[session.consumer_id], queries=queries, stream_targets=stream_targets, pacer=pacers[session.consumer_id], replicated=True),
-                products=session.products, deadline=observation_deadline, samples=samples, errors=errors,
+                products=session.products, pacer=pacers[session.consumer_id],
+                deadline=observation_deadline, samples=samples, errors=errors,
             ))
             for session in plan.logical_sessions
         ]
@@ -995,11 +1101,15 @@ async def run_inside() -> dict[str, object]:
     streams = tuple(config["stream_targets"])
     started = time.monotonic()
     if mode == "matrix":
-        samples, errors, selected_count = await _run_matrix(
+        samples, errors, selected_products = await _run_matrix(
             products_by_consumer=products_by_consumer, identities=identities,
             queries=queries, stream_targets=streams, pacers=pacers,
             sessions=plan.logical_sessions,
         )
+        selected_count = len(selected_products)
+        covered_instruments = tuple(sorted({
+            (product.venue, product.native_symbol) for product in selected_products
+        }))
         counters = Counter()
     elif mode in {"load", "final"}:
         samples, errors, counters = await _run_load(
@@ -1008,6 +1118,7 @@ async def run_inside() -> dict[str, object]:
             duration_seconds=int(config["duration_seconds"]),
         )
         selected_count = sum(len(item.products) for item in plan.logical_sessions)
+        covered_instruments = plan.covered_instruments
     else:
         raise ValueError("Phase-3 inner mode is invalid")
     status = "PASS" if not errors else "FAIL"
@@ -1019,7 +1130,7 @@ async def run_inside() -> dict[str, object]:
         "authenticated_identity_count": plan.identity_count,
         "planned_stream_count": plan.stream_count,
         "selected_product_count": selected_count,
-        "covered_instruments": [{"venue": venue, "native_symbol": symbol} for venue, symbol in plan.covered_instruments],
+        "covered_instruments": [{"venue": venue, "native_symbol": symbol} for venue, symbol in covered_instruments],
         "runtime_contract": {
             "catalog_revision": catalog.catalog_revision,
             "acquisition_revision": acquisition.revision,

@@ -51510,6 +51510,17 @@ refinement without the owner's next request.
   quality failure. Declare the internal slot fields and exercise construction
   plus one local acquire in regression before the next matrix; preserve all
   prior failed receipts and do not retry until that source gate is green.
+- 2026-09-22: matrix `r3` functionally passed against both active Query
+  replicas (`26` selected V2 reads, no typed error, V1 fallback, direct-provider
+  access or order action; exact client cleanup and reader health also passed).
+  It exposed two acceptance-driver reporting defects before any staged load:
+  per-call `usable_ms` included the intentional per-identity quota wait, and
+  the returned coverage list came from the five-session planner instead of the
+  matrix's additional ten required execution products. Neither is a read-plane
+  failure, but publishing either would misstate latency or scope. Separate
+  paced queue wait from endpoint-to-validated-result latency and return actual
+  selected matrix coverage; rerun only this affected fast matrix after the
+  source regressions pass. No staged load/C2 has started.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

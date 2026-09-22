@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from argparse import Namespace
 import json
+from types import SimpleNamespace
+
+from qdl.certification.phase3_consumer_load import LogicalConsumerSession
 
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "phase3_consumer_load_acceptance.py"
@@ -107,6 +110,50 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         evidence = asyncio.run(exercise())
         self.assertEqual(evidence["operations"], {"snapshot": 1})
         self.assertEqual(evidence["queue_wait_ms"], 0.0)
+
+    def test_measurement_excludes_quota_wait_and_summary_keeps_it_separate(self):
+        async def exercise():
+            pacer = _MODULE._Pacer(0.001)
+            token = pacer.begin_measurement()
+            await pacer.acquire("first")
+            await pacer.acquire("second")
+            return pacer.finish_measurement(token)
+
+        queue_wait_ms = asyncio.run(exercise())
+        summary = _MODULE._summarize_samples([{
+            "group": ("SNAPSHOT", "query-1", "BINANCE", "BTCUSDT", "TRADE", ""),
+            "usable_ms": 12.5,
+            "queue_wait_ms": queue_wait_ms,
+            "response_payload_bytes": 321,
+        }])
+        self.assertEqual(summary[0]["usable_latency"]["p50_ms"], 12.5)
+        self.assertEqual(summary[0]["client_pacing_wait"]["n"], 1)
+        self.assertEqual(summary[0]["response_payload"]["total_bytes"], 321)
+
+    def test_matrix_selection_reports_all_required_venue_symbol_pairs(self):
+        def product(venue: str, symbol: str, feed: str):
+            return SimpleNamespace(
+                consumer_id="trading-system.paper.stable",
+                venue=venue,
+                native_symbol=symbol,
+                feed=SimpleNamespace(value=feed),
+                interval=None,
+                identity=("trading-system.paper.stable", venue, symbol, feed, ""),
+            )
+
+        products = tuple(
+            product(venue, symbol, "QUOTE")
+            for venue, symbols in _MODULE._FIVE_LIQUID.items()
+            for symbol in symbols
+        )
+        session = LogicalConsumerSession(
+            1, "trading-system.paper.stable", products[:2]
+        )
+        selected = _MODULE._matrix_selection(
+            sessions=(session,), execution_products=products
+        )
+        pairs = {(item.venue, item.native_symbol) for item in selected}
+        self.assertEqual(len(pairs), 10)
 
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
