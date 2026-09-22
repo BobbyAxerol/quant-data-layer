@@ -50993,7 +50993,7 @@ removed.
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity
 
-**Status: SOURCE_VALIDATED / RUNTIME_PROFILE_AND_ROLLOUT_PENDING.**
+**Status: SOURCE_CORRECTED / RUNTIME_ROLLED_BACK / RETEST_PENDING.**
 **Goal:** protect TS and frequent alpha reads from cold-read contention, then
 demonstrate useful capacity improvement before retaining any larger cap.
 **Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
@@ -51146,6 +51146,85 @@ owner approval. Insufficient measured capacity remains an open exit, not hidden 
   `20.66 GiB` images / `6.879 GiB` BuildKit cache to `21.38 GiB` / `7.651 GiB`;
   no cleanup is authorized yet because the candidate, active reader and named
   rollback image remain required for the next bounded decision.
+- 2026-09-22: owner approved the Phase-2 runtime packet after the source and
+  artifact gates above. The packet serially recreates only `query_v2_1`, waits
+  for its existing healthcheck, then recreates only `query_v2_2`, using
+  `qdl-v2-python:2.1.1-13b3594@sha256:2aaa1289dbd0681ef8f696cfc017d74494b4d642b32e760effbdc6145f4ca8e9`.
+  The exact rollback for either role is the active
+  `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d` image
+  with its current environment, sealed runtime/TLS/state mounts, aliases and
+  `512 MiB / 1 CPU` cap. A failed healthcheck, restart/OOM, mount/environment
+  drift, or an attributable regression in the bounded V2-only read observation
+  stops and restores only the affected Query role set (including a previously
+  serially transitioned peer), so the two replicas do not remain on different
+  binaries. V1, Stream, Rust,
+  ingestors, projectors, Kafka offsets/topology, Redis, SQLite, Trading System,
+  alpha and order paths are explicitly excluded. The post-rollout observation
+  is authenticated, read-only and uses the real five-symbol/two-venue
+  `MARK_INDEX_PRICE` control through both Query replicas; it makes no fallback,
+  direct-provider, stream or order request. It is not C2 and does not change a
+  consumer manifest or resource cap.
+- 2026-09-22: the first post-rollout TS-path observation is an in-scope
+  **FAIL**, not a provider-quality failure. The disposable real
+  `trading-system.paper.stable` V2-primary client completed `239/240` reads of
+  the 60-route manifest twice through each reader with zero V1 fallback,
+  direct-provider or order action. The one rejected call was `OKX
+  BTC-USDT-SWAP QUOTE` on Query replica 1 with typed
+  `read lane consumer is at its finite pending bound`. The reader stayed
+  healthy (restart/OOM `0`); all other successful endpoint samples remain
+  evidence only, not an exit. This attributes the failure to the new local
+  hot-snapshot per-identity admission (`1` active / `4` pending) when the
+  actual TS process and the probe share the same authenticated identity, not
+  to stale data, a venue, fallback or a resource cap. Receipt SHA-256 is
+  `39019ef4d8d4e1e12aa7ba9c544a7e4d17d0dabacd26c1292d66e41cda8b5765` and
+  result SHA-256 is
+  `10f60bae11383dff31ef29c53c91d1eebaf1db61a0c13a8a113712a921b3d261`.
+  Per the approved stop rule, the candidate reader pair must be restored to
+  the named rollback image before correcting and retesting this finite,
+  fairness-preserving local admission policy. No C2, cap increase or broader
+  runtime mutation is permitted from this failed run.
+- 2026-09-22: the approved in-scope correction keeps the existing `2` hot
+  workers, `16` snapshot pending requests / `512 KiB` and `4` reference hot
+  workers, `32` reference pending requests / `1 MiB`; it does **not** raise a
+  container cap, Query RPC ceiling, provider quota or retry policy. It gives
+  the declared TS identity a finite queue sized for its current hot bindings
+  while retaining a reserved pending slot for a non-TS identity, and conversely
+  reserves a TS slot while only alpha identities are present. Normal identities
+  retain their finite per-identity queue. Only the declared TS identity may
+  borrow an idle active worker, and only while no distinct identity waits;
+  generic identities keep their normal fair-share at all times. The same
+  reusable policy applies to hot snapshot and execution reference lanes.
+  Focused tests must prove: concurrent TS
+  current-slice reads do not reject below the declared finite queue; an alpha
+  still gains progress behind a busy TS identity; only the explicitly reserved
+  TS identity may borrow an otherwise idle active worker (generic identities
+  retain their hard fair-share to avoid event-loop arrival races); neither class
+  can exhaust the other's last reserve; cancellation releases count/bytes; typed data quality,
+  generation and provider limits remain unchanged. Snapshot single-flight is
+  intentionally not added without evidence of expensive duplicate cache work:
+  latest cache reads measured in the failed observation were millisecond-scale,
+  and sharing a post-policy result would risk blurring caller-specific freshness
+  and entitlement validation.
+- 2026-09-22: the approved rollback completed serially for only `query_v2_1`
+  and `query_v2_2`. Both again run the retained
+  `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`
+  rollback image, existing runtime/TLS/state mounts and `512 MiB / 1 CPU`,
+  healthy with restart/OOM `0`. No excluded role or durable state changed.
+- 2026-09-22: source correction replaces the arbitrary one-size TS queue with
+  a reusable `BoundedReadLane` policy: normal identities remain bounded at
+  their configured pending limit; the explicit TS identity has a separately
+  finite current-slice bound; each absent class retains one pending slot; and
+  only TS may borrow an idle active worker. The correction is shared by hot
+  snapshot/status and hot execution-reference lanes. It adds no endpoint,
+  schema, provider request, cache sharing, retry, cap or runtime topology
+  change. Focused lane/service regressions (`11`) passed, including both
+  reserve directions, TS burst admission, alpha progress and reference-lane
+  behavior. The full affected Query/SDK/warmup/MARK-INDEX/readiness/stream
+  regression suite passed `150` tests in `20.702 s`; syntax and `git diff
+  --check` passed. This source is not yet built or rolled out. The next
+  permitted action is one immutable Query candidate built from the corrected
+  commit, followed by the same two-reader-only packet and one replacement
+  bounded TS V2-only observation. No C2 is required in this phase.
 
 **Remaining:** measure the same bounded read workload before/after a separately
 approved Query-only rollout; retain the existing `512 MiB / 1 CPU` caps unless

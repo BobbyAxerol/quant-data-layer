@@ -32,6 +32,10 @@ class ReadLanePolicy:
     max_pending_per_consumer: int = 2
     reserved_consumer_id: str | None = None
     reserved_slots: int = 0
+    reserved_max_active_per_consumer: int | None = None
+    reserved_max_pending_per_consumer: int | None = None
+    reserved_pending_slots: int = 0
+    non_reserved_pending_slots: int = 0
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_active <= 64:
@@ -48,6 +52,24 @@ class ReadLanePolicy:
             raise ValueError("read lane reserved slots must leave one general slot")
         if self.reserved_slots and not self.reserved_consumer_id:
             raise ValueError("read lane reserved slots require a consumer identity")
+        if self.reserved_max_active_per_consumer is not None:
+            if not self.reserved_consumer_id:
+                raise ValueError("reserved consumer active bound requires a consumer identity")
+            if not self.max_active_per_consumer <= self.reserved_max_active_per_consumer <= self.max_active:
+                raise ValueError("reserved consumer active bound is invalid")
+        if self.reserved_max_pending_per_consumer is not None:
+            if not self.reserved_consumer_id:
+                raise ValueError("reserved consumer pending bound requires a consumer identity")
+            if not self.max_active <= self.reserved_max_pending_per_consumer <= self.max_pending:
+                raise ValueError("reserved consumer pending bound is invalid")
+        if not 0 <= self.reserved_pending_slots < self.max_pending:
+            raise ValueError("reserved consumer pending reserve is invalid")
+        if not 0 <= self.non_reserved_pending_slots < self.max_pending:
+            raise ValueError("non-reserved consumer pending reserve is invalid")
+        if (
+            self.reserved_pending_slots or self.non_reserved_pending_slots
+        ) and not self.reserved_consumer_id:
+            raise ValueError("pending reserves require a consumer identity")
 
 
 @dataclass(slots=True)
@@ -180,19 +202,52 @@ class BoundedReadLane:
             self._rejected += 1
             self._rejected_bytes += 1
             raise ReadLaneRejected("read lane request exceeds its byte reservation budget")
-        if pending >= self.policy.max_pending:
+        if pending >= self._class_pending_limit(consumer_id):
             self._rejected += 1
-            raise ReadLaneRejected("read lane is at request capacity")
+            raise ReadLaneRejected("read lane retains finite capacity for another consumer class")
         if self._pending_bytes + reserved_bytes > self.policy.max_pending_bytes:
             self._rejected += 1
             self._rejected_bytes += 1
             raise ReadLaneRejected("read lane is at byte reservation capacity")
         if (
             self._pending_by_consumer.get(consumer_id, 0)
-            >= self.policy.max_pending_per_consumer
+            >= self._consumer_pending_limit(consumer_id)
         ):
             self._rejected += 1
             raise ReadLaneRejected("read lane consumer is at its finite pending bound")
+
+    def _consumer_pending_limit(self, consumer_id: str) -> int:
+        if (
+            consumer_id == self.policy.reserved_consumer_id
+            and self.policy.reserved_max_pending_per_consumer is not None
+        ):
+            return self.policy.reserved_max_pending_per_consumer
+        return self.policy.max_pending_per_consumer
+
+    def _class_pending_limit(self, consumer_id: str) -> int:
+        """Keep one bounded queue slot for the absent consumer class.
+
+        A critical identity can use idle capacity until an ordinary identity is
+        present, but it cannot fill the whole finite queue and make a new alpha
+        request unadmittable. The reciprocal reserve gives a later TS request a
+        bounded entry point when only alphas have work. Once both classes have
+        queued work, all declared capacity is usable and FIFO fairness decides
+        service order.
+        """
+
+        reserved = self.policy.reserved_consumer_id
+        if reserved is None:
+            return self.policy.max_pending
+        has_reserved = bool(self._pending_by_consumer.get(reserved, 0))
+        has_non_reserved = any(
+            identity != reserved and pending
+            for identity, pending in self._pending_by_consumer.items()
+        )
+        if consumer_id == reserved and not has_non_reserved:
+            return self.policy.max_pending - self.policy.non_reserved_pending_slots
+        if consumer_id != reserved and not has_reserved:
+            return self.policy.max_pending - self.policy.reserved_pending_slots
+        return self.policy.max_pending
 
     def _withdraw(self, entry: _Entry) -> None:
         current = self._pending_by_consumer[entry.consumer_id] - 1
@@ -210,16 +265,11 @@ class BoundedReadLane:
             heads.setdefault(queued.consumer_id, queued)
         if heads.get(entry.consumer_id) is not entry:
             return False
-        if (
-            self._active_by_consumer.get(entry.consumer_id, 0)
-            >= self.policy.max_active_per_consumer
-        ):
-            return False
-
         reserved = self.policy.reserved_consumer_id
         reserved_head = heads.get(reserved) if reserved else None
         reserved_can_start = (
-            reserved_head is not None and self._can_start_without_reservation(reserved_head)
+            reserved_head is not None
+            and self._can_start_without_reservation(reserved_head, heads)
         )
         if (
             entry.consumer_id != reserved
@@ -234,17 +284,30 @@ class BoundedReadLane:
         eligible = [
             head
             for head in heads.values()
-            if self._can_start_without_reservation(head)
+            if self._can_start_without_reservation(head, heads)
         ]
         if not eligible:
             return False
         return entry is min(eligible, key=lambda candidate: candidate.sequence)
 
-    def _can_start_without_reservation(self, entry: _Entry) -> bool:
+    def _can_start_without_reservation(
+        self, entry: _Entry, heads: dict[str, _Entry]
+    ) -> bool:
+        if self._active >= self.policy.max_active:
+            return False
+        active_for_consumer = self._active_by_consumer.get(entry.consumer_id, 0)
+        if active_for_consumer < self.policy.max_active_per_consumer:
+            return True
+        # Only the explicitly reserved critical identity may borrow an idle
+        # worker. Generic identities retain the hard fair-share cap even when
+        # they arrive one event-loop turn before a peer, avoiding a race where
+        # a bursty alpha could acquire every active worker ahead of another.
+        borrowed_limit = self.policy.reserved_max_active_per_consumer
         return (
-            self._active < self.policy.max_active
-            and self._active_by_consumer.get(entry.consumer_id, 0)
-            < self.policy.max_active_per_consumer
+            entry.consumer_id == self.policy.reserved_consumer_id
+            and borrowed_limit is not None
+            and len(heads) == 1
+            and active_for_consumer < borrowed_limit
         )
 
     def _non_reserved_active(self) -> int:

@@ -191,6 +191,42 @@ _LOCAL_HISTORY_BYTES_PER_ROW = 1024
 _LOCAL_HISTORY_BASE_BYTES = 16 * 1024
 
 
+def _hot_snapshot_lane_policy() -> ReadLanePolicy:
+    """Finite latest/status capacity sized for the current TS hot slice set."""
+
+    return ReadLanePolicy(
+        max_active=2,
+        max_pending=16,
+        max_pending_bytes=512 * 1024,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=4,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=2,
+        reserved_max_pending_per_consumer=15,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
+def _hot_reference_lane_policy() -> ReadLanePolicy:
+    """Finite execution-reference capacity without changing provider quotas."""
+
+    return ReadLanePolicy(
+        max_active=4,
+        max_pending=32,
+        max_pending_bytes=1024 * 1024,
+        max_active_per_consumer=2,
+        max_pending_per_consumer=8,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=4,
+        reserved_max_pending_per_consumer=31,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
 class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
 
@@ -328,28 +364,8 @@ class V2QueryService:
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
         self._local_batch_admission = _LocalBatchAdmission()
-        self._hot_snapshot_admission = BoundedReadLane(
-            ReadLanePolicy(
-                max_active=2,
-                max_pending=16,
-                max_pending_bytes=512 * 1024,
-                max_active_per_consumer=1,
-                max_pending_per_consumer=4,
-                reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-                reserved_slots=1,
-            )
-        )
-        self._hot_reference_admission = BoundedReadLane(
-            ReadLanePolicy(
-                max_active=4,
-                max_pending=32,
-                max_pending_bytes=1024 * 1024,
-                max_active_per_consumer=2,
-                max_pending_per_consumer=8,
-                reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-                reserved_slots=1,
-            )
-        )
+        self._hot_snapshot_admission = BoundedReadLane(_hot_snapshot_lane_policy())
+        self._hot_reference_admission = BoundedReadLane(_hot_reference_lane_policy())
         self._query_work_pools = _QueryWorkPools()
         self._gap_scan_task: asyncio.Task[tuple[GapRecord, ...]] | None = None
         self.last_batch_evidence: dict[str, object] = {}
@@ -404,34 +420,14 @@ class V2QueryService:
     def _hot_snapshot_admission_for(self) -> BoundedReadLane:
         admission = getattr(self, "_hot_snapshot_admission", None)
         if admission is None:
-            admission = BoundedReadLane(
-                ReadLanePolicy(
-                    max_active=2,
-                    max_pending=16,
-                    max_pending_bytes=512 * 1024,
-                    max_active_per_consumer=1,
-                    max_pending_per_consumer=4,
-                    reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-                    reserved_slots=1,
-                )
-            )
+            admission = BoundedReadLane(_hot_snapshot_lane_policy())
             self._hot_snapshot_admission = admission
         return admission
 
     def _hot_reference_admission_for(self) -> BoundedReadLane:
         admission = getattr(self, "_hot_reference_admission", None)
         if admission is None:
-            admission = BoundedReadLane(
-                ReadLanePolicy(
-                    max_active=4,
-                    max_pending=32,
-                    max_pending_bytes=1024 * 1024,
-                    max_active_per_consumer=2,
-                    max_pending_per_consumer=8,
-                    reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-                    reserved_slots=1,
-                )
-            )
+            admission = BoundedReadLane(_hot_reference_lane_policy())
             self._hot_reference_admission = admission
         return admission
 
