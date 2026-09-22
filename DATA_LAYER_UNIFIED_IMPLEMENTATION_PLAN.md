@@ -49560,3 +49560,66 @@ The already-certified Query digest was tagged locally as
 container recreate, runtime mount, data-plane state or consumer route changed.
 The release certificate records the runtime tag and this alias separately so
 source/release/runtime provenance remains truthful.
+
+**R1.35-D publication and scoped hygiene (`APPROVED / EXECUTING`, 2026-09-22).**
+Remote CI run `35686045531` passed contract, SDK and full unit/image-security
+gates on `6c71c75`; `main` was fast-forwarded to that exact commit and annotated
+tag `v2.0.27` was pushed. The tag-triggered publication workflow
+`35686829884` passed. This is a source/release event only; it does not recreate
+or retag any running container.
+
+The approved cleanup is deliberately narrow. Stop/remove only the disposable
+Compose project `qdl-r135-ci` (its `data_layer` and `redis_marketdata` test
+containers plus its project network, never a volume). Retain every active
+Data Layer image, the immutable `v2.0.27` Query alias and named Query/V1
+rollback images: `f671...f31b9`, `c8d...c2ab`, `d724...f2a3b`,
+`903...1e8f0`, `389...c9762`, `eec...`, `ed1...` and `dbfb...15d65`.
+After confirming no container references them, remove only other QDL Python,
+Rust and legacy test image IDs. Finally remove only unused BuildKit cache older
+than 24 hours; this cannot remove images, containers, volumes, networks,
+source, runtime state, Kafka, Redis, SQLite, V1, Trading System, alpha or an
+order path. Record before/after disk, exact failures/retentions and reader
+health. Merged feature worktree/branch cleanup occurs only after this journal
+is committed and synchronized to `dev` and `main`.
+
+Pre-cleanup inventory additionally found one stopped disposable probe,
+`qdl-mark-index-typed` on test image `8d4...e1ef`; it is included in this
+exact cleanup. Two exited `stable_tls_init` and `stable_state_init` containers
+are retained bootstrap provenance for the active V2 runtime, along with their
+referenced image `bd016...ed4d`; they are not disposable CI artifacts.
+
+The first age-bounded cache pass can leave cache newly touched by images that
+were deleted in this same transaction. Post-image-removal inspection showed
+`13.89GB` of such *unused* BuildKit cache. Since publication is complete and
+the retained image set is verified, the cleanup expands only to
+`docker builder prune --all --force`: Docker removes unused build cache only;
+it cannot remove a retained image, running/stopped container, volume, network,
+source, runtime state or market-data object. This is the final hygiene action
+for this closed release, followed by a fresh disk and runtime-health check.
+
+**R1.35-D publication and scoped hygiene result (`PASS / POST-RELEASE JOURNAL`,
+2026-09-22).** GitHub Release `v2.0.27` is published with its certificate at
+`https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.0.27` after
+remote CI `35686045531` and tag workflow `35686829884` both passed. Exactly
+the two `qdl-r135-ci` containers, their two project networks and the stopped
+`qdl-mark-index-typed` probe were removed; no volume was removed. The two
+retained bootstrap init containers still reference `bd016...ed4d` and remain
+outside the cleanup scope.
+
+Exact unreferenced QDL test images were removed while the active/recovery set
+was retained: V1 `dbfb...15d65`; Query release/alias `f671...f31b9`; Stream
+and Query rollback `c8d...c2ab`; projector `d724...f2a3b`; bar edge
+`903...1e8f0`; Rust core `389...c9762`; Binance/OKX ingestors `eec...` and
+`ed1...`; and bootstrap provenance `bd016...ed4d`. Docker images fell from
+`75` / `44.42GB` to `34` / `19.91GB`. BuildKit fell from `265` / `40.62GB`
+to `29` / `4.85GB` with `0B` reclaimable; the two bounded cache passes
+reclaimed `19.37GB` then `16.39GB`. Containers fell from `60` / `57 active`
+to `57` / `55 active`; volume count remained `17` and no volume data was
+deleted. Host free space is `163GB`.
+
+Post-cleanup, both Query readers on `f671...f31b9` and both Stream readers on
+`c8d...c2ab` are `healthy`, restart `0`, not OOM-killed; V1 is running,
+restart `0`, not OOM-killed. The last ten minutes of Query logs contained no
+`traceback`, `error`, `oom` or `fatal` signal. The final cache/index/C2
+certificate remains valid because cleanup did not recreate a role, alter a
+runtime mount, mutate Kafka/Redis/SQLite, or touch a consumer/order path.
