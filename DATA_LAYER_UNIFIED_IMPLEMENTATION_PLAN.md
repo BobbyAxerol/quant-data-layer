@@ -51650,6 +51650,57 @@ refinement without the owner's next request.
   reservation/order/interleaving/failure regressions. The sole next traffic
   action remains `load-5-r5` (`5` logical sessions, `90s` maximum); later
   stages and final C2 remain blocked on its result.
+- 2026-09-22: `load-5-r5` also stopped fail-closed, after `23.787s`, with no
+  disposable client left behind and both active Query readers still healthy at
+  restart/OOM `0`. The new handoff evidence is complete (`9` planned streams,
+  no incomplete reservation), yet monitoring/Binance `BTCUSDT` TRADE still
+  received a gap-free event at logical offset `23952753` whose source and
+  receive ages were both about `23.2s`, above the unchanged `15s` BLOCK policy.
+  There was no V1 fallback, direct-provider call, provider connection or order
+  action. Equal source/receive age after a completed reservation rules out the
+  prior local snapshot-to-subscribe queue as the remaining cause; the next
+  bounded investigation is cursor/replay/materialization lineage in the Stream
+  read path. No retry, quality relaxation, reader rollout or runtime mutation
+  is authorized until that exact lineage is understood and source-tested.
+- 2026-09-22: bounded lineage inspection found the failed physical offset has
+  already rolled out of the explicitly retained BTC trade window, so its raw
+  payload is neither re-read nor reconstructed. The relevant source path is
+  nevertheless exact: initial replay tests freshness before
+  `subscription.record()`, whose cursor advance may require durable I/O, then
+  yields without testing freshness again. A frame that is eligible at the
+  first check can therefore cross its declared `BLOCK` bound while a signed
+  cursor is issued. This is a delivery time-of-check/time-of-use defect, not a
+  provider, quota, clock, manifest or quality-policy defect. The approved
+  in-scope source slice is limited to rechecking an initial replay record
+  immediately after cursor advancement and before emission. A newly stale
+  record remains consumed in the signed physical cursor, is not emitted, and
+  the subscription waits for the next eligible record. It must add a
+  deterministic clock-advance regression proving that behavior and a control
+  case proving a fresh record still emits. It changes no threshold, replay
+  retention, provider policy, manifest, credential, runtime configuration or
+  durable state. Only after source gates pass may the same replacement
+  `load-5-r5` be run once; Query/Stream rollout and C2 remain explicitly
+  blocked pending that result.
+- 2026-09-22: implemented and source-certified the initial-replay freshness
+  recheck. `GrpcMarketDataService` now advances the signed cursor first, then
+  evaluates the existing requirement predicate immediately before emitting the
+  initial frame. A stale-after-advance physical record is deliberately skipped
+  with its cursor retained; the next fresh record remains deliverable. Two
+  deterministic regressions cover the direct helper and the public loopback
+  gRPC path, including an injected 11-second cursor-I/O delay, followed by a
+  fresh live record. The full focused suite passed `60` tests in `0.867s`:
+  `tests.test_fund_phase5_stream_sdk`,
+  `tests.test_phase3_consumer_load`,
+  `tests.test_phase3_consumer_load_driver`, and
+  `tests.test_read_plane_phase2_capacity`, using existing
+  `qdl-r135-ci-audit:1295705`, read-only, network-disabled and non-root. The
+  current Query runtime image intentionally lacks test dependencies; that
+  bootstrap fact was recorded and did not run any test case. No runtime role,
+  image, provider connection, V1 path, manifest, credential, durable store or
+  order action changed. `git diff --check` passed. The next and only permitted
+  traffic step is the previously failed replacement `load-5-r5` once, with
+  five logical sessions for at most 90 seconds; later load stages, reader
+  rollout and C2 are still blocked on that receipt.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
