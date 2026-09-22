@@ -50276,3 +50276,49 @@ and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
   Compose/symbol edits. No new worktree. Stable `v2.0.27` unchanged. Baseline
   failed TS handoff and all diagnostics retained; no runtime mutation yet in
   this closure. The first action is a bounded profile, not another C2/build.
+- Profile setup: host has no pip/uv; downloaded and SHA-verified the standalone
+  py-spy 0.4.1 wheel into `/tmp`, without installing runtime dependencies.
+  First diagnostic could not write its output mount; reran with an isolated
+  writable profile directory. Baseline 15s/50Hz nonblocking sample produced
+  312 stacks / 26 sampling errors; counts are diagnostic, not precise CPU
+  attribution. Next bounded TS profile applies existing `7d410919...` for
+  roughly 45s, samples the existing stream PID namespace only, then restores
+  original TS image/env/binding in `finally`. No other service change, no
+  orders and no acceptance claim. This is the owner's approved mixed-load
+  diagnosis, not another full C2 or a production promotion.
+- Profile result: baseline 172/312 sampled leaves and mixed TS 310/854 leaves
+  are in partition retention; mixed trace has 183 leaves in the OFFSET scan.
+  Sampling errors (26/141) are retained, so this is attribution evidence, not
+  a precise CPU percentage. SQLite EXPLAIN confirms the correct covering PK
+  index; no missing index or reason to create another index. The algorithm
+  walks 12,064 offsets for each touched partition on every append batch.
+  Bounded mixed run completed and restored TS; its lag stayed under 1.5s in
+  that shorter/lower-rate window, not reproduction of the earlier 76s peak.
+  Fix the avoidable repeated retention scan first: certify dense retained
+  offset suffixes once per SQLite data_version, use indexed last-offset math,
+  invalidate on foreign commit/rollback, and retain the exact OFFSET fallback
+  for sparse/legacy/age-retained data. No schema or retention-window change.
+  Test sparse histories, external mutation, reopen, multi-writer, rollback,
+  duplicate, cursor expiration and exact byte/count accounting; compare to the
+  original algorithm and measured SQLite VM work before runtime rollout.
+- Source verification: 71/71 retention/transport/replay/stream tests pass;
+  135 affected stable-edge/query/WAL/recovery/live-view/lineage tests pass.
+  The remaining Redis integration test passed against a disposable named
+  Redis after correcting its test-network setup (initial DNS/setup failures
+  retained, not counted as domain failures). Total 207 passed, no remaining
+  skip in this selected set. Test Redis/container/network removed; no shared
+  state changed. `git diff --check` passes.
+- Differential replay: 12,400 authentic Binance/OKX QUOTE records captured
+  read-only (SHA256 e21fc8afb9fbb0a8c13e92eaa8be815bad14c06a1a24523b3cd18a596a18f03c),
+  33 append batches into isolated tmpfs SQLite, identical retained 8,192 rows
+  and payload hashes. Original/candidate median 9.784/8.512ms, p95
+  12.012/10.632ms; VM instructions 1,408,100/597,100. This is about 13% median
+  and 58% VM-work improvement, NOT live consumer latency or a disk durability
+  benchmark. No p99 claim from 33 samples. Evidence lives in
+  `v210-consumer-load-20260922/evidence/retention-replay.json` outside Git.
+- Next approved packet: one immutable candidate, exact-image regressions,
+  rolling existing passive/active Stream then Query replicas with unchanged
+  mounts/TLS/environment/CPU/RAM. Keep full per-role rollback. Only after
+  readiness and fast preflight run the real TS revision-10 workload. No RAM
+  increase has been applied. Temporary Redis cleanup pre-available disk:
+  177122664448 bytes; runtime restart state unchanged.

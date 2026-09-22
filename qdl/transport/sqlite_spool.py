@@ -151,6 +151,8 @@ class SQLiteDurableSpool:
         self.config = config
         self._clock_ns = clock_ns
         self._lock = threading.RLock()
+        self._retention_data_version: int | None = None
+        self._dense_retained_partitions: set[tuple[str, str]] = set()
         config.path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(
             str(config.path), timeout=30.0, isolation_level=None, check_same_thread=False
@@ -676,6 +678,7 @@ class SQLiteDurableSpool:
                     self._checkpoint_wal_passive_locked()
                 return results
             except BaseException:
+                self._dense_retained_partitions.clear()
                 if self._connection.in_transaction:
                     self._connection.execute("ROLLBACK")
                 raise
@@ -1455,16 +1458,16 @@ class SQLiteDurableSpool:
         limit = self.config.max_partition_records
         if limit <= 0:
             return
+        if self.config.retain_partition_windows:
+            # A foreign writer may have changed a legacy/sparse window. Our
+            # own append/prefix-trim transactions preserve a proven dense tail.
+            version = int(self._connection.execute("PRAGMA data_version").fetchone()[0])
+            if version != self._retention_data_version:
+                self._dense_retained_partitions.clear()
+                self._retention_data_version = version
         for stream, partition_key in partitions:
-            threshold = self._connection.execute(
-                """
-                SELECT logical_offset FROM events
-                WHERE stream = ? AND partition_key = ?
-                ORDER BY logical_offset DESC LIMIT 1 OFFSET ?
-                """,
-                (stream, partition_key, limit - 1),
-            ).fetchone()
-            if threshold is None:
+            threshold = self._retained_threshold_locked(stream, partition_key, limit)
+            if threshold is None or threshold <= 1:
                 continue
             removed = self._connection.execute(
                 """
@@ -1472,7 +1475,7 @@ class SQLiteDurableSpool:
                 FROM events
                 WHERE stream = ? AND partition_key = ? AND logical_offset < ?
                 """,
-                (stream, partition_key, int(threshold[0])),
+                (stream, partition_key, threshold),
             ).fetchone()
             if int(removed[0]) == 0:
                 continue
@@ -1481,9 +1484,47 @@ class SQLiteDurableSpool:
                 DELETE FROM events
                 WHERE stream = ? AND partition_key = ? AND logical_offset < ?
                 """,
-                (stream, partition_key, int(threshold[0])),
+                (stream, partition_key, threshold),
             )
             self._decrement_usage_locked(int(removed[0]), int(removed[1]))
+
+    def _retained_threshold_locked(
+        self, stream: str, partition_key: str, limit: int
+    ) -> int | None:
+        key = (stream, partition_key)
+        if self.config.retain_partition_windows:
+            if key not in self._dense_retained_partitions:
+                row = self._connection.execute(
+                    """
+                    SELECT MIN(logical_offset), MAX(logical_offset), COUNT(*)
+                    FROM events WHERE stream = ? AND partition_key = ?
+                    """,
+                    key,
+                ).fetchone()
+                if int(row[2]) == 0:
+                    return None
+                if int(row[1]) - int(row[0]) + 1 == int(row[2]):
+                    self._dense_retained_partitions.add(key)
+            if key in self._dense_retained_partitions:
+                row = self._connection.execute(
+                    """
+                    SELECT logical_offset FROM events
+                    WHERE stream = ? AND partition_key = ?
+                    ORDER BY logical_offset DESC LIMIT 1
+                    """,
+                    key,
+                ).fetchone()
+                return int(row[0]) - limit + 1 if row is not None else None
+        # Sparse histories must keep N actual rows, not N logical offsets.
+        row = self._connection.execute(
+            """
+            SELECT logical_offset FROM events
+            WHERE stream = ? AND partition_key = ?
+            ORDER BY logical_offset DESC LIMIT 1 OFFSET ?
+            """,
+            (*key, limit - 1),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
 
     @staticmethod
     def _stored_event(row: sqlite3.Row) -> StoredEvent:
