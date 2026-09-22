@@ -1,0 +1,716 @@
+{
+  "actual_ts": {
+    "consumer_projection_latency_sha256": "b8de30017ff27a4624464eb1c7e034e32f23d99e041e319cd96601e6cb54803b",
+    "fallback_requests": 0,
+    "independent_heartbeats": 10,
+    "observation_seconds": 305.12,
+    "order_actions": 0,
+    "provider_direct_connections": 0,
+    "published_route_count": 60,
+    "reader_observation_sha256": "3c958be59631e576ed05ffb177c8f406ea4a8556d51cd21f31c1cb1b637ce8b2",
+    "ready_routes_min": 60,
+    "resource_samples_sha256": "bdd985b65478737db101a488442764cc541fc8e093f1bbb784f47f6c832f317e",
+    "startup_seconds": 30.081,
+    "status": "PASS"
+  },
+  "actual_ts_publication_counts": {
+    "BINANCE|BNBUSDT|BAR": 6,
+    "BINANCE|BNBUSDT|BOOK_DELTA": 1066,
+    "BINANCE|BNBUSDT|BOOK_SNAPSHOT": 11,
+    "BINANCE|BNBUSDT|MARK_INDEX_PRICE": 216,
+    "BINANCE|BNBUSDT|QUOTE": 800,
+    "BINANCE|BNBUSDT|TRADE": 1072,
+    "BINANCE|BTCUSDT|BAR": 6,
+    "BINANCE|BTCUSDT|BOOK_DELTA": 916,
+    "BINANCE|BTCUSDT|BOOK_SNAPSHOT": 11,
+    "BINANCE|BTCUSDT|MARK_INDEX_PRICE": 215,
+    "BINANCE|BTCUSDT|QUOTE": 598,
+    "BINANCE|BTCUSDT|TRADE": 575,
+    "BINANCE|DOGEUSDT|BAR": 6,
+    "BINANCE|DOGEUSDT|BOOK_DELTA": 1115,
+    "BINANCE|DOGEUSDT|BOOK_SNAPSHOT": 11,
+    "BINANCE|DOGEUSDT|MARK_INDEX_PRICE": 215,
+    "BINANCE|DOGEUSDT|QUOTE": 638,
+    "BINANCE|DOGEUSDT|TRADE": 821,
+    "BINANCE|ETHUSDT|BAR": 6,
+    "BINANCE|ETHUSDT|BOOK_DELTA": 914,
+    "BINANCE|ETHUSDT|BOOK_SNAPSHOT": 11,
+    "BINANCE|ETHUSDT|MARK_INDEX_PRICE": 216,
+    "BINANCE|ETHUSDT|QUOTE": 606,
+    "BINANCE|ETHUSDT|TRADE": 540,
+    "BINANCE|SOLUSDT|BAR": 6,
+    "BINANCE|SOLUSDT|BOOK_DELTA": 1048,
+    "BINANCE|SOLUSDT|BOOK_SNAPSHOT": 11,
+    "BINANCE|SOLUSDT|MARK_INDEX_PRICE": 218,
+    "BINANCE|SOLUSDT|QUOTE": 643,
+    "BINANCE|SOLUSDT|TRADE": 666,
+    "OKX|BNB-USDT-SWAP|BAR": 6,
+    "OKX|BNB-USDT-SWAP|BOOK_DELTA": 1562,
+    "OKX|BNB-USDT-SWAP|BOOK_SNAPSHOT": 11,
+    "OKX|BNB-USDT-SWAP|MARK_INDEX_PRICE": 212,
+    "OKX|BNB-USDT-SWAP|QUOTE": 1092,
+    "OKX|BNB-USDT-SWAP|TRADE": 263,
+    "OKX|BTC-USDT-SWAP|BAR": 6,
+    "OKX|BTC-USDT-SWAP|BOOK_DELTA": 924,
+    "OKX|BTC-USDT-SWAP|BOOK_SNAPSHOT": 11,
+    "OKX|BTC-USDT-SWAP|MARK_INDEX_PRICE": 217,
+    "OKX|BTC-USDT-SWAP|QUOTE": 670,
+    "OKX|BTC-USDT-SWAP|TRADE": 1021,
+    "OKX|DOGE-USDT-SWAP|BAR": 6,
+    "OKX|DOGE-USDT-SWAP|BOOK_DELTA": 937,
+    "OKX|DOGE-USDT-SWAP|BOOK_SNAPSHOT": 11,
+    "OKX|DOGE-USDT-SWAP|MARK_INDEX_PRICE": 215,
+    "OKX|DOGE-USDT-SWAP|QUOTE": 648,
+    "OKX|DOGE-USDT-SWAP|TRADE": 1223,
+    "OKX|ETH-USDT-SWAP|BAR": 6,
+    "OKX|ETH-USDT-SWAP|BOOK_DELTA": 914,
+    "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT": 11,
+    "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE": 213,
+    "OKX|ETH-USDT-SWAP|QUOTE": 596,
+    "OKX|ETH-USDT-SWAP|TRADE": 1055,
+    "OKX|SOL-USDT-SWAP|BAR": 6,
+    "OKX|SOL-USDT-SWAP|BOOK_DELTA": 981,
+    "OKX|SOL-USDT-SWAP|BOOK_SNAPSHOT": 11,
+    "OKX|SOL-USDT-SWAP|MARK_INDEX_PRICE": 214,
+    "OKX|SOL-USDT-SWAP|QUOTE": 658,
+    "OKX|SOL-USDT-SWAP|TRADE": 1006
+  },
+  "classification": "Bounded actual Trading System consumer adoption and existing declared V2 data plane; not universal capacity or broker execution certification",
+  "consumer_manifest_revision": 10,
+  "event_age_at_ts_publication_ms": {
+    "BINANCE|BNBUSDT|BAR": {
+      "max": 2853.002,
+      "p50": 1774.09,
+      "p95": 2771.679,
+      "samples": 6
+    },
+    "BINANCE|BNBUSDT|BOOK_DELTA": {
+      "max": 45616.233,
+      "p50": 11764.131,
+      "p95": 45098.592,
+      "p99": 45397.617,
+      "samples": 1066
+    },
+    "BINANCE|BNBUSDT|BOOK_SNAPSHOT": {
+      "max": 2376.918,
+      "p50": 1386.66,
+      "p95": 2082.901,
+      "samples": 11
+    },
+    "BINANCE|BNBUSDT|MARK_INDEX_PRICE": {
+      "max": 2393.556,
+      "p50": 1435.319,
+      "p95": 2097.383,
+      "p99": 2341.804,
+      "samples": 216
+    },
+    "BINANCE|BNBUSDT|QUOTE": {
+      "max": 4073.828,
+      "p50": 1202.703,
+      "p95": 2951.573,
+      "p99": 3306.883,
+      "samples": 800
+    },
+    "BINANCE|BNBUSDT|TRADE": {
+      "max": 45509.174,
+      "p50": 12015.542,
+      "p95": 43165.185,
+      "p99": 44943.1,
+      "samples": 1072
+    },
+    "BINANCE|BTCUSDT|BAR": {
+      "max": 3610.565,
+      "p50": 1442.11,
+      "p95": 1870.313,
+      "samples": 6
+    },
+    "BINANCE|BTCUSDT|BOOK_DELTA": {
+      "max": 45709.327,
+      "p50": 15353.981,
+      "p95": 45208.055,
+      "p99": 45480.652,
+      "samples": 916
+    },
+    "BINANCE|BTCUSDT|BOOK_SNAPSHOT": {
+      "max": 2073.535,
+      "p50": 1611.225,
+      "p95": 1942.641,
+      "samples": 11
+    },
+    "BINANCE|BTCUSDT|MARK_INDEX_PRICE": {
+      "max": 2319.842,
+      "p50": 1383.21,
+      "p95": 1998.867,
+      "p99": 2248.539,
+      "samples": 215
+    },
+    "BINANCE|BTCUSDT|QUOTE": {
+      "max": 3351.1,
+      "p50": 1060.709,
+      "p95": 2508.635,
+      "p99": 3110.017,
+      "samples": 598
+    },
+    "BINANCE|BTCUSDT|TRADE": {
+      "max": 45433.822,
+      "p50": 27632.138,
+      "p95": 45116.767,
+      "p99": 45354.601,
+      "samples": 575
+    },
+    "BINANCE|DOGEUSDT|BAR": {
+      "max": 3612.376,
+      "p50": 1535.778,
+      "p95": 1883.078,
+      "samples": 6
+    },
+    "BINANCE|DOGEUSDT|BOOK_DELTA": {
+      "max": 45663.681,
+      "p50": 15024.344,
+      "p95": 44973.406,
+      "p99": 45401.11,
+      "samples": 1115
+    },
+    "BINANCE|DOGEUSDT|BOOK_SNAPSHOT": {
+      "max": 1981.938,
+      "p50": 1455.219,
+      "p95": 1734.661,
+      "samples": 11
+    },
+    "BINANCE|DOGEUSDT|MARK_INDEX_PRICE": {
+      "max": 2776.146,
+      "p50": 1490.298,
+      "p95": 2384.198,
+      "p99": 2599.636,
+      "samples": 215
+    },
+    "BINANCE|DOGEUSDT|QUOTE": {
+      "max": 3577.782,
+      "p50": 1145.871,
+      "p95": 2833.247,
+      "p99": 3204.172,
+      "samples": 638
+    },
+    "BINANCE|DOGEUSDT|TRADE": {
+      "max": 45442.926,
+      "p50": 38599.042,
+      "p95": 45056.514,
+      "p99": 45311.906,
+      "samples": 821
+    },
+    "BINANCE|ETHUSDT|BAR": {
+      "max": 4761.35,
+      "p50": 1281.859,
+      "p95": 1852.67,
+      "samples": 6
+    },
+    "BINANCE|ETHUSDT|BOOK_DELTA": {
+      "max": 45738.464,
+      "p50": 12557.278,
+      "p95": 45135.041,
+      "p99": 45483.23,
+      "samples": 914
+    },
+    "BINANCE|ETHUSDT|BOOK_SNAPSHOT": {
+      "max": 2496.989,
+      "p50": 1450.406,
+      "p95": 2130.667,
+      "samples": 11
+    },
+    "BINANCE|ETHUSDT|MARK_INDEX_PRICE": {
+      "max": 2406.098,
+      "p50": 1323.121,
+      "p95": 1932.981,
+      "p99": 2143.875,
+      "samples": 216
+    },
+    "BINANCE|ETHUSDT|QUOTE": {
+      "max": 3578.825,
+      "p50": 887.993,
+      "p95": 2667.106,
+      "p99": 3174.445,
+      "samples": 606
+    },
+    "BINANCE|ETHUSDT|TRADE": {
+      "max": 45625.076,
+      "p50": 27913.037,
+      "p95": 45219.849,
+      "p99": 45320.836,
+      "samples": 540
+    },
+    "BINANCE|SOLUSDT|BAR": {
+      "max": 2929.013,
+      "p50": 1219.064,
+      "p95": 1819.787,
+      "samples": 6
+    },
+    "BINANCE|SOLUSDT|BOOK_DELTA": {
+      "max": 45694.69,
+      "p50": 13810.779,
+      "p95": 45107.588,
+      "p99": 45462.397,
+      "samples": 1048
+    },
+    "BINANCE|SOLUSDT|BOOK_SNAPSHOT": {
+      "max": 3304.824,
+      "p50": 1470.002,
+      "p95": 2282.507,
+      "samples": 11
+    },
+    "BINANCE|SOLUSDT|MARK_INDEX_PRICE": {
+      "max": 2964.506,
+      "p50": 1399.177,
+      "p95": 2040.646,
+      "p99": 2234.908,
+      "samples": 218
+    },
+    "BINANCE|SOLUSDT|QUOTE": {
+      "max": 3599.711,
+      "p50": 1145.296,
+      "p95": 2870.543,
+      "p99": 3318.523,
+      "samples": 643
+    },
+    "BINANCE|SOLUSDT|TRADE": {
+      "max": 45425.019,
+      "p50": 25329.119,
+      "p95": 44554.763,
+      "p99": 45176.346,
+      "samples": 666
+    },
+    "OKX|BNB-USDT-SWAP|BAR": {
+      "max": 2927.042,
+      "p50": 2179.527,
+      "p95": 2424.507,
+      "samples": 6
+    },
+    "OKX|BNB-USDT-SWAP|BOOK_DELTA": {
+      "max": 45560.445,
+      "p50": 5576.142,
+      "p95": 42417.999,
+      "p99": 45229.427,
+      "samples": 1562
+    },
+    "OKX|BNB-USDT-SWAP|BOOK_SNAPSHOT": {
+      "max": 1625.223,
+      "p50": 1430.312,
+      "p95": 1583.845,
+      "samples": 11
+    },
+    "OKX|BNB-USDT-SWAP|MARK_INDEX_PRICE": {
+      "max": 2782.326,
+      "p50": 1224.835,
+      "p95": 2165.645,
+      "p99": 2512.257,
+      "samples": 212
+    },
+    "OKX|BNB-USDT-SWAP|QUOTE": {
+      "max": 3945.521,
+      "p50": 1852.931,
+      "p95": 2924.059,
+      "p99": 3314.576,
+      "samples": 1092
+    },
+    "OKX|BNB-USDT-SWAP|TRADE": {
+      "max": 17273.284,
+      "p50": 1663.258,
+      "p95": 5558.371,
+      "p99": 9183.611,
+      "samples": 263
+    },
+    "OKX|BTC-USDT-SWAP|BAR": {
+      "max": 3607.831,
+      "p50": 1824.499,
+      "p95": 2578.444,
+      "samples": 6
+    },
+    "OKX|BTC-USDT-SWAP|BOOK_DELTA": {
+      "max": 45715.968,
+      "p50": 12424.015,
+      "p95": 45127.425,
+      "p99": 45428.081,
+      "samples": 924
+    },
+    "OKX|BTC-USDT-SWAP|BOOK_SNAPSHOT": {
+      "max": 2371.403,
+      "p50": 1539.217,
+      "p95": 2096.54,
+      "samples": 11
+    },
+    "OKX|BTC-USDT-SWAP|MARK_INDEX_PRICE": {
+      "max": 2228.664,
+      "p50": 1137.665,
+      "p95": 1696.399,
+      "p99": 2100.001,
+      "samples": 217
+    },
+    "OKX|BTC-USDT-SWAP|QUOTE": {
+      "max": 3501.517,
+      "p50": 1003.254,
+      "p95": 2879.473,
+      "p99": 3292.696,
+      "samples": 670
+    },
+    "OKX|BTC-USDT-SWAP|TRADE": {
+      "max": 45522.246,
+      "p50": 36279.263,
+      "p95": 44842.573,
+      "p99": 45228.677,
+      "samples": 1021
+    },
+    "OKX|DOGE-USDT-SWAP|BAR": {
+      "max": 3609.213,
+      "p50": 1605.949,
+      "p95": 2106.298,
+      "samples": 6
+    },
+    "OKX|DOGE-USDT-SWAP|BOOK_DELTA": {
+      "max": 45675.676,
+      "p50": 17196.804,
+      "p95": 44886.131,
+      "p99": 45459.808,
+      "samples": 937
+    },
+    "OKX|DOGE-USDT-SWAP|BOOK_SNAPSHOT": {
+      "max": 1976.472,
+      "p50": 1402.488,
+      "p95": 1885.39,
+      "samples": 11
+    },
+    "OKX|DOGE-USDT-SWAP|MARK_INDEX_PRICE": {
+      "max": 3122.746,
+      "p50": 1389.905,
+      "p95": 2355.792,
+      "p99": 2743.841,
+      "samples": 215
+    },
+    "OKX|DOGE-USDT-SWAP|QUOTE": {
+      "max": 3766.03,
+      "p50": 1110.706,
+      "p95": 2706.959,
+      "p99": 3190.429,
+      "samples": 648
+    },
+    "OKX|DOGE-USDT-SWAP|TRADE": {
+      "max": 11748.778,
+      "p50": 1878.079,
+      "p95": 6431.318,
+      "p99": 10729.304,
+      "samples": 1223
+    },
+    "OKX|ETH-USDT-SWAP|BAR": {
+      "max": 2926.688,
+      "p50": 2084.315,
+      "p95": 2792.02,
+      "samples": 6
+    },
+    "OKX|ETH-USDT-SWAP|BOOK_DELTA": {
+      "max": 45626.174,
+      "p50": 12422.5,
+      "p95": 45177.001,
+      "p99": 45420.17,
+      "samples": 914
+    },
+    "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT": {
+      "max": 2600.713,
+      "p50": 1890.882,
+      "p95": 2137.066,
+      "samples": 11
+    },
+    "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE": {
+      "max": 2944.036,
+      "p50": 1183.395,
+      "p95": 1874.31,
+      "p99": 2023.484,
+      "samples": 213
+    },
+    "OKX|ETH-USDT-SWAP|QUOTE": {
+      "max": 3374.254,
+      "p50": 1050.208,
+      "p95": 2681.561,
+      "p99": 3162.154,
+      "samples": 596
+    },
+    "OKX|ETH-USDT-SWAP|TRADE": {
+      "max": 45559.542,
+      "p50": 26653.19,
+      "p95": 45009.889,
+      "p99": 45328.324,
+      "samples": 1055
+    },
+    "OKX|SOL-USDT-SWAP|BAR": {
+      "max": 3615.62,
+      "p50": 1654.419,
+      "p95": 2159.791,
+      "samples": 6
+    },
+    "OKX|SOL-USDT-SWAP|BOOK_DELTA": {
+      "max": 45752.709,
+      "p50": 14714.912,
+      "p95": 45109.025,
+      "p99": 45486.114,
+      "samples": 981
+    },
+    "OKX|SOL-USDT-SWAP|BOOK_SNAPSHOT": {
+      "max": 1866.839,
+      "p50": 1360.828,
+      "p95": 1785.426,
+      "samples": 11
+    },
+    "OKX|SOL-USDT-SWAP|MARK_INDEX_PRICE": {
+      "max": 2913.819,
+      "p50": 1197.121,
+      "p95": 1886.904,
+      "p99": 2398.338,
+      "samples": 214
+    },
+    "OKX|SOL-USDT-SWAP|QUOTE": {
+      "max": 3754.875,
+      "p50": 1167.203,
+      "p95": 3019.493,
+      "p99": 3502.336,
+      "samples": 658
+    },
+    "OKX|SOL-USDT-SWAP|TRADE": {
+      "max": 7706.621,
+      "p50": 1817.773,
+      "p95": 5663.389,
+      "p99": 6708.888,
+      "samples": 1006
+    }
+  },
+  "event_age_caveat": "BAR close age; quiet MARK/TRADE/L2 age is not session eligibility; bounded last 2000 samples per product",
+  "exclusions": [
+    "DNSE/VN and unentitled Spot remain existing legacy/V1 scope",
+    "No broker order, alpha activation, account mutation, TS P18 implementation or mainnet certification",
+    "Same-host bounded 60-route load; no independent-HA or unlimited-capacity claim",
+    "GitHub CI and main/tag publication are separate release gates and must pass before tag push"
+  ],
+  "failures_retained": [
+    "observer cursor/audit read-only setup",
+    "Python 3.10 observer timeout API mismatch",
+    "incorrect strict-execution TRADE observer method",
+    "512MiB actual TS freshness failures"
+  ],
+  "latency_semantics": "SDK request start through authentic V2 response and the same typed projection as TS stream_view_batches; quiet TRADE can be observable while execution_eligible=false. Event age is reported separately, never substituted for RPC latency.",
+  "projector_stage_samples": {
+    "canonical_age_ms": {
+      "max_ms": 1074.2,
+      "n": 39445,
+      "not_a_percentile": true,
+      "weighted_mean_ms": 288.555,
+      "windows": 35
+    },
+    "durable_append_ms": {
+      "max_ms": 558.5,
+      "n": 1137,
+      "not_a_percentile": true,
+      "weighted_mean_ms": 57.392,
+      "windows": 35
+    }
+  },
+  "release": "v2.1.0",
+  "release_manifest_sha256": "b4e43688ef714e6cef28c0bf2e565b0fbd7b5c70703c9271e1189a9c5bf99afe",
+  "resources": [
+    {
+      "direct_reclaim_pages_delta": 0,
+      "duration_seconds": 285.592,
+      "file_refault_pages_delta": 0,
+      "image": "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+      "memory_current_mib": 120.7,
+      "one_core_cpu_percent": 10.63,
+      "oom": false,
+      "restart": 0,
+      "role": "/qdl_v2_stable_candidate-stream_v2_active-1"
+    },
+    {
+      "direct_reclaim_pages_delta": 0,
+      "duration_seconds": 285.592,
+      "file_refault_pages_delta": 2944,
+      "image": "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+      "memory_current_mib": 676.73,
+      "one_core_cpu_percent": 47.94,
+      "oom": false,
+      "restart": 0,
+      "role": "/qdl_v2_stable_candidate-stream_v2_passive-1"
+    },
+    {
+      "direct_reclaim_pages_delta": 0,
+      "duration_seconds": 285.592,
+      "file_refault_pages_delta": 0,
+      "image": "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+      "memory_current_mib": 192.53,
+      "one_core_cpu_percent": 26.34,
+      "oom": false,
+      "restart": 0,
+      "role": "/qdl_v2_stable_candidate-query_v2_1-1"
+    },
+    {
+      "direct_reclaim_pages_delta": 0,
+      "duration_seconds": 285.592,
+      "file_refault_pages_delta": 0,
+      "image": "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+      "memory_current_mib": 162.12,
+      "one_core_cpu_percent": 15.35,
+      "oom": false,
+      "restart": 0,
+      "role": "/qdl_v2_stable_candidate-query_v2_2-1"
+    },
+    {
+      "direct_reclaim_pages_delta": 0,
+      "duration_seconds": 285.592,
+      "file_refault_pages_delta": 0,
+      "image": "sha256:7d410919ccdfa31f2c9f6111625e0ee9994172bd615f603ecbc0b31e33cba475",
+      "memory_current_mib": 152.54,
+      "one_core_cpu_percent": 43.34,
+      "oom": false,
+      "restart": 0,
+      "role": "/market_data_service"
+    }
+  ],
+  "rollback": {
+    "query": "sha256:f671dcebfdca1b28fc2cb99f3129f8f13e78a9a5853d2be8adfd9ee00c6f31b9",
+    "stream": "sha256:c8d7458e57d62d6fb2d6366f42911d86085918f6f6939d624c61494798dac2ab",
+    "trading_consumer": "sha256:0983912997a6e48e9d7fe311dcafc03678ba33845fdef7e78b6f55730f7ac4b2",
+    "trading_consumer_caveat": "revision 9 fallback is known fail-closed, not healthy V2 adoption"
+  },
+  "routing_revision": 22,
+  "runtime": {
+    "projector_image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+    "query_and_stream_roles": [
+      "query_v2_1",
+      "query_v2_2",
+      "stream_v2_active",
+      "stream_v2_passive"
+    ],
+    "query_cpu_limit": 1,
+    "query_memory_limit_bytes": 536870912,
+    "rust_image": "sha256:389753b37c4f3935193acc739687c4a18c5b307f3ea6a427153f5689d31c9762",
+    "stream_cpu_limit": 2,
+    "stream_memory_limit_bytes": 1073741824,
+    "stream_memory_plus_swap_bytes": 1610612736,
+    "trading_consumer_image": "sha256:7d410919ccdfa31f2c9f6111625e0ee9994172bd615f603ecbc0b31e33cba475"
+  },
+  "schema": "qdl.v210.consumer-load-certificate.v1",
+  "scope": {
+    "active_consumer_products": 299,
+    "consumer_counts": {
+      "alpha.binance.paper.stable": 125,
+      "alpha.okx.paper.stable": 110,
+      "monitoring.multivenue.stable": 4,
+      "trading-system.paper.stable": 60
+    },
+    "feeds": {
+      "BAR": 150,
+      "BASIS": 5,
+      "BOOK_DELTA": 20,
+      "BOOK_SNAPSHOT": 20,
+      "CONTRACT_METADATA": 10,
+      "FUNDING_RATE": 10,
+      "LONG_SHORT_RATIO": 5,
+      "MARK_INDEX_PRICE": 20,
+      "OPEN_INTEREST": 10,
+      "QUOTE": 20,
+      "TAKER_FLOW": 5,
+      "TRADE": 24
+    },
+    "ts_routes": 60,
+    "ts_symbols_per_venue": 5,
+    "venues": [
+      "BINANCE_USDM",
+      "OKX_SWAP"
+    ]
+  },
+  "sdk_version": "2.0.3",
+  "source": {
+    "base": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+    "image": "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+    "source": "1c0844f562ff419a98d4374a838acf7764569219",
+    "tag": "qdl-v2-python:2.1.0-1c0844f"
+  },
+  "status": "PASS",
+  "steady_call_to_validated_use_ms": {
+    "BINANCE|BAR": {
+      "max": 824.34,
+      "p50": 532.378,
+      "p95": 806.164,
+      "samples": 31
+    },
+    "BINANCE|BOOK_DELTA": {
+      "max": 162.878,
+      "p50": 43.685,
+      "p95": 75.705,
+      "samples": 32
+    },
+    "BINANCE|BOOK_SNAPSHOT": {
+      "max": 172.452,
+      "p50": 55.161,
+      "p95": 74.781,
+      "samples": 32
+    },
+    "BINANCE|MARK_INDEX_PRICE": {
+      "max": 123.844,
+      "p50": 16.783,
+      "p95": 27.42,
+      "samples": 31
+    },
+    "BINANCE|QUOTE": {
+      "max": 46.926,
+      "p50": 9.576,
+      "p95": 12.971,
+      "samples": 31
+    },
+    "BINANCE|TRADE": {
+      "max": 82.757,
+      "p50": 9.459,
+      "p95": 13.705,
+      "samples": 33
+    },
+    "OKX|BAR": {
+      "max": 847.468,
+      "p50": 530.931,
+      "p95": 812.696,
+      "samples": 31
+    },
+    "OKX|BOOK_DELTA": {
+      "max": 248.339,
+      "p50": 35.642,
+      "p95": 57.099,
+      "samples": 32
+    },
+    "OKX|BOOK_SNAPSHOT": {
+      "max": 135.562,
+      "p50": 50.518,
+      "p95": 77.714,
+      "samples": 30
+    },
+    "OKX|MARK_INDEX_PRICE": {
+      "max": 61.134,
+      "p50": 15.847,
+      "p95": 28.082,
+      "samples": 31
+    },
+    "OKX|QUOTE": {
+      "max": 66.928,
+      "p50": 9.393,
+      "p95": 19.751,
+      "samples": 30
+    },
+    "OKX|TRADE": {
+      "max": 21.702,
+      "p50": 8.905,
+      "p95": 15.359,
+      "samples": 31
+    }
+  },
+  "tests": {
+    "c2_rerun": false,
+    "exact_image_pass": 123,
+    "fast_preflight_products": 299,
+    "fast_preflight_query_replicas": 2,
+    "independent_sdk_read_pass": 240,
+    "inherited_c2_sha256": "bed675bd77bbac258acf308632b2bd8ce1f5535fd4b03b820fb0f010d5469c86",
+    "selected_source_pass": 207,
+    "selected_source_remaining_skips": 0
+  }
+}

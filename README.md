@@ -23,8 +23,8 @@ It currently serves:
 - [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 - [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 - [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
-- [V2.0.13 release notes](./upgrade/evidence/releases/v2.0.13/RELEASE_NOTES.md)
-- [V2.0.13 machine-readable certificate](./upgrade/evidence/releases/v2.0.13/certificate.json)
+- [V2.1.0 release notes](./upgrade/evidence/releases/v2.1.0/RELEASE_NOTES.md)
+- [V2.1.0 machine-readable certificate](./upgrade/evidence/releases/v2.1.0/certificate.json)
 - [Contributing guide](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)
@@ -134,6 +134,35 @@ paper scope for BTC, ETH, SOL, DOGE and BNB across both venues.
 
 ## Certified V2 Benchmark Snapshot
 
+### V2.1.0 Actual Consumer Load (2026-09-22)
+
+The real Trading System consumer passed 60/60 sealed Binance/OKX routes for
+305 seconds, with 413 validated SDK reads and publication observed for every
+route. The 299-product read-plane preflight also passed on both Query replicas.
+No test orders or hidden V1 fallback. SDK remains 2.0.3; binding/JWT revision 10.
+
+Consumer-call-to-validated-use latency under that load:
+
+| Feed | Binance p50 / p95 | OKX p50 / p95 |
+|---|---:|---:|
+| TRADE | 9.46 / 13.71ms | 8.91 / 15.36ms |
+| QUOTE | 9.58 / 12.97ms | 9.39 / 19.75ms |
+| MARK_INDEX_PRICE | 16.78 / 27.42ms | 15.85 / 28.08ms |
+| BOOK_SNAPSHOT | 55.16 / 74.78ms | 50.52 / 77.71ms |
+| BOOK_DELTA | 43.69 / 75.71ms | 35.64 / 57.10ms |
+| Final BAR snapshot | 532.38 / 806.16ms | 530.93 / 812.70ms |
+
+N=30-33 steady reads per bucket; no p99 SLA claimed. Quiet/session readiness
+is distinct from execution eligibility. These RPC timings are not source
+event age or candle-close-to-signal latency. Stream memory limits are 1GiB
+after source optimization and measured reclaim improvement; CPU limits did
+not increase. See the linked certificate for resources, inherited C2, failed
+attempts, rollback and exclusions. This does not certify unbounded load.
+
+### Historical Benchmarks
+
+The following older figures are preserved as historical evidence, not a claim
+that they were measured again on v2.1.0.
 These figures are real-provider/no-order evidence, not a blanket network SLA.
 Request round-trip is consumer -> V2 query/cache -> consumer; it is distinct
 from provider event age and from final-BAR materialization. The durable price/

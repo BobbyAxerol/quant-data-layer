@@ -50166,7 +50166,7 @@ No push/merge/tag/release; do not resume TS P18 before owner review.
 <a id="v210-consumer-load-closure-20260922"></a>
 ## V2.1.0 Consumer-Load Closure (2026-09-22)
 
-**Status: IN_PROGRESS / OWNER_APPROVED.** This is the bounded continuation of
+**Status: RUNTIME_CERTIFIED / RELEASE_READY.** This is the bounded continuation of
 the failed revision-10 TS handoff, not a new architecture program. Owner
 approved implementation, affected runtime rollout, certification and release
 `v2.1.0` only if the recorded gates pass. Do not resume TS P18 work here.
@@ -50322,3 +50322,87 @@ and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
   readiness and fast preflight run the real TS revision-10 workload. No RAM
   increase has been applied. Temporary Redis cleanup pre-available disk:
   177122664448 bytes; runtime restart state unchanged.
+- Candidate `1c0844f` image `579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`
+  passed 123 exact-image regression tests. Build initially used a bare image
+  ID in FROM, which Docker interpreted as a registry name; corrected to the
+  inspected local base tag/digest. No failed image was promoted.
+- Four reader/stream roles now run that candidate, unchanged resources and
+  mounts/config/TLS. Fast authenticated read-plane preflight passes all 299
+  products on both Query replicas; no stream/fallback/order/provider-direct
+  connections in that test. Original full C2 remains inherited, not rerun.
+- Actual-load observer had two setup failures before collecting any acceptance
+  window: cursor and then audit directories were read-only. TS was restored
+  after each attempt. Both observer directories now use its private tmpfs;
+  actual TS state remains untouched. These are test-harness errors, not new
+  provider defects or passed 300s runs. Separate failed receipts retained.
+- Optimized 512MiB runtime reached TS 60/60 after 30s, but the real window
+  includes a MARK_INDEX Binance DOGE incomplete response and two OKX QUOTE
+  health samples older than 2s. This remains FAIL, despite automatic recovery.
+  Writer lease moved normally to the replica named `stream_v2_passive` during
+  rolling; measure actual lease owner rather than assuming role name.
+  Writer used about 50-52% of one CPU in the sampled interval, cgroup about
+  500MiB/512MiB with continuing max/reclaim events, OOM=0. Do not infer these
+  failures are provider defects without typed errors.
+- Next measured A/B changes ONLY the two existing Stream memory ceilings from
+  536870912 to 1073741824 bytes, with swap allowance preserved at the previous
+  536870912 bytes (combined memory+swap 1610612736). Use live Docker resource
+  update without process restart; no image/config/lease/data change. Rollback
+  memory=536870912, memory-swap=1073741824. CPU remains 2. Retain the increase
+  only if equivalent actual TS load measurably reduces reclaim/latency; otherwise
+  revert. The same observer now prints compact typed reference failures.
+- A/B evidence: optimized 512MiB writer over 300.6s averaged 50.4% of one CPU,
+  497MiB resident cgroup, 35,352 direct-reclaim pages and 9,664 file refaults.
+  At 1GiB, sampled 240.5s averaged 50.2% CPU, 630MiB cgroup and zero direct
+  reclaim. No OOM/restart, no CPU increase. This supports more page-cache
+  headroom, not a claim that extra RAM makes compute faster. Provider traffic
+  is real and not bit-identical between windows; retain that limitation.
+- Measurement corrections, not serving defects: the observer initially used
+  Python-3.11 `asyncio.timeout` against TS Python 3.10, so its 413 attempted RPC
+  measurements are INVALID and excluded from latency reporting. Replaced with
+  `wait_for`. A subsequent observer incorrectly used strict execution TRADE
+  projection for quiet BNB/OKX; 5 strict rejections are retained, not relabeled
+  successful. Actual TS health was 60/60 throughout 300s in that run.
+- Supplemental authentic 240-read probe uses the exact `_project` path used
+  by TS stream batches, records execution eligibility separately, and passes
+  all 60 routes x both replicas x two rounds. Per-feed N=40; p50/p95 ms:
+  QUOTE 9.980/57.739, TRADE 9.571/31.210, BOOK_SNAPSHOT 53.895/120.151,
+  BOOK_DELTA 43.903/257.589, MARK_INDEX_PRICE 24.173/266.117,
+  BAR 540.027/824.446. No p99 claim for N=40. No orders/fallback/provider-direct.
+  Source timestamp ages are NOT these RPC timings. Run final actual-TS 300s
+  receipt with the corrected observer; do not certify the raw failed harness
+  receipts or hide their setup/semantics errors.
+- Final corrected acceptance PASS: startup 30.081s, normal window 305.120s,
+  10 independent service heartbeats (not 60 independent heartbeat claims),
+  60/60 routes throughout, 413 validated RPC reads, 60 actual TS publication
+  identities, no observer RPC/reference failure. Order actions=0, no direct
+  venue requests or fallback. TS remains on `7d410919...ba475`, revision 10,
+  SDK 2.0.3; old revision-9 rollback is retained but NOT advertised healthy.
+- Steady per-venue latency and resource detail are in
+  [v2.1.0 certificate](upgrade/evidence/releases/v2.1.0/certificate.json) and
+  [release notes](upgrade/evidence/releases/v2.1.0/RELEASE_NOTES.md). Receipt
+  SHA256 `bc5b5a92293b87a9b4bb635a93d2f1bf6933cfd4ab70805295179904d6770d86`.
+  Old C2 is inherited by hash; no blanket C2 rerun. New stream image also
+  carries the previously tested e4a7377 SQLite hydration/WAL recovery fixes;
+  do not attribute all runtime improvement to the retention optimization alone.
+- Retained resource adjustment: Stream limit 1GiB each, 2 CPUs unchanged,
+  query limit 512MiB/1 CPU unchanged. Writer observed about 677MiB / 48% of
+  one CPU; direct reclaim delta=0, restart=0, OOM=false. The external canonical
+  reader Compose packet now persists these limits; rollback packet retains
+  exact original images/config/512MiB. No further runtime recreate required.
+- Cleanup COMPLETE for this slice: all disposable test/profile/observer
+  containers and Redis network removed; exact build context, capture fixture
+  and downloaded profiling tool removed. Four exact BuildKit records pruned
+  (about 37.7MB cache). Disk available 177803522048 -> 177881571328 bytes;
+  host delta includes concurrent runtime writes and is not exact reclaim.
+  Runtime IDs/restarts/images unchanged by cleanup. One new image exists and
+  is active, not disposable. Retain Query `f671dceb...`, Stream `c8d7458e...`,
+  Projector `d724764b...`, TS `09839129...` rollback plus all other active images.
+  Do not prune unrelated TS/Rust build records. No new worktree was created.
+- Release packet: tested implementation commit `1c0844f`, immutable reader
+  image `579d578e...cb6aa6c`, documentation/certificate descendants only.
+  Push/integrate feature into dev, require CI, then approved fast-forward
+  main/tag `v2.1.0` and automated GitHub publication. Do not bypass branch
+  protection. Publication is not claimed before that workflow succeeds.
+  Source-only release-note commits do not change the certified binary and
+  do not require another real-provider C2. TS P18 remains paused for owner
+  review, and owner's TS Compose/symbol changes remain untouched.
