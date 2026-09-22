@@ -51135,11 +51135,21 @@ owner approval. Insufficient measured capacity remains an open exit, not hidden 
   The corresponding fairness/cancellation/byte-bound tests are in the focused
   suite above. This is a bounded local admission policy, not an order, provider
   or data-quality authority.
+- 2026-09-22: committed source slice `13b3594` built exactly one immutable,
+  non-deployed candidate from `git archive`, excluding the dirty working tree:
+  `qdl-v2-python:2.1.1-13b3594@sha256:2aaa1289dbd0681ef8f696cfc017d74494b4d642b32e760effbdc6145f4ca8e9`
+  (OCI revision `13b3594d5ccf88491e60777eef4c0fb1c2ef9a32`, `205,496,840`
+  bytes). The same isolated `145`-test suite passed in `20.358 s` inside that
+  artifact at `512 MiB / 1 CPU`. It is retained only as the named candidate for
+  a later Query-only A/B rollout; no role, cap, state, provider connection or
+  consumer routing changed during build/test. Docker inventory moved from
+  `20.66 GiB` images / `6.879 GiB` BuildKit cache to `21.38 GiB` / `7.651 GiB`;
+  no cleanup is authorized yet because the candidate, active reader and named
+  rollback image remain required for the next bounded decision.
 
-**Remaining:** build one immutable Query candidate from the committed source;
-measure the same bounded read workload before/after a separately approved
-Query-only rollout; retain the existing `512 MiB / 1 CPU` caps unless those
-measurements prove a bounded increase is useful; then record the exact
+**Remaining:** measure the same bounded read workload before/after a separately
+approved Query-only rollout; retain the existing `512 MiB / 1 CPU` caps unless
+those measurements prove a bounded increase is useful; then record the exact
 optimization/resource report. Full C2 and consumer-load certification remain
 Phase 3 work, not a Phase-2 substitute.
 **Cleanup:** reuse existing test image when possible; inventory/remove only new
