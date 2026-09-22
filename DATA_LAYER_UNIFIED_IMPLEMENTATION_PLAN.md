@@ -49163,3 +49163,85 @@ V1, consumer, alpha, broker or order path changed. Next scope is one immutable
 Rust image and a serial recreate of only `ingestor_okx_swap`, retaining its
 current digest/runtime mount as rollback; targeted real-provider transition
 evidence must pass before the one replacement C2.
+
+**R1.35-D one-role runtime packet (`APPROVED / READY TO APPLY`,
+2026-09-21).** Immutable Rust image
+`qdl-v2-rust:2.0.26-62241bc@sha256:ed1ef88bb400bc262ffdec40589e210657757dc7f963c2f727cb86d4b8c4378a`
+was built from source commit `62241bcf29aa8e03603984a7cce680b83c0bb0ea` and
+passed a non-root (`10001:10001`), read-only, no-network binary smoke. The
+only permitted runtime mutation is a serial `--no-deps --no-build`
+recreate of `qdl_v2_stable_candidate` service `ingestor_okx_swap`. Its exact
+current rollback is
+`qdl-v2-rust@sha256:b7b9d153f0ed31892007639ca35f42642f9d41e713e4a06a9222fabdd82b81ec`.
+The existing read-only runtime JSON
+`dlv2-r124-okx-native-bar-20260917T091434Z/runtime/ingestor-okx-swap.json`,
+`stable_tls`, `stable_state`, `stable_egress`, `10001:10001`, `256 MiB` and
+`0.5 CPU` constraints are byte/config-equivalent before and after; no config
+or durable-state file is regenerated. V1, Kafka topology/offsets, Redis,
+SQLite, Query/Stream, Rust cores, other ingestors, Trading System, alpha and
+order path are excluded. Rollback is the one-image override plus serial
+recreate of this one service. Exit before C2: service healthy/restart `0`/no
+OOM and the real 10-book 75-second indexed transition sample has zero
+timer-driven `UNKNOWN` or `DISCONNECTED` status.
+
+**R1.35-D one-role rollout and targeted L2 evidence (`PASS / ONE C2
+REPLACEMENT NEXT`, 2026-09-21).** Only `ingestor_okx_swap` was serially
+recreated with the approved `62241bc` Rust image. It is healthy, has restart
+`0` and is not OOM-killed; its runtime JSON, TLS/state mounts, CPU/memory
+limits and all excluded V1/Kafka/Redis/SQLite/consumer/order components remain
+unchanged. The bounded real-provider sample at
+`/home/bobby/.local/state/qdl-v2/releases/v2.0.26-62241bc/evidence/l2-transition/indexed-sample-after-roll.json`
+observed each of the ten Binance USD-M/OKX Swap BTC/ETH/SOL/DOGE/BNB execution
+books as `LIVE` in `75/75` indexed samples, with no timed `UNKNOWN` or
+`DISCONNECTED` transition. This satisfies the targeted Rust correction exit;
+it is not itself the all-scope C2 certificate.
+
+**R1.35-D replacement C2 opening finding (`FAIL CLOSED / HARNESS SOURCE
+CORRECTION`, 2026-09-22).** One and only one replacement no-order C2 was
+launched from the current reader image using the sealed four identities, both
+Query replicas and both Stream replicas. It made no provider-direct or order
+action, and the disposable client removed itself. The manifest-derived opening
+plan was `299` V2-primary products, `1,482` governed operations and `935s`
+minimum budget. During opening, `alpha.okx.paper.stable` failed at
+`OKX.SWAP.PERPETUAL.ETH-USDT` `QUOTE` because a first stream frame was passed
+to `validate_product_view` as current and exceeded freshness. The 10-row,
+payload-free, two-replica status probe immediately afterward showed all five
+OKX quotes `LIVE`, complete, gap-free and execution-eligible (event ages
+`751-1,559ms`; session liveness `135-294ms`). A bounded ETH warmup-to-stream
+probe then proved the first frame carried the `REPLAYING` control even though
+the following strict snapshot was fresh. Therefore this is not permission,
+provider outage, L2 materialization or freshness-SLA relaxation: C2's first
+frame path fails to classify a control-marked replay as state-only unless the
+parser itself emits `DATA_STALE`.
+
+**Approved narrow C2 harness correction (`SOURCE ONLY / TEST NEXT`).** Treat
+only a first native `QUOTE` stream frame preceded by the signed `REPLAYING`
+control as state replay: retain identity/provenance/gap/payload validation, do
+not admit it as current/execution data, and require the existing strict current
+V2 snapshot before acceptance. A quote without that control remains current
+and must still reject stale data. Existing BAR and TRADE replay/quiet handoff
+semantics remain unchanged. Add deterministic regressions for both quote
+branches. No Rust,
+provider adapter, manifest/SLA, container, runtime, V1, Kafka, Redis, SQLite,
+Trading System, alpha or order-path change is permitted in this slice. Only
+after source tests and a reader-only rollout may one final replacement C2 be
+considered; the previous failed C2 is retained as non-certificate provenance.
+
+**R1.35-D QUOTE replay-handoff correction (`PASS / COMMIT AND C2 CLIENT IMAGE
+NEXT`, 2026-09-22).** The acceptance client now classifies only a first
+`QUOTE` frame preceded by `REPLAYING` as replay-only before parsing it, retains
+the existing identity/provenance/gap/payload checks, and makes the pre-existing
+strict current snapshot the sole execution-quality attestation. A quote with
+no replay control remains on the original strict-current path. BAR and TRADE
+logic is unchanged after the first broad draft was rejected by their existing
+regressions. New deterministic coverage proves a replay-controlled first
+execution quote is acknowledged only as state and requires fresh read-back.
+The full receipt harness passed `57/57`; Phase 10.5 identity/pace/closing
+coverage passed `41/41`, both in the candidate Python image with source mounted
+read-only and network disabled. An initial `pytest` invocation stopped before
+tests because the serving image intentionally has no `pytest`; no dependency
+was installed and the same suites were run through stdlib `unittest`. The
+temporary real-provider probes were no-order, payload-free and leave no
+container/state. Next is one committed source slice, an immutable client image
+from that SHA, and one final C2 only; no reader service rollout is needed for
+this client-only behavior correction.

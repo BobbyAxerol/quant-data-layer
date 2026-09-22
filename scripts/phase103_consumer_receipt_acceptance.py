@@ -1175,12 +1175,22 @@ async def _stream_resume(
                 )
             if not quiet_primary:
                 assert first is not None
-                first_replay_only = False
+                # Native BBO quotes can receive a retained frame immediately
+                # after accepting a signed cursor. The REPLAYING control, not
+                # the frame's current age, decides that this QUOTE is state
+                # replay. It is never execution input; a strict current read
+                # follows. BAR and TRADE already have distinct certified
+                # replay/quiet handoff rules below and are intentionally kept
+                # on those paths.
+                first_replay_only = (
+                    product.feed.value == "QUOTE" and "REPLAYING" in first_controls
+                )
                 try:
                     first_view = market_data_view_from_stream(
                         first,
                         template=session.warmup.data[-1],
                         requirement=stream_requirement,
+                        **({"replay_only": True} if first_replay_only else {}),
                     )
                 except ContinuityError as error:
                     # A snapshot cursor can race a delayed provider frame. The
