@@ -50791,7 +50791,8 @@ Read this section and the linked guides before implementing each phase:
 <a id="read-plane-capacity-phase-1"></a>
 ### Phase 1 - Correctness And Diagnostic Safety
 
-**Status: IMPLEMENTED / SOURCE_TESTED / RUNTIME_VALIDATION_PENDING.**
+
+**Status: COMPLETE / SOURCE_AND_RUNTIME_VALIDATED.**
 **Goal:** remove the reproducible diagnostic availability hazard and close the
 specific intermittent MARK/INDEX failure with attributed, component-level proof.
 **Guides:** architecture **17.4-17.5, 26.5, 37.3, 38**; OKX **8.9/8.13,
@@ -50921,20 +50922,78 @@ Stop after this exit/report; Phase 2 awaits its owner approval.
   approved narrow reader rollout and bounded authentic read observation; no
   C2, capacity certification, provider-direct call, runtime restart, state
   change or cleanup/prune was performed.
+- 2026-09-22: an immutable candidate was built from the committed archive,
+  never the dirty checkout: `qdl-v2-python:2.1.1-a3fea33`
+  (`sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`,
+  OCI revision `a3fea334c6886046f49a5b78c633d187dea6c4b0`, non-root
+  `qdl:qdl`). Its isolated, network-disabled/read-only rerun at the original
+  `512 MiB / 1 CPU` passed **42 tests in 14.016 s**: stable diagnostic/window
+  contracts, cancellation/typed incomplete behavior and V2 API compatibility.
+  The retained exact rollback is still
+  `sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`.
+  No service was recreated during build/test. The next packet, if separately
+  approved, rolls only `query_v2_1` then `query_v2_2`, preserving their
+  existing runtime/TLS/state mounts and `512 MiB / 1 CPU` limits, then runs
+  the bounded read-only five-symbol/two-venue M3 observation through both
+  replicas. V1, Stream, Rust, ingestors, projectors, Kafka, Redis, SQLite,
+  Trading System, alpha and order paths remain excluded.
 
-**Remaining:** source D1-D3/M1-M2 are complete. M3 is the only Phase-1 exit
-item outstanding: build/attest this source revision, roll only explicitly
-approved reader roles with named rollback, then collect bounded authentic
-five-symbol/two-venue read evidence. No C2 or Phase-2 capacity work is
-permitted before that result.
-**Cleanup:** all test containers used `--rm`; no test image, cache, volume,
-network, runtime state or source worktree was created. No runtime cleanup is
-needed or authorized in this source-only slice.
+- 2026-09-22: owner approved the exact M3 reader packet. The only runtime
+  mutation is serial `query_v2_1`, then `query_v2_2`, from the active reader
+  image `sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`
+  to `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`.
+  Existing sealed environment, TLS/state mounts, network aliases and
+  `512 MiB / 1 CPU` limits remain unchanged. A failed health or M3 observation
+  rolls back only those same two roles to the named active image. The
+  observation is V2-only, read-only, no-order and tests ten MARK/INDEX bindings
+  (`BTC/ETH/SOL/DOGE/BNB` x Binance USD-M/OKX Swap) through each Query replica;
+  it does not run C2, call V1/direct providers or mutate Kafka/Redis/SQLite,
+  Trading System or alpha state.
+- 2026-09-22: M3 rendered with packet revision `r2`, after canonicalizing the
+  unordered Docker mount list rather than treating list-order noise as a real
+  mount change. Packet SHA-256 is `d25d533243439eec1e66f1b92a618cca56898162431b3730dea16918cd1c5c25`;
+  it verified every reader's environment hash, normalized mount identity and
+  `512 MiB / 1 CPU` cap before each action. Only `query_v2_1`, then
+  `query_v2_2` were recreated. Both reached `healthy`, restart `0`, OOM
+  `false`, and image `sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`;
+  the secret-free rollout receipt SHA-256 is
+  `53a110fa6bc27b7488050db1cef92b4bd8733fb49939bec68ad54f417ce7f731`.
+  Compose emitted an orphan *warning* for excluded shared roles, but no
+  `--remove-orphans` option was used and no excluded role changed.
+- 2026-09-22: the first disposable M3 client selected a retired certificate
+  authority and stopped at mTLS before any successful V2 request or market-data
+  read. Public certificate fingerprints isolated that launcher-only mismatch;
+  the active Query CA is `7B:37:4A:...:14:87`, while the attempted old bundle
+  was `FC:AF:51:...:8C:30`. The existing current inspection identity matched
+  the active CA. This is retained as bounded no-read provenance, not counted as
+  a data-plane failure or a retry of C2.
+- 2026-09-22: authenticated M3 then passed independently through both public
+  Query replicas with the real `trading-system.paper.stable` V2 SDK identity.
+  Each 60-second, 2-second-cadence, V2-only read observed all ten exact
+  `MARK_INDEX_PRICE` bindings for `BTC/ETH/SOL/DOGE/BNB` on Binance USD-M and
+  OKX Swap, with 31 valid component samples per binding, zero typed errors,
+  zero V1 fallback and zero direct-provider/order/stream actions. Replica 1
+  evidence `f83f3293e8b095a71986d7dd2d9bef23b3028d3bd3daed934555a422ff1828d8`
+  measured SDK consumer-call-to-usable p50/p95/p99 `162.517/344.572/430.068 ms`;
+  replica 2 evidence `3f9db4e61e1f1782c4e946ccec5c7fed3b1f997de6825babb5800f918301a7c8`
+  measured `141.637/298.253/360.645 ms`. Provider-confirmation age remains
+  separately recorded (`2.730 s` and `2.523 s` p99): it is immutable
+  component/session lineage, not SDK call latency, and every result retained
+  governed quiet/live eligibility. Filtered post-rollout Query logs had no
+  `ERROR`, `FATAL`, `Traceback`, `OOM` or `exception` record.
+
+**Remaining:** none in Phase 1. Its bounded authentic exit is complete; no C2
+was required or run. Phase 2 may start from this exact reader baseline.
+**Cleanup:** all disposable M3 clients used `--rm` and are absent. Retain the
+active candidate image, the named rollback image and bounded secret-free packet/
+evidence under external runtime state until the Phase-2 release decision. No
+volume, network, cache, state, source worktree or excluded runtime role was
+removed.
 
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity
 
-**Status: PENDING_PHASE_1_AND_OWNER_APPROVAL.**
+**Status: SOURCE_VALIDATED / RUNTIME_PROFILE_AND_ROLLOUT_PENDING.**
 **Goal:** protect TS and frequent alpha reads from cold-read contention, then
 demonstrate useful capacity improvement before retaining any larger cap.
 **Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
@@ -51024,8 +51083,65 @@ caps/manifest revision using the recorded baseline. Preserve all source data and
 consumer cursor state. Stop after the optimization/resource report; Phase 3 awaits
 owner approval. Insufficient measured capacity remains an open exit, not hidden debt.
 
-**Journal / work completed:** plan drafted only; no optimization, A/B or cap change.
-**Remaining:** hot/cold attribution, scoped optimization, applicable A/B and gates.
+**Journal / work completed:**
+
+- 2026-09-22: owner approved Phase 2 after requesting Phase 1 be completed
+  first. Phase 2 remains deliberately blocked by the recorded Phase-1 M3
+  reader-runtime observation; this prevents capacity work from being measured
+  on a source revision whose diagnostic correction has not yet reached either
+  Query replica. The approved scope remains query/read-plane only: no new
+  service, topology, provider subscription, durable-state reset, Trading
+  System/alpha/order mutation or broad recertification is implied.
+- 2026-09-22: read-only inventory fixed the Phase-1 M3 baseline: both Query
+  replicas are healthy, read-only, each capped at `512 MiB / 1 CPU`, and both
+  run `sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`
+  (`qdl-v2-python:2.1.0-1c0844f`, OCI revision `1c0844f562ff419a98d4374a838acf7764569219`).
+  This is the exact retained rollback coordinate for the later M3 packet.
+  Compose must be rendered with the sealed runtime environment rather than
+  host defaults; a host-only render correctly refused missing secret/runtime
+  variables and was not a runtime or source failure.
+- 2026-09-22: Phase-1 M3 completed on both Query replicas. The active exact
+  baseline is now `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`,
+  still `512 MiB / 1 CPU` per reader, with the prior
+  `sha256:579d578e...dcb6aa6c` retained as rollback. Phase 2 may profile this
+  binary; no capacity increase, stream role change, TS mutation or new consumer
+  claim is implied by this unblock.
+- 2026-09-22: Phase-2 source slice is implemented but deliberately not built
+  or rolled out. Query now owns three finite work classes: hot latest/status
+  reads (`2` workers), cold history/warmup materialization (`4` workers), and
+  diagnostic scans (`1` worker). The same process has bounded per-consumer
+  admission and byte reservations for hot snapshots (`2/16/512 KiB` active /
+  total / queued bytes), execution `MARK_INDEX_PRICE` reads (`4/32/1 MiB`),
+  and local history batches (one active, five total, `64 MiB`). The actual TS
+  identity has a demand-driven reserved hot share; idle capacity remains
+  available to normal identities, and no provider quota/cooldown policy was
+  changed. The SDK adds an optional two-reader transport which retries only a
+  pre-response transport failure once; it never hunts for a green replica after
+  a typed quality, entitlement or schema rejection.
+- 2026-09-22: isolated source verification used the active reader image with a
+  read-only source mount, `--network none`, `512 MiB / 1 CPU`, non-root user,
+  dropped capabilities and temporary filesystem only. `145` focused Query,
+  router, SDK, warmup, execution MARK/INDEX, readiness, routing and stream
+  integration regressions passed in `20.578 s`. A second syntax pass using
+  `PYTHONPYCACHEPREFIX=/tmp/pycache` passed for every changed Python module;
+  the first `compileall` invocation was intentionally read-only and could not
+  write `.pyc`, so it is not counted as a source failure. `git diff --check`
+  passed. No source test contacted a provider or runtime service, and every
+  disposable container used `--rm`.
+- 2026-09-22: the admission design was reviewed for reserved-share progress:
+  an authenticated TS request starts atomically while a capacity slot exists;
+  when the lane is full, a released general slot is held for the waiting TS
+  request rather than allowing another alpha to consume the final reserve.
+  The corresponding fairness/cancellation/byte-bound tests are in the focused
+  suite above. This is a bounded local admission policy, not an order, provider
+  or data-quality authority.
+
+**Remaining:** build one immutable Query candidate from the committed source;
+measure the same bounded read workload before/after a separately approved
+Query-only rollout; retain the existing `512 MiB / 1 CPU` caps unless those
+measurements prove a bounded increase is useful; then record the exact
+optimization/resource report. Full C2 and consumer-load certification remain
+Phase 3 work, not a Phase-2 substitute.
 **Cleanup:** reuse existing test image when possible; inventory/remove only new
 disposable test artifacts under approved scope; keep active and named rollback.
 

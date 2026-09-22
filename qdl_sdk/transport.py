@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import time
+from dataclasses import dataclass
 from collections.abc import AsyncIterator, Sequence
 from urllib.parse import urlsplit
 
@@ -227,6 +229,165 @@ class RestQueryTransport:
             retryable=bool(payload.get("retryable", False)),
             retry_after_ms=payload.get("retry_after_ms"),
         )
+
+
+@dataclass(slots=True)
+class _ReplicaReadHealth:
+    failures: int = 0
+    successes: int = 0
+    unavailable_until: float = 0.0
+
+
+class ReplicatedRestQueryTransport:
+    """Bounded, health-aware distribution over existing V2 Query replicas.
+
+    It retries only a transport failure which occurred before a typed V2
+    response exists.  A data-quality, entitlement or schema error remains the
+    selected replica's authoritative result; trying another reader to find a
+    green answer would weaken the public contract.
+    """
+
+    def __init__(
+        self,
+        replicas: Sequence[RestQueryTransport],
+        *,
+        max_attempts: int = 2,
+        cooldown_seconds: float = 1.0,
+    ) -> None:
+        values = tuple(replicas)
+        if len(values) < 2:
+            raise ValueError("replicated Query transport requires at least two replicas")
+        urls = tuple(getattr(replica, "base_url", "") for replica in values)
+        if not all(urls) or len(set(urls)) != len(urls):
+            raise ValueError("replicated Query transport replicas must have unique base URLs")
+        if not 1 <= max_attempts <= len(values):
+            raise ValueError("replicated Query max_attempts is outside replica bounds")
+        if cooldown_seconds <= 0:
+            raise ValueError("replicated Query cooldown must be positive")
+        self.replicas = values
+        self._health = [_ReplicaReadHealth() for _ in values]
+        self._max_attempts = max_attempts
+        self._cooldown_seconds = cooldown_seconds
+        self._next = 0
+
+    async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
+        return await self._read("warmup", requirement, consumer_id=consumer_id)
+
+    async def warmup_batch(
+        self,
+        requirements: Sequence[DataRequirement],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict:
+        return await self._read(
+            "warmup_batch",
+            requirements,
+            consumer_id=consumer_id,
+            require_all=require_all,
+        )
+
+    async def reference_batch(
+        self,
+        requirements: Sequence[ReferenceRequirement],
+        *,
+        consumer_id: str,
+        require_all: bool,
+    ) -> dict:
+        return await self._read(
+            "reference_batch",
+            requirements,
+            consumer_id=consumer_id,
+            require_all=require_all,
+        )
+
+    async def snapshot(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
+        return await self._read("snapshot", requirement, consumer_id=consumer_id)
+
+    async def feed_status(
+        self, requirement: DataRequirement, *, consumer_id: str
+    ) -> dict:
+        return await self._read("feed_status", requirement, consumer_id=consumer_id)
+
+    async def instruments(
+        self,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        cursor: str | None = None,
+        limit: int = 500,
+    ) -> dict:
+        return await self._read(
+            "instruments",
+            consumer_id=consumer_id,
+            consumer_grade=consumer_grade,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def instrument(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+    ) -> dict:
+        return await self._read(
+            "instrument",
+            identity,
+            consumer_id=consumer_id,
+            consumer_grade=consumer_grade,
+        )
+
+    async def close(self) -> None:
+        await asyncio.gather(*(replica.close() for replica in self.replicas))
+
+    def stats(self) -> tuple[dict[str, int | str], ...]:
+        now = time.monotonic()
+        return tuple(
+            {
+                "base_url": replica.base_url,
+                "successes": health.successes,
+                "failures": health.failures,
+                "cooling": int(health.unavailable_until > now),
+            }
+            for replica, health in zip(self.replicas, self._health, strict=True)
+        )
+
+    async def _read(self, method: str, *args, **kwargs) -> dict:
+        selected = self._candidate_indexes()
+        last_error: httpx.TransportError | None = None
+        for index in selected:
+            replica = self.replicas[index]
+            try:
+                result = await getattr(replica, method)(*args, **kwargs)
+            except httpx.TransportError as error:
+                last_error = error
+                health = self._health[index]
+                health.failures += 1
+                health.unavailable_until = time.monotonic() + self._cooldown_seconds
+                continue
+            self._health[index].successes += 1
+            self._health[index].unavailable_until = 0.0
+            return result
+        assert last_error is not None
+        raise last_error
+
+    def _candidate_indexes(self) -> tuple[int, ...]:
+        count = len(self.replicas)
+        ordered = tuple((self._next + offset) % count for offset in range(count))
+        self._next = (self._next + 1) % count
+        now = time.monotonic()
+        available = tuple(
+            index
+            for index in ordered
+            if self._health[index].unavailable_until <= now
+        )
+        # A total reader outage still performs one bounded transport attempt so
+        # the caller gets the current network error rather than a synthetic
+        # local cooldown error. It never fans out beyond max_attempts.
+        selected = available or ordered
+        return selected[: self._max_attempts]
 
 
 class GrpcStreamTransport:

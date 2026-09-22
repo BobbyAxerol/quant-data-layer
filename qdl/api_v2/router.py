@@ -681,10 +681,10 @@ async def snapshot(
     access.require_permission(DataPlanePermission.SNAPSHOT_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await asyncio.to_thread(
-        service.snapshot,
+    result = await service.snapshot_async(
         requirement,
         purpose=purpose,
+        consumer_id=access.consumer_id,
     )
     item = _bind_item_cursor(request, access, requirement, result.item)
     return SnapshotResponse(request_id=result.request_id, data=_market_item(item))
@@ -749,6 +749,7 @@ async def warmup(
     result = await service.warmup_async(
         requirement,
         purpose=purpose,
+        consumer_id=access.consumer_id,
     )
     result = type(result)(
         result.request_id,
@@ -813,7 +814,11 @@ async def history(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await service.warmup_async(requirement, purpose=purpose)
+    result = await service.warmup_async(
+        requirement,
+        purpose=purpose,
+        consumer_id=access.consumer_id,
+    )
     result = type(result)(
         result.request_id,
         _bind_history_cursor(request, access, requirement, result.history),
@@ -948,7 +953,12 @@ async def feed_status(
         "schema": "qdl.feed-status.v2",
         "instrument_uid": instrument_uid,
         "feed": feed.value,
-        "quality": asdict(await asyncio.to_thread(service.status, requirement)),
+        "quality": asdict(
+            await service.status_async(
+                requirement,
+                consumer_id=access.consumer_id,
+            )
+        ),
     }
 
 
@@ -971,7 +981,7 @@ async def readiness(
         requirements,
         require_all=body.require_all,
     )
-    result = await asyncio.to_thread(service.readiness, batch, purpose=purpose)
+    result = await service.readiness_async(batch, purpose=purpose)
     items = []
     for item in result.results:
         problem = None

@@ -692,6 +692,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     async def close_stable_query():
         if execution_mark_index_reader is not None:
             await execution_mark_index_reader.close()
+        await service.close()
         await asyncio.to_thread(spool.close)
         await asyncio.to_thread(identity.quota.close)
 

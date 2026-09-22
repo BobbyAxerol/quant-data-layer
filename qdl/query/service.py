@@ -5,7 +5,9 @@ import math
 import threading
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Awaitable, Callable, TypeVar
 
 from qdl.adapters.intervals import canonical_interval_ms
@@ -31,6 +33,7 @@ from qdl.query.contracts import (
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
+from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
     ReferenceBatchRequirement,
@@ -181,7 +184,14 @@ class ReadinessResult:
     results: tuple[ReadinessItemResult, ...]
 
 
-class _LocalBatchAdmissionRejected(RuntimeError):
+_TS_RESERVED_CONSUMER_ID = "trading-system.paper.stable"
+_HOT_SNAPSHOT_RESERVED_BYTES = 16 * 1024
+_HOT_REFERENCE_RESERVED_BYTES = 16 * 1024
+_LOCAL_HISTORY_BYTES_PER_ROW = 1024
+_LOCAL_HISTORY_BASE_BYTES = 16 * 1024
+
+
+class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
 
 
@@ -198,63 +208,92 @@ class _LocalBatchAdmission:
     declared work deadline; it is never provider pacing.
     """
 
-    def __init__(self, *, max_active: int = 1, max_pending: int = 5) -> None:
+    def __init__(
+        self,
+        *,
+        max_active: int = 1,
+        max_pending: int = 5,
+        max_pending_bytes: int = 64 * 1024 * 1024,
+        reserved_consumer_id: str | None = _TS_RESERVED_CONSUMER_ID,
+    ) -> None:
         if max_active != 1:
             raise ValueError("local canonical batch admission currently requires one active lane")
         if max_pending < max_active:
             raise ValueError("local canonical batch pending bound must include active work")
-        self._gate = asyncio.Semaphore(max_active)
-        self._lock = asyncio.Lock()
-        self._max_pending = max_pending
-        self._pending = 0
-        self._active = 0
-        self._admitted = 0
-        self._rejected = 0
-        self._queue_wait_timeouts = 0
+        self._lane = BoundedReadLane(
+            ReadLanePolicy(
+                max_active=max_active,
+                max_pending=max_pending,
+                max_pending_bytes=max_pending_bytes,
+                max_active_per_consumer=1,
+                max_pending_per_consumer=1,
+                reserved_consumer_id=reserved_consumer_id,
+                reserved_slots=0,
+            )
+        )
+        self._anonymous_sequence = 0
 
-    async def run(self, work, *, wait_timeout_ms: int | None = None):
-        if wait_timeout_ms is not None and wait_timeout_ms < 1:
-            raise ValueError("local canonical batch admission wait must be positive")
-        async with self._lock:
-            if self._pending >= self._max_pending:
-                self._rejected += 1
-                raise _LocalBatchAdmissionRejected(
-                    "local canonical-cache batch admission is at capacity"
-                )
-            self._pending += 1
-        acquired = False
+    async def run(
+        self,
+        work,
+        *,
+        consumer_id: str | None = None,
+        reserved_bytes: int = _LOCAL_HISTORY_BASE_BYTES,
+        wait_timeout_ms: int | None = None,
+    ):
+        if consumer_id is None:
+            # Focused legacy callers did not carry an authenticated consumer
+            # identity. Preserve their old global-only behavior without
+            # weakening the real router path, which always supplies one.
+            self._anonymous_sequence += 1
+            consumer_id = f"qdl.v2.legacy.{self._anonymous_sequence}"
         try:
-            try:
-                if wait_timeout_ms is None:
-                    await self._gate.acquire()
-                else:
-                    await asyncio.wait_for(
-                        self._gate.acquire(), timeout=wait_timeout_ms / 1_000
-                    )
-            except asyncio.TimeoutError as error:
-                self._queue_wait_timeouts += 1
-                raise _LocalBatchAdmissionRejected(
-                    "local canonical-cache batch admission wait exceeded the declared deadline"
-                ) from error
-            acquired = True
-            self._active += 1
-            self._admitted += 1
-            return await work()
-        finally:
-            if acquired:
-                self._active -= 1
-                self._gate.release()
-            async with self._lock:
-                self._pending -= 1
+            return await self._lane.run(
+                work,
+                consumer_id=consumer_id,
+                reserved_bytes=reserved_bytes,
+                wait_timeout_ms=wait_timeout_ms,
+            )
+        except ReadLaneRejected as error:
+            raise _LocalBatchAdmissionRejected(
+                f"local canonical-cache batch admission {error}"
+            ) from error
 
     def stats(self) -> dict[str, int]:
-        return {
-            "active": self._active,
-            "pending": self._pending,
-            "admitted": self._admitted,
-            "rejected": self._rejected,
-            "queue_wait_timeouts": self._queue_wait_timeouts,
-        }
+        return self._lane.stats()
+
+
+class _QueryWorkPools:
+    """Small, explicit worker pools so cold reads cannot occupy hot threads."""
+
+    def __init__(self) -> None:
+        self._hot = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qdl-query-hot")
+        self._cold = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdl-query-cold")
+        self._diagnostic = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="qdl-query-diagnostic"
+        )
+        self._closed = False
+
+    async def hot(self, work: Callable, /, *args, **kwargs):
+        return await self._run(self._hot, work, *args, **kwargs)
+
+    async def cold(self, work: Callable, /, *args, **kwargs):
+        return await self._run(self._cold, work, *args, **kwargs)
+
+    async def diagnostic(self, work: Callable, /, *args, **kwargs):
+        return await self._run(self._diagnostic, work, *args, **kwargs)
+
+    @staticmethod
+    async def _run(pool: ThreadPoolExecutor, work: Callable, /, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(pool, partial(work, *args, **kwargs))
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for pool in (self._hot, self._cold, self._diagnostic):
+            pool.shutdown(wait=False, cancel_futures=True)
 
 
 class V2QueryService:
@@ -289,6 +328,29 @@ class V2QueryService:
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
         self._local_batch_admission = _LocalBatchAdmission()
+        self._hot_snapshot_admission = BoundedReadLane(
+            ReadLanePolicy(
+                max_active=2,
+                max_pending=16,
+                max_pending_bytes=512 * 1024,
+                max_active_per_consumer=1,
+                max_pending_per_consumer=4,
+                reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+                reserved_slots=1,
+            )
+        )
+        self._hot_reference_admission = BoundedReadLane(
+            ReadLanePolicy(
+                max_active=4,
+                max_pending=32,
+                max_pending_bytes=1024 * 1024,
+                max_active_per_consumer=2,
+                max_pending_per_consumer=8,
+                reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+                reserved_slots=1,
+            )
+        )
+        self._query_work_pools = _QueryWorkPools()
         self._gap_scan_task: asyncio.Task[tuple[GapRecord, ...]] | None = None
         self.last_batch_evidence: dict[str, object] = {}
         self.last_reference_batch_evidence: dict[str, object] = {}
@@ -338,6 +400,145 @@ class V2QueryService:
                 requirement, item, DataProduct.CANONICAL_SNAPSHOT
             ),
         )
+
+    def _hot_snapshot_admission_for(self) -> BoundedReadLane:
+        admission = getattr(self, "_hot_snapshot_admission", None)
+        if admission is None:
+            admission = BoundedReadLane(
+                ReadLanePolicy(
+                    max_active=2,
+                    max_pending=16,
+                    max_pending_bytes=512 * 1024,
+                    max_active_per_consumer=1,
+                    max_pending_per_consumer=4,
+                    reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+                    reserved_slots=1,
+                )
+            )
+            self._hot_snapshot_admission = admission
+        return admission
+
+    def _hot_reference_admission_for(self) -> BoundedReadLane:
+        admission = getattr(self, "_hot_reference_admission", None)
+        if admission is None:
+            admission = BoundedReadLane(
+                ReadLanePolicy(
+                    max_active=4,
+                    max_pending=32,
+                    max_pending_bytes=1024 * 1024,
+                    max_active_per_consumer=2,
+                    max_pending_per_consumer=8,
+                    reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+                    reserved_slots=1,
+                )
+            )
+            self._hot_reference_admission = admission
+        return admission
+
+    def _query_work_pools_for(self) -> _QueryWorkPools:
+        pools = getattr(self, "_query_work_pools", None)
+        if pools is None:
+            pools = _QueryWorkPools()
+            self._query_work_pools = pools
+        return pools
+
+    @staticmethod
+    def _consume_detached_lane_task(task: asyncio.Task) -> None:
+        """Drain shielded work after its request owner has disconnected."""
+
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    @staticmethod
+    def _lane_error(
+        error: ReadLaneRejected,
+        *,
+        request_id: str,
+        instrument_uid: str | None = None,
+    ) -> QueryServiceError:
+        return QueryServiceError(
+            QueryProblem(CanonicalErrorCode.RATE_LIMITED, str(error), True),
+            request_id=request_id,
+            instrument_uid=instrument_uid,
+        )
+
+    async def snapshot_async(
+        self,
+        requirement: DataRequirement,
+        *,
+        purpose: AccessPurpose,
+        consumer_id: str,
+        request_id: str | None = None,
+    ) -> QueryResult:
+        """Serve a small latest view without borrowing cold/history workers."""
+
+        request_id = request_id or self.request_id()
+
+        async def execute() -> QueryResult:
+            return await self._query_work_pools_for().hot(
+                self.snapshot,
+                requirement,
+                purpose=purpose,
+                request_id=request_id,
+            )
+
+        task = asyncio.create_task(
+            self._hot_snapshot_admission_for().run(
+                execute,
+                consumer_id=consumer_id,
+                reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+            ),
+            name="qdl-v2-hot-snapshot",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._consume_detached_lane_task)
+            raise
+        except ReadLaneRejected as error:
+            raise self._lane_error(
+                error,
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+            ) from error
+
+    async def status_async(
+        self,
+        requirement: DataRequirement,
+        *,
+        consumer_id: str,
+        request_id: str | None = None,
+    ) -> QualityMetadata:
+        """Read current governed status on the same bounded hot cache lane."""
+
+        request_id = request_id or self.request_id()
+
+        async def execute() -> QualityMetadata:
+            return await self._query_work_pools_for().hot(self.status, requirement)
+
+        task = asyncio.create_task(
+            self._hot_snapshot_admission_for().run(
+                execute,
+                consumer_id=consumer_id,
+                reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+            ),
+            name="qdl-v2-hot-status",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._consume_detached_lane_task)
+            raise
+        except ReadLaneRejected as error:
+            raise self._lane_error(
+                error,
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+            ) from error
 
     def warmup(
         self,
@@ -459,13 +660,14 @@ class V2QueryService:
         requirement: DataRequirement,
         *,
         purpose: AccessPurpose,
+        consumer_id: str = "qdl.v2.single-warmup",
         request_id: str | None = None,
     ) -> WarmupResult:
         """Run one warmup through the same bounded policy as a batch item."""
         request_id = request_id or self.request_id()
         batch = await self.warmup_batch_async(
             BatchRequirement(
-                consumer_id="qdl.v2.single-warmup",
+                consumer_id=consumer_id,
                 requirements=(requirement,),
                 require_all=True,
             ),
@@ -544,6 +746,27 @@ class V2QueryService:
         local_history_lock = asyncio.Lock()
         local_histories_task = None
         prefetched_local_histories = None
+        local_reserved_bytes = self._local_history_reservation_bytes(local_requirements)
+
+        async def materialize_local_histories():
+            try:
+                return await self._local_batch_admission_for().run(
+                    lambda: self._query_work_pools_for().cold(
+                        history_many, local_requirements
+                    ),
+                    consumer_id=batch.consumer_id,
+                    reserved_bytes=local_reserved_bytes,
+                    wait_timeout_ms=local_admission_wait_ms,
+                )
+            except _LocalBatchAdmissionRejected as error:
+                return {
+                    requirement: self._lane_error(
+                        error,
+                        request_id=request_id,
+                        instrument_uid=requirement.instrument_uid,
+                    )
+                    for requirement in local_requirements
+                }
 
         async def local_history(requirement: DataRequirement):
             """Share one immutable local snapshot after an item is admitted."""
@@ -556,7 +779,8 @@ class V2QueryService:
             async with local_history_lock:
                 if local_histories_task is None:
                     local_histories_task = asyncio.create_task(
-                        asyncio.to_thread(history_many, local_requirements)
+                        materialize_local_histories(),
+                        name="qdl-v2-cold-local-history",
                     )
                 task = local_histories_task
             histories = await asyncio.shield(task)
@@ -577,7 +801,7 @@ class V2QueryService:
                         purpose=purpose,
                         request_id=request_id,
                     )
-                return await asyncio.to_thread(
+                return await self._query_work_pools_for().cold(
                     self.warmup,
                     requirement,
                     purpose=purpose,
@@ -713,7 +937,7 @@ class V2QueryService:
             async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories
                 try:
-                    prefetched_local_histories = await asyncio.to_thread(
+                    prefetched_local_histories = await self._query_work_pools_for().cold(
                         history_many, local_requirements
                     )
                 except Exception as error:
@@ -725,6 +949,8 @@ class V2QueryService:
             local_batch_task = asyncio.create_task(
                 admission.run(
                     execute_whole_local_batch,
+                    consumer_id=batch.consumer_id,
+                    reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
                 )
             )
@@ -767,6 +993,32 @@ class V2QueryService:
             return {}
         return {str(key): int(value) for key, value in stats().items()}
 
+    @staticmethod
+    def _local_history_reservation_bytes(
+        requirements: tuple[DataRequirement, ...],
+    ) -> int:
+        """Reserve a conservative bounded response budget before cache decode.
+
+        A row limit is a consumer lookback cap, not a byte cap.  The admission
+        uses a deliberately conservative 1 KiB/row estimate, including an
+        envelope/decoded-object allowance, so a 50-item large batch cannot
+        build an unbounded in-process response queue.  This does not change
+        the actual provider/cache result or its public V2 shape.
+        """
+
+        rows = 0
+        for requirement in requirements:
+            specification = requirement.warmup_specification
+            if specification is None:
+                rows += 1
+            elif specification.rows is not None:
+                rows += specification.rows
+            else:
+                # Time-range requests are capped by the public endpoint but
+                # not expressed as a row count. Reserve the legal maximum.
+                rows += 10_000
+        return max(_LOCAL_HISTORY_BASE_BYTES, rows * _LOCAL_HISTORY_BYTES_PER_ROW)
+
     async def reference_data_batch_async(
         self,
         batch: ReferenceBatchRequirement,
@@ -802,6 +1054,7 @@ class V2QueryService:
             if self.execution_mark_index_reader is not None
             else {}
         )
+        hot_reference_before = self._hot_reference_admission_for().stats()
         results: list[ReferenceBatchItemResult | None] = [None] * len(batch.requirements)
         admitted: list[tuple[int, ReferenceDataRequirement, ReferenceRequest]] = []
         for index, requirement in enumerate(batch.requirements):
@@ -862,12 +1115,10 @@ class V2QueryService:
                 # This is deliberately not a provider retry/cache path. The
                 # active stream gateway either has one verified current view or
                 # query returns its typed fail-closed reason to the consumer.
-                result = await self.execution_mark_index_reader.fetch(
-                    request,
-                    max_freshness_ms=requirement.max_freshness_ms or 0,
-                    source_policy_id=requirement.source_policy_id,
-                    event_recency_policy=requirement.effective_event_recency_policy,
-                    max_session_liveness_ms=requirement.max_session_liveness_ms,
+                result = await self._fetch_execution_mark_index_hot(
+                    request=request,
+                    requirement=requirement,
+                    consumer_id=batch.consumer_id,
                     deadline_ms=self._reference_deadline_ms(candidate, purpose),
                 )
             else:
@@ -939,12 +1190,18 @@ class V2QueryService:
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)
+                if isinstance(execution.error, ReadLaneRejected):
+                    code = CanonicalErrorCode.RATE_LIMITED
+                    detail = str(execution.error)
+                else:
+                    code = CanonicalErrorCode.SOURCE_UNAVAILABLE
+                    detail = "reference batch provider lane did not complete"
                 results[index] = ReferenceBatchItemResult(
                     requirement,
-                    CanonicalErrorCode.SOURCE_UNAVAILABLE.value,
+                    code.value,
                     problem=QueryProblem(
-                        CanonicalErrorCode.SOURCE_UNAVAILABLE,
-                        "reference batch provider lane did not complete",
+                        code,
+                        detail,
                         True,
                         retry_after_ms,
                     ),
@@ -975,6 +1232,7 @@ class V2QueryService:
             if self.execution_mark_index_reader is not None
             else {}
         )
+        hot_reference_after = self._hot_reference_admission_for().stats()
         self.last_reference_batch_evidence = {
             "request_id": request_id,
             "item_count": len(resolved),
@@ -993,6 +1251,19 @@ class V2QueryService:
                 f"execution_live_{key}": execution_live_after.get(key, 0)
                 - execution_live_before.get(key, 0)
                 for key in execution_live_after
+            },
+            **{
+                f"hot_reference_{key}": hot_reference_after.get(key, 0)
+                - hot_reference_before.get(key, 0)
+                for key in hot_reference_after
+                if key
+                not in {
+                    "active",
+                    "pending",
+                    "pending_bytes",
+                    "active_reserved",
+                    "pending_reserved",
+                }
             },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
@@ -1054,6 +1325,35 @@ class V2QueryService:
             assert requirement.max_freshness_ms is not None
             return min(requirement.deadline_ms, requirement.max_freshness_ms)
         return requirement.deadline_ms
+
+    async def _fetch_execution_mark_index_hot(
+        self,
+        *,
+        request: ReferenceRequest,
+        requirement: ReferenceDataRequirement,
+        consumer_id: str,
+        deadline_ms: int,
+    ) -> ReferenceBatchResult:
+        """Read an execution view without competing with provider history work."""
+
+        assert self.execution_mark_index_reader is not None
+
+        async def fetch() -> ReferenceBatchResult:
+            return await self.execution_mark_index_reader.fetch(
+                request,
+                max_freshness_ms=requirement.max_freshness_ms or 0,
+                source_policy_id=requirement.source_policy_id,
+                event_recency_policy=requirement.effective_event_recency_policy,
+                max_session_liveness_ms=requirement.max_session_liveness_ms,
+                deadline_ms=deadline_ms,
+            )
+
+        return await self._hot_reference_admission_for().run(
+            fetch,
+            consumer_id=consumer_id,
+            reserved_bytes=_HOT_REFERENCE_RESERVED_BYTES,
+            wait_timeout_ms=deadline_ms,
+        )
 
     def _reference_snapshot_requires_refresh(
         self,
@@ -1379,10 +1679,19 @@ class V2QueryService:
         try:
             scanner = getattr(self.backend, "open_gaps_bounded", None)
             if callable(scanner):
-                return await asyncio.to_thread(scanner, cancelled=cancelled.is_set)
-            return await asyncio.to_thread(self.backend.open_gaps)
+                return await self._query_work_pools_for().diagnostic(
+                    scanner, cancelled=cancelled.is_set
+                )
+            return await self._query_work_pools_for().diagnostic(self.backend.open_gaps)
         finally:
             cancelled.set()
+
+    async def close(self) -> None:
+        """Release only local Query worker pools during reader shutdown."""
+
+        pools = getattr(self, "_query_work_pools", None)
+        if pools is not None:
+            pools.close()
 
     def readiness(
         self,
@@ -1415,6 +1724,20 @@ class V2QueryService:
             request_id,
             ready=not any(item.problem is not None for item in results),
             results=tuple(results),
+        )
+
+    async def readiness_async(
+        self,
+        batch: BatchRequirement,
+        *,
+        purpose: AccessPurpose,
+    ) -> ReadinessResult:
+        """Keep high-cardinality diagnostic work out of the default executor."""
+
+        return await self._query_work_pools_for().diagnostic(
+            self.readiness,
+            batch,
+            purpose=purpose,
         )
 
     def _enforce(

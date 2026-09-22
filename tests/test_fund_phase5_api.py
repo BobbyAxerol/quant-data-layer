@@ -275,13 +275,23 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["code"], "PARTIAL_RESULT")
         self.assertTrue(response.json()["retryable"])
 
-    def test_sync_query_routes_use_the_existing_thread_boundary(self):
+    def test_query_routes_pass_authenticated_identity_to_owned_read_lanes(self):
         calls = []
-        original = router_module.asyncio.to_thread
+        snapshot_original = self.service.snapshot_async
+        status_original = self.service.status_async
+        readiness_original = self.service.readiness_async
 
-        async def record(callable_, *args, **kwargs):
-            calls.append(callable_.__name__)
-            return await original(callable_, *args, **kwargs)
+        async def record_snapshot(*args, **kwargs):
+            calls.append(("snapshot", kwargs["consumer_id"]))
+            return await snapshot_original(*args, **kwargs)
+
+        async def record_status(*args, **kwargs):
+            calls.append(("status", kwargs["consumer_id"]))
+            return await status_original(*args, **kwargs)
+
+        async def record_readiness(*args, **kwargs):
+            calls.append(("readiness", args[0].consumer_id))
+            return await readiness_original(*args, **kwargs)
 
         requirement = {
             "instrument_uid": self.binance.instrument_uid,
@@ -291,7 +301,11 @@ class Phase5ApiTests(unittest.TestCase):
             "interval": "1m",
             "max_freshness_ms": 10_000,
         }
-        with patch.object(router_module.asyncio, "to_thread", new=record):
+        with (
+            patch.object(self.service, "snapshot_async", new=record_snapshot),
+            patch.object(self.service, "status_async", new=record_status),
+            patch.object(self.service, "readiness_async", new=record_readiness),
+        ):
             snapshot = self.client.get(
                 f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
                 params=self.params(),
@@ -311,7 +325,14 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(snapshot.status_code, 200, snapshot.text)
         self.assertEqual(status.status_code, 200, status.text)
         self.assertEqual(readiness.status_code, 200, readiness.text)
-        self.assertEqual(calls, ["snapshot", "status", "readiness"])
+        self.assertEqual(
+            calls,
+            [
+                ("snapshot", self.consumer_id),
+                ("status", self.consumer_id),
+                ("readiness", self.consumer_id),
+            ],
+        )
 
     def test_batch_partial_semantics_and_execution_fail_closed(self):
         missing = self.requirement.__dict__ | {
