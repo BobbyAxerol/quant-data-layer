@@ -1,0 +1,29 @@
+{
+  "image": "qdl-v2-python:2.1.0-1c0844f",
+  "network": "executor_network",
+  "queries": ["https://query_v2_1:8200", "https://query_v2_2:8200"],
+  "stream_targets": ["stream_v2_active:8210", "stream_v2_passive:8210"],
+  "consumers": [{
+    "id": "trading-system.paper.stable",
+    "tls": {
+      "ca_file": "/path/to/trading-system/ca.crt",
+      "cert_file": "/path/to/trading-system/client.crt",
+      "key_file": "/path/to/trading-system/client.key"
+    },
+    "jwt": {
+      "private_key_file": "/path/to/trading-system-jwt/private.key",
+      "key_id": "stable-trading-system-rs256-v1",
+      "issuer": "https://identity.qdl.stable.internal",
+      "audience": "qdl-v2-stable",
+      "roles": ["market_data_reader", "historical_reader", "stream_consumer"]
+    }
+  }],
+  "limits": {
+    "rounds": 3,
+    "requests_per_second": 1,
+    "batch_size": 8,
+    "timeout_seconds": 30,
+    "max_seconds": 1800,
+    "stream_seconds": 0
+  }
+}

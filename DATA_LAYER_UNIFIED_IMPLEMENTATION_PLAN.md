@@ -50454,3 +50454,154 @@ and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
   container, volume or shared data is removed by branch cleanup. All active
   and explicitly named rollback images above remain retained. No further
   resource increase or Trading System P18 work is part of this closure.
+
+<a id="consumer-endpoint-benchmark-20260922"></a>
+## Reusable External-Consumer Endpoint Benchmark (2026-09-22)
+
+**Status: TOOL_IMPLEMENTED_AND_TESTED / RUNTIME_DIAGNOSTIC_UNSAFE.** Owner requested a reusable container
+client measuring every applicable public V2 endpoint and every manifest
+binding, not a feed sample or an assumed fixed total of 30. The current TS
+scope is 30 products per venue / 60 total; the release has 299 consumer
+products. Endpoint operation count and product count are different axes.
+
+### Scope, Guide And Invariants
+
+- Follow architecture guide sections [37](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy)
+  and [38](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers).
+  Reuse SDK, sealed release/catalog/manifest scope and existing certification
+  validators. No new service, image build, runtime patch, rollout or C2 gate.
+- One disposable external client per selected identity, using an existing
+  immutable image, actual Docker network, mTLS/JWT and exact manifest revision.
+  Never borrow another consumer's entitlements, change policies or substitute
+  provider-direct reads. V1 legacy/admin/internal producer operations are
+  inventoried separately and not automatically exercised as public V2 reads.
+- Cover all 11 public V2 REST operations plus optional signed gRPC stream:
+  snapshot, warmup/history, both batch APIs, feed status, instrument list/detail,
+  readiness summary/check and gap diagnostics. Applicability, permission,
+  unsupported operation and insufficient/no data samples remain explicit.
+- Report every consumer/replica/product/operation with attempts, failures,
+  cold/steady request latency, call-to-validated-use and typed quality/source
+  age separately. Batch wall latency is not per-item service latency. A quiet
+  stream timeout is NO_EVENT, never a successful zero-millisecond sample.
+- Bound rounds, per-identity pacing, batch size, concurrency (one in flight),
+  deadlines and stream sessions using manifest quotas; no retry-until-pass.
+  Reads can populate normal caches/quota/audit state, but cannot place orders,
+  change authority or perform administrative writes. No raw prices, tokens,
+  private keys or signed cursors in reports. Credentials stay external.
+
+### Tests, Exit And Rollback
+
+- Test complete scope including 30-per-venue TS and reference metrics; no
+  hidden cap by feed, cross-mix, omitted interval or fabricated requirement.
+- Test typed failure/partial batch/empty result, quiet and disconnected stream,
+  validation inside timed usable boundary, small-sample percentiles, timeouts,
+  deadline budget, permission exclusions, coverage drift and cleanup failure.
+- Run a bounded real external-container smoke using current identities; report
+  exact operations/products/samples and failures honestly. A tooling smoke is
+  NOT a new release certificate or proof of maximum load/remote-region latency.
+- Exit: reusable CLI + profile example + JSON/CSV/Markdown report + tested
+  per-binding coverage; document unmeasured legacy/protocol boundaries.
+  Commit tested source with owner identity. No push/merge/release requested
+  for this tooling task. Cleanup only its disposable containers/temp output;
+  retain measurements and all existing production/rollback images.
+- Rollback is stopping/removing only this tool's named test container. No
+  production container or data rollback is needed. TS/alpha source unchanged.
+
+### Development Journal
+
+- Baseline read: old `measure_consumer_request_latency.py` defaults to two
+  products per feed/interval, handles only snapshot/warmup/instrument lookup,
+  and does not cover metric-specific reference requests or all endpoint URLs.
+  Keep its CLI compatible; add a dedicated full-scope runner reusing the same
+  SDK/validators. Canonical branch `feat/consumer-endpoint-benchmark` from
+  `dev@e6955f3`, no extra worktree; stable/runtime v2.1.0 unchanged.
+- Implemented `scripts/benchmark_consumer_endpoints.py`, public profile example
+  and [runbook](docs/runbooks/consumer-endpoint-benchmark.md). Host launcher is
+  stdlib-only; actual SDK/domain validators execute in the existing immutable
+  image. Exact key-file mounts, one in-flight request, manifest quota pacing,
+  explicit endpoint/permission/filter/deadline exclusions, JSON/CSV/Markdown
+  per-binding rows. Optional gRPC uses SDK signed handoff/projection/ack, not a
+  provider-direct socket. It is a first-event measurement, not a new C2 drill.
+- Source verification: `python -B -m unittest
+  tests.test_consumer_endpoint_benchmark tests.test_consumer_latency_reporting
+  -q` in a network-disabled, read-only disposable release-image container:
+  **28 passed**. Initial tooling-only test caught selection of a legacy-only
+  release consumer; added explicit no-V2 rejection and tested only declared
+  V2 inventories, retaining legacy exclusions. A subsequent syntax typo was
+  corrected before the passing run. No production defect or runtime fix.
+- Actual inventory CLI passed for TS: **60 products / 30 per venue**, all
+  11 REST operations covered by the frozen OpenAPI. Disposable inventory
+  container removed. Started a bounded one-round actual TS read benchmark
+  against both query replicas, maximum 2 request/s, 600s identity deadline;
+  evidence outside Git at `.local/state/qdl-endpoint-benchmark/ts-real-20260922`.
+  This is tooling proof, not permission to repeat release certification.
+- Expanded scoped source verification: **42 passed** including existing SDK
+  protobuf stream projection, explicit operation filters, deadline accounting,
+  permissions and stream close on quiet/disconnected sessions.
+- **Actual run failed, evidence retained, no retry-until-pass:** start
+  `2026-09-22T12:32:39Z`; both replicas, all 60 TS products represented;
+  **308 REST attempts: 271 PASS, 37 FAIL** (`35 ConnectError`, `2 TimeoutError`).
+  **100 optional stream cases NOT_MEASURED_STREAM_DISABLED.** Results:
+  `.local/state/qdl-endpoint-benchmark/ts-real-20260922/report.{json,csv,md}`.
+  Both `GET /v2/data-quality/gaps` attempts timed out. Kernel evidence confirms
+  query-1 OOM at `12:33:28 UTC`, query-2 OOM at `12:36:13 UTC`; both Docker
+  restart counts advanced 0 -> 1. `State.OOMKilled=false` after restart was
+  insufficient and was NOT used to deny the OOM. The real benchmark triggered
+  the expensive diagnostic path; production impact is acknowledged explicitly.
+- Narrow source diagnosis, **not a production patch**: async
+  `qdl/api_v2/router.py:data_quality_gaps` directly calls synchronous
+  `StableSpoolQueryBackend.open_gaps` in `qdl/runtime/stable_source.py`;
+  it reads/parses spool tails for **every catalog binding**, including large
+  physical BAR windows. This is not bounded per demanded consumer and blocks
+  the query event loop. The two request/kill windows plus kernel cgroup IDs
+  support this path as the cause; no allocation profiler/isolated reproduction
+  was run after the live incident. No claim that increasing RAM is the fix.
+- Tool safety correction: `gaps` remains in the inventory but is hard-blocked
+  as **SAFETY_BLOCKED** before network access, including explicit filters.
+  No bypass flag; all-operation report remains **INCOMPLETE** until a separately
+  approved server repair and test lift that guard. No additional real reads
+  after OOM confirmation. The queued reference-only CLI failed before any
+  container/request on an existing identity directory permission check; no
+  credential copying, permission change or entitlement workaround performed.
+- Recovery read-only: both query replicas returned `healthy`, restart=1 and
+  stopped increasing. Actual TS heartbeat was **READY 60/60**, unhealthy=[]
+  (sample age 23.4s). No manual restart, rollout, image/config/authority change,
+  order, provider-direct request or fallback was performed by this task.
+- Latency from the incident run is **diagnostic, not steady-state certification**.
+  Successful call-to-validated-use medians pooled by operation: snapshot
+  39.90ms (87), status 33.87ms (87), warmup 1152.15ms (16), history 1116.39ms
+  (17), reference batch 28.04ms (22; TS MARK_INDEX only), instrument detail
+  5.29ms (20), warmup batch 8089.67ms (4 whole-batch calls), readiness check
+  1513.14ms (14 whole-batch calls). Per-binding/replica timings and failures are
+  retained; one round is not a per-binding p95/p99 SLA. Funding/OI/basis/other
+  alpha reference products and gRPC were inventoried/tested locally, **not
+  actually benchmarked** in this run.
+- Runtime resource sample during the run: benchmark 113.6MiB/512MiB and 1.00%
+  CPU; query-1 177.4MiB/512MiB and 10.61% CPU, query-2 187.8MiB/512MiB and
+  25.92% CPU. This snapshot preceded OOM and does not describe peak usage.
+  Mandatory next runtime work is a separately scoped bounded/asynchronous
+  gap-diagnostic fix with isolated saturation/resource tests, not more C2 or
+  blind benchmarking. New release certification is NOT granted by this task.
+- Final source/SDK regression: **43 passed**, including the non-bypassable
+  diagnostic safety guard and cleanup paths. `git diff --check` clean. Tool
+  start captures source SHA and tool digest before network execution; profile
+  and all real measurement files remain outside Git. A reusable local TS
+  profile is `.local/state/qdl-endpoint-benchmark/profile.json`; one-round
+  smoke defaults are intentional, not a claim of statistically stable p99.
+- Cleanup verified: no container matching `qdl-endpoint-bench-*` remains.
+  This task built/pulled **zero images**, created no BuildKit entries, volumes
+  or networks, and performed no broad prune. Existing shared inventory:
+  37 images / 24 active / 19.95GB, 54 build-cache records / 29 active / 5.273GB;
+  retained because they are not this task's disposable artifacts. Host disk
+  after scoped auto-removal: 123GB used / 167GB available (43% of 290GB).
+  No pre-cleanup disk sample was captured, so reclaimed bytes are not claimed.
+- Canonical checkout `/home/bobby/data_layer`, feature
+  `feat/consumer-endpoint-benchmark` from `e6955f3`; sole worktree. Stable
+  `main`/`dev` remain `e6955f3`, published `v2.1.0` tag `c1e32cb` unchanged.
+  Active query/stream digest `579d578e...dcb6aa6c`, runtime r135-b2/
+  catalog 9/routing 22 and all TLS/state mounts unchanged. Query restart=1
+  each after the documented auto-recovery, not zero. Projector/Rust/V1 images
+  and named rollback artifacts from the prior release remain untouched.
+  TS image `7d410919...3cba475`, SDK 2.0.3/revision 10 unchanged; actual
+  heartbeat recovered READY 60/60. No TS/P18/alpha source edits. No push,
+  merge or new release performed for this tooling task.
