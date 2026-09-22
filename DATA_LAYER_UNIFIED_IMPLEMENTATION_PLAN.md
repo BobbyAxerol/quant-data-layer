@@ -50074,3 +50074,23 @@ E08 reboot/heartbeat proof, E09.1 real mutation-count evidence must be tied to
 the current handoff. Then approved P18.4 representative alpha acceptance
 (adaptive_hma_cpp and bb_salping, Paper Binance/OKX). P19 mainnet is later,
 not a G1 release blocker. This repair does not certify those missing TS gates.
+
+**Final handoff boundary / cleanup receipt:** Data Layer source/report/SDK
+committed at `d92b91d` following deployed projector source `e4a7377`.
+Corrected TS candidate built from `6b27d8e`:
+`sha256:ecc8ee33177dd725b4bebc3c07f2e102cfa433a33e5a85e9bb99fafbb288c764`;
+actual candidate image passed 199 scoped tests with immutable vendor fixtures.
+Exact single-service packet validates; it has NOT been applied. Current
+`market_data_service` remains `09839129...f7ac4b2`, manifest 9. Owner approval
+of the three remaining projectors has been fully executed; it is not relabelled
+as approval of this new consumer image. No extra Data Layer C2 is needed.
+
+Withdrawn TS candidate `5f892132...bc6b538` deleted after zero-reference check,
+342.8kB of exact task cache removed plus its source build directory; all task
+test containers absent. Filesystem available `176081129472` before this final
+cleanup / `176450744320` after, not an exact reclaimed amount due to concurrent
+runtime maintenance. Unrelated Rust build cache and all runtime/rollback
+images, volumes and state retained. After cleanup, the approved projector
+`_4/_5/_6` remain healthy/restart 0/OOM false. Canonical paths/feature branches
+unchanged, no new worktree, no push/merge/tag. Remaining boundary: real TS
+consumer adoption/observation and owner's release decision, not a failed DL C2.
