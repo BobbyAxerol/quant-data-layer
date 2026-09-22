@@ -51540,6 +51540,33 @@ refinement without the owner's next request.
   session, existing identity assignment and sealed quota/stream limits. The
   next permitted traffic is the frozen `5/90s` no-order load stage; no stream,
   warmup, provider, V1 or order traffic was created by this coverage preflight.
+- 2026-09-22: staged load `load-5-r1` stopped in `8.958s` before stream
+  observation because the disposable driver incorrectly required every identity
+  to declare a durable `BAR 1m`. Runtime manifest inspection in the active
+  immutable image shows both alpha identities and the Trading System identity
+  declare durable BAR products, while `monitoring.multivenue.stable` correctly
+  declares only four durable `TRADE` products. The failed client was removed;
+  both Query readers remained healthy, and the receipt records zero order,
+  V1-fallback and direct-provider actions. This is a harness contract defect,
+  not a data-plane fault: final-BAR proof must be selected only from a
+  consumer's declared durable BAR products, at its lowest declared interval;
+  a consumer with no BAR requirement must remain covered by its declared live
+  stream and be reported as `FINAL_BAR_NOT_DECLARED`, not rejected or treated
+  as if finality had been verified. The next source slice adds this exact
+  manifest-derived selection plus offline regressions before retrying only
+  `5/90s`; no runtime role, image, manifest, credential or service changes.
+- 2026-09-22: the narrow driver repair is source-validated in the active
+  immutable image with `29` deterministic tests passing (Phase-3 planner,
+  driver and inherited Phase-2 capacity cases). New regression covers shortest
+  declared BAR selection and a live-only consumer receiving `CONTINUITY`, not
+  a false final-BAR assertion. An exact network-disabled runtime-manifest
+  preflight then rendered the real `5`-session shape: all `10/10` required
+  Binance/OKX pairs, `9` actual/`9` budgeted streams, three `FINAL_BAR 1m`
+  probes (both alpha identities plus Trading System), and one monitoring
+  `CONTINUITY` TRADE probe. No credentials were printed, no service endpoint
+  was contacted and no runtime state changed. The next permitted action is one
+  replacement `5/90s` disposable no-order load client; the failed `r1` receipt
+  remains preserved rather than overwritten.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

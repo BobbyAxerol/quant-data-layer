@@ -518,6 +518,15 @@ class _PacedStreamTransport:
 
 
 @dataclass(frozen=True, slots=True)
+class _StreamSpec:
+    name: str
+    consumer_id: str
+    product: object
+    slow: bool
+    purpose: str
+
+
+@dataclass(frozen=True, slots=True)
 class _Identity:
     consumer_id: str
     tls: object
@@ -698,14 +707,68 @@ def _stream_product(products):
     return min(values, key=lambda item: (rank[item.feed.value], item.interval or ""))
 
 
-def _bar_product(products):
+def _final_bar_product(products):
+    """Return the shortest declared durable BAR, or no final-BAR probe.
+
+    A manifest that only consumes live feeds must not be rejected merely
+    because it has no BAR requirement. Its supplemental stream remains a
+    continuity probe and is explicitly reported as such.
+    """
+    from qdl.adapters.intervals import canonical_interval_ms
+
     values = [
         item for item in products
-        if item.delivery.value == "DURABLE" and item.feed.value == "BAR" and item.interval == "1m"
+        if item.delivery.value == "DURABLE" and item.feed.value == "BAR"
     ]
     if not values:
-        raise ValueError("Phase-3 consumer lacks a durable final BAR 1m product")
-    return sorted(values, key=lambda item: (item.venue, item.native_symbol))[0]
+        return None
+    if any(not isinstance(item.interval, str) or not item.interval for item in values):
+        raise ValueError("Phase-3 durable BAR product is missing its canonical interval")
+    return min(
+        values,
+        key=lambda item: (
+            canonical_interval_ms(item.interval),
+            item.venue,
+            item.native_symbol,
+        ),
+    )
+
+
+def _supplemental_stream_spec(consumer_id, products) -> _StreamSpec:
+    final_bar = _final_bar_product(products)
+    if final_bar is not None:
+        return _StreamSpec(
+            name=f"final-bar-{consumer_id}",
+            consumer_id=consumer_id,
+            product=final_bar,
+            slow=False,
+            purpose="FINAL_BAR",
+        )
+    return _StreamSpec(
+        name=f"continuity-{consumer_id}",
+        consumer_id=consumer_id,
+        product=_stream_product(products),
+        slow=False,
+        purpose="CONTINUITY",
+    )
+
+
+def _build_stream_specs(plan, products_by_consumer) -> tuple[_StreamSpec, ...]:
+    logical = tuple(
+        _StreamSpec(
+            name=f"logical-{session.ordinal}",
+            consumer_id=session.consumer_id,
+            product=_stream_product(session.products),
+            slow=session.ordinal % 13 == 0,
+            purpose="LOGICAL",
+        )
+        for session in plan.logical_sessions
+    )
+    supplemental = tuple(
+        _supplemental_stream_spec(consumer_id, products)
+        for consumer_id, products in sorted(products_by_consumer.items())
+    )
+    return (*logical, *supplemental)
 
 
 def _make_client(identity, *, queries, stream_targets, pacer, replicated: bool):
@@ -888,17 +951,12 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
     samples: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
     counters: Counter[str] = Counter()
-    # The extra per-identity BAR stream demonstrates finality independently of
-    # high-frequency feeds. It is already included in the sealed stream budget.
+    # Each identity has one supplemental stream inside the sealed stream budget.
+    # It proves final BAR only where the manifest declares a durable BAR; a
+    # live-only consumer instead contributes an explicitly labelled continuity
+    # probe and is never misreported as BAR-finality coverage.
     startup: asyncio.Queue = asyncio.Queue()
-    stream_specs = []
-    for session in plan.logical_sessions:
-        stream_specs.append((
-            f"logical-{session.ordinal}", session.consumer_id,
-            _stream_product(session.products), session.ordinal % 13 == 0,
-        ))
-    for consumer_id, products in sorted(products_by_consumer.items()):
-        stream_specs.append((f"final-bar-{consumer_id}", consumer_id, _bar_product(products), False))
+    stream_specs = _build_stream_specs(plan, products_by_consumer)
     setup_budget = max(
         90.0,
         max(budget.planned_streams * budget.seconds_per_request * 2.0 for budget in plan.identity_budgets) + 60.0,
@@ -912,15 +970,15 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
     # before starting the timed observation. This prevents setup pacing from
     # being reported as load latency, while keeping the first event as evidence
     # that the stream is genuinely live rather than merely constructed.
-    async def establish_then_run(name, consumer_id, product, slow):
+    async def establish_then_run(spec: _StreamSpec):
         from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
         from qdl_sdk.models import ControlEvent, StreamEvent
         from qdl_sdk.projection import market_data_view_from_stream
-        client = _make_client(identities[consumer_id], queries=queries, stream_targets=stream_targets, pacer=pacers[consumer_id], replicated=True)
+        client = _make_client(identities[spec.consumer_id], queries=queries, stream_targets=stream_targets, pacer=pacers[spec.consumer_id], replicated=True)
         started = time.perf_counter()
         admitted = False
         try:
-            async with client.warmup_then_stream(sdk_requirement(product)) as session:
+            async with client.warmup_then_stream(sdk_requirement(spec.product)) as session:
                 while True:
                     event = await asyncio.wait_for(session.__anext__(), timeout=60.0)
                     if isinstance(event, ControlEvent):
@@ -931,21 +989,21 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
                     view = market_data_view_from_stream(
                         event,
                         template=session.warmup.data[-1],
-                        requirement=sdk_requirement(product),
+                        requirement=sdk_requirement(spec.product),
                     )
-                    validate_product_view(product, view, require_current_quality=True)
+                    validate_product_view(spec.product, view, require_current_quality=True)
                     session.acknowledge(event)
-                    counters[f"stream_event:{name}"] += 1
+                    counters[f"stream_event:{spec.name}"] += 1
                     samples.append({
-                        "group": _product_group(product, "STREAM", "replicated"),
+                        "group": _product_group(spec.product, "STREAM", "replicated"),
                         "usable_ms": (time.perf_counter() - started) * 1000.0,
                     })
                     started = time.perf_counter()
                     break
-                await startup.put((name, None))
+                await startup.put((spec.name, None))
                 admitted = True
                 await start_observation.wait()
-                if slow:
+                if spec.slow:
                     await asyncio.sleep(5.0)
                     counters["slow_reader_sessions"] += 1
                 while not stop_observation.is_set():
@@ -963,22 +1021,22 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
                         continue
                     if not isinstance(event, StreamEvent):
                         raise ValueError("stream returned an unknown event type")
-                    view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=sdk_requirement(product))
-                    validate_product_view(product, view, require_current_quality=True)
+                    view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=sdk_requirement(spec.product))
+                    validate_product_view(spec.product, view, require_current_quality=True)
                     session.acknowledge(event)
-                    counters[f"stream_event:{name}"] += 1
-                    samples.append({"group": _product_group(product, "STREAM", "replicated"), "usable_ms": (time.perf_counter() - started) * 1000.0})
+                    counters[f"stream_event:{spec.name}"] += 1
+                    samples.append({"group": _product_group(spec.product, "STREAM", "replicated"), "usable_ms": (time.perf_counter() - started) * 1000.0})
                     started = time.perf_counter()
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            errors.append({"operation": "STREAM", "stream": name, "product": _product_evidence(product), "error": _safe_error(error)})
+            errors.append({"operation": "STREAM", "stream": spec.name, "product": _product_evidence(spec.product), "error": _safe_error(error)})
             if not admitted:
-                await startup.put((name, "FAILED"))
+                await startup.put((spec.name, "FAILED"))
         finally:
             await client.close()
 
-    stream_tasks = [asyncio.create_task(establish_then_run(*spec)) for spec in stream_specs]
+    stream_tasks = [asyncio.create_task(establish_then_run(spec)) for spec in stream_specs]
     active_tasks: list[asyncio.Task] = []
     started_names: set[str] = set()
     try:
@@ -1040,11 +1098,25 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
         stop_observation.set()
         start_observation.set()
         await asyncio.gather(*stream_tasks, return_exceptions=True)
-    expected_bars = [name for name, _, _, _ in stream_specs if name.startswith("final-bar-")]
+    expected_bars = [spec.name for spec in stream_specs if spec.purpose == "FINAL_BAR"]
     missing_bars = [name for name in expected_bars if counters[f"stream_event:{name}"] < 1]
     if missing_bars:
         errors.append({"operation": "FINAL_BAR", "missing_streams": sorted(missing_bars)})
-    return samples, errors, counters
+    supplemental = [
+        {
+            "consumer_id": spec.consumer_id,
+            "kind": spec.purpose,
+            "final_bar_status": (
+                "FINAL_BAR_DECLARED"
+                if spec.purpose == "FINAL_BAR"
+                else "FINAL_BAR_NOT_DECLARED"
+            ),
+            "product": _product_evidence(spec.product),
+        }
+        for spec in stream_specs
+        if spec.purpose != "LOGICAL"
+    ]
+    return samples, errors, counters, supplemental
 
 
 async def run_inside() -> dict[str, object]:
@@ -1111,8 +1183,9 @@ async def run_inside() -> dict[str, object]:
             (product.venue, product.native_symbol) for product in selected_products
         }))
         counters = Counter()
+        supplemental_streams = []
     elif mode in {"load", "final"}:
-        samples, errors, counters = await _run_load(
+        samples, errors, counters, supplemental_streams = await _run_load(
             plan=plan, products_by_consumer=products_by_consumer, identities=identities,
             queries=queries, stream_targets=streams, pacers=pacers,
             duration_seconds=int(config["duration_seconds"]),
@@ -1158,6 +1231,7 @@ async def run_inside() -> dict[str, object]:
         "latency": _summarize_samples(samples),
         "pacer": {consumer_id: pacer.evidence() for consumer_id, pacer in sorted(pacers.items())},
         "stream_counters": dict(sorted(counters.items())),
+        "supplemental_streams": supplemental_streams,
         "errors": errors[:20],
         "error_count": len(errors),
         "elapsed_seconds": round(time.monotonic() - started, 3),

@@ -155,6 +155,77 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         pairs = {(item.venue, item.native_symbol) for item in selected}
         self.assertEqual(len(pairs), 10)
 
+    def test_final_bar_probe_uses_the_shortest_declared_durable_interval(self):
+        def product(feed: str, interval: str | None, symbol: str):
+            return SimpleNamespace(
+                consumer_id="alpha.binance.paper.stable",
+                venue="BINANCE",
+                native_symbol=symbol,
+                feed=SimpleNamespace(value=feed),
+                delivery=SimpleNamespace(value="DURABLE"),
+                interval=interval,
+                identity=("alpha.binance.paper.stable", "BINANCE", symbol, feed, interval or ""),
+            )
+
+        selected = _MODULE._final_bar_product((
+            product("BAR", "15m", "ETHUSDT"),
+            product("BAR", "5m", "BTCUSDT"),
+            product("TRADE", None, "BTCUSDT"),
+        ))
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.interval, "5m")
+        self.assertEqual(selected.native_symbol, "BTCUSDT")
+
+    def test_live_only_consumer_uses_continuity_not_false_final_bar_proof(self):
+        def product(feed: str):
+            return SimpleNamespace(
+                consumer_id="monitoring.multivenue.stable",
+                venue="OKX",
+                native_symbol="BTC-USDT-SWAP",
+                feed=SimpleNamespace(value=feed),
+                delivery=SimpleNamespace(value="DURABLE"),
+                interval=None,
+                identity=("monitoring.multivenue.stable", "OKX", "BTC-USDT-SWAP", feed, ""),
+            )
+
+        values = (product("TRADE"), product("QUOTE"))
+        self.assertIsNone(_MODULE._final_bar_product(values))
+        spec = _MODULE._supplemental_stream_spec(
+            "monitoring.multivenue.stable", values
+        )
+        self.assertEqual(spec.purpose, "CONTINUITY")
+        self.assertEqual(spec.name, "continuity-monitoring.multivenue.stable")
+        self.assertEqual(spec.product.feed.value, "TRADE")
+
+    def test_stream_specs_keep_one_supplemental_probe_per_identity(self):
+        def product(consumer_id: str, feed: str, interval: str | None = None):
+            return SimpleNamespace(
+                consumer_id=consumer_id,
+                venue="BINANCE",
+                native_symbol="BTCUSDT",
+                feed=SimpleNamespace(value=feed),
+                delivery=SimpleNamespace(value="DURABLE"),
+                interval=interval,
+                identity=(consumer_id, "BINANCE", "BTCUSDT", feed, interval or ""),
+            )
+
+        alpha = "alpha.binance.paper.stable"
+        monitor = "monitoring.multivenue.stable"
+        alpha_products = (product(alpha, "BAR", "1m"), product(alpha, "TRADE"))
+        monitor_products = (product(monitor, "TRADE"), product(monitor, "QUOTE"))
+        plan = SimpleNamespace(logical_sessions=(
+            LogicalConsumerSession(1, alpha, alpha_products),
+            LogicalConsumerSession(2, monitor, monitor_products),
+        ))
+        specs = _MODULE._build_stream_specs(
+            plan,
+            {alpha: alpha_products, monitor: monitor_products},
+        )
+        supplemental = {spec.consumer_id: spec for spec in specs if spec.purpose != "LOGICAL"}
+        self.assertEqual(len(specs), 4)
+        self.assertEqual(supplemental[alpha].purpose, "FINAL_BAR")
+        self.assertEqual(supplemental[monitor].purpose, "CONTINUITY")
+
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
