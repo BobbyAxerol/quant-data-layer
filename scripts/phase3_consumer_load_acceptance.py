@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -402,14 +402,15 @@ def run_host(args: argparse.Namespace) -> int:
 @dataclass(slots=True)
 class _Pacer:
     spacing_seconds: float
+    _lock: asyncio.Lock = field(init=False, repr=False)
+    _next_at: float | None = field(init=False, default=None)
+    _wait_ms: float = field(init=False, default=0.0)
+    _operations: Counter[str] = field(init=False, default_factory=Counter)
 
     def __post_init__(self) -> None:
         if self.spacing_seconds <= 0:
             raise ValueError("load pacer spacing must be positive")
         self._lock = asyncio.Lock()
-        self._next_at: float | None = None
-        self._wait_ms = 0.0
-        self._operations: Counter[str] = Counter()
 
     async def acquire(self, operation: str) -> None:
         async with self._lock:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 import sys
@@ -96,6 +97,16 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertEqual(result["n"], 3)
         self.assertEqual(result["p50_ms"], 2.0)
         self.assertIsNone(result["p99_ms"])
+
+    def test_slot_backed_pacer_constructs_and_records_a_local_acquire(self):
+        async def exercise():
+            pacer = _MODULE._Pacer(1.0)
+            await pacer.acquire("snapshot")
+            return pacer.evidence()
+
+        evidence = asyncio.run(exercise())
+        self.assertEqual(evidence["operations"], {"snapshot": 1})
+        self.assertEqual(evidence["queue_wait_ms"], 0.0)
 
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:

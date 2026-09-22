@@ -51503,6 +51503,13 @@ refinement without the owner's next request.
   A network-disabled exact bootstrap then passed TLS context, gRPC credential
   construction and local JWT signing for all four identities under UID `10001`.
   No Query/Stream request or runtime mutation occurred in either check.
+- 2026-09-22: the first fully bootstrapped matrix reached manifest/planner
+  construction, then stopped before any endpoint call because `_Pacer` used
+  `dataclass(slots=True)` without declaring its lock/counter state. The exact
+  no-network trace identified this as a driver defect, not a Query, manifest or
+  quality failure. Declare the internal slot fields and exercise construction
+  plus one local acquire in regression before the next matrix; preserve all
+  prior failed receipts and do not retry until that source gate is green.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
