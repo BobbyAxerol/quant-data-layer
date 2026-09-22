@@ -51306,7 +51306,7 @@ deleted broadly.
 <a id="read-plane-capacity-phase-3"></a>
 ### Phase 3 - Consumer Load Acceptance And Release
 
-**Status: PENDING_PHASE_2_AND_OWNER_APPROVAL.**
+**Status: APPROVED / PREFLIGHT_IN_PROGRESS.**
 **Goal:** demonstrate the declared 20-50 alpha-equivalent data workload plus
 the actual TS reader, then release with an accurate capacity/support statement.
 **Guides:** architecture **16, 25.8, 27, 28, 37.6, 38**; inherited certificates,
@@ -51410,8 +51410,75 @@ or mainnet-order certification is made by a data serving test.
 and scoped cleanup are complete. Do not continue into Trading System P18 or alpha
 refinement without the owner's next request.
 
-**Journal / work completed:** plan drafted only; no load/C2, release or cleanup.
-**Remaining:** frozen workload/budgets, affected acceptance, approved publication.
+**Journal / work completed:**
+
+- 2026-09-22: owner approved Phase 3 after the recorded Phase-2 exit. The
+  approved workload is V2-primary, real-provider, no-order read/stream
+  observation over Binance USD-M and OKX Swap five-liquid demand. It advances
+  only `5 -> 20 -> 35 -> 50` logical sessions alongside the actual Trading
+  System reader. No V1 fallback/direct-provider access, order/signal/sizing
+  mutation, authority/config/manifest/JWT/TLS change, provider subscription,
+  Kafka/Redis/SQLite reset, shared service restart or cap increase is implied
+  by this approval. A shared-reader N-1 restart remains excluded absent its own
+  packet; client-side alternate-reader transport is the permitted failure drill.
+- 2026-09-22: the current trust registry exposes four existing crypto V2
+  consumer identities for this workload (`trading-system.paper.stable`,
+  `alpha.binance.paper.stable`, `alpha.okx.paper.stable`, and
+  `monitoring.multivenue.stable`). Phase 3 will open bounded logical sessions
+  over those real identities and state both denominators in every report:
+  session count and authenticated-identity-class count. It will not claim that
+  fifty sessions are fifty newly registered consumer manifests, and it will
+  not mint or install temporary credentials just to inflate a capacity claim.
+  Identity-registry scale is a separate auth-control-plane task, not a safe
+  hidden mutation in a read-plane acceptance.
+- 2026-09-22: preflight baseline is the active Phase-2 reader pair
+  `qdl-v2-python:2.1.1-43301d7@sha256:e4cf361b968d5c43fdc0bc05ff6abd85eecae0ea9638c94c1896fa1de4961dd7`,
+  each read-only at `512 MiB / 1 CPU`, healthy with restart/OOM `0`. The named
+  immediate rollback is `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`.
+  No service has been recreated and no load client has been launched in this
+  preflight slice.
+- 2026-09-22: Phase-3 source slice is now frozen before implementation. One
+  reusable, manifest-derived external driver will render `5`, `20`, `35` and
+  `50` logical sessions over the four already registered identities. A logical
+  session owns a deterministic `2..5` product mix and never claims to be a new
+  authenticated consumer. Request pacing is computed independently per
+  identity from its sealed `requests_per_minute` quota at a fixed 10% test
+  share; warmup is issued only where the selected manifest requirement allows
+  it; reference reads use the typed reference batch API; and stream opens are
+  capped by the manifest. The driver fails closed on identity/route/quality
+  drift, typed V2 errors, quota breach, unexpected fallback, or an attempted
+  unsupported operation. Its unit suite is deterministic and uses no network;
+  the later disposable client is the only component allowed to contact the
+  active Query/Stream roles.
+- 2026-09-22: source preflight passed in the active immutable reader image
+  (`20` deterministic tests: Phase-3 planner/driver plus inherited Phase-2
+  capacity checks). The driver uses only a disposable read-only client
+  container, copies mounted workload credentials into tmpfs before dropping to
+  UID/GID `10001`, and has neither Docker socket, V1 endpoint, provider URL nor
+  order client. Its actual runtime scope is the four manifests loaded by the
+  active Query roles, not the historic r135 routing receipt: current
+  manifest/catalog materializes `299` V2 products against the mounted runtime
+  catalog/acquisition plan. The historic r135 release-routing manifest hashes
+  intentionally differ from the current immutable image manifests, so it is
+  retained as historical evidence only; any Phase-3 release must seal current
+  manifest hashes with its candidate image rather than sign an obsolete
+  receipt.
+- 2026-09-22: exact no-order load shape is frozen. Each stage uses the same
+  four existing identity classes and all ten five-liquid Binance USD-M / OKX
+  Swap venue-symbol pairs. Final `50` logical sessions select `2..5` declared
+  products each, cover all ten pairs, and allocate `54` durable streams:
+  `14/20` for each alpha identity, `13/20` for monitoring, and `13/50` for the
+  Trading System identity. Per-identity request pacing is exactly ten percent
+  of its sealed quota (`18 rpm` for alpha/monitoring, `150 rpm` for Trading
+  System). The execution order is one `5`-session exact matrix (no observation
+  duration), then `5/90s`, `20/120s`, `35/180s`, and one final `50/300s` run.
+  Each run uses one disposable client name/namespace and removes it on both
+  pass and failure; no reader, provider, durable store, manifest, authority or
+  consumer runtime is changed.
+
+**Remaining:** run the exact fast matrix, then the escalating load/failure
+gates and one final 300-second no-order acceptance. Publication remains a
+separate owner-approved release action.
 **Technical-debt rule:** unresolved in-scope correctness/capacity defects block
 their exit. Real external limitations and explicitly accepted reduced scope must
 be named; do not conceal them by omitting a product from the denominator.
