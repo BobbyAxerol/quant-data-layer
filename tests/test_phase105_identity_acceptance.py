@@ -934,8 +934,32 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 "selected_release_route_count": 301,
                 "selected_v2_primary_product_count": 299,
                 "selected_v1_primary_excluded_count": 2,
-                "minimum_deadline_seconds": 935.0,
+                "minimum_deadline_seconds": 1015.0,
             },
+        )
+        self.assertEqual(
+            plan["consumers"]["monitoring.multivenue.stable"][
+                "opening_operation_budget"
+            ],
+            {"QUERY_READ": 32, "STREAM_SUBSCRIBE": 8},
+        )
+        self.assertEqual(
+            plan["consumers"]["trading-system.paper.stable"][
+                "opening_operation_budget"
+            ],
+            {"QUERY_READ": 300, "REFERENCE_BATCH": 20, "STREAM_SUBSCRIBE": 100},
+        )
+        self.assertEqual(
+            plan["consumers"]["alpha.binance.paper.stable"][
+                "opening_operation_budget"
+            ],
+            {"QUERY_READ": 560, "REFERENCE_BATCH": 26, "STREAM_SUBSCRIBE": 180},
+        )
+        self.assertEqual(
+            plan["consumers"]["alpha.okx.paper.stable"][
+                "opening_operation_budget"
+            ],
+            {"QUERY_READ": 540, "REFERENCE_BATCH": 4, "STREAM_SUBSCRIBE": 180},
         )
         self.assertEqual(set(plan["consumers"]), set(consumer_ids))
         self.assertGreater(plan["total_operations"], len(scope.products))

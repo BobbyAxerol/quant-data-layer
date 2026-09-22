@@ -49245,3 +49245,38 @@ temporary real-provider probes were no-order, payload-free and leave no
 container/state. Next is one committed source slice, an immutable client image
 from that SHA, and one final C2 only; no reader service rollout is needed for
 this client-only behavior correction.
+
+**R1.35-D C2 opening-capacity accounting finding (`FAIL CLOSED / HARNESS
+SOURCE CORRECTION`, 2026-09-22).** The one final C2 candidate built from
+`2745362` reached only its opening stage and exited `FAIL_OPENING_CAPACITY`;
+it made no order or provider-direct action and the disposable client removed
+itself. This is not a new market-data quality failure: the sealed operation
+plan forecast `380`/`360` Query reads for the Binance/OKX alpha identities,
+while the pacer observed `546`/`479`. The planner counted the two replica
+reads plus two signed warmup handoffs for each durable route, but omitted the
+bounded strict current read-back that C2 performs after a replay-only frame.
+The resulting `935s` deadline is therefore an under-estimate of C2's own
+declared protocol. Approved correction scope: compile a conservative,
+deterministic upper bound of two replay read-backs for every durable product
+into the existing per-identity `QUERY_READ` budget; add a regression which
+ties that bound to the receipt protocol and proves the manifest deadline is
+not below it. Keep the real provider quota unchanged, retain paced serialized
+requests, do not weaken any stale/gap/session fence, and do not change any
+runtime role. Exit: focused source tests plus one immutable disposable C2
+client from the corrected SHA; no further C2 retry occurs before the plan
+matches the protocol graph.
+
+**R1.35-D C2 opening-capacity correction (`PASS / COMMIT AND ONE FINAL C2
+NEXT`, 2026-09-22).** The operation compiler now includes the deterministic
+upper bound of two strict replay read-backs for each durable route, preserving
+the existing read-back behavior rather than bypassing it. The exact stable
+manifest budgets are now `QUERY_READ=560` for
+`alpha.binance.paper.stable`, `540` for `alpha.okx.paper.stable`, `300` for
+`trading-system.paper.stable`, and `32` for monitoring; the derived minimum
+opening deadline is `1015s`. Focused source-only suites ran in the non-root,
+read-only, network-disabled candidate image: Phase 10.5 identity/pace/closing
+coverage `41/41 PASS`; receipt/replay harness `57/57 PASS`. No runtime role,
+V1, Kafka, Redis, SQLite, provider, consumer, alpha or order path changed.
+Next is one coherent commit, one immutable disposable C2 client from that
+commit and one final no-order acceptance; any failure is investigated from
+typed evidence before another run.

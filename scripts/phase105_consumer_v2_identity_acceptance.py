@@ -851,11 +851,12 @@ def _build_c2_opening_operation_plan(
     """Compile the C2 opening budget from the sealed SDK operation graph.
 
     The calculation deliberately follows the same helpers C2 later invokes.
-    It does not inspect provider payloads or change a manifest.  Every durable
-    product gets two initial Query reads plus an explicit two-session
-    warmup/cursor handoff; provider pass-through gets only the two Query reads;
-    reference batches and the one documented native-BASIS deferral are counted
-    through their existing batching helper.
+    It does not inspect provider payloads or change a manifest. Every durable
+    product gets two initial Query reads, an explicit two-session warmup/cursor
+    handoff, and a bounded strict current read-back after each replay handoff.
+    Provider pass-through gets only the two Query reads; reference batches and
+    the one documented native-BASIS deferral are counted through their existing
+    batching helper.
     """
 
     if not products or not consumer_ids:
@@ -933,11 +934,14 @@ def _build_c2_opening_operation_plan(
             ),
         )
         budget = {
-            # Every stream-capable product reads both Query replicas first;
-            # durable products then do one warmup/snapshot per handoff side.
+            # Every stream-capable product reads both Query replicas first.
+            # Durable products then do one warmup/snapshot per handoff side
+            # and may need one strict current read-back after each replay-only
+            # frame. The latter is an upper bound from _stream_resume, not a
+            # retry allowance or a relaxation of any data-quality fence.
             "QUERY_READ": (
                 2 * len(streamed)
-                + 2 * len(durable)
+                + 4 * len(durable)
                 # V2 -> V1 -> V2 reads both replicas before and after fallback.
                 + 4 * probe_counts[consumer_id]
             ),
