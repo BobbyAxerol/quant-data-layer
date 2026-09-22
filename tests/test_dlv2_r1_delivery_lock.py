@@ -610,45 +610,6 @@ class LatestStateCoalescingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hops, 1, "an unknown watermark must still read the store off-loop")
 
 
-class ProjectorBatchWaitTests(unittest.TestCase):
-    """DL-V2 R1.11: the drain window is a latency budget, not a constant.
-
-    With a backlog the window is irrelevant, a batch fills at once. At the head
-    it decides everything: a 10 ms window collects a handful of records and the
-    drain still pays a full HTTP round trip, a durable write and a checkpoint,
-    so the pipeline spends its time on fixed costs instead of records.
-    """
-
-    def _config(self, **env):
-        from qdl.runtime.stable import StableRuntimeConfig
-        base = dict(StableRuntimeConfig.from_environment.__defaults__ or ())
-        del base
-        return env
-
-    def test_the_default_trades_a_tenth_of_a_second_for_batching(self) -> None:
-        from qdl.runtime.stable import StableRuntimeConfig
-
-        self.assertEqual(
-            StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"].default,
-            0.10,
-        )
-
-    def test_the_window_is_bounded_so_it_cannot_become_a_stall(self) -> None:
-        """One second is the ceiling; a longer window would hide a dead feed."""
-
-        from qdl.runtime.stable import StableRuntimeConfig
-
-        field = StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"]
-        self.assertEqual(field.type, "float")
-
-    def test_the_engine_still_refuses_a_window_outside_its_own_bound(self) -> None:
-        from qdl.runtime.stable_projector import StableProjectorEngine
-
-        import inspect
-
-        signature = inspect.signature(StableProjectorEngine.__init__)
-        self.assertIn("batch_wait_seconds", signature.parameters)
-
     async def test_records_ageing_out_before_delivery_report_backpressure(self) -> None:
         """DL-V2 R1.13: discarding is right, discarding in silence is not.
 
@@ -663,12 +624,28 @@ class ProjectorBatchWaitTests(unittest.TestCase):
             token=self.token(), max_buffer_events=4,
             accepts=lambda _stored: True,
         )
-        await self.gateway.publish_many([event(i) for i in range(1, 11)])
+        await self.gateway.publish_many([event(i) for i in range(1, 5)])
+        self.assertFalse(rejects_everything.overflowed)
         # Flip the predicate after the records are queued, which is exactly the
         # shape of a record that was fresh when pushed and stale when read.
         rejects_everything._accepts = lambda _stored: False
-        with self.assertRaises(SlowConsumer):
-            await rejects_everything.next_live()
+        reader = asyncio.create_task(rejects_everything.next_live())
+        async def wait_until_filtered():
+            while rejects_everything.filtered_since_delivery < 4:
+                await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(wait_until_filtered(), timeout=1)
+            self.assertFalse(reader.done())
+            rejects_everything._accepts = lambda _stored: True
+            await self.gateway.publish_many([event(5)])
+            rejects_everything._accepts = lambda _stored: False
+            with self.assertRaisesRegex(SlowConsumer, "records aged out"):
+                await asyncio.wait_for(reader, timeout=1)
+            self.assertFalse(rejects_everything.overflowed)
+            self.assertEqual(rejects_everything.aged_out_at_read, 5)
+        finally:
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
 
     async def test_one_late_record_does_not_trip_backpressure(self) -> None:
         """A single aged record is ordinary; a buffer's worth of them is not."""
@@ -676,21 +653,54 @@ class ProjectorBatchWaitTests(unittest.TestCase):
         subscription = await self.gateway.open(
             consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
             token=self.token(), max_buffer_events=4,
-            accepts=lambda stored: stored.cursor.offset != 1,
         )
         await self.gateway.publish_many([event(1), event(2)])
+        subscription._accepts = lambda stored: stored.cursor.offset != 1
         record = await subscription.next_live()
         self.assertEqual(record.stored.cursor.offset, 2)
         self.assertEqual(subscription.filtered_since_delivery, 0)
+        self.assertEqual(subscription.aged_out_at_read, 1)
 
     async def test_the_filtered_counter_resets_on_every_delivery(self) -> None:
         subscription = await self.gateway.open(
             consumer_id="alpha", stream=STREAM, partition_key=PARTITION,
             token=self.token(), max_buffer_events=8,
-            accepts=lambda stored: stored.cursor.offset % 2 == 0,
         )
         await self.gateway.publish_many([event(i) for i in range(1, 9)])
+        subscription._accepts = lambda stored: stored.cursor.offset % 2 == 0
         for expected in (2, 4, 6, 8):
             record = await subscription.next_live()
             self.assertEqual(record.stored.cursor.offset, expected)
             self.assertEqual(subscription.filtered_since_delivery, 0)
+        self.assertEqual(subscription.aged_out_at_read, 4)
+
+
+class ProjectorBatchWaitTests(unittest.TestCase):
+    """DL-V2 R1.11: the drain window is a latency budget, not a constant.
+
+    With a backlog the window is irrelevant, a batch fills at once. At the head
+    it decides everything: a 10 ms window collects a handful of records and the
+    drain still pays a full HTTP round trip, a durable write and a checkpoint,
+    so the pipeline spends its time on fixed costs instead of records.
+    """
+
+    def test_the_default_trades_a_tenth_of_a_second_for_batching(self) -> None:
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        self.assertEqual(
+            StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"].default,
+            0.10,
+        )
+
+    def test_the_window_is_bounded_so_it_cannot_become_a_stall(self) -> None:
+        from qdl.runtime.stable import StableRuntimeConfig
+
+        field = StableRuntimeConfig.__dataclass_fields__["projector_batch_wait_seconds"]
+        self.assertEqual(field.type, "float")
+
+    def test_the_engine_still_refuses_a_window_outside_its_own_bound(self) -> None:
+        from qdl.runtime.stable_projector import StableProjectorEngine
+        import inspect
+
+        signature = inspect.signature(StableProjectorEngine.__init__)
+        self.assertIn("batch_wait_seconds", signature.parameters)

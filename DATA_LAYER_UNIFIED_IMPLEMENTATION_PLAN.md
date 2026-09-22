@@ -50406,3 +50406,29 @@ and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
   Source-only release-note commits do not change the certified binary and
   do not require another real-provider C2. TS P18 remains paused for owner
   review, and owner's TS Compose/symbol changes remain untouched.
+- Release CI checkpoint: dev `d58521f`, GitHub run `35719167376` failed the
+  unit-discovery step; SDK Python 3.10 and contract/Rust gates passed. Runtime
+  acceptance remains valid, but main/tag publication is BLOCKED until this
+  exact CI failure is resolved. Public annotations show only exit code 1;
+  reproduce discovery in the existing immutable image with source read-only,
+  no network, bounded CPU/RAM, and no production dependency. Investigate only
+  actual failed cases; retain environment-related skips/errors separately.
+  No runtime rollout or blanket provider C2 is justified by a test-only fix.
+- Discovery also exposed three pre-existing async projector backpressure tests
+  under plain `unittest.TestCase`: coroutine bodies were never awaited. Move
+  them into the existing asynchronous gateway fixture, verify filtering at
+  delivery (not enqueue/overflow), and retain the distinct aged-out reason.
+  All 35 delivery/backpressure tests pass with RuntimeWarning treated as error.
+  This is a test-harness correction, not a serving implementation change.
+- Release-contract test still pinned SDK `2.0.2`, while the released SDK and
+  CI wheel gate are explicitly `2.0.3`. Correct that exact expectation; keep
+  public API `2.0.0`, schema/path counts and strict snapshot equality unchanged.
+- Full local discovery completed 1,818 cases / 509.946s: one SDK-version
+  assertion failure, four import errors caused solely by the diagnostic
+  container's read-only `/app/logs`, and seven opt-in/environment skips.
+  Corrected test-only expectation and reran all affected imports/contracts
+  plus delivery tests with isolated tmpfs logs/data: 50/50 PASS, no skips.
+  No host log/data directory or shared Redis was mounted. The three formerly
+  unawaited cases are now genuine behavioral passes, not inherited green dots.
+  All diagnostic containers auto-removed. CI must rerun on this exact commit;
+  the serving-code tree and accepted image remain unchanged.
