@@ -1,0 +1,126 @@
+{
+  "schema": "qdl.v2.r135-release-certificate.v2",
+  "status": "PASS",
+  "release": "v2.0.27",
+  "classification": "R1.35 active-V2 consumer-plane certificate after exact final-BAR lookup correction.",
+  "release_ref": "annotated git tag v2.0.27",
+  "scope": {
+    "active_v2_products": 299,
+    "durable_products": 234,
+    "on_demand_products": 65,
+    "venues": {
+      "BINANCE_USDM": 157,
+      "OKX_SWAP": 142
+    },
+    "feeds": {
+      "BAR": 150,
+      "BASIS": 5,
+      "BOOK_DELTA": 20,
+      "BOOK_SNAPSHOT": 20,
+      "CONTRACT_METADATA": 10,
+      "FUNDING_RATE": 10,
+      "LONG_SHORT_RATIO": 5,
+      "MARK_INDEX_PRICE": 20,
+      "OPEN_INTEREST": 10,
+      "QUOTE": 20,
+      "TAKER_FLOW": 5,
+      "TRADE": 24
+    }
+  },
+  "acceptance": {
+    "receipt_schema": "qdl.phase105.v2-identity-acceptance.v1",
+    "receipt_sha256": "1b932d33a367a3022b543cff03ed295bb7336857cab55e6c0c98f935e47a591b",
+    "status": "PASS_V2_DATA_PLANE_ONLY",
+    "opening_products": 299,
+    "opening_seconds": 993.905,
+    "opening_budget_seconds": 1015.0,
+    "observation_seconds": 300.1,
+    "closing_products": 299,
+    "closing_seconds": 28.171,
+    "elapsed_seconds": 1322.178,
+    "quota_window_wait_seconds": 43.712,
+    "order_actions": 0,
+    "provider_connections": 0,
+    "cursor_directory_removed": true,
+    "secret_values_recorded": false,
+    "test_provenance": false,
+    "resource_capture": {
+      "client_cpu_millicores": 93,
+      "client_rss_bytes": 262254592
+    },
+    "fallback_drill": {
+      "status": "PASS",
+      "allowed_trade_routes": 7,
+      "transition": "V2_PRIMARY -> V1_FALLBACK -> V2_PRIMARY",
+      "blocked_routes": 292,
+      "blocked_route_downgrade": false
+    },
+    "closing_transports": {
+      "BATCH_V2_PRIMARY": 194,
+      "L2_STATUS_SNAPSHOT": 40,
+      "ON_DEMAND_NO_CLOSING_DURABLE_READ": 65
+    },
+    "latency_semantics": "Consumer request start to SDK-usable response under the concurrent declared workload; it is not venue event age, provider timestamp age, or final-bar-close latency."
+  },
+  "runtime": {
+    "query_reader_image": {
+      "reference": "qdl-v2-python:2.0.26-8232d1b",
+      "release_alias": "qdl-v2-python:2.0.27-8232d1b",
+      "digest": "sha256:f671dcebfdca1b28fc2cb99f3129f8f13e78a9a5853d2be8adfd9ee00c6f31b9",
+      "source_commit": "8232d1ba064b5f12f1afc9f1f2f4742b284e6097",
+      "roles": [
+        "query_v2_1",
+        "query_v2_2"
+      ]
+    },
+    "stream_reader_image": {
+      "reference": "qdl-v2-python:2.0.26-657e86f",
+      "digest": "sha256:c8d7458e57d62d6fb2d6366f42911d86085918f6f6939d624c61494798dac2ab",
+      "source_commit": "657e86f099d73eb2f606cd3d6d28d9715a9976fa",
+      "roles": [
+        "stream_v2_active",
+        "stream_v2_passive"
+      ]
+    },
+    "query_reader_rollback": "sha256:c8d7458e57d62d6fb2d6366f42911d86085918f6f6939d624c61494798dac2ab",
+    "projector_image": {
+      "digest": "sha256:d724764b17dc9f21e681c2ebeac4fb48588d45010b0f1ff3a00b6cfa408f2a3b",
+      "source_commit": "987b1a2827338f98eb41318d8536a28808ff80d0"
+    },
+    "binance_bar_edge_image": {
+      "digest": "sha256:9039236e7a8e570f2364b470b33386ab702bc1dde5ae9d5e7d90a4dda531e8f0",
+      "source_commit": "95d95957f2ee41a8af7068857c15916b9cb082c7"
+    },
+    "rust_core_image": {
+      "reference": "qdl-v2-rust:2.0.20-f1c9e1d",
+      "digest": "sha256:389753b37c4f3935193acc739687c4a18c5b307f3ea6a427153f5689d31c9762",
+      "source_commit": "f1c9e1dd145c159934fb418d96fdac50d21c1d3b"
+    },
+    "v1_fallback": {
+      "reference": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+      "digest": "sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65"
+    },
+    "runtime_provenance": {
+      "routing_revision": 22,
+      "c2_packet_sha256": "5150ff5638f64c4a58a248b45b46816cc8d2300ac7ecf6050af211d18c393b19",
+      "query_override_sha256": "4a20075577b1f59a6e77f2baad7eb41f8afd3fffa981f7a7f5bb8e1879b4ed4d",
+      "query_restart_count": 0,
+      "stream_restart_count": 0,
+      "reader_oom_killed": false
+    }
+  },
+  "component_reconciliation": {
+    "query_delta_after_8232d1b": [
+      "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+      "upgrade/evidence/releases/v2.0.27"
+    ],
+    "stream_delta_after_657e86f": "No Stream serving-code change is claimed by this exact-final-BAR Query release slice.",
+    "rust_delta_after_f1c9e1d": "The final native regression is a source-only oracle check; qdl-realtime-core serving behavior was not changed by this release slice.",
+    "projector_and_bar_edge": "No later serving-code delta is claimed for the active projector or Binance bar-edge paths."
+  },
+  "declared_exclusions": [
+    "DNSE/VN remains V1_PRIMARY pending its separate market-hours certificate.",
+    "Dark or unentitled Spot/catalog inventory is not claimed as V2 execution coverage.",
+    "This data-plane release does not grant broker-order authority; Trading System and alpha paper/live policy remain their own control plane."
+  ]
+}

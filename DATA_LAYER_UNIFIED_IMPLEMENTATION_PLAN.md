@@ -49500,3 +49500,63 @@ OKX book session/liveness/generation behavior introduced by this release
 branch. The named test container and its sole target volume were removed after
 the pass. No image, runtime container, provider connection or durable Data
 Layer state was created or changed by that test.
+
+**R1.35-D release reconciliation (`IN PROGRESS / SOURCE-ONLY`, 2026-09-22).**
+The final executable Query source is `8232d1b`; `8232d1b..2a4b5c5` contains
+only this implementation journal. The deployed Query pair is therefore
+component-attested at
+`qdl-v2-python:2.0.26-8232d1b@sha256:f671dcebfdca1b28fc2cb99f3129f8f13e78a9a5853d2be8adfd9ee00c6f31b9`,
+healthy with restart `0` and no OOM. The active Stream pair remains healthy on
+the prior attested reader digest
+`sha256:c8d7458e57d62d6fb2d6366f42911d86085918f6f6939d624c61494798dac2ab`;
+V1 fallback remains
+`qdl-v1-fallback:v1.2.4-2b0dcf7@sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65`.
+
+The previous `v2.0.26` certificate was committed but no matching remote tag
+exists. This closure must therefore publish the next patch coordinate
+`v2.0.27`, not retag a historical certificate. It is a component-attested
+release: no pointless rebuilt or rolled binary is permitted because the source
+delta after the proven Query image is documentation only. The public release
+artifact may contain only the compact final C2 receipt hash
+`1b932d33a367a3022b543cff03ed295bb7336857cab55e6c0c98f935e47a591b`,
+declared product counts, image digests, source reconciliation and explicit
+Binance USD-M/OKX Swap boundaries. It must not copy the receipt, identities,
+runtime packet, raw market data, cursor state or logs into Git.
+
+**Release gates and rollback.** Validate certificate JSON and the repository's
+release-certification suite in the immutable Query image with source mounted
+read-only and no network; then commit the evidence on this already-green
+feature branch, fast-forward it to `dev`, wait for CI, fast-forward `dev` to
+`main`, create and push annotated tag `v2.0.27`, and verify the release
+workflow. No runtime role is recreated by this source/release transaction.
+Runtime rollback remains the existing named Query digest above and frozen V1
+route; source rollback is the normal `main` release rollback. Only after the
+tag workflow is green may scoped image/cache/container cleanup begin with an
+exact retention inventory and pre/post disk evidence.
+
+**R1.35-D release evidence source gates (`PASS / COMMIT NEXT`, 2026-09-22).**
+The public `v2.0.27` certificate, scope and notes record the final compact C2
+hash and bounded aggregate facts only. Its runtime inventory corrects the old
+over-broad reader claim: the active Query pair is `f671...f31b9`, while the
+active Stream pair is the separately attested `c8d...c2ab`; both were healthy,
+restart `0`, and not OOM-killed at the final C2. The active Rust core digest
+is `389753b...c9762`; the active V1 fallback digest remains
+`dbfb5784...15d65`.
+
+In `qdl-v2-python:2.0.26-8232d1b` with source mounted read-only, no network,
+non-root UID and tmpfs-only `/tmp`, JSON validation passed and
+`tests.test_phase105_release_certification` passed `6/6`. The release
+workflow's own public precondition (semantic tag, `status=PASS`, notes present)
+also passed. No image, runtime role, provider, Kafka, Redis, SQLite, V1,
+consumer, alpha or order state changed. Next: commit this evidence slice,
+publish it to the existing feature/dev line, then use the already-approved
+fast-forward/tag workflow; no C2 rerun is permitted or needed.
+
+**R1.35-D stable image alias (`PASS / RELEASE COMMIT AMEND`, 2026-09-22).**
+The already-certified Query digest was tagged locally as
+`qdl-v2-python:2.0.27-8232d1b`; inspection proves it resolves to the unchanged
+`sha256:f671dceb...c6f31b9` image alongside the actual running
+`2.0.26-8232d1b` tag. This is an immutable alias only: no image build, pull,
+container recreate, runtime mount, data-plane state or consumer route changed.
+The release certificate records the runtime tag and this alias separately so
+source/release/runtime provenance remains truthful.

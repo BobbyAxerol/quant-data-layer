@@ -1,0 +1,27 @@
+{
+  "schema": "qdl.v2.r135-release-scope.v2",
+  "release": "v2.0.27",
+  "certificate_sha256_source": "upgrade/evidence/releases/v2.0.27/certificate.json",
+  "active_scope": {
+    "products": 299,
+    "durable": 234,
+    "on_demand": 65,
+    "binance_usdm": 157,
+    "okx_swap": 142
+  },
+  "quality_fences": [
+    "identity",
+    "venue isolation",
+    "declared feed semantics",
+    "final-bar validity",
+    "sequence/gap/generation",
+    "two-query-replica parity",
+    "signed cursor replay",
+    "manifest-governed V1 fallback"
+  ],
+  "acceptance_receipt_sha256": "1b932d33a367a3022b543cff03ed295bb7336857cab55e6c0c98f935e47a591b",
+  "order_actions": 0,
+  "provider_connections": 0,
+  "raw_market_payload_recorded": false,
+  "secrets_recorded": false
+}
