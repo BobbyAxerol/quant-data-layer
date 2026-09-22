@@ -51567,6 +51567,31 @@ refinement without the owner's next request.
   was contacted and no runtime state changed. The next permitted action is one
   replacement `5/90s` disposable no-order load client; the failed `r1` receipt
   remains preserved rather than overwritten.
+- 2026-09-22: replacement load `load-5-r2` reached real V2 stream traffic but
+  stopped fail-closed after `41.801s`; its exact disposable client was removed
+  and both Query readers remained healthy with restart/OOM `0`. The only
+  primary error was `DATA_STALE` on two monitoring/Binance `BTCUSDT` TRADE
+  streams; V1 fallback, direct-provider calls and order actions remained zero.
+  Bounded Stream telemetry identifies the actual cause: the harness requested
+  an arbitrary `64`-event lossless buffer, which overflowed at `63` queued
+  records under a high-rate BTC trade feed. All four sealed manifests authorize
+  `2000` events and the stable Stream server caps the same value. This is not
+  evidence that the provider session is stale; it is an unrepresentative client
+  buffer override. The next narrow source repair derives the request buffer
+  from each loaded manifest quota, validates the bound locally and reports it
+  in the receipt. It retains the existing disposable `512 MiB / 1 CPU` client
+  cap, does not change server buffers or manifests, and will retry only the
+  failed `5/90s` stage after source/offline gates pass.
+- 2026-09-22: the manifest-bound stream-buffer repair passed `30` deterministic
+  tests in the active immutable reader image, including invalid-bound rejection;
+  it covers normal stream clients and the client-side N-1 Query alternate path.
+  The driver now carries each manifest's `max_buffer_events` through the signed
+  identity map and records it in the stage receipt. The active four manifests
+  all seal `2000`, equal to the stable Stream server's bound; the test client
+  remains independently capped at `512 MiB / 1 CPU`, so an OOM or buffer growth
+  remains a measured capacity failure rather than a hidden server-cap increase.
+  No endpoint, provider, service, authority or durable state was touched by
+  this source validation. The next action is one replacement `5/90s` run only.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

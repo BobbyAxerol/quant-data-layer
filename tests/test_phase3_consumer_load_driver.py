@@ -226,6 +226,16 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertEqual(supplemental[alpha].purpose, "FINAL_BAR")
         self.assertEqual(supplemental[monitor].purpose, "CONTINUITY")
 
+    def test_stream_buffer_comes_from_the_sealed_identity_quota(self):
+        self.assertEqual(
+            _MODULE._stream_buffer_bound(SimpleNamespace(max_buffer_events=2000)),
+            2000,
+        )
+        with self.assertRaisesRegex(ValueError, "sealed stream buffer quota"):
+            _MODULE._stream_buffer_bound(SimpleNamespace(max_buffer_events=0))
+        with self.assertRaisesRegex(ValueError, "sealed stream buffer quota"):
+            _MODULE._stream_buffer_bound(SimpleNamespace(max_buffer_events=10_001))
+
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

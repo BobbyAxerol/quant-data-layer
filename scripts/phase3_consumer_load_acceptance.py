@@ -531,6 +531,7 @@ class _Identity:
     consumer_id: str
     tls: object
     credential: object
+    max_buffer_events: int
 
 
 def _product_evidence(product) -> dict[str, object]:
@@ -635,6 +636,7 @@ def _identity_map(config: dict[str, object], manifests: dict[str, object]) -> di
                 consumer_manifest_revision=manifest.manifest_revision,
                 lifetime_seconds=300, refresh_before_seconds=60,
             ),
+            max_buffer_events=manifest.quotas.max_buffer_events,
         )
     if set(values) != set(manifests):
         raise ValueError("Phase-3 identity set differs from the sealed workload scope")
@@ -771,6 +773,13 @@ def _build_stream_specs(plan, products_by_consumer) -> tuple[_StreamSpec, ...]:
     return (*logical, *supplemental)
 
 
+def _stream_buffer_bound(identity) -> int:
+    value = getattr(identity, "max_buffer_events", None)
+    if not isinstance(value, int) or not 1 <= value <= 10_000:
+        raise ValueError("Phase-3 identity has an invalid sealed stream buffer quota")
+    return value
+
+
 def _make_client(identity, *, queries, stream_targets, pacer, replicated: bool):
     from qdl_sdk.client import AsyncDataLayerClient
     from qdl_sdk.transport import GrpcStreamTransport, ReplicatedRestQueryTransport, RestQueryTransport
@@ -786,7 +795,7 @@ def _make_client(identity, *, queries, stream_targets, pacer, replicated: bool):
             GrpcStreamTransport(stream_targets, tls=identity.tls, credential_provider=identity.credential), pacer,
         ),
         consumer_id=identity.consumer_id,
-        max_buffer_events=64,
+        max_buffer_events=_stream_buffer_bound(identity),
         max_reconnect_attempts=1,
     )
 
@@ -935,7 +944,7 @@ async def _n_minus_one_probe(*, identity, product, secondary, stream_targets, pa
         query_transport=query,
         stream_transport=_PacedStreamTransport(GrpcStreamTransport(stream_targets, tls=identity.tls, credential_provider=identity.credential), pacer),
         consumer_id=identity.consumer_id,
-        max_buffer_events=64,
+        max_buffer_events=_stream_buffer_bound(identity),
         max_reconnect_attempts=0,
     )
     try:
@@ -1225,6 +1234,7 @@ async def run_inside() -> dict[str, object]:
                 "seconds_per_request": round(item.seconds_per_request, 6),
                 "max_streams": item.max_streams,
                 "planned_streams": item.planned_streams,
+                "max_buffer_events": identities[item.consumer_id].max_buffer_events,
             }
             for item in plan.identity_budgets
         ],
