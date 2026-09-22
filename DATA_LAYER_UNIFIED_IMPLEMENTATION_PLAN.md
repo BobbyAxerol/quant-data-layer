@@ -51521,6 +51521,25 @@ refinement without the owner's next request.
   paced queue wait from endpoint-to-validated-result latency and return actual
   selected matrix coverage; rerun only this affected fast matrix after the
   source regressions pass. No staged load/C2 has started.
+- 2026-09-22: corrected matrix `r4` passed with all `10/10` required
+  venue-symbol pairs on both Query replicas (`26` selected V2 reads, `38`
+  route/replica groups, zero typed errors/fallback/direct-provider/order action,
+  max group p95 `53.837 ms` QUOTE and `188.380 ms` TRADE). Intentional quota
+  wait is now reported separately; the disposable client's max RSS was
+  `176428 KiB` and both readers remained healthy/clean after removal. A final
+  source preflight found the initial five-session planner itself covered only
+  `9/10` pairs even though matrix augmentation covered the tenth. Every staged
+  load must independently satisfy the frozen all-ten-pair scope, so planner
+  selection now needs a deterministic required-pair coverage repair before any
+  stream/load traffic starts. This is a workload-shape correction, not a
+  runtime read-plane fault; no staged load/C2 has started.
+- 2026-09-22: the deterministic coverage repair passed `26` source tests in
+  the active immutable image and an exact network-disabled bootstrap against
+  the active manifests. The `5`-session plan now independently covers all ten
+  required Binance USD-M/OKX Swap pairs while preserving `2..5` products per
+  session, existing identity assignment and sealed quota/stream limits. The
+  next permitted traffic is the frozen `5/90s` no-order load stage; no stream,
+  warmup, provider, V1 or order traffic was created by this coverage preflight.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

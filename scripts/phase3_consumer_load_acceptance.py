@@ -1080,18 +1080,18 @@ async def run_inside() -> dict[str, object]:
         consumer_id: _selected_five(tuple(item for item in scope.products if item.consumer_id == consumer_id))
         for consumer_id in sorted(identities)
     }
-    plan = build_consumer_load_plan(
-        manifests=runtime_manifests,
-        products_by_consumer=products_by_consumer,
-        logical_session_count=int(config["logical_sessions"]),
-    )
     required_pairs = tuple(
         (venue, symbol)
         for venue, symbols in sorted(_FIVE_LIQUID.items())
         for symbol in sorted(symbols)
     )
-    if int(config["logical_sessions"]) == 50:
-        assert_required_instrument_coverage(plan, required_pairs)
+    plan = build_consumer_load_plan(
+        manifests=runtime_manifests,
+        products_by_consumer=products_by_consumer,
+        logical_session_count=int(config["logical_sessions"]),
+        required_instruments=required_pairs,
+    )
+    assert_required_instrument_coverage(plan, required_pairs)
     pacers = {
         budget.consumer_id: _Pacer(budget.seconds_per_request)
         for budget in plan.identity_budgets

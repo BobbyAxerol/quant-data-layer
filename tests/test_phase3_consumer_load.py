@@ -108,6 +108,20 @@ class ConsumerLoadPlanTests(unittest.TestCase):
             self.assertLessEqual(budget.test_requests_per_minute, budget.requests_per_minute // 10 or 1)
             self.assertLessEqual(budget.planned_streams, budget.max_streams)
 
+    def test_small_stage_can_require_all_declared_venue_symbol_pairs(self):
+        required = (
+            tuple(("BINANCE", item) for item in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"))
+            + tuple(("OKX", item) for item in ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", "BNB-USDT-SWAP"))
+        )
+        plan = build_consumer_load_plan(
+            manifests=self.manifests,
+            products_by_consumer=self.products,
+            logical_session_count=5,
+            required_instruments=required,
+        )
+        assert_required_instrument_coverage(plan, required)
+        self.assertTrue(all(2 <= len(session.products) <= 5 for session in plan.logical_sessions))
+
     def test_planner_refuses_unavailable_identity_capacity_before_any_traffic(self):
         manifests = {"one": _Manifest(_Quotas(60, 1))}
         products = {"one": _products("one", "BINANCE", ("BTCUSDT", "ETHUSDT"))}

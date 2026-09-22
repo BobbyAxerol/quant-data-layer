@@ -7,7 +7,7 @@ driver is allowed to contact the V2 Query/Stream plane.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -183,6 +183,129 @@ def _ensure_streamable_product(
     raise ValueError("load identity has no streamable product")
 
 
+def _instrument_pair(product: AcceptanceProduct) -> tuple[str, str]:
+    return (product.venue, product.native_symbol)
+
+
+def _coverage_counts(
+    sessions: Sequence[LogicalConsumerSession],
+) -> Counter[tuple[str, str]]:
+    return Counter(
+        _instrument_pair(product)
+        for session in sessions
+        for product in session.products
+    )
+
+
+def _ensure_required_instrument_coverage(
+    sessions: Sequence[LogicalConsumerSession],
+    *,
+    eligible: Mapping[str, Sequence[AcceptanceProduct]],
+    required_instruments: Sequence[tuple[str, str]],
+) -> tuple[LogicalConsumerSession, ...]:
+    """Make every bounded stage cover its declared venue-symbol scope.
+
+    The logical-session count is deliberately independent of the demanded
+    universe.  For small stages, deterministically append a missing declared
+    product to a same-identity session with spare capacity; only then replace a
+    redundant pair.  This keeps each session at `2..5` products, retains the
+    sealed identity/quota allocation, and fails before traffic when coverage is
+    impossible rather than silently shrinking the denominator.
+    """
+
+    required = tuple(sorted(set(required_instruments)))
+    if not required:
+        return tuple(sessions)
+    if any(not venue or not symbol for venue, symbol in required):
+        raise ValueError("required instrument coverage contains an empty identity")
+
+    result = list(sessions)
+    for pair in required:
+        coverage = _coverage_counts(result)
+        if coverage[pair]:
+            continue
+        candidate_by_consumer = {
+            consumer_id: tuple(sorted(
+                (product for product in values if _instrument_pair(product) == pair),
+                key=_product_sort_key,
+            ))
+            for consumer_id, values in eligible.items()
+        }
+        candidate_by_consumer = {
+            consumer_id: values
+            for consumer_id, values in candidate_by_consumer.items()
+            if values
+        }
+        applied = False
+        for session_index in sorted(
+            range(len(result)),
+            key=lambda index: (len(result[index].products), result[index].ordinal),
+        ):
+            session = result[session_index]
+            if len(session.products) >= 5:
+                continue
+            existing = {product.identity for product in session.products}
+            candidate = next(
+                (product for product in candidate_by_consumer.get(session.consumer_id, ())
+                 if product.identity not in existing),
+                None,
+            )
+            if candidate is None:
+                continue
+            result[session_index] = LogicalConsumerSession(
+                ordinal=session.ordinal,
+                consumer_id=session.consumer_id,
+                products=(*session.products, candidate),
+            )
+            applied = True
+            break
+        if applied:
+            continue
+
+        coverage = _coverage_counts(result)
+        for session_index in sorted(
+            range(len(result)), key=lambda index: result[index].ordinal
+        ):
+            session = result[session_index]
+            existing = {product.identity for product in session.products}
+            candidate = next(
+                (product for product in candidate_by_consumer.get(session.consumer_id, ())
+                 if product.identity not in existing),
+                None,
+            )
+            if candidate is None:
+                continue
+            replace_index = next(
+                (
+                    index for index, product in enumerate(session.products)
+                    if coverage[_instrument_pair(product)] > 1
+                ),
+                None,
+            )
+            if replace_index is None:
+                continue
+            products = list(session.products)
+            products[replace_index] = candidate
+            result[session_index] = LogicalConsumerSession(
+                ordinal=session.ordinal,
+                consumer_id=session.consumer_id,
+                products=tuple(products),
+            )
+            applied = True
+            break
+        if not applied:
+            raise ValueError(
+                "load plan cannot cover required instrument " + repr(pair)
+            )
+
+    missing = set(required) - set(_coverage_counts(result))
+    if missing:
+        raise ValueError(
+            "load plan misses required instruments: " + repr(sorted(missing))
+        )
+    return tuple(result)
+
+
 def build_consumer_load_plan(
     *,
     manifests: Mapping[str, ConsumerManifest],
@@ -190,6 +313,7 @@ def build_consumer_load_plan(
     logical_session_count: int,
     test_quota_fraction: float = 0.10,
     extra_streams_per_identity: int = 1,
+    required_instruments: Sequence[tuple[str, str]] = (),
 ) -> ConsumerLoadPlan:
     """Render `2..5`-feed sessions without inventing identities or quota.
 
@@ -238,6 +362,12 @@ def build_consumer_load_plan(
         cursors[consumer_id] = (cursors[consumer_id] + count) % len(values)
         sessions_by_consumer[consumer_id] += 1
         sessions.append(session)
+
+    sessions = list(_ensure_required_instrument_coverage(
+        sessions,
+        eligible=eligible,
+        required_instruments=required_instruments,
+    ))
 
     budgets: list[IdentityLoadBudget] = []
     for consumer_id in consumer_ids:
