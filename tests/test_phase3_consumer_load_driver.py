@@ -236,6 +236,54 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sealed stream buffer quota"):
             _MODULE._stream_buffer_bound(SimpleNamespace(max_buffer_events=10_001))
 
+    def test_stream_quality_diagnostic_is_bounded_and_separates_event_from_receive_age(self):
+        event = SimpleNamespace(
+            logical_offset=17,
+            event=SimpleNamespace(
+                source_event_time_ns=1_000_000_000,
+                received_at_ns=3_500_000_000,
+                quality_flags=(),
+                connection_generation=4,
+                lease_epoch=7,
+                authority_revision=9,
+                config_revision=10,
+                price="must-not-appear",
+                source_session_id="must-not-appear",
+            ),
+        )
+        requirement = SimpleNamespace(
+            max_freshness_ms=15_000,
+            effective_event_recency_policy=SimpleNamespace(value="BLOCK"),
+            max_session_liveness_ms=None,
+            stale_policy=SimpleNamespace(value="BLOCK"),
+            gap_policy=SimpleNamespace(value="BLOCK"),
+        )
+
+        result = _MODULE._stream_frame_quality_diagnostic(
+            event, requirement, now_ns=5_000_000_000
+        )
+
+        self.assertEqual(result["logical_offset"], 17)
+        self.assertEqual(result["source_event_age_ms"], 4_000)
+        self.assertEqual(result["receive_age_ms"], 1_500)
+        self.assertEqual(result["max_freshness_ms"], 15_000)
+        self.assertEqual(result["connection_generation"], 4)
+        self.assertEqual(result["quality_flags"], [])
+        encoded = json.dumps(result, sort_keys=True)
+        self.assertNotIn("must-not-appear", encoded)
+        self.assertNotIn("price", encoded.lower())
+
+    def test_stream_quality_diagnostic_never_raises_for_incomplete_frame(self):
+        result = _MODULE._stream_frame_quality_diagnostic(
+            SimpleNamespace(logical_offset="not-an-offset", event=SimpleNamespace()),
+            SimpleNamespace(),
+            now_ns=5_000_000_000,
+        )
+        self.assertIsNone(result["logical_offset"])
+        self.assertIsNone(result["source_event_age_ms"])
+        self.assertIsNone(result["receive_age_ms"])
+        self.assertEqual(result["quality_flags"], [])
+
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -62,6 +62,69 @@ def _safe_error(error: BaseException) -> dict[str, object]:
     }
 
 
+def _stream_frame_quality_diagnostic(event, requirement, *, now_ns: int | None = None) -> dict[str, object]:
+    """Return bounded non-secret quality context for a rejected stream frame.
+
+    The load receipt needs enough information to distinguish a stale provider
+    event from a stale transport/session without recording raw payloads,
+    prices, timestamps, cursor material, or identity secrets.
+    """
+
+    from qdl.common.v1 import common_pb2
+
+    envelope = getattr(event, "event", None)
+    current_ns = time.time_ns() if now_ns is None else now_ns
+
+    def integer(value: object) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def age_ms(value: object) -> int | None:
+        timestamp_ns = integer(value)
+        if timestamp_ns is None or timestamp_ns <= 0:
+            return None
+        return max(0, (current_ns - timestamp_ns) // 1_000_000)
+
+    def policy_name(value: object) -> str | None:
+        candidate = getattr(value, "value", None)
+        return candidate if isinstance(candidate, str) else None
+
+    flags: list[str] = []
+    for value in getattr(envelope, "quality_flags", ()):
+        try:
+            flags.append(
+                common_pb2.QualityFlag.Name(int(value)).removeprefix("QUALITY_FLAG_")
+            )
+        except (TypeError, ValueError):
+            flags.append("UNKNOWN")
+
+    return {
+        "logical_offset": integer(getattr(event, "logical_offset", None)),
+        "source_event_age_ms": age_ms(getattr(envelope, "source_event_time_ns", None)),
+        "receive_age_ms": age_ms(getattr(envelope, "received_at_ns", None)),
+        "max_freshness_ms": integer(getattr(requirement, "max_freshness_ms", None)),
+        "event_recency_policy": policy_name(
+            getattr(requirement, "effective_event_recency_policy", None)
+        ),
+        "max_session_liveness_ms": integer(
+            getattr(requirement, "max_session_liveness_ms", None)
+        ),
+        "stale_policy": policy_name(getattr(requirement, "stale_policy", None)),
+        "gap_policy": policy_name(getattr(requirement, "gap_policy", None)),
+        "quality_flags": sorted(set(flags)),
+        "connection_generation": integer(
+            getattr(envelope, "connection_generation", None)
+        ),
+        "lease_epoch": integer(getattr(envelope, "lease_epoch", None)),
+        "authority_revision": integer(
+            getattr(envelope, "authority_revision", None)
+        ),
+        "config_revision": integer(getattr(envelope, "config_revision", None)),
+    }
+
+
 def _percentiles(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {"n": 0, "p50_ms": None, "p95_ms": None, "p99_ms": None, "max_ms": None}
@@ -986,8 +1049,10 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
         client = _make_client(identities[spec.consumer_id], queries=queries, stream_targets=stream_targets, pacer=pacers[spec.consumer_id], replicated=True)
         started = time.perf_counter()
         admitted = False
+        last_stream_event = None
+        requirement = sdk_requirement(spec.product)
         try:
-            async with client.warmup_then_stream(sdk_requirement(spec.product)) as session:
+            async with client.warmup_then_stream(requirement) as session:
                 while True:
                     event = await asyncio.wait_for(session.__anext__(), timeout=60.0)
                     if isinstance(event, ControlEvent):
@@ -995,10 +1060,11 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
                         continue
                     if not isinstance(event, StreamEvent):
                         raise ValueError("stream returned an unknown event type")
+                    last_stream_event = event
                     view = market_data_view_from_stream(
                         event,
                         template=session.warmup.data[-1],
-                        requirement=sdk_requirement(spec.product),
+                        requirement=requirement,
                     )
                     validate_product_view(spec.product, view, require_current_quality=True)
                     session.acknowledge(event)
@@ -1030,7 +1096,8 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
                         continue
                     if not isinstance(event, StreamEvent):
                         raise ValueError("stream returned an unknown event type")
-                    view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=sdk_requirement(spec.product))
+                    last_stream_event = event
+                    view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=requirement)
                     validate_product_view(spec.product, view, require_current_quality=True)
                     session.acknowledge(event)
                     counters[f"stream_event:{spec.name}"] += 1
@@ -1039,7 +1106,17 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            errors.append({"operation": "STREAM", "stream": spec.name, "product": _product_evidence(spec.product), "error": _safe_error(error)})
+            evidence = {
+                "operation": "STREAM",
+                "stream": spec.name,
+                "product": _product_evidence(spec.product),
+                "error": _safe_error(error),
+            }
+            if last_stream_event is not None:
+                evidence["stream_quality"] = _stream_frame_quality_diagnostic(
+                    last_stream_event, requirement
+                )
+            errors.append(evidence)
             if not admitted:
                 await startup.put((spec.name, "FAILED"))
         finally:

@@ -51592,6 +51592,34 @@ refinement without the owner's next request.
   remains a measured capacity failure rather than a hidden server-cap increase.
   No endpoint, provider, service, authority or durable state was touched by
   this source validation. The next action is one replacement `5/90s` run only.
+- 2026-09-22: `load-5-r3` proved the buffer repair took effect: all identities
+  requested their sealed `2000` event bound and bounded Stream telemetry shows
+  monitoring subscriptions closed with `overflowed=false`, `queued=0` after
+  hundreds of delivered records. It nevertheless stopped after `25.711s` on
+  the same monitoring/Binance `BTCUSDT` TRADE route with `DATA_STALE`; the
+  client was removed, V1/direct-provider/order counts stayed zero, and both
+  Query readers stayed healthy/restart/OOM `0`. The query snapshot itself was
+  valid, so the remaining distinction is inside stream-frame projection:
+  source-event recency versus transport receive age/policy, not queue capacity.
+  Current compact error evidence hashes the exception but does not identify
+  that branch. Before another traffic attempt, add bounded non-secret stream
+  frame diagnostics (offset, source/receive ages, declared freshness/session
+  policies, flags and generation) and test it deterministically. This is an
+  in-scope evidence repair required by the Phase-3 failure rule; it changes no
+  reader, manifest or quality threshold and will be followed by only one
+  targeted `5/90s` replacement run.
+- 2026-09-22: the bounded stream-quality receipt repair is source-validated in
+  the active immutable image (`32` deterministic Phase-3/Phase-2 tests,
+  network disabled). A rejected stream frame now records only logical offset,
+  source-event and receive ages, declared freshness/session/gap policies,
+  quality-flag names and public generation/revision metadata. It deliberately
+  records no payload field, price, raw timestamp, signed cursor, identity path
+  or secret. Regression proves source-age and receive-age stay distinct and an
+  incomplete diagnostic frame cannot mask the original failure. No runtime
+  role, manifest, reader limit, provider, durable store or authority changed.
+  The one permitted next traffic action remains replacement `load-5-r4`
+  (`5` logical sessions, `90s` maximum), whose sole new purpose is to identify
+  the exact stale-policy branch before any quality repair is considered.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
