@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter, defaultdict
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import hashlib
@@ -485,16 +487,33 @@ def run_host(args: argparse.Namespace) -> int:
 
 
 @dataclass(slots=True)
+class _HandoffReservation:
+    """Two quota slots reserved for one snapshot-to-stream handoff."""
+
+    stream_at: float
+    state: str = "QUERY"
+
+
+@dataclass(slots=True)
 class _Pacer:
     spacing_seconds: float
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     _lock: asyncio.Lock = field(init=False, repr=False)
     _next_at: float | None = field(init=False, default=None)
     _wait_ms: float = field(init=False, default=0.0)
     _operations: Counter[str] = field(init=False, default_factory=Counter)
+    _handoff_reservations: int = field(init=False, default=0)
+    _incomplete_handoffs: int = field(init=False, default=0)
     _measurement_wait_ms: ContextVar[float] = field(
         init=False,
         repr=False,
         default_factory=lambda: ContextVar("phase3_pacer_measurement_wait_ms", default=0.0),
+    )
+    _handoff: ContextVar[_HandoffReservation | None] = field(
+        init=False,
+        repr=False,
+        default_factory=lambda: ContextVar("phase3_pacer_handoff", default=None),
     )
 
     def __post_init__(self) -> None:
@@ -503,8 +522,30 @@ class _Pacer:
         self._lock = asyncio.Lock()
 
     async def acquire(self, operation: str) -> None:
+        reservation = self._handoff.get()
+        if reservation is not None and reservation.state == "QUERY":
+            if operation not in {"snapshot", "warmup"}:
+                raise RuntimeError("Phase-3 handoff expected snapshot or warmup")
+            async with self._lock:
+                reservation.state = "STREAM"
+                self._operations[operation] += 1
+            return
+        if reservation is not None and reservation.state == "STREAM":
+            if operation != "stream_subscribe":
+                raise RuntimeError("Phase-3 handoff expected stream subscribe")
+            async with self._lock:
+                wait = max(0.0, reservation.stream_at - self.clock())
+                self._operations[operation] += 1
+                self._wait_ms += wait * 1000.0
+                self._measurement_wait_ms.set(
+                    self._measurement_wait_ms.get() + wait * 1000.0
+                )
+                reservation.state = "COMPLETE"
+            if wait:
+                await self.sleep(wait)
+            return
         async with self._lock:
-            now = time.monotonic()
+            now = self.clock()
             target = now if self._next_at is None else max(now, self._next_at)
             self._next_at = target + self.spacing_seconds
             self._operations[operation] += 1
@@ -514,7 +555,41 @@ class _Pacer:
                 self._measurement_wait_ms.get() + wait * 1000.0
             )
         if wait:
-            await asyncio.sleep(wait)
+            await self.sleep(wait)
+
+    @asynccontextmanager
+    async def handoff(self):
+        """Reserve consecutive quota slots before a snapshot-to-stream join.
+
+        The signed cursor from a snapshot is only a safe live handoff when its
+        matching subscription is not delayed behind unrelated work. Reserving
+        both slots first preserves the per-identity leaky-bucket rate while
+        limiting the post-snapshot delay to one declared spacing interval.
+        """
+
+        if self._handoff.get() is not None:
+            raise RuntimeError("Phase-3 handoff reservation cannot be nested")
+        async with self._lock:
+            now = self.clock()
+            snapshot_at = now if self._next_at is None else max(now, self._next_at)
+            stream_at = snapshot_at + self.spacing_seconds
+            self._next_at = stream_at + self.spacing_seconds
+            wait = max(0.0, snapshot_at - now)
+            self._wait_ms += wait * 1000.0
+            self._measurement_wait_ms.set(
+                self._measurement_wait_ms.get() + wait * 1000.0
+            )
+            self._handoff_reservations += 1
+        if wait:
+            await self.sleep(wait)
+        reservation = _HandoffReservation(stream_at=stream_at)
+        token = self._handoff.set(reservation)
+        try:
+            yield
+        finally:
+            if reservation.state != "COMPLETE":
+                self._incomplete_handoffs += 1
+            self._handoff.reset(token)
 
     def begin_measurement(self):
         return self._measurement_wait_ms.set(0.0)
@@ -529,6 +604,8 @@ class _Pacer:
             "spacing_seconds": round(self.spacing_seconds, 6),
             "queue_wait_ms": round(self._wait_ms, 3),
             "operations": dict(sorted(self._operations.items())),
+            "handoff_reservations": self._handoff_reservations,
+            "incomplete_handoffs": self._incomplete_handoffs,
         }
 
 
@@ -863,6 +940,20 @@ def _make_client(identity, *, queries, stream_targets, pacer, replicated: bool):
     )
 
 
+@asynccontextmanager
+async def _paced_warmup_then_stream(client, pacer: _Pacer, requirement, **kwargs):
+    """Keep the signed snapshot and its first stream join within two quota slots.
+
+    Reconnects after the first subscription deliberately return to normal pacing.
+    A failed warmup does not refund its reserved stream slot, so the test client
+    never exceeds the same per-identity leaky-bucket allowance.
+    """
+
+    async with pacer.handoff():
+        async with client.warmup_then_stream(requirement, **kwargs) as session:
+            yield session
+
+
 async def _matrix_read(identity, *, product, replica, queries, stream_targets, pacer, samples, errors) -> None:
     client = _make_client(identity, queries=(replica,), stream_targets=stream_targets, pacer=pacer, replicated=False)
     token = pacer.begin_measurement()
@@ -972,14 +1063,21 @@ async def _reconnect_probe(*, identity, product, queries, stream_targets, pacer)
 
     client = _make_client(identity, queries=queries, stream_targets=stream_targets, pacer=pacer, replicated=True)
     try:
-        async with client.warmup_then_stream(sdk_requirement(product)) as first:
+        async with _paced_warmup_then_stream(
+            client, pacer, sdk_requirement(product)
+        ) as first:
             event = await asyncio.wait_for(first.__anext__(), timeout=60.0)
             if not isinstance(event, StreamEvent):
                 raise ValueError("reconnect probe did not receive a stream event")
             view = market_data_view_from_stream(event, template=first.warmup.data[-1], requirement=sdk_requirement(product))
             validate_product_view(product, view, require_current_quality=True)
             first.acknowledge(event)
-        async with client.warmup_then_stream(sdk_requirement(product), resume_restored_state=True) as restored:
+        async with _paced_warmup_then_stream(
+            client,
+            pacer,
+            sdk_requirement(product),
+            resume_restored_state=True,
+        ) as restored:
             if not restored.state_restored:
                 raise ValueError("signed cursor was not restored on reopen")
             event = await asyncio.wait_for(restored.__anext__(), timeout=60.0)
@@ -1052,7 +1150,9 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
         last_stream_event = None
         requirement = sdk_requirement(spec.product)
         try:
-            async with client.warmup_then_stream(requirement) as session:
+            async with _paced_warmup_then_stream(
+                client, pacers[spec.consumer_id], requirement
+            ) as session:
                 while True:
                     event = await asyncio.wait_for(session.__anext__(), timeout=60.0)
                     if isinstance(event, ControlEvent):

@@ -51620,6 +51620,36 @@ refinement without the owner's next request.
   The one permitted next traffic action remains replacement `load-5-r4`
   (`5` logical sessions, `90s` maximum), whose sole new purpose is to identify
   the exact stale-policy branch before any quality repair is considered.
+- 2026-09-22: replacement `load-5-r4` used only the active V2 readers and
+  stopped fail-closed after `22.172s`; its disposable client was removed and
+  both readers remained healthy with restart/OOM `0`. The new bounded evidence
+  identifies the cause: monitoring/Binance `BTCUSDT` TRADE frames had no gap
+  flags and matching source/receive ages of `15,495..21,278 ms`, exceeding its
+  declared `15,000 ms` BLOCK policy. The preceding Query snapshot was valid.
+  This proves neither a quiet provider session nor a buffer overflow: the
+  acceptance harness obtained a snapshot, then independently queued its
+  matching gRPC `Subscribe` behind the same low-RPM identity pacer, allowing a
+  gap-free post-snapshot replay to age locally before first projection. The
+  in-scope repair is not a freshness relaxation: reserve the two existing
+  quota slots as one snapshot-to-stream handoff, preserving the same 10-percent
+  per-identity schedule while bounding only their inter-operation delay to one
+  declared spacing interval. Add deterministic reservation/order/failure tests,
+  then rerun only replacement `5/90s`; no reader/runtime/manifest/provider or
+  durable state changes are authorized.
+- 2026-09-22: implemented that driver-only repair as a two-slot, per-identity
+  leaky-bucket reservation around the SDK's existing `warmup_then_stream`
+  handoff. The reservation admits exactly one `warmup`/`snapshot` followed by
+  its matching first `stream_subscribe`; unrelated reads cannot interleave, and
+  a failed handoff conservatively retains rather than refunds the second slot.
+  Normal reconnects return to ordinary pacing after that first subscribe. This
+  changes no server quota, freshness policy, manifest, provider client or
+  runtime role. Network-disabled source verification in the current immutable
+  image passed `34` tests (`tests.test_phase3_consumer_load`,
+  `tests.test_phase3_consumer_load_driver`, and
+  `tests.test_read_plane_phase2_capacity`), including deterministic
+  reservation/order/interleaving/failure regressions. The sole next traffic
+  action remains `load-5-r5` (`5` logical sessions, `90s` maximum); later
+  stages and final C2 remain blocked on its result.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

@@ -111,6 +111,68 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertEqual(evidence["operations"], {"snapshot": 1})
         self.assertEqual(evidence["queue_wait_ms"], 0.0)
 
+    def test_handoff_reserves_consecutive_snapshot_and_subscribe_quota_slots(self):
+        class Clock:
+            now = 0.0
+
+            def __init__(self):
+                self.waits: list[float] = []
+
+            def read(self):
+                return self.now
+
+            async def sleep(self, seconds: float):
+                self.waits.append(seconds)
+                self.now += seconds
+
+        async def exercise():
+            clock = Clock()
+            pacer = _MODULE._Pacer(3.0, clock=clock.read, sleep=clock.sleep)
+            async with pacer.handoff():
+                await pacer.acquire("snapshot")
+                await pacer.acquire("stream_subscribe")
+            await pacer.acquire("reference_batch")
+            return clock.waits, pacer.evidence()
+
+        waits, evidence = asyncio.run(exercise())
+        self.assertEqual(waits, [3.0, 3.0])
+        self.assertEqual(
+            evidence["operations"],
+            {"reference_batch": 1, "snapshot": 1, "stream_subscribe": 1},
+        )
+        self.assertEqual(evidence["handoff_reservations"], 1)
+        self.assertEqual(evidence["incomplete_handoffs"], 0)
+
+    def test_handoff_rejects_interleaving_and_conservatively_keeps_failed_slot(self):
+        class Clock:
+            now = 0.0
+
+            def __init__(self):
+                self.waits: list[float] = []
+
+            def read(self):
+                return self.now
+
+            async def sleep(self, seconds: float):
+                self.waits.append(seconds)
+                self.now += seconds
+
+        async def exercise():
+            clock = Clock()
+            pacer = _MODULE._Pacer(2.0, clock=clock.read, sleep=clock.sleep)
+            async with pacer.handoff():
+                await pacer.acquire("warmup")
+                with self.assertRaisesRegex(RuntimeError, "expected stream subscribe"):
+                    await pacer.acquire("reference_batch")
+            await pacer.acquire("snapshot")
+            return clock.waits, pacer.evidence()
+
+        waits, evidence = asyncio.run(exercise())
+        self.assertEqual(waits, [4.0])
+        self.assertEqual(evidence["operations"], {"snapshot": 1, "warmup": 1})
+        self.assertEqual(evidence["handoff_reservations"], 1)
+        self.assertEqual(evidence["incomplete_handoffs"], 1)
+
     def test_measurement_excludes_quota_wait_and_summary_keeps_it_separate(self):
         async def exercise():
             pacer = _MODULE._Pacer(0.001)
