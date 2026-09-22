@@ -49393,3 +49393,34 @@ then the all-scope fast read-plane matrix and one final C2. The current C2
 launcher must be resealed from routing revision `22` and consumer manifest
 revisions `12/11`; the older r135-b2 revision `20` launcher is not valid
 certificate provenance.
+
+**R1.35-D exact final-BAR index runtime packet (`APPROVED / PENDING
+EXECUTION`, 2026-09-22).** Source commit `8232d1b` is the only code input.
+Read-only preflight found the existing stable cache at
+`qdl_v2_stable_candidate_stable_state:/var/lib/qdl-stable/shared/
+canonical-cache.sqlite3`, with `1,498,469` events, `188` partitions, `140`
+final-BAR watermarks, `3.15GB` logical database pages and no
+`idx_qdl_spool_events_final_bar_close`; the underlying filesystem has
+`123,099,721,728` bytes available. The operation may stop exactly these V2
+cache users to eliminate an SQLite schema/write race:
+`projector_v2`, `projector_v2_2`, `projector_v2_3`, `projector_v2_4`,
+`projector_v2_5`, `projector_v2_6`, `query_v2_1`, `query_v2_2`,
+`stream_v2_active`, `stream_v2_passive`.
+
+It must leave V1 `data_layer_service`, Rust cores, Binance/OKX ingestors,
+Binance BAR edge, Kafka topology/offsets, Redis, TLS, runtime bundle,
+consumer manifests, Trading System, alpha and every order path untouched.
+After bounded preflight, run only
+`migrate_stable_final_bar_lookup_index.py --apply --confirm
+CREATE_QDL_FINAL_BAR_LOOKUP_INDEX` in an ephemeral Python candidate container
+mounted to the existing named `stable_state` volume. It may create only the
+named SQLite index; it may not change rows, cursors, offsets, WAL policy,
+Redis or any source identity. Record before/after index status, actual query
+plan, build duration, SQLite quick-check, disk bytes and Kafka lag. Start the
+same stream/projector containers, verify catch-up and health, then recreate
+only `query_v2_1` and `query_v2_2` onto the immutable candidate image from
+`8232d1b`; their existing `sha256:c8d7458e...` image plus the explicit index
+drop are the rollback coordinates. A failure before index commit restarts the
+same ten roles; a post-index rollback drops only the index and restores the two
+Query images. No C2 runs until the collocated 50-BAR matrix and all-scope fast
+read-plane matrix pass.
