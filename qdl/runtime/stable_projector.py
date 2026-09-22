@@ -1197,6 +1197,10 @@ async def poll_projector_records(
     return records
 
 
+class ProjectorCloseTimeout(RuntimeError):
+    """The process must restart; a native consumer cannot be abandoned safely."""
+
+
 async def supervise_stable_projector(
     *,
     broker_factory: Callable[[], tuple[ProjectorBroker, StableProjectorEngine]],
@@ -1206,6 +1210,7 @@ async def supervise_stable_projector(
     retry_initial_seconds: float = 0.25,
     retry_max_seconds: float = 5.0,
     close_timeout_seconds: float = 10.0,
+    on_close_timeout: Callable[[], None] | None = None,
 ) -> None:
     """Recreate poisoned Kafka generations without weakening ACK ordering."""
 
@@ -1240,31 +1245,20 @@ async def supervise_stable_projector(
             on_broker(None)
             if broker is not None:
                 try:
-                    # R1.31. This await had no bound, and that is how two of the
-                    # three projectors died on 2026-09-19: both stopped mid-recovery
-                    # immediately after `attempt=5`, with `retry_max_seconds` at 5.0,
-                    # so eleven minutes of silence could not have been backoff. A
-                    # Kafka client whose coordinator is unreachable can block in
-                    # `close` indefinitely; the supervisor then never runs again, the
-                    # role stays Up with no error, and its partitions rebalance onto
-                    # whichever projector is still alive - one carried all six, with
-                    # lag to 47,258, and 33 of 188 spool partitions fell outside
-                    # their own declared bound.
-                    #
-                    # A timeout cannot kill the worker thread, so the thread is left
-                    # running and leaked deliberately. A leaked thread in a process
-                    # that keeps projecting is strictly better than a live role that
-                    # has silently stopped, and the next generation builds its own
-                    # broker rather than reusing this one.
+                    # A timed-out native call still owns a thread/client. Never
+                    # start another generation in this process while it survives.
                     await asyncio.wait_for(
                         asyncio.to_thread(broker.close), close_timeout_seconds
                     )
-                except asyncio.TimeoutError:
-                    logger.warning(
+                except asyncio.TimeoutError as error:
+                    logger.error(
                         "stable projector generation close did not return within %ss; "
-                        "abandoning the broker thread and rebuilding the generation",
+                        "process restart required; no replacement consumer created",
                         close_timeout_seconds,
                     )
+                    if on_close_timeout is not None:
+                        on_close_timeout()
+                    raise ProjectorCloseTimeout("native consumer close deadline exceeded") from error
                 except Exception as error:  # noqa: BLE001 - poisoned generation cleanup
                     logger.warning(
                         "stable projector generation close failed during recovery error=%s",

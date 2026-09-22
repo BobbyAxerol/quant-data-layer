@@ -482,37 +482,24 @@ class SQLiteDurableSpool:
     ) -> int | None:
         """Seed one legacy BAR partition exactly once across spool processes.
 
-        The first process holding SQLite's write lock checks whether an active
-        stream owner has already supplied the watermark. Only if it is still
-        absent does it perform the bounded retained-tail lookup. This keeps a
-        restart/rebalance from multiplying legacy scans at an aligned BAR
-        boundary, while preserving the durable max fence.
+        Read legacy history without reserving the shared writer. A concurrent
+        append may publish a newer close during that read; the short write
+        transaction rechecks and keeps the monotonic maximum.
         """
 
         if not stream.strip() or not partition_key.strip():
             raise ValueError("final BAR watermark identity is incomplete")
         with self._lock:
+            current = self.final_bar_watermark(stream=stream, partition_key=partition_key)
+            if current is not None:
+                return current
+            close_time_ns = legacy_lookup()
+            if close_time_ns is None:
+                return self.final_bar_watermark(stream=stream, partition_key=partition_key)
+            if not 0 < close_time_ns < 2**63:
+                raise PayloadCorruption("legacy final BAR watermark is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                row = self._connection.execute(
-                    """
-                    SELECT close_time_ns FROM final_bar_watermarks
-                    WHERE stream = ? AND partition_key = ?
-                    """,
-                    (stream, partition_key),
-                ).fetchone()
-                if row is not None:
-                    value = int(row["close_time_ns"])
-                    if value <= 0:
-                        raise PayloadCorruption("final BAR watermark is invalid")
-                    self._connection.execute("COMMIT")
-                    return value
-                close_time_ns = legacy_lookup()
-                if close_time_ns is None:
-                    self._connection.execute("COMMIT")
-                    return None
-                if not 0 < close_time_ns < 2**63:
-                    raise PayloadCorruption("legacy final BAR watermark is invalid")
                 value = self._upsert_final_bar_watermark_locked(
                     stream=stream,
                     partition_key=partition_key,
@@ -1305,7 +1292,9 @@ class SQLiteDurableSpool:
         with self._lock:
             if self._connection is None:
                 return
-            self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            # Other roles may still own read snapshots. Closing this handle is
+            # not a storage-reclamation operation and must not block their work.
+            self._checkpoint_wal_passive_locked()
             self._connection.close()
             self._connection = None
 

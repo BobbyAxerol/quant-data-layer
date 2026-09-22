@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Protocol
 
@@ -100,6 +102,17 @@ class KafkaProjectorConfig:
                 raise ValueError(f"Kafka stable projector TLS file is unavailable: {value}")
 
 
+def _consumer_call(method):
+    @wraps(method)
+    def serialized(self, *args, **kwargs):
+        # librdkafka close must not overlap poll/metadata/commit. The lock also
+        # binds assignment callbacks and pending checkpoints to one generation.
+        with self._consumer_lock:
+            return method(self, *args, **kwargs)
+
+    return serialized
+
+
 class ConfluentProjectorBroker:
     """Read-committed source with bounded post-ACK checkpoint coalescing."""
 
@@ -109,6 +122,7 @@ class ConfluentProjectorBroker:
         if factory is None:
             raise RuntimeError("confluent-kafka runtime dependency is unavailable")
         self.config = config
+        self._consumer_lock = threading.RLock()
         self._assignment_epoch = 1
         self._closed = False
         self._pending_offsets: dict[tuple[str, int], int] = {}
@@ -181,12 +195,14 @@ class ConfluentProjectorBroker:
             self._consumer.resume(partitions)
             self._canonical_pause_applied = False
 
+    @_consumer_call
     def pause_canonical(self) -> None:
         if self._closed:
             raise RuntimeError("Kafka stable projector consumer is closed")
         self._canonical_pause_requested = True
         self._apply_canonical_flow_control()
 
+    @_consumer_call
     def resume_canonical(self) -> None:
         if self._closed:
             raise RuntimeError("Kafka stable projector consumer is closed")
@@ -211,6 +227,7 @@ class ConfluentProjectorBroker:
         self._pending_checkpoint_calls = 0
         self._last_checkpoint_flush = time.monotonic()
 
+    @_consumer_call
     def poll(self, timeout_seconds: float) -> KafkaProjectorRecord | None:
         if self._closed:
             raise RuntimeError("Kafka stable projector consumer is closed")
@@ -231,6 +248,7 @@ class ConfluentProjectorBroker:
             return None
         return self._decode(message)
 
+    @_consumer_call
     def poll_batch(
         self, max_records: int, timeout_seconds: float
     ) -> list[KafkaProjectorRecord]:
@@ -290,20 +308,29 @@ class ConfluentProjectorBroker:
         )
 
     def ping(self, timeout_seconds: float = 1.0) -> bool:
-        if self._closed:
-            return False
         if timeout_seconds <= 0:
             raise ValueError("Kafka metadata timeout must be positive")
-        self._raise_commit_error()
-        metadata = self._consumer.list_topics(timeout=timeout_seconds)
-        return metadata is not None
+        deadline = time.monotonic() + timeout_seconds
+        if not self._consumer_lock.acquire(timeout=timeout_seconds):
+            return False
+        try:
+            remaining = deadline - time.monotonic()
+            if self._closed or remaining <= 0:
+                return False
+            self._raise_commit_error()
+            return self._consumer.list_topics(timeout=remaining) is not None
+        finally:
+            self._consumer_lock.release()
 
     def checkpoint(self, record: KafkaProjectorRecord) -> None:
         self.checkpoint_many((record,))
 
+    @_consumer_call
     def checkpoint_many(
         self, records: tuple[KafkaProjectorRecord, ...] | list[KafkaProjectorRecord]
     ) -> None:
+        if self._closed:
+            raise RuntimeError("Kafka stable projector consumer is closed")
         values = tuple(records)
         if not values:
             return
@@ -325,6 +352,7 @@ class ConfluentProjectorBroker:
         ):
             self._flush_checkpoints(asynchronous=True)
 
+    @_consumer_call
     def close(self) -> None:
         if self._closed:
             return

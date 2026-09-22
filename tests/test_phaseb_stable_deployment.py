@@ -1501,7 +1501,9 @@ class StableComposeAndBundleTests(unittest.TestCase):
                 heartbeat,
             )
             healthcheck = services[name]["healthcheck"]
-            self.assertIn(heartbeat, " ".join(healthcheck["test"]))
+            self.assertEqual(healthcheck["test"], [
+                "CMD", "python", "-m", "qdl.runtime.projector_watchdog",
+            ])
             self.assertEqual(healthcheck["interval"], "20s")
             self.assertEqual(healthcheck["timeout"], "5s")
             self.assertEqual(healthcheck["retries"], 3)

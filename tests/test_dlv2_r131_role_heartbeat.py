@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from qdl.runtime.heartbeat import write_heartbeat
@@ -66,6 +67,16 @@ class HeartbeatTests(unittest.TestCase):
 
         healthcheck_window_ns = 30 * 1_000_000_000
         self.assertLessEqual(_MIN_INTERVAL_NS * 10, healthcheck_window_ns)
+
+    def test_wall_clock_correction_cannot_stop_liveness_writes(self) -> None:
+        with patch("qdl.runtime.heartbeat.time.time_ns", side_effect=[100_000_000_000, 1]), patch(
+            "qdl.runtime.heartbeat.time.monotonic_ns", side_effect=[10_000_000_000, 12_000_000_000]
+        ):
+            write_heartbeat(self.path, role="stable_projector")
+            write_heartbeat(self.path, role="stable_projector")
+        payload = json.loads(self.path.read_text())
+        self.assertEqual(payload["updated_at_ns"], 1)
+        self.assertEqual(payload["monotonic_ns"], 12_000_000_000)
 
     def test_an_unwritable_path_does_not_raise(self) -> None:
         """A heartbeat that kills its own role is worse than no heartbeat."""

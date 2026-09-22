@@ -53,10 +53,11 @@ def write_heartbeat(
     try:
         key = os.fspath(path)
         now_ns = time.time_ns()
+        monotonic_ns = time.monotonic_ns()
         previous = _last_written_ns.get(key)
-        if previous is not None and now_ns - previous < min_interval_ns:
+        if previous is not None and monotonic_ns - previous < min_interval_ns:
             return
-        _last_written_ns[key] = now_ns
+        _last_written_ns[key] = monotonic_ns
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps({
@@ -64,6 +65,7 @@ def write_heartbeat(
             "role": role,
             "detail": detail,
             "updated_at_ns": now_ns,
+            "monotonic_ns": monotonic_ns,
             "pid": os.getpid(),
         })
         handle, temporary = tempfile.mkstemp(dir=str(target.parent), prefix=".hb-")

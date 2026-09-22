@@ -49640,3 +49640,219 @@ remote-deletion approval for that broad, reversible-but-costly action. They do
 not affect source selection, release tag, runtime, disk, consumer routing or
 future feature work. Retain them as remote provenance until that separate
 approval is supplied; do not misrepresent this as incomplete runtime cleanup.
+
+<a id="v2-runtime-readiness-closure-20260922"></a>
+## Runtime Readiness Closure - Revision, Projector And Consumer Recovery
+
+**Status:** `OWNER_APPROVED / IN_PROGRESS`, 2026-09-22. One bounded repair,
+three sequential scopes, one implementation branch `fix/v2-runtime-readiness`
+from `dev@a5304b9` in canonical `/home/bobby/data_layer`. This is a runtime
+incident closure, not a new architecture or a rerun of the upgrade program.
+The historical `v2.0.27` certificate stays immutable and scope-qualified.
+
+**Goal/stop:** Binance USD-M and OKX active consumer products are usable on V2;
+deployment identity is coherent; projector recovery makes progress without
+lost acknowledged events; exact fast matrices precede one final C2; publish
+truthful endpoint latency and cleanup evidence. Stop when these objectives and
+the allowed consumer binding handoff pass. No extra venue/product expansion.
+
+**Required guide:** [configuration/revision](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#22-configuration-and-control-plane),
+[readiness](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#24-health-readiness-and-data-readiness),
+[durability](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#11-durable-topic-partition-and-retention-design),
+[handoff](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#16-gap-free-warmup-to-live-handoff),
+[failure semantics](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers),
+[performance](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy),
+and the existing R1.35 source, index, matrix and C2 receipts immediately above.
+AGENTS.md and the owner's current direction govern execution and reporting.
+
+**Facts vs hypotheses:** current Query digest is `f671...f31b9`, Stream
+`c8d...c2ab`, six projectors `d724...f2a3b`; two projectors are unhealthy and
+logged `database is locked`. TS mounts consumer revision 9; the active reader
+requires revision 10. A 409 from a passive gateway is evidence of fencing,
+not by itself a broken lease. The locking transaction and why recovery stalls
+remain hypotheses until reproduced. Older broad freshness probes do not
+override typed quiet/session policy or the exact registered manifest.
+
+### Scope 1 - Deployment And Binding Convergence
+
+- Inventory the *loaded* config paths, component image/source digests, routing
+  revision/hash, catalog and consumer manifest revision/hash, JWT claims and
+  mounts. Different version dimensions need not share a number. Image-default
+  files that are not loaded are not runtime truth.
+- Reuse and harden existing bundle/preflight tooling so invalid bindings fail
+  before a rollout, with exact typed causes. Generate one coherent runtime
+  packet plus role-specific rollback (image AND compatible config/mounts).
+- Binance V1 kline is `LEGACY / NOT_REQUIRED`: exclude it from active crypto
+  BAR demand, required health and fallback. Keep public compatibility routes;
+  do not rebuild legacy WS. Preserve declared Spot/DNSE disposition and all
+  unrelated allowed fallback products.
+- Prepare TS binding/config handoff; do not alter Trading System until Data
+  Layer fast readiness is proven. Then change only the market-data consumer
+  config/service needed for the verified 60 routes, without engine/alpha edits.
+- **Exit/tests:** positive exact binding; wrong identity/hash/revision rejected;
+  both Query replicas consistent; rollback bundle is valid; legacy kline cannot
+  silently become crypto BAR authority. Never bypass authentication to pass.
+
+### Scope 2 - Projector Commit And Recovery
+
+- Diagnose lock wait, transaction/append, maintenance/checkpoint and gateway ACK
+  separately. Reproduce the actual contention with independent processes and
+  a disposable SQLite file. Preserve existing final-BAR index and semantics.
+- Fix only demonstrated ownership/transaction/recovery defects. Bound work,
+  queues and retry; keep writes short, maintenance coordinated and hot readers
+  independent. Do not treat a larger timeout or more replicas as a root fix.
+- Exercise active/passive 409, ACK loss, replay, cancellation and shutdown.
+  Kafka offsets must not acknowledge data ahead of its durable effect. Event
+  IDs, source timestamps, generation and original quality remain authoritative.
+- **Exit/tests:** concurrent read/write/maintenance; lock release and recovery;
+  crash before/after commit; duplicate/ACK loss; fenced handoff; disk bound;
+  no acknowledged loss, duplicate effect or checkpoint regression. All declared
+  projectors progress and backlog converges; process-up alone is insufficient.
+
+### Scope 3 - Fast Matrix, C2, Release And Hygiene
+
+1. Run affected source/contract/protocol regressions, including real SQLite
+   multiprocess behavior. Test data is synthetic only in isolated tests.
+2. Read every one of the current 299 V2 products under its own real manifest
+   identity on both Query replicas; collect all item errors, quality and replica
+   mismatches in one bounded pass. No stream/fallback/order/provider-direct.
+3. Check legal strict BAR batches 1/8/16/32/50 with bounded concurrency and
+   fairness. Keep quiet-session, finality and execution eligibility distinct.
+4. Run only affected protocol cases before C2. Once all preflight gates pass,
+   run one final C2 with a 300-second observation window, signed cursor/replay,
+   reconnect and declared fallback/blocked policy. Report opening and total
+   time separately: the prior full C2 took ~22 minutes, not five minutes.
+5. No-order probes use a declared test quota or a budget accounting for live
+   consumer usage; never exhaust the running TS identity to collect p99. Report
+   n/success/eligible/error plus consumer-call-to-usable p50/p95/p99 per endpoint
+   family, source age/BAR-close latency, queue/lag, CPU/RSS, WAL/disk and recovery.
+   Too few samples withhold p99; errors never become successful latency samples.
+6. After DL readiness, verify the real market-data consumer's 60 routes with
+   the prepared exact binding. DL-only certification does not certify TS
+   adoption. Keep order/alpha execution disabled throughout this repair.
+
+**Runtime boundary/rollback:** existing Query pair, Stream pair and six
+projectors only as required by proven code/config changes, followed by the
+single TS market-data config handoff after readiness. Record exact digest,
+mounts, service set and inverse operation before each mutation. Preserve Kafka
+topology/offsets, Redis contents, SQLite data, TLS identities, Rust/ingestors,
+V1 runtime, all other TS/alpha services and order paths. Normal market-data
+writes and normal recovery are expected; no reset/flush/deletion shortcut.
+
+**Commit/release/cleanup:** commit coherent tested slices with the configured
+user identity and journal. Feature -> dev/CI -> main/tag only under the owner's
+release flow; component attestation preserves unchanged binaries and evidence.
+At closure inventory before/after disk and exact retention set: active images,
+named compatible rollback and release images. Remove this task's disposable
+clients/images/cache; never broad-delete operational/evidence containers,
+volumes, state or financial history. Remove merged feature worktrees/branches
+only after reachability and clean-status verification. No image per test retry.
+
+**Reporting and debt:** log actual commands/results, source/runtime changes,
+new root causes, failed probes and their corrections here after each tested
+slice. Fix in-scope bugs; do not rename unfinished implementation as external
+debt. TS P18.3E/P18.4 remain the separate subsequent upgrade; no TS upgrade
+source changes before Data Layer readiness. Final report covers every active
+endpoint family and distinguishes historical certification from current health.
+
+**Start checkpoint:** rules/guide/source and Docker mounts inspected. Canonical
+V1 mounts only env/log/data, not host source; switching the clean Data Layer
+checkout to this feature branch cannot hot-edit deployed code. No runtime,
+data-plane, provider or Trading System mutation yet; no test artifacts created.
+
+**Diagnostic checkpoint (2026-09-22):** both unhealthy projector Python stacks
+are parked in `ConfluentProjectorBroker.close -> Consumer.close`; their image
+already contains the R1.31 ten-second `asyncio.wait_for` workaround. Thus this
+is not simply a missing rollout. That workaround explicitly abandons worker
+threads; it does not provide bounded native-client lifetime. Poll/metadata/
+checkpoint/close currently have no mutual exclusion. Upstream documents a
+[poll/close concurrency defect](https://github.com/confluentinc/confluent-kafka-python/issues/1797),
+but the exact native deadlock instruction here has not been proven. Fix/test
+the demonstrable ownership race and add bounded process recovery, not a
+claim that a larger timeout repairs librdkafka. An existing per-projector
+healthcheck may terminate only its own verified projector child of Docker
+`init: true` after a monotonic no-progress deadline; the existing
+`unless-stopped` restart policy performs recovery. PID 1 itself has special
+signal semantics, so signalling it from a sibling healthcheck is not accepted
+as a recovery proof. A disposable `--init` native-GIL probe exited `-9` as
+expected. No new service/container or topology; only standard Docker init on
+the existing six projector containers.
+
+The active stream stack also sampled retention DELETE under the SQLite write
+transaction. Its event-window query uses the correct partition/offset index;
+do not remove the certified final-BAR index speculatively. Missing-watermark
+legacy hydration currently takes the writer lock while reading retained
+history; move that read outside the short monotonic-max transaction and test
+the concurrent writer race. No durable data is discarded.
+
+TS revision 9 versus loaded manifest 10 is confirmed. The runtime routing file
+and image-default routing file differ, but routing is not directly loaded by
+the service; only actual catalog/acquisition/manifest paths determine binding
+truth. Preflight must not mix these provenance dimensions.
+
+Read-only probes: Docker inspect/logs/stats, SQLite EXPLAIN/size/sample queries,
+and nonblocking py-spy stacks. Native py-spy unwind failed `UNW_EBADREG`; it is
+not evidence of a successful native trace. Diagnostic tool installed only in
+`/tmp/qdl-readiness-tools` with an auto-removed client; remove it at closure.
+No production restart/data mutation yet. Source tests remain to be run.
+
+**Source recovery slice (`PASS_SOURCE / RUNTIME_PENDING`, 2026-09-22):**
+
+- Kafka poll/metadata/checkpoint/close now share generation ownership; health
+  lock acquisition counts against its existing timeout. Calls after close fail
+  closed. Close timeout terminates generation ownership and asks the projector
+  process to exit, rather than leaking a thread and opening another consumer.
+- Existing projector healthchecks use monotonic heartbeat and verified
+  Docker-init child identity. `30s` means unhealthy; `120s` no loop progress
+  means restart this process only. These are recovery deadlines, NOT market
+  freshness/SLA. Startup, old heartbeat, other role/PID and wall-clock correction
+  are covered. The external probe handles native-GIL stalls that cannot run an
+  asyncio timer. Six existing containers gain standard Docker `init: true`;
+  there is no new service or Kafka consumer group.
+- SQLite legacy hydration reads before taking the writer lock and then applies
+  monotonic max atomically. Closing a connection uses nonblocking PASSIVE,
+  leaving TRUNCATE only in the previously approved physical-capacity path.
+  Final-BAR index, event/cursor identity, fsync and post-ACK Kafka commit stay.
+- Crypto BAR routing already declares V2 primary / fallback blocked. A compiled
+  contract regression now pins that fact: legacy V1 Binance kline is not a
+  required crypto read/fallback dependency. No V1 source/runtime change.
+
+Verification in existing immutable Python image with read-only source,
+network disabled, max 2 CPU / 768MiB: ten affected modules collected `187`
+tests in `68.383s`: `186 PASS`, one isolated-Redis test skipped. That test was
+then run against a fresh internal-network Redis with no persistent volume:
+`1 PASS` (`0.208s`), namespace cleaned and both test container/network removed.
+Heartbeat/watchdog delta tests: `22 PASS` (`1.586s`); compiled legacy routing
+test: `1 PASS`. First suite run exposed one obsolete Compose assertion expecting
+the old shell healthcheck; updated to validate the new command and existing
+heartbeat environment instead. No failed runtime result has been relabelled.
+
+The real subprocess/SQLite tests cover concurrent legacy scan plus independent
+writer, monotonic newer fence, integrity, nonblocking close, no concurrent
+Kafka health/poll/close, no replacement consumer after failed close, and
+external termination of a native call holding the interpreter GIL. A disposable
+Docker `--init` proof additionally terminated the exact stalled projector child
+and exited `137`; its container was auto-removed. These are fault tests, not
+real-provider acceptance.
+
+Bounded synthetic SQLite benchmark: 100,000 retained events, 256-event appends,
+four 80-sample runs at 2/32/2/32MiB page cache. p50 was 144/143/139/131ms;
+p95 335/313/344/319ms, maxima 373..419ms, integrity true and retained count
+100,000. The small/variable improvement does not justify changing runtime page
+cache; no such tuning was applied. Temporary DB removed automatically.
+
+**Prepared rollout (not executed yet):**
+`/home/bobby/.local/state/qdl-v2/runtime-readiness-20260922` contains only the
+six-projector candidate/rollback Compose definitions, exact image/mounts and
+environment commitments. Environment values are NOT copied into the packet;
+Compose receives the unchanged values in memory. Configuration validation
+passed. All six rollback images are
+`sha256:d724764b17dc9f21e681c2ebeac4fb48588d45010b0f1ff3a00b6cfa408f2a3b`;
+restore the old healthcheck/init settings with that same rollback definition.
+No Query/Stream rollout is needed for this recovery slice. Preserve their
+current images and all existing runtime/state/TLS mounts.
+
+Cleanup checkpoint: no task-created service remains; reusable diagnostic
+scripts/tool await final cleanup. Disk available `174,609,543,168` bytes.
+Docker: 34 images / 19.91GB, 4.85GB BuildKit cache (reported active, not pruned).
+No broad image/volume cleanup; retain active and named rollback artifacts.

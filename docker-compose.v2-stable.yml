@@ -418,6 +418,7 @@ services:
 
   projector_v2:
     <<: *python
+    init: true
     # DL-V2 R1.5 measured 15% of a 0.75 ceiling on the two lightest partitions,
     # which is why this was cut to 0.50. R1.23 shows why an average is the wrong
     # instrument: during the 2026-09-17 bootstrap replay this was throttled 92%
@@ -457,7 +458,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-1.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -474,6 +475,7 @@ services:
 
   projector_v2_2:
     <<: *python
+    init: true
     # R1.23: the 0.75 anchor default left no burst headroom; throttled 67-92%
     # during the 2026-09-17 bootstrap replay. One Python process is one core,
     # so 1.00 is the honest ceiling.
@@ -506,7 +508,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-2.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -523,6 +525,7 @@ services:
 
   projector_v2_3:
     <<: *python
+    init: true
     # R1.23: the 0.75 anchor default left no burst headroom; throttled 67-92%
     # during the 2026-09-17 bootstrap replay. One Python process is one core,
     # so 1.00 is the honest ceiling.
@@ -555,7 +558,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-3.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -575,6 +578,7 @@ services:
   # not symbol-, interval-, venue- or alpha-specific services.
   projector_v2_4:
     <<: *python
+    init: true
     cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
@@ -604,7 +608,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-4.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -621,6 +625,7 @@ services:
 
   projector_v2_5:
     <<: *python
+    init: true
     cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
@@ -650,7 +655,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-5.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -667,6 +672,7 @@ services:
 
   projector_v2_6:
     <<: *python
+    init: true
     cpus: 1.00
     mem_limit: 768m
     command: [python, -m, app.entrypoints.projector_v2_stable]
@@ -696,7 +702,7 @@ services:
       - stable_tls:/stable-certs:ro
       - ${QDL_STABLE_RUNTIME_DIR:?set QDL_STABLE_RUNTIME_DIR}:/runtime:ro
     healthcheck:
-      test: [CMD-SHELL, "find /var/lib/qdl-stable/runtime/heartbeat/projector-6.json -newermt '-30 seconds' 2>/dev/null | grep -q ."]
+      test: [CMD, python, -m, qdl.runtime.projector_watchdog]
       interval: 20s
       timeout: 5s
       retries: 3

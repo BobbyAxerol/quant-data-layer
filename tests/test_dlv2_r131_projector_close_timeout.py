@@ -1,4 +1,4 @@
-"""R1.31: a projector that cannot close its broker must not stop projecting.
+"""A projector that cannot close its broker must recover without client leaks.
 
 On 2026-09-19 two of the three projectors went silent mid-recovery, both
 immediately after logging `generation failed; reconnecting attempt=5`.
@@ -12,8 +12,9 @@ reports nothing: Kafka rebalanced all six `md.canonical.v2` partitions onto the
 one surviving projector, lag reached 47,258, and 33 of 188 spool partitions fell
 outside their own declared `stale_after_ms`.
 
-These tests drive the real supervisor with a broker whose `close` blocks, and
-assert it keeps going.
+The 2026-09-22 regression supersedes deliberate thread abandonment: a failed
+close must stop the generation and request bounded process recovery. Healthy
+close still permits in-process retry.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import asyncio
 import threading
 import unittest
 
-from qdl.runtime.stable_projector import supervise_stable_projector
+from qdl.runtime.stable_projector import ProjectorCloseTimeout, supervise_stable_projector
 
 
 class _Engine:
@@ -59,6 +60,10 @@ class ProjectorCloseTimeoutTests(unittest.IsolatedAsyncioTestCase):
         self.brokers: list[_Broker] = []
         self.generations = 0
 
+    def tearDown(self) -> None:
+        for broker in self.brokers:
+            broker.release.set()
+
     def _factory(self, *, block: bool, error: Exception):
         def factory():
             self.generations += 1
@@ -89,21 +94,20 @@ class ProjectorCloseTimeoutTests(unittest.IsolatedAsyncioTestCase):
         )
         return slept
 
-    async def test_a_blocking_close_no_longer_stops_the_supervisor(self) -> None:
-        """The defect: before the timeout this call never returned."""
-        slept = await self._run(block=True, generations=3, close_timeout=0.2)
-        self.assertGreaterEqual(self.generations, 3)
-        self.assertGreaterEqual(len(slept), 3)
+    async def test_blocking_close_requires_process_recovery_without_leaking_generations(self) -> None:
+        with self.assertRaises(ProjectorCloseTimeout):
+            await self._run(block=True, generations=3, close_timeout=0.05)
+        self.assertEqual(self.generations, 1)
 
     async def test_the_blocked_close_really_was_entered(self) -> None:
-        await self._run(block=True, generations=2, close_timeout=0.2)
+        with self.assertRaises(ProjectorCloseTimeout):
+            await self._run(block=True, generations=2, close_timeout=0.05)
         for broker in self.brokers:
             self.assertTrue(broker.close_started.is_set())
             self.assertFalse(broker.closed, "close must still be blocked, not completed")
 
-    async def test_each_generation_builds_its_own_broker(self) -> None:
-        """An abandoned broker is never reused by the next generation."""
-        await self._run(block=True, generations=3, close_timeout=0.2)
+    async def test_each_closed_generation_builds_its_own_broker(self) -> None:
+        await self._run(block=False, generations=3, close_timeout=0.2)
         self.assertEqual(len({id(b) for b in self.brokers}), len(self.brokers))
 
     async def test_a_close_that_returns_is_still_awaited_normally(self) -> None:
@@ -113,9 +117,24 @@ class ProjectorCloseTimeoutTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_backoff_is_still_capped_so_silence_stays_diagnostic(self) -> None:
         """A supervisor that is alive logs at least every `retry_max_seconds`."""
-        slept = await self._run(block=True, generations=6, close_timeout=0.2)
+        slept = await self._run(block=False, generations=6, close_timeout=0.2)
         self.assertTrue(slept)
         self.assertLessEqual(max(slept), 5.0)
+
+    async def test_timeout_notifies_process_owner_once(self) -> None:
+        notifications = []
+        active = []
+        with self.assertRaises(ProjectorCloseTimeout):
+            await supervise_stable_projector(
+                broker_factory=self._factory(block=True, error=RuntimeError("409")),
+                should_stop=lambda: False,
+                on_broker=active.append,
+                close_timeout_seconds=0.05,
+                on_close_timeout=lambda: notifications.append("restart"),
+            )
+        self.assertEqual(notifications, ["restart"])
+        self.assertIsNone(active[-1])
+        self.assertEqual(self.generations, 1)
 
     async def test_a_non_positive_close_timeout_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

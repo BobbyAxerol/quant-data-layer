@@ -1016,6 +1016,9 @@ async def serve_stable_projector() -> None:
             broker_factory=broker_factory,
             should_stop=health_task.done,
             on_broker=on_broker,
+            # Executor shutdown would join the same hung native thread. All
+            # commits remain post-durable-ACK; Docker restarts from Kafka.
+            on_close_timeout=lambda: os._exit(75),
         )
         await health_task
     finally:
