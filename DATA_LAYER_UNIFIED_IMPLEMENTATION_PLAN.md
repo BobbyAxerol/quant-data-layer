@@ -49489,3 +49489,14 @@ next operation is source/release reconciliation, coherent commit, CI and the
 already-approved feature-to-`dev` release flow. Do not rerun C2 merely because
 the source journal commit has a different documentation SHA; the executable
 source and deployed Query image remain pinned to `8232d1b`.
+
+**Final native regression and scoped test cleanup (`PASS / 2026-09-22`).** In
+the existing local Rust builder, with source mounted read-only, no network and
+all compiler output confined to one disposable Docker volume,
+`cargo test -p qdl-kafka --locked --offline` passed all native regressions:
+`20` library tests, `22` native-ingestor tests, `3` production-core tests and
+`5` realtime-core tests, with zero failures. This includes the provider-neutral
+OKX book session/liveness/generation behavior introduced by this release
+branch. The named test container and its sole target volume were removed after
+the pass. No image, runtime container, provider connection or durable Data
+Layer state was created or changed by that test.
