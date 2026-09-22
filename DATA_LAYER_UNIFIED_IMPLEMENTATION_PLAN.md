@@ -51475,6 +51475,16 @@ refinement without the owner's next request.
   Each run uses one disposable client name/namespace and removes it on both
   pass and failure; no reader, provider, durable store, manifest, authority or
   consumer runtime is changed.
+- 2026-09-22: the first `5`-session matrix stopped before any Query/Stream
+  request with `ModuleNotFoundError`. The disposable driver mounted the new
+  planner below `/driver/qdl`, while the immutable image resolves the existing
+  regular `qdl.certification` package from `/app`; Python therefore could not
+  see the new helper. The exact client was removed, both Query readers remained
+  healthy, and no order/V1/provider/direct call occurred. The in-scope repair
+  is a single read-only bind of that helper into the existing package path plus
+  an offline import/mount regression; it does not change a runtime image,
+  reader, manifest, credential, durable store or policy. The matrix has not
+  been retried.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

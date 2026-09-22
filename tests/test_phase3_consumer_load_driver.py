@@ -67,6 +67,11 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertIn("--pids-limit", command)
         self.assertNotIn("--privileged", command)
         self.assertFalse(any("docker.sock" in value for value in command))
+        self.assertTrue(any(
+            "/app/qdl/certification/phase3_consumer_load.py" in value
+            for value in command
+        ))
+        self.assertFalse(any("/driver/qdl" in value for value in command))
         identity = inner["identities"][0]
         self.assertTrue(identity["tls"]["ca_file"].startswith("/tmp/identity/"))
         self.assertTrue(identity["jwt"]["private_key_file"].startswith("/tmp/identity/"))
