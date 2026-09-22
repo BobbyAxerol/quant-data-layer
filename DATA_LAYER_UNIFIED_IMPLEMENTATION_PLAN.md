@@ -50162,3 +50162,117 @@ remain healthy/restart 0/OOM false. No DL source runtime rollout this turn.
 Canonical `/home/bobby/data_layer` remains `fix/v2-runtime-readiness` with no
 extra worktree; dev/main `a5304b9`, published stable `v2.0.27` unchanged.
 No push/merge/tag/release; do not resume TS P18 before owner review.
+
+<a id="v210-consumer-load-closure-20260922"></a>
+## V2.1.0 Consumer-Load Closure (2026-09-22)
+
+**Status: IN_PROGRESS / OWNER_APPROVED.** This is the bounded continuation of
+the failed revision-10 TS handoff, not a new architecture program. Owner
+approved implementation, affected runtime rollout, certification and release
+`v2.1.0` only if the recorded gates pass. Do not resume TS P18 work here.
+
+**Read first:** [performance engineering](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy),
+[gap-free handoff](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#16-gap-free-warmup-to-live-handoff),
+[health/readiness](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#24-health-readiness-and-data-readiness),
+[failure semantics](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers),
+the preceding readiness closure, and TS main-plan
+`qdl-r10-consumer-handoff-20260922` / section 53.2.
+
+### Scope And Invariants
+
+- Serve the actual 60-binding TS manifest: five symbols, Binance USD-M/OKX
+  Swap, TRADE/QUOTE/BAR/BOOK_DELTA streams plus BOOK_SNAPSHOT/MARK_INDEX reads.
+  Measure actual request/event rate; 60 bindings are not 60 HTTP requests.
+- Profile first: event loop, envelope/cursor/fan-out, durable append/SQLite
+  contention, memory reclaim, query replica distribution and consumer cache.
+  Optimize the demonstrated bottleneck, reuse shared contracts and runtime.
+- Preserve decimals, native timestamps, identity, generation/lease, signed
+  cursors, ordering, idempotency, finality and fail-closed quality. No silent
+  drop of lossless streams, no ACK before required durable completion, no SLA
+  relaxation, direct-provider bypass or disabling a failing demanded route.
+- No topology, service-per-symbol, Kafka offset/retention reset, Redis flush,
+  SQLite deletion, DB migration/order mutation, alpha startup or V1 changes.
+- Existing canonical checkouts/feature branches only. Preserve TS owner's
+  uncommitted Compose/symbol changes. Runtime configuration remains external.
+
+### Work Package 1: Diagnose And Correct
+
+1. Capture bounded real-provider records read-only or reuse existing captures;
+   benchmark isolated replay with explicit test provenance, bounded CPU/RAM,
+   and the actual feed/subscription shape. Never relabel replay as live proof.
+2. Compare idle/read-only, streamed and mixed workloads. Attribute queue age
+   separately from provider event age and consumer-call-to-validated-use.
+3. Fix only measured overhead: partition-indexed delivery, repeated immutable
+   decode/validation, bounded scheduling, cursor/log overhead or SQLite writer
+   contention as evidence warrants. Recheck time-dependent eligibility at
+   delivery. Slow consumers cannot create unbounded tasks or stall all feeds.
+4. Rust remains canonical core. Use native batched compute only if profiling
+   demonstrates CPU-bound work that cannot be addressed by eliminating work;
+   do not add an FFI/service/process-per-event merely to claim more Rust.
+5. Add focused regressions: identity/isolation, stale/quiet/disconnected,
+   duplicate/gap/generation, cursor/replay, cancellation/overflow, crash-safe
+   durable order and representative mixed load. Existing passing unrelated
+   domain/provider suites are inherited, not repeatedly rerun.
+
+**Exit:** reproduce the cost/failure, fix it with differential evidence and
+pass affected source/protocol tests. Record exact commands, counts, failures,
+measurements and conclusions below after each coherent tested slice.
+
+### Work Package 2: Bounded Runtime And Actual Consumer Acceptance
+
+1. Build one immutable reader/stream candidate after source gates, recording
+   its SHA/digest. Roll only affected existing Query/Stream roles; no gratuitous
+   projector/Rust rollout. TS uses tested `7d410919...ba475`, revision 10/SDK
+   2.0.3 unless another demonstrated adapter defect needs a tested patch.
+2. Preserve exact mounts/TLS/config/state; record the full per-role rollback
+   packet before changes. Current Query rollback `f671dceb...31b9`, Stream
+   `c8d7458e...ac2ab`, TS `09839129...f7ac4b2` with original binding/environment.
+   TS rollback revision 9 is known fail-closed, NOT a healthy adoption claim.
+3. Resources change only after source optimization and measured A/B benefit.
+   Stream presently has 2 CPUs/512MiB; cgroup total is near 506MiB, including
+   file cache, although Docker's cache-excluding figure is near 159MiB.
+   Evaluate 1GiB only if reclaim/refault/I/O materially improves under the same
+   load; revert an ineffective increase. Do not increase CPU without evidence.
+4. Fast 299-product reads through both Query replicas, no full stream opening;
+   targeted stream protocol proof for affected feed families. Do not treat
+   shared DNS as proven balancing or route traffic to a fenced passive writer.
+5. One final 300s actual TS no-order window after convergence. Preserve failed
+   startup separately. Test real reconnect/resume and recovery; measure all
+   60 routes, authentication/quota, per-replica latency, delivery age, backlog,
+   cgroup CPU/RAM/file-cache/reclaim/I/O, restart/OOM and typed errors. Do not
+   count repeated heartbeat rows as independent per-route observations.
+6. Inherit immutable 299-product C2 provider/contract evidence. Rerun affected
+   C2 cursor/durability/fencing cases if those semantics change; do not repeat
+   the entire C2 after each patch. This receipt certifies actual TS load only,
+   not unmeasured unlimited scale, mainnet execution or independent HA.
+
+**Exit:** 60/60 demanded routes meet their typed manifest policy throughout
+the normal window; no unexplained loss/cross-mix/duplicate, accumulating lag,
+order action, hidden fallback or unbounded memory; injected failures fail
+closed and recover under existing protocol. Report p50/p95/p99 with sample
+counts, errors separately, and distinguish RPC usability from event freshness
+and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
+
+### Work Package 3: Certificate, Release And Cleanup
+
+- Publish a compact receipt linked to old C2, tested source/image/manifest and
+  actual TS acceptance. Status remains FAILED/IN_PROGRESS if any gate fails.
+- Commit coherent tested slices with BobbyAxerol identity. Push feature ->
+  dev with CI -> main through release workflow, then tag/publish `v2.1.0` only
+  from accepted source; reconcile immutable images and release provenance.
+  Preserve branch protection and report any external GitHub authorization gap.
+- Remove disposable containers/captures/build contexts and unreferenced test
+  images/cache only; retain active images plus named rollback set and bounded
+  evidence. Measure disk before/after, verify unchanged runtime identities.
+  Remove feature worktree/branch only after represented safely in dev.
+- Report endpoint/feed coverage, consumer-call latency, resource/load envelope,
+  canonical paths/branches, release/runtime digests, cleanup and any remaining
+  boundary. Owner reviews before resuming the separate TS upgrade.
+
+### Implementation Journal
+
+- Start: canonical DL `fix/v2-runtime-readiness@bef7b23`, clean; TS
+  `fix/data-layer-r10-consumer-handoff@d911599`, only pre-existing owner
+  Compose/symbol edits. No new worktree. Stable `v2.0.27` unchanged. Baseline
+  failed TS handoff and all diagnostics retained; no runtime mutation yet in
+  this closure. The first action is a bounded profile, not another C2/build.
