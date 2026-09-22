@@ -49644,7 +49644,10 @@ approval is supplied; do not misrepresent this as incomplete runtime cleanup.
 <a id="v2-runtime-readiness-closure-20260922"></a>
 ## Runtime Readiness Closure - Revision, Projector And Consumer Recovery
 
-**Status:** `DATA_PLANE_C2_PASS / CONSUMER_HANDOFF_PENDING`, 2026-09-22. One bounded repair,
+**Status:** `DATA_PLANE_C2_PASS / CONSUMER_HANDOFF_PASS`, 2026-09-22. The
+[v2.1.0 closure](#v210-consumer-load-closure-20260922) below records the subsequent
+actual TS receipt and publication; earlier failed handoff evidence is retained.
+One bounded repair,
 three sequential scopes, one implementation branch `fix/v2-runtime-readiness`
 from `dev@a5304b9` in canonical `/home/bobby/data_layer`. This is a runtime
 incident closure, not a new architecture or a rerun of the upgrade program.
@@ -50166,7 +50169,7 @@ No push/merge/tag/release; do not resume TS P18 before owner review.
 <a id="v210-consumer-load-closure-20260922"></a>
 ## V2.1.0 Consumer-Load Closure (2026-09-22)
 
-**Status: RUNTIME_CERTIFIED / RELEASE_READY.** This is the bounded continuation of
+**Status: CLOSED / V2.1.0_PUBLISHED.** This is the bounded continuation of
 the failed revision-10 TS handoff, not a new architecture program. Owner
 approved implementation, affected runtime rollout, certification and release
 `v2.1.0` only if the recorded gates pass. Do not resume TS P18 work here.
@@ -50432,3 +50435,22 @@ and bar-close reaction. Do not invent p99 for tiny samples or promise a speedup.
   unawaited cases are now genuine behavioral passes, not inherited green dots.
   All diagnostic containers auto-removed. CI must rerun on this exact commit;
   the serving-code tree and accepted image remain unchanged.
+- Publication COMPLETE: all three CI jobs on `c1e32cb` passed in
+  [CI 35721468907](https://github.com/BobbyAxerol/quant-data-layer/actions/runs/35721468907),
+  including full unit discovery, contract/Rust, SDK 3.10, migration, API load,
+  Redis replay/recovery, topology rollback, artifact and security gates.
+  Approved main fast-forward and immutable annotated tag `v2.1.0` point to
+  `c1e32cbea079eccfc1b51bc55ce8c62fc6e844c9`. No force push/protection bypass.
+  [Publication workflow 35722735872](https://github.com/BobbyAxerol/quant-data-layer/actions/runs/35722735872)
+  passed; [public stable release](https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.1.0)
+  published at `2026-09-22T11:40:22Z`, not draft/prerelease. This final journal
+  update is documentation only; it does not move the immutable release tag,
+  change the accepted binary/image, or require another provider acceptance.
+- Post-CI check: actual TS remains READY 60/60 with no unhealthy slice. No
+  `qdl-v210*` test container remains. Only the canonical Data Layer checkout
+  exists; feature is fully represented by dev/main at the published tag.
+  Final housekeeping follows the same feature -> dev -> CI -> main path,
+  then removes that merged local/remote feature reference. No runtime image,
+  container, volume or shared data is removed by branch cleanup. All active
+  and explicitly named rollback images above remain retained. No further
+  resource increase or Trading System P18 work is part of this closure.
