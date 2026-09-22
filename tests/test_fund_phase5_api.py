@@ -22,6 +22,7 @@ from tests.phase7_support import make_identity, make_token, manifest_mapping
 from qdl.query import (
     AccessPurpose,
     BarLifecycle,
+    CanonicalErrorCode,
     ConsumerGrade,
     ContractMetadata,
     CoverageStatus,
@@ -36,6 +37,7 @@ from qdl.query import (
     MarketDataItem,
     MemoryMarketDataBackend,
     QualityMetadata,
+    QueryProblem,
     QueryServiceError,
     SourceMetadata,
     V2QueryService,
@@ -254,6 +256,24 @@ class Phase5ApiTests(unittest.TestCase):
         gaps = self.client.get("/v2/data-quality/gaps").json()["items"]
         self.assertEqual(gaps[0]["source_id"], "OKX_DIRECT")
         self.assertEqual(self.client.get("/v2/system/readiness").json()["authority"], "V1")
+
+    def test_gap_diagnostic_preserves_typed_incomplete_result(self):
+        async def incomplete_scan():
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.PARTIAL_RESULT,
+                    "global gap diagnostic exceeded its work deadline",
+                    True,
+                    retry_after_ms=1_000,
+                ),
+                request_id="phase1-gap-diagnostic",
+            )
+
+        with patch.object(self.service, "open_gaps_async", new=incomplete_scan):
+            response = self.client.get("/v2/data-quality/gaps")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["code"], "PARTIAL_RESULT")
+        self.assertTrue(response.json()["retryable"])
 
     def test_sync_query_routes_use_the_existing_thread_boundary(self):
         calls = []

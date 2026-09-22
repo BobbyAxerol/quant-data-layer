@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
 from qdl.query.contracts import (
+    CanonicalErrorCode,
     CoverageStatus,
     DataRequirement,
     FeedType,
@@ -271,6 +272,16 @@ class MemoryMarketDataBackend:
 
     def open_gaps(self) -> tuple[GapRecord, ...]:
         return tuple(sorted(self._gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
+
+    def open_gaps_bounded(self, *, cancelled=None) -> tuple[GapRecord, ...]:
+        if cancelled is not None and cancelled():
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.PARTIAL_RESULT,
+                "global gap diagnostic was cancelled",
+                True,
+                retry_after_ms=1_000,
+            ))
+        return self.open_gaps()
 
 
 @dataclass(frozen=True)

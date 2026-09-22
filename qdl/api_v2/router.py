@@ -1016,7 +1016,7 @@ async def data_quality_gaps(
         "schema": "qdl.data-quality.gaps.v2",
         "items": [
             {**asdict(item), "feed": item.feed.value}
-            for item in service.open_gaps()
+            for item in await service.open_gaps_async()
         ],
     }
 

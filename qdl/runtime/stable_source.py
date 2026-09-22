@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, replace
+from typing import Callable
 
 from qdl.adapters.intervals import (
     canonical_interval_ms,
@@ -36,7 +37,8 @@ from qdl.query import (
     StalePolicy,
     V2QueryService,
 )
-from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR
+from qdl.query.contracts import CanonicalErrorCode, QueryProblem
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
 from qdl.replay import GapFreeHandoff
 from qdl.runtime.stable_catalog import (
     StableSourceBinding,
@@ -44,6 +46,11 @@ from qdl.runtime.stable_catalog import (
     canonical_payload_interval,
 )
 from qdl.runtime.stable_capacity import (
+    STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+    STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
+    STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+    STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+    STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
     STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
 )
@@ -51,7 +58,11 @@ from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
 from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
-from qdl.transport.sqlite_spool import FinalBarTailWindow
+from qdl.transport.sqlite_spool import (
+    FinalBarTailWindow,
+    TailReadCancelled,
+    TailReadLimitExceeded,
+)
 
 
 def _decimal_text(value) -> str:
@@ -174,6 +185,10 @@ class _ParsedStoredEvent:
     envelope: market_data_pb2.EventEnvelope
 
 
+class _GapDiagnosticIncomplete(RuntimeError):
+    """The global gap diagnostic reached a declared safe work bound."""
+
+
 class StableSpoolQueryBackend:
     """Provider-neutral stable query view over a Kafka-rebuildable SQLite cache."""
 
@@ -186,9 +201,23 @@ class StableSpoolQueryBackend:
         config_revision: int = 1,
         session_liveness_root: str | None = None,
         clock_ns=time.time_ns,
+        monotonic_ns=time.monotonic_ns,
+        gap_scan_max_results: int = STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+        gap_scan_max_expected_bars: int = STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+        gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+        gap_scan_page_rows: int = STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
+        gap_scan_max_page_payload_bytes: int = STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
     ) -> None:
         if len(schema_digest) != 64:
             raise ValueError("stable query schema digest must be SHA-256")
+        if min(
+            gap_scan_max_results,
+            gap_scan_max_expected_bars,
+            gap_scan_max_work_ms,
+            gap_scan_page_rows,
+            gap_scan_max_page_payload_bytes,
+        ) < 1:
+            raise ValueError("stable gap diagnostic bounds must be positive")
         self.spool = spool
         self.catalog = catalog
         self.schema_digest = schema_digest
@@ -199,6 +228,14 @@ class StableSpoolQueryBackend:
             else None
         )
         self._clock_ns = clock_ns
+        self._monotonic_ns = monotonic_ns
+        self._gap_scan_max_results = int(gap_scan_max_results)
+        self._gap_scan_max_expected_bars = int(gap_scan_max_expected_bars)
+        self._gap_scan_max_work_ns = int(gap_scan_max_work_ms) * 1_000_000
+        self._gap_scan_page_rows = int(gap_scan_page_rows)
+        self._gap_scan_max_page_payload_bytes = int(
+            gap_scan_max_page_payload_bytes
+        )
 
     def warmup_is_local(self, requirement: DataRequirement) -> bool:
         self.catalog.binding_for(requirement)
@@ -613,19 +650,136 @@ class StableSpoolQueryBackend:
         return item.quality if item else None
 
     def open_gaps(self) -> tuple[GapRecord, ...]:
-        gaps = []
-        for binding in self.catalog.bindings:
-            records = self._parse_records(self.spool.read_tail(
-                stream=binding.canonical_stream,
-                partition_key=binding.partition_key,
-                limit=(
-                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-                    if binding.feed is FeedType.BAR
-                    else STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
-                ),
-            ))
-            gaps.extend(self._gaps(binding, records))
+        return self.open_gaps_bounded()
+
+    def open_gaps_bounded(
+        self,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[GapRecord, ...]:
+        """Return a complete global diagnostic result or a typed failure.
+
+        The public diagnostic route must never turn a bounded partial scan into
+        an empty/success response.  Each physical tail is decoded in a small
+        page, then released before the next page/binding.  The output itself
+        is bounded and a caller receives ``PARTIAL_RESULT`` if its exact scope
+        cannot complete within the declared work budget.
+        """
+
+        stop = cancelled or (lambda: False)
+        deadline_ns = self._monotonic_ns() + self._gap_scan_max_work_ns
+        detected_at_ns = self._clock_ns()
+        gaps: list[GapRecord] = []
+
+        def check_budget() -> None:
+            if stop():
+                raise _GapDiagnosticIncomplete("global gap diagnostic was cancelled")
+            if self._monotonic_ns() >= deadline_ns:
+                raise _GapDiagnosticIncomplete("global gap diagnostic exceeded its work deadline")
+
+        def append_gap(gap: GapRecord) -> None:
+            check_budget()
+            if len(gaps) >= self._gap_scan_max_results:
+                raise _GapDiagnosticIncomplete("global gap diagnostic exceeded its result bound")
+            gaps.append(gap)
+
+        try:
+            for binding in self.catalog.bindings:
+                check_budget()
+                self._scan_binding_gaps_bounded(
+                    binding,
+                    detected_at_ns=detected_at_ns,
+                    append_gap=append_gap,
+                    check_budget=check_budget,
+                    cancelled=stop,
+                )
+        except (TailReadCancelled, TailReadLimitExceeded, _GapDiagnosticIncomplete) as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.PARTIAL_RESULT,
+                str(error),
+                True,
+                retry_after_ms=1_000,
+            )) from error
         return tuple(sorted(gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
+
+    def _scan_binding_gaps_bounded(
+        self,
+        binding: StableSourceBinding,
+        *,
+        detected_at_ns: int,
+        append_gap: Callable[[GapRecord], None],
+        check_budget: Callable[[], None],
+        cancelled: Callable[[], bool],
+    ) -> None:
+        """Scan one exact logical binding without retaining its physical tail."""
+
+        observed_opens: set[int] = set()
+
+        def visit(page: tuple[StoredEvent, ...]) -> None:
+            for stored in page:
+                check_budget()
+                envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+                if (
+                    envelope.WhichOneof("payload") != binding.feed.value.lower()
+                    or canonical_payload_interval(envelope) != binding.interval
+                ):
+                    continue
+                if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
+                    append_gap(self._gap(
+                        binding,
+                        f"sequence:{envelope.source_sequence}",
+                        envelope.source_sequence,
+                        detected_at_ns,
+                    ))
+                if binding.feed is FeedType.BAR:
+                    observed_opens.add(int(envelope.bar.open_time_ns))
+
+        self.spool.visit_tail_pages(
+            stream=binding.canonical_stream,
+            partition_key=binding.partition_key,
+            limit=(
+                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                if binding.feed is FeedType.BAR
+                else STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+            ),
+            page_rows=self._gap_scan_page_rows,
+            max_page_payload_bytes=self._gap_scan_max_page_payload_bytes,
+            visit=visit,
+            cancelled=cancelled,
+        )
+        if binding.feed is not FeedType.BAR or not observed_opens:
+            return
+
+        step = _interval_ns(binding.interval or "")
+        first_open = min(observed_opens)
+        last_open = max(observed_opens)
+        if binding.continuous_calendar:
+            expected_count = ((last_open - first_open) // step) + 1
+            if expected_count > self._gap_scan_max_expected_bars:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                )
+            expected_opens = range(first_open, last_open + step, step)
+        else:
+            try:
+                expected_opens = trading_calendar_for_id(
+                    binding.instrument.session_calendar_id
+                ).bar_opens_between_ns(
+                    start_ns=first_open,
+                    end_ns=last_open + step,
+                    interval_ns=step,
+                    max_rows=self._gap_scan_max_expected_bars,
+                )
+            except ValueError as error:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                ) from error
+        for expected_open in expected_opens:
+            check_budget()
+            if expected_open not in observed_opens:
+                append_gap(self._gap(
+                    binding, str(expected_open), "MISSING", detected_at_ns
+                ))
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
         requested, start_ns, end_ns, _ = self._requested_window(requirement)

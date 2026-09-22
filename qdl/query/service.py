@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import uuid
 import time
 from dataclasses import dataclass, replace
@@ -36,6 +37,7 @@ from qdl.query.reference import (
     ReferenceDataRequirement,
 )
 from qdl.query.results import (
+    GapRecord,
     HistoryResult,
     InstrumentPage,
     InstrumentQuery,
@@ -287,6 +289,7 @@ class V2QueryService:
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
         self._local_batch_admission = _LocalBatchAdmission()
+        self._gap_scan_task: asyncio.Task[tuple[GapRecord, ...]] | None = None
         self.last_batch_evidence: dict[str, object] = {}
         self.last_reference_batch_evidence: dict[str, object] = {}
 
@@ -1323,8 +1326,63 @@ class V2QueryService:
             DataProduct.CANONICAL_SNAPSHOT,
         ).quality
 
-    def open_gaps(self):
-        return self.backend.open_gaps()
+    def open_gaps(self) -> tuple[GapRecord, ...]:
+        """Compatibility path for internal synchronous callers.
+
+        Production HTTP callers use :meth:`open_gaps_async`, which coalesces a
+        bounded scan.  Both paths select the bounded backend primitive when it
+        is available, so a direct caller cannot accidentally revive the old
+        catalog-wide retained-tail allocation pattern.
+        """
+
+        try:
+            scanner = getattr(self.backend, "open_gaps_bounded", None)
+            return scanner() if callable(scanner) else self.backend.open_gaps()
+        except QueryBackendError as error:
+            raise QueryServiceError(
+                error.problem,
+                request_id=self.request_id(),
+            ) from error
+
+    async def open_gaps_async(self) -> tuple[GapRecord, ...]:
+        """Coalesce one bounded global diagnostic scan per query service.
+
+        ``shield`` keeps an individual HTTP disconnect from cancelling the
+        shared task.  The worker itself owns a finite deadline and receives a
+        cooperative cancellation flag on application shutdown, so releasing a
+        waiting client never leaves an unbounded thread behind.
+        """
+
+        task = self._gap_scan_task
+        if task is None or task.done():
+            task = asyncio.create_task(
+                self._run_bounded_gap_scan(),
+                name="qdl-v2-bounded-gap-diagnostic",
+            )
+            self._gap_scan_task = task
+
+            def clear(completed: asyncio.Task[tuple[GapRecord, ...]]) -> None:
+                if self._gap_scan_task is completed:
+                    self._gap_scan_task = None
+
+            task.add_done_callback(clear)
+        try:
+            return await asyncio.shield(task)
+        except QueryBackendError as error:
+            raise QueryServiceError(
+                error.problem,
+                request_id=self.request_id(),
+            ) from error
+
+    async def _run_bounded_gap_scan(self) -> tuple[GapRecord, ...]:
+        cancelled = threading.Event()
+        try:
+            scanner = getattr(self.backend, "open_gaps_bounded", None)
+            if callable(scanner):
+                return await asyncio.to_thread(scanner, cancelled=cancelled.is_set)
+            return await asyncio.to_thread(self.backend.open_gaps)
+        finally:
+            cancelled.set()
 
     def readiness(
         self,

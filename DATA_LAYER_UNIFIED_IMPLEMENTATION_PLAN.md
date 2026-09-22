@@ -50791,7 +50791,7 @@ Read this section and the linked guides before implementing each phase:
 <a id="read-plane-capacity-phase-1"></a>
 ### Phase 1 - Correctness And Diagnostic Safety
 
-**Status: PENDING_OWNER_APPROVAL.**
+**Status: IMPLEMENTED / SOURCE_TESTED / RUNTIME_VALIDATION_PENDING.**
 **Goal:** remove the reproducible diagnostic availability hazard and close the
 specific intermittent MARK/INDEX failure with attributed, component-level proof.
 **Guides:** architecture **17.4-17.5, 26.5, 37.3, 38**; OKX **8.9/8.13,
@@ -50862,9 +50862,74 @@ Reverting the diagnostic fix restores a known hazard, so retain its operational
 do-not-call restriction and mark safety unresolved rather than claim closure.
 Stop after this exit/report; Phase 2 awaits its owner approval.
 
-**Journal / work completed:** plan drafted only; no implementation or new tests.
-**Remaining:** D1-D3/M1-M3, measured root cause, affected rollout/evidence.
-**Cleanup:** no test artifacts created by drafting; no runtime cleanup performed.
+**Journal / work completed:**
+
+- 2026-09-22: owner approved Phase 1. Source implementation and isolated tests
+  are authorized. Runtime containers, mounts, Kafka/Redis/SQLite, V1, Trading
+  System, alpha and order paths remain out of scope until a later exact rollout
+  packet names affected roles, images, rollback and observation window.
+- 2026-09-22: D1 implementation replaces the old catalog-wide
+  `read_tail(...).fetchall()` diagnostic path with `visit_tail_pages`: four
+  retained rows per page, an 8 MiB page cap, 2,048 result cap, one physical
+  retained-window cap and a 5,000 ms monotonic work budget. The route now has
+  exactly two outcomes: a complete sorted result or typed retryable
+  `PARTIAL_RESULT`; it cannot return a truncated empty/partial success. The
+  scanner filters the exact logical feed and interval before gap evaluation,
+  preventing shared L2 physical partitions from cross-mixing `BOOK_SNAPSHOT`
+  and `BOOK_DELTA`. Calendar BAR expectation remains governed by the native
+  calendar and a late repair closes only its exact missing open.
+- 2026-09-22: D2 implementation moves only `/v2/data-quality/gaps` onto an
+  existing Query-service background thread boundary. Concurrent authorized
+  callers coalesce one bounded scan; an individual HTTP cancellation is
+  shielded from the shared worker; worker cancellation sets a cooperative
+  event and returns no stuck task. `QUALITY_READ` authorization remains before
+  the scan. The HTTP route preserves `PARTIAL_RESULT` as retryable HTTP 409.
+  No new poller, worker service, cache, entitlement or public schema was
+  added.
+- 2026-09-22: D1-D3 isolated source matrix passed under the existing Python
+  image with `--network none --read-only --memory=512m --cpus=1`:
+  `python -m unittest tests.test_phaseb_stable_edge.StableQueryContractTests
+  tests.test_read_plane_phase1_diagnostics -v` = **30 passed, 12.415 s**.
+  It covers empty/contiguous/gapped windows, long-range typed stop, shared L2
+  partitions, VN calendar + late repair, client and worker cancellation,
+  typed incomplete propagation, a 2,048-event retained tail and unchanged
+  latest QUOTE/final-BAR reads. The test is fixture-only and leaves no spool
+  or container because Docker used `--rm`.
+- 2026-09-22: M1/M2 source/protocol regression passed in the same isolated,
+  network-disabled image at `768 MiB / 2 CPU`:
+  `python -m unittest tests.test_execution_mark_index_live_view
+  tests.test_execution_mark_index_consumer_latency
+  tests.test_mark_index_paired_lineage tests.test_phase113_reference_v2
+  tests.test_fund_phase5_api tests.test_routed_query_backend -v` = **68
+  passed, 13.762 s**. It covers five symbols x Binance/OKX, paired component
+  lineage, quiet-live versus missing/stale component, session stop,
+  disconnect/generation/gap fences, replica/live-reader routing, strict batch
+  identity and no REST fallback for execution MARK/INDEX. The added direct
+  API contract rerun under `512 MiB / 1 CPU` is **12 passed, 1.789 s**.
+- 2026-09-22: source trace confirms the generic `INTERNAL_STREAM` external
+  provider-limiter root cause was already corrected by ancestor `292fb97`:
+  finite internal concurrency, no token-rate quota, one fail-closed attempt,
+  and policy/freshness/deadline-scoped singleflight. This Phase adds no
+  DOGE-specific branch, timestamp rewrite or cross-venue fallback. An earlier
+  exploratory combined run at `512 MiB / 1 CPU` had one unrelated
+  scheduling-sensitive `test_local_batch_gate_wait_does_not_spend_admitted_read_deadline`
+  failure in the pre-existing Phase-10 warmup suite; it was not used as Phase-1
+  acceptance and its normal-resource targeted regression passed previously.
+- 2026-09-22: runtime is intentionally unchanged: Query/Stream readers remain
+  on `qdl-v2-python:2.1.0-1c0844f` (`sha256:579d578e...dcb6aa6c`), while this
+  source slice is not built/deployed. M3 therefore remains pending an exact
+  approved narrow reader rollout and bounded authentic read observation; no
+  C2, capacity certification, provider-direct call, runtime restart, state
+  change or cleanup/prune was performed.
+
+**Remaining:** source D1-D3/M1-M2 are complete. M3 is the only Phase-1 exit
+item outstanding: build/attest this source revision, roll only explicitly
+approved reader roles with named rollback, then collect bounded authentic
+five-symbol/two-venue read evidence. No C2 or Phase-2 capacity work is
+permitted before that result.
+**Cleanup:** all test containers used `--rm`; no test image, cache, volume,
+network, runtime state or source worktree was created. No runtime cleanup is
+needed or authorized in this source-only slice.
 
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity

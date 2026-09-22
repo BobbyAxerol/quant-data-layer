@@ -41,6 +41,14 @@ ON events (stream, partition_key, {FINAL_BAR_CLOSE_TIME_EXPRESSION}, logical_off
 """
 
 
+class TailReadCancelled(RuntimeError):
+    """A cooperative, bounded diagnostic reader was cancelled."""
+
+
+class TailReadLimitExceeded(RuntimeError):
+    """One diagnostic tail page exceeded its declared input bound."""
+
+
 @dataclass(frozen=True)
 class SpoolConfig:
     path: Path
@@ -768,6 +776,59 @@ class SQLiteDurableSpool:
 
         self.visit_tails(requests=requests, visit=collect)
         return {key: tuple(value) for key, value in grouped.items()}
+
+    def visit_tail_pages(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        limit: int,
+        page_rows: int,
+        max_page_payload_bytes: int,
+        visit: Callable[[tuple[StoredEvent, ...]], None],
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
+        """Visit one retained tail in small, bounded physical pages.
+
+        This is deliberately a diagnostic/read primitive rather than a replay
+        API.  It avoids ``fetchall`` for a whole retained partition so an
+        expensive inspector cannot retain every payload while it decodes a
+        catalog.  Rows are delivered newest first; callers that require market
+        chronology must establish it explicitly from their payload fields.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        if limit <= 0 or limit > max_tail_rows:
+            raise ValueError(f"limit must be between 1 and {max_tail_rows}")
+        if page_rows < 1 or page_rows > limit:
+            raise ValueError("tail page rows must fit inside the requested limit")
+        if max_page_payload_bytes < self.config.max_event_bytes:
+            raise ValueError("tail page payload bound must fit one stored event")
+
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                SELECT * FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC LIMIT ?
+                """,
+                (stream, partition_key, limit),
+            )
+            while True:
+                if cancelled is not None and cancelled():
+                    raise TailReadCancelled("bounded diagnostic tail read was cancelled")
+                rows = cursor.fetchmany(page_rows)
+                if not rows:
+                    return
+                page_payload_bytes = sum(len(row["payload"]) for row in rows)
+                if page_payload_bytes > max_page_payload_bytes:
+                    raise TailReadLimitExceeded(
+                        "bounded diagnostic tail page exceeds its payload limit"
+                    )
+                page = tuple(self._stored_event(row) for row in rows)
+                if cancelled is not None and cancelled():
+                    raise TailReadCancelled("bounded diagnostic tail read was cancelled")
+                visit(page)
 
     def visit_tails(
         self,
