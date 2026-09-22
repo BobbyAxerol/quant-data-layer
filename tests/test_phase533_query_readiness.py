@@ -20,6 +20,7 @@ from qdl.runtime.stable import (
     stable_readiness,
 )
 from qdl.transport import DurableEvent, SQLiteDurableSpool, SpoolConfig
+from qdl.transport.sqlite_spool import FINAL_BAR_LOOKUP_INDEX_NAME
 
 
 def _event(index: int, payload: bytes) -> DurableEvent:
@@ -179,6 +180,44 @@ class Phase533QueryReadinessTests(unittest.TestCase):
             self.assertFalse(any("DROP INDEX" in sql for sql in statements))
         finally:
             reopened.close()
+
+    def test_new_spool_has_final_bar_lookup_index_before_events_exist(self):
+        self.assertTrue(self.spool.final_bar_lookup_index_present())
+        names = {
+            str(row[1])
+            for row in self.spool._connection.execute("PRAGMA index_list(events)").fetchall()
+        }
+        self.assertIn(FINAL_BAR_LOOKUP_INDEX_NAME, names)
+
+    def test_existing_spool_requires_explicit_final_bar_lookup_index_migration(self):
+        path = Path(self.temp.name) / "legacy-events.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE events (
+                    stream TEXT NOT NULL,
+                    partition_key TEXT NOT NULL,
+                    logical_offset INTEGER NOT NULL,
+                    event_id BLOB NOT NULL,
+                    payload BLOB NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    accepted_at_ns INTEGER NOT NULL,
+                    committed_at_ns INTEGER NOT NULL,
+                    content_type TEXT NOT NULL,
+                    headers_json TEXT NOT NULL,
+                    PRIMARY KEY (stream, partition_key, logical_offset),
+                    UNIQUE (stream, event_id)
+                );
+                """
+            )
+        legacy = SQLiteDurableSpool(SpoolConfig(path=path, min_free_disk_bytes=0))
+        try:
+            self.assertFalse(legacy.final_bar_lookup_index_present())
+            self.assertTrue(legacy.create_final_bar_lookup_index())
+            self.assertTrue(legacy.create_final_bar_lookup_index())
+            self.assertTrue(legacy.final_bar_lookup_index_present())
+        finally:
+            legacy.close()
 
     def test_projector_bootstrap_uses_bounded_usage_summary(self):
         source = inspect.getsource(serve_stable_projector)

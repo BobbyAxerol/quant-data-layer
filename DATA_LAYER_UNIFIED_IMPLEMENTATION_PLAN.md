@@ -49280,3 +49280,116 @@ V1, Kafka, Redis, SQLite, provider, consumer, alpha or order path changed.
 Next is one coherent commit, one immutable disposable C2 client from that
 commit and one final no-order acceptance; any failure is investigated from
 typed evidence before another run.
+
+**R1.35-D pre-C2 strict local-BAR batch capacity finding (`IN PROGRESS / QUERY
+SOURCE ONLY`, 2026-09-22).** Before another C2, the exact manifest-legal
+`alpha.okx.paper.stable` BAR batch matrix was inspected. Isolated shapes
+`1/8/16/32/50` all returned complete, final, replica-aligned V2 histories; the
+maximum 50-item batch took about `11.0-11.7s` per Query replica. The same
+50-item alpha-OKX batch passed alone but failed when collocated with a second
+legal consumer lane: its second request waited behind the first and the client
+received `ReadTimeout`. This is a Query local-materialization admission defect,
+not provider freshness, an OKX quota, a missing BAR, or a reason to relax a
+consumer SLA.
+
+The cause is source-visible: `_LocalBatchAdmission` requires one active lane
+and holds its lease across the bounded SQLite snapshot, per-item warmup
+materialization, cursor/signature work and HTTP JSON completion. The previous
+tests proved intentional serialization, but did not prove that two
+manifest-legal maximum lanes complete within their bounded transport/deadline
+envelope. The next source slice must first profile the existing 50-item path
+into snapshot/materialization/completion components, then make the smallest
+bounded local-cache correction justified by that evidence. It must preserve
+one immutable SQLite snapshot per request, no cross-consumer data mix, typed
+backpressure/cancellation drain, finite resident work, response completion
+ownership and all final-bar/quality semantics. It must not change Binance,
+OKX, DNSE or `INTERNAL_STREAM` provider policy, use provider-direct reads,
+weaken quality fences, or mutate runtime/V1/Kafka/Redis/SQLite/consumer/order
+state during source testing.
+
+**Exit gates and release order.** Add deterministic regression coverage for
+two collocated maximum legal batches, saturation/rejection, cancellation and
+snapshot/replica parity; run the focused Query/warmup suites and a read-only
+real batch-shape matrix using the current sealed routing revision. Only if
+those pass: build one Query candidate image, roll only `query_v2_1` and
+`query_v2_2` with the current reader digest as rollback, run one all-scope
+fast read-plane matrix, then exactly one final 300-second C2. The release
+candidate must reseal the current routing/manifest revisions rather than reuse
+the stale r135-b2 revision-20 launcher. C2 failure receipts remain
+non-certificate provenance; cleanup, source/CI convergence, merge and tag are
+not started before these gates pass.
+
+**R1.35-D local-BAR materialization root cause and selected correction
+(`APPROVED SOURCE SLICE / 2026-09-22`).** Read-only inspection of the active
+`3.15GB` canonical cache disproved the earlier hypothesis that the final-BAR
+fast path lacked watermarks or exact rows: `final_bar_watermarks` contains
+`140` rows and representative OKX DOGE `15m` lookup finds both requested
+final closes. `EXPLAIN QUERY PLAN` instead shows the exact-window predicate
+uses only the events primary-key prefix `(stream, partition_key)` and scans
+the partition while evaluating `CAST(json_extract(headers_json,
+'$."qdl.final_bar_close_time_ns"') AS INTEGER)`. A 50-route closing batch
+therefore still executes roughly fifty JSON scans over retained `12,064`-row
+BAR tails despite returning only two rows per route. This explains the
+observed `~11s` isolated batch and timeout under collocation.
+
+The selected correction is one deterministic SQLite expression index matching
+the already-authoritative exact-window predicate:
+`(stream, partition_key, CAST(json_extract(headers_json,
+'$."qdl.final_bar_close_time_ns"') AS INTEGER), logical_offset)`. It is a
+lookup acceleration only: the existing exact reader still returns every
+matching row and retains its duplicate/revision validation and retained-tail
+fallback unchanged. The correction explicitly does **not** increase local
+active lanes, raise transport timeouts, lower `max_warmup_rows`, relax final
+BAR semantics, or alter provider/Kafka/Redis policy.
+
+Source probe refinement: SQLite did not automatically select a new expression
+index on an unanalyzed test cache; it preferred the primary-key partition scan.
+The lookup therefore uses `INDEXED BY` only when this exact named index is
+present. This is not a hint to a possibly arbitrary index: the constant and
+predicate are owned together by the transport, and legacy caches without the
+index retain the original unhinted exact query plus retained-tail fallback.
+This avoids an unbounded `ANALYZE` of the live `3.15GB` cache while preserving
+the index's deterministic acceleration after the explicit migration.
+
+**Additional gates.** Source tests must prove schema idempotency, exact final
+lookup/duplicate fallback parity and an `EXPLAIN QUERY PLAN` use of the new
+index. The real cache index build is a separate bounded runtime migration,
+because SQLite must scan existing rows once; it will be proposed with exact
+role/state blast radius, duration/lock observation and rollback (the index can
+be dropped without data loss) only after the source candidate passes. No
+runtime DDL occurs in this source slice.
+
+**Source slice result (`PASS / 2026-09-22`).** `SQLiteDurableSpool` now creates
+the expression index only when the `events` table is first created; an existing
+spool is unchanged until the explicit idempotent method/CLI migration is run.
+`scripts/migrate_stable_final_bar_lookup_index.py` is read-only by default,
+requires `--apply --confirm CREATE_QDL_FINAL_BAR_LOOKUP_INDEX` to build the
+index, and records index presence plus the actual query plan. The exact
+window query uses `INDEXED BY` only after confirming this named transport-owned
+index exists, which avoids the planner's unanalyzed primary-key tail scan
+without relying on a cache-wide `ANALYZE`.
+
+Verification passed in a disposable network-disabled, read-only test
+container with only a `tmpfs /tmp`: `python -m unittest -v
+tests.test_phase533_query_readiness.Phase533QueryReadinessTests
+tests.test_phaseb_stable_edge.StableQueryContractTests` (`33/33`). It covers
+new-cache index bootstrap, legacy-cache no-auto-DDL plus explicit idempotent
+migration, exact-plan selection, complete exact windows, missing/gap/revised
+and duplicate fallback, cursor binding, bounded history and query quality.
+The CLI was separately exercised against an ephemeral legacy SQLite database:
+dry-run showed the original PK plan, `--apply` switched to the expression
+index plan, and a second dry-run remained idempotent. No shared cache, service,
+provider, Kafka, Redis, V1, consumer, alpha or order path was modified.
+The shared SQLite durable-transport regression suite also passed (`27/27`),
+including one-snapshot batch tails, fifty-partition public shape, retention,
+checkpoint monotonicity, replay/idempotency, WAL bounds and cross-replica
+initialization.
+
+**Remaining bounded work before C2.** Commit this source slice, build one
+candidate, then request an exact runtime packet for the one shared
+`canonical-cache.sqlite3` index build. After the index exists, roll only the
+two Query readers to the candidate, run the legal collocated `50`-BAR matrix,
+then the all-scope fast read-plane matrix and one final C2. The current C2
+launcher must be resealed from routing revision `22` and consumer manifest
+revisions `12/11`; the older r135-b2 revision `20` launcher is not valid
+certificate provenance.

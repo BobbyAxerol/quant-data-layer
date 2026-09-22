@@ -94,6 +94,10 @@ from qdl.transport import (
     SQLiteDurableSpool,
     SpoolConfig,
 )
+from qdl.transport.sqlite_spool import (
+    FINAL_BAR_CLOSE_TIME_EXPRESSION,
+    FINAL_BAR_LOOKUP_INDEX_NAME,
+)
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
@@ -897,6 +901,70 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(len(fallback_reads), 3)
         self.assertEqual(actual[requirements[1]].coverage.value, "PARTIAL")
+
+    def test_final_bar_exact_lookup_uses_expression_index_and_keeps_duplicate_fallback(self):
+        binding = next(
+            item for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-solusdt-bar-1m"
+        )
+        rows = []
+        for offset in (-1, 0):
+            event = _final_bar_at(
+                self.catalog,
+                binding,
+                "binance_usdm_rest_bar.json",
+                offset=offset,
+                label=f"indexed-final-bar-{offset}",
+            )
+            _append(self.spool, self.catalog, event, final_bar_watermark=True)
+            rows.append(event)
+        latest = rows[-1].bar.close_time_ns
+        plan = self.spool._connection.execute(
+            f"""
+            EXPLAIN QUERY PLAN
+            SELECT * FROM events INDEXED BY {FINAL_BAR_LOOKUP_INDEX_NAME}
+            WHERE stream = ? AND partition_key = ?
+              AND {FINAL_BAR_CLOSE_TIME_EXPRESSION} IN (?, ?)
+            ORDER BY logical_offset ASC
+            """,
+            (
+                binding.canonical_stream,
+                binding.partition_key,
+                latest - 60_000_000_000,
+                latest,
+            ),
+        ).fetchall()
+        self.assertIn(FINAL_BAR_LOOKUP_INDEX_NAME, " ".join(str(row[3]) for row in plan))
+
+        revised = _final_bar_at(
+            self.catalog,
+            binding,
+            "binance_usdm_rest_bar.json",
+            offset=0,
+            label="indexed-final-bar-revision",
+        )
+        revised.bar.revision = 1
+        revised.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+        revised.bar.supersedes_event_id = rows[-1].event_id
+        _append(self.spool, self.catalog, revised, final_bar_watermark=True)
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            clock_ns=lambda: revised.bar.close_time_ns + 1_000_000,
+        )
+        requirement = _requirement(binding, warmup=2)
+        expected = backend.history(requirement)
+        fallback_reads = []
+        read_tail_rows_locked = self.spool._read_tail_rows_locked
+
+        def tracked_fallback(**kwargs):
+            fallback_reads.append((kwargs["stream"], kwargs["partition_key"]))
+            return read_tail_rows_locked(**kwargs)
+
+        self.spool._read_tail_rows_locked = tracked_fallback
+        self.assertEqual(backend.history_many((requirement,))[requirement], expected)
+        self.assertEqual(fallback_reads, [(binding.canonical_stream, binding.partition_key)])
 
     def test_history_many_hybrid_final_window_uses_one_sqlite_snapshot(self):
         binance = next(

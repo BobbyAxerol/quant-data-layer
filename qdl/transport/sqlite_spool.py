@@ -26,6 +26,19 @@ from qdl.transport.contracts import (
 
 
 JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+FINAL_BAR_LOOKUP_INDEX_NAME = "idx_qdl_spool_events_final_bar_close"
+# Keep this expression byte-for-byte aligned with the exact final-BAR lookup
+# below. SQLite only uses an expression index when the query expression has
+# the same shape; a semantically similar JSON predicate can silently regress
+# to a partition scan.
+FINAL_BAR_CLOSE_TIME_EXPRESSION = (
+    "CAST(json_extract(headers_json, "
+    "'$.\"qdl.final_bar_close_time_ns\"') AS INTEGER)"
+)
+FINAL_BAR_LOOKUP_INDEX_SQL = f"""
+CREATE INDEX IF NOT EXISTS {FINAL_BAR_LOOKUP_INDEX_NAME}
+ON events (stream, partition_key, {FINAL_BAR_CLOSE_TIME_EXPRESSION}, logical_offset)
+"""
 
 
 @dataclass(frozen=True)
@@ -169,6 +182,12 @@ class SQLiteDurableSpool:
         self._connection.execute(f"PRAGMA journal_size_limit={JOURNAL_SIZE_LIMIT_BYTES}")
 
     def _migrate(self) -> None:
+        # A live cache can hold millions of canonical events. Creating an
+        # expression index over it is an intentional operational migration,
+        # never an incidental consequence of upgrading a reader. New spools
+        # get the index before any rows exist; old spools use the explicit
+        # migration method below.
+        events_preexisted = self._table_exists_locked("events")
         self._connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS partitions (
@@ -241,6 +260,8 @@ class SQLiteDurableSpool:
             );
             """
         )
+        if not events_preexisted:
+            self._create_final_bar_lookup_index_locked()
         self._ensure_usage_state()
         self._connection.execute(
             """
@@ -249,6 +270,65 @@ class SQLiteDurableSpool:
             """,
             (uuid.uuid4().hex, self._clock_ns()),
         )
+
+    def _table_exists_locked(self, table_name: str) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = ?
+            """,
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def _final_bar_lookup_index_present_locked(self) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'index' AND name = ?
+            """,
+            (FINAL_BAR_LOOKUP_INDEX_NAME,),
+        ).fetchone()
+        return row is not None
+
+    def final_bar_lookup_index_present(self) -> bool:
+        """Return whether this spool has the optional exact-BAR lookup index."""
+        with self._lock:
+            return self._final_bar_lookup_index_present_locked()
+
+    def _create_final_bar_lookup_index_locked(self) -> bool:
+        try:
+            self._connection.execute(FINAL_BAR_LOOKUP_INDEX_SQL)
+        except sqlite3.OperationalError as error:
+            # Exact-window materialization is already explicitly optional on
+            # SQLite builds without JSON support. Keep that portable fallback
+            # rather than making an otherwise valid spool fail on open.
+            if "json" in str(error).lower():
+                return False
+            raise
+        return self._final_bar_lookup_index_present_locked()
+
+    def _final_bar_lookup_events_source_locked(self) -> str:
+        # SQLite may prefer the primary-key tail scan until a full ANALYZE has
+        # run, even when the exact expression index exists. The latter would
+        # scan a live multi-thousand-row partition for each requested close.
+        # Force the known-compatible index only when it is actually present;
+        # legacy caches retain the existing unhinted query and tail fallback.
+        if self._final_bar_lookup_index_present_locked():
+            return f"events INDEXED BY {FINAL_BAR_LOOKUP_INDEX_NAME}"
+        return "events"
+
+    def create_final_bar_lookup_index(self) -> bool:
+        """Run the explicit, idempotent final-BAR lookup-index migration.
+
+        Callers must invoke this only from an approved operational packet for
+        an existing cache: SQLite builds the index by scanning current rows.
+        It is intentionally not called during normal reopen of a live spool.
+        ``False`` means the SQLite build lacks JSON-expression support and the
+        retained-tail implementation remains authoritative.
+        """
+        with self._lock:
+            return self._create_final_bar_lookup_index_locked()
 
     def _ensure_usage_state(self) -> None:
         """Initialize legacy spool usage once without rescanning live caches."""
@@ -817,13 +897,12 @@ class SQLiteDurableSpool:
             raise PayloadCorruption("final BAR watermark window is invalid")
         placeholders = ",".join("?" for _ in expected_closes)
         try:
+            events_source = self._final_bar_lookup_events_source_locked()
             rows = self._connection.execute(
                 f"""
-                SELECT * FROM events
+                SELECT * FROM {events_source}
                 WHERE stream = ? AND partition_key = ?
-                  AND CAST(json_extract(
-                    headers_json, '$."qdl.final_bar_close_time_ns"'
-                  ) AS INTEGER) IN ({placeholders})
+                  AND {FINAL_BAR_CLOSE_TIME_EXPRESSION} IN ({placeholders})
                 ORDER BY logical_offset ASC
                 """,
                 (stream, partition_key, *expected_closes),
