@@ -49424,3 +49424,68 @@ drop are the rollback coordinates. A failure before index commit restarts the
 same ten roles; a post-index rollback drops only the index and restores the two
 Query images. No C2 runs until the collocated 50-BAR matrix and all-scope fast
 read-plane matrix pass.
+
+Because the standalone DDL writer does not inherit the normal spool close
+hook, the packet also permits exactly one `PRAGMA wal_checkpoint(TRUNCATE)`
+after `quick_check=ok` and while all ten cache users remain stopped. This is a
+normal SQLite durability checkpoint, not a reset: it retains every committed
+event/index, changes no policy/offset/key and must report `busy=0` before any
+role restarts. The existing `64MiB` journal-size limit is reapplied on that
+same connection so the one-time index WAL does not become an accidental
+long-lived cache expansion.
+
+**R1.35-D runtime index and pre-C2 gates (`PASS / 2026-09-22`).** The
+candidate image `qdl-v2-python:2.0.26-8232d1b` at
+`sha256:f671dcebfdca1b28fc2cb99f3129f8f13e78a9a5853d2be8adfd9ee00c6f31b9`
+ran the explicit index migration in `82.7s` without OOM. It preserved exactly
+`1,498,539` event rows; `quick_check=ok`, the final-BAR expression index is
+present, and the exact lookup plan now uses
+`idx_qdl_spool_events_final_bar_close`. The bounded post-DDL checkpoint
+reported `busy=0` and `[0,0,0]`, preserving the database at `3,154,001,920`
+bytes. The same six projectors and two streams resumed healthy with restart
+count `0`; Kafka catch-up converged to ordinary moving-tail partition lag
+`7..58`. Only `query_v2_1` and `query_v2_2` were recreated onto the candidate;
+both are healthy with restart count `0`. V1, Rust, ingestors, BAR edge, Kafka
+topology/offsets, Redis, TLS, Trading System, alpha and all order paths were
+unchanged.
+
+A freshly sealed no-order client packet uses source/acquisition hashes
+`2072202c...4947e` / `af8a8450...f367b`, release-routing revision `22`
+(`ad018898...f167bc`) and the current four consumer identities. The legal
+strict final-BAR batch matrix passed: the 50-item alpha-OKX batch was
+`451ms/903ms` primary/secondary in isolation and all collocated legal lanes
+completed below `1.09s`, with zero fallback, provider connections or order
+actions. The full read-plane preflight then passed all `299` V2 products across
+both replicas in `28.374s`, with zero stream, fallback, provider-direct or
+order action. Its end-to-end whole-scope batch p99 was `3226ms` primary and
+`3598ms` secondary; this is not a per-product freshness claim. The one
+remaining gate is exactly one 300-second C2 receipt against this sealed packet.
+
+**R1.35-D final C2 (`PASS_V2_DATA_PLANE_ONLY / 2026-09-22`).** The one
+permitted full C2 against sealed routing revision `22` passed all `299`
+products (`234` durable) across the two candidate Query replicas. It proved
+signed warmup, cursor replay/reconnect, V2-primary reads, allowed V1
+fallback-return for the seven declared routes, and blocked-fallback enforcement
+for the other `292` declared routes. It opened no provider connection, made
+zero order actions and removed its temporary cursor directory. The independent
+closing V2 readback covered all `299` products; no identity, quality, gap,
+generation, completeness or replica contract mismatch was recorded.
+
+The receipt is intentionally compact/payload-free under the external packet
+directory. It reports `993.905s` bounded quota-derived opening, `300.100s`
+observation, `28.171s` closing revalidation and `1322.178s` total elapsed;
+peak client RSS was `262,254,592` bytes. The long opening is certificate-harness
+cost for `1,950` governed read/stream operations, not a provider retry or
+runtime failure. It is accepted for this certificate but must not be copied
+into a routine release smoke: a later delivery-performance task should retain
+the same semantic gates while partitioning evidence by unchanged manifest
+slice. That is a test-runtime ergonomics improvement, not a Data Layer
+correctness debt or a release blocker.
+
+**R1.35-D status.** The strict local-BAR defect is closed: source regression,
+explicit live-cache index migration, legal collocated maximum-batch matrix,
+all-scope fast preflight and exactly one final C2 all passed. The permitted
+next operation is source/release reconciliation, coherent commit, CI and the
+already-approved feature-to-`dev` release flow. Do not rerun C2 merely because
+the source journal commit has a different documentation SHA; the executable
+source and deployed Query image remain pinned to `8232d1b`.
