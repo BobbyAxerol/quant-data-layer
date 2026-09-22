@@ -50993,7 +50993,7 @@ removed.
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity
 
-**Status: SOURCE_CORRECTED / RUNTIME_ROLLED_BACK / RETEST_PENDING.**
+**Status: COMPLETE / QUERY_R2_ACTIVE / NO_RESOURCE_INCREASE.**
 **Goal:** protect TS and frequent alpha reads from cold-read contention, then
 demonstrate useful capacity improvement before retaining any larger cap.
 **Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
@@ -51225,14 +51225,83 @@ owner approval. Insufficient measured capacity remains an open exit, not hidden 
   permitted action is one immutable Query candidate built from the corrected
   commit, followed by the same two-reader-only packet and one replacement
   bounded TS V2-only observation. No C2 is required in this phase.
+- 2026-09-22: the corrected source commit
+  `43301d78d3260506914db747b01dec52ad239f20` was built once from `git archive`
+  into the non-deployed Query candidate
+  `qdl-v2-python:2.1.1-43301d7@sha256:e4cf361b968d5c43fdc0bc05ff6abd85eecae0ea9638c94c1896fa1de4961dd7`.
+  Its base is the retained active rollback image
+  `qdl-v2-python:2.1.1-a3fea33@sha256:a231c153341bbbace3a764eb6968470125f983bd319488a12f7d924a117bc76d`;
+  the build used `--network none` and never copied the dirty source checkout.
+  The immutable artifact passed the affected `150`-test Query/SDK/warmup/
+  MARK-INDEX/router/stream suite in `21.047 s` under non-root,
+  read-only-root, no-network, `512 MiB / 1 CPU` constraints. The preserved R1
+  failure packet and original candidate remain evidence only. R2 will serially
+  recreate exactly `query_v2_1` then `query_v2_2`, preserve their environment,
+  mounts, aliases and caps by hash, and restore both to `a231...` on any
+  health, restart/OOM, shape-drift or bounded-read failure. It still excludes
+  V1, Stream, Rust, ingestors, projectors, Kafka, Redis, SQLite, Trading
+  System, alpha and all order paths.
+- 2026-09-22: R2 preflight packet
+  `e6172437f92c07c337de683b1944e36ae5d23c7d933d87b1f786bd8aabe0ea53`
+  matched the retained `a231...` reader pair. The serial rollout then replaced
+  only `query_v2_1` and `query_v2_2`; receipt
+  `cf2d06aa29e94b77f87beb1d540db6f4c474dd43a453f61fe3d3f1abbc6d72c9`
+  records `ROLLED_HEALTHY`. Both roles now run
+  `qdl-v2-python:2.1.1-43301d7@sha256:e4cf361b968d5c43fdc0bc05ff6abd85eecae0ea9638c94c1896fa1de4961dd7`,
+  remain read-only and capped at `512 MiB / 1 CPU`, and reported healthy with
+  restart/OOM `0`. Compose emitted its known orphan warning but
+  `--remove-orphans` was not used; no service other than the two named Query
+  readers was recreated.
+- 2026-09-22: the replacement authenticated TS V2-only observation used one
+  disposable external client with the live `trading-system.paper.stable`
+  identity and the actual 60-route manifest. It completed two ordered sweeps
+  through each of both Query replicas: `240/240` valid results, zero typed
+  errors, V1 fallback, direct-provider/stream call or order action. Result
+  SHA-256 is `96c1ab159ccbe3e824bf7980f02c83c02d5f69f2e4659a31dc24ddbba2761b9c`;
+  receipt SHA-256 is `e6cc0b72ce67794eddad165b5f088f70884a251dfc386095f851cb3f5a428251`.
+  The prior finite-pending rejection is therefore closed for the declared TS
+  hot slice without weakening alpha fairness, quality, provider quota or any
+  endpoint contract. The exact test container was removed after collection.
+- 2026-09-22: consumer-call-to-domain-validated usable latency from that real
+  observation is recorded separately from source age/finality. Conservative
+  per-group p95 maxima across Binance USD-M and OKX Swap were `19.090 ms`
+  QUOTE, `24.841 ms` TRADE, `87.158 ms` MARK_INDEX_PRICE, `103.129 ms`
+  BOOK_SNAPSHOT and `218.569 ms` BOOK_DELTA. BAR `1m` steady second-sweep
+  reads were `471-774 ms` on Query 1 and `481-864 ms` on Query 2. The first
+  newly-recreated Query-1 BAR sweep was a bounded cold-cache/process warm
+  sample (`1.906-4.821 s` for ten final, valid BARs); its repeated sweep had
+  no quality error, fallback, cross-mix or provider call. It is published as
+  cold-start evidence, not folded into the steady-state percentile or hidden
+  as a success claim. A consumer-start/cold-reader load measurement belongs to
+  the already-defined Phase 3 workload, not a reason to couple Query startup
+  to a particular consumer manifest here.
+- 2026-09-22: observed reader memory stayed at `159.0 MiB` and `155.8 MiB`
+  (about `31%` and `30%` of the existing cap). Memory cgroup counters show
+  `low/high/max/oom/oom_kill=0` for both readers. CPU throttle accounting since
+  reader start was `14.381 s/400.6 s` on Query 1 and `4.596 s/202.6 s` on
+  Query 2; it is cumulative and cannot be attributed solely to this probe.
+  There is therefore no controlled A/B evidence that a `1.5 CPU` or `1 GiB`
+  cap would improve the declared workload. Per the phase rule, caps and all
+  cold/provider/diagnostic limits remain unchanged rather than consuming host
+  headroom speculatively. The Phase-3 frozen load test owns any later capacity
+  decision.
+- 2026-09-22: scoped closure cleanup removed only the unreferenced R1 candidate
+  `qdl-v2-python:2.1.1-13b3594@sha256:2aaa1289dbd0681ef8f696cfc017d74494b4d642b32e760effbdc6145f4ca8e9`
+  and the `20 MiB` `git archive` build context used for R2. Docker image use
+  moved from `21.40 GiB` (`7.402 GiB` reclaimable) to `20.69 GiB`
+  (`6.689 GiB` reclaimable). Active R2 `e4cf...`, named rollback `a231...`,
+  sealed runtime state, TLS, volumes, networks, evidence and all running roles
+  remain intact. BuildKit still reports `7.689 GiB` total / `2.418 GiB`
+  reclaimable; it was not broad-pruned because cache ownership is shared and
+  no exact safe cache identity was established in this phase.
 
-**Remaining:** measure the same bounded read workload before/after a separately
-approved Query-only rollout; retain the existing `512 MiB / 1 CPU` caps unless
-those measurements prove a bounded increase is useful; then record the exact
-optimization/resource report. Full C2 and consumer-load certification remain
-Phase 3 work, not a Phase-2 substitute.
-**Cleanup:** reuse existing test image when possible; inventory/remove only new
-disposable test artifacts under approved scope; keep active and named rollback.
+**Exit:** PASS for the Phase-2 declared hot-read/admission workload. The
+corrected reader pair is active; no capacity increase is retained without A/B
+evidence. Full C2 and 20-50-consumer certification remain Phase 3 work, not a
+Phase-2 substitute.
+**Cleanup:** COMPLETE for exact Phase-2 artifacts. Retain active R2 and named
+`a231...` rollback; shared BuildKit cache is intentionally deferred rather than
+deleted broadly.
 
 <a id="read-plane-capacity-phase-3"></a>
 ### Phase 3 - Consumer Load Acceptance And Release
