@@ -50094,3 +50094,71 @@ images, volumes and state retained. After cleanup, the approved projector
 `_4/_5/_6` remain healthy/restart 0/OOM false. Canonical paths/feature branches
 unchanged, no new worktree, no push/merge/tag. Remaining boundary: real TS
 consumer adoption/observation and owner's release decision, not a failed DL C2.
+
+**2026-09-22 final consumer handoff approved:** owner authorizes applying the
+prepared TS-only market-data packet (`ecc8ee33...88c764`, manifest/JWT 10,
+SDK 2.0.3) and observing actual 60-route consumption for 300s. Record the new
+consumer receipt linked to immutable `bed675bd...9c86` C2; never edit the old
+certificate into a new revision. DL services/images/config/data stay unchanged.
+No P18 continuation until owner reviews readiness again. Release flow is
+feature -> dev/CI -> main/tag only after successful handoff; no bypass of CI.
+
+**2026-09-22 actual TS handoff result: FAILED, upstream load qualification
+still open.** The approved TS-only candidate authenticated at manifest 10,
+but its first 180s startup failed on stale QUOTE replay projection. TS source
+`4982027` corrected that mapping, with 218 scoped regressions and an authentic
+10-route QUOTE stream proof passing. A replacement TS-only image then failed
+another 180s startup: 52..55/60 ready after t=30s, multiple MARK_INDEX_PRICE
+SOURCE_UNAVAILABLE responses. The 300s consumer acceptance never started.
+No repeat of the Data Layer 299-product C2 occurred.
+
+During that actual 40-stream TS load, active gateway CPU sampled approximately
+95.7% of one core, projector canonical acceptance-to-append lag reached
+70..75s and durable append mean approached 1s. Following rollback of TS alone,
+observed canonical age returned to roughly 0.34..0.43s mean, append to
+0.12..0.21s and active gateway CPU to approximately 53%. This is evidence of a
+load-dependent upstream degradation; the exact hot function is not yet
+profiled. After rollback, a read-only internal test returned 200 for all ten
+active-gateway MARK/INDEX bindings; passive gateway 409/fenced was expected.
+A healthy container and passing no-load read are not proof of sustained load.
+
+Original C2 `bed675bd...9c86` remains immutable and applies to its recorded
+test shape. The statement that no issue remains in the read plane must now be
+qualified: full real TS adoption has exposed this capacity finding. Do not
+rewrite that certificate as a revision-10 adoption certificate, publish a new
+stable release, relax SLA or restart other services to force a pass.
+
+Only market_data_service was recreated and restored to `09839129...f7ac4b2`
+with its exact old environment/revision-9 binding (known fail-closed, not
+working V2 adoption). DL images/configuration/offsets/state did not change.
+Evidence lives under `/home/bobby/.local/state/trading-system/market-data/`
+`revisions/20260922-r10-quote-policy/`: both failed observations, typed reference
+diagnostic and active/passive internal read diagnostic. Preserve the existing
+projector fix and rollback images; no P18 continuation until this consumer
+readiness issue is resolved and reviewed. A separate exact DL runtime scope
+is required for any stream/query capacity repair; it is not contained in the
+approved TS-only handoff packet.
+
+**Final failed-adoption receipt:** actual TS heartbeat ended at 52/60 ready,
+with five MARK/INDEX unavailable and three BOOK_SNAPSHOT stale. There was no
+new authentication/quota mismatch after revision-10 deployment. Saved projector
+spans under load (09:05:30..09:07:59) show mean canonical age 52.829..74.450s,
+maximum 75.961s; after rollback (09:10:30..09:11:59), mean age 0.338..0.882s,
+maximum 2.450s. These are stage-age metrics, not consumer-call percentiles.
+Exact source of CPU cost remains unprofiled; 2-CPU stream quota rules out an
+assumed Docker 1-CPU cap, not a single event-loop bottleneck. Do not deploy an
+untested optimization or weaken a route to hide this failed load shape.
+
+Receipt hashes and cleanup inventory are in the linked TS handoff section.
+Withdrawn TS image `ecc8ee33...` and temporary build context removed; exact
+cache cleanup reclaimed 978.3kB. Original active TS image and one explicitly
+retained, tested/non-certified candidate `7d410919...` remain. Three small
+dependency-held overlay cache records were not forcibly pruned. Disk available
+176331898880 bytes before / 176508874752 after (not exact reclaimed bytes).
+DL active images remain projector `56d331db...bac5f1`, Query `f671dceb...31b9`,
+Stream `c8d7458e...ac2ab`, Rust `389753...c9762`, V1 `dbfb578...15d65`;
+projector rollback `d724764b...f2a3b` retained. All six projectors/four readers
+remain healthy/restart 0/OOM false. No DL source runtime rollout this turn.
+Canonical `/home/bobby/data_layer` remains `fix/v2-runtime-readiness` with no
+extra worktree; dev/main `a5304b9`, published stable `v2.0.27` unchanged.
+No push/merge/tag/release; do not resume TS P18 before owner review.
