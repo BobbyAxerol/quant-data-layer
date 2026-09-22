@@ -50687,3 +50687,411 @@ authorization, change manifests or perform a runtime rollout.
   sole checkout `/home/bobby/data_layer`; stable dev/main and published v2.1.0
   untouched. Only this main-plan journal is committed for the follow-up;
   no push/merge/release or Trading System/alpha implementation changes.
+
+<a id="read-plane-stability-capacity-plan-20260922"></a>
+## Read-Plane Stability And Consumer Capacity - Three-Phase Plan (2026-09-22)
+
+**Status: PLAN_ONLY / AWAITING_PER_PHASE_OWNER_APPROVAL.** The owner authorizes
+writing this plan, not starting implementation, load generation, resource
+changes, rollout, cleanup of existing artifacts, push, merge or release.
+Execute exactly the three phases below in order after their respective
+approvals. Do not create additional phases or expand into the unfinished
+Trading System upgrade. Update the journal inside each phase after each
+coherent tested slice; do not replace failed evidence with a later green sample.
+
+| Phase | Goal | Current state |
+| --- | --- | --- |
+| [1 - Correctness And Diagnostic Safety](#read-plane-capacity-phase-1) | Repair the unsafe gap diagnostic and trace/fix intermittent MARK/INDEX rejection | PENDING_OWNER_APPROVAL |
+| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | PENDING_PHASE_1_AND_OWNER_APPROVAL |
+| [3 - Consumer Load Acceptance And Release](#read-plane-capacity-phase-3) | Prove the declared 20-50-consumer workload, certify affected behavior and release cleanly | PENDING_PHASE_2_AND_OWNER_APPROVAL |
+
+### Governing Scope And Evidence Reuse
+
+Read this section and the linked guides before implementing each phase:
+
+- [Architecture sections 17-18: stable routes, batch errors, caching and SDK](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#17-stable-api-design).
+- [Architecture section 37: correctness-first performance, stage attribution and benchmark provenance](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#37-performance-engineering-policy)
+  and [section 38: typed failure semantics](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#38-failure-semantics-exposed-to-consumers).
+- [Architecture section 25.8: capacity planning](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#258-capacity-planning),
+  [section 26.5: input/payload bounds](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#265-input-and-payload-safety),
+  [section 27: tests](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#27-testing-strategy-and-fund-grade-release-gates)
+  and [section 28: release/rollback](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md#28-cicd-release-engineering-and-deployment-governance).
+- [OKX provider guide](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md),
+  sections **8.9, 8.13, 10.11 and 10.12**, and the official
+  [mark-price](https://app.okx.com/docs-v5/en/#public-data-websocket-mark-price-channel)
+  and [index-tickers](https://app.okx.com/docs-v5/en/#public-data-websocket-index-tickers-channel)
+  contracts. Recheck current provider docs when implementing a cadence change.
+- [Trading System section 53.2](../trading_system/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md#532-shared-runtime-v2-read-plane-and-trading-system-admission-plane)
+  defines the consumed facade and independent Risk cache read-back.
+  [Alpha migration architecture](../execution_alpha/ALPHA_RUNTIME_MIGRATION_ARCHITECTURE.md),
+  section **8.5** for FIFO/dedup intent and the later **V2 Alpha Consumer
+  Production Execution Ledger** for current transport, is context only:
+  historical V1/Redis examples do not authorize reverting V2 to legacy paths.
+- [Existing v2.1.0 load evidence](#v210-consumer-load-closure-20260922)
+  and [benchmark/interval evidence and OOM incident](#consumer-endpoint-benchmark-20260922)
+  remain the baseline. Use the [existing benchmark runbook](docs/runbooks/consumer-endpoint-benchmark.md)
+  and SDK validators rather than another parallel acceptance framework.
+
+**Facts frozen from the preceding read-only investigation, not new tests:**
+
+- `/v2/data-quality/gaps` synchronously calls `open_gaps()` over the catalog
+  and decodes retained spool tails. Both Query containers OOM-killed during
+  the documented benchmark. The CLI safety guard is NOT a server-side repair.
+- The most recent intermittent TS finding was **BINANCE / DOGEUSDT /
+  MARK_INDEX_PRICE**, with an incomplete reference batch; later TS recovered
+  to 60/60. Neither that recovery nor older OKX findings establish a root cause.
+- Three bounded public OKX GETs in the preceding discussion returned code `0`:
+  `DOGE-USDT-SWAP` instrument `live`, positive `markPx`, and positive `idxPx`
+  for **index identity `DOGE-USDT`**. This proves product availability only,
+  not execution freshness or sustained WS support. Do not label it unsupported.
+- OKX documents changed/quiet publication at approximately 200ms/10s for
+  mark and 100ms/60s for index. Component event timestamps, channel/session
+  liveness and execution eligibility are distinct. A shared socket heartbeat
+  alone does not prove a particular component is current or gap-free.
+- Last inspected Query caps: 512MiB/1 CPU each; Stream caps: 1GiB/2 CPU each.
+  `market_data_service` has no explicit Docker CPU/RAM cap. A request to add
+  50% cannot be implemented by inventing a prior cap or reducing an uncapped
+  container's available resources. Re-inventory these facts before runtime work.
+- The configured stream subscriber ceiling is 1000, but gRPC concurrency is
+  200 per server; long-lived RPCs consume that budget. Neither is a measured
+  consumer capacity. Existing alpha quotas are shared per identity, not per
+  container; two stream replicas are not automatically twice the usable capacity.
+
+**Non-negotiable boundaries:**
+
+1. Optimize at current caps first. Increase selected caps only after the same
+   workload exposes a resource constraint and a measured A/B improvement.
+   Extra RAM is not the fix for unbounded diagnostics; extra CPU is not the
+   fix for serialized I/O, stale source data or incorrect policy.
+2. Reuse passed certificates with source/config/policy hashes and exact scope.
+   Maintain an affected-test map: `change -> affected behavior -> inherited
+   evidence -> new proof`. Do not rerun 299-product C2, all interval warmups,
+   provider certification or TS order tests merely because a phase starts.
+   Mandatory repository CI remains mandatory; do not remove gates to save time.
+3. Keep V2 primary, existing V1 fallback policy, native venue identity,
+   timestamps, decimal/unit semantics, gap/finality checks and Risk authority.
+   No freshness relaxation, timestamp restamping, synthetic production events,
+   cross-venue substitute prices or silent dropping of required components.
+4. No new services, proxies, symbol workers, provider subscriptions/universe,
+   Kafka topology/offset reset, Redis flush, SQLite deletion/migration, retention
+   redesign, alpha strategy/sizing/order change, or DNSE/Spot activation.
+   Rust changes are permitted only if the traced MARK/INDEX defect is in its
+   shared reducer; this is not permission to rewrite the core. Unrelated defects
+   are reported with evidence and are not silently included in these phases.
+5. TS changes, if proven necessary, stop at its Data Layer reader, typed error
+   propagation and exact `market_data_service` configuration. Mirror any such
+   change in the TS main journal. Gateway/Risk/executor business logic and the
+   independent P18 program are excluded. Do not start alpha execution containers.
+6. Each approval covers its recorded scope, not unnamed future resources.
+   Before rollout, record exact affected roles, source/image/config digests,
+   preserved mounts/state, stop conditions and rollback. Do not recreate
+   unaffected roles for image uniformity. Rollout writes are normal read-plane
+   caches/telemetry only, not permission to reset durable state or send orders.
+
+<a id="read-plane-capacity-phase-1"></a>
+### Phase 1 - Correctness And Diagnostic Safety
+
+**Status: PENDING_OWNER_APPROVAL.**
+**Goal:** remove the reproducible diagnostic availability hazard and close the
+specific intermittent MARK/INDEX failure with attributed, component-level proof.
+**Guides:** architecture **17.4-17.5, 26.5, 37.3, 38**; OKX **8.9/8.13,
+10.11/10.12**; incident and interval evidence linked above.
+
+**Implementation scope and sequence:**
+
+1. Freeze source/image/config and reproduce the diagnostic defect in an
+   isolated reader at the original **512MiB** limit, never by intentionally
+   OOM-killing either shared Query. Use bounded captured data or explicitly
+   test-only fixtures. Capture the allocation/scan cause before changing it.
+2. Replace all-at-once diagnostic scanning with bounded pages/chunks, bytes,
+   result count and work deadline. Use a bounded worker/admission lane, release
+   memory between chunks and avoid materializing enormous expected-bar ranges.
+   Cancellation must stop or cooperatively bound the underlying work; a timed
+   out await must not release a permit while its worker keeps running unbounded.
+3. Keep the existing public route and compatible success schema. Enforce
+   existing authorization/visibility; select the correct logical feed/interval
+   in shared partitions. A complete scan may return an empty list; an incomplete
+   or expired scan must return an existing typed failure, not a truncated success.
+   Public pagination/schema expansion is not necessary for this scope. If any
+   proposed additive field is needed, prove SDK/OpenAPI compatibility first.
+4. Coalesce identical in-flight diagnostic work only within the same authorized
+   scope. Any cached result must be bounded, age-labelled and invalidated by
+   relevant revision/generation. Do not turn monitoring into a new poller/service.
+   Retain the benchmark's unsafe-route guard until isolated safety proof passes.
+5. Collect one bounded diagnostic matrix for five symbols on both venues and
+   both Query replicas. For each mark/index component retain native identity,
+   source timestamp/receive time, channel evidence, generation/watermark,
+   completeness, eligibility reason, batch-item error and TS result. Compare
+   raw provider evidence -> canonical/live view -> Query -> SDK -> TS; attribute
+   provider silence, projection lag, mapping error and scheduling delay separately.
+6. Fix the failing shared boundary only. Preserve component-specific quiet
+   semantics already approved; unchanged-price confirmation is not a new trade
+   and does not rewrite the original event time. Missing/stale mark or index,
+   disconnect, source mismatch, gap and generation changes remain fail-closed.
+   Preserve typed item errors through batches and the TS adapter if it currently
+   collapses them into `UNCLASSIFIED`. No DOGE-only bypass or special price.
+7. If OKX DOGE cannot satisfy the current execution contract, record the exact
+   provider/internal cause and affected consumers. The owner's discussed fallback
+   is a versioned `BLOCKED` binding for **only OKX DOGE MARK_INDEX**; preserve
+   other DOGE feeds and Binance. Risk-dependent consumers must remain blocked,
+   not fall back to a different venue or LAST price. This is a declared reduced
+   product scope, NOT proof of repair: report `STOPPED_WITH_EXCLUSION` for owner
+   decision, never call the original all-product exit PASS or hide unfinished code.
+
+**Required new tests, limited to affected behavior:**
+
+| ID | Cases | Pass condition |
+| --- | --- | --- |
+| D1 | Empty/gapped/contiguous windows, late repair, long missing ranges, mixed physical/logical partitions, non-continuous calendar fixture | Correct gap identity and completeness; no false empty-success or phantom gap |
+| D2 | Concurrent same/different scopes, saturation, unauthorized read, timeout, client cancel and worker shutdown | Bounded CPU/RAM/results and admission; no scope leakage, stuck worker or permit leak |
+| D3 | Diagnostic large-data scan alongside quote/latest-BAR reads at 512MiB | No OOM/restart/event-loop blockage; normal read outcomes unchanged; record latency/resource deltas |
+| M1 | Five symbols x both venues: independent mark/index updates, quiet channel, stale replay, one missing/stale component, heartbeat stop, disconnect/reconnect, generation change | Accurate typed state and execution eligibility; no restamped freshness or cross-symbol/venue contamination |
+| M2 | Mixed valid/invalid batch, both replicas, cached data still valid/expired after refresh failure | Item-level cause retained; strict batch cannot falsely pass; replica results compared at compatible watermarks |
+| M3 | Bounded authentic observation of the failing products plus both-venue controls | Trace closes the reported defect; quiet feed correctly distinguished from unusable execution data |
+
+**Exit:** all affected source/protocol tests pass; original memory limit is
+safe under D1-D3; root cause and before/after evidence exist for MARK/INDEX.
+A bounded real read check after an approved narrow rollout validates the fix.
+No full C2 or capacity certification in this phase. No in-scope implementation
+defect is relabelled technical debt. A genuine provider limitation is explicit
+and cannot silently reduce the Phase-3 denominator.
+
+**Rollback and stop:** retain exact prior images/config by changed role. Roll
+back only the affected reader/core/TS reader if applicable; no state rewind.
+Reverting the diagnostic fix restores a known hazard, so retain its operational
+do-not-call restriction and mark safety unresolved rather than claim closure.
+Stop after this exit/report; Phase 2 awaits its owner approval.
+
+**Journal / work completed:** plan drafted only; no implementation or new tests.
+**Remaining:** D1-D3/M1-M3, measured root cause, affected rollout/evidence.
+**Cleanup:** no test artifacts created by drafting; no runtime cleanup performed.
+
+<a id="read-plane-capacity-phase-2"></a>
+### Phase 2 - Hot Read Optimization And Bounded Capacity
+
+**Status: PENDING_PHASE_1_AND_OWNER_APPROVAL.**
+**Goal:** protect TS and frequent alpha reads from cold-read contention, then
+demonstrate useful capacity improvement before retaining any larger cap.
+**Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
+alpha V2/FIFO rules linked above. This phase is not an alpha logic migration.
+
+**Classify by product and work, not URL alone:**
+
+| Lane | Work included | Policy |
+| --- | --- | --- |
+| Hot read | Latest/final BAR, TRADE, QUOTE, execution MARK_INDEX, bounded L2 snapshot, relevant status and stream delivery | Low queue wait, bounded concurrency, explicit TS share and per-identity fairness |
+| Cold read | Warmup/history/batches, funding/OI/basis/metadata provider reads and catalog diagnostics | Existing provider quotas; low bounded concurrency and finite queued bytes/work |
+| Diagnostic | Global gaps and expensive inspection | Phase-1 bounds; cannot consume hot-read permits or bypass quality checks |
+
+`reference:batch` is mixed-domain: execution MARK_INDEX may be hot, a long
+funding/basis query is not. Classify and bound each item; a mixed batch cannot
+smuggle cold work into the hot lane. Prioritize read service, not order authority.
+
+**Implementation scope and sequence:**
+
+1. Profile the unchanged optimized Phase-1 build at current caps using existing
+   probes. Separate pool/admission wait, I/O, decode, transport, SDK validation,
+   source age, event-loop lag, cgroup CPU throttling and memory reclaim. Establish
+   the numeric per-operation p95/p99/deadline and recovery targets before tuning.
+   Use active contracts and prior stable evidence, not arbitrary venue claims.
+2. Reuse shared query executors/clients to isolate hot/cold budgets and bound
+   queue bytes as well as counts. Reserve a service share for the authenticated
+   TS identity while guaranteeing progress for alpha identities. No unlimited
+   priority queue, starvation, or external-provider cooldown on internal reads.
+3. Reduce duplicate work: single-flight exact binding/revision reads, shared
+   decoded latest views and connection reuse where justified by profiling.
+   Cache keys include venue/instrument/feed/interval/policy/generation and do not
+   share entitlement results. Validate freshness/authority at delivery; do not
+   conceal source loss behind cache TTL. A latest-BAR request must not unnecessarily
+   decode a full historical window. Preserve finality/corrections and short history.
+4. Reuse SDK transport for bounded, health-aware read distribution over the two
+   existing Query replicas. Keep the single-URL path backward-compatible; test
+   mTLS hostname/identity and signed cursor behavior. DNS alias/keep-alive is not
+   proof of request balancing. Retry only safe read failures within the original
+   deadline; no retry storm, cross-source fallback, or retry of a typed data-quality
+   rejection just to find a green replica. No new load-balancer container/service.
+5. Reconcile HTTP/gRPC, opening/reconnect and buffer limits with actual binding
+   counts. Fifty clients with five streams plus TS can exceed 200 RPCs; do not
+   quote the unused 1000-subscriber ceiling as capacity. Compute permits and byte
+   budgets from the frozen workload, reserve control/reconnect capacity and keep
+   slow-consumer queues bounded. No silent loss/coalescing of required BAR/trade/L2
+   events. Do not multiply venue ingest subscriptions for each downstream client.
+6. Treat TS separately: its Docker cap is currently unset. Measure before any
+   resource decision; do not introduce a smaller cap under a '+50%' label. If its
+   read admission/pool/quota is the actual constraint, propose a **50% increase
+   to that measured/configured budget**, record baseline/target and maintain the
+   associated manifest/identity consistency. Quota changes are not CPU increases.
+   If it is CPU-bound, show contention and the actual resource-control change
+   rather than assume more REST concurrency helps. Risk continues local cache
+   read-back; no new synchronous Data Layer dependency in order admission.
+7. Only after steps 1-6, test the selected cap change below against the same
+   optimized binary, workload and observation window. Inspect aggregate host
+   headroom, not just per-container RSS. Retain only improvements with supporting
+   latency/throughput/reclaim evidence and no correctness/neighbor regression.
+
+| Existing role | Last inspected cap | Conditional maximum in this plan |
+| --- | --- | --- |
+| `query_v2_1`, `query_v2_2` | Each 512MiB / 1 CPU | Each **1GiB / 1.5 CPU** if justified after optimization |
+| `stream_v2_active`, `stream_v2_passive` | Each 1GiB / 2 CPU | Each **2GiB / 3 CPU** only if measured hot-stream/fan-out pressure requires it |
+| `market_data_service` | No Docker memory/CPU cap | No fictitious multiplier; measured TS budget decision in step 6 |
+| Warmup/history/diagnostic lanes; Kafka/Redis/Rust/projectors/other TS roles | Existing limits | **Unchanged**, except the Phase-1 defect fix already approved |
+
+CPU/RAM caps apply to a container, not an endpoint. Raising Query caps must NOT
+raise cold-read concurrency, retained history, response size or diagnostic bounds.
+Stream caps are conditional, not an instruction to double every V2 service.
+If optimized current caps already pass, record `NO_RESOURCE_INCREASE_NEEDED`.
+
+**Required new tests:** hot reads under simultaneous cold-read saturation;
+per-identity fairness/TS reserve; canceled queued/in-flight work; cache single-flight
+and generation invalidation; strict batch item identity; slow consumer and bounded
+backpressure; reader failure/failover and TLS/cursor compatibility; fresh/expired
+data eligibility unchanged under load. Reuse Phase-1 protocol results unless the
+relevant path changed. Use isolated faults, not shared-runtime failure injection.
+
+**Exit:** optimized code passes affected tests; exact numeric latency/queue/
+resource/recovery budgets and workload are recorded before Phase 3. Same-workload
+A/B explains every retained cap or records no increase. Hot reads and TS cannot
+be starved by cold work; quotas no longer contradict the proposed stream workload.
+Do not declare support for 50 clients yet. Full C2 is still deferred.
+
+**Rollback and stop:** restore only changed role images, SDK config and selected
+caps/manifest revision using the recorded baseline. Preserve all source data and
+consumer cursor state. Stop after the optimization/resource report; Phase 3 awaits
+owner approval. Insufficient measured capacity remains an open exit, not hidden debt.
+
+**Journal / work completed:** plan drafted only; no optimization, A/B or cap change.
+**Remaining:** hot/cold attribution, scoped optimization, applicable A/B and gates.
+**Cleanup:** reuse existing test image when possible; inventory/remove only new
+disposable test artifacts under approved scope; keep active and named rollback.
+
+<a id="read-plane-capacity-phase-3"></a>
+### Phase 3 - Consumer Load Acceptance And Release
+
+**Status: PENDING_PHASE_2_AND_OWNER_APPROVAL.**
+**Goal:** demonstrate the declared 20-50 alpha-equivalent data workload plus
+the actual TS reader, then release with an accurate capacity/support statement.
+**Guides:** architecture **16, 25.8, 27, 28, 37.6, 38**; inherited certificates,
+Phase-2 budgets and [consumer benchmark runbook](docs/runbooks/consumer-endpoint-benchmark.md).
+
+**Freeze the workload before execution:**
+
+- Reuse the SDK/benchmark validators in bounded external client containers.
+  One or a few disposable load drivers may own many independently identified
+  consumer sessions; report this honestly, not as 50 real strategy containers.
+  Real alpha logic, credentials, signal/state mutation and order submission stay off.
+- Use temporary authorized test identities/manifests derived from approved
+  products, with production-equivalent policy/quotas. Do not bypass quotas or
+  share one identity while claiming independent consumer capacity. Record and
+  clean only those identity artifacts; do not rotate shared CA/keys for this test.
+- Define BAR/reference, quote/trade/mark, and grid/L2 workload profiles, with
+  **2-5 feeds per consumer**, exact symbols/intervals, streaming versus polling,
+  poll frequency, message/byte rates, warmup rows and reconnect behavior. Include
+  both Binance/OKX and all five already demanded liquid symbols across the mix.
+  A multi-symbol consumer can have more than five streams: enumerate them.
+- Target **20 and 50 consumers plus TS**, advancing through **5 -> 20 -> 35 -> 50**
+  only after the prior step passes. No claim of 50 all-tick/multi-hundred-symbol
+  alphas unless that exact workload is run. Do not invert single-read latency
+  to invent QPS capacity. Record actual consumer counts, RPCs and upstream traffic.
+
+**Execution and test order:**
+
+1. Verify Phase-1/2 affected tests and inherited evidence hashes. Build/reuse
+   one candidate per changed language artifact; no new image for a failed probe
+   when code/config has not changed. Render a per-role rollout/rollback map.
+   Stage load/fault tests on isolated readers using captured real data or an
+   approved read-only runtime source before applying shared-runtime traffic.
+2. Run the fast exact read matrix for changed products on both Query replicas;
+   test relevant batch shapes once. For unchanged products, inherit certification
+   and sample compatibility only as needed by the diff. Do not start a full C2
+   to locate mapping, quota, saturation or diagnostics bugs.
+3. Run bounded load steps with predetermined durations/request/byte limits and
+   automated abort on OOM, restart, unbounded queue/lag, resource pressure or
+   unexplained TS degradation. No test should continue hammering a failed reader.
+   Pause to attribute failure; do not retry until a lucky window passes.
+4. Include simultaneous final-BAR delivery, phased 2500/5000-row warmup where
+   history/manifest allows, hot reads during cold work, one slow consumer and
+   reconnect bursts. Verify append/dedup rather than repeated full history.
+   Test one-Query loss in isolation; record N-1 capacity separately from normal
+   capacity. Do not disrupt shared replicas without the exact approved rollout.
+5. After all fast/protocol/load gates pass, run **one final 300-second no-order
+   consumer acceptance** on the release candidate at the frozen target workload,
+   with actual TS telemetry. Exercise affected signed cursor/reconnect paths;
+   reuse unchanged V1-fallback/C2 evidence. Do not reopen all 299 streams by
+   default. A changed fallback/identity contract requires only its affected drill.
+6. On failure, preserve product/item error, quality hash, binding/replica, source
+   and receive age, queue wait and resource context. Repair the specific in-scope
+   defect and rerun affected fast tests first. A replacement final acceptance is
+   necessary only after a material fix; retain the failed run, do not invent an
+   extra phase or endlessly repeat the same acceptance for diagnosis.
+
+**Required report and exit gates:**
+
+| Dimension | Required evidence / exit |
+| --- | --- |
+| Consumer-visible latency | Per endpoint + venue/symbol/feed/interval + replica/profile: call start -> SDK/domain-validated usable result, p50/p95/p99, sample count, failures/timeouts and response bytes. No percentile claim from insufficient samples; batch wall time is not a per-item call |
+| Data timeliness | Source/component age separate from HTTP latency; BAR close -> usable separate from snapshot RTT; queue/pool wait and SDK cost attributed. All values remain subject to their existing execution policy |
+| Correctness | No false fresh/complete result, cross-mix, unexplained duplicate/gap, unauthorized product, lost mandatory event or zero substituted for missing data |
+| Real TS | All configured demanded products accounted for (currently 60); quiet sessions and execution eligibility reported separately. Zero unexplained degradation caused by candidate/load; provider failures explicitly attributed, safely rejected and recovered |
+| Resources | CPU/throttling, RSS plus cgroup/page-cache/reclaim, memory peak, event-loop delay, in-flight/queued work, buffer bytes, Kafka/projector/Redis lag and disk delta. No OOM/restart/unbounded growth; enough measured headroom for the declared burst |
+| Resilience | Bounded slow-reader/reconnect/failover behavior with preserved cursor/generation; N-1 result and recovery time stated separately; no weakened quality gate to stay green |
+| Safety | No order/broker/signal/sizing/account mutation; test namespaces isolated; normal telemetry/cache writes identified; no destructive reset |
+| Scope | Every unchanged endpoint has an inherited evidence reference or is explicitly unmeasured/excluded. New latency coverage is limited to this workload, not a recertification of all products |
+
+Capacity is certified only for the tested workload and achieved count. Passing
+20 but failing 50 is not a 50-consumer PASS; report the bottleneck and remaining
+target within this same phase. Owner-approved product exclusion changes the
+published scope, not the historical result. No fixed promise of zero future bugs
+or mainnet-order certification is made by a data serving test.
+
+**Release, rollback and cleanup:**
+
+- Publish the complete endpoint/capacity/limits/error report before requesting
+  release approval. Use a new patch tag after v2.1.0, never retag the existing
+  release. Feature -> remote `dev` CI -> approved `main` release; do not merge
+  ahead of approval or bypass required CI. Capture semantic source, image,
+  config/manifest and certificate provenance together. Docs-only merge changes
+  may inherit tested implementation by attestation; runtime-code changes require
+  affected checks, not an automatic full-C2 rerun solely for a new merge SHA.
+- Roll only the named changed Query/Stream and, if necessary, TS reader or the
+  narrowly repaired Rust role. Keep V1, other TS services, alpha and durable
+  storage untouched. Restore exact per-role image/config/cap on regression;
+  do not use a generic 'previous image' or reset state to force a green result.
+- Before cleanup record image/container/cache inventory, retention map and disk
+  usage. Remove exact disposable clients, test identity artifacts and test-only
+  images/cache created here when unreferenced. Keep active production artifacts,
+  the explicitly named rollback set, runtime state and bounded evidence. Never
+  broad-prune shared volumes/networks or unrelated development images.
+- After source integration, verify feature changes are represented in `dev`
+  before removing merged branches/worktrees. Report canonical checkout/branch/SHA,
+  stable release/tag, active image/config/service map, rollback set, remaining
+  active feature work and disk before/after. No phase-specific runtime directory
+  or image name becomes a new long-lived service identity.
+
+**Stop condition:** close after affected acceptance, approved release/provenance
+and scoped cleanup are complete. Do not continue into Trading System P18 or alpha
+refinement without the owner's next request.
+
+**Journal / work completed:** plan drafted only; no load/C2, release or cleanup.
+**Remaining:** frozen workload/budgets, affected acceptance, approved publication.
+**Technical-debt rule:** unresolved in-scope correctness/capacity defects block
+their exit. Real external limitations and explicitly accepted reduced scope must
+be named; do not conceal them by omitting a product from the denominator.
+
+### Plan-Only Change Receipt
+
+- Scope of this edit: this Unified Plan only, appending three pending phases;
+  no runtime/source/config change or execution approval implied.
+- Prepared on canonical `/home/bobby/data_layer`, existing feature
+  `feat/consumer-endpoint-benchmark` at base `cec7f7c`; no extra worktree.
+  User commit identity verified as `BobbyAxerol <vugioan11022002@gmail.com>`.
+- Baseline from the preceding investigation: published `v2.1.0` unchanged;
+  Query/Stream image `579d578e...dcb6aa6c`, runtime r135-b2/catalog 9/routing 22;
+  TS reader image `7d410919...3cba475`, SDK 2.0.3/revision 10. No new health
+  certification or runtime inventory is claimed by this documentation edit.
+- Documentation verification passed: structural check found exactly three
+  ordered pending phases, required status/goal/guide/journal fields, six focused
+  Phase-1 cases, and **17 valid local file/anchor links**. Reviewed the full
+  one-file diff; `git diff --check` passed. Runtime suites and certified C2 are
+  deliberately not rerun for a plan-only change. No build/test resource was
+  created, so there is nothing new to prune; active/rollback artifacts remain
+  untouched. No push, merge or release in this documentation task.
