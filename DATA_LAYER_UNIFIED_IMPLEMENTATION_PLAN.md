@@ -51701,6 +51701,21 @@ refinement without the owner's next request.
   traffic step is the previously failed replacement `load-5-r5` once, with
   five logical sessions for at most 90 seconds; later load stages, reader
   rollout and C2 are still blocked on that receipt.
+- 2026-09-22: built exactly one immutable Stream candidate from the source
+  repair, `qdl-v2-python:2.1.1-f288182@sha256:23e5088caeb4046e9e36ef4c2898103054cf65f310b63e9bb08fbcf58f7aabf0`,
+  with OCI revision `f288182b7d7a7aa9c20cd88292fd3ffc280a0c78`. It was tested
+  without network, writable source, runtime mounts or persistent container
+  state: its production imports passed and the two new initial-replay
+  regressions passed (`2/2`, `0.043s`) under UID/GID `10001`. The broader
+  source suite remains the recorded `60/60` result in the dependency-complete
+  audit image; the production reader image intentionally does not carry the
+  full test toolchain. The candidate is not deployed. The exact next runtime
+  decision is a bounded rolling recreate of only `stream_v2_active` and
+  `stream_v2_passive`, retaining their current mounts/TLS/config and the named
+  rollback image `qdl-v2-python:2.1.0-1c0844f@sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`.
+  No rollout, C2, later load stage, V1/Query/Rust/ingestor/projector/Kafka/
+  Redis/SQLite/Trading-System/alpha or order-path change is authorized by this
+  source receipt.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
