@@ -704,7 +704,10 @@ dependencies = [
 name = "qdl-contracts"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "prost",
+ "ring",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,112 @@
+{
+ "note": "warmup horizon is excluded: warm500 and warm5000 share a digest; stale_policy changes it.",
+ "schema": "qdl.kn.v220.golden.requirement-digest.v1",
+ "vectors": [
+  {
+   "digest": "0d1ec3040b5f976413dacb2b293bc825a30196251ef917fd05756d7a86ff01b8",
+   "name": "binance_usdm_btc_trade",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "ALPHA",
+    "feed": "TRADE",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+    "max_freshness_ms": 2000,
+    "recovery": "SNAPSHOT_AND_REPLAY",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "BLOCK"
+   }
+  },
+  {
+   "digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "name": "okx_swap_btc_trade",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "ALPHA",
+    "feed": "TRADE",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+    "max_freshness_ms": 2000,
+    "recovery": "SNAPSHOT_AND_REPLAY",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "BLOCK"
+   }
+  },
+  {
+   "digest": "474734cab1ed81b2794f2cddd97e98d30094e6e2c5f81806f442552aaa870084",
+   "name": "okx_swap_btc_bar_1m_warm500",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "ALPHA",
+    "feed": "BAR",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+    "interval": "1m",
+    "recovery": "SNAPSHOT_AND_REPLAY",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "BLOCK",
+    "warmup_limit": 500
+   }
+  },
+  {
+   "digest": "474734cab1ed81b2794f2cddd97e98d30094e6e2c5f81806f442552aaa870084",
+   "name": "okx_swap_btc_bar_1m_warm5000",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "ALPHA",
+    "feed": "BAR",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+    "interval": "1m",
+    "recovery": "SNAPSHOT_AND_REPLAY",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "BLOCK",
+    "warmup_limit": 5000
+   }
+  },
+  {
+   "digest": "a3cce35e7599ebcfafad50c6bae4308f04507af51ca05e3344dc59dcb5d2a835",
+   "name": "binance_usdm_btc_mark_execution",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "EXECUTION",
+    "event_recency_policy": "OBSERVE",
+    "feed": "MARK_INDEX_PRICE",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+    "max_freshness_ms": 3000,
+    "max_session_liveness_ms": 5000,
+    "recovery": "FRESH_SNAPSHOT",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "BLOCK"
+   }
+  },
+  {
+   "digest": "929d160b8adf3d0caaf3cb504f4558a6847f6b769553092309acd72963f56834",
+   "name": "binance_usdm_btc_trade_observe",
+   "requirement": {
+    "bar_revision_policy": "LATEST",
+    "consumer_grade": "ALPHA",
+    "feed": "TRADE",
+    "gap_policy": "BLOCK",
+    "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+    "max_freshness_ms": 2000,
+    "recovery": "SNAPSHOT_AND_REPLAY",
+    "require_final_bars": true,
+    "require_full_coverage": true,
+    "source_policy_id": "crypto_primary_v2",
+    "stale_policy": "OBSERVE"
+   }
+  }
+ ]
+}

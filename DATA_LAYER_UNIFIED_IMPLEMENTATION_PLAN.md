@@ -53424,6 +53424,47 @@ baseline/budget honesty. No executor self-approval.
     evidence reused unchanged; stream/replay/cursor, Query endpoints/latency
     and cache rebuild/boot recovery are re-proven; capacity 50+TS carried to
     KN-5 as never passed.
+- 2026-09-23: **K1.3 + K1-T01/T02 | shared contracts frozen, Python and Rust
+  agree byte for byte.** Spec `contracts/v2/kn-v220-contracts.md`; code
+  `qdl/replay/cursor_v3.py`, `qdl/projection/state_contract.py`,
+  `rust/qdl-contracts/src/cursor_v3.rs`, `rust/qdl-contracts/src/state_contract.rs`;
+  oracle `contracts/golden/kn_v220/{cursor_v3,requirement_digest,state_contract}.json`
+  (hand-specified outcomes; bytes produced once and reviewed; keys are marked
+  TEST-ONLY). Decisions frozen:
+  - cursor v3 = canonical JSON (byte-sorted keys, token charset that never
+    needs escaping, integers `0..2^63-1`) + HMAC-SHA256, base64url with
+    canonical trailing bits. Claims per invariant 29 plus source coordinate
+    (topic id, partition, last applied offset), plan epoch and route
+    generation. The current v2 token lacks environment, requirement digest,
+    schema major and policy/catalog revisions (`qdl/replay/handoff.py:87-96`).
+  - outcomes follow the SDK recovery contract: legacy v1/v2 tokens and every
+    generation/route/policy/catalog/schema-major mismatch or expiry are
+    EXPIRED (SDK resnapshots); malformed/forged/foreign-consumer/environment/
+    requirement are INVALID (SDK raises).
+  - requirement digest over delivery semantics only (warmup horizon excluded);
+    Rust derives it from the proto exactly as `requirement_from_proto`.
+  - logical product key `lpk1|env|VENUE|MARKET|uid|FEED|qualifier`; book
+    snapshot and delta are distinct products; source vs changelog
+    coordinates; latest-apply, append-only BAR revision (equal revision +
+    different content = CONFLICT) and cache read-state rules.
+  Tests: Python `tests.test_kn_v220_contracts` 12 OK (25 cursor cases, 6
+  digests, 11 BAR, 6 latest, 4 cache, 5+5 LPK), with
+  `test_phase1_contracts`, `test_phase92_bootstrap_cursor`,
+  `test_phasec40_live_handoff` 24 OK; Rust `cargo test -p qdl-contracts`
+  12 OK (9 new, plus the existing Python/Rust canonical golden-byte tests),
+  `cargo fmt --check` and `clippy -D warnings` clean, offline in
+  `qdl-rust-builder:r134-test` with the `qdl-cargo-home` registry cache.
+  Findings fixed before commit: Python accepted NaN/Infinity and padded or
+  non-canonical base64 that Rust rejects; both now refuse them identically.
+  **Finding for KN-5 (rollback):** the running v2 codec raises
+  `ValueError` for any unknown schema, which gRPC maps to INVALID_ARGUMENT, so
+  after a cutover a rollback would hand v3 tokens (and SDK-persisted v3
+  checkpoints) to the old stack and the SDK would raise instead of
+  resnapshotting. The old Stream/Query need a narrow fix (unknown/newer cursor
+  schema -> CursorExpired) deployed before the KN-5 cutover; recorded as a
+  KN-5 prerequisite, not changed now (no old-stack roll in KN-1).
+  Cargo: `base64` added to workspace dependencies; `qdl-contracts` gains
+  `base64`, `ring`, `serde_json` (all already locked; `Cargo.lock` +3 edges).
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

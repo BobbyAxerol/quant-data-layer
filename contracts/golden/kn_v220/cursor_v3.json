@@ -1,0 +1,534 @@
+{
+ "active_key_id": "kn1-test-k2",
+ "canonical": {
+  "body": "{\"catalog_revision\":9,\"consumer_id\":\"alpha.okx.paper.stable\",\"environment\":\"paper\",\"expires_at_ns\":1790182800123456789,\"issued_at_ns\":1790179200123456789,\"key_id\":\"kn1-test-k2\",\"partition_plan_epoch\":1,\"product_key\":\"lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|TRADE|-\",\"requirement_digest\":\"3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81\",\"route_generation\":\"kn-v220-r1\",\"schema\":\"qdl.handoff-cursor.v3\",\"schema_major\":2,\"snapshot_id\":\"3f1c9a0d5b7e2f4a8c6d1e0b9a7f5c3e1d2b4a6c8e0f1a3b5c7d9e1f2a4b6c8d\",\"source_offset\":9223372036854775806,\"source_partition\":3,\"source_policy_revision\":1,\"source_topic_id\":\"ljfjPYApRpWQd79McfTtZg\",\"stream\":\"md.canonical.v2\"}",
+  "claims": {
+   "catalog_revision": 9,
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expires_at_ns": 1790182800123456789,
+   "issued_at_ns": 1790179200123456789,
+   "key_id": "kn1-test-k2",
+   "partition_plan_epoch": 1,
+   "product_key": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|TRADE|-",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "route_generation": "kn-v220-r1",
+   "schema_major": 2,
+   "snapshot_id": "3f1c9a0d5b7e2f4a8c6d1e0b9a7f5c3e1d2b4a6c8e0f1a3b5c7d9e1f2a4b6c8d",
+   "source_offset": 9223372036854775806,
+   "source_partition": 3,
+   "source_policy_revision": 1,
+   "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+   "stream": "md.canonical.v2"
+  },
+  "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+ },
+ "cases": [
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "valid_u64_ns_precision",
+   "now_ns": 1790179500000000000,
+   "outcome": "OK",
+   "reason": null,
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "valid_rotated_verification_key",
+   "now_ns": 1790179500000000000,
+   "outcome": "OK",
+   "reason": null,
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMSIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.1wqaKihOd74726Sw0PO7Xy7kwDt8wkA6AspEiRpoC9o"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "tamper_body_resigned_not",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "SIGNATURE",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjEsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.binance.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "wrong_consumer",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "CONSUMER",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "live",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "wrong_environment",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "ENVIRONMENT",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "cross_venue_requirement",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "REQUIREMENT",
+   "requirement_digest": "0d1ec3040b5f976413dacb2b293bc825a30196251ef917fd05756d7a86ff01b8",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_source_policy_revision",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "SOURCE_POLICY",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjIsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.ATv8mbwS675h3x51dWwBCI_Hs12-lYPiaJ9cnZn2g_w"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_catalog_revision",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "CATALOG",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjoxMCwiY29uc3VtZXJfaWQiOiJhbHBoYS5va3gucGFwZXIuc3RhYmxlIiwiZW52aXJvbm1lbnQiOiJwYXBlciIsImV4cGlyZXNfYXRfbnMiOjE3OTAxODI4MDAxMjM0NTY3ODksImlzc3VlZF9hdF9ucyI6MTc5MDE3OTIwMDEyMzQ1Njc4OSwia2V5X2lkIjoia24xLXRlc3QtazIiLCJwYXJ0aXRpb25fcGxhbl9lcG9jaCI6MSwicHJvZHVjdF9rZXkiOiJscGsxfHBhcGVyfE9LWHxTV0FQfGZiMjYyMTRjLTdiOWItNTk2MS05NWIyLTU1MTU0NzU1YWYwZnxUUkFERXwtIiwicmVxdWlyZW1lbnRfZGlnZXN0IjoiMzcyMGViOTcyNDU1MWVhM2MyZWFlNzVmZDk1MWVjMmU4YzhhN2NlZGIwZmZiZDBjYTkwYmFlNDNiNjRhY2Y4MSIsInJvdXRlX2dlbmVyYXRpb24iOiJrbi12MjIwLXIxIiwic2NoZW1hIjoicWRsLmhhbmRvZmYtY3Vyc29yLnYzIiwic2NoZW1hX21ham9yIjoyLCJzbmFwc2hvdF9pZCI6IjNmMWM5YTBkNWI3ZTJmNGE4YzZkMWUwYjlhN2Y1YzNlMWQyYjRhNmM4ZTBmMWEzYjVjN2Q5ZTFmMmE0YjZjOGQiLCJzb3VyY2Vfb2Zmc2V0Ijo5MjIzMzcyMDM2ODU0Nzc1ODA2LCJzb3VyY2VfcGFydGl0aW9uIjozLCJzb3VyY2VfcG9saWN5X3JldmlzaW9uIjoxLCJzb3VyY2VfdG9waWNfaWQiOiJsamZqUFlBcFJwV1FkNzlNY2ZUdFpnIiwic3RyZWFtIjoibWQuY2Fub25pY2FsLnYyIn0.eIhWshG8W1EQCsvgX68gEXDwtqIgL6DkkMNhrZiRrGw"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_schema_major",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "SCHEMA_MAJOR",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjMsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.LoVZQheRPl9trM9qtmZD3K8qvu_53R5dzSh1_Ew8kDU"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_source_topic_id",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "TOPIC_GENERATION",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6Ik5FV1RPUElDSUR4eHh4eHh4eHh4eHgiLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.aYvQxJLO4jq1jyk-VwItTPuk1pY15qVLwaR10xztKHw"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_partition_plan_epoch",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "PARTITION_PLAN",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoyLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.8EA1c_9gbJDqRk_RCcV3p6nHB9oKnRiKaaBPAnLLoXE"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "mismatch_route_generation",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "ROUTE_GENERATION",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjIiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.CsqThBt1P8kIFMFpkf1JFePJh886S4gmEFyaEfstNes"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "expired_at_boundary",
+   "now_ns": 1790182800123456789,
+   "outcome": "EXPIRED",
+   "reason": "EXPIRED",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "legacy_v2_spool_token",
+   "now_ns": 1790179500000000000,
+   "outcome": "EXPIRED",
+   "reason": "LEGACY_SCHEMA",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJleHBpcmVzX2F0X25zIjo0NjExNjg2MDE4NDI3Mzg3OTA0LCJnZW5lcmF0aW9uX2lkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJpc3N1ZWRfYXRfbnMiOjEsImtleV9pZCI6InN0YWJsZS1rMSIsInBhcnRpdGlvbl9rZXkiOiJmYjI2MjE0Yy03YjliLTU5NjEtOTViMi01NTE1NDc1NWFmMGYvdHJhZGUvb2t4LXN3YXAiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjIiLCJzbmFwc2hvdF9pZCI6InMiLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIiLCJ3YXRlcm1hcmtfb2Zmc2V0Ijo0Mn0.x7EI4Tfg1N6Cdsk1Ja8M7j2aDl_HYIVlT_SX8nBtBfA"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "unknown_key",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "UNKNOWN_KEY",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rOSIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.n9p-uBYoJ4mwjZb4qqgV8esPQX5UmaFkPN1SGBVYX8Q"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "non_canonical_whitespace",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "NON_CANONICAL",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCAiY29uc3VtZXJfaWQiOiJhbHBoYS5va3gucGFwZXIuc3RhYmxlIiwiZW52aXJvbm1lbnQiOiJwYXBlciIsImV4cGlyZXNfYXRfbnMiOjE3OTAxODI4MDAxMjM0NTY3ODksImlzc3VlZF9hdF9ucyI6MTc5MDE3OTIwMDEyMzQ1Njc4OSwia2V5X2lkIjoia24xLXRlc3QtazIiLCJwYXJ0aXRpb25fcGxhbl9lcG9jaCI6MSwicHJvZHVjdF9rZXkiOiJscGsxfHBhcGVyfE9LWHxTV0FQfGZiMjYyMTRjLTdiOWItNTk2MS05NWIyLTU1MTU0NzU1YWYwZnxUUkFERXwtIiwicmVxdWlyZW1lbnRfZGlnZXN0IjoiMzcyMGViOTcyNDU1MWVhM2MyZWFlNzVmZDk1MWVjMmU4YzhhN2NlZGIwZmZiZDBjYTkwYmFlNDNiNjRhY2Y4MSIsInJvdXRlX2dlbmVyYXRpb24iOiJrbi12MjIwLXIxIiwic2NoZW1hIjoicWRsLmhhbmRvZmYtY3Vyc29yLnYzIiwic2NoZW1hX21ham9yIjoyLCJzbmFwc2hvdF9pZCI6IjNmMWM5YTBkNWI3ZTJmNGE4YzZkMWUwYjlhN2Y1YzNlMWQyYjRhNmM4ZTBmMWEzYjVjN2Q5ZTFmMmE0YjZjOGQiLCJzb3VyY2Vfb2Zmc2V0Ijo5MjIzMzcyMDM2ODU0Nzc1ODA2LCJzb3VyY2VfcGFydGl0aW9uIjozLCJzb3VyY2VfcG9saWN5X3JldmlzaW9uIjoxLCJzb3VyY2VfdG9waWNfaWQiOiJsamZqUFlBcFJwV1FkNzlNY2ZUdFpnIiwic3RyZWFtIjoibWQuY2Fub25pY2FsLnYyIn0.TICLz9XsBoKVrMH5tQ1-HLz6osUZN0-MZ7MeOltOVLw"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "float_number",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "FIELD_RANGE",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LjAsImNvbnN1bWVyX2lkIjoiYWxwaGEub2t4LnBhcGVyLnN0YWJsZSIsImVudmlyb25tZW50IjoicGFwZXIiLCJleHBpcmVzX2F0X25zIjoxNzkwMTgyODAwMTIzNDU2Nzg5LCJpc3N1ZWRfYXRfbnMiOjE3OTAxNzkyMDAxMjM0NTY3ODksImtleV9pZCI6ImtuMS10ZXN0LWsyIiwicGFydGl0aW9uX3BsYW5fZXBvY2giOjEsInByb2R1Y3Rfa2V5IjoibHBrMXxwYXBlcnxPS1h8U1dBUHxmYjI2MjE0Yy03YjliLTU5NjEtOTViMi01NTE1NDc1NWFmMGZ8VFJBREV8LSIsInJlcXVpcmVtZW50X2RpZ2VzdCI6IjM3MjBlYjk3MjQ1NTFlYTNjMmVhZTc1ZmQ5NTFlYzJlOGM4YTdjZWRiMGZmYmQwY2E5MGJhZTQzYjY0YWNmODEiLCJyb3V0ZV9nZW5lcmF0aW9uIjoia24tdjIyMC1yMSIsInNjaGVtYSI6InFkbC5oYW5kb2ZmLWN1cnNvci52MyIsInNjaGVtYV9tYWpvciI6Miwic25hcHNob3RfaWQiOiIzZjFjOWEwZDViN2UyZjRhOGM2ZDFlMGI5YTdmNWMzZTFkMmI0YTZjOGUwZjFhM2I1YzdkOWUxZjJhNGI2YzhkIiwic291cmNlX29mZnNldCI6OTIyMzM3MjAzNjg1NDc3NTgwNiwic291cmNlX3BhcnRpdGlvbiI6Mywic291cmNlX3BvbGljeV9yZXZpc2lvbiI6MSwic291cmNlX3RvcGljX2lkIjoibGpmalBZQXBScFdRZDc5TWNmVHRaZyIsInN0cmVhbSI6Im1kLmNhbm9uaWNhbC52MiJ9.gHOT4jjzAPP98IjOGC-YhCreYVkeLDtCBk0MLBusCb8"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "extra_field",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "FIELDS",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIiLCJ6ZXh0cmEiOiJ4In0.PoMXggEPZioS8S69rYQtacm-apb8X0XM2M7TFHp8iYM"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "charset_space",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "FIELD_CHARSET",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuIHYyMjAiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.f8-yMYcCGjTD1N7ULL7SxKQBnuARAsbrdIQe-eSmTc0"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "bad_encoding",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "ENCODING",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "not-a-token"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "nan_constant",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "ENCODING",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjpOYU4sImNvbnN1bWVyX2lkIjoiYWxwaGEub2t4LnBhcGVyLnN0YWJsZSIsImVudmlyb25tZW50IjoicGFwZXIiLCJleHBpcmVzX2F0X25zIjoxNzkwMTgyODAwMTIzNDU2Nzg5LCJpc3N1ZWRfYXRfbnMiOjE3OTAxNzkyMDAxMjM0NTY3ODksImtleV9pZCI6ImtuMS10ZXN0LWsyIiwicGFydGl0aW9uX3BsYW5fZXBvY2giOjEsInByb2R1Y3Rfa2V5IjoibHBrMXxwYXBlcnxPS1h8U1dBUHxmYjI2MjE0Yy03YjliLTU5NjEtOTViMi01NTE1NDc1NWFmMGZ8VFJBREV8LSIsInJlcXVpcmVtZW50X2RpZ2VzdCI6IjM3MjBlYjk3MjQ1NTFlYTNjMmVhZTc1ZmQ5NTFlYzJlOGM4YTdjZWRiMGZmYmQwY2E5MGJhZTQzYjY0YWNmODEiLCJyb3V0ZV9nZW5lcmF0aW9uIjoia24tdjIyMC1yMSIsInNjaGVtYSI6InFkbC5oYW5kb2ZmLWN1cnNvci52MyIsInNjaGVtYV9tYWpvciI6Miwic25hcHNob3RfaWQiOiIzZjFjOWEwZDViN2UyZjRhOGM2ZDFlMGI5YTdmNWMzZTFkMmI0YTZjOGUwZjFhM2I1YzdkOWUxZjJhNGI2YzhkIiwic291cmNlX29mZnNldCI6OTIyMzM3MjAzNjg1NDc3NTgwNiwic291cmNlX3BhcnRpdGlvbiI6Mywic291cmNlX3BvbGljeV9yZXZpc2lvbiI6MSwic291cmNlX3RvcGljX2lkIjoibGpmalBZQXBScFdRZDc5TWNmVHRaZyIsInN0cmVhbSI6Im1kLmNhbm9uaWNhbC52MiJ9.xwmz9ZZEf7flt9MSdlG9aH-ZIG9vIx5ajm0uL5LlFnI"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "bad_base64_length",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "ENCODING",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQA.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQQ"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "duplicate_key",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "NON_CANONICAL",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIiLCJjYXRhbG9nX3JldmlzaW9uIjo5fQ.dGvwsO-WIaR1XvOYpH5OFAY7CXzztE0zYnliVZk0Bms"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "non_canonical_base64_trailing_bits",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "ENCODING",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjMiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.caLT-xdbyBPbFObHZMmEYnWkup_fKtluUpeFWTvhVQR"
+  },
+  {
+   "consumer_id": "alpha.okx.paper.stable",
+   "environment": "paper",
+   "expectation": {
+    "catalog_revision": 9,
+    "environment": "paper",
+    "partition_plan_epoch": 1,
+    "route_generation": "kn-v220-r1",
+    "schema_major": 2,
+    "source_policy_revision": 1,
+    "source_topic_id": "ljfjPYApRpWQd79McfTtZg",
+    "stream": "md.canonical.v2"
+   },
+   "name": "unknown_schema",
+   "now_ns": 1790179500000000000,
+   "outcome": "INVALID",
+   "reason": "SCHEMA",
+   "requirement_digest": "3720eb9724551ea3c2eae75fd951ec2e8c8a7cedb0ffbd0ca90bae43b64acf81",
+   "token": "eyJjYXRhbG9nX3JldmlzaW9uIjo5LCJjb25zdW1lcl9pZCI6ImFscGhhLm9reC5wYXBlci5zdGFibGUiLCJlbnZpcm9ubWVudCI6InBhcGVyIiwiZXhwaXJlc19hdF9ucyI6MTc5MDE4MjgwMDEyMzQ1Njc4OSwiaXNzdWVkX2F0X25zIjoxNzkwMTc5MjAwMTIzNDU2Nzg5LCJrZXlfaWQiOiJrbjEtdGVzdC1rMiIsInBhcnRpdGlvbl9wbGFuX2Vwb2NoIjoxLCJwcm9kdWN0X2tleSI6ImxwazF8cGFwZXJ8T0tYfFNXQVB8ZmIyNjIxNGMtN2I5Yi01OTYxLTk1YjItNTUxNTQ3NTVhZjBmfFRSQURFfC0iLCJyZXF1aXJlbWVudF9kaWdlc3QiOiIzNzIwZWI5NzI0NTUxZWEzYzJlYWU3NWZkOTUxZWMyZThjOGE3Y2VkYjBmZmJkMGNhOTBiYWU0M2I2NGFjZjgxIiwicm91dGVfZ2VuZXJhdGlvbiI6ImtuLXYyMjAtcjEiLCJzY2hlbWEiOiJxZGwuaGFuZG9mZi1jdXJzb3IudjkiLCJzY2hlbWFfbWFqb3IiOjIsInNuYXBzaG90X2lkIjoiM2YxYzlhMGQ1YjdlMmY0YThjNmQxZTBiOWE3ZjVjM2UxZDJiNGE2YzhlMGYxYTNiNWM3ZDllMWYyYTRiNmM4ZCIsInNvdXJjZV9vZmZzZXQiOjkyMjMzNzIwMzY4NTQ3NzU4MDYsInNvdXJjZV9wYXJ0aXRpb24iOjMsInNvdXJjZV9wb2xpY3lfcmV2aXNpb24iOjEsInNvdXJjZV90b3BpY19pZCI6ImxqZmpQWUFwUnBXUWQ3OU1jZlR0WmciLCJzdHJlYW0iOiJtZC5jYW5vbmljYWwudjIifQ.-k_yiAEkd_PrBxyiQacehRROB_nzgNIPIR1X0aqg0-Q"
+  }
+ ],
+ "keys": {
+  "kn1-test-k1": "kn1-golden-TEST-ONLY-rotated-key-00002",
+  "kn1-test-k2": "kn1-golden-TEST-ONLY-key-not-prod-0001"
+ },
+ "provenance": "TEST-ONLY keys; never production secrets. Hand-specified outcomes, bytes produced by qdl/replay/cursor_v3.py.",
+ "schema": "qdl.kn.v220.golden.cursor-v3.v1"
+}
