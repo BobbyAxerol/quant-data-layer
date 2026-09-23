@@ -1,0 +1,32 @@
+[package]
+name = "qdl-stream-gateway"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Kafka-native V2 stream gateway (KN-1 vertical slice): authenticated Subscribe from committed canonical records."
+
+[[bin]]
+name = "qdl-stream-gateway"
+path = "src/main.rs"
+
+[dependencies]
+# `use_pem` is off: it pulls `time`, whose fixed releases need a newer toolchain
+# than the pinned 1.82. Keys are parsed from SPKI in `auth.rs`.
+jsonwebtoken = { version = "=9.3.1", default-features = false }
+prost.workspace = true
+qdl-contracts.workspace = true
+rdkafka.workspace = true
+redis.workspace = true
+ring.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-rustls = { version = "=0.26.4", default-features = false, features = ["logging", "ring", "tls12"] }
+tokio-stream = "=0.1.17"
+# No `tls` feature: it pulls the unmaintained `rustls-pemfile` (RUSTSEC-2025-0134);
+# mutual TLS is built in `tls.rs` with rustls + tokio-rustls.
+tonic = { version = "=0.12.3", default-features = false, features = ["transport", "codegen", "prost"] }
+
+[dev-dependencies]
+base64.workspace = true

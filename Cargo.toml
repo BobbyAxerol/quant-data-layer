@@ -5,6 +5,7 @@ members = [
     "rust/qdl-kafka",
     "rust/qdl-provider-envelope",
     "rust/qdl-realtime-core",
+    "rust/qdl-stream-gateway",
     "rust/qdl-venue-core",
 ]
 resolver = "2"

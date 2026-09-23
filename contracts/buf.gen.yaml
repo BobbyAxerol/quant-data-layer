@@ -7,6 +7,10 @@ plugins:
   - remote: buf.build/community/neoeinstein-prost:v0.5.0
     revision: 1
     out: ../generated/rust
+  - remote: buf.build/community/neoeinstein-tonic:v0.4.1
+    revision: 1
+    out: ../generated/rust
+    opt:
+      - no_include
 inputs:
   - directory: proto
-
