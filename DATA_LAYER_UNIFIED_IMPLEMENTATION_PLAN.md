@@ -52832,6 +52832,34 @@ refinement without the owner's next request.
   dip. The failures are typed and fail-closed; they are reported, not
   relabelled.
 
+- 2026-09-23: **Stage 35 (14/10/7/4, 63 streams, 35 req/s, 180 s) at 10:40Z:**
+  9 of 10 latency gates PASS (MARK_INDEX p99 200 / 336 ms, QUOTE OKX p99 139 ms,
+  TRADE / L2 / BAR_LATEST well inside), **offered 5,624, completed 5,622, missed
+  0**, 2 typed `DATA_STALE`; writer healthy this run (age max 1.5 s, append max
+  1.0 s); TS 59/60 in 3 of 19 samples. Failing: QUOTE Binance p99 **340 ms**
+  (target 250, n=1,079), and **start-up: 5 of 35 sessions failed** - 21
+  simultaneous 2,500/5,000-row warmups through the single-active local lane need
+  about 45 s, while the frozen retry policy (10 attempts, <= 4 s backoff) gives up
+  after about 25 s. That policy is not loosened after the fact; the storm is a
+  finding (a fleet cold start exceeds the one-large-warmup-per-replica lane).
+  **Final stage 50 at 10:39Z aborted after 37 s: `query_v2_1` was OOM-killed.**
+  Kernel: `Memory cgroup out of memory: Killed process 411833 (python) ...
+  anon-rss:516972kB`, cgroup `docker-f4537de2...` = `query_v2_1`, 10:39:39Z;
+  `unless-stopped` restarted it at 10:40:19Z, healthy since; `query_v2_2` never
+  restarted; TS stayed 60/60 in the four samples taken. The host monitor
+  stopped the load on the restart, as the contract requires. **Memory, measured:**
+  Query peaks in the host's ten-second samples were 398 / 371 MB at stage 20
+  **before** the GC-threshold change, 309-446 MB in later stage-20 runs and
+  460 / 473 MB at stage 35 - the warmup storm, not the GC change, drives it;
+  whether the higher thresholds add to the peak is within run-to-run noise and
+  not isolated.
+  **Packet (recorded before execution): Query memory 512 MiB -> 1 GiB**, the
+  contract's pre-declared selective ceiling, justified by the measured OOM. One
+  variable: same image `32581a38...`, CPU 1.50 unchanged, same environment /
+  mounts / networks by hash, serial `query_v2_1` then `query_v2_2`; rollback
+  512 MiB. Then the final stage 50 is rerun. Not touched: Stream, projectors,
+  Kafka, Redis, SQLite data, quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
