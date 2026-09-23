@@ -52303,6 +52303,55 @@ refinement without the owner's next request.
   `build-fifo/` context (21 MB) is removed with the rest of this slice's
   scoped cleanup.
 
+- 2026-09-23: **stability first - complete.** Beyond the Query FIFO and BAR
+  entries above, TS `1193b13` was deployed to `market_data_service` only (TS
+  journal, 2026-09-23 rollout result): r10 acceptance **startup 25.0 s, then
+  300.3 s at 60/60**, fallback 0, and the consumer's disconnect rate went from
+  about 90 a minute before the FIFO fix to **0 in the eight minutes after**.
+  The now-typed errors exposed 20 start-up `RATE_LIMITED` rejections, all in
+  two seconds, from the per-consumer local history-batch lane when 60 routes
+  warm at once; bounded and self-recovering, and a named load case for Phase 3.
+  All Data Layer roles: 17 healthy, 3 `rust_core` without a healthcheck (known,
+  B3); `kafka1`/`kafka2` restart counts are historic, not from this session.
+- 2026-09-23: **Phase-3 target planner, source slice.** `build_target_workload_plan`
+  in `qdl/certification/phase3_consumer_load.py` materializes the frozen
+  four-class profile: CANDLE streams final BAR 1m and polls QUOTE at 1/s;
+  REALTIME streams TRADE+QUOTE and polls MARK_INDEX at 1/s; GRID streams BAR
+  1m+QUOTE+BOOK_DELTA, takes a BOOK_SNAPSHOT at start-up and polls MARK_INDEX at
+  1/s; MULTI streams two QUOTEs of one venue, polls a two-item MARK_INDEX batch
+  at 1/s and FUNDING_RATE at 1/min (both manifests declare FUNDING_RATE for all
+  five symbols; OPEN_INTEREST exists only on OKX, so it is not used). The
+  offered load is an input: the plan refuses to exist when a class product is
+  missing or a sealed quota cannot carry the demand, and never lowers a rate
+  to fit. Venues are interleaved symbol by symbol; a first cut filled Binance
+  before OKX, which put all five stage-5 sessions on one identity, and was
+  corrected before commit. Against the **real** manifests and catalog it
+  produces, per identity (binance / okx):
+  | stage | mix | streams | hot req/s | rpm | streams |
+  | --- | --- | ---: | ---: | --- | --- |
+  | 5 | 2/1/1/1 | 9 | 5 | 181 / 120 | 5 / 4 |
+  | 20 | 8/6/4/2 | 36 | 20 | 601 / 601 | 18 / 18 |
+  | 35 | 14/10/7/4 | 63 | 35 | 1,082 / 1,022 | 33 / 30 |
+  | 50 | 20/15/10/5 | 90 | 50 | 1,502 / 1,503 | 45 / 45 |
+  **Quota A is set from this, not estimated:** the sealed limit is a
+  fixed-minute window shared by both Query replicas through Redis
+  (`RedisMinuteQuota` on `stable_redis`) with no burst smoothing, so warmups,
+  reconnects and the final 25 % burst fall in the same minute. With 1.5x
+  request and 1.2x stream headroom stage 50 needs 2,255 rpm / 54 streams per
+  identity; the packet seals **2,400 rpm / 60 streams** on each alpha identity.
+  An earlier "about 1,800 rpm" was an estimate without that headroom and is
+  superseded. **Stream gateway budget:** 90 alpha streams plus the TS's 40
+  (its 60 routes are 10 each of six feeds; MARK_INDEX and BOOK_SNAPSHOT are
+  polled) is 130, 156 with the contract's 20 % reserve, under
+  `QDL_STABLE_MAX_CONCURRENT_RPCS=200`; no gateway change is needed.
+  Tests: new `tests/test_phase3_target_workload.py` (11) pin the owner's own
+  numbers, coverage, the even 25/25 split, 2..5 products per session, the
+  MULTI and GRID shapes, refusal on a missing product, refusal of stage 20 on
+  today's quota, acceptance on 2,400/60, and that an unfit plan keeps its
+  offered rate. With the existing preflight planner tests: **17/17**, in the
+  active reader image, network-disabled, non-root, 512 MiB / 1 CPU. The
+  preflight planner and its driver path are unchanged.
+
 **Remaining:** perform the previously denied
 exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
 [target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);

@@ -413,3 +413,224 @@ def assert_required_instrument_coverage(
     missing = expected - frozenset(plan.covered_instruments)
     if missing:
         raise ValueError("load plan misses required instruments: " + repr(sorted(missing)))
+
+
+# ---------------------------------------------------------------------------
+# v2.1.1 frozen target workload
+#
+# The preflight planner above derives its request rate from ten percent of each
+# identity's sealed quota and opens at most one stream per session. That is a
+# safe mapping check, not the owner's target. The target below is the frozen
+# four-class profile of the v2.1.1 closure contract: the offered load is an
+# INPUT (declared streams and fixed request periods per class), and the plan
+# refuses to exist when a sealed identity quota cannot carry it, instead of
+# quietly lowering the rate to fit.
+# ---------------------------------------------------------------------------
+
+TARGET_STAGE_MIX: dict[int, tuple[int, int, int, int]] = {
+    # candle, realtime, grid, multi
+    5: (2, 1, 1, 1),
+    20: (8, 6, 4, 2),
+    35: (14, 10, 7, 4),
+    50: (20, 15, 10, 5),
+}
+TARGET_STAGE_SECONDS: dict[int, int] = {5: 90, 20: 120, 35: 180, 50: 300}
+TARGET_CLASSES = ("CANDLE", "REALTIME", "GRID", "MULTI")
+TARGET_HOT_PERIOD_SECONDS = 1.0
+TARGET_REFERENCE_PERIOD_SECONDS = 60.0
+# Sealed quota is a fixed-minute window shared by both Query replicas through
+# Redis, with no burst smoothing, so start-up warmups, reconnects and the final
+# 25% burst land in the same minute as steady traffic.
+TARGET_QUOTA_HEADROOM = 1.5
+TARGET_STREAM_HEADROOM = 1.2
+
+
+@dataclass(frozen=True, slots=True)
+class TargetPoll:
+    """One fixed-period read a logical alpha issues for the whole observation."""
+
+    products: tuple[AcceptanceProduct, ...]
+    period_seconds: float
+    operation: str
+
+    def __post_init__(self) -> None:
+        if not self.products or self.period_seconds <= 0:
+            raise ValueError("target poll is invalid")
+        if self.operation not in {"SNAPSHOT", "REFERENCE_BATCH"}:
+            raise ValueError("target poll operation is unknown")
+        if self.operation == "SNAPSHOT" and len(self.products) != 1:
+            raise ValueError("a snapshot poll reads exactly one product")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetAlphaSession:
+    ordinal: int
+    consumer_id: str
+    alpha_class: str
+    streams: tuple[AcceptanceProduct, ...]
+    polls: tuple[TargetPoll, ...]
+    startup_snapshots: tuple[AcceptanceProduct, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.alpha_class not in TARGET_CLASSES or self.ordinal < 1:
+            raise ValueError("target session class or ordinal is invalid")
+        if not self.streams or not self.polls:
+            raise ValueError("target session needs streams and polls")
+        products = (*self.streams, *(p for poll in self.polls for p in poll.products),
+                    *self.startup_snapshots)
+        if any(item.consumer_id != self.consumer_id for item in products):
+            raise ValueError("target session mixes consumer identities")
+        declared = {item.identity for item in products}
+        if not 2 <= len(declared) <= 6:
+            raise ValueError("target session must declare 2..5 products plus a startup snapshot")
+
+    @property
+    def requests_per_minute(self) -> float:
+        return sum(60.0 / poll.period_seconds for poll in self.polls)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetIdentityDemand:
+    consumer_id: str
+    sessions: int
+    required_requests_per_minute: int
+    required_streams: int
+    sealed_requests_per_minute: int
+    sealed_max_streams: int
+
+    @property
+    def quota_needed(self) -> int:
+        import math
+        return math.ceil(self.required_requests_per_minute * TARGET_QUOTA_HEADROOM)
+
+    @property
+    def streams_needed(self) -> int:
+        import math
+        return math.ceil(self.required_streams * TARGET_STREAM_HEADROOM)
+
+    @property
+    def fits(self) -> bool:
+        return (self.sealed_requests_per_minute >= self.quota_needed
+                and self.sealed_max_streams >= self.streams_needed)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetWorkloadPlan:
+    stage: int
+    sessions: tuple[TargetAlphaSession, ...]
+    demands: tuple[TargetIdentityDemand, ...]
+
+    @property
+    def stream_count(self) -> int:
+        return sum(len(item.streams) for item in self.sessions)
+
+    @property
+    def hot_requests_per_second(self) -> float:
+        return sum(1.0 / poll.period_seconds for s in self.sessions for poll in s.polls
+                   if poll.period_seconds <= TARGET_HOT_PERIOD_SECONDS)
+
+    @property
+    def class_counts(self) -> tuple[int, ...]:
+        counts = Counter(item.alpha_class for item in self.sessions)
+        return tuple(counts[name] for name in TARGET_CLASSES)
+
+    @property
+    def covered_instruments(self) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted({(p.venue, p.native_symbol) for s in self.sessions for p in s.streams}))
+
+
+def _one(products: Sequence[AcceptanceProduct], venue: str, symbol: str,
+         feed: str, interval: str | None = None) -> AcceptanceProduct:
+    found = [item for item in products
+             if item.venue == venue and item.native_symbol == symbol
+             and item.feed.value == feed and (interval is None or item.interval == interval)]
+    if len(found) != 1:
+        raise ValueError(f"target workload needs exactly one {feed}{'/' + interval if interval else ''} "
+                         f"for {venue} {symbol}; manifest declares {len(found)}")
+    return found[0]
+
+
+def build_target_workload_plan(
+    *,
+    stage: int,
+    manifests: Mapping[str, ConsumerManifest],
+    products_by_consumer: Mapping[str, Sequence[AcceptanceProduct]],
+    venue_identity: Mapping[str, str],
+    instruments: Mapping[str, Sequence[str]],
+    enforce_quota: bool = True,
+) -> TargetWorkloadPlan:
+    """Materialize the frozen four-class workload for one stage.
+
+    Sessions are assigned to venue/symbol pairs round-robin, so every stage of
+    at least ten single-instrument sessions covers all ten pairs. A MULTI
+    session takes two symbols of one venue because one alpha identity serves
+    one venue. Raises before any traffic when a class product is missing from
+    the identity's manifest or when a sealed quota cannot carry the demand with
+    the declared headroom.
+    """
+
+    if stage not in TARGET_STAGE_MIX:
+        raise ValueError(f"target stage must be one of {sorted(TARGET_STAGE_MIX)}")
+    venues = sorted(venue_identity)
+    # Interleave venues symbol by symbol so every stage, including five
+    # sessions, spreads over both venues and both identities rather than
+    # filling one venue first.
+    columns = [sorted(instruments[venue]) for venue in venues]
+    pairs = [(venue, column[row]) for row in range(max(map(len, columns)))
+             for venue, column in zip(venues, columns) if row < len(column)]
+    if not pairs:
+        raise ValueError("target workload has no instruments")
+    classes = [name for name, count in zip(TARGET_CLASSES, TARGET_STAGE_MIX[stage]) for _ in range(count)]
+    sessions: list[TargetAlphaSession] = []
+    for ordinal, alpha_class in enumerate(classes, start=1):
+        venue, symbol = pairs[(ordinal - 1) % len(pairs)]
+        consumer_id = venue_identity[venue]
+        values = products_by_consumer[consumer_id]
+        hot = lambda *items: TargetPoll(tuple(items), TARGET_HOT_PERIOD_SECONDS,
+                                        "REFERENCE_BATCH" if items[0].feed.value == "MARK_INDEX_PRICE" else "SNAPSHOT")
+        if alpha_class == "CANDLE":
+            streams = (_one(values, venue, symbol, "BAR", "1m"),)
+            polls = (hot(_one(values, venue, symbol, "QUOTE")),)
+            startup = ()
+        elif alpha_class == "REALTIME":
+            streams = (_one(values, venue, symbol, "TRADE"), _one(values, venue, symbol, "QUOTE"))
+            polls = (hot(_one(values, venue, symbol, "MARK_INDEX_PRICE")),)
+            startup = ()
+        elif alpha_class == "GRID":
+            streams = (_one(values, venue, symbol, "BAR", "1m"), _one(values, venue, symbol, "QUOTE"),
+                       _one(values, venue, symbol, "BOOK_DELTA"))
+            polls = (hot(_one(values, venue, symbol, "MARK_INDEX_PRICE")),)
+            startup = (_one(values, venue, symbol, "BOOK_SNAPSHOT"),)
+        else:
+            symbols = sorted(instruments[venue])
+            second = symbols[(symbols.index(symbol) + 1) % len(symbols)]
+            streams = (_one(values, venue, symbol, "QUOTE"), _one(values, venue, second, "QUOTE"))
+            polls = (
+                TargetPoll((_one(values, venue, symbol, "MARK_INDEX_PRICE"),
+                            _one(values, venue, second, "MARK_INDEX_PRICE")),
+                           TARGET_HOT_PERIOD_SECONDS, "REFERENCE_BATCH"),
+                TargetPoll((_one(values, venue, symbol, "FUNDING_RATE"),),
+                           TARGET_REFERENCE_PERIOD_SECONDS, "REFERENCE_BATCH"),
+            )
+            startup = ()
+        sessions.append(TargetAlphaSession(ordinal, consumer_id, alpha_class, streams, polls, startup))
+
+    demands = []
+    for consumer_id in sorted({item.consumer_id for item in sessions}):
+        mine = [item for item in sessions if item.consumer_id == consumer_id]
+        quotas = manifests[consumer_id].quotas
+        demand = TargetIdentityDemand(
+            consumer_id=consumer_id,
+            sessions=len(mine),
+            required_requests_per_minute=round(sum(item.requests_per_minute for item in mine)),
+            required_streams=sum(len(item.streams) for item in mine),
+            sealed_requests_per_minute=quotas.requests_per_minute,
+            sealed_max_streams=quotas.max_streams,
+        )
+        if enforce_quota and not demand.fits:
+            raise ValueError(
+                f"target stage {stage} does not fit sealed quota of {consumer_id}: needs "
+                f"{demand.quota_needed} rpm / {demand.streams_needed} streams with headroom, sealed "
+                f"{demand.sealed_requests_per_minute} rpm / {demand.sealed_max_streams} streams")
+        demands.append(demand)
+    return TargetWorkloadPlan(stage=stage, sessions=tuple(sessions), demands=tuple(demands))
