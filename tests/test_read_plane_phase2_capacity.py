@@ -138,6 +138,69 @@ class ReadLaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lane.stats()["pending"], 0)
         self.assertEqual(lane.stats()["pending_bytes"], 0)
 
+    async def _assert_withdrawn_head_does_not_block(self, reason, consumer_id):
+        lane = self.lane()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        tasks = []
+
+        async def block():
+            started.set()
+            await release.wait()
+
+        try:
+            tasks.append(asyncio.create_task(lane.run(
+                block, consumer_id=consumer_id, reserved_bytes=1024,
+            )))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            waiter = asyncio.create_task(lane.run(
+                lambda: asyncio.sleep(0), consumer_id=consumer_id,
+                reserved_bytes=1024, wait_timeout_ms=10 if reason == "timeout" else None,
+            ))
+            tasks.append(waiter)
+            await asyncio.sleep(0)
+            if reason == "timeout":
+                with self.assertRaises(ReadLaneRejected):
+                    await waiter
+            else:
+                waiter.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await waiter
+            release.set()
+            await tasks[0]
+            self.assertEqual(lane.stats()["pending"], 0)
+            for identity in (consumer_id, "next-alpha"):
+                result = await asyncio.wait_for(lane.run(
+                    lambda: asyncio.sleep(0, result="recovered"),
+                    consumer_id=identity, reserved_bytes=1024,
+                ), timeout=0.2)
+                self.assertEqual(result, "recovered")
+            self.assertEqual(lane.stats()["active"], 0)
+            self.assertEqual(lane.stats()["pending_bytes"], 0)
+            self.assertEqual(len(lane._waiting), 0)
+        finally:
+            release.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_cancelled_fifo_head_allows_next_reserved_request(self):
+        await self._assert_withdrawn_head_does_not_block(
+            "cancel", "trading-system.paper.stable",
+        )
+
+    async def test_timed_out_fifo_head_allows_next_reserved_request(self):
+        await self._assert_withdrawn_head_does_not_block(
+            "timeout", "trading-system.paper.stable",
+        )
+
+    async def test_cancelled_fifo_head_allows_next_alpha_request(self):
+        await self._assert_withdrawn_head_does_not_block("cancel", "alpha-a")
+
+    async def test_timed_out_fifo_head_allows_next_alpha_request(self):
+        await self._assert_withdrawn_head_does_not_block("timeout", "alpha-a")
+
     async def test_one_identity_borrows_idle_worker_then_yields_to_waiting_peer(self):
         lane = self.lane(
             max_pending_per_consumer=4,

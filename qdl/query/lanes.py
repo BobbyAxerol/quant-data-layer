@@ -164,6 +164,7 @@ class BoundedReadLane:
                 self._condition.notify_all()
             except BaseException:
                 if entry in self._waiting:
+                    self._waiting.remove(entry)
                     self._withdraw(entry)
                     self._condition.notify_all()
                 raise

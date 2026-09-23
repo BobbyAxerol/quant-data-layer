@@ -50703,7 +50703,7 @@ coherent tested slice; do not replace failed evidence with a later green sample.
 | Phase | Goal | Current state |
 | --- | --- | --- |
 | [1 - Correctness And Diagnostic Safety](#read-plane-capacity-phase-1) | Repair the unsafe gap diagnostic and trace/fix intermittent MARK/INDEX rejection | COMPLETE / BOUNDED_RUNTIME_PROOF |
-| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | COMPLETE / QUERY_R2_ACTIVE |
+| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | REOPENED / CANCELLATION_FIX_TESTED / ROLLOUT_PENDING |
 | [3 - Consumer Load Acceptance And Release](#read-plane-capacity-phase-3) | Prove the declared 20-50-consumer workload, certify affected behavior and release cleanly | IN_PROGRESS / LOAD_EXIT_NOT_PASSED |
 
 ### Governing Scope And Evidence Reuse
@@ -50993,7 +50993,7 @@ removed.
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity
 
-**Status: COMPLETE / QUERY_R2_ACTIVE / NO_RESOURCE_INCREASE.**
+**Status: REOPENED / CANCELLATION_FIX_TESTED / ROLLOUT_PENDING / NO_RESOURCE_INCREASE.**
 **Goal:** protect TS and frequent alpha reads from cold-read contention, then
 demonstrate useful capacity improvement before retaining any larger cap.
 **Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
@@ -51884,8 +51884,58 @@ refinement without the owner's next request.
   load retry was performed by this audit. Existing read-plane releases stay
   authoritative while this source slice awaits the exact data-plane repair.
 
-**Remaining:** run the exact fast matrix, then the escalating load/failure
-gates and one final 300-second no-order acceptance. Publication remains a
+- 2026-09-23: focused live audit found a separate Phase-2 admission defect:
+  three ten-item MARK/INDEX reads on Query 1 each returned ten SOURCE_UNAVAILABLE
+  items after 2012-2178ms, while the same three reads on Query 2 returned all
+  ten items in 74-86ms. This is not proof of an OKX/DOGE provider limitation.
+  Source inspection found that canceled/timed-out admission waiters release
+  accounting but remain in the FIFO list; the old test checks counters only.
+  Reproduce cancellation and timeout followed by a successful next request,
+  fix only waiter removal, and run the affected bounded-lane suite before
+  considering a Query-only rollout. No resource/SLA/provider policy changes.
+
+- 2026-09-23: the newly added FIFO regressions reproduced four failures on
+  unchanged source: cancellation and queue timeout, each for a reserved TS
+  identity and an ordinary alpha, left the next request blocked after the
+  active work finished. The one-line fix removes the entry under the existing
+  condition lock before releasing its count/byte reservation. The affected
+  admission, execution MARK/INDEX, Phase-3 planner and driver suite then passed
+  63 tests in 1.855s with no network and 512 MiB / 1 CPU. Existing success,
+  fairness, bounded-queue and data-quality behavior remains unchanged. Phase 2
+  is explicitly REOPENED until a Query-only rollout and read-back prove runtime
+  recovery; the historic 240/240 pass is retained, not treated as sustained
+  acceptance. The live split (Query 1 failing, Query 2 healthy) is consistent
+  with the reproduced replica-local FIFO poison; no live process internals
+  were altered to inspect it, so deployment read-back remains necessary.
+- 2026-09-23: committed BAR candidate source d65b94d was built into exactly one
+  non-deployed image qdl-v2-python:2.1.1-d65b94d, image ID
+  ba41b1f279d42998ecb6abf6cae32e55ef6d275e59c37498077b774edb7f01b4.
+  It overlays only the BAR recovery module and repair CLI on the existing
+  active 9039236e BAR image, preserving catalog 8/acquisition 17. Forty tests
+  passed in 18.385s against code embedded in that image (only tests mounted;
+  no network/runtime state). An earlier digest-only Dockerfile base syntax
+  caused a registry-resolution failure; it was corrected to a digest-verified
+  local base tag before the one successful build. The image is a retained
+  candidate, not deployed or certified, and does not contain the later Query
+  FIFO patch. No replacement Query image has been built by this audit.
+- 2026-09-23: cleanup removed only the audit build context
+  /tmp/qdl-bar-recovery-build-d65b94d (87,231 file bytes). Host used disk moved
+  135,206,965,248 -> 135,206,858,752 bytes, with 175,687,778,304 bytes free;
+  this is a concurrent host observation, not Docker reclaim attribution.
+  All disposable audit clients/tests were --rm and none remains. Inventory:
+  41 images / 21.4 GB, BuildKit 8.591 GB (2.44 GB reclaimable), including other
+  tasks; no broad prune was run. Retain active Query e4cf361b, Stream23e5088c,
+  BAR9039236e, their documented rollbacks, and the one undeployed BAR candidate.
+  Shared resources and unrelated builds are not owned by this audit. Runtime
+  reader restarts/OOM remain zero; no service/image/config was switched.
+  Only one source worktree exists, /home/bobby/data_layer on
+  feat/consumer-endpoint-benchmark. Stable tag v2.1.0 resolves to c1e32cb;
+  main/dev are the later merge e6955f3. No push/merge/tag was performed.
+
+**Remaining:** roll the tested Query FIFO fix, perform the previously denied
+exact three-open BAR repair and BAR-edge-only recovery rollout, verify both
+replicas and the repaired history, then run the exact fast matrix, escalating
+load/failure gates and one final 300-second no-order acceptance. Publication remains a
 separate owner-approved release action.
 **Technical-debt rule:** unresolved in-scope correctness/capacity defects block
 their exit. Real external limitations and explicitly accepted reduced scope must
