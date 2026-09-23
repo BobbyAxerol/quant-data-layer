@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 import logging
@@ -651,12 +652,26 @@ def install_stable_health(app, readiness, manifest) -> None:
 # cold window against a 9 ms median. 1 ms trades a little throughput for
 # bounded hot-read waits in this latency-first reader.
 QUERY_GIL_SWITCH_INTERVAL_SECONDS = 0.001
+# A 5,000-row warmup keeps its rows alive through the render, so the default
+# thresholds (700, 10, 10) ran ~526 collections per warmup including 3 full
+# sweeps of 75-217 ms, each holding the GIL (offline, one real partition,
+# 2026-09-23). (100_000, 50, 100) measured 2-3 collections, no full sweep,
+# at most 31 ms. Most objects are freed by reference counting either way.
+QUERY_GC_THRESHOLDS = (100_000, 50, 100)
 
 
 def configure_query_interpreter() -> None:
     """Process-wide interpreter settings for a Query reader."""
 
     sys.setswitchinterval(QUERY_GIL_SWITCH_INTERVAL_SECONDS)
+    gc.set_threshold(*QUERY_GC_THRESHOLDS)
+
+
+def freeze_query_startup_heap() -> None:
+    """Keep the start-up heap (catalog, manifests, identity) out of later sweeps."""
+
+    gc.collect()
+    gc.freeze()
 
 
 def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAPI:
@@ -714,6 +729,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         await asyncio.to_thread(spool.close)
         await asyncio.to_thread(identity.quota.close)
 
+    freeze_query_startup_heap()
     return app
 
 

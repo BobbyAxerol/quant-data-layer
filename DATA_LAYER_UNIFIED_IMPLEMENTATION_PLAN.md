@@ -52775,6 +52775,31 @@ refinement without the owner's next request.
   `025c4b15...`. Not touched: Stream, projectors, Kafka, Redis, SQLite data,
   quotas, TS, alpha.
 
+- 2026-09-23: **small-warmup lane rolled (`2.1.1-e0d9401`,
+  `sha256:afdb1926...`, Query x2 at 1.50, `ROLLED_HEALTHY`, TS 60/60; full suite
+  1,960 tests, the same five pre-existing errors).** Stage 20 rerun at 10:16Z:
+  **start-up clean** (0 failed sessions, 24 s, 50 bounded `RATE_LIMITED`
+  retries), every stream and final BAR delivered, **TS 60/60 in all fourteen
+  samples** (disconnects 1.1/min, background level), MARK_INDEX p95 175 / 179 ms
+  and p99 324 / 402 ms **PASS**, QUOTE p95 72 / 54 ms but p99 **267 / 479 ms**
+  (target 250), L2/TRADE probes p95 0.59-1.08 s. **53 of 57 slow reads sit in
+  the cold window** (10:17:1x-2x). Four typed `DATA_STALE` refusals (Binance
+  ETHUSDT QUOTE x3, DOGEUSDT QUOTE x1) are fail-closed freshness outcomes of the
+  kind TS logs without load - reported as failures, not reclassified.
+  **Garbage collection, measured rather than guessed:** on one real partition
+  copied `mode=ro` into a scratch spool, a 5,000-row warmup plus chunked render
+  ran **~526 collections including 3 full sweeps of 75-217 ms** (0.33-0.65 s of
+  GC, each holding the GIL) at the default thresholds; freezing the start-up heap
+  alone did not help (3-4 full sweeps); thresholds **(100_000, 50, 100)** cut it
+  to **2-3 collections, no full sweep, at most 31 ms**; both together 25 ms.
+  **Fix:** `configure_query_interpreter` also sets those thresholds and
+  `create_stable_query_app` ends with `freeze_query_startup_heap()`. Tests:
+  `tests/test_query_interpreter.py` (2); API and deployment suites pass.
+  **Packet (recorded before execution):** image from this commit on the `a231...`
+  base, Query x2 at 1.50 CPU / 512 MiB, serial and hash-asserting; rollback
+  `afdb1926...`. Not touched: Stream, projectors, Kafka, Redis, SQLite data,
+  quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
