@@ -52990,6 +52990,43 @@ refinement without the owner's next request.
   **Packet (recorded before execution):** image from this commit, Query x2
   only (1.50 CPU / 1 GiB), rollback `59f70779...`; Stream keeps `59f70779...`.
 
+- 2026-09-23: **cold duty cycle rolled (`2.1.1-b25797d`, `sha256:10779794...`,
+  Query x2; full suite 1,972 tests, the same five pre-existing errors).** The same
+  live probe (QUOTE at 20/s on `query_v2_1`, one 5,000-row warmup): during the
+  warmup **77 reads completed (was 13), p50 24 ms (was 156), p95 146 ms, max 715 ms
+  (was 1,440)**; the warmup took 5.3 s (was 4.1). **Stage 20 at 11:53Z: every gate
+  PASS except `ts:ready_60_every_sample`** - QUOTE p99 105 / 111 ms, MARK_INDEX p99
+  148 / 156 ms, TRADE p95 20 / 41 ms, L2 p95 74 / 94 ms, BAR_LATEST p95 23 / 24 ms,
+  0 errors, 0 missed, start-up 44 s with 17 bounded retries and no failure. TS was
+  59/60 in 4 of 16 samples: OKX DOGE QUOTE stale at 2.17 s against its 2 s bound
+  (quiet symbol, pipeline age up to 1.8 s) and a Binance ETHUSDT BOOK_DELTA
+  `SESSION_RESET` (venue session, recovered). A three-minute no-load baseline was
+  60/60 in all 18 samples, so the gate is right to count them; they are typed and
+  bounded, not relabelled.
+  **Stage 35 at 12:00Z: a market burst met the writer again.** `rust_core_2` went
+  to 353-708/s at 12:03:15-12:04:32Z (about 1,100-1,200/s combined), projector
+  `canonical_age` reached 21-46 s and `durable_append` 1-2.3 s per batch, TS
+  MARK_INDEX went `SOURCE_UNAVAILABLE` on up to six slices (TS down to 54/60),
+  and alpha MARK reads fell back to REST (p95 289-316 ms). Everything else held:
+  QUOTE p99 148-162 ms, TRADE / L2 / BAR PASS, offered 6,527, completed 6,522,
+  missed 0, start-up clean (54 s). The stream lease holder ran 0.81 CPU against
+  0.55-0.65 before: the alpha MARK reads the previous fix sent to its live view
+  are HTTP work on the same single process that writes and fans out.
+  **Fix: alpha reads served in-process by Query** (`qdl/reference/local_mark_index.py`).
+  The same `ExecutionMarkIndexLiveView`, endpoint handler and
+  `HttpExecutionMarkIndexReader` conversion run inside the Query replica over an
+  ASGI transport; before each read the instrument's latest canonical record is
+  offered from the replica's own spool (as `hydrate_from_spool` does). No network
+  hop, no stream-process load, no venue call; every identity, freshness and gap
+  gate unchanged; REST stays the alpha-only fallback. TS execution keeps the
+  stream gateway's view (pre-spool delivery and quiet-session evidence). Tests: 5
+  new (local reader reads the latest spooled record and follows a newer one; an
+  empty spool is typed not-ready; alpha and execution use their own readers); the
+  mark/index suite 31/31. **Read-only smoke on the real catalog and spool: all
+  ten MARK_INDEX bindings `OK` in 1.3-8.7 ms.**
+  **Packet (recorded before execution):** image from this commit, Query x2 only
+  (1.50 CPU / 1 GiB), rollback `10779794...`; Stream keeps `59f70779...`.
+
 **Remaining:** items (a)-(f) of the entry above, then the 50+TS final gate and
 the v2.1.1 publication and provenance steps of the
 [closure contract](#read-plane-v211-target-closure). Complete v2.1.1 remote CI/release,

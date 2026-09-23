@@ -1496,3 +1496,77 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             set(live.calls_by_policy),
             {("policy-a", 2_000, 2_000), ("policy-b", 1_500, 1_500)},
         )
+
+
+class LocalAlphaMarkIndexReaderTests(unittest.IsolatedAsyncioTestCase):
+    """Alpha reads served in-process from the Query replica's own spool.
+
+    v2.1.1 stage 35 (2026-09-23): serving alpha reads through the stream
+    gateway added HTTP work to the single writer process, and a market burst
+    then left it 46 s behind. The same view and endpoint now run in Query.
+    """
+
+    def setUp(self) -> None:
+        from qdl.reference.local_mark_index import SpoolRefreshingMarkIndexView
+        self.record = _record(venue="OKX", market="SWAP", native_symbol="BTC-USDT-SWAP", base="BTC")
+        self.binding = _binding(self.record)
+        test = self
+
+        class _Spool:
+            def __init__(self):
+                self.rows = []
+                self.calls = []
+
+            def read_tail(self, *, stream, partition_key, limit):
+                self.calls.append((stream, partition_key, limit))
+                return self.rows[-limit:]
+
+        self.spool = _Spool()
+        self.view = SpoolRefreshingMarkIndexView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        ).attach(spool=self.spool, canonical_stream=STREAM)
+        del test
+
+    def _request(self):
+        return ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE, mark_index_kind=MarkIndexKind.BOTH)
+
+    async def test_reads_the_latest_spooled_record_through_the_unchanged_endpoint(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        first = _envelope(self.binding, sequence=1, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, first, offset=10))
+        reader = reader_for_view(self.view)
+        result = await reader.fetch(self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual({field.name for field in result.observations[0].fields}, {"mark_price", "index_price"})
+        self.assertEqual(self.spool.calls[-1], (STREAM, self.binding.partition_key, 1))
+        newer = _envelope(self.binding, sequence=2, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, newer, offset=11))
+        await reader.fetch(self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        current = self.view._records[self.record.instrument_uid]
+        self.assertEqual(current.spool_watermark_offset, 11)
+
+    async def test_an_empty_spool_is_typed_not_ready(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        result = await reader_for_view(self.view).fetch(
+            self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        self.assertNotEqual(result.status, ReferenceStatus.OK)
+
+
+class AlphaReaderRoutingTests(ExecutionMarkIndexQueryRoutingTests):
+    async def test_alpha_uses_its_own_reader_and_execution_keeps_the_stream(self):
+        execution_reader, alpha_reader = _LiveReader(), _LiveReader()
+        service = V2QueryService(
+            **self.common, execution_mark_index_reader=execution_reader,
+            alpha_mark_index_reader=alpha_reader,
+        )
+        await service.reference_data_batch_async(
+            ReferenceBatchRequirement("execution-reader", (self._execution_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertEqual((execution_reader.calls, alpha_reader.calls), (1, 1))
+        self.assertEqual(self.fallback.calls, 0)

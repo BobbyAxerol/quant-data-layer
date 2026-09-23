@@ -1638,6 +1638,11 @@ class StableGrpcSnapshotLoader:
         )
 
 
+
+def build_local_alpha_mark_index_reader(*, catalog, spool):
+    from qdl.reference.local_mark_index import build_local_alpha_mark_index_reader as build
+    return build(catalog=catalog, spool=spool)
+
 def build_stable_query_stack(
     *,
     spool: SQLiteDurableSpool,
@@ -1711,6 +1716,12 @@ def build_stable_query_stack(
         small_local_warmup_lane=True,
         # A fleet cold start queues its large warmups instead of refusing them.
         queued_local_batch_lane=True,
+        # Alpha MARK/INDEX reads from this replica's own spool, in-process.
+        alpha_mark_index_reader=(
+            build_local_alpha_mark_index_reader(catalog=catalog, spool=spool)
+            if reference_batch is not None
+            else None
+        ),
     )
     issuer = StableConsumerCursorIssuer(
         handoff, catalog, ttl_seconds=cursor_ttl_seconds

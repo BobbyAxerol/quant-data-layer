@@ -420,6 +420,7 @@ class V2QueryService:
         execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
         small_local_warmup_lane: bool = False,
         queued_local_batch_lane: bool = False,
+        alpha_mark_index_reader: ExecutionMarkIndexReader | None = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -437,6 +438,8 @@ class V2QueryService:
         self.reference_batch = reference_batch
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
+        # Alpha current MARK/INDEX reads; falls back to the execution reader.
+        self.alpha_mark_index_reader = alpha_mark_index_reader
         # Opt-in: the stable runtime enables it; the default keeps every local
         # warmup in the single-active lane.
         self._small_local_warmup_lane = small_local_warmup_lane
@@ -1403,8 +1406,7 @@ class V2QueryService:
         purpose: AccessPurpose,
     ) -> bool:
         if (
-            self.execution_mark_index_reader is None
-            or requirement.max_freshness_ms is None
+            requirement.max_freshness_ms is None
             or request.product is not ReferenceProduct.MARK_INDEX_PRICE
             or request.is_history
         ):
@@ -1413,7 +1415,9 @@ class V2QueryService:
             purpose is AccessPurpose.INTERNAL_EXECUTION
             and requirement.consumer_grade is ConsumerGrade.EXECUTION
         ):
-            return True
+            return self.execution_mark_index_reader is not None
+        if self._alpha_mark_index_reader() is None:
+            return False
         # Alpha reads of the current MARK/INDEX use the same verified live view
         # of the ingested canonical record instead of a venue REST call. On
         # 2026-09-23 (v2.1.1 Phase-3 stage 50) the REST path put OKX alpha
@@ -1424,6 +1428,12 @@ class V2QueryService:
         return (
             purpose is AccessPurpose.INTERNAL_ALPHA
             and requirement.consumer_grade is ConsumerGrade.ALPHA
+        )
+
+    def _alpha_mark_index_reader(self) -> ExecutionMarkIndexReader | None:
+        return (
+            getattr(self, "alpha_mark_index_reader", None)
+            or self.execution_mark_index_reader
         )
 
     @staticmethod
@@ -1489,10 +1499,15 @@ class V2QueryService:
     ) -> ReferenceBatchResult:
         """Read an execution view without competing with provider history work."""
 
-        assert self.execution_mark_index_reader is not None
+        reader = (
+            self.execution_mark_index_reader
+            if requirement.consumer_grade is ConsumerGrade.EXECUTION
+            else self._alpha_mark_index_reader()
+        )
+        assert reader is not None
 
         async def fetch() -> ReferenceBatchResult:
-            return await self.execution_mark_index_reader.fetch(
+            return await reader.fetch(
                 request,
                 max_freshness_ms=requirement.max_freshness_ms or 0,
                 source_policy_id=requirement.source_policy_id,
