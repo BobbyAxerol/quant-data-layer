@@ -51716,6 +51716,20 @@ refinement without the owner's next request.
   No rollout, C2, later load stage, V1/Query/Rust/ingestor/projector/Kafka/
   Redis/SQLite/Trading-System/alpha or order-path change is authorized by this
   source receipt.
+- 2026-09-23: owner explicitly approved the bounded runtime packet for this
+  repair. It may recreate only `stream_v2_active` and `stream_v2_passive`, one
+  at a time, in compose project `qdl_v2_stable_candidate`, changing only their
+  image to `qdl-v2-python:2.1.1-f288182@sha256:23e5088caeb4046e9e36ef4c2898103054cf65f310b63e9bb08fbcf58f7aabf0`.
+  The existing bind runtime directory, `stable_state`, `stable_tls`, command,
+  networks, healthcheck and environment remain exactly as rendered by
+  `reader-candidate.compose.json`. The exact rollback for each role is the
+  current `qdl-v2-python:2.0.28-e4a7377@sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c`
+  with the same configuration. Query, V1, Rust, ingestors, bar edge,
+  projectors, Kafka, Redis, SQLite, Trading System, alpha and all order paths
+  are excluded. After both roles are healthy with no restart/OOM, this packet
+  authorizes exactly one replacement `load-5-r5` no-order run at five logical
+  sessions for at most ninety seconds; it does not authorize C2 or later load
+  stages.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
