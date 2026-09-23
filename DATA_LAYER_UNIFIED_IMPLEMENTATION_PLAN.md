@@ -50703,7 +50703,7 @@ coherent tested slice; do not replace failed evidence with a later green sample.
 | Phase | Goal | Current state |
 | --- | --- | --- |
 | [1 - Correctness And Diagnostic Safety](#read-plane-capacity-phase-1) | Repair the unsafe gap diagnostic and trace/fix intermittent MARK/INDEX rejection | COMPLETE / BOUNDED_RUNTIME_PROOF |
-| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | REOPENED / CANCELLATION_FIX_TESTED / ROLLOUT_PENDING |
+| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | REOPENED / CANCELLATION_FIX_ROLLED / CAPACITY_ALIGNMENT_PENDING |
 | [3 - Consumer Load Acceptance And Release](#read-plane-capacity-phase-3) | Prove the declared 20-50-consumer workload, certify affected behavior and release cleanly | IN_PROGRESS / LOAD_EXIT_NOT_PASSED |
 
 ### Governing Scope And Evidence Reuse
@@ -51176,7 +51176,7 @@ removed.
 <a id="read-plane-capacity-phase-2"></a>
 ### Phase 2 - Hot Read Optimization And Bounded Capacity
 
-**Status: REOPENED / CANCELLATION_FIX_TESTED / ROLLOUT_PENDING / NO_RESOURCE_INCREASE.**
+**Status: REOPENED / CANCELLATION_FIX_ROLLED / RUNTIME_READ_BACK_PASS / CAPACITY_ALIGNMENT_PENDING / NO_RESOURCE_INCREASE.**
 **Goal:** protect TS and frequent alpha reads from cold-read contention, then
 demonstrate useful capacity improvement before retaining any larger cap.
 **Guides:** architecture **17.7, 18, 25.8, 37.1-37.6**; TS **53.2** and current
@@ -52135,7 +52135,72 @@ refinement without the owner's next request.
   for this documentation slice. Canonical feature checkout and prior active/
   rollback images remain unchanged; published v2.1.0 remains the stable tag.
 
-**Remaining:** roll the tested Query FIFO fix, perform the previously denied
+- 2026-09-23: the Query FIFO-cancellation fix is rolled and proved on the
+  running readers. Before touching them, a read-only inventory showed the live
+  cost of the defect on the actual consumer: `market_data_service` logged
+  **2,546 `UNCLASSIFIED` failures and 2,551 disconnects in 30 minutes**, evenly
+  across all ten `MARK_INDEX_PRICE` products on both venues (about 90 per
+  minute), every one "reference batch is incomplete". A uniform failure over
+  Binance and OKX at once is not a venue; it is the replica-local wedge.
+  The before-rollout read, the same disposable real-TS-identity probe that
+  closed Phase 2 R2 (60 routes, two sweeps, each replica pinned), measured
+  **Query 1 100/120 with `MARK_INDEX` 0/20** (each call held 796-2,018 ms then
+  failed) against **Query 2 120/120 with `MARK_INDEX` 20/20**; zero fallback,
+  direct-provider or order action
+  (`phase2-ts-m3-20260923T053457Z`).
+  One Query candidate was built from `git archive 06b6cfe` on the retained
+  `a231...` reader base with the network disabled, exactly the R2 procedure:
+  `qdl-v2-python:2.1.1-06b6cfe@sha256:fdfc4df72d3dfc2f15c865a55902bb46f12cffd3b3bf24e5ca3184dbca919f9d`.
+  Its only runtime change against the active `43301d7` is the one-line waiter
+  removal in `qdl/query/lanes.py`; no consumer manifest, catalog, contract,
+  compose or dependency file differs, so it carries no manifest-revision risk.
+  Inside that artifact, network-disabled, read-only, non-root at `512 MiB /
+  1 CPU`, the affected admission / execution MARK-INDEX / Phase-3 planner and
+  driver suite passed **63/63 in 1.770 s**. The four new FIFO regressions were
+  then run against the **production** `43301d7` image and all four failed with
+  `TimeoutError` in `asyncio.wait_for` - the next request behind a cancelled or
+  timed-out head never admitted - while the file's other eleven tests passed,
+  which rules out an import mismatch. The defect is therefore shown present in
+  production and absent in the candidate, not only asserted.
+  The rollout reused the R2 script's logic unchanged (fourteen changed lines:
+  candidate, rollback, two overlays, packet and receipt names, docstring) and
+  the R2 reader-only compose, whose 57 environment values are all interpolated
+  from the live containers with none literal. `PREFLIGHT_OK` matched both
+  readers on `e4cf361b`, healthy, `512 MiB / 1 CPU`, read-only. It recreated
+  only `query_v2_1` then `query_v2_2`, receipt `ROLLED_HEALTHY`; compose's
+  orphan warning is the known reader-only-file notice and `--remove-orphans`
+  was not used. Rollback for both is `43301d7@sha256:e4cf361b...`.
+  After-rollout, same probe: **both replicas 120/120, `MARK_INDEX` 20/20 each**,
+  consumer-call-to-usable `MARK_INDEX` p50/p95 **14.9/23.2 ms** (Query 1) and
+  **13.2/30.3 ms** (Query 2), status `PASS`, zero failures, fallback,
+  direct-provider or order action (`phase2-ts-m3-20260923T054024Z`). The real
+  consumer agrees: its disconnects went from 67-98 per minute through 05:39 to
+  **1 per minute** from 05:40, and the three that remained in the following
+  four minutes are correctly typed `DATA_STALE` on QUOTE/BOOK_DELTA streams,
+  with **zero `MARK_INDEX` failures and zero `UNCLASSIFIED`**. Both of the
+  owner's Phase-1 read-back conditions - every replica returns all ten
+  MARK/INDEX products, and a cancelled or expired head cannot block a later
+  client - now hold on the running binary.
+- 2026-09-23: the Trading System half of the same incident is repaired at its
+  reader boundary only, TS commit `1193b13` on `fix/data-layer-r10-consumer-handoff`.
+  `execution_mark_index_from_reference` re-raised a failed one-item batch as a
+  codeless error; the item's own `SOURCE_UNAVAILABLE` is now kept as the
+  error's code and `retryable`. It is classification only and pinned so:
+  `RETAINED_VIEW_CODES` is `{DATA_STALE}`, so a non-stale item still
+  disconnects; backoff is a function of progress, not `retryable`; and slice
+  health sets `DISCONNECTED` unconditionally and only reports the two fields.
+  `DATA_STALE` is excluded from the new path so a stale item the stricter
+  lineage check rejected cannot reach the retained-view rule. Tests ran in the
+  running `market_data_service` image, `qdl-sdk 2.0.3`: **125/125**. Against
+  the original code the classification test fails and the three safety tests
+  pass, the intended split. The `p18-1d2e3ad` test image carries `qdl-sdk
+  2.0.1` and fails four unrelated reference-requirement tests on
+  `extra_forbidden`; identical with and without this change, so it is an
+  image mismatch, not a regression. **Not deployed**: taking effect needs a
+  `market_data_service` recreate with its own current image named, which is a
+  separate packet. The FIFO rollout alone already removed the storm.
+
+**Remaining:** perform the previously denied
 exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
 [target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);
 verify both replicas and repaired history; optimize and A/B selective caps if
