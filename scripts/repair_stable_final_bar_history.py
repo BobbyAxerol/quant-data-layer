@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binding", action="append", required=True)
     parser.add_argument("--rows", type=int, required=True)
+    parser.add_argument("--observed-ms", type=int, help="pin the provider history window to this UTC epoch millisecond")
+    parser.add_argument("--expected-open", action="append", default=[], help="optional exact missing open: binding_id=UTC_epoch_ms (repeatable)")
     parser.add_argument("--expected-missing", action="append", required=True)
     parser.add_argument("--wait-seconds", type=float, default=180.0)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
@@ -86,6 +88,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply and args.confirm != CONFIRM:
         raise SystemExit(f"--apply requires --confirm {CONFIRM}")
 
+    if args.observed_ms is not None and not 0 < args.observed_ms <= time.time_ns() // 1_000_000:
+        raise SystemExit("--observed-ms must be a positive past UTC epoch millisecond")
+    approved_opens: dict[str, set[int]] = {}
+    for value in args.expected_open:
+        binding, separator, timestamp = value.partition("=")
+        if not separator or binding not in bindings or not timestamp.isdigit() or int(timestamp) <= 0:
+            raise SystemExit("--expected-open must name a requested binding and positive UTC epoch millisecond")
+        opens = approved_opens.setdefault(binding, set())
+        if int(timestamp) in opens:
+            raise SystemExit("--expected-open may not repeat an open")
+        opens.add(int(timestamp))
+    if approved_opens and (set(approved_opens) != set(bindings) or any(len(approved_opens[key]) != expected[key] for key in bindings)):
+        raise SystemExit("--expected-open must match every binding and approved missing count")
+
     edge = (
         build_readonly_repair_probe_from_environment()
         if args.dry_run
@@ -96,7 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         plans = tuple(
-            edge.prepare_history_repair(binding_id, rows=args.rows)
+            edge.prepare_history_repair(
+                binding_id, rows=args.rows,
+                **({"observed_ms": args.observed_ms} if args.observed_ms is not None else {}),
+            )
             for binding_id in bindings
         )
         for plan in plans:
@@ -107,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
                     "stable BAR repair missing-row count differs from approved scope "
                     f"binding={plan.source.binding_id} expected={required} actual={actual}"
                 )
+            if approved_opens:
+                actual_opens = {edge._open_time_ms(plan.acquisition, item) for item in plan.missing_envelopes}
+                if actual_opens != approved_opens[plan.source.binding_id]:
+                    raise RuntimeError("stable BAR repair missing opens differ from approved scope")
         if not args.apply:
             print(json.dumps({
                 "schema": "qdl.stable-final-bar-history-repair.v1",

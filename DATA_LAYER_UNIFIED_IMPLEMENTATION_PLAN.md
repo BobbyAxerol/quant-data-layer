@@ -50691,9 +50691,10 @@ authorization, change manifests or perform a runtime rollout.
 <a id="read-plane-stability-capacity-plan-20260922"></a>
 ## Read-Plane Stability And Consumer Capacity - Three-Phase Plan (2026-09-22)
 
-**Status: PLAN_ONLY / AWAITING_PER_PHASE_OWNER_APPROVAL.** The owner authorizes
-writing this plan, not starting implementation, load generation, resource
-changes, rollout, cleanup of existing artifacts, push, merge or release.
+**Status: PHASES_1_2_COMPLETE / PHASE_3_REVIEW_AND_CLOSURE_IN_PROGRESS.**
+The owner has approved implementation of all three phases. The original
+plan-only receipt below remains historical; per-phase journals and named
+runtime packets record actual authorized changes and outstanding exits.
 Execute exactly the three phases below in order after their respective
 approvals. Do not create additional phases or expand into the unfinished
 Trading System upgrade. Update the journal inside each phase after each
@@ -50701,9 +50702,9 @@ coherent tested slice; do not replace failed evidence with a later green sample.
 
 | Phase | Goal | Current state |
 | --- | --- | --- |
-| [1 - Correctness And Diagnostic Safety](#read-plane-capacity-phase-1) | Repair the unsafe gap diagnostic and trace/fix intermittent MARK/INDEX rejection | PENDING_OWNER_APPROVAL |
-| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | PENDING_PHASE_1_AND_OWNER_APPROVAL |
-| [3 - Consumer Load Acceptance And Release](#read-plane-capacity-phase-3) | Prove the declared 20-50-consumer workload, certify affected behavior and release cleanly | PENDING_PHASE_2_AND_OWNER_APPROVAL |
+| [1 - Correctness And Diagnostic Safety](#read-plane-capacity-phase-1) | Repair the unsafe gap diagnostic and trace/fix intermittent MARK/INDEX rejection | COMPLETE / BOUNDED_RUNTIME_PROOF |
+| [2 - Hot Read Optimization And Bounded Capacity](#read-plane-capacity-phase-2) | Protect frequent reads and TS; optimize before increasing caps | COMPLETE / QUERY_R2_ACTIVE |
+| [3 - Consumer Load Acceptance And Release](#read-plane-capacity-phase-3) | Prove the declared 20-50-consumer workload, certify affected behavior and release cleanly | IN_PROGRESS / LOAD_EXIT_NOT_PASSED |
 
 ### Governing Scope And Evidence Reuse
 
@@ -50790,7 +50791,6 @@ Read this section and the linked guides before implementing each phase:
 
 <a id="read-plane-capacity-phase-1"></a>
 ### Phase 1 - Correctness And Diagnostic Safety
-
 
 **Status: COMPLETE / SOURCE_AND_RUNTIME_VALIDATED.**
 **Goal:** remove the reproducible diagnostic availability hazard and close the
@@ -51802,6 +51802,87 @@ refinement without the owner's next request.
   bounded action is an exact count-fenced publish of those three rows through
   the existing pipeline, followed by cache convergence and the failed
   replacement `load-5-r5`; it requires the explicit Kafka data-plane packet.
+
+- 2026-09-23: owner requested an independent review of all three phases and
+  completion of their remaining approved scope. Phase-1 diagnostic bounds and
+  authentic MARK/INDEX proof, and Phase-2 corrected finite admission with
+  240/240 TS reads, remain inherited evidence. Neither certifies 20-50 alpha
+  sessions. Phase 3 has not passed even its five-session observation, so no
+  new release/capacity claim is justified. Earlier driver failures include
+  package/PYTHONPATH/TLS setup, undeclared dataclass slots, coverage/budget
+  assumptions, and separating quota wait from actual endpoint latency.
+  The source audit now checks two unclosed boundaries before another runtime
+  attempt: native recovery must not forget a detected hole when it ages out
+  of its three-bar lookback, and the load driver must continuously drain open
+  streams during setup and preserve a pending read across quiet-channel
+  observation timeouts. Stream inter-arrival time is not call-to-usable
+  latency; it must be reported separately. Reproduce these behaviors with
+  deterministic tests, repair only those shared paths, then repeat affected
+  source checks. No new phase/topology, relaxed quality policy, or repeated
+  full certification is added. The earlier live three-row Kafka repair was
+  rejected by automatic approval review before execution; no record was
+  published. Keep its exact payload/rollback boundary visible and complete
+  unaffected source/evidence work first. Runtime gaps must be re-inventoried
+  read-only before any repair because a moving 240-row window is not a
+  timestamp-pinned approval. Publication remains conditional on actual load
+  and final consumer acceptance, not merely healthy processes.
+
+- 2026-09-23: independent audit reproduced two failures in the committed
+  `25ff16e` recovery before editing it (five native-recovery tests: two failed).
+  A hole could leave the three-open moving tail and be forgotten; a longer
+  interruption could also leave older missing opens behind a healthy suffix.
+  The repaired loop retains each detected exact window until durable coverage
+  closes it, then advances from the last verified open with the existing
+  bounded catch-up limit. Startup still checks only three opens; this is not
+  permission for a full historical re-bootstrap. Provider queries use the
+  pinned window cutoff; visibility delay starts after ACK, not before a slow
+  provider fetch. Cache-generation changes clear this local recovery state.
+  The CLI now supports `--observed-ms` and `--expected-open` so equal missing
+  counts at different timestamps cannot authorize a different repair.
+- 2026-09-23: the existing Phase-3 driver was corrected, without another test
+  framework. Opened streams continue being drained while other sessions open;
+  quiet polls preserve one pending SDK read and join it on shutdown; setup
+  events alone cannot satisfy the observed final-BAR gate. Stream interarrival,
+  source-to-usable age, host-receive-to-usable age and SDK validation time are
+  separate from request RTT. A deterministic 512-sample reservoir per route
+  bounds driver memory, with exact all-event counts and labelled sampling.
+  The required 2500/5000-row SDK warmups now overlap hot readers and streams
+  for both alpha venue manifests. The host samples Query/Stream/TS resources
+  every ten seconds and stops on OOM, unhealthy process, restart or deployment
+  drift. These are source gates, not a claim that real capacity has passed.
+  The affected offline matrix passed 123 tests in 25.948s (BAR bootstrap/
+  recovery, driver/planner, Phase-2 admission, scheduler, repair CLI and stream
+  SDK) at 512 MiB / 1 CPU; no skip, provider call or runtime mutation. Test
+  warnings are the intentional recovery fault fixtures. After-ACK visibility
+  timing then passed the focused 64-test follow-up in 20.070s before commit.
+- 2026-09-23: current read-only inventory at 04:36:51Z confirmed exactly the
+  known 00:44Z holes on OKX BNB/ETH/SOL; all seven other demanded crypto 1m
+  tails had zero gaps across 240 opens. A subsequent publisher-disabled real
+  provider probe PASS pinned `observed_ms=1790124421000` and exact missing
+  `open_ms=1790124240000` with only three provider rows per binding. All three
+  returned exactly one missing open, with zero data mutations and no Kafka
+  connection settings. These were PUBLIC OKX history reads, not authenticated
+  venue-account reads. The pending apply remains precisely those three opens
+  via the existing pipeline; previous automatic-review denial remains in force.
+  Current Query RSS is approximately 183/154 MiB of 512 MiB and Stream
+  381/115 MiB of 1 GiB, from a single observation, not a capacity benchmark.
+  No production service was recreated during this audit; load/C2 was not rerun.
+  Canonical main/dev remain e6955f3 (published v2.1.0), with one active feature
+  checkout and no extra worktree. The release still needs repaired runtime,
+  staged load and final acceptance, then the approved Git/CI/release procedure.
+
+- 2026-09-23: implementation-to-plan audit also limits the pending capacity
+  claim explicitly: this workload uses four registered identities at their
+  frozen 10% request budget, not fifty independently provisioned identities
+  and not fifty unrestricted tick-heavy alphas. Existing N-1 probe simulates
+  primary transport failure and validates the alternate Query; it does not
+  prove host/replica process-loss capacity. Real 5/20/35/50 results, required
+  warmup counts, continuous resource samples, actual TS 60-route health and
+  final 300-second acceptance remain exit evidence to collect. Kafka/Redis
+  backlog, cgroup throttling/peak and disk deltas must accompany that run;
+  a source-test PASS cannot stand in for them. No production mutation or
+  load retry was performed by this audit. Existing read-plane releases stay
+  authoritative while this source slice awaits the exact data-plane repair.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

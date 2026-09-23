@@ -9,6 +9,8 @@ import unittest
 from argparse import Namespace
 import json
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
+from unittest.mock import patch
 
 from qdl.certification.phase3_consumer_load import LogicalConsumerSession
 
@@ -345,6 +347,163 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertIsNone(result["source_event_age_ms"])
         self.assertIsNone(result["receive_age_ms"])
         self.assertEqual(result["quality_flags"], [])
+
+    def test_quiet_stream_poll_does_not_cancel_pending_read(self):
+        async def exercise():
+            stopped = asyncio.Event()
+            release = asyncio.Event()
+            cancelled = []
+
+            async def events():
+                try:
+                    await release.wait()
+                    yield "actual-event"
+                finally:
+                    cancelled.append(True)
+
+            stream = events()
+            reader = _MODULE._stream_events_until_stop(stream, stopped, poll_seconds=0.001)
+            waiting = asyncio.create_task(reader.__anext__())
+            await asyncio.sleep(0.015)
+            self.assertFalse(waiting.done())
+            self.assertFalse(cancelled)
+            release.set()
+            event, _, _ = await asyncio.wait_for(waiting, 1)
+            self.assertEqual(event, "actual-event")
+            stopped.set()
+            await reader.aclose()
+            await stream.aclose()
+        asyncio.run(exercise())
+
+    def test_quiet_stream_shutdown_joins_pending_read(self):
+        async def exercise():
+            stopped = asyncio.Event()
+            entered = asyncio.Event()
+            closed = asyncio.Event()
+
+            async def events():
+                try:
+                    entered.set()
+                    await asyncio.Event().wait()
+                    yield "unreachable"
+                finally:
+                    closed.set()
+
+            stream = events()
+            reader = _MODULE._stream_events_until_stop(stream, stopped, poll_seconds=0.001)
+            waiting = asyncio.create_task(reader.__anext__())
+            await entered.wait()
+            stopped.set()
+            with self.assertRaises(StopAsyncIteration):
+                await asyncio.wait_for(waiting, 1)
+            self.assertTrue(closed.is_set())
+        asyncio.run(exercise())
+
+    def test_stream_timeliness_is_not_reported_as_request_latency(self):
+        result = _MODULE._summarize_samples([{
+            "group": ("STREAM", "replicated", "OKX", "SOL-USDT-SWAP", "BAR", "1m"),
+            "validation_ms": 0.5,
+            "source_to_usable_ms": 123.0,
+            "host_receive_to_usable_ms": 45.0,
+            "interarrival_ms": 60_000.0,
+        }])[0]
+        self.assertEqual(result["usable_latency"]["n"], 0)
+        self.assertEqual(result["source_to_usable"]["p50_ms"], 123.0)
+        self.assertEqual(result["stream_interarrival"]["p50_ms"], 60_000.0)
+
+    def test_load_samples_remain_bounded_with_exact_population_counts(self):
+        samples = _MODULE._BoundedSamples(per_group=8)
+        group = ("STREAM", "replicated", "OKX", "SOL-USDT-SWAP", "TRADE", "")
+        for value in range(10_000):
+            samples.append({"group": group, "validation_ms": float(value)})
+        self.assertEqual(len(list(samples)), 8)
+        result = _MODULE._summarize_samples(samples)[0]
+        self.assertEqual(result["observed_samples"], 10_000)
+        self.assertEqual(result["sampling"], "bounded_reservoir")
+
+    def test_load_drains_early_stream_before_later_stream_finishes_opening(self):
+        from qdl_sdk.models import StreamEvent
+
+        async def exercise():
+            drained = asyncio.Event()
+            product = SimpleNamespace(consumer_id="test", venue="OKX", native_symbol="SOL-USDT-SWAP",
+                                      feed=SimpleNamespace(value="TRADE"), interval=None,
+                                      delivery=SimpleNamespace(value="DURABLE"), source_policy_id="fixture")
+            specs = [SimpleNamespace(name=name, consumer_id="test", product=product, slow=False, purpose="CONTINUITY")
+                     for name in ("early", "late")]
+            clients = []
+
+            class Session:
+                warmup = SimpleNamespace(data=[object()])
+                count = 0
+
+                def __init__(self, ordinal):
+                    self.ordinal = ordinal
+
+                async def __anext__(self):
+                    self.count += 1
+                    if self.ordinal == 1 and self.count == 1:
+                        await asyncio.wait_for(drained.wait(), 0.2)
+                    await asyncio.sleep(0.001)
+                    return StreamEvent(self.count, "fixture", SimpleNamespace(source_event_time_ns=1, received_at_ns=1))
+
+                def acknowledge(self, event):
+                    if self.ordinal == 0 and event.logical_offset >= 2:
+                        drained.set()
+
+            class Client:
+                def __init__(self, ordinal):
+                    self.session = Session(ordinal)
+                    self.closed = False
+
+                async def close(self):
+                    self.closed = True
+
+            def make_client(*args, **kwargs):
+                client = Client(len(clients))
+                clients.append(client)
+                return client
+
+            @asynccontextmanager
+            async def handoff(client, *args):
+                yield client.session
+
+            with patch.object(_MODULE, '_build_stream_specs', return_value=specs), \
+                 patch.object(_MODULE, '_make_client', side_effect=make_client), \
+                 patch.object(_MODULE, '_paced_warmup_then_stream', side_effect=handoff), \
+                 patch('qdl.certification.phase103_consumer_acceptance.sdk_requirement', return_value=object()), \
+                 patch('qdl.certification.phase103_consumer_acceptance.validate_product_view'), \
+                 patch('qdl_sdk.projection.market_data_view_from_stream', return_value=object()):
+                _, errors, counters, _ = await _MODULE._run_load(
+                    plan=SimpleNamespace(logical_sessions=(), identity_budgets=[SimpleNamespace(planned_streams=2, seconds_per_request=0.01)]),
+                    products_by_consumer={}, identities={'test': object()}, queries=[], stream_targets=[],
+                    pacers={'test': object()}, duration_seconds=0.01,
+                )
+            self.assertEqual(errors, [])
+            self.assertTrue(drained.is_set())
+            self.assertGreater(counters['stream_event:early'], 1)
+            self.assertTrue(all(client.closed for client in clients))
+        asyncio.run(exercise())
+
+    def test_runtime_guard_detects_restart_oom_and_deployment_drift(self):
+        initial = {'reader': {'id': 'one', 'image': 'fixed', 'running': True, 'oom': False, 'restarts': 0, 'health': 'healthy'}}
+        self.assertIsNone(_MODULE._runtime_fault(initial, initial))
+        for change in ({'oom': True}, {'running': False}, {'restarts': 1}, {'id': 'two'}, {'health': 'unhealthy'}):
+            with self.subTest(change=change):
+                self.assertIsNotNone(_MODULE._runtime_fault(initial, {'reader': {**initial['reader'], **change}}))
+
+    def test_cold_workload_requires_declared_large_history_on_both_venues(self):
+        def product(consumer, symbol, limit):
+            return SimpleNamespace(consumer_id=consumer, native_symbol=symbol, feed=SimpleNamespace(value='BAR'),
+                                   interval='1m', delivery=SimpleNamespace(value='DURABLE'),
+                                   requirement=SimpleNamespace(warmup_limit=limit))
+        binance = 'alpha.binance.paper.stable'
+        okx = 'alpha.okx.paper.stable'
+        products = {binance: [product(binance, 'BTCUSDT', 10000)], okx: [product(okx, 'BTC-USDT-SWAP', 10000)]}
+        self.assertEqual(len(_MODULE._cold_history_selection(products)), 2)
+        products[okx] = [product(okx, 'BTC-USDT-SWAP', 100)]
+        with self.assertRaisesRegex(ValueError, 'no declared 5000-row'):
+            _MODULE._cold_history_selection(products)
 
     def test_host_refuses_partial_identity_scope_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:

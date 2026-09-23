@@ -15,13 +15,14 @@ from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
+import random
 import resource
 import statistics
 import subprocess
@@ -299,6 +300,57 @@ def _docker_stats(containers: list[str]) -> list[dict[str, object]]:
     return values
 
 
+def _runtime_states(containers):
+    template = '{"name":{{json .Name}},"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"oom":{{json .State.OOMKilled}},"restarts":{{.RestartCount}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"none"{{end}}}'
+    result = subprocess.run(["docker", "inspect", "--format", template, *containers],
+                            capture_output=True, text=True, check=True, timeout=20)
+    return {value["name"].lstrip("/"): value for value in map(json.loads, result.stdout.splitlines())}
+
+
+def _runtime_fault(before, current):
+    for name, original in before.items():
+        now = current.get(name)
+        if now is None or not now["running"] or now["oom"] or now["health"] == "unhealthy":
+            return f"runtime unhealthy: {name}"
+        if now["id"] != original["id"] or now["image"] != original["image"] or now["restarts"] != original["restarts"]:
+            return f"runtime restart or deployment changed: {name}"
+    return None
+
+
+def _run_monitored_client(command, containers, *, timeout):
+    baseline = _runtime_states(containers)
+    fault = _runtime_fault(baseline, baseline)
+    if fault:
+        raise RuntimeError(fault)
+    telemetry = []
+    deadline = time.monotonic() + timeout
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                fault = "client deadline exceeded"
+                break
+            try:
+                stdout, stderr = process.communicate(timeout=min(10.0, remaining))
+                current = _runtime_states(containers)
+                fault = _runtime_fault(baseline, current)
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr), telemetry, fault
+            except subprocess.TimeoutExpired:
+                current = _runtime_states(containers)
+                fault = _runtime_fault(baseline, current)
+                telemetry.append({"at_ns": time.time_ns(), "states": current, "stats": _docker_stats(containers)})
+                if fault:
+                    break
+        process.kill()
+        stdout, stderr = process.communicate(timeout=10)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr), telemetry, fault
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
+
+
 def _cleanup_exact_container(name: str) -> None:
     existing = subprocess.run(
         ["docker", "ps", "-aq", "--filter", f"name=^/{name}$"],
@@ -436,12 +488,14 @@ def run_host(args: argparse.Namespace) -> int:
     started = time.monotonic()
     process = None
     cleanup_error = None
+    runtime_fault = None
+    telemetry = []
+    query_names = list(profile["query_containers"])
+    compose_prefix = query_names[0].split("-query_v2_", 1)[0]
+    monitored = [*query_names, f"{compose_prefix}-stream_v2_active-1", f"{compose_prefix}-stream_v2_passive-1", "market_data_service"]
     try:
-        process = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=max(180, args.duration_seconds + 720),
+        process, telemetry, runtime_fault = _run_monitored_client(
+            command, monitored, timeout=max(180, args.duration_seconds + 720),
         )
     finally:
         try:
@@ -454,7 +508,7 @@ def run_host(args: argparse.Namespace) -> int:
     receipt = _parse_receipt(stdout)
     host = {
         "schema": "qdl.phase3.consumer-load-host.v1",
-        "status": "PASS" if process is not None and process.returncode == 0 and receipt and receipt.get("status") == "PASS" and cleanup_error is None else "FAIL",
+        "status": "PASS" if process is not None and process.returncode == 0 and receipt and receipt.get("status") == "PASS" and cleanup_error is None and runtime_fault is None else "FAIL",
         "image_id": image_id,
         "source_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip(),
         "tool_sha256": _sha256(Path(__file__).read_bytes()),
@@ -467,6 +521,9 @@ def run_host(args: argparse.Namespace) -> int:
         "query_containers": list(profile["query_containers"]),
         "query_stats_before": before,
         "query_stats_after": after,
+        "runtime_fault": runtime_fault,
+        "runtime_observation": telemetry,
+        "resource_sample_interval_seconds": 10,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "client_returncode": None if process is None else process.returncode,
         "client_stdout_sha256": _sha256(stdout.encode()),
@@ -693,11 +750,39 @@ def _product_group(product, operation: str, replica: str) -> tuple[str, ...]:
     )
 
 
+class _BoundedSamples:
+    """Deterministic reservoir per declared route; all-event counts stay exact."""
+
+    def __init__(self, per_group: int = 512):
+        self.per_group = per_group
+        self.seen = Counter()
+        self.groups = defaultdict(list)
+        self.random = random.Random(0)
+
+    def append(self, sample):
+        key = tuple(sample["group"])
+        self.seen[key] += 1
+        values = self.groups[key]
+        if len(values) < self.per_group:
+            values.append(sample)
+        else:
+            index = self.random.randrange(self.seen[key])
+            if index < self.per_group:
+                values[index] = sample
+
+    def __iter__(self):
+        for values in self.groups.values():
+            yield from values
+
+
 def _summarize_samples(samples: list[dict[str, object]]) -> list[dict[str, object]]:
     groups: dict[tuple[str, ...], dict[str, list[float] | list[int]]] = defaultdict(
-        lambda: {"usable": [], "queue": [], "bytes": []}
+        lambda: {"usable": [], "queue": [], "bytes": [], "validation_ms": [], "source_to_usable_ms": [], "host_receive_to_usable_ms": [], "interarrival_ms": []}
     )
     for sample in samples:
+        for metric in ("validation_ms", "source_to_usable_ms", "host_receive_to_usable_ms", "interarrival_ms"):
+            if isinstance(sample.get(metric), float):
+                groups[tuple(sample["group"])][metric].append(sample[metric])
         latency = sample.get("usable_ms")
         if isinstance(latency, float):
             groups[tuple(sample["group"])]["usable"].append(latency)
@@ -710,10 +795,16 @@ def _summarize_samples(samples: list[dict[str, object]]) -> list[dict[str, objec
     return [
         {
             "operation": key[0], "replica": key[1], "venue": key[2],
+            "observed_samples": samples.seen[key] if isinstance(samples, _BoundedSamples) else len(values["usable"]) or len(values["validation_ms"]),
+            "sampling": "bounded_reservoir" if isinstance(samples, _BoundedSamples) else "all_samples",
             "native_symbol": key[3], "feed": key[4], "interval": key[5] or None,
             "usable_latency": _percentiles(values["usable"]),
             "client_pacing_wait": _percentiles(values["queue"]),
             "response_payload": _byte_summary(values["bytes"]),
+            "stream_validation": _percentiles(values["validation_ms"]),
+            "source_to_usable": _percentiles(values["source_to_usable_ms"]),
+            "host_receive_to_usable": _percentiles(values["host_receive_to_usable_ms"]),
+            "stream_interarrival": _percentiles(values["interarrival_ms"]),
         }
         for key, values in sorted(groups.items())
     ]
@@ -1117,8 +1208,71 @@ async def _n_minus_one_probe(*, identity, product, secondary, stream_targets, pa
         await client.close()
 
 
+async def _stream_events_until_stop(session, stopped, *, poll_seconds: float = 5.0):
+    """Keep one pending read alive across quiet periods and join it on exit."""
+    pending = None
+    try:
+        while not stopped.is_set():
+            if pending is None:
+                pending = asyncio.create_task(session.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=poll_seconds)
+            if not done:
+                continue
+            event = pending.result()
+            pending = None
+            yield event, time.perf_counter(), time.time_ns()
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+async def _cold_history_probe(*, identity, product, queries, stream_targets, pacer, samples, counters):
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+
+    client = _make_client(identity, queries=queries, stream_targets=stream_targets, pacer=pacer, replicated=True)
+    try:
+        for rows in (2500, 5000):
+            requirement = sdk_requirement(product)
+            if requirement.warmup_limit < rows:
+                raise ValueError("declared BAR history cannot satisfy the approved cold workload")
+            requirement = replace(requirement, warmup_limit=rows)
+            token = pacer.begin_measurement()
+            started = time.perf_counter()
+            try:
+                response = await client.warmup(requirement)
+                if len(response.data) != rows:
+                    raise ValueError("cold history coverage differs from requested rows")
+                for item in response.data:
+                    validate_product_view(product, item, require_current_quality=False)
+                validate_product_view(product, response.data[-1], require_current_quality=True)
+                samples.append(_measurement_sample(
+                    product=product, operation=f"WARMUP_{rows}", replica="replicated",
+                    pacer=pacer, token=token, started=started, response=response,
+                ))
+                token = None
+                counters[f"warmup_rows:{product.venue}:{rows}"] += len(response.data)
+            finally:
+                if token is not None:
+                    pacer.finish_measurement(token)
+    finally:
+        await client.close()
+
+
+def _cold_history_selection(products_by_consumer):
+    selected = []
+    for consumer in ("alpha.binance.paper.stable", "alpha.okx.paper.stable"):
+        candidates = [p for p in products_by_consumer.get(consumer, ())
+                      if p.feed.value == "BAR" and p.interval == "1m"
+                      and p.delivery.value == "DURABLE" and p.requirement.warmup_limit >= 5000]
+        if not candidates:
+            raise ValueError(f"cold history workload has no declared 5000-row BAR for {consumer}")
+        selected.append(min(candidates, key=lambda p: p.native_symbol))
+    return selected
+
+
 async def _run_load(*, plan, products_by_consumer, identities, queries, stream_targets, pacers, duration_seconds: int):
-    samples: list[dict[str, object]] = []
+    samples = _BoundedSamples()
     errors: list[dict[str, object]] = []
     counters: Counter[str] = Counter()
     # Each identity has one supplemental stream inside the sealed stream budget.
@@ -1153,8 +1307,11 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
             async with _paced_warmup_then_stream(
                 client, pacers[spec.consumer_id], requirement
             ) as session:
-                while True:
-                    event = await asyncio.wait_for(session.__anext__(), timeout=60.0)
+                slowed = False
+                previous_delivery = None
+                async for event, delivered_at, delivered_ns in _stream_events_until_stop(
+                    session, stop_observation
+                ):
                     if isinstance(event, ControlEvent):
                         counters["stream_control_events"] += 1
                         continue
@@ -1162,47 +1319,44 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
                         raise ValueError("stream returned an unknown event type")
                     last_stream_event = event
                     view = market_data_view_from_stream(
-                        event,
-                        template=session.warmup.data[-1],
-                        requirement=requirement,
+                        event, template=session.warmup.data[-1], requirement=requirement
                     )
                     validate_product_view(spec.product, view, require_current_quality=True)
                     session.acknowledge(event)
+                    validated_at = time.perf_counter()
+                    validated_ns = delivered_ns + int((validated_at - delivered_at) * 1_000_000_000)
                     counters[f"stream_event:{spec.name}"] += 1
-                    samples.append({
+                    observing = start_observation.is_set()
+                    if observing:
+                        counters[f"observed_event:{spec.name}"] += 1
+                    # A blocking next-event wait includes venue cadence. Report
+                    # source/host age and local validation separately from RTT.
+                    sample = {
                         "group": _product_group(spec.product, "STREAM", "replicated"),
-                        "usable_ms": (time.perf_counter() - started) * 1000.0,
-                    })
-                    started = time.perf_counter()
-                    break
-                await startup.put((spec.name, None))
-                admitted = True
-                await start_observation.wait()
-                if spec.slow:
-                    await asyncio.sleep(5.0)
-                    counters["slow_reader_sessions"] += 1
-                while not stop_observation.is_set():
-                    if observation_deadline is None:
-                        raise RuntimeError("stream observation did not receive a deadline")
-                    remaining = observation_deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    try:
-                        event = await asyncio.wait_for(session.__anext__(), timeout=min(5.0, remaining))
-                    except asyncio.TimeoutError:
-                        continue
-                    if isinstance(event, ControlEvent):
-                        counters["stream_control_events"] += 1
-                        continue
-                    if not isinstance(event, StreamEvent):
-                        raise ValueError("stream returned an unknown event type")
-                    last_stream_event = event
-                    view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=requirement)
-                    validate_product_view(spec.product, view, require_current_quality=True)
-                    session.acknowledge(event)
-                    counters[f"stream_event:{spec.name}"] += 1
-                    samples.append({"group": _product_group(spec.product, "STREAM", "replicated"), "usable_ms": (time.perf_counter() - started) * 1000.0})
-                    started = time.perf_counter()
+                        "validation_ms": (validated_at - delivered_at) * 1000.0,
+                    }
+                    for field, timestamp in (
+                        ("source_to_usable_ms", event.event.source_event_time_ns),
+                        ("host_receive_to_usable_ms", event.event.received_at_ns),
+                    ):
+                        if timestamp > 0:
+                            sample[field] = max(0.0, (validated_ns - timestamp) / 1_000_000.0)
+                    if previous_delivery is not None:
+                        sample["interarrival_ms"] = (delivered_at - previous_delivery) * 1000.0
+                    previous_delivery = delivered_at
+                    samples.append(sample)
+                    if not admitted:
+                        counters[f"setup_first_usable_ms:{spec.name}"] = round(
+                            (validated_at - started) * 1000.0, 3
+                        )
+                        await startup.put((spec.name, None))
+                        admitted = True
+                    # Drain while other streams are opening; setup itself must
+                    # not turn an already live subscription into a slow reader.
+                    if observing and spec.slow and not slowed:
+                        slowed = True
+                        await asyncio.sleep(5.0)
+                        counters["slow_reader_sessions"] += 1
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -1260,7 +1414,15 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
             ))
             for consumer_id, products in sorted(products_by_consumer.items())
         ]
-        active_tasks = [*poll_tasks, *reconnect_tasks, *nminusone_tasks]
+        cold_tasks = [
+            asyncio.create_task(_cold_history_probe(
+                identity=identities[product.consumer_id], product=product, queries=queries,
+                stream_targets=stream_targets, pacer=pacers[product.consumer_id],
+                samples=samples, counters=counters,
+            ))
+            for product in (_cold_history_selection(products_by_consumer) if products_by_consumer else ())
+        ]
+        active_tasks = [*poll_tasks, *reconnect_tasks, *nminusone_tasks, *cold_tasks]
         while time.monotonic() < observation_deadline:
             await asyncio.sleep(min(1.0, observation_deadline - time.monotonic()))
             if errors:
@@ -1283,9 +1445,9 @@ async def _run_load(*, plan, products_by_consumer, identities, queries, stream_t
     finally:
         stop_observation.set()
         start_observation.set()
-        await asyncio.gather(*stream_tasks, return_exceptions=True)
+        await asyncio.gather(*active_tasks, *stream_tasks, return_exceptions=True)
     expected_bars = [spec.name for spec in stream_specs if spec.purpose == "FINAL_BAR"]
-    missing_bars = [name for name in expected_bars if counters[f"stream_event:{name}"] < 1]
+    missing_bars = [name for name in expected_bars if counters[f"observed_event:{name}"] < 1]
     if missing_bars:
         errors.append({"operation": "FINAL_BAR", "missing_streams": sorted(missing_bars)})
     supplemental = [

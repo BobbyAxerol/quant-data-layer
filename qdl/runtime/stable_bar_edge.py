@@ -309,6 +309,8 @@ class StableBinanceBarEdge:
         self._last_retry_log: dict[str, float] = {}
         self._native_recovery_next_at: dict[str, float] = {}
         self._native_gap_first_seen_at: dict[str, float] = {}
+        self._native_recovery_pending: dict[str, frozenset[int]] = {}
+        self._native_recovery_verified_open: dict[str, int] = {}
         self._native_recovery_visible_after: dict[str, float] = {}
         self._history_bootstrapped = False
         self._stopped = threading.Event()
@@ -945,6 +947,11 @@ class StableBinanceBarEdge:
         previous_cache_id = self.canonical_cache_id
         self.canonical_cache_id = observed_cache_id
         self._last_open_ms.clear()
+        self._native_recovery_pending.clear()
+        self._native_recovery_verified_open.clear()
+        self._native_gap_first_seen_at.clear()
+        self._native_recovery_visible_after.clear()
+        self._native_recovery_next_at = {key: 0.0 for key in self._native_recovery_next_at}
         self._retry_attempts.clear()
         self._next_retry_at.clear()
         self._last_retry_log.clear()
@@ -1283,9 +1290,20 @@ class StableBinanceBarEdge:
         if newest_open_ms is None:
             return frozenset()
         interval_ms = _bar_interval_ms(source.interval or "")
+        verified = self._native_recovery_verified_open.get(source.binding_id)
+        if verified is None:
+            rows = self.native_recovery_lookback_rows
+        else:
+            rows = max(self.native_recovery_lookback_rows, (newest_open_ms - verified) // interval_ms)
+        maximum = min(self.max_catchup_rows, durable_bar_history_capacity_rows(source.interval or ""))
+        if rows > maximum:
+            raise RuntimeError(
+                f"stable native BAR recovery exceeds bounded history binding={source.binding_id} "
+                f"required={rows} maximum={maximum}"
+            )
         opens = frozenset(
             newest_open_ms - index * interval_ms
-            for index in range(self.native_recovery_lookback_rows)
+            for index in range(rows)
         )
         if any(value <= 0 for value in opens):
             return frozenset()
@@ -1349,9 +1367,14 @@ class StableBinanceBarEdge:
 
         candidates: list[tuple[StableSourceBinding, StableAcquisitionBinding, frozenset[int]]] = []
         for source, acquisition in due:
-            expected_opens = self._native_expected_opens(
-                source, observed_ms=observed_ms
-            )
+            expected_opens = self._native_recovery_pending.get(source.binding_id)
+            if expected_opens is None:
+                try:
+                    expected_opens = self._native_expected_opens(source, observed_ms=observed_ms)
+                except Exception as error:
+                    self._schedule_retry(source.binding_id, now=now, error=error)
+                    next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+                    continue
             if not expected_opens:
                 next_at[source.binding_id] = self._next_native_recovery_check_at(
                     source, observed_ms=observed_ms, now=now
@@ -1359,14 +1382,21 @@ class StableBinanceBarEdge:
                 continue
             covered = self._durable_final_bar_opens(source, expected_opens)
             if covered == expected_opens:
+                self._native_recovery_pending.pop(source.binding_id, None)
+                self._native_recovery_verified_open[source.binding_id] = max(expected_opens)
                 self._native_gap_first_seen_at.pop(source.binding_id, None)
                 self._native_recovery_visible_after.pop(source.binding_id, None)
                 self._clear_retry(source.binding_id)
-                next_at[source.binding_id] = self._next_native_recovery_check_at(
-                    source, observed_ms=observed_ms, now=now
+                newest = self._expected_closed_open_ms(source, observed_ms=observed_ms)
+                next_at[source.binding_id] = (
+                    now + 0.01 if newest is not None and max(expected_opens) < newest
+                    else self._next_native_recovery_check_at(source, observed_ms=observed_ms, now=now)
                 )
                 continue
 
+            # Retain the original hole across provider failures and wall-clock
+            # advances; a healthy newer suffix does not repair missing history.
+            self._native_recovery_pending[source.binding_id] = expected_opens
             first_seen = self._native_gap_first_seen_at.setdefault(
                 source.binding_id, now
             )
@@ -1406,7 +1436,8 @@ class StableBinanceBarEdge:
                     source,
                     acquisition,
                     expected_opens=expected_opens,
-                    observed_ms=observed_ms,
+                    observed_ms=max(expected_opens) + _bar_interval_ms(source.interval or "")
+                    + max(1, int(self.settlement_delay_seconds * 1000) + 1),
                 ): (source, acquisition)
                 for source, acquisition, expected_opens in candidates
             }
@@ -1435,7 +1466,7 @@ class StableBinanceBarEdge:
                 # Kafka acknowledgement precedes canonical/projector visibility.
                 # Wait once before inspecting again so a healthy projector cannot
                 # induce duplicate provider recovery requests.
-                visible_at = now + self.native_recovery_visibility_seconds
+                visible_at = self.clock() + self.native_recovery_visibility_seconds
                 self._native_recovery_visible_after[source.binding_id] = visible_at
                 next_at[source.binding_id] = visible_at
                 logger.warning(

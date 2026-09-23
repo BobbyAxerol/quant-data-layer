@@ -614,6 +614,68 @@ class StableBarBootstrapTests(unittest.TestCase):
             finally:
                 spool.close()
 
+    def test_native_recovery_keeps_detected_hole_after_three_bar_window_moves(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                self.batches.append(tuple(values))
+                return tuple(range(len(self.batches[-1])))
+
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _ = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                for value in (120_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 600.2
+                for value in (420_000, 480_000, 540_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                with patch('qdl.runtime.stable_bar_edge.fetch_okx_history',
+                           new_callable=AsyncMock,
+                           return_value=self._okx_history_envelopes(120_000, 180_000, 240_000)):
+                    self.assertEqual(edge.run_native_recovery_cycle(), 1)
+                self.assertEqual(json.loads(publisher.batches[0][0].raw_frame_bytes)['data'][0][0], '180000')
+            finally:
+                spool.close()
+
+    def test_native_recovery_catches_outage_longer_than_lookback(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                self.batches.append(tuple(values))
+                return tuple(range(len(self.batches[-1])))
+
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _ = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                for value in (120_000, 180_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 600.2
+                for value in (420_000, 480_000, 540_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 603.3
+                with patch('qdl.runtime.stable_bar_edge.fetch_okx_history',
+                           new_callable=AsyncMock,
+                           return_value=self._okx_history_envelopes(300_000, 360_000, 420_000, 480_000, 540_000)):
+                    self.assertEqual(edge.run_native_recovery_cycle(), 2)
+                self.assertEqual([json.loads(v.raw_frame_bytes)['data'][0][0] for v in publisher.batches[0]], ['300000', '360000'])
+            finally:
+                spool.close()
+
     def test_cache_overlap_keeps_durable_final_and_publishes_only_missing_history(self):
         class Envelope:
             def __init__(self, open_ms: int):
