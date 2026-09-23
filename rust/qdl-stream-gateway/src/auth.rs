@@ -202,14 +202,39 @@ fn now_seconds() -> f64 {
         .unwrap_or_default()
 }
 
-fn claim_integer(claims: &Value, name: &str) -> Result<i64, String> {
+/// `int(claim)` for a JSON number. Python integers are unbounded, so the
+/// value is widened to i128 (a float is truncated, saturating beyond the i128
+/// range) and every later comparison or difference is exact or checked: an
+/// extreme `iat`/`exp` can never wrap into an acceptable lifetime (KN-1 F2).
+/// Strings and booleans, which `int()` would also coerce, are refused: the
+/// native side fails closed there.
+fn claim_integer(claims: &Value, name: &str) -> Result<i128, String> {
+    let invalid = || format!("{name} must be an integer");
     match &claims[name] {
-        Value::Number(number) => number
-            .as_i64()
-            .or_else(|| number.as_f64().map(|value| value.trunc() as i64))
-            .ok_or_else(|| format!("{name} must be an integer")),
-        _ => Err(format!("{name} must be an integer")),
+        Value::Number(number) => {
+            if let Some(value) = number.as_i64() {
+                return Ok(i128::from(value));
+            }
+            if let Some(value) = number.as_u64() {
+                return Ok(i128::from(value));
+            }
+            number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| value.trunc() as i128)
+                .ok_or_else(invalid)
+        }
+        _ => Err(invalid()),
     }
+}
+
+/// `expires_at <= issued_at or expires_at - issued_at > max_lifetime`, with
+/// the difference checked: an i128 overflow is a lifetime beyond any policy.
+fn lifetime_exceeds_policy(issued_at: i128, expires_at: i128, max_lifetime_seconds: i64) -> bool {
+    expires_at <= issued_at
+        || expires_at
+            .checked_sub(issued_at)
+            .is_none_or(|lifetime| lifetime > i128::from(max_lifetime_seconds))
 }
 
 /// `ServiceTokenVerifier.verify` + the PyJWT claim rules it relies on.
@@ -253,7 +278,7 @@ pub fn verify_token(config: &JwtConfig, token: &str, now: f64) -> Result<Princip
     if expires_at as f64 <= now {
         return Err("workload token verification failed".into());
     }
-    if expires_at <= issued_at || expires_at - issued_at > config.max_lifetime_seconds {
+    if lifetime_exceeds_policy(issued_at, expires_at, config.max_lifetime_seconds) {
         return Err("workload token lifetime exceeds policy".into());
     }
     let environment = claims["environment"]
@@ -575,6 +600,49 @@ mod tests {
             verify_token(&config, &token(&other, "k1", claims(now)), now as f64).is_err(),
             "wrong signing key"
         );
+    }
+
+    #[test]
+    fn extreme_issued_at_or_expiry_is_a_lifetime_refusal_never_an_overflow() {
+        let (encoding, decoding) = keypair();
+        let config = config(decoding);
+        let now = now_seconds().floor() as i64;
+        let lifetime = Err("workload token lifetime exceeds policy".to_owned());
+        let verify = |iat: Value, exp: Value| {
+            let mut value = claims(now);
+            value["iat"] = iat;
+            value["exp"] = exp;
+            verify_token(&config, &token(&encoding, "k1", value), now as f64)
+                .map(|principal| principal.subject)
+        };
+        // exp - iat overflowed i64 and wrapped into an accepted lifetime.
+        assert_eq!(verify(i64::MIN.into(), (now + 100).into()), lifetime);
+        assert_eq!(
+            verify(serde_json::json!(-1e300), (now + 100).into()),
+            lifetime
+        );
+        assert_eq!(verify((-1_i64).into(), (now + 100).into()), lifetime);
+        // A far-future exp is a lifetime refusal too (int() is unbounded).
+        // A non-integer exp is refused one step earlier here: jsonwebtoken
+        // parses a required `exp` as u64. Python refuses the same token at
+        // the lifetime rule; both are an authentication failure.
+        assert_eq!(
+            verify(now.into(), serde_json::json!(1e300)),
+            Err("workload token verification failed".to_owned())
+        );
+        assert_eq!(verify(now.into(), u64::MAX.into()), lifetime);
+        assert_eq!(verify(i64::MIN.into(), u64::MAX.into()), lifetime);
+        // A float within policy truncates exactly like int().
+        assert!(verify(serde_json::json!(now as f64 + 0.9), (now + 300).into()).is_ok());
+    }
+
+    #[test]
+    fn lifetime_arithmetic_is_checked_at_the_i128_edges() {
+        assert!(lifetime_exceeds_policy(i128::MIN, i128::MAX, 900));
+        assert!(lifetime_exceeds_policy(i128::MAX, i128::MIN, 900));
+        assert!(lifetime_exceeds_policy(0, 901, 900));
+        assert!(!lifetime_exceeds_policy(0, 900, 900));
+        assert!(lifetime_exceeds_policy(5, 5, 900));
     }
 
     fn spki_pem(point: &[u8]) -> String {

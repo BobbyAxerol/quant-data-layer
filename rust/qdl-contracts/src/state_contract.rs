@@ -4,8 +4,56 @@
 //! read state. `contracts/golden/kn_v220/state_contract.json` is the shared
 //! oracle; the KN-3 projector implements these rules, it does not invent them.
 
+use serde_json::{Map, Value};
+
 pub const LPK_VERSION: &str = "lpk1";
 pub const MAX_OFFSET: u64 = i64::MAX as u64;
+const MAX_PARTITION: u64 = (1 << 31) - 1;
+
+/// Strict JSON decoding shared by the state records (KN-1 F4): exactly the
+/// named fields; integers are JSON integers (never `true`, never `1.0`),
+/// strings are strings. `qdl/projection/state_contract.py` refuses the same
+/// shapes.
+fn object<'a>(
+    value: &'a Value,
+    names: &[&str],
+    what: &str,
+) -> Result<&'a Map<String, Value>, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{what} must be an object"))?;
+    if object.len() != names.len() || names.iter().any(|name| !object.contains_key(*name)) {
+        return Err(format!("{what} fields are incomplete or unknown"));
+    }
+    Ok(object)
+}
+
+fn integer(
+    object: &Map<String, Value>,
+    name: &str,
+    maximum: u64,
+    what: &str,
+) -> Result<u64, String> {
+    object[name]
+        .as_u64()
+        .filter(|value| *value <= maximum)
+        .ok_or_else(|| format!("{what} field is invalid: {name}"))
+}
+
+fn text(object: &Map<String, Value>, name: &str, what: &str) -> Result<String, String> {
+    object[name]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{what} field is invalid: {name}"))
+}
+
+fn is_hex64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
 
 fn is_lpk_field(value: &str) -> bool {
     (1..=96).contains(&value.len())
@@ -118,6 +166,39 @@ pub struct ChangelogCoordinate {
     pub materializer_epoch: u64,
 }
 
+impl SourceCoordinate {
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        const WHAT: &str = "source coordinate";
+        let object = object(value, &["topic_id", "partition", "offset"], WHAT)?;
+        Ok(Self {
+            topic_id: text(object, "topic_id", WHAT)?,
+            partition: integer(object, "partition", MAX_PARTITION, WHAT)? as u32,
+            offset: integer(object, "offset", MAX_OFFSET, WHAT)?,
+        })
+    }
+}
+
+impl ChangelogCoordinate {
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        const WHAT: &str = "changelog coordinate";
+        let object = object(
+            value,
+            &["topic", "partition", "offset", "materializer_epoch"],
+            WHAT,
+        )?;
+        let materializer_epoch = integer(object, "materializer_epoch", MAX_OFFSET, WHAT)?;
+        if materializer_epoch < 1 {
+            return Err("changelog coordinate is out of range".into());
+        }
+        Ok(Self {
+            topic: text(object, "topic", WHAT)?,
+            partition: integer(object, "partition", MAX_PARTITION, WHAT)? as u32,
+            offset: integer(object, "offset", MAX_OFFSET, WHAT)?,
+            materializer_epoch,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyDecision {
     Apply,
@@ -169,6 +250,29 @@ pub struct BarState {
     pub source: SourceCoordinate,
 }
 
+impl BarState {
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        const WHAT: &str = "bar state";
+        let object = object(
+            value,
+            &["is_final", "revision", "content_sha256", "source"],
+            WHAT,
+        )?;
+        let content_sha256 = text(object, "content_sha256", WHAT)?;
+        if !is_hex64(&content_sha256) {
+            return Err("bar content hash must be lowercase SHA-256".into());
+        }
+        Ok(Self {
+            is_final: object["is_final"]
+                .as_bool()
+                .ok_or("bar state field is invalid: is_final")?,
+            revision: integer(object, "revision", u64::from(u32::MAX), WHAT)? as u32,
+            content_sha256,
+            source: SourceCoordinate::from_value(&object["source"])?,
+        })
+    }
+}
+
 /// A final bar is never replaced by an in-progress update; an equal revision
 /// with different content is a conflict, never last-write-wins.
 pub fn bar_revision_decision(current: Option<&BarState>, incoming: &BarState) -> ApplyDecision {
@@ -206,7 +310,6 @@ pub fn cache_read_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
 
     fn golden() -> Value {
         let path = format!(
@@ -217,20 +320,31 @@ mod tests {
     }
 
     fn coordinate(value: &Value) -> SourceCoordinate {
-        SourceCoordinate {
-            topic_id: value["topic_id"].as_str().expect("topic").to_owned(),
-            partition: value["partition"].as_u64().expect("partition") as u32,
-            offset: value["offset"].as_u64().expect("offset"),
-        }
+        SourceCoordinate::from_value(value).expect("coordinate")
     }
 
     fn bar(value: &Value) -> Option<BarState> {
-        (!value.is_null()).then(|| BarState {
-            is_final: value["is_final"].as_bool().expect("final"),
-            revision: value["revision"].as_u64().expect("revision") as u32,
-            content_sha256: value["content_sha256"].as_str().expect("hash").to_owned(),
-            source: coordinate(&value["source"]),
-        })
+        (!value.is_null()).then(|| BarState::from_value(value).expect("bar"))
+    }
+
+    #[test]
+    fn malformed_state_records_are_refused_like_python() {
+        let doc = golden();
+        let list = |name: &str| doc[name].as_array().expect(name).clone();
+        for value in list("source_coordinates_invalid") {
+            assert!(SourceCoordinate::from_value(&value).is_err(), "{value}");
+        }
+        for value in list("changelog_coordinates_invalid") {
+            assert!(ChangelogCoordinate::from_value(&value).is_err(), "{value}");
+        }
+        for value in list("changelog_coordinates_valid") {
+            assert!(ChangelogCoordinate::from_value(&value).is_ok(), "{value}");
+        }
+        for value in list("bar_states_invalid") {
+            assert!(BarState::from_value(&value).is_err(), "{value}");
+        }
+        assert!(list("source_coordinates_invalid").len() >= 10);
+        assert!(list("bar_states_invalid").len() >= 10);
     }
 
     #[test]

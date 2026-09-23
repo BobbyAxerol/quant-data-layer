@@ -42,8 +42,9 @@ SCHEMA_V3 = "qdl.handoff-cursor.v3"
 LEGACY_SCHEMAS = frozenset({"qdl.handoff-cursor.v1", "qdl.handoff-cursor.v2"})
 REQUIREMENT_DIGEST_SCHEMA = "qdl.requirement-digest.v1"
 MAX_OFFSET = 2**63 - 1
-_TOKEN_CHARSET = re.compile(r"^[A-Za-z0-9._:/@|+=-]{1,256}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+# Always ``fullmatch``: ``re.match`` with ``$`` also accepts a trailing "\n".
+_TOKEN_CHARSET = re.compile(r"[A-Za-z0-9._:/@|+=-]{1,256}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 class CursorInvalid(ValueError):
@@ -88,9 +89,9 @@ class CursorV3Claims:
             if item.type == "int":
                 if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_OFFSET:
                     raise CursorInvalid("FIELD_RANGE", item.name)
-            elif not isinstance(value, str) or not _TOKEN_CHARSET.match(value):
+            elif not isinstance(value, str) or not _TOKEN_CHARSET.fullmatch(value):
                 raise CursorInvalid("FIELD_CHARSET", item.name)
-        if not _HEX64.match(self.requirement_digest):
+        if not _HEX64.fullmatch(self.requirement_digest):
             raise CursorInvalid("FIELD_CHARSET", "requirement_digest")
         if self.expires_at_ns <= self.issued_at_ns:
             raise CursorInvalid("FIELD_RANGE", "expires_at_ns")
@@ -126,7 +127,7 @@ def canonical_body(value: Mapping[str, Any]) -> bytes:
                 raise CursorInvalid("FIELD_RANGE", key)
             encoded = str(item)
         else:
-            if not _TOKEN_CHARSET.match(item):
+            if not _TOKEN_CHARSET.fullmatch(item):
                 raise CursorInvalid("FIELD_CHARSET", key)
             encoded = f'"{item}"'
         parts.append(f'"{key}":{encoded}')
@@ -203,7 +204,7 @@ class SignedCursorV3Codec:
         if any(len(secret) < 32 for secret in keys.values()):
             raise ValueError("cursor-signing secrets must contain at least 256 bits")
         for key_id in keys:
-            if not _TOKEN_CHARSET.match(key_id):
+            if not _TOKEN_CHARSET.fullmatch(key_id):
                 raise ValueError("cursor key id has characters outside the token charset")
         self._keys = dict(keys)
         self.active_key_id = active_key_id
@@ -237,7 +238,9 @@ class SignedCursorV3Codec:
         if not isinstance(raw, dict):
             raise CursorInvalid("ENCODING")
         schema = raw.get("schema")
-        if schema in LEGACY_SCHEMAS:
+        # An array or object schema is unhashable: test the type before the
+        # set lookup so it is refused as SCHEMA, never raised as TypeError.
+        if isinstance(schema, str) and schema in LEGACY_SCHEMAS:
             # An earlier spool-offset cursor can never be interpreted as a
             # Kafka coordinate. Its only safe outcome is a fresh snapshot; a
             # forged legacy body gains nothing beyond that authenticated reset.

@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-23); KN-2..KN-5 NOT STARTED.**
+**Program status: KN-1 REVIEW_CHANGES_REQUIRED (Astra, 2026-09-23; fixes in progress); KN-2..KN-5 NOT STARTED.**
 KN-1 review receipt: [KN-1 Astra receipt](#kn1-astra-receipt).
 **Target:** durable, correct, bounded Rust-first read/distribution plane serving
 the declared Binance/OKX products and 50 logical alpha clients plus TS demand;
@@ -53275,7 +53275,7 @@ Do not start the next phase merely because the executor's tests passed.
 
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
-| [KN-1](#kn-plan-phase-1) | IMPLEMENTED_PENDING_ASTRA_REVIEW | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
+| [KN-1](#kn-plan-phase-1) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
 | [KN-2](#kn-plan-phase-2) | PENDING_KN1_REVIEW | Claude Opus 5.5 | Astra | Full Stream/replay contract, bounded failure/reconnect proof |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
@@ -53315,7 +53315,7 @@ phase; do not create new subphase names to defer unfinished implementation.
 <a id="kn-plan-phase-1"></a>
 ### KN-1 - Contract, Baseline And Measured Rust Foundation
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-23). One owner decision open: the live slice ACL (see decisions).
+**Status:** REVIEW_CHANGES_REQUIRED (Astra review 2026-09-23: six in-scope findings, fixed inside KN-1 - see the journal).
 **Goal:** freeze the recovery/security/data/resource contracts and prove a small
 Rust-to-real-SDK path before expanding implementation; no prolonged redesign.
 **Guide index:** [18.8 work items and K1-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-1),
@@ -53780,6 +53780,72 @@ Astra requested review points and next allowed step:
   (per-subscription readers are not the KN-2 design); ACL incident handling.
   Next: KN-2 only after ASTRA_REVIEW_PASS and the owner ACL decision.
 ```
+
+- 2026-09-23: **Astra review of KN-1: REVIEW_CHANGES_REQUIRED (six findings,
+  all in KN-1 scope; fixed here, no new phase).** Recorded before the fixes:
+  - F1 [P1] Rust requirement validation is weaker than Python (execution
+    BLOCK/full coverage, OBSERVE needs a session SLA, BAR/metric interval,
+    warmup consistency). Fix: one native validator in `qdl-contracts`
+    mirroring `requirement_from_proto` + `WarmupSpecification` +
+    `DataRequirement.__post_init__` in the same order, used by the digest and
+    the gateway; shared negative golden vectors run by both languages.
+  - F2 [P1] JWT lifetime subtraction can overflow on extreme `iat`. Fix:
+    checked arithmetic with Python's result (reject as lifetime), regression
+    with i64-extreme and huge-float claims.
+  - F3 [P1] `kn_native_slice_probe.py run` exits 0 whatever the result. Fix:
+    explicit PASS predicate (records, decode/token errors, ordering, exact
+    resume, digest parity, REPLAYING+LIVE, every negative) and a non-zero exit;
+    tests for each failing condition.
+  - F4 [P2] Python cursor/state inputs less strict than Rust (`schema`
+    list/object -> TypeError; `$` accepts a trailing newline; coordinates
+    accept bool/float). Fix: full-match charsets, strict types, typed
+    errors; new malformed-input golden vectors for both languages.
+  - F5 [P2] The 275 B/row BAR figure omits canonical coordinates, quality and
+    generation/provenance. Fix: measure a contract-complete row (and the
+    lossless canonical alternative) on real bars and re-freeze the budget on
+    that, stating any remaining overhead; no default RAM increase.
+  - F6 [P2] The Redis sizing helper can `FLUSHALL` any target. Fix: no
+    FLUSHALL; refuse a non-empty target; a per-run namespace with exact key
+    cleanup; tests for the guard.
+  Re-run scope: unit/golden in both languages, the Redis sizing on a
+  disposable Redis, and the capture slice (F1/F2 touch auth/admission).
+- 2026-09-23: **KN-1 fix slice 1 - F1, F2, F4 (contracts and auth):
+  implemented, tested locally.**
+  - F1: `rust/qdl-contracts/src/requirement.rs` (`ValidatedRequirement`) is the
+    one native validator; `DeliveryRequirement::from_proto` (digest) and the
+    gateway `StreamRequirement::from_proto` both go through it, so an invalid
+    requirement is never digested or served. Oracle
+    `contracts/golden/kn_v220/requirement_validation.json`: 44 cases (37
+    refusals, 28 rule codes, every code exercised), outcomes produced by
+    `qdl.stream.grpc_service.requirement_from_proto`; Python and Rust both
+    replay it. It covers unknown enum wire numbers and Python `str.strip`
+    blanks (U+001C..U+001F). Same class as F2, found while fixing:
+    `delivery_decision` cast a client `max_freshness_ms` with `as i64`
+    (u64::MAX wrapped to "too old"); now compared in i128, with a regression.
+  - F2: JWT `iat`/`exp`/`nbf` widen to i128 (a float is truncated like
+    `int()`; non-finite is refused) and the lifetime difference is checked; an
+    overflow is a lifetime refusal. Regressions: `iat = i64::MIN`, `-1e300`,
+    `exp = u64::MAX`, i128 edges. Known fail-closed divergence, unchanged: a
+    non-integer `exp` is refused one step earlier by jsonwebtoken (Python
+    refuses the same token at the lifetime rule).
+  - F4: Python charsets are `fullmatch` (cursor token/hex, LPK field, BAR
+    hash); a non-string cursor `schema` is `SCHEMA`, never TypeError;
+    `SourceCoordinate`, `ChangelogCoordinate` and `BarState` refuse bool, float
+    and string values where an integer is due. Rust gained the equivalent
+    strict JSON decoders (`from_value`). New golden: 4 cursor cases (schema
+    array/object, trailing-newline consumer/digest), `claims_invalid` (4),
+    3 LPKs, 11 source, 8 changelog and 10 BAR malformed records; the 25
+    existing cursor vectors are byte-identical.
+  - Evidence: `tests.test_kn_v220_contracts` 18/18 OK. The same tests on the
+    pre-fix `cursor_v3.py` and `state_contract.py` fail 29 subtests
+    (`FAILED (failures=24, errors=5)`: TypeError on schema array/object, NON_CANONICAL instead of FIELD_CHARSET,
+    trailing-newline LPKs accepted, bool/float coordinates accepted). The Rust
+    regressions were not run against the pre-fix Rust code. Rust workspace:
+    `cargo fmt --check` clean, `clippy --all-targets -D warnings` clean,
+    214 passed / 0 failed / 2 ignored (the ignored ones are the isolated-Kafka
+    tests). No dependency change.
+  - Normative spec `contracts/v2/kn-v220-contracts.md` updated (full-match
+    rule, requirement validation, strict decoding).
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

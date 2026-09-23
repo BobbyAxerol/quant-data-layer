@@ -2,7 +2,7 @@
 
 Normative spec for the Kafka-native Rust-first read plane. Implementations:
 `qdl/replay/cursor_v3.py`, `qdl/projection/state_contract.py` (Python) and
-`rust/qdl-contracts/src/{cursor_v3,state_contract}.rs` (Rust). Oracle:
+`rust/qdl-contracts/src/{cursor_v3,state_contract,requirement}.rs` (Rust). Oracle:
 `contracts/golden/kn_v220/*.json`, read by `tests/test_kn_v220_contracts.py`
 and the Rust unit tests. Design context: guide section 18.4-18.5
 (`upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness`).
@@ -16,7 +16,9 @@ object: keys sorted by byte value, no whitespace, `,` and `:` separators;
 every value is either a string matching `[A-Za-z0-9._:/@|+=-]{1,256}` (never
 escaped) or a decimal unsigned integer `0..2^63-1` (never a float or bool).
 Verification uses the received body bytes; a validly signed body that does
-not re-encode byte-for-byte is `NON_CANONICAL`.
+not re-encode byte-for-byte is `NON_CANONICAL`. Every pattern in this document is a
+**full match** of the whole string (Python `fullmatch`, never `match` with
+`$`, which also accepts a trailing `\n`).
 
 **Claims** (all required, no others): `schema="qdl.handoff-cursor.v3"`,
 `key_id`, `environment`, `consumer_id`, `requirement_digest` (64 lowercase
@@ -33,7 +35,7 @@ languages):
 |---|---|---|
 | shape: one `.`, <= 4096 bytes, both parts canonical base64url, UTF-8 JSON object, no NaN/Infinity | `ENCODING` | INVALID |
 | `schema` is v1/v2 (spool offsets) | `LEGACY_SCHEMA` | **EXPIRED** |
-| `schema` is anything else but v3 | `SCHEMA` | INVALID |
+| `schema` is anything else but v3, including a non-string (array, object, number) | `SCHEMA` | INVALID |
 | `key_id` unknown | `UNKNOWN_KEY` | INVALID |
 | HMAC mismatch | `SIGNATURE` | INVALID |
 | field set not exact | `FIELDS` | INVALID |
@@ -57,7 +59,19 @@ Only the active key signs; any configured key verifies (rotation).
 `require_final_bars`, `stale_policy`, `gap_policy`, `recovery`,
 `bar_revision_policy`. Enum names drop the proto prefix; absent/zero optional
 values are empty; booleans are `true`/`false`. The warmup horizon is excluded.
-Rust derives it from the proto exactly as `requirement_from_proto` does.
+Rust derives it from the proto exactly as `requirement_from_proto` does,
+and only for a requirement that passed the validation below.
+
+**Requirement validation.** A requirement is validated before it is digested
+or served, in the Python order: proto enums (unknown wire number ->
+`ENUM_UNKNOWN`, then UNSPECIFIED for feed, grade, stale, gap, recovery,
+revision; `event_recency_policy` UNSPECIFIED means absent), warmup horizon and
+interval-source policy, `WarmupTimeRange`, `WarmupSpecification` bounds, then
+`DataRequirement.__post_init__` (blank = Python `str.strip`, which includes
+U+001C..U+001F). Each refusal has a stable rule code;
+`contracts/golden/kn_v220/requirement_validation.json` holds one case per rule
+plus accepted edges, produced by the Python server path. Refusal is
+`INVALID_ARGUMENT` with the Python message.
 
 ## 2. Coordinates
 
@@ -66,6 +80,11 @@ Rust derives it from the proto exactly as `requirement_from_proto` does.
   watermarks.
 - **Changelog coordinate** `(topic, partition, offset, materializer_epoch)`:
   where a derived state record sits. Delivery metadata, never a cursor.
+- Decoding is strict in both languages: exactly the named fields; integers
+  are JSON integers (never `true`, never `1.0`, never a string); partition
+  `0..2^31-1`, offsets `0..2^63-1`, `materializer_epoch >= 1`; topic names are
+  non-empty strings. A BAR state's `is_final` is a boolean, `revision` a
+  uint32 and `content_sha256` 64 lowercase hex.
 - Offsets compare only inside one `(topic_id, partition)`; across topic
   identities or partitions the result is `NOT_COMPARABLE` and the sink fence
   decides. Offset gaps from filtering or transaction markers are valid; source

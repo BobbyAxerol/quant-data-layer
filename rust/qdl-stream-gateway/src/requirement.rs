@@ -7,6 +7,7 @@ use crate::bundle::Manifest;
 use crate::generated::marketdata_v2::{event_envelope, EventEnvelope};
 use crate::generated::query_v2 as query;
 use qdl_contracts::cursor_v3::DeliveryRequirement;
+use qdl_contracts::requirement::{ValidatedRequirement, WarmupHorizon};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamRequirement {
@@ -16,25 +17,17 @@ pub struct StreamRequirement {
 }
 
 impl StreamRequirement {
+    /// Validated exactly as the Python server validates
+    /// (`qdl_contracts::requirement`); any refusal is INVALID_ARGUMENT.
     pub fn from_proto(value: &query::DataRequirement) -> Result<Self, String> {
-        let delivery = DeliveryRequirement::from_proto(value)?;
-        let (warmup_rows, time_range) = match value.warmup.as_ref().and_then(|w| w.horizon.as_ref())
-        {
-            Some(query::warmup_specification::Horizon::Rows(rows)) => (u64::from(*rows), false),
-            Some(query::warmup_specification::Horizon::TimeRange(_)) => (0, true),
-            None => (u64::from(value.warmup_limit), false),
+        let validated = ValidatedRequirement::from_proto(value).map_err(|error| error.message)?;
+        let (warmup_rows, time_range) = match validated.warmup.as_ref().map(|w| &w.horizon) {
+            Some(WarmupHorizon::Rows(rows)) => (u64::from(*rows), false),
+            Some(WarmupHorizon::TimeRange { .. }) => (0, true),
+            None => (u64::from(validated.warmup_limit), false),
         };
-        if value.warmup.is_some()
-            && value
-                .warmup
-                .as_ref()
-                .and_then(|w| w.horizon.as_ref())
-                .is_none()
-        {
-            return Err("warmup horizon is required".into());
-        }
         Ok(Self {
-            delivery,
+            delivery: validated.delivery,
             warmup_rows,
             time_range,
         })
@@ -157,9 +150,84 @@ pub fn delivery_decision(
         }
         _ => envelope.source_event_time_ns,
     };
-    if now_ns - observed_ns <= (max_freshness_ms as i64) * 1_000_000 {
+    // Python integers do not overflow: compare in i128, where neither a huge
+    // client bound nor an extreme event time can wrap.
+    if i128::from(now_ns) - i128::from(observed_ns) <= i128::from(max_freshness_ms) * 1_000_000 {
         Delivery::Deliver
     } else {
         Delivery::TooOld
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generated::marketdata_v2::Trade;
+
+    fn trade_requirement() -> query::DataRequirement {
+        query::DataRequirement {
+            instrument_uid: "fb26214c-7b9b-5961-95b2-55154755af0f".into(),
+            source_policy_id: "crypto_primary_v2".into(),
+            max_freshness_ms: 15_000,
+            require_full_coverage: true,
+            require_final_bars: true,
+            feed_type: query::FeedType::Trade as i32,
+            grade: query::ConsumerGrade::Alpha as i32,
+            stale_policy_type: query::StalePolicy::Block as i32,
+            gap_policy_type: query::GapPolicy::Block as i32,
+            recovery_policy: query::RecoveryPolicy::SnapshotAndReplay as i32,
+            revision_policy: query::BarRevisionPolicy::Latest as i32,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn subscribe_refuses_what_the_python_server_refuses() {
+        assert!(StreamRequirement::from_proto(&trade_requirement()).is_ok());
+        let partial_execution = query::DataRequirement {
+            grade: query::ConsumerGrade::Execution as i32,
+            require_full_coverage: false,
+            ..trade_requirement()
+        };
+        assert_eq!(
+            StreamRequirement::from_proto(&partial_execution),
+            Err("execution-grade requirements need full coverage".into())
+        );
+        let python_blank_uid = query::DataRequirement {
+            instrument_uid: "\u{1f}".into(),
+            ..trade_requirement()
+        };
+        assert_eq!(
+            StreamRequirement::from_proto(&python_blank_uid),
+            Err("instrument_uid is required".into())
+        );
+        let trade_with_interval = query::DataRequirement {
+            interval: "1m".into(),
+            ..trade_requirement()
+        };
+        assert!(StreamRequirement::from_proto(&trade_with_interval).is_err());
+    }
+
+    #[test]
+    fn a_huge_freshness_bound_never_wraps_into_too_old() {
+        let requirement = StreamRequirement::from_proto(&query::DataRequirement {
+            max_freshness_ms: u64::MAX,
+            ..trade_requirement()
+        })
+        .expect("valid");
+        let envelope = EventEnvelope {
+            source_event_time_ns: i64::MIN,
+            payload: Some(event_envelope::Payload::Trade(Trade::default())),
+            ..Default::default()
+        };
+        assert_eq!(
+            delivery_decision(&requirement, &envelope, i64::MAX),
+            Delivery::Deliver
+        );
+        let bounded = StreamRequirement::from_proto(&trade_requirement()).expect("valid");
+        assert_eq!(
+            delivery_decision(&bounded, &envelope, i64::MAX),
+            Delivery::TooOld
+        );
     }
 }

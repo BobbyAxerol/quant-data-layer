@@ -14,6 +14,7 @@ import unittest
 
 from qdl.projection.state_contract import (
     BarState,
+    ChangelogCoordinate,
     LogicalProductKey,
     SourceCoordinate,
     bar_revision_decision,
@@ -21,6 +22,7 @@ from qdl.projection.state_contract import (
     latest_apply_decision,
 )
 from qdl.query.contracts import DataRequirement
+from qdl.query.v2 import query_pb2
 from qdl.replay.cursor_v3 import (
     CursorInvalid,
     CursorV3Claims,
@@ -80,6 +82,30 @@ class CursorV3GoldenTests(unittest.TestCase):
         self.assertEqual(claims.source_offset, 9_223_372_036_854_775_806)
         self.assertIn(b'"source_offset":9223372036854775806', claims.body())
 
+    def test_malformed_claims_are_refused_with_the_shared_reason(self):
+        # F4: ``re.match`` with ``$`` accepted a trailing newline; claims are
+        # now full-matched, and a bool is never an integer.
+        self.assertGreaterEqual(len(self.doc["claims_invalid"]), 4)
+        for case in self.doc["claims_invalid"]:
+            with self.subTest(case["name"]):
+                with self.assertRaises(CursorInvalid) as raised:
+                    CursorV3Claims(**case["claims"])
+                self.assertEqual(raised.exception.reason, case["reason"])
+
+    def test_array_or_object_schema_is_invalid_never_a_type_error(self):
+        cases = {case["name"]: case for case in self.doc["cases"]}
+        for name in ("schema_array", "schema_object"):
+            case = cases[name]
+            with self.subTest(name), self.assertRaises(CursorInvalid) as raised:
+                self.codec.verify(
+                    case["token"], consumer_id=case["consumer_id"],
+                    environment=case["environment"],
+                    requirement_digest_value=case["requirement_digest"],
+                    expected=CursorV3Expectation(**case["expectation"]),
+                    now_ns=case["now_ns"],
+                )
+            self.assertEqual(raised.exception.reason, "SCHEMA")
+
     def test_only_the_active_key_signs(self):
         claims = dict(self.doc["canonical"]["claims"], key_id="kn1-test-k1")
         with self.assertRaises(ValueError):
@@ -97,6 +123,70 @@ class RequirementDigestGoldenTests(unittest.TestCase):
         vectors = {v["name"]: v["digest"] for v in _load("requirement_digest.json")["vectors"]}
         self.assertNotEqual(vectors["binance_usdm_btc_trade"], vectors["okx_swap_btc_trade"])
         self.assertEqual(vectors["okx_swap_btc_bar_1m_warm500"], vectors["okx_swap_btc_bar_1m_warm5000"])
+
+
+def _enum(wrapper, prefix: str, value) -> int:
+    """A golden enum is a name, or a raw wire number for unknown values."""
+
+    return value if isinstance(value, int) else wrapper.Value(prefix + value)
+
+
+def _requirement_proto(value: dict) -> query_pb2.DataRequirement:
+    proto = query_pb2.DataRequirement(
+        instrument_uid=value["instrument_uid"], interval=value["interval"],
+        source_policy_id=value["source_policy_id"], warmup_limit=value["warmup_limit"],
+        max_freshness_ms=value["max_freshness_ms"],
+        require_full_coverage=value["require_full_coverage"],
+        require_final_bars=value["require_final_bars"],
+        feed_type=_enum(query_pb2.FeedType, "FEED_TYPE_", value["feed"]),
+        grade=_enum(query_pb2.ConsumerGrade, "CONSUMER_GRADE_", value["consumer_grade"]),
+        stale_policy_type=_enum(query_pb2.StalePolicy, "STALE_POLICY_", value["stale_policy"]),
+        gap_policy_type=_enum(query_pb2.GapPolicy, "GAP_POLICY_", value["gap_policy"]),
+        recovery_policy=_enum(query_pb2.RecoveryPolicy, "RECOVERY_POLICY_", value["recovery"]),
+        revision_policy=_enum(
+            query_pb2.BarRevisionPolicy, "BAR_REVISION_POLICY_", value["bar_revision_policy"]),
+        event_recency_policy=_enum(
+            query_pb2.StalePolicy, "STALE_POLICY_", value["event_recency_policy"] or "UNSPECIFIED"),
+        max_session_liveness_ms=value["max_session_liveness_ms"],
+    )
+    warmup = value["warmup"]
+    if warmup is not None:
+        spec = query_pb2.WarmupSpecification(
+            interval_source_policy=_enum(
+                query_pb2.IntervalSourcePolicy, "INTERVAL_SOURCE_POLICY_",
+                warmup["interval_source_policy"]),
+            max_cache_age_ms=warmup["max_cache_age_ms"], deadline_ms=warmup["deadline_ms"])
+        if warmup["horizon"] == "rows":
+            spec.rows = warmup["rows"]
+        elif warmup["horizon"] == "time_range":
+            spec.time_range.start_time_ns = warmup["start_time_ns"]
+            spec.time_range.end_time_ns = warmup["end_time_ns"]
+        proto.warmup.CopyFrom(spec)
+    return proto
+
+
+class RequirementValidationGoldenTests(unittest.TestCase):
+    """F1: the Rust gateway validates with ``qdl_contracts::requirement``
+    against the same file; the Python server path is the oracle."""
+
+    def test_every_case_matches_the_python_server_path(self):
+        from qdl.stream.grpc_service import requirement_from_proto
+
+        doc = _load("requirement_validation.json")
+        self.assertGreaterEqual(len(doc["cases"]), 40)
+        for case in doc["cases"]:
+            with self.subTest(case["name"]):
+                proto = _requirement_proto(case["requirement"])
+                if case["rule"] is None:
+                    requirement_from_proto(proto)
+                else:
+                    with self.assertRaises(ValueError):
+                        requirement_from_proto(proto)
+
+    def test_every_rule_is_exercised(self):
+        doc = _load("requirement_validation.json")
+        exercised = {case["rule"] for case in doc["cases"] if case["rule"]}
+        self.assertEqual(exercised, set(doc["rules"]))
 
 
 class StateContractGoldenTests(unittest.TestCase):
@@ -137,6 +227,31 @@ class StateContractGoldenTests(unittest.TestCase):
                 self.assertEqual(
                     bar_revision_decision(state(case["current"]), state(case["incoming"])).value,
                     case["decision"])
+
+    def test_malformed_state_records_are_refused(self):
+        # F4: bool/float/str where an integer is due, empty topics, a hash
+        # with a trailing newline - all refused, as in the Rust decoders.
+        for value in self.doc["source_coordinates_invalid"]:
+            with self.subTest(source=value), self.assertRaises(ValueError):
+                SourceCoordinate(**value)
+        for value in self.doc["changelog_coordinates_invalid"]:
+            with self.subTest(changelog=value), self.assertRaises(ValueError):
+                ChangelogCoordinate(**value)
+        for value in self.doc["changelog_coordinates_valid"]:
+            ChangelogCoordinate(**value)
+        for value in self.doc["bar_states_invalid"]:
+            with self.subTest(bar=value), self.assertRaises(ValueError):
+                source = value["source"]
+                BarState(value["is_final"], value["revision"], value["content_sha256"],
+                         SourceCoordinate(**source))
+
+    def test_trailing_newline_never_passes_a_key_field(self):
+        with self.assertRaises(ValueError):
+            LogicalProductKey.parse("lpk1|paper|OKX|SWAP|x|TRADE|-\n")
+        with self.assertRaises(ValueError):
+            LogicalProductKey.for_product(
+                environment="paper", venue="OKX", market="SWAP", instrument_uid="x\n",
+                feed="TRADE", interval=None)
 
     def test_cache_read_state(self):
         for case in self.doc["cache_read_state"]:

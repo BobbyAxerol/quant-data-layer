@@ -27,9 +27,16 @@ from enum import StrEnum
 import re
 
 LPK_VERSION = "lpk1"
-_LPK_FIELD = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+# Always ``fullmatch``: ``re.match`` with ``$`` also accepts a trailing "\n".
+_LPK_FIELD = re.compile(r"[A-Za-z0-9._:-]{1,96}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 MAX_OFFSET = 2**63 - 1
+
+
+def _is_integer(value: object) -> bool:
+    """A JSON integer: ``bool`` is an ``int`` subclass and ``1.0`` is a float."""
+
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 @dataclass(frozen=True)
@@ -43,7 +50,8 @@ class LogicalProductKey:
 
     def __post_init__(self) -> None:
         for name in ("environment", "venue", "market", "instrument_uid", "feed", "qualifier"):
-            if not _LPK_FIELD.match(getattr(self, name)):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _LPK_FIELD.fullmatch(value):
                 raise ValueError(f"logical product key field is invalid: {name}")
         if self.venue != self.venue.upper() or self.market != self.market.upper() or self.feed != self.feed.upper():
             raise ValueError("venue, market and feed are upper-case enum names")
@@ -79,7 +87,10 @@ class SourceCoordinate:
     offset: int
 
     def __post_init__(self) -> None:
-        if not self.topic_id or not 0 <= self.partition < 1 << 31 or not 0 <= self.offset <= MAX_OFFSET:
+        if (not isinstance(self.topic_id, str) or not self.topic_id
+                or not _is_integer(self.partition) or not _is_integer(self.offset)):
+            raise ValueError("source coordinate field has the wrong type")
+        if not 0 <= self.partition < 1 << 31 or not 0 <= self.offset <= MAX_OFFSET:
             raise ValueError("source coordinate is out of range")
 
 
@@ -93,7 +104,10 @@ class ChangelogCoordinate:
     materializer_epoch: int
 
     def __post_init__(self) -> None:
-        if (not self.topic or not 0 <= self.partition < 1 << 31
+        if (not isinstance(self.topic, str) or not self.topic
+                or not all(_is_integer(item) for item in (self.partition, self.offset, self.materializer_epoch))):
+            raise ValueError("changelog coordinate field has the wrong type")
+        if (not 0 <= self.partition < 1 << 31
                 or not 0 <= self.offset <= MAX_OFFSET or self.materializer_epoch < 1):
             raise ValueError("changelog coordinate is out of range")
 
@@ -136,9 +150,12 @@ class BarState:
     source: SourceCoordinate
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.is_final, bool) or not _is_integer(self.revision)
+                or not isinstance(self.content_sha256, str) or not isinstance(self.source, SourceCoordinate)):
+            raise ValueError("bar state field has the wrong type")
         if not 0 <= self.revision < 1 << 32:
             raise ValueError("bar revision is a uint32")
-        if not _HEX64.match(self.content_sha256):
+        if not _HEX64.fullmatch(self.content_sha256):
             raise ValueError("bar content hash must be lowercase SHA-256")
 
 

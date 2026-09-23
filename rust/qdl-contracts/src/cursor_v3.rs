@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::qdl::query::v2 as query;
+use crate::requirement::ValidatedRequirement;
 
 pub const SCHEMA_V3: &str = "qdl.handoff-cursor.v3";
 pub const LEGACY_SCHEMAS: [&str; 2] = ["qdl.handoff-cursor.v1", "qdl.handoff-cursor.v2"];
@@ -401,83 +402,14 @@ pub struct DeliveryRequirement {
     pub bar_revision_policy: String,
 }
 
-fn enum_name(name: Option<&str>, prefix: &str, field: &str) -> Result<String, String> {
-    let name = name.ok_or_else(|| format!("{field} is not a known enum value"))?;
-    if name.ends_with("_UNSPECIFIED") {
-        return Err(format!("{field} cannot be UNSPECIFIED"));
-    }
-    Ok(name.trim_start_matches(prefix).to_owned())
-}
-
 impl DeliveryRequirement {
-    /// Same mapping as `qdl.stream.grpc_service.requirement_from_proto`.
+    /// Same mapping as `qdl.stream.grpc_service.requirement_from_proto`,
+    /// including the full `DataRequirement` validation: a requirement the
+    /// Python server refuses is never digested (KN-1 F1).
     pub fn from_proto(value: &query::DataRequirement) -> Result<Self, String> {
-        let stale = |number: i32| {
-            query::StalePolicy::try_from(number)
-                .ok()
-                .map(|v| v.as_str_name())
-        };
-        let event_recency_policy =
-            if value.event_recency_policy == query::StalePolicy::Unspecified as i32 {
-                None
-            } else {
-                Some(enum_name(
-                    stale(value.event_recency_policy),
-                    "STALE_POLICY_",
-                    "event_recency_policy",
-                )?)
-            };
-        Ok(Self {
-            instrument_uid: value.instrument_uid.clone(),
-            feed: enum_name(
-                query::FeedType::try_from(value.feed_type)
-                    .ok()
-                    .map(|v| v.as_str_name()),
-                "FEED_TYPE_",
-                "feed",
-            )?,
-            interval: (!value.interval.is_empty()).then(|| value.interval.clone()),
-            consumer_grade: enum_name(
-                query::ConsumerGrade::try_from(value.grade)
-                    .ok()
-                    .map(|v| v.as_str_name()),
-                "CONSUMER_GRADE_",
-                "consumer_grade",
-            )?,
-            source_policy_id: value.source_policy_id.clone(),
-            max_freshness_ms: (value.max_freshness_ms != 0).then_some(value.max_freshness_ms),
-            event_recency_policy,
-            max_session_liveness_ms: (value.max_session_liveness_ms != 0)
-                .then_some(value.max_session_liveness_ms),
-            require_full_coverage: value.require_full_coverage,
-            require_final_bars: value.require_final_bars,
-            stale_policy: enum_name(
-                stale(value.stale_policy_type),
-                "STALE_POLICY_",
-                "stale_policy",
-            )?,
-            gap_policy: enum_name(
-                query::GapPolicy::try_from(value.gap_policy_type)
-                    .ok()
-                    .map(|v| v.as_str_name()),
-                "GAP_POLICY_",
-                "gap_policy",
-            )?,
-            recovery: enum_name(
-                query::RecoveryPolicy::try_from(value.recovery_policy)
-                    .ok()
-                    .map(|v| v.as_str_name()),
-                "RECOVERY_POLICY_",
-                "recovery",
-            )?,
-            bar_revision_policy: enum_name(
-                query::BarRevisionPolicy::try_from(value.revision_policy)
-                    .ok()
-                    .map(|v| v.as_str_name()),
-                "BAR_REVISION_POLICY_",
-                "bar_revision_policy",
-            )?,
-        })
+        ValidatedRequirement::from_proto(value)
+            .map(|requirement| requirement.delivery)
+            .map_err(|error| error.message)
     }
 
     pub fn digest(&self) -> String {
@@ -604,6 +536,23 @@ mod tests {
                 "{name}"
             );
             assert_eq!(reason, case["reason"].as_str(), "{name}");
+        }
+    }
+
+    #[test]
+    fn malformed_claims_are_refused_with_the_python_reason() {
+        let doc = golden("cursor_v3.json");
+        let cases = doc["claims_invalid"].as_array().expect("claims_invalid");
+        assert!(cases.len() >= 4);
+        for case in cases {
+            let refused = claims_from_object(case["claims"].as_object().expect("claims"))
+                .expect_err(case["name"].as_str().expect("name"));
+            assert_eq!(
+                Some(refused.reason()),
+                case["reason"].as_str(),
+                "{}",
+                case["name"]
+            );
         }
     }
 
