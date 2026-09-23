@@ -42,6 +42,7 @@ from qdl.query import (
 )
 from qdl.domain.calendar import trading_calendar_for_id
 from qdl.query.results import MarketDataItem
+from qdl.query.lanes import ReadLaneRejected
 from qdl.query.service import _LocalBatchAdmission
 from qdl.runtime.closed_bar_cache import ClosedBarWindowCache
 from qdl.runtime.provider_history import (
@@ -2806,6 +2807,120 @@ def _sdk_bar(open_ns: int) -> MarketDataView:
         },
         "watermark_offset": open_ns // MINUTE_NS,
     })
+
+
+
+class SmallLocalWarmupLaneTests(unittest.IsolatedAsyncioTestCase):
+    """Warmups of at most two rows do not queue behind large local warmups.
+
+    v2.1.1 Phase-3 stage 20 (2026-09-23): alpha stream handoffs (0-1 rows) were
+    refused RATE_LIMITED and TS slices stayed unready while 2,500/5,000-row
+    alpha warmups held the single-active local lane. The stable runtime now
+    gives <= 2-row warmups their own bounded lane.
+    """
+
+    def _service(self, *, enabled: bool):
+        class Backend:
+            def __init__(self):
+                self.release_large = asyncio.Event()
+                self.large_started = threading.Event()
+                self.gate = threading.Event()
+
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                if any(_rows(item) > 2 for item in requirements):
+                    self.large_started.set()
+                    self.gate.wait(5)
+                return {requirement: "history" for requirement in requirements}
+
+        class Executor:
+            @staticmethod
+            def stats():
+                return {}
+
+            async def execute(self, items, *, work, identity, provider, deadline_ms):
+                del identity, provider, deadline_ms
+                executions = []
+                for item in items:
+                    executions.append(
+                        WarmupExecution(item, await work(item), None, 1, False, 0.0)
+                    )
+                return tuple(executions)
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = Executor()
+                self.last_batch_evidence = {}
+                self._small_local_warmup_lane = enabled
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                del requirement, purpose, request_id
+                return history
+
+        return Service()
+
+    @staticmethod
+    def _requirement(uid: str, rows: int | None):
+        return DataRequirement(
+            instrument_uid=uid, feed=FeedType.BAR, consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2", interval="1m",
+            warmup=None if rows is None else WarmupSpecification.for_rows(rows, deadline_ms=2_000),
+        )
+
+    async def _warm(self, service, consumer, *requirements):
+        async def completion(result):
+            return result
+        return await service.warmup_batch_completed_async(
+            BatchRequirement(consumer_id=consumer, requirements=requirements),
+            purpose=AccessPurpose.INTERNAL_ALPHA, completion=completion,
+        )
+
+    async def test_small_warmup_completes_while_a_large_one_holds_the_local_lane(self):
+        service = self._service(enabled=True)
+        large = asyncio.create_task(self._warm(service, "alpha-a", self._requirement("big", 5000)))
+        await asyncio.wait_for(asyncio.to_thread(service.backend.large_started.wait, 2), 3)
+        small = await asyncio.wait_for(
+            self._warm(service, "alpha-b", self._requirement("handoff", 1)), 2)
+        latest = await asyncio.wait_for(
+            self._warm(service, "trading-system.paper.stable", self._requirement("latest", None)), 2)
+        self.assertEqual([item.status for item in small.results + latest.results], ["OK", "OK"])
+        self.assertFalse(large.done())
+        service.backend.gate.set()
+        self.assertEqual([item.status for item in (await large).results], ["OK"])
+
+    async def test_routing_is_opt_in_and_by_every_item_size(self):
+        enabled, disabled = self._service(enabled=True), self._service(enabled=False)
+        small, big = self._requirement("s", 2), self._requirement("b", 3)
+        self.assertIs(enabled._local_batch_admission_for((small,)), enabled._small_local_warmup_admission)
+        self.assertIs(enabled._local_batch_admission_for((small, big)), enabled._local_batch_admission_for())
+        self.assertIs(disabled._local_batch_admission_for((small,)), disabled._local_batch_admission_for())
+
+    async def test_small_lane_stays_bounded_per_consumer_and_recovers(self):
+        service = self._service(enabled=True)
+        lane = service._local_batch_admission_for((self._requirement("s", 1),))
+        hold = asyncio.Event()
+        blockers = [
+            asyncio.create_task(lane.run(hold.wait, consumer_id="alpha-a"))
+            for _ in range(4)
+        ]
+        while lane.stats()["pending"] < 4:
+            await asyncio.sleep(0)
+        with self.assertRaises(ReadLaneRejected):
+            await lane.run(hold.wait, consumer_id="alpha-a")
+        hold.set()
+        await asyncio.gather(*blockers)
+        result = await self._warm(service, "alpha-a", self._requirement("s", 1))
+        self.assertEqual([item.status for item in result.results], ["OK"])
+
+
+def _rows(requirement) -> int:
+    specification = requirement.warmup_specification
+    return 1 if specification is None or specification.rows is None else specification.rows
 
 
 if __name__ == "__main__":

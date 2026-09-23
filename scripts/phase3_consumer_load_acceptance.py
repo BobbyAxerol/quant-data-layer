@@ -1896,7 +1896,7 @@ class _EitherSet:
 
 
 async def _target_stream(*, client, stream: _TargetStream, series, recorder, observing, stop,
-                         reconnect_now, established) -> None:
+                         reconnect_now, established, startup=None) -> None:
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
     from qdl_sdk.models import ControlEvent, StreamEvent
     from qdl_sdk.projection import market_data_view_from_stream
@@ -1909,66 +1909,87 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
     resume = False
     slowed = False
     signalled = False
+    attempts = 0
     try:
         while not stop.is_set():
-            async with client.warmup_then_stream(requirement, resume_restored_state=resume) as session:
-                if resume:
-                    stream.reconnects += 1
-                    stream.restored += int(bool(session.state_restored))
-                    if not session.state_restored:
-                        raise ValueError("signed cursor was not restored on reconnect")
-                template = session.warmup.data[-1]
-                if series is not None:
-                    outcome = series.offer(template.payload.open_time_ns)
-                    stream.repeats += outcome == "REPEAT"
-                if not signalled:
-                    signalled = True
-                    established.set_result(None)
-                interrupt = _EitherSet(stop, reconnect_now) if stream.reconnect and not resume else stop
-                async for event, delivered_at, delivered_ns in _stream_events_until_stop(
-                    session, interrupt, poll_seconds=1.0
-                ):
-                    if isinstance(event, ControlEvent):
-                        stream.control += 1
-                        recorder.counters[f"stream_control:{event.code}"] += 1
-                        continue
-                    if not isinstance(event, StreamEvent):
-                        raise ValueError("stream returned an unknown event type")
-                    view = market_data_view_from_stream(event, template=template, requirement=requirement)
-                    validate_product_view(product, view, require_current_quality=True)
-                    if event.logical_offset <= stream.last_offset:
-                        raise ValueError("stream logical offset regressed")
-                    stream.last_offset = event.logical_offset
-                    session.acknowledge(event)
-                    validated_at = time.perf_counter()
-                    validated_ns = delivered_ns + int((validated_at - delivered_at) * 1_000_000_000)
-                    stream.events += 1
-                    byte_size = getattr(event.event, "ByteSize", None)
-                    stream.bytes += byte_size() if callable(byte_size) else 0
-                    sample = {
-                        "group": _product_group(product, "STREAM", "active"),
-                        "validation_ms": (validated_at - delivered_at) * 1000.0,
-                    }
-                    if event.event.received_at_ns > 0:
-                        sample["host_receive_to_usable_ms"] = max(
-                            0.0, (validated_ns - event.event.received_at_ns) / 1_000_000.0)
+            try:
+                async with client.warmup_then_stream(requirement, resume_restored_state=resume) as session:
+                    if resume:
+                        stream.reconnects += 1
+                        stream.restored += int(bool(session.state_restored))
+                        if not session.state_restored:
+                            raise ValueError("signed cursor was not restored on reconnect")
+                    template = session.warmup.data[-1]
                     if series is not None:
-                        outcome = series.offer(view.payload.open_time_ns)
+                        outcome = series.offer(template.payload.open_time_ns)
                         stream.repeats += outcome == "REPEAT"
-                        if view.payload.lifecycle == "FINAL":
-                            stream.final_bars += 1
+                    if not signalled:
+                        signalled = True
+                        established.set_result(None)
+                    interrupt = _EitherSet(stop, reconnect_now) if stream.reconnect and not resume else stop
+                    async for event, delivered_at, delivered_ns in _stream_events_until_stop(
+                        session, interrupt, poll_seconds=1.0
+                    ):
+                        if isinstance(event, ControlEvent):
+                            stream.control += 1
+                            recorder.counters[f"stream_control:{event.code}"] += 1
+                            continue
+                        if not isinstance(event, StreamEvent):
+                            raise ValueError("stream returned an unknown event type")
+                        view = market_data_view_from_stream(event, template=template, requirement=requirement)
+                        validate_product_view(product, view, require_current_quality=True)
+                        if event.logical_offset <= stream.last_offset:
+                            raise ValueError("stream logical offset regressed")
+                        stream.last_offset = event.logical_offset
+                        session.acknowledge(event)
+                        validated_at = time.perf_counter()
+                        validated_ns = delivered_ns + int((validated_at - delivered_at) * 1_000_000_000)
+                        stream.events += 1
+                        byte_size = getattr(event.event, "ByteSize", None)
+                        stream.bytes += byte_size() if callable(byte_size) else 0
+                        sample = {
+                            "group": _product_group(product, "STREAM", "active"),
+                            "validation_ms": (validated_at - delivered_at) * 1000.0,
+                        }
+                        if event.event.received_at_ns > 0:
+                            sample["host_receive_to_usable_ms"] = max(
+                                0.0, (validated_ns - event.event.received_at_ns) / 1_000_000.0)
+                        if series is not None:
+                            outcome = series.offer(view.payload.open_time_ns)
+                            stream.repeats += outcome == "REPEAT"
+                            if view.payload.lifecycle == "FINAL":
+                                stream.final_bars += 1
+                                sample["source_to_usable_ms"] = max(
+                                    0.0, (validated_ns - view.payload.close_time_ns) / 1_000_000.0)
+                        elif event.event.source_event_time_ns > 0:
                             sample["source_to_usable_ms"] = max(
-                                0.0, (validated_ns - view.payload.close_time_ns) / 1_000_000.0)
-                    elif event.event.source_event_time_ns > 0:
-                        sample["source_to_usable_ms"] = max(
-                            0.0, (validated_ns - event.event.source_event_time_ns) / 1_000_000.0)
-                    if observing.is_set():
-                        stream.observed_events += 1
-                        recorder.stream_samples.append(sample)
-                        if stream.slow and not slowed:
-                            slowed = True
-                            recorder.counters["slow_reader_pauses"] += 1
-                            await asyncio.sleep(5.0)
+                                0.0, (validated_ns - event.event.source_event_time_ns) / 1_000_000.0)
+                        if observing.is_set():
+                            stream.observed_events += 1
+                            recorder.stream_samples.append(sample)
+                            if stream.slow and not slowed:
+                                slowed = True
+                                recorder.counters["slow_reader_pauses"] += 1
+                                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                # Before the first handoff completes, a typed startup code (a
+                # finite lane refusing more work) is retried with bounded backoff,
+                # as an alpha would; after it, every error counts.
+                attempts += 1
+                if (
+                    signalled or startup is None
+                    or _error_code(error) not in startup["retry_codes"]
+                    or attempts >= int(startup["retry_max_attempts"])
+                ):
+                    raise
+                recorder.counters[f"startup_retry:{_error_code(error)}"] += 1
+                recorder.startup_retries += 1
+                delay = min(float(startup["retry_max_seconds"]),
+                            float(startup["retry_base_seconds"]) * 2 ** (attempts - 1))
+                await asyncio.sleep(delay * (0.5 + random.random() / 2))
+                continue
             if stop.is_set():
                 break
             resume = True
@@ -2159,7 +2180,7 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
                 client=client, stream=stream,
                 series=series_by_session.get(session.ordinal) if product.feed.value == "BAR" else None,
                 recorder=recorder, observing=observing, stop=stop, reconnect_now=reconnect_now,
-                established=established,
+                established=established, startup=budget["startup"],
             )))
             outcome = await asyncio.wait_for(established, timeout=float(budget["startup"]["max_setup_seconds"]))
             if outcome is not None:

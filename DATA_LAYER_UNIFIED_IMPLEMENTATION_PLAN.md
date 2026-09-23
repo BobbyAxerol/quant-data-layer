@@ -52740,6 +52740,41 @@ refinement without the owner's next request.
   rollback `6c75e501...`. Not touched: Stream, projectors, Kafka, Redis, SQLite
   data, quotas, TS, alpha.
 
+- 2026-09-23: **chunked render rolled (`2.1.1-9cf40c2`, `sha256:025c4b15...`,
+  Query x2 at 1.50, `ROLLED_HEALTHY`, TS 60/60; full suite 1,957 tests, the same
+  five pre-existing errors).** Stage 5 at 09:59Z: QUOTE p95 35 / 51 ms, MARK_INDEX
+  p95 175 / 149 ms, BAR_LATEST, TS 60/60 in all samples; probe maxima fell from
+  ~1.4 s to ~0.8 s but still fail the frozen small-sample rule (L2, TRADE), all in
+  the cold window; 3 `DATA_STALE` (rotating probes on quiet symbols and one QUOTE
+  snapshot) not attributed further. The remaining ~0.8 s pause is most likely a
+  full garbage collection after the large render - **not verified**.
+  **Stage 20 (8/6/4/2, 36 streams, 20 req/s, 120 s) at 10:02Z - hot reads hold at
+  four times the load:** QUOTE p95 **80 / 89 ms**, p99 241 / 248 ms; MARK_INDEX p95
+  **159 / 170 ms**, p99 222 / 320 ms; BAR_LATEST p95 141 / 259 ms; client wake lag
+  p99 2.2 ms. Failing: L2 p95 362 / 395 ms (target 300), TRADE p95 140 / 160 ms
+  (target 100), and **start-up**: stream handoffs refused `RATE_LIMITED`, three
+  sessions failed setup (so their final BARs were missing), TS 57/60 in three
+  samples while alphas warmed.
+  **Cause (code, `qdl/query/service.py`):** every local warmup - including a
+  stream handoff of 0-1 rows - enters the single-active local batch lane (one
+  active per replica, one pending per consumer), where 2,500/5,000-row alpha
+  warmups hold it for seconds; TS handoffs wait there too. The driver also did
+  not retry a stream handoff's typed startup refusal as it retries bulk warmups.
+  **Fix:** an opt-in second lane for batches whose every item needs at most two
+  rows, shaped like the hot snapshot lane (2 active, 16 pending, TS reserve, 1
+  active / 4 pending per other consumer), enabled by `build_stable_query_stack`;
+  large warmups keep the single-active lane and the default service is unchanged,
+  so the nine tests that pin the single lane pass as before. New tests (3): a small
+  warmup and a TS latest warmup complete while a 5,000-row warmup holds the local
+  lane; routing is opt-in and needs every item small; the small lane still refuses
+  a fifth pending item per consumer and recovers. The driver now retries a stream
+  handoff's declared startup code (`RATE_LIMITED`) with the budget's bounded
+  backoff until the first handoff completes; after that every error counts.
+  **Packet (recorded before execution):** image from this commit on the `a231...`
+  base, Query x2 at 1.50 CPU / 512 MiB, serial and hash-asserting; rollback
+  `025c4b15...`. Not touched: Stream, projectors, Kafka, Redis, SQLite data,
+  quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);

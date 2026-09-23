@@ -231,6 +231,45 @@ class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
 
 
+_SMALL_LOCAL_WARMUP_ROWS = 2
+
+
+def _small_local_warmup_lane_policy() -> ReadLanePolicy:
+    """Finite lane for warmups of at most two rows, shaped like the hot lanes.
+
+    A stream handoff or latest-style warmup reads one or two rows through the
+    exact final-BAR index or a one-row tail - snapshot-sized work. In the
+    single-active local batch lane it waited behind 2,500/5,000-row warmups
+    that take seconds: on 2026-09-23 (v2.1.1 Phase-3 stage 20) alpha stream
+    handoffs were refused ``RATE_LIMITED`` and TS slices stayed unready while
+    alpha sessions warmed. Large warmups keep the single-active lane.
+    """
+
+    return ReadLanePolicy(
+        max_active=2,
+        max_pending=16,
+        max_pending_bytes=512 * 1024,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=4,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=2,
+        reserved_max_pending_per_consumer=15,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
+def _is_small_local_warmup(requirement: DataRequirement) -> bool:
+    specification = requirement.warmup_specification
+    if specification is None:
+        return True
+    return (
+        specification.rows is not None
+        and specification.rows <= _SMALL_LOCAL_WARMUP_ROWS
+    )
+
+
 class _LocalBatchAdmission:
     """Serialize expensive local history snapshots without touching venue policy.
 
@@ -251,13 +290,14 @@ class _LocalBatchAdmission:
         max_pending: int = 5,
         max_pending_bytes: int = 64 * 1024 * 1024,
         reserved_consumer_id: str | None = _TS_RESERVED_CONSUMER_ID,
+        policy: ReadLanePolicy | None = None,
     ) -> None:
-        if max_active != 1:
-            raise ValueError("local canonical batch admission currently requires one active lane")
-        if max_pending < max_active:
-            raise ValueError("local canonical batch pending bound must include active work")
-        self._lane = BoundedReadLane(
-            ReadLanePolicy(
+        if policy is None:
+            if max_active != 1:
+                raise ValueError("local canonical batch admission currently requires one active lane")
+            if max_pending < max_active:
+                raise ValueError("local canonical batch pending bound must include active work")
+            policy = ReadLanePolicy(
                 max_active=max_active,
                 max_pending=max_pending,
                 max_pending_bytes=max_pending_bytes,
@@ -266,7 +306,7 @@ class _LocalBatchAdmission:
                 reserved_consumer_id=reserved_consumer_id,
                 reserved_slots=0,
             )
-        )
+        self._lane = BoundedReadLane(policy)
         self._anonymous_sequence = 0
 
     async def run(
@@ -346,6 +386,7 @@ class V2QueryService:
         reference_batch: ReferenceBatch | None = None,
         reference_source_id: Callable[[InstrumentRecord], str] | None = None,
         execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
+        small_local_warmup_lane: bool = False,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -363,7 +404,13 @@ class V2QueryService:
         self.reference_batch = reference_batch
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
+        # Opt-in: the stable runtime enables it; the default keeps every local
+        # warmup in the single-active lane.
+        self._small_local_warmup_lane = small_local_warmup_lane
         self._local_batch_admission = _LocalBatchAdmission()
+        self._small_local_warmup_admission = _LocalBatchAdmission(
+            policy=_small_local_warmup_lane_policy()
+        )
         self._hot_snapshot_admission = BoundedReadLane(_hot_snapshot_lane_policy())
         self._hot_reference_admission = BoundedReadLane(_hot_reference_lane_policy())
         self._query_work_pools = _QueryWorkPools()
@@ -626,9 +673,25 @@ class V2QueryService:
                 )
         return BatchQueryResult(request_id, tuple(results))
 
-    def _local_batch_admission_for(self) -> _LocalBatchAdmission:
-        """Lazily preserve compatibility for focused service test doubles."""
+    def _local_batch_admission_for(
+        self, requirements: tuple[DataRequirement, ...] = (),
+    ) -> _LocalBatchAdmission:
+        """The lane for one local batch; lazily built for focused test doubles.
 
+        With the small-warmup lane enabled, a batch whose every item needs at
+        most two rows uses it; anything larger keeps the single-active lane.
+        """
+
+        if (
+            getattr(self, "_small_local_warmup_lane", False)
+            and requirements
+            and all(_is_small_local_warmup(item) for item in requirements)
+        ):
+            admission = getattr(self, "_small_local_warmup_admission", None)
+            if admission is None:
+                admission = _LocalBatchAdmission(policy=_small_local_warmup_lane_policy())
+                self._small_local_warmup_admission = admission
+            return admission
         admission = getattr(self, "_local_batch_admission", None)
         if admission is None:
             admission = _LocalBatchAdmission()
@@ -746,7 +809,7 @@ class V2QueryService:
 
         async def materialize_local_histories():
             try:
-                return await self._local_batch_admission_for().run(
+                return await self._local_batch_admission_for(local_requirements).run(
                     lambda: self._query_work_pools_for().cold(
                         history_many, local_requirements
                     ),
@@ -915,7 +978,7 @@ class V2QueryService:
                 ),
                 "local_batch_items": len(local_requirements),
                 "local_batch_admission": (
-                    self._local_batch_admission_for().stats()
+                    self._local_batch_admission_for(local_requirements).stats()
                     if local_requirements
                     else None
                 ),
@@ -928,7 +991,7 @@ class V2QueryService:
             return await completion(assemble_batch(executions))
 
         if fully_local_batch:
-            admission = self._local_batch_admission_for()
+            admission = self._local_batch_admission_for(local_requirements)
 
             async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories

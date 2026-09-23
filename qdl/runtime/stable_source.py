@@ -1696,6 +1696,9 @@ def build_stable_query_stack(
         reference_batch=reference_batch,
         reference_source_id=reference_source_id,
         execution_mark_index_reader=execution_mark_index_reader,
+        # Stream handoffs and latest-style warmups (<= 2 rows) must not wait
+        # behind 2,500/5,000-row warmups in the single-active lane.
+        small_local_warmup_lane=True,
     )
     issuer = StableConsumerCursorIssuer(
         handoff, catalog, ttl_seconds=cursor_ttl_seconds
