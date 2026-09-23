@@ -52493,6 +52493,73 @@ refinement without the owner's next request.
   (24) plus the existing target (11), driver (24) and planner (6) suites,
   **65/65** in the active reader image, network disabled.
 
+- 2026-09-23: **the eight-open apply was refused by the automatic approval
+  review** before execution, exactly as the first 1m apply was; nothing was
+  published. The dry-run evidence and pinned arguments stay in the run
+  directory (`bar-repair-outage-args.txt`, `bar-repair-outage-dry-run.json`)
+  for the owner to run or authorise. Until then the 5m/15m bounded sample
+  stays `OPEN_SEQUENCE_GAP` for OKX BNB/ETH/SOL; the load stages use only 1m
+  BAR and do not depend on it.
+- 2026-09-23: **Phase-3 target stage 5, first two runs: the load client and
+  one Query defect, separated by measurement.** Run 1 (08:32Z): every read
+  succeeded (0 errors, 0 rate-limit rejections, setup 7.8 s, one startup
+  retry), medians were healthy (QUOTE 9 ms, MARK_INDEX 86-104 ms), yet every
+  class had multi-second tails, the client's own scheduler lagged up to 940 ms
+  and TS sat at 56/60 for about 37 s. The cold 2500/5000-row warmups were
+  running in the same process as the hot readers and parsing thousands of rows
+  on their event loop, so the client itself inflated latency: the cold role
+  now runs in its own worker process, as a separate alpha would. Run 2
+  (08:38Z): TS stayed **60/60 in all eleven samples**, but QUOTE still had a
+  **6.53 s / 6.55 s** maximum on both venues at once while the client lagged
+  at most 0.92 s - a server stall. The host's ten-second samples put
+  `query_v2_1` at **102.67 % of its 1.00 CPU at 08:38:47Z** and 85 % at
+  08:38:59Z, the cold-warmup window (5000 rows took 6.3-7.3 s).
+  **Root cause, from code and an offline profile.** `GET .../warmup` is an
+  async handler that ended in `return _warmup(result)`: 5,000 response models
+  built on the event loop, then FastAPI's second validation walk of
+  `response_model`, also on the loop. An offline cProfile on a copy of one
+  real partition (OKX BNB 1m, 10,064 rows read from the spool `mode=ro` into a
+  tmpfs scratch spool, in a `--rm` container) measured 2.75 s backend,
+  **1.87 s router conversion** (40,000 decimal re-parses) and 0.32 s JSON for
+  5,000 rows - a **10.3 MB** response. One Python process per replica, so
+  while that ran every hot read on the replica waited. The batch endpoint
+  already avoided the second walk but still rendered on the loop.
+  **Fix (`qdl/api_v2/router.py`).** `_json_off_loop` builds, dumps and
+  encodes the response on a worker thread; the bytes are exactly those of the
+  previous `JSONResponse(content=model.model_dump(mode="json", by_alias=True))`.
+  The single warmup and the time-range history now render through the same
+  `warmup_batch_completed_async` completion as the batch, so rendering still
+  happens inside the local lease and at most one large response is built per
+  replica: the memory bound is kept, only the thread changes. Cursor binding
+  (which copies every item and reads the durable watermark) moved off the loop
+  with it. Services without the completion hook keep the old path. Tests: two
+  new in `tests/test_fund_phase5_api.py` - the loop keeps ticking while a slow
+  build renders and the bytes are identical; the single warmup's completion
+  returns the rendered response (so it rendered under the lease). Both fail on
+  the previous source and pass on this one. Not changed: lanes, quotas, CPU
+  caps, the spool, Stream, the public schema.
+  **Also measured, not changed:** a latest-BAR snapshot costs 430-740 ms at
+  `warmup_limit` 1 and 10,000 alike, because `StableSpoolQueryBackend.latest`
+  (`qdl/runtime/stable_source.py:244`) reads and decodes the whole retained
+  partition window for every BAR read, so a repaired bar at a newer logical
+  offset cannot hide the market-time tail. It is inside the 1,000 ms p95
+  target and no frozen alpha class polls BAR; it becomes work only if a stage
+  fails on it.
+  **Rollout packet (recorded before execution).** One image, `git archive` of
+  this commit on the retained `a231...` reader base, network disabled, rolled
+  to **Query x2 only** (`query_v2_1`, then `query_v2_2`) by the reused
+  hash-asserting script (environment, mounts, networks, 512 MiB / 1 CPU,
+  read-only); a failure restores the pair. Rollback image `37d7f518...`
+  (`2.1.1-ae2d62a`, today's Query). Stream keeps `37d7f518` - it does not
+  serve warmups, and not rolling it avoids another lease-handover dip for TS.
+  Not touched: Stream, projectors, bar edge, Rust, ingestors, Kafka, Redis,
+  SQLite, quotas, V1, TS, alpha, orders. Read-back: both replicas healthy on
+  the candidate, TS 60/60, then target stage 5 rerun.
+  Full suite on this source: **1,950 tests, 5 errors, 7 skipped** - the same
+  five pre-existing errors as the 1,924-test baseline (three modules the image
+  lacks dependencies for, read-only `/app/logs`, the frozen contract test);
+  the 26 added tests all pass.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);

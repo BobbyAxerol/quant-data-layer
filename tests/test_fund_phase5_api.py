@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import time
 import unittest
 from unittest.mock import patch
 
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
-from qdl.api_v2.models import BatchResponse
+from qdl.api_v2.models import BatchResponse, WarmupResponse
 from qdl.consumer import ConsumerManifestLoader
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
@@ -413,6 +415,64 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(
             validated.model_dump(mode="json", by_alias=True),
             response.json(),
+        )
+
+    def test_single_warmup_renders_inside_the_local_lease_like_the_batch(self):
+        original = self.service.warmup_batch_completed_async
+        completed = []
+
+        async def instrumented(*args, **kwargs):
+            response = await original(*args, **kwargs)
+            completed.append(response)
+            return response
+
+        with patch.object(self.service, "warmup_batch_completed_async", instrumented):
+            response = self.client.get(
+                f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+                params=self.params(limit=2),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(completed), 1)
+        # The completion returned the rendered response, so rendering happened
+        # while the local lease was still held.
+        self.assertEqual(completed[0].media_type, "application/json")
+        validated = WarmupResponse.model_validate_json(response.content)
+        self.assertEqual(validated.count, 2)
+        self.assertEqual(validated.model_dump(mode="json", by_alias=True), response.json())
+
+    def test_large_response_rendering_leaves_the_event_loop_serving(self):
+        router_module = importlib.import_module("qdl.api_v2.router")
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+            params=self.params(limit=2),
+        )
+        model = WarmupResponse.model_validate_json(response.content)
+
+        def slow_build():
+            time.sleep(0.3)  # stands in for seconds of Pydantic work on 5,000 rows
+            return model
+
+        async def scenario():
+            ticks = 0
+            done = asyncio.Event()
+
+            async def ticker():
+                nonlocal ticks
+                while not done.is_set():
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            task = asyncio.create_task(ticker())
+            rendered = await router_module._json_off_loop(slow_build)
+            done.set()
+            await task
+            return ticks, rendered
+
+        ticks, rendered = asyncio.run(scenario())
+        self.assertGreaterEqual(ticks, 15)
+        self.assertEqual(
+            rendered.body,
+            JSONResponse(content=model.model_dump(mode="json", by_alias=True)).body,
         )
 
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):

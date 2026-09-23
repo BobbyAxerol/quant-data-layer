@@ -403,6 +403,65 @@ def _warmup(result) -> WarmupResponse:
     )
 
 
+async def _json_off_loop(build) -> JSONResponse:
+    """Build, dump and encode a large public response on a worker thread.
+
+    A 5,000-row BAR warmup is about 10 MB and seconds of Pydantic work. Done on
+    the event loop it stalls every other request on the replica: measured on
+    2026-09-23 (v2.1.1 Phase-3 stage 5), QUOTE snapshots reached 6.5 s while
+    ``query_v2_1`` sat at its 1.0 CPU cap during two cold warmups. The bytes
+    are exactly those of ``JSONResponse(content=model.model_dump(mode="json",
+    by_alias=True))``; only the thread that computes them changes.
+    """
+
+    return await asyncio.to_thread(
+        lambda: JSONResponse(content=build().model_dump(mode="json", by_alias=True))
+    )
+
+
+async def _single_warmup_response(request, access, service, requirement, purpose):
+    """One warmup, rendered inside the local lease exactly like ``warmup:batch``.
+
+    Holding the lease through rendering keeps at most one large response being
+    built per replica, so moving the work off the loop does not also remove its
+    memory bound.
+    """
+
+    async def render(batch_result):
+        (item,) = batch_result.results
+        if item.problem is not None:
+            raise QueryServiceError(
+                item.problem,
+                request_id=batch_result.request_id,
+                instrument_uid=requirement.instrument_uid,
+            )
+        # Cursor binding copies every item and reads the durable watermark, so
+        # it belongs off the loop with the rest of the response.
+        return await _json_off_loop(lambda: _warmup(type(item.result)(
+            item.result.request_id,
+            _bind_history_cursor(request, access, requirement, item.result.history),
+        )))
+
+    complete = getattr(service, "warmup_batch_completed_async", None)
+    if callable(complete):
+        return await complete(
+            BatchRequirement(access.consumer_id, (requirement,), require_all=True),
+            purpose=purpose,
+            completion=render,
+        )
+    # Service doubles predating the completion hook keep the original path.
+    result = await service.warmup_async(
+        requirement,
+        purpose=purpose,
+        consumer_id=access.consumer_id,
+    )
+    result = type(result)(
+        result.request_id,
+        _bind_history_cursor(request, access, requirement, result.history),
+    )
+    return _warmup(result)
+
+
 def _warmup_batch_response(
     request: Request,
     access: DataPlaneAccess,
@@ -746,16 +805,7 @@ async def warmup(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await service.warmup_async(
-        requirement,
-        purpose=purpose,
-        consumer_id=access.consumer_id,
-    )
-    result = type(result)(
-        result.request_id,
-        _bind_history_cursor(request, access, requirement, result.history),
-    )
-    return _warmup(result)
+    return await _single_warmup_response(request, access, service, requirement, purpose)
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
@@ -814,16 +864,7 @@ async def history(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await service.warmup_async(
-        requirement,
-        purpose=purpose,
-        consumer_id=access.consumer_id,
-    )
-    result = type(result)(
-        result.request_id,
-        _bind_history_cursor(request, access, requirement, result.history),
-    )
-    return _warmup(result)
+    return await _single_warmup_response(request, access, service, requirement, purpose)
 
 
 @router.post("/market-data/warmup:batch", response_model=BatchResponse)
@@ -848,10 +889,12 @@ async def warmup_batch(
     )
 
     async def render(result):
-        response = _warmup_batch_response(request, access, result, requirements)
         # Returning an already-rendered Response prevents FastAPI from doing a
-        # second Pydantic walk after the fully-local service lease is released.
-        return JSONResponse(content=response.model_dump(mode="json", by_alias=True))
+        # second Pydantic walk after the fully-local service lease is released;
+        # rendering off the loop keeps other requests on this replica moving.
+        return await _json_off_loop(
+            lambda: _warmup_batch_response(request, access, result, requirements)
+        )
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
