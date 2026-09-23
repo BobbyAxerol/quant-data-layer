@@ -52444,6 +52444,55 @@ refinement without the owner's next request.
   `canonical_age_ms` next to consumer latency; if the writer is what fails a
   stage, the write path is optimized with an A/B there, not before.
 
+- 2026-09-23: **Phase-3 target driver, source slice, and what its first live
+  matrix found (packet recorded before execution).** `--mode target-matrix`
+  read every product of the stage-50 profile once through each Query replica
+  with the two alpha identities: **128 of 132 PASS**. Median/max ms: QUOTE
+  snapshot 8-10/40, TRADE 7-8/19, BOOK_SNAPSHOT 56-95/172, MARK_INDEX
+  reference 86-107/398, FUNDING reference 99-106/295, latest BAR 519-530/865.
+  The four failures are the bounded longer-interval sample:
+  `OPEN_SEQUENCE_GAP` on OKX BNB 5m and 15m, both replicas. A read-only scan
+  of the newest 5,100 rows of all 144 BAR partitions (spool `mode=ro`) then
+  located every hole. **The 2026-09-23 00:44Z outage also cost eight
+  higher-interval OKX opens** that the pinned 1m repair did not cover: 3m
+  (00:42Z) and 5m (00:40Z) for BNB/ETH/SOL, 15m (00:30Z) for BNB/ETH; 1m has
+  none left. **Older holes are a different thing and are not repaired here:**
+  15m-4h partitions on both venues have gaps from about 09-02 to 09-17, the
+  period before the native BAR bindings went live, so durable 15m history is
+  contiguous only from about 09-17T07:30Z (about 577 rows) and a deeper durable
+  window fails closed with `OPEN_SEQUENCE_GAP`. Binance 5m/15m/1h and OKX 1h
+  passed the sample, consistent with those intervals being served by the
+  provider pass-through rather than the spool; the alpha runtime warms non-1m
+  intervals through that path. Named as a limitation, not hidden.
+  **Packet, recorded before execution.** The same governed CLI and container as
+  the 1m repair (`repair_stable_final_bar_history.py` in
+  `binance_bar_edge`, image `ba41b1f2...`), pinned `--observed-ms
+  1790124421000 --rows 3`, each binding `--expected-missing =1` and an exact
+  `--expected-open`: 3m `1790124120000`, 5m `1790124000000`, 15m
+  `1790123400000`. The publisher-disabled dry run reported exactly one missing
+  row per binding at those opens, `production_mutations: 0`. Apply writes
+  **exactly eight** venue-confirmed final bars through raw Kafka -> Rust
+  canonical -> projector; nothing else. Not touched: any role, image, config,
+  Redis, offsets, older holes, 1m. Rollback: none is needed for an
+  idempotent authentic append; a wrong row would be superseded only by the
+  same governed path. Read-back: the 500-row 5m/15m sample on both replicas.
+  **Driver source (uncommitted until the stages run):** `--mode target` runs
+  the frozen profile at its declared rate, one SDK client per logical alpha,
+  sessions over `ceil(n/13)` worker processes; `DeclaredRateTicker` /
+  `PollLedger` account offered/sent/completed/failed/missed/late per tick and
+  never stretch a period; `BarSeries` enforces append/dedup/FIFO/gap on each
+  alpha's bounded series; the budget is frozen in
+  `config/v2/v211-target-acceptance-budget.json` before the first target run
+  and evaluated by `evaluate_target_acceptance`. The host samples the TS
+  heartbeat every ten seconds, counts TS disconnects against a ten-minute
+  pre-run baseline, and reports projector spans. A pre-existing host defect
+  was fixed on the way: `_runtime_states` failed its whole multi-container
+  `docker inspect` because `market_data_service` (TS image `v1.2.5`) has no
+  healthcheck (`map has no entry for key "Health"`); it now uses
+  `index .State "Health"`. Tests: new `tests/test_phase3_target_driver.py`
+  (24) plus the existing target (11), driver (24) and planner (6) suites,
+  **65/65** in the active reader image, network disabled.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
