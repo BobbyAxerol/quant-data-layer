@@ -1848,3 +1848,218 @@ WI đó, báo số đo và xin quyết định, **không tự đổi hướng**.
 | Q9 | Độ bền BAR: (i) BarStore + backup + dựng lại từ provider đã diễn tập, hay (ii) thêm topic `md.bars.v2` compacted, nhân bản RF3, ghi bằng transaction? | **(i) trong 4 phase** vì nhanh hơn và đủ invariant 32 khi BarStore chỉ là kho dẫn xuất. (ii) để sau nếu owner muốn bản sao nhân bản |
 | Q10 | Chấp nhận cutover toàn phần bằng một manifest version, với canary là driver stage 20/35 trên mạng shadow (A8)? | Có |
 | Q11 | Giữ retention canonical 6h (§16.3-2)? | Có, đến khi có hạ tầng đĩa/host khác |
+
+---
+
+<a id="opus-rust-first-refined"></a>
+## 17. Opus: refine theo mục tiêu V2 Rust-first (thay thế một phần §14–16)
+
+> **Ngày:** 2026-09-23. **Lý do:** owner xác nhận core V2 là **Rust-first**. Đọc lại Guide:
+> - §6.2: Rust sở hữu *Kafka producer/consumer, Redis projector, replay engine,
+>   high-throughput gRPC stream gateway*.
+> - §6.3: không FFI từng message; Rust và Python là process riêng, nói chuyện qua Protobuf
+>   + log bền.
+> - §20.1 liệt kê các role: `qdl-stream-gateway` (Rust), `qdl-projector-redis` (Rust),
+>   `qdl-api` (Python).
+> - §5: *Redis Projector → API*.
+> - §7.3: Redis giữ latest snapshot và warmup cache, dựng lại được từ log.
+>
+> Các quyết định D2–D4 ở §14 (gateway Python, LatestView trong Python, BarStore SQLite)
+> **đi ngược mục tiêu này**. Chúng là lối tắt theo code Python hiện có, không phải kiến
+> trúc chuẩn.
+> **Kiểm trong lượt này (chỉ đọc):** `Cargo.lock` đã có `rdkafka 0.39`, `redis 0.25`,
+> `prost 0.13`, `tokio 1.48`, `hyper 1.11`, `rustls 0.23`, `ring 0.17`, `serde_json`,
+> `base64`. **Chưa có** `tonic`, `h2`, `serde_yaml`. `qdl-kafka` đã có
+> `TransactionalKafkaBridge` và các fenced sink; `qdl-realtime-core` đã dùng Redis +
+> Lua `Script`. Build Rust dùng `Dockerfile.qdl-rust-runtime` (có sẵn).
+
+### 17.1 Phần bị thay thế
+
+| Mục cũ | Trạng thái | Thay bằng |
+|---|---|---|
+| §14.3 D2 (gateway Python, luật chuyển Rust) | **Thay thế** | R1: `qdl-stream-gateway` bằng Rust |
+| §14.3 D3, §14.4.3 (LatestView trong Python, checkpoint SQLite) | **Thay thế** | R2: `qdl-projector` Rust → Redis + changelog compacted |
+| §14.3 D4, §14.4.4 (BarStore SQLite, bar_materializer Python) | **Thay thế** | R3: bar trong projector Rust → Redis ZSET + `md.bars.v2` |
+| §15.3 P1.1, P1.3–P1.5, P2.1–P2.6 | **Thay thế** | Work item ở §17.6 |
+| §16.2 A2, A3, A4, A9 | **Bỏ (legacy của thiết kế Python/SQLite)** | Được giải bằng cơ chế Kafka/Rust ở §17.4 |
+| §16.2 A5, A10 | **Viết lại** | §17.4 |
+| §14.3 D1, D5–D9; §15.1 F1–F8; §16.2 A1, A6, A7, A8, A11; §16.3 | **Giữ** | — |
+
+### 17.2 Kiến trúc đích (khớp Guide §5, §6, §20)
+
+```text
+Sàn ─► qdl-ingestor (Rust) ─► md.raw.realtime.v2 ─► rust_core (Rust, EOS) ─► md.canonical.v2
+                                                                              │ (RF3, 6 partition)
+        ┌─────────────────────────────────────────────────────────────────────┼──────────────────┐
+        ▼                                                                     ▼                  │
+ qdl-stream-gateway ×2 (Rust, tonic)                          qdl-projector ×1..2 (Rust)         │
+  - assign 6 partition, read_committed, không commit          - consumer group, read_committed   │
+  - ring theo key + index subscriber                          - stage A (EOS): canonical →       │
+  - replay engine (reader riêng, có trần)                        md.latest.v2 (compacted)         │
+  - JWT + manifest + entitlement + freshness                     md.bars.v2   (compacted)         │
+  - cursor HMAC (khớp byte với Python)                           + offset, cùng một transaction   │
+  - Subscribe only, không lease                               - stage B: apply Redis (Lua CAS    │
+  alias qdl-v2-stream-a / -b                                     theo offset); khởi động = phát  │
+                                                                 lại changelog vào Redis         │
+                                                                         │                       │
+                                                                         ▼                       │
+                                                               stable_redis (cache, dựng lại được)
+                                                                         │
+                                                                         ▼
+                                                qdl-api ×2 (Python, không state, không consumer Kafka)
+                                                  - snapshot/latest/MARK: Redis GET/MGET
+                                                  - BAR warmup/history: Redis ZRANGEBYSCORE
+                                                  - cấp cursor HMAC từ offset lưu trong Redis
+                                                  alias qdl-v2-query
+bar_edge (Python, giữ nguyên thuật toán) ─► md.raw → canonical (không đổi); xác nhận bền: đọc Redis
+```
+
+**SQLite biến mất khỏi đường dữ liệu.** Đây chính là thủ tục sunset của ADR-0006, cuối
+cùng được thực hiện.
+
+### 17.3 Các quyết định refine (thay D2–D4, bổ sung D10–D12)
+
+| ID | Quyết định | Vì sao chuẩn nhất / tối ưu nhất |
+|---|---|---|
+| **R1** | `qdl-stream-gateway` Rust (tonic), chỉ có `Subscribe` + health; 2 replica độc lập, không lease | Guide §6.2/§20.1. Consumer chỉ gọi `Subscribe` (§15.2), nên phạm vi port nhỏ: JWT (verify bằng `ring`, đã có trong lock), manifest/catalog, matching + freshness, codec HMAC. Chi phí mỗi lượt giao (dựng protobuf + ký token) không bị GIL giới hạn |
+| **R2** | `qdl-projector` Rust: **stage A** EOS canonical → `md.latest.v2` (compacted, key = `partition_key`); **stage B** apply Redis bằng Lua CAS (`offset mới > offset lưu`) | Pattern chuẩn của Kafka (changelog + sink idempotent). Dùng lại `TransactionalKafkaBridge` (`rust/qdl-kafka/src/lib.rs:826-898`). Giải cả 3 vấn đề cũ cùng lúc: feed ít cập nhật vẫn có latest (changelog không hết hạn); Redis mất thì dựng lại trong vài giây; zombie bị fencing bằng `transactional.id` (invariant 33). **Không còn cache identity, không còn `ProjectionCacheMismatch`** |
+| **R3** | Bar trong cùng projector: `md.bars.v2` compacted, key = `binding|open_time|revision` (append-only theo revision); Redis `ZSET bars:{binding}` (score = open_time, trần 10k + headroom) | Lịch sử BAR được nhân bản RF3 (invariant 32 đạt tự nhiên). Revision là append-only vì nằm trong key (invariant 35), compaction chỉ xoá bản trùng. Warmup = một lệnh `ZRANGEBYSCORE`. Không file dùng chung giữa các process |
+| **R4** | `qdl-api` Python **không có trạng thái**: chỉ đọc Redis, cấp cursor, auth REST | Guide §6.1/§20.1. Không consumer Kafka trong Python, nên hết tranh chấp GIL giữa hot và cold. Hai replica đọc cùng một Redis nên **không lệch** (A9 tự hết) |
+| **R5** | Payload public dựng sẵn: projector Rust lưu vào Redis **JSON public đã render** (đúng schema V2 đóng) + các trường đã decode | Warmup 5.000 dòng chỉ là nối bytes, không dựng model, không decode protobuf. Cổng: **golden test khớp byte** với Python renderer hiện tại (`qdl/api_v2/router.py`). Nếu không đạt khớp byte thì phương án dự phòng là Python render từ các trường đã decode (Q12) |
+| R6 (= D5) | Checkpoint consumer chỉ ở phía client (token) | Giữ |
+| R7 (= D6 + A1) | Token v3 đủ invariant 29; codec có **golden vector dùng chung** Rust/Python trong `contracts/` | Query (Python) cấp token, gateway (Rust) nhận, nên phải khớp byte |
+| R8 (= D7 + F2) | Cutover đổi 4 alias cùng lúc | Giữ |
+| **R9** | Redis: namespace mới `qdl:v3:{env}`; `maxmemory` 128 MB → **768 MB [ước lượng: 140 key BAR × ≤10k × ~300 B + latest]**, `noeviction`, vẫn tmpfs, không persistence | Redis chỉ là cache dựng lại được từ changelog (Guide §7.3). Chấp nhận ephemeral vì dựng lại tự động |
+| **R10** | Topic mới: `md.latest.v2`, `md.bars.v2`: compact, RF3, min ISR 2, 6 partition. `md.latest.v2` co-partition với canonical theo key. Cần ACL cho `qdl-projector-v3` (group, `transactional.id`, write) | Là thay đổi broker, **owner duyệt riêng** |
+| **R11** | Giữ nguyên rust_core, ingestor, bar_edge (chỉ đổi chỗ xác nhận bền: Redis ZSET thay spool) | Không đụng producer trong 4 phase: giảm blast radius; đường ghi hiện tại đã đúng kiểu Kafka-native |
+| **R12** | *Để sau, ngoài 4 phase:* "Initial low-latency mode" của Guide §11.4 (ingestor ghi raw + canonical trong một transaction, bỏ một hop) | Giảm latency thật nhưng đụng producer, blast radius lớn. Chỉ làm khi số đo sau P3 cho thấy cần |
+
+### 17.4 Tính đúng, độ bền, readiness theo thiết kế mới
+
+- **Thứ tự và không mất:**
+  - Gateway đọc partition liên tục, replay → live trong một task tokio: đăng ký +
+    chốt boundary atomic, rồi pending buffer có trần (§14.4.2).
+  - Lossless tràn → `RESOURCE_EXHAUSTED` / `RECOVERY_REQUIRED` typed (invariant 5).
+  - Book và BAR final không bao giờ coalesce (A6, invariant 27).
+- **EOS và idempotency:**
+  - Stage A: Kafka transaction.
+  - Stage B: CAS theo `(generation, offset)`. Crash giữa chừng thì phát lại, không ghi
+    đè lùi.
+  - Hai projector cùng partition: bên cũ bị fencing bởi Kafka.
+  - Thay A4 (flock) bằng cơ chế chuẩn của Kafka.
+- **Độ bền (invariant 32):**
+  - Realtime: canonical RF3 (6h).
+  - Latest: `md.latest.v2` RF3, không hết hạn theo thời gian.
+  - BAR: `md.bars.v2` RF3.
+  - Redis là cache: mất thì stage B phát lại changelog.
+  - Thay A3; không còn "bản duy nhất trên SQLite".
+- **Readiness (invariant 28; Guide §24):**
+  - Gateway: broker reachable + đủ 6 partition + lag < 1 s + khoá cursor + catalog + JWKS.
+  - Projector: đã được assign + lag < ngưỡng + Redis generation đã dựng xong.
+  - API: Redis đạt + generation khớp + heartbeat projector còn tươi.
+  - Readiness **theo từng slice** dựa vào latest + timestamp nguồn + trạng thái gap.
+- **DR (thay A10):**
+  - Diễn tập: mất Redis (dựng lại từ changelog, đo RTO); mất một gateway; mất projector
+    (group rebalance); xoay khoá cursor; mất broker trong **Kafka test**.
+- **Độ lệch replica (A9):** không còn, vì API đọc một Redis.
+- **Giới hạn giữ nguyên (§16.3):**
+  - một host;
+  - retention canonical 6h;
+  - chứng chỉ hết hạn 2026-11-20;
+  - DNSE/Spot ngoài phạm vi.
+
+### 17.5 Tài nguyên mục tiêu **[ước lượng; cổng thoát = đo thật ≤5,0 vCPU theo R1.29]**
+
+| Role | Cap đề xuất | Thay cho |
+|---|---|---|
+| qdl-stream-gateway ×2 (Rust) | 0,5 CPU / 256 MiB mỗi cái | stream_v2 ×2 (2,0 + 2,0) |
+| qdl-projector ×1 (+1 dự phòng khi cần) (Rust) | 0,5 CPU / 256 MiB | projector ×6 (6 × 1,0) |
+| qdl-api ×2 (Python, không state) | 0,75–1,0 CPU / 512 MiB | query_v2 ×2 (1,5 + 1,5) |
+| stable_redis | 0,5 CPU / 768 MiB | 0,5 / 160 MiB |
+| **Tổng cap các role này** | **≈3,5–4,0** | **≈13,5** |
+
+### 17.6 Bốn phase theo kiến trúc refine (work item chính)
+
+**P1 — `qdl-stream-gateway` Rust, shadow. [ước lượng] 8–12 ngày**
+- **P1.0:** baseline (đo baseline 4 đại lượng theo A11); sửa lỗi `subscriber_count`;
+  kiểm ACL `assign`; **đề xuất dependency mới** (`tonic`, `h2`, `tower`, `serde_yaml`
+  hoặc chuyển manifest sang JSON lúc build) qua `cargo deny check`. Owner duyệt
+  dependency.
+- **P1.1 — lát dọc đầu tiên (3–4 ngày):** crate `rust/qdl-stream-gateway` (binary
+  `qdl-stream-gateway`), tonic server dùng TLS hiện có (`stable_tls/stream`, SAN có
+  alias), nhận `Subscribe` cho **một** feed (TRADE) với JWT + manifest thật, cursor HMAC
+  khớp golden vector Python, đọc Kafka live. SDK Python thật subscribe được qua mạng
+  shadow. **Đo sớm:** CPU / 1.000 lượt giao, p99 latency thêm.
+- **P1.2:** token v3 (invariant 29) ở cả Python issuer và Rust verifier;
+  `contracts/cursor/golden/*.json`.
+- **P1.3:** ring theo key (byte + thời gian; BAR theo số lượng), index subscriber, queue
+  có trần, coalesce theo vòng đời.
+- **P1.4:** replay engine (consumer riêng, trần 200k bản ghi / 64 MiB / 2 s, tối đa 4
+  cùng lúc, huỷ được).
+- **P1.5:** đủ mọi feed stream của manifest TS + alpha; freshness filter; lỗi typed khớp
+  mapping của SDK (`qdl_sdk/transport.py:503-526`).
+- **P1.6–P1.8:** shadow (mạng test, alias trong SAN), oracle Kafka
+  (`scripts/kafka_native_stream_parity.py`), kill replica, đuổi ≥3.000/s. Cổng thoát như
+  §14.5.
+
+**P2 — `qdl-projector` Rust + `qdl-api` đọc Redis, shadow. [ước lượng] 7–10 ngày;
+bắt đầu song song sau P1.2**
+- **P2.0:** tạo topic `md.latest.v2`, `md.bars.v2` + ACL (R10, owner duyệt).
+- **P2.1:** crate `rust/qdl-projector`:
+  - stage A (dùng lại `TransactionalKafkaBridge`) và stage B (Lua CAS);
+  - schema Redis `qdl:v3:{env}:latest:{partition_key}`, `…:bars:{binding}` (ZSET),
+    `…:barmeta:{binding}`, `…:projector:generation`, `…:projector:heartbeat`.
+- **P2.2:** render JSON public trong Rust + **golden test khớp byte** với Python cho mọi
+  feed/payload (R5).
+- **P2.3:** migrate BAR: xuất các dòng BAR từ spool (`mode=ro`) thành bản ghi
+  `md.bars.v2` qua một producer có transaction (script một lần, đối chiếu count/hash
+  theo key), rồi projector dựng Redis.
+  - bar_edge `_durable_final_bar_opens` đọc Redis ZSET
+    (`stable_bar_edge.py:969-989`); identity chuyển sang projector generation.
+- **P2.4:** `qdl-api` backend Redis: snapshot/latest/MARK/BOOK_SNAPSHOT = GET/MGET;
+  warmup/history = ZRANGEBYSCORE + nối JSON dựng sẵn; cấp cursor v3. Không còn lane
+  lạnh/duty-cycle, **chỉ gỡ sau khi đo**.
+- **P2.5:** diễn tập: xoá Redis namespace test → dựng lại từ changelog (đo RTO); kill
+  projector giữa transaction; zombie.
+- **P2.6:** shadow `qdl-api` ×2 trên mạng test; matrix 132/132; parity tại cùng watermark
+  với oracle Kafka; driver stage 20/35 trên mạng shadow (canary A8).
+
+**P3 — Cutover + nghiệm thu. [ước lượng] 3–4 ngày** (như §15.3, với F2: đổi 4 alias cùng
+lúc)
+- Baseline đã đo ở P1.0.
+- Stage 50 + TS; burst thật.
+- Diễn tập rollback.
+- Cổng ≤5,0 vCPU.
+
+**P4 — Gỡ bỏ + phát hành. [ước lượng] 2–3 ngày** (như §15.3)
+- Gỡ thêm: toàn bộ `qdl/transport/sqlite_spool.py` khỏi đường dữ liệu, projector Python,
+  `stable_ingest`, lease Stream, Python gRPC stream service.
+- ADR-0007 ghi rằng **ADR-0006 đã sunset**.
+- Release v2.2.0 trước ~2026-11-10.
+
+**Tổng [ước lượng]:**
+- Tuần tự: 20–29 ngày làm việc.
+- Chạy P1 và P2 song song: **15–20 ngày**. Hai agent có thể chia P1 (gateway) và P2
+  (projector + API), mỗi bên một crate/module riêng.
+- Dài hơn hướng Python ở §14, nhưng là **đích cuối**, không phải bước trung gian phải
+  làm lại.
+
+### 17.7 Rủi ro riêng của Rust-first
+
+| Rủi ro | Giảm thiểu |
+|---|---|
+| Dependency mới (tonic, h2, tower) | `cargo deny`, pin version, owner duyệt ở P1.0 |
+| Token/JSON Rust lệch byte với Python | Golden vector dùng chung trong `contracts/`, test chạy ở cả hai ngôn ngữ trong CI |
+| Port auth/manifest sai quyền | Test từ chối chéo venue/symbol/consumer; chạy song song với verifier Python ở shadow, so từng quyết định |
+| Thời gian build Rust (image lớn) | Dùng lại builder stage có cache; build chỉ khi crate đổi (rule 3b) |
+| Redis 768 MiB trên host | Đo thật khi shadow; trần theo số đo |
+
+### 17.8 Câu hỏi cho owner (thay Q2–Q4, thêm Q12–Q14)
+
+| # | Câu hỏi | Khuyến nghị |
+|---|---|---|
+| Q2′ | Gateway Rust (R1)? | Có (theo mục tiêu V2) |
+| Q4′ | Projector Rust + changelog compacted + Redis cho latest/BAR (R2, R3); bỏ SQLite hoàn toàn? | Có |
+| Q12 | JSON public dựng sẵn trong Rust (R5), với golden khớp byte; dự phòng là Python render? | Có |
+| Q13 | Duyệt dependency Rust mới và topic/ACL mới (R10)? | Duyệt ở P1.0 / P2.0 |
+| Q14 | Key/pubsub tương thích V1 **không** port sang projector Rust (F1: không ai tới được), ghi sunset có quản lý (A7)? | Có |

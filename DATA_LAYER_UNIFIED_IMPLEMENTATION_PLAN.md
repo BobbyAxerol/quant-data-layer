@@ -53203,3 +53203,24 @@ phases: single-host durability, the guide's 7-30 day canonical retention
 (about 595 GB against 159 GB free), certificate expiry on 2026-11-20 and
 multi-venue production certification. Owner questions Q9-Q11 added.
 No source, config or runtime change; no build, push, merge or release.
+
+<a id="kafka-native-opus-rust-first-refined"></a>
+### 2026-09-23 - Opus Rust-First Refinement Of The Kafka-Native Proposal (Section 17)
+
+**Status: DOCUMENTATION COMPLETE / FEEDS ASTRA CONSOLIDATION WITH OWNER.**
+The owner confirmed the V2 core is Rust-first. Section 17 of
+[the Kafka-native architecture review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#opus-rust-first-refined)
+realigns the proposal with guide sections 5, 6.2, 6.3, 7.3 and 20.1: a Rust
+`qdl-stream-gateway` (Subscribe only, two lease-free replicas), a Rust
+`qdl-projector` (EOS changelog to compacted `md.latest.v2` / `md.bars.v2`,
+then an offset-CAS Redis sink), and a stateless Python `qdl-api` reading
+Redis. SQLite leaves the data path (ADR-0006 sunset). It supersedes section
+14 D2-D4 and section 15 work items P1.1, P1.3-P1.5 and P2.1-P2.6, drops
+section 16 additions A2, A3, A4 and A9 as artifacts of the Python/SQLite
+design, and rewrites A5 and A10. Read-only checks: `Cargo.lock` already
+locks rdkafka, redis, prost, tokio, hyper, rustls, ring, serde_json and
+base64 but not tonic, h2 or serde_yaml; `qdl-kafka` provides
+`TransactionalKafkaBridge`; `qdl-realtime-core` already uses Redis Lua.
+Owner questions Q2', Q4' and Q12-Q14 added (new Rust dependencies, new
+compacted topics and ACLs, byte-identical JSON rendering, V1-compat sunset).
+No source, config or runtime change; no build, push, merge or release.
