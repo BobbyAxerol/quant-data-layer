@@ -1750,7 +1750,14 @@ async def _target_read(client, operation: str, products) -> object:
             reference_evidence(reference, result, observed_at_ns=time.time_ns())
         return response
     (product,) = products
-    response = await client.snapshot(sdk_requirement(product))
+    requirement = sdk_requirement(product)
+    if product.feed.value == "BAR":
+        # The alpha runtime's latest_bar (execution_alpha
+        # runtime/app/alpha_runtime/orchestration/data_layer_v2.py) sends no
+        # warmup. The manifest's 10,000-row BAR warmup belongs to history
+        # reads, and would make every latest read judge a 10,000-row horizon.
+        requirement = replace(requirement, warmup_limit=0)
+    response = await client.snapshot(requirement)
     validate_product_view(product, response.data, require_current_quality=True)
     return response
 

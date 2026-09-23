@@ -52679,6 +52679,45 @@ refinement without the owner's next request.
   hash-asserting; rollback `f7531891...`. Not touched: Stream, projectors,
   Kafka, Redis, SQLite data, quotas, TS, alpha.
 
+- 2026-09-23: **latest-BAR fast path rolled (`2.1.1-a282305`,
+  `sha256:72dcf635...`, Query x2 at 1.00, `ROLLED_HEALTHY`, TS 60/60), and
+  the driver's BAR_LATEST probe now sends what the alpha runtime's
+  `latest_bar` sends (no warmup) instead of the manifest's 10,000-row history
+  horizon.** Stage 5 at 09:43Z: **BAR_LATEST passes** (p50 57-59 ms, was
+  0.8-1.2 s); QUOTE p95 287-391 ms (was 537-740), MARK_INDEX p95 265-559 ms
+  (was 728-833); 2 `DATA_STALE` snapshot errors; TS 55/60 in two samples during
+  alpha setup (QUOTE slices stale at 2.5-3.4 s with the writer healthy -
+  `durable_append` max 150-220 ms - so not the write path; not attributed
+  further) and an OKX ETH BOOK_DELTA `SESSION_RESET` later (venue-side). The
+  remaining outliers sit in the cold window (09:43:42-51Z).
+  **CPU A/B, round 2 (same image `72dcf635`, one variable, pre-declared in the
+  hot-reader entry):** at 1.50 throttling fell from 3.74 s / 2.05 s to **0.44 s
+  / 0.43 s per 100 s**; L2 (both venues) and MARK_INDEX OKX gates turned
+  **PASS**; errors 2 -> **0**; missed ticks and failures **0**; TS **60/60 in
+  all eleven samples**; no neighbour regression (Stream throttle 0.01 s,
+  market_data_service unchanged). With the lock removed the raise now improves
+  the target metric, so **1.50 is retained** and recorded in
+  `docker-compose.v2-stable.yml` for both readers. **Owner decision needed:**
+  the 2026-09-18 standing rule asks for resource-neutral ceiling raises; no
+  role offers a safe equal cut (the passive Stream must match the active on
+  failover; the projectors saturated in the 07:44Z burst; the bar edge has
+  0.25 of slack). The v2.1.1 contract permits Query 1.5 without an offset.
+  Ceiling sums: compose 23.75 -> **24.75**; live caps 21.0 -> 22.0; actual
+  average draw of all stack roles 5.09 vcore.
+  Still failing at 1.50: QUOTE p95 264-288 ms (target 100) and p99 1.2-1.3 s,
+  MARK_INDEX Binance p99 1.53 s, TRADE small-sample max 0.63-0.89 s - all in
+  the cold window, which is 11 % of a 90 s run.
+  **Next single variable, packet recorded before execution: the Query process's
+  GIL switch interval 5 ms -> 1 ms** (`configure_query_interpreter`, called by
+  `create_stable_query_app`). With locks and throttling gone, a cold
+  warmup's CPU-bound threads still make every GIL acquisition of the event
+  loop or a hot-read thread wait up to the switch interval, and a hot read
+  needs several. Image from this commit on the `a231...` base, Query x2 at
+  1.50 CPU / 512 MiB, serial and hash-asserting; rollback `72dcf635...` at
+  1.50. Test: `tests/test_query_interpreter.py`; the 185 tests that read the
+  compose file or touch these paths pass. Not touched: Stream, projectors,
+  Kafka, Redis, SQLite data, quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);

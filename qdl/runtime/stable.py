@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import ssl
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -642,7 +643,24 @@ def install_stable_health(app, readiness, manifest) -> None:
         }
 
 
+# A cold 2,500/5,000-row warmup keeps one or two threads CPU-bound for
+# seconds. At CPython's default 5 ms switch interval every GIL acquisition by
+# the event loop or a hot-read thread may wait that long, and a hot read needs
+# several: on 2026-09-23 (v2.1.1 Phase-3 stage 5, lock and throttling already
+# removed) QUOTE snapshots still reached p95 ~280 ms and p99 ~1.2 s inside the
+# cold window against a 9 ms median. 1 ms trades a little throughput for
+# bounded hot-read waits in this latency-first reader.
+QUERY_GIL_SWITCH_INTERVAL_SECONDS = 0.001
+
+
+def configure_query_interpreter() -> None:
+    """Process-wide interpreter settings for a Query reader."""
+
+    sys.setswitchinterval(QUERY_GIL_SWITCH_INTERVAL_SECONDS)
+
+
 def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAPI:
+    configure_query_interpreter()
     config = config or StableRuntimeConfig.from_environment("query_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
