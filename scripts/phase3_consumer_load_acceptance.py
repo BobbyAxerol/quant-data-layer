@@ -2045,12 +2045,19 @@ def _probe_products(products_by_consumer, feed: str, interval: str | None = None
     return values
 
 
-async def _target_rotating_probe(*, client, venue, feed, products, period, start, end, recorder, stop):
-    """One latency probe per venue and feed, rotating the five symbols."""
+async def _target_rotating_probe(*, client, venue, feed, products, period, start, end, recorder, stop,
+                                 phase=0.0):
+    """One latency probe per venue and feed, rotating the five symbols.
+
+    Each probe has its own phase, as the session polls do: six probes firing in
+    the same millisecond on one identity queue behind each other in Query's
+    per-consumer hot lane and measure that queue, not the read (stage 20,
+    2026-09-23: TRADE p50 20-270 ms beside QUOTE 15 ms on the same replica).
+    """
 
     from qdl.certification.phase3_consumer_load import DeclaredRateTicker, PollLedger
 
-    ticker = DeclaredRateTicker(start=start, period=period, phase=0.0, end=end)
+    ticker = DeclaredRateTicker(start=start, period=period, phase=phase, end=end)
     ledger = PollLedger(offered=ticker.offered)
     index = 0
     try:
@@ -2253,10 +2260,11 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
             for feed in probes["feeds"]:
                 by_venue = _probe_products(products_by_consumer, feed, "1m" if feed == "BAR" else None)
                 for venue, products in by_venue.items():
+                    period = float(probes["period_seconds"])
                     poll_tasks.append(asyncio.create_task(_target_rotating_probe(
                         client=probe_clients[venue], venue=venue, feed=feed, products=products,
-                        period=float(probes["period_seconds"]), start=start + 1.0, end=end,
-                        recorder=recorder, stop=stop,
+                        period=period, start=start + 1.0, end=end,
+                        recorder=recorder, stop=stop, phase=rng.random() * period,
                     )))
         if cold_role:
             async def cold_later():

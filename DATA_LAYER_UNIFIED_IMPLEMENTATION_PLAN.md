@@ -52800,6 +52800,38 @@ refinement without the owner's next request.
   `afdb1926...`. Not touched: Stream, projectors, Kafka, Redis, SQLite data,
   quotas, TS, alpha.
 
+- 2026-09-23: **GC thresholds rolled (`2.1.1-99e3896`, `sha256:32581a38...`,
+  Query x2 at 1.50, `ROLLED_HEALTHY`, TS 60/60).** Stage 20 at 10:26Z: QUOTE
+  p95 41-75 ms and **p99 194-201 ms PASS** (was 267-479), MARK_INDEX p99 250-350
+  ms, L2 p95 174-224 ms **PASS** (was 0.86-1.02 s), BAR_LATEST PASS; TRADE p95
+  199-217 ms failed.
+  **Probe phases (driver):** all six probes fired in the same millisecond on one
+  identity and queued behind each other in Query's per-consumer hot lane (one
+  active per consumer per replica), so TRADE measured that queue (p50 20-270 ms
+  beside QUOTE 15 ms on the same replica). Each probe now has its own phase, as
+  the session polls already had. A driver artefact, not a Data Layer change.
+  **Stage 20 at 10:30Z: all ten latency gates PASS** - QUOTE p95 40 / 57 ms, p99
+  127 / 156 ms; MARK_INDEX p95 138 / 159 ms, p99 214 / 220 ms; TRADE p95 62 / 89
+  ms; L2 p95 114 / 115 ms; BAR_LATEST p95 20 / 46 ms; start-up clean (21.5 s, 50
+  bounded retries); client wake lag p99 2.5 ms.
+  **What failed instead is the write path.** All six projectors saw
+  `durable_append` peaks of 4.2-6.1 s and `canonical_age` peaks of 4.4-7.2 s at
+  10:30:24-45Z (alpha streams opening), 10:31:15-37Z and 10:34:09Z (streams
+  closing), with `rust_core` ingest normal (150-280/s) - not a market burst.
+  Alpha TRADE streams arrived 0.7-1.3 s late at p50 and 1.7-4.6 s at p95, so
+  **fourteen QUOTE stream events failed the governed freshness bound**, two QUOTE
+  snapshots were `DATA_STALE`, and TS dipped to 57/60. Across runs the writer
+  peaks vary rather than scale (append max ~1.0-1.6 s in most stage-5/20 runs,
+  1.9 s and 6.1 s in the last two): the single stream process that holds the
+  lease both writes and fans out to ~76 streams (36 alpha + 40 TS). Checked and
+  ruled out: per-event server checkpoints (the SDK keeps the cursor client-side,
+  `qdl_sdk/client.py:368`). **Not attributed further and not changed:** this is
+  the single-writer ceiling of [DL-V2 R1 outcome](#dl-v2-r1-outcome-20260916);
+  its structural fix is out of this closure's scope, and applying the Query
+  interpreter tuning to Stream is unmeasured and would cost TS a lease-handover
+  dip. The failures are typed and fail-closed; they are reported, not
+  relabelled.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
