@@ -708,23 +708,32 @@ class SQLiteDurableSpool:
         if after and (after.stream != stream or after.partition_key != partition_key):
             raise ValueError("cursor does not belong to requested stream/partition")
         offset = after.offset if after else 0
-        with self._lock:
-            oldest = self._connection.execute(
-                "SELECT MIN(logical_offset) FROM events WHERE stream = ? AND partition_key = ?",
-                (stream, partition_key),
-            ).fetchone()[0]
-            if oldest is not None and offset < int(oldest) - 1:
-                raise CursorExpired(
-                    f"cursor {offset} predates oldest retained offset {int(oldest)}"
-                )
-            rows = self._connection.execute(
-                """
-                SELECT * FROM events
-                WHERE stream = ? AND partition_key = ? AND logical_offset > ?
-                ORDER BY logical_offset ASC LIMIT ?
-                """,
-                (stream, partition_key, offset, limit),
-            ).fetchall()
+        # Replay reads run on the hot connection in one read snapshot, so a
+        # subscription opening never waits on (or holds) the writer's lock.
+        # v2.1.1 stage 20 (2026-09-23): projector appends stalled 2-6 s while
+        # alpha streams opened and closed on the stream process.
+        with self._hot_lock:
+            connection = self._hot_reader_locked()
+            connection.execute("BEGIN")
+            try:
+                oldest = connection.execute(
+                    "SELECT MIN(logical_offset) FROM events WHERE stream = ? AND partition_key = ?",
+                    (stream, partition_key),
+                ).fetchone()[0]
+                if oldest is not None and offset < int(oldest) - 1:
+                    raise CursorExpired(
+                        f"cursor {offset} predates oldest retained offset {int(oldest)}"
+                    )
+                rows = connection.execute(
+                    """
+                    SELECT * FROM events
+                    WHERE stream = ? AND partition_key = ? AND logical_offset > ?
+                    ORDER BY logical_offset ASC LIMIT ?
+                    """,
+                    (stream, partition_key, offset, limit),
+                ).fetchall()
+            finally:
+                connection.execute("COMMIT")
         return [self._stored_event(row) for row in rows]
 
     def read_tail(
@@ -1165,8 +1174,8 @@ class SQLiteDurableSpool:
     def get_checkpoint(
         self, *, consumer_id: str, stream: str, partition_key: str
     ) -> Cursor | None:
-        with self._lock:
-            row = self._connection.execute(
+        with self._hot_lock:
+            row = self._hot_reader_locked().execute(
                 """
                 SELECT logical_offset FROM consumer_checkpoints
                 WHERE consumer_id = ? AND stream = ? AND partition_key = ?

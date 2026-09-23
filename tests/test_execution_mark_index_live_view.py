@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+from qdl.query.lanes import ReadLaneRejected
 from pathlib import Path
 
 import httpx
@@ -1274,7 +1276,18 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             deadline_ms=deadline_ms,
         )
 
-    async def test_execution_uses_live_view_but_alpha_reference_keeps_existing_adapter(self):
+    def _alpha_requirement(self) -> ReferenceDataRequirement:
+        return ReferenceDataRequirement(
+            instrument_uid=self.record.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=60_000,
+        )
+
+    async def test_execution_and_alpha_read_the_live_view_not_the_venue(self):
+        # v2.1.1 stage 50: alpha REST reads of OKX MARK/INDEX exceeded the
+        # venue bucket and reached p50 420 ms; the ingested view serves both.
         live = _LiveReader()
         service = V2QueryService(**self.common, execution_mark_index_reader=live)
         execution = await service.reference_data_batch_async(
@@ -1282,21 +1295,23 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_EXECUTION,
         )
         self.assertFalse(execution.partial)
-        self.assertEqual(live.calls, 1)
-        self.assertEqual(self.fallback.calls, 0)
         self.assertEqual(
             execution.results[0].result.lineage[0].provider_endpoint, LIVE_ENDPOINT
         )
-
-        alpha_requirement = ReferenceDataRequirement(
-            instrument_uid=self.record.instrument_uid,
-            product=ReferenceProduct.MARK_INDEX_PRICE,
-            consumer_grade=ConsumerGrade.ALPHA,
-            source_policy_id="crypto_liquid_v2",
-            max_freshness_ms=2_000,
-        )
         alpha = await service.reference_data_batch_async(
-            ReferenceBatchRequirement("alpha-reader", (alpha_requirement,)),
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(alpha.partial)
+        self.assertEqual(live.calls, 2)
+        self.assertEqual(self.fallback.calls, 0)
+        self.assertEqual(alpha.results[0].result.lineage[0].provider_endpoint, LIVE_ENDPOINT)
+
+    async def test_alpha_falls_back_to_the_venue_when_the_view_cannot_serve(self):
+        live = _LiveReader(status=ReferenceStatus.ERROR)
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+        alpha = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
             purpose=AccessPurpose.INTERNAL_ALPHA,
         )
         self.assertFalse(alpha.partial)
@@ -1306,6 +1321,21 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             alpha.results[0].result.lineage[0].provider_endpoint,
             "TEST_REFERENCE_REST_ADAPTER",
         )
+
+    async def test_alpha_falls_back_when_the_hot_lane_refuses(self):
+        live = _LiveReader()
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+
+        async def refused(**_kwargs):
+            raise ReadLaneRejected("read lane consumer is at its finite pending bound")
+
+        service._fetch_execution_mark_index_hot = refused
+        alpha = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(alpha.partial)
+        self.assertEqual(self.fallback.calls, 1)
 
     async def test_execution_live_view_stale_is_typed_and_never_falls_back_to_rest(self):
         live = _LiveReader(status=ReferenceStatus.ERROR)

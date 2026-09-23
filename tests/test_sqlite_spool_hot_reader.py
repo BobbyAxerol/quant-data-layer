@@ -75,6 +75,30 @@ class HotReaderTests(unittest.TestCase):
             self.spool._connection.execute("ROLLBACK")
         self.assertEqual(len(self.spool.read_tail(stream="md.canonical.v2", partition_key="p1", limit=10)), 6)
 
+    def test_replay_reads_do_not_wait_behind_a_held_writer_lock(self):
+        # Stream subscriptions replay with read/get_checkpoint; on the stream
+        # process the writer holds _lock for every append.
+        from qdl.transport.contracts import Cursor
+        released = threading.Event()
+
+        def hold_writer_lock():
+            with self.spool._lock:
+                released.wait(2)
+
+        holder = threading.Thread(target=hold_writer_lock)
+        holder.start()
+        time.sleep(0.05)
+        started = time.monotonic()
+        rows = self.spool.read(stream="md.canonical.v2", partition_key="p1",
+                               after=Cursor("md.canonical.v2", "p1", 2), limit=10)
+        checkpoint = self.spool.get_checkpoint(consumer_id="c", stream="md.canonical.v2", partition_key="p1")
+        elapsed = time.monotonic() - started
+        released.set()
+        holder.join()
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual([item.cursor.offset for item in rows], [3, 4, 5])
+        self.assertIsNone(checkpoint)
+
     def test_close_releases_the_hot_connection(self):
         self.spool.read_tail(stream="md.canonical.v2", partition_key="p1", limit=1)
         self.assertIsNotNone(self.spool._hot_connection)

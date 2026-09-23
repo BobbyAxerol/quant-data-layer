@@ -260,6 +260,32 @@ def _small_local_warmup_lane_policy() -> ReadLanePolicy:
     )
 
 
+def _queued_local_batch_lane_policy() -> ReadLanePolicy:
+    """The single-active large-warmup lane with a bounded queue per identity.
+
+    The default admits one pending batch per consumer and refuses the next at
+    once. Many alpha sessions share one platform identity, so a fleet cold
+    start became immediate ``RATE_LIMITED`` refusals: on 2026-09-23 (v2.1.1
+    Phase-3) 5 of 35 and 13 of 50 sessions never started. Queuing keeps one
+    active materialization per replica - the memory bound - while each waiter
+    is still limited by its own request deadline and by 64 MiB of reserved
+    rows (about twelve 5,000-row warmups), with queue slots kept for TS.
+    """
+
+    return ReadLanePolicy(
+        max_active=1,
+        max_pending=16,
+        max_pending_bytes=64 * 1024 * 1024,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=8,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=0,
+        reserved_max_pending_per_consumer=8,
+        reserved_pending_slots=2,
+        non_reserved_pending_slots=1,
+    )
+
+
 def _is_small_local_warmup(requirement: DataRequirement) -> bool:
     specification = requirement.warmup_specification
     if specification is None:
@@ -387,6 +413,7 @@ class V2QueryService:
         reference_source_id: Callable[[InstrumentRecord], str] | None = None,
         execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
         small_local_warmup_lane: bool = False,
+        queued_local_batch_lane: bool = False,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -407,7 +434,11 @@ class V2QueryService:
         # Opt-in: the stable runtime enables it; the default keeps every local
         # warmup in the single-active lane.
         self._small_local_warmup_lane = small_local_warmup_lane
-        self._local_batch_admission = _LocalBatchAdmission()
+        self._local_batch_admission = (
+            _LocalBatchAdmission(policy=_queued_local_batch_lane_policy())
+            if queued_local_batch_lane
+            else _LocalBatchAdmission()
+        )
         self._small_local_warmup_admission = _LocalBatchAdmission(
             policy=_small_local_warmup_lane_policy()
         )
@@ -1171,15 +1202,37 @@ class V2QueryService:
         ) -> ReferenceBatchResult:
             _index, requirement, request = candidate
             if self._uses_execution_mark_index_live_reader(requirement, request, purpose):
-                # This is deliberately not a provider retry/cache path. The
-                # active stream gateway either has one verified current view or
-                # query returns its typed fail-closed reason to the consumer.
-                result = await self._fetch_execution_mark_index_hot(
-                    request=request,
-                    requirement=requirement,
-                    consumer_id=batch.consumer_id,
-                    deadline_ms=self._reference_deadline_ms(candidate, purpose),
-                )
+                # For execution this is deliberately not a provider retry/cache
+                # path: the active stream gateway either has one verified
+                # current view or query returns its typed fail-closed reason.
+                try:
+                    result = await self._fetch_execution_mark_index_hot(
+                        request=request,
+                        requirement=requirement,
+                        consumer_id=batch.consumer_id,
+                        deadline_ms=self._reference_deadline_ms(candidate, purpose),
+                    )
+                except ReadLaneRejected:
+                    if (
+                        self._is_execution_mark_index_read(requirement, purpose)
+                        or self.reference_batch is None
+                    ):
+                        raise
+                    result = None
+                if result is None:
+                    result = await self.reference_batch.fetch_one(
+                        request, bypass_cache=bypass_cache
+                    )
+                elif (
+                    result.status is not ReferenceStatus.OK
+                    and not self._is_execution_mark_index_read(requirement, purpose)
+                    and self.reference_batch is not None
+                ):
+                    # Alpha only: a view the stream cannot serve (handover,
+                    # quiet component) returns to the venue snapshot path.
+                    result = await self.reference_batch.fetch_one(
+                        request, bypass_cache=bypass_cache
+                    )
             else:
                 result = await self.reference_batch.fetch_one(
                     request, bypass_cache=bypass_cache
@@ -1333,13 +1386,37 @@ class V2QueryService:
         request: ReferenceRequest,
         purpose: AccessPurpose,
     ) -> bool:
-        return (
-            self.execution_mark_index_reader is not None
-            and purpose is AccessPurpose.INTERNAL_EXECUTION
+        if (
+            self.execution_mark_index_reader is None
+            or requirement.max_freshness_ms is None
+            or request.product is not ReferenceProduct.MARK_INDEX_PRICE
+            or request.is_history
+        ):
+            return False
+        if (
+            purpose is AccessPurpose.INTERNAL_EXECUTION
             and requirement.consumer_grade is ConsumerGrade.EXECUTION
-            and requirement.max_freshness_ms is not None
-            and request.product is ReferenceProduct.MARK_INDEX_PRICE
-            and not request.is_history
+        ):
+            return True
+        # Alpha reads of the current MARK/INDEX use the same verified live view
+        # of the ingested canonical record instead of a venue REST call. On
+        # 2026-09-23 (v2.1.1 Phase-3 stage 50) the REST path put OKX alpha
+        # reads at p50 420 ms: two replicas each refreshing five mark and five
+        # index ids every 0.75 s exceed OKX's market bucket (10/s), so provider
+        # admission deferred them. A view the stream cannot serve falls back to
+        # the REST path in ``work``, so alpha availability never gets worse.
+        return (
+            purpose is AccessPurpose.INTERNAL_ALPHA
+            and requirement.consumer_grade is ConsumerGrade.ALPHA
+        )
+
+    @staticmethod
+    def _is_execution_mark_index_read(
+        requirement: ReferenceDataRequirement, purpose: AccessPurpose
+    ) -> bool:
+        return (
+            purpose is AccessPurpose.INTERNAL_EXECUTION
+            and requirement.consumer_grade is ConsumerGrade.EXECUTION
         )
 
     def _reference_provider_lane(
@@ -1365,7 +1442,8 @@ class V2QueryService:
             # policy or deadline would make the result's admission ambiguous.
             return (
                 *request.cache_key,
-                "INTERNAL_EXECUTION",
+                purpose.value,
+                requirement.consumer_grade.value,
                 requirement.source_policy_id,
                 requirement.max_freshness_ms,
                 requirement.effective_event_recency_policy.value,

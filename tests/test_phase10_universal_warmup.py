@@ -2918,6 +2918,55 @@ class SmallLocalWarmupLaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.status for item in result.results], ["OK"])
 
 
+class QueuedLocalBatchLaneTests(unittest.IsolatedAsyncioTestCase):
+    """A fleet cold start queues large warmups instead of refusing them.
+
+    v2.1.1 Phase-3 (2026-09-23): with one pending batch per identity, 5 of 35
+    and 13 of 50 alpha sessions sharing two identities were refused at start.
+    """
+
+    def _lane(self):
+        from qdl.query.service import _queued_local_batch_lane_policy
+        return _LocalBatchAdmission(policy=_queued_local_batch_lane_policy())
+
+    async def test_one_identitys_large_warmups_queue_and_all_complete_one_at_a_time(self):
+        lane = self._lane()
+        active = 0
+        peak = 0
+
+        async def work():
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return "ok"
+
+        results = await asyncio.gather(*(
+            lane.run(work, consumer_id="alpha.okx.paper.stable", reserved_bytes=5_136_384,
+                     wait_timeout_ms=5_000)
+            for _ in range(8)
+        ))
+        self.assertEqual(results, ["ok"] * 8)
+        self.assertEqual(peak, 1)
+
+    async def test_queue_stays_bounded_per_identity_and_keeps_room_for_ts(self):
+        lane = self._lane()
+        hold = asyncio.Event()
+        alphas = [asyncio.create_task(lane.run(hold.wait, consumer_id="alpha.okx.paper.stable"))
+                  for _ in range(8)]
+        while lane.stats()["pending"] < 8:
+            await asyncio.sleep(0)
+        with self.assertRaises(ReadLaneRejected):
+            await lane.run(hold.wait, consumer_id="alpha.okx.paper.stable")
+        ts = asyncio.create_task(lane.run(hold.wait, consumer_id="trading-system.paper.stable"))
+        while lane.stats()["pending"] < 9:
+            await asyncio.sleep(0)
+        hold.set()
+        await asyncio.gather(*alphas, ts)
+        self.assertEqual(lane.stats()["pending"], 0)
+
+
 def _rows(requirement) -> int:
     specification = requirement.warmup_specification
     return 1 if specification is None or specification.rows is None else specification.rows

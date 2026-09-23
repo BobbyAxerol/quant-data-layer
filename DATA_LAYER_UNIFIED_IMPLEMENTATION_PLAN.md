@@ -52903,6 +52903,54 @@ refinement without the owner's next request.
   repair awaiting the owner (automatic review refused it); (f) owner decision on
   the resource-neutral rule for Query CPU (compose ceiling sum 23.75 -> 24.75).
 
+- 2026-09-23: **owner: fix everything, starting with OKX MARK_INDEX.**
+  **(b) OKX MARK_INDEX, root cause (code):** an alpha's current MARK/INDEX read
+  never touched the ingested data. `_uses_execution_mark_index_live_reader`
+  (`qdl/query/service.py`) admitted only `INTERNAL_EXECUTION`/`EXECUTION`, so
+  alpha reads went to `ReferenceBatch.fetch_one` - a venue REST call behind a
+  0.75 s cache (`qdl/reference/batch.py:57-68`). That file's own arithmetic:
+  five OKX index ids cost 6.7 requests/s *per replica* against a `market` bucket
+  that refills at 10/s. Two replicas with all five symbols hot at stage 50 exceed
+  it, provider admission defers, and OKX reads queue (p50 ~100 -> 420 ms);
+  Binance returns mark and index in one call against a larger budget.
+  **Fix:** alpha-grade current MARK/INDEX reads use the same verified live view of
+  the ingested canonical record that execution uses (same source policy,
+  `crypto_liquid_v2`; the view applies the binding's own 2 s bound). For alpha
+  only, a view that cannot serve (or a full hot lane) returns to the REST path,
+  so alpha availability cannot get worse; execution stays fail-closed with no
+  fallback. The singleflight key now carries purpose and grade. Tests
+  (`tests/test_execution_mark_index_live_view.py`): the old test that pinned
+  "alpha keeps REST" now pins "both read the view, the venue is not called";
+  alpha falls back when the view is unavailable and when the lane refuses;
+  execution still never falls back. 20/20.
+  **(a) Cold-start storm (code):** the large-warmup lane allowed one pending
+  batch per consumer and refused the next at once; with many alphas per
+  identity that is an immediate `RATE_LIMITED`. `_queued_local_batch_lane_policy`
+  keeps **one active** materialization per replica (the memory bound) but queues
+  up to 8 per identity / 16 in all, bounded by each request's deadline and by
+  64 MiB of reserved rows, with two queue slots kept for TS; opt-in
+  (`queued_local_batch_lane`, enabled by `build_stable_query_stack`), so the
+  default lane and its nine pinned tests are unchanged. Tests (2): eight large
+  warmups of one identity queue and all complete with one active at a time; a
+  ninth is refused typed while TS still gets in.
+  **(c) Stream write-path stalls (code):** stream subscriptions replay through
+  `spool.read` and `get_checkpoint`, which took the same lock as every append on
+  the stream process - consistent with appends stalling 2-6 s exactly while
+  alpha streams opened and closed. Both now run on the hot query-only connection
+  (`read` in one read snapshot); the stream process also gets the Query reader's
+  interpreter settings (1 ms GIL interval, GC thresholds, frozen start-up heap).
+  Test: a replay read returns while another thread holds the writer lock. The
+  interpreter settings on Stream are applied by analogy with the Query
+  measurement, and are judged by the projector spans in the reruns.
+  **Packet (recorded before execution):** one image from this commit on the
+  `a231...` base. Step 1: Query x2 (1.50 CPU / 1 GiB unchanged), rollback
+  `32581a38...`. Step 2: Stream passive then active via the reused stream roll
+  script (same caps, hash-asserted), rollback `37d7f518...`; the lease handover
+  costs TS about a minute of `MARK_INDEX` `SOURCE_UNAVAILABLE`, as recorded for
+  the quota-A roll. Not touched: projectors, bar edge, Rust, ingestors, Kafka,
+  Redis, SQLite data, quotas, TS, alpha. Then the target matrix, stage 20, 35
+  and the final stage 50 are rerun.
+
 **Remaining:** items (a)-(f) of the entry above, then the 50+TS final gate and
 the v2.1.1 publication and provenance steps of the
 [closure contract](#read-plane-v211-target-closure). Complete v2.1.1 remote CI/release,

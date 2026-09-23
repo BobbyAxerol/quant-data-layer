@@ -888,8 +888,13 @@ async def serve_stable_stream() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # The stream process both writes (ingest append) and fans out; the same
+    # GIL and GC settings as the Query reader keep a burst of subscription work
+    # from holding the writer's thread for a whole collection or switch period.
+    configure_query_interpreter()
     runtime = create_stable_stream_runtime()
     await runtime.start()
+    freeze_query_startup_heap()
     server = uvicorn.Server(uvicorn.Config(
         runtime.health_app, host="0.0.0.0", port=runtime.config.http_port,
         log_level="info", access_log=False, log_config=None,
