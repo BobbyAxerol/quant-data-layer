@@ -159,6 +159,10 @@ class SQLiteDurableSpool:
         self.config = config
         self._clock_ns = clock_ns
         self._lock = threading.RLock()
+        # Hot single-statement reads use their own connection and lock; see
+        # ``_hot_reader``. Lock order is always ``_lock`` then ``_hot_lock``.
+        self._hot_lock = threading.Lock()
+        self._hot_connection: sqlite3.Connection | None = None
         self._retention_data_version: int | None = None
         self._dense_retained_partitions: set[tuple[str, str]] = set()
         config.path.parent.mkdir(parents=True, exist_ok=True)
@@ -742,8 +746,8 @@ class SQLiteDurableSpool:
         max_tail_rows = max(10_000, self.config.max_partition_records)
         if limit <= 0 or limit > max_tail_rows:
             raise ValueError(f"limit must be between 1 and {max_tail_rows}")
-        with self._lock:
-            rows = self._connection.execute(
+        with self._hot_lock:
+            rows = self._hot_reader_locked().execute(
                 """
                 SELECT * FROM events
                 WHERE stream = ? AND partition_key = ?
@@ -752,6 +756,29 @@ class SQLiteDurableSpool:
                 (stream, partition_key, limit),
             ).fetchall()
         return [self._stored_event(row) for row in reversed(rows)]
+
+    def _hot_reader_locked(self) -> sqlite3.Connection:
+        """A second, query-only connection for one-statement hot reads.
+
+        ``visit_tails`` holds ``_lock`` while its caller materializes one
+        physical tail - seconds for a 5,000-row BAR warmup. Measured on
+        2026-09-23 (v2.1.1 Phase-3 stage 5): every hot latest read on that
+        Query replica queued behind it for 2-5 s with its CPU un-throttled.
+        In WAL mode each statement here reads its own committed snapshot, so a
+        single-statement read needs neither the batch transaction nor its lock.
+        Callers hold ``_hot_lock``.
+        """
+
+        if self._hot_connection is None:
+            connection = sqlite3.connect(
+                str(self.config.path), timeout=30.0, isolation_level=None,
+                check_same_thread=False,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=30000")
+            connection.execute("PRAGMA query_only=ON")
+            self._hot_connection = connection
+        return self._hot_connection
 
     def read_tails(
         self,
@@ -1067,7 +1094,7 @@ class SQLiteDurableSpool:
             raise ValueError("ttl_seconds must be positive")
         now_ns = self._clock_ns()
         with self._lock:
-            high = self.high_watermark(cursor.stream, cursor.partition_key)
+            high = self._high_watermark_locked(cursor.stream, cursor.partition_key)
             if cursor.offset > high:
                 raise ValueError("checkpoint is beyond the partition high watermark")
             current = self._connection.execute(
@@ -1291,14 +1318,26 @@ class SQLiteDurableSpool:
         return [dict(row) for row in rows]
 
     def high_watermark(self, stream: str, partition_key: str) -> int:
-        with self._lock:
-            row = self._connection.execute(
+        """Committed high watermark, read on the hot connection."""
+
+        with self._hot_lock:
+            row = self._hot_reader_locked().execute(
                 """
                 SELECT next_offset FROM partitions
                 WHERE stream = ? AND partition_key = ?
                 """,
                 (stream, partition_key),
             ).fetchone()
+        return int(row["next_offset"]) - 1 if row else 0
+
+    def _high_watermark_locked(self, stream: str, partition_key: str) -> int:
+        row = self._connection.execute(
+            """
+            SELECT next_offset FROM partitions
+            WHERE stream = ? AND partition_key = ?
+            """,
+            (stream, partition_key),
+        ).fetchone()
         return int(row["next_offset"]) - 1 if row else 0
 
     def stats(self) -> SpoolStats:
@@ -1361,6 +1400,10 @@ class SQLiteDurableSpool:
             self._checkpoint_wal_passive_locked()
             self._connection.close()
             self._connection = None
+            with self._hot_lock:
+                if self._hot_connection is not None:
+                    self._hot_connection.close()
+                    self._hot_connection = None
 
     def integrity_check(self) -> bool:
         with self._lock:

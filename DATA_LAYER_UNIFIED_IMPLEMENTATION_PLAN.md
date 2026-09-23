@@ -52602,6 +52602,45 @@ refinement without the owner's next request.
   reverted. Not touched: Stream, projectors, Kafka, Redis, SQLite, quotas,
   TS, alpha.
 
+- 2026-09-23: **CPU B arm (Query 1.50, 09:09Z) and the real cause of the
+  tails.** At 1.50 CPU the cgroup throttling almost vanished - **0.38 s and
+  0.75 s per 100 s** against 5.55 s and 3.06 s at 1.00 - but the tails did
+  not improve (QUOTE p99 ~5 s), and 09:10:06-09:10:16Z showed **both**
+  replicas stalling 2-5 s at once, in the cold-warmup window, with the writer
+  healthy (projector `canonical_age` max 0.8 s, `durable_append` max 0.33 s)
+  and TS QUOTE slices frozen at ~2.1 s age (54/60 for ~30 s). Not CPU, then.
+  **Root cause (code):** `SQLiteDurableSpool.visit_tails`
+  (`qdl/transport/sqlite_spool.py`) holds the spool's single `RLock` while
+  its visitor materializes a physical tail - deliberately, one tail at a time,
+  so a 50-item batch cannot hold every tail in memory. But `read_tail` and
+  `high_watermark` take the same lock, so every hot latest read and every
+  snapshot cursor on that replica waited for the whole cold warmup. The
+  off-loop render and the CPU raise could not touch that.
+  **Fix:** `read_tail` and `high_watermark` - single-statement reads - use a
+  second, `query_only` connection with its own lock. In WAL mode each
+  statement reads its own committed snapshot, so they need neither the batch
+  transaction nor its lock; `visit_tails` keeps its one-snapshot, one-tail
+  memory bound unchanged. `checkpoint()` reads the watermark on the main
+  connection inside its own lock (`_high_watermark_locked`); lock order is
+  always main then hot. Every caller was checked: none reads its own open
+  transaction. Tests (`tests/test_sqlite_spool_hot_reader.py`, 3): on the
+  previous source a hot read **waited 1.50 s** behind a visit and a reader
+  saw an **uncommitted** watermark (98, not 6); on this source it returns
+  promptly and sees only committed data; close releases the connection. The
+  spool/edge suites around it: 92 tests OK; full suite **1,953 tests, the
+  same five pre-existing errors, 7 skipped**.
+  **CPU decision, by the contract's rule:** 1.50 is not retained - it removed
+  throttling but showed no tail improvement on the same workload, and the lock
+  confounded both arms. It is reverted to 1.00 in the same rollout, and the
+  A/B is repeated on the fixed image only if throttling still shows in tails.
+  **Packet (recorded before execution):** image `git archive` of this commit
+  on the retained `a231...` base, network disabled, to **Query x2 only** at
+  **1.00 CPU / 512 MiB** (the revert), serial, hash-asserting; rollback is
+  today's state (`2b177869...` at 1.50). Stream and projectors keep their
+  images: the defect stalls Query's hot reads, and a Stream roll would cost
+  TS a lease-handover dip. Not touched: Stream, projectors, Kafka, Redis,
+  SQLite data, quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
