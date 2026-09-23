@@ -53246,8 +53246,8 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 REVIEW_CHANGES_REQUIRED (Astra, 2026-09-23; fixes in progress); KN-2..KN-5 NOT STARTED.**
-KN-1 review receipt: [KN-1 Astra receipt](#kn1-astra-receipt).
+**Program status: KN-1 IMPLEMENTED_PENDING_ASTRA_REVIEW (re-review after REVIEW_CHANGES_REQUIRED F1-F6, 2026-09-23); KN-2..KN-5 NOT STARTED.**
+KN-1 review receipt: [KN-1 re-review receipt](#kn1-astra-receipt-r2) (first submission: [KN-1 Astra receipt](#kn1-astra-receipt)).
 **Target:** durable, correct, bounded Rust-first read/distribution plane serving
 the declared Binance/OKX products and 50 logical alpha clients plus TS demand;
 V2 primary in approved scope, V1 fallback only where policy allows, old V2
@@ -53275,7 +53275,7 @@ Do not start the next phase merely because the executor's tests passed.
 
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
-| [KN-1](#kn-plan-phase-1) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
+| [KN-1](#kn-plan-phase-1) | IMPLEMENTED_PENDING_ASTRA_REVIEW | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
 | [KN-2](#kn-plan-phase-2) | PENDING_KN1_REVIEW | Claude Opus 5.5 | Astra | Full Stream/replay contract, bounded failure/reconnect proof |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
@@ -53315,7 +53315,7 @@ phase; do not create new subphase names to defer unfinished implementation.
 <a id="kn-plan-phase-1"></a>
 ### KN-1 - Contract, Baseline And Measured Rust Foundation
 
-**Status:** REVIEW_CHANGES_REQUIRED (Astra review 2026-09-23: six in-scope findings, fixed inside KN-1 - see the journal).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (re-review: Astra's REVIEW_CHANGES_REQUIRED F1-F6 of 2026-09-23 fixed inside KN-1; see the journal and the [re-review receipt](#kn1-astra-receipt-r2)).
 **Goal:** freeze the recovery/security/data/resource contracts and prove a small
 Rust-to-real-SDK path before expanding implementation; no prolonged redesign.
 **Guide index:** [18.8 work items and K1-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-1),
@@ -53714,6 +53714,9 @@ no automatic runtime promotion.
 | K1.4 + T06 | `469ff4e` | `kn_resource_sizing.py payloads/redis/runtime`; `test_kn_v220_budget` 4 OK | `/home/bobby/.local/state/qdl-v2/kn1-20260923/sizing/*.json`; budget `9fd24b67...` | size-delta Kafka rate negative -> retention deletes -> rate = retained/retention | disposable Redis only (removed) | 0 left | K1.5 |
 | K1.5 + T03/T04/T05/T06 | `9e2e8ec` | gateway unit 7 OK; isolated Kafka 1 OK; SDK slice both products, negatives 22/22; `cargo deny` ok; workspace 205/0/2 | `/home/bobby/.local/state/qdl-v2/kn1-20260923/slice-evidence-final/slice-result.json` `3d17996d...` | replay overflow via `try_send` -> awaited backpressure; `group.id` required by librdkafka -> ACL decision; tonic `tls`/`time` advisories -> rustls TLS + SPKI keys; unbounded harness waits -> bounded | ACL added + removed; shadow network/containers created + removed | all removed; binary/bundle kept to KN-2 exit | owner ACL decision |
 | K1.6 | `9e2e8ec` | CI job `kn-native-integration`; full Python suite 2,007 / 5 classified / 7 skipped | `.github/workflows/ci.yml` | none | none | none | Astra review |
+| Review F1/F2/F4 | `f163d14` | `test_kn_v220_contracts` 18 OK (pre-fix Python: 29 subtests fail); Rust workspace 214/0/2, fmt/clippy clean | `contracts/golden/kn_v220/requirement_validation.json` (44 cases) + new malformed vectors | Rust requirement weaker than Python -> one native validator; JWT i64 overflow -> i128 checked; `re.match`+`$`, unhashable schema, bool/float coords -> fullmatch/strict types | none | none | slice rerun |
+| Review F3/F5/F6 | `80d94f9` | `test_kn_native_slice_probe` 7, `test_kn_resource_sizing` 8, `test_kn_v220_budget` 4 OK | `.../kn1-20260923/sizing-f5/` (payloads `f56d6c67...`, listpack2048 `80501edb...`); budget `325a5a5e...` | exit 0 regardless -> verdict + exit 1; FLUSHALL -> guarded namespace; 275 B row incomplete -> 641.7 B contract-complete lossless row, per-product staging | read-only spool capture; 2 disposable Redis (217 keys, 0 left) | containers `--rm`, raw sample deleted | slice rerun |
+| Review slice rerun | this entry | capture slice PASS (verdict, exit 0), negatives 24/24, 2,266 + 2,625 records, 0 decode/token errors, exact resume; full Python suite 2,028 / same 5 classified / 7 skipped | `.../kn1-20260923/slice-evidence-f1f2/slice-result.json` `87831765...`; binary `3031c5f5...`; suite log `ee367c09...` | none new | shadow network, quota Redis, isolated broker, gateway created + removed; no ACL | 0 kn1 containers/networks; key/env/profile/capture deleted | Astra re-review |
 
 <a id="kn1-astra-receipt"></a>
 - 2026-09-23: **KN-1 receipt for Astra (guide 18.14 format).**
@@ -53902,6 +53905,122 @@ Astra requested review points and next allowed step:
     owner and is not taken by default. `test_kn_v220_budget` 4 OK (asserts the
     arithmetic, that 2x steady exceeds maxmemory, maxmemory unchanged, and
     listpack threshold >= measured row).
+- 2026-09-23: **KN-1 F1/F2 capture-slice rerun packet (recorded before
+  start).** Same blast radius as the K1.5 capture-mode packet above, nothing
+  added: release gateway binary rebuilt from `80d94f9` (hash recorded);
+  a fresh random shadow cursor key `kn1-shadow-k1` (0400), `jwt.env` from the
+  running stream's public keyring only, profile with the two alpha
+  identities; internal network `qdl_v2_kn1_shadow`, disposable
+  `kn1-quota-redis`, isolated `kn1-kafka-slice` (no production Kafka), fresh
+  read-only spool capture of the same four keys (6,000/6,000/3,000/3,000).
+  The harness now exits non-zero unless `slice_verdict` passes, and the matrix
+  has 24 cases (+ `jwt_iat_i64_min`, `requirement_invalid_execution_partial`).
+  No production ACL/principal change (capture mode). Cleanup as before: stop
+  the `kn1-*` containers (`--rm`), remove the network, delete key/env/profile
+  and the raw capture/commit log; keep hashes and bounded results.
+- 2026-09-23: **KN-1 F1/F2 capture-slice rerun: PASS.** Binary `3031c5f5...`
+  (release, `80d94f9`), bundle `e8aa9c95...` (inputs unchanged since
+  `9e2e8ec`), isolated topic id `vb5p7pmFRe-UEuOezvSnUQ`, capture 18,000
+  records (`775b1f19...`). `slice_verdict`: pass, no failures, exit 0.
+  Both products REPLAYING -> LIVE, 2,266 (OKX) and 2,625 (Binance) records,
+  0 decode and 0 resume-token errors (every Rust-signed token verified by the
+  Python codec with offset equality), strictly increasing offsets, exact
+  next-record resume, digest parity. Negatives **24/24**, including the new
+  wire regressions `jwt_iat_i64_min` -> UNAUTHENTICATED (F2) and
+  `requirement_invalid_execution_partial` -> INVALID_ARGUMENT (F1). Gateway
+  after close: 0 active, 23 refused (24 minus the TLS-handshake case), 0
+  overflow, 0 too-old. Capture-mode commit->client after LIVE: p50 3.1 / 8.9
+  ms, p95 17.2 / 36.3 ms, p99 21.4 / 43.2 ms (n 264 / 626); request first
+  control 277 / 138 ms, warm 107 / 202 ms; gateway CPU mean 3.0 % of a core
+  (max 20 %, 15 samples), RSS <= 10.4 MiB. These are capture properties on an
+  isolated broker - **not live latency and not KN-2 runtime readiness.**
+  Evidence `/home/bobby/.local/state/qdl-v2/kn1-20260923/slice-evidence-f1f2/`
+  (`slice-result.json` `87831765...`). Cleanup verified: 0 `kn1` containers,
+  0 networks, shadow key/env/profile, capture and commit log deleted; stable
+  stack containers all Up. Full Python suite on the fixed tree: 2,028 tests,
+  5 errors - the same five classified IDs as the K1.6 baseline - 7 skipped
+  (`suite-kn1-review-fixes.log` `ee367c09...`).
+
+<a id="kn1-astra-receipt-r2"></a>
+- 2026-09-23: **KN-1 re-review receipt for Astra (guide 18.14 format).**
+
+```text
+Phase / status / source SHA / affected files and line counts:
+  KN-1 / IMPLEMENTED_PENDING_ASTRA_REVIEW (re-review of REVIEW_CHANGES_REQUIRED
+  F1-F6) / feat/consumer-endpoint-benchmark f163d14 80d94f9 + this journal
+  commit (base of the fixes 14c19a7); 19 source files, +3,205/-213 (plan
+  excluded). Main: rust/qdl-contracts/src/requirement.rs (new, +494),
+  state_contract.rs (+138), cursor_v3.rs; qdl-stream-gateway auth.rs,
+  requirement.rs; qdl/replay/cursor_v3.py, qdl/projection/state_contract.py;
+  contracts/golden/kn_v220 requirement_validation.json (new, 44 cases),
+  cursor_v3.json, state_contract.json; kn-v220-contracts.md; scripts
+  kn_native_slice_probe.py, kn_resource_sizing.py; budget JSON; tests (2 new
+  files, 2 extended). No dependency change.
+Approved scope and actual work items completed:
+  Exactly F1-F6 inside KN-1, no new phase. F1 native requirement validator
+  shared by digest + gateway; F2 checked JWT lifetime; F3 slice verdict +
+  exit code; F4 strict Python parsing + shared malformed vectors; F5
+  contract-complete BAR row measured, budget re-frozen; F6 guarded Redis
+  sizing. Capture slice rerun because F1/F2 touch admission/auth.
+Domain invariants and behavior changed/preserved:
+  An invalid requirement is refused in Python order with the Python message
+  (INVALID_ARGUMENT) and is never digested or served. JWT extreme iat/exp is a
+  lifetime refusal, never a wrap. Cursor/state parsing refuses trailing
+  newlines, non-string schema (SCHEMA, not TypeError) and bool/float integers
+  in both languages. Existing 25 cursor vectors byte-identical. Production
+  behaviour unchanged (nothing rolled).
+Tests: command, cases, pass/fail/skip, isolated/real-provider, evidence hash/path:
+  Python KN tests 40 OK (contracts 18, slice probe 7, sizing 8, budget 4,
+  bundle 3); the new contract tests fail 29 subtests on the pre-fix Python.
+  Full suite 2,028 / 5 classified errors (same IDs as K1.6) / 7 skipped.
+  Rust workspace fmt/clippy clean, 214 passed / 0 failed / 2 ignored (the
+  Rust regressions were not run against the pre-fix Rust). Capture slice on
+  real captured canonical records, isolated broker, real JWT/TLS/SDK: PASS,
+  24/24 negatives, 0 decode/token errors, exact resume
+  (slice-evidence-f1f2/slice-result.json 87831765). F5 on 2,000 real bars
+  (sizing-f5/, sample 883236a2).
+New failures -> root cause -> fix -> regression evidence:
+  F1 Rust validator covered only enums -> ValidatedRequirement mirrors the
+  Python chain -> golden 44 cases both languages + wire negative. Same class
+  found while fixing: delivery_decision cast u64 freshness `as i64` -> i128
+  -> unit test. F2 exp-iat i64 overflow -> i128 + checked_sub -> unit tests +
+  wire negative. F3 run always exit 0 -> slice_verdict/exit 1 -> 7 tests.
+  F4 re.match `$`, unhashable schema, bool/float coords -> fullmatch/strict
+  -> golden + tests. F5 row omitted coordinates/quality/provenance ->
+  measured complete lossless row. F6 FLUSHALL -> refuse non-empty +
+  namespace cleanup -> 4 tests.
+Runtime: exact mutations or NONE; active/config/rollback map:
+  No production mutation, no ACL/principal change. Read-only spool reads
+  (sizing sample, slice capture); disposable Redis x2 and the shadow slice
+  stack created and removed. Active stack unchanged; nothing to roll back.
+Resources: latency/capacity/memory/disk measured vs budget; untested limits:
+  Budget re-frozen (325a5a5e): contract-complete BAR row 641.7 B in 64-open
+  listpack buckets, hash-max-listpack-value 2048 (512 silently converts to
+  hashtable); 1,085 MB steady at cap, 599 MB today. A full staging
+  generation (2,171 MB) no longer fits the unchanged 1,288 MB maxmemory ->
+  per-product generation swap required (peak 1,093 MB, 195 MB headroom);
+  without the identity header the cap (1,302 MB) does not fit. No RAM
+  increase. Capture-mode numbers only; the live four latency quantities and
+  KN-2 runtime readiness are NOT claimed.
+Cleanup: removed/retained artifacts, reason/expiry, disk/restart evidence:
+  0 kn1 containers/networks; shadow key/env/profile, raw capture, commit log
+  and sizing sample deleted (hashes kept). Retained: candidate binary +
+  bundle (to KN-2 exit), target/ 6.4 GB (to KN-5). Free disk 154 GB. No
+  production restart.
+Remaining decision gates, not relabelled implementation gaps:
+  (1) owner: DESCRIBE kn- ACL (or another principal) for a bounded live
+  slice/KN-2 readers; (2) dedicated read principal vs deleted CA key with the
+  2026-11-20 rotation; (3) Rust 1.82 pin; (4) Astra: accept the per-product
+  staging constraint for KN-3 or send the RAM question to the owner.
+  In scope later: KN-5 old-stack cursor compat; KN-4 Query-lane 429.
+Astra requested review points and next allowed step:
+  Check each finding against its regression: requirement_validation.json
+  coverage and order; lifetime_exceeds_policy and claim_integer; the known
+  fail-closed divergence (non-integer exp refused earlier by jsonwebtoken);
+  slice_verdict completeness; the F5 row definition (identity fields held
+  per product) and the re-frozen arithmetic; the F6 guard. Next: KN-2 only
+  after ASTRA_REVIEW_PASS; live latency only after the owner's ACL decision.
+```
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
