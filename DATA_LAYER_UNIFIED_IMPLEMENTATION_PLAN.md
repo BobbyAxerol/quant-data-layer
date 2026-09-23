@@ -53465,6 +53465,43 @@ baseline/budget honesty. No executor self-approval.
   KN-5 prerequisite, not changed now (no old-stack roll in KN-1).
   Cargo: `base64` added to workspace dependencies; `qdl-contracts` gains
   `base64`, `ring`, `serde_json` (all already locked; `Cargo.lock` +3 edges).
+- 2026-09-23: **K1.4 + K1-T06 | resource and retention sizing measured, candidate
+  budget frozen.** New `scripts/kn_resource_sizing.py` (payloads: spool
+  `mode=ro` + a bounded tmpfs copy rendered through the real Query backend and
+  router; redis: a disposable Redis of the production digest, `--network
+  none`, removed after - 0 left; runtime: `docker stats` 60 x 10 s and Kafka
+  `log-dirs`). Evidence `/home/bobby/.local/state/qdl-v2/kn1-20260923/sizing/`
+  (`payloads.json` `600b578f...`, `redis-listpack512.json` `a1348ee1...`,
+  `redis.json` `947ce79b...`, `runtime.json` `649f7921...`, `kafka.json`
+  `1943478c...`). Measured:
+  - canonical protobuf mean bytes: TRADE 546, QUOTE 570, MARK 685, BAR 709,
+    BOOK 2,160 (max 56,495). Rendered public row: BAR 1,932, TRADE 1,415,
+    QUOTE 1,473, MARK 1,350; one OKX DOGE book snapshot 39,503.
+  - Redis bytes per real BAR row (2,000 OKX DOGE 1m, Redis 7.2.14): public
+    JSON 2,191; canonical 936; compact typed row 463 (hash + zset); **275 in
+    listpack buckets of 120** with `hash-max-listpack-value 512`. Demand is
+    141 BAR products, 1,400,500 rows (alpha 140 x 10,000 all 14 intervals,
+    VN 500); with the 2,064 headroom 1,691,524 rows = **465 MB steady, 930 MB
+    during a full staging rebuild**. The earlier 768 MiB / 300 B-per-row
+    guesses are replaced by these numbers; public-JSON caching (3.1 GB) is
+    ruled out.
+  - **CPU denominator: the whole running Data Layer draws 5.1 vCPU mean
+    (p95 6.1) at a quiet rate with the backlog drained** - already over the
+    R1.29 5.0 budget; brokers 2.0, rust_core 0.9, projectors ~1.0, ingestors
+    0.4, stream 0.6, query 0.3. Non-Data-Layer containers 3.2.
+  - Kafka canonical 374 KB/s and raw 308 KB/s per broker (retained bytes /
+    retention). A short size-delta window gave negative rates (retention
+    deletions); that method was replaced in the script.
+  Frozen `config/v2/kn-v220-candidate-budget.json` (SHA-256 `9fd24b67...`):
+  inherits every latency/stage/workload/TS gate from the v2.1.1 budget by
+  hash (`974f009e...`), the four owner latency quantities, the 3,000
+  canonical/s challenge rule, the CPU denominator and an unverified 4.6 vCPU
+  target allocation, the shadow exception (<=1.5 vCPU actual, expires at KN-5
+  exit, stop conditions), market-cache layout/config/caps (maxmemory 1.2 GiB,
+  container 1.5 GiB) and retention (served = demanded rows, +2,064 headroom,
+  7-day tombstone lifetime, `md.latest.v2`/`md.bars.v2` compacted RF3; topic
+  creation stays a KN-3 packet). Tests `tests.test_kn_v220_budget` 4 OK
+  (inherited hash, CPU arithmetic, cache arithmetic, topology).
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

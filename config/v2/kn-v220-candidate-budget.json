@@ -1,0 +1,113 @@
+{
+  "schema": "qdl.kn.v220.candidate-budget.v1",
+  "frozen_at": "2026-09-23",
+  "source": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-1 (K1.4); guide upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency",
+  "note": "Frozen before any KN runtime exists. Latency, stages, workload and TS gates are inherited unchanged from the v2.1.1 budget by hash; resource and retention values are measured or derived from measurements named below. A missed target is an open exit, never a threshold edited after results.",
+  "inherits": {
+    "path": "config/v2/v211-target-acceptance-budget.json",
+    "sha256": "974f009ea3688b7d6cd25f9aed586a462dccad6f8a93d7502581b911c7e1d21a",
+    "unchanged": ["stages", "latency_ms", "latency_scope", "sample_rule", "requests", "streams", "cold", "startup", "probes", "final", "trading_system"]
+  },
+  "latency_quantities": {
+    "rule": "Owner rule 2026-09-18: every endpoint benchmark reports all four, with unit, measurement point and sample count.",
+    "request_latency": "SDK call in the consumer container until the decoded, validated result is usable; cold and warm connections reported separately",
+    "durable_event_age": "age of the served record at response time from the source/component/BAR-close timestamp named in the response",
+    "delivery_lag": "provider event (BAR: close time) to canonical publish; host receive and Kafka commit as sub-spans",
+    "end_to_end_cache": "provider event (BAR: close time) to the state being applied at the alpha/TS client"
+  },
+  "throughput_challenge": {
+    "canonical_events_per_s": 3000,
+    "rule": "canonical records from real capture or live, not raw frames or synthetic tiny events; accelerated replay is never reported as live freshness",
+    "measured_quiet_rate_per_s": 835,
+    "measured_burst_raw_per_s": 2749
+  },
+  "cpu": {
+    "steady_state_vcpu_max": 5.0,
+    "denominator": ["kafka1", "kafka2", "kafka3", "ingestors", "rust_core", "binance_bar_edge", "stream", "projector", "query", "control_redis", "market_cache"],
+    "excluded_and_reported_separately": ["trading_system", "alpha", "test_clients", "builds", "rollback_stack", "shadow_candidates"],
+    "baseline_measured": {
+      "evidence": "kn1-20260923/sizing/runtime.json",
+      "window": "60 samples x 10 s, 2026-09-23 18:21Z, quiet market, backlog drained",
+      "data_layer_vcpu_mean": 5.1,
+      "data_layer_vcpu_p95": 6.106,
+      "brokers_vcpu_mean": 2.0,
+      "note": "the running design already exceeds the 5.0 budget at a quiet rate; KN must remove work, not only stay equal"
+    },
+    "target_allocation_vcpu_unverified": {
+      "brokers": 2.0,
+      "ingestors": 0.4,
+      "rust_core": 0.9,
+      "binance_bar_edge": 0.05,
+      "stream_gateway_total": 0.4,
+      "projector": 0.3,
+      "query_total": 0.4,
+      "control_redis": 0.05,
+      "market_cache": 0.1,
+      "sum": 4.6,
+      "status": "hypothesis to verify in KN-2..KN-5; not a result"
+    },
+    "shadow_exception": {
+      "max_actual_vcpu": 1.5,
+      "expires": "KN-5 exit",
+      "stop_conditions": ["host idle below 5 % for 60 s", "TS ready routes drop", "old projector group lag grows for 5 minutes"]
+    }
+  },
+  "kafka": {
+    "evidence": "kn1-20260923/sizing/kafka.json",
+    "canonical_retention_avg_bytes_per_s_per_broker": 374308,
+    "raw_retention_avg_bytes_per_s_per_broker": 308162,
+    "canonical_retention_ms": 21600000,
+    "partition_count": 6,
+    "partition_change_allowed": false,
+    "stream_reader_fetch_wait_ms_start": 10,
+    "note": "canonical carries the full raw envelope header and is larger than raw; removing it is out of KN scope (KD13)"
+  },
+  "payload_bytes_measured": {
+    "evidence": "kn1-20260923/sizing/payloads.json",
+    "canonical_protobuf_mean": {"TRADE": 546, "QUOTE": 570, "MARK_INDEX_PRICE": 685, "BAR": 709, "BOOK": 2160},
+    "book_canonical_max": 56495,
+    "public_json_row": {"BAR": 1932, "TRADE": 1415, "QUOTE": 1473, "MARK_INDEX_PRICE": 1350, "BOOK_SNAPSHOT_okx_doge": 39503},
+    "bar_compact_row": 255
+  },
+  "market_cache": {
+    "process": "separate Redis process and config from the control/quota/admission Redis (KD10)",
+    "image": "same redis image digest as stable_redis",
+    "bar_row_encoding": "compact typed record (decimal strings exact, integer ns times, final, revision, event id)",
+    "bar_layout": "per-product hash buckets of 120 opens in listpack encoding; open time in integer milliseconds",
+    "required_config": {"hash-max-listpack-entries": 128, "hash-max-listpack-value": 512, "maxmemory-policy": "noeviction", "save": "", "appendonly": "no"},
+    "measured_bytes_per_bar_row": {
+      "evidence": "kn1-20260923/sizing/redis-listpack512.json (2,000 real OKX DOGE 1m bars, Redis 7.2.14)",
+      "compact_listpack_bucket120": 274.9,
+      "compact_hash_plus_zset": 462.7,
+      "canonical_hash_plus_zset": 935.7,
+      "public_json_hash_plus_zset": 2190.5
+    },
+    "sizing": {
+      "demanded_bar_products": 141,
+      "demanded_rows_max": 1400500,
+      "retained_opens_cap_rule": "demanded rows + 2064 headroom per product (10,000 -> 12,064; VN 500 -> 2,564)",
+      "rows_at_cap": 1691524,
+      "steady_bytes_at_cap": 465000000,
+      "retained_today_rows": 933977,
+      "steady_bytes_today": 257000000,
+      "staging_rebuild": "full staging generation beside the ready one",
+      "peak_bytes_during_rebuild": 930000000,
+      "maxmemory_bytes": 1288490188,
+      "container_memory_limit_bytes": 1610612736,
+      "status": "starting cap for KN-3; re-measured with the real projector and all feeds before promotion"
+    }
+  },
+  "retention": {
+    "bar_retained_opens_served": "the demanded rows of each product (10,000 for alpha crypto, 500 VN, 1,000 TS 1m inside the 10,000)",
+    "bar_retained_opens_headroom": 2064,
+    "bar_revision_audit": "append-only revision facts kept for every open inside the retained window; below the durable retention floor a tombstone is published",
+    "tombstone_lifetime_ms": 604800000,
+    "rebuild_horizon": "a cache generation offline longer than the tombstone lifetime rebuilds from a fresh generation; it never overlays a cache that may have missed deletes",
+    "state_topics": {
+      "md.latest.v2": {"cleanup.policy": "compact", "key": "logical product key", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000},
+      "md.bars.v2": {"cleanup.policy": "compact", "key": "binding|open_time_ms|revision", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "min.compaction.lag.ms": 3600000},
+      "approval": "topic creation and ACLs are a separate KN-3 runtime packet"
+    },
+    "demand_only": "only products with manifest demand are materialized; provider wrappers keep serving bounded on-demand history outside the cache"
+  }
+}
