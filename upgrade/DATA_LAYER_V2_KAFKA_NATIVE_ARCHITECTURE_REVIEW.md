@@ -1,5 +1,15 @@
 # Data Layer V2 — Đánh giá kiến trúc và đề xuất quay về đúng bản chất Kafka
 
+> [!IMPORTANT]
+> **CLAUDE OPUS 5.5: ĐỌC MỤC 18 TRƯỚC KHI IMPLEMENT.** Owner đã duyệt bản
+> [thống nhất NĂM phase tại mục 18](#kn-v220-approved-guide) ngày 2026-09-23.
+> Mục 0-17 phía dưới là lịch sử thảo luận, không phải năm kế hoạch cạnh tranh.
+> Thiết kế hiện hành = mục 18; status/dev logs/evidence =
+> [Unified Plan KN-1 đến KN-5](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-v220-plan).
+> Claude implement; Astra review từng phase. **Chưa có phase mới nào được thực thi
+> hoặc certified chỉ vì tài liệu này đã được duyệt.** Các dòng "bản thảo/4 phase"
+> dưới đây được giữ nguyên như lịch sử, không ghi đè quyết định mới.
+
 > **Trạng thái:** bản thảo để thảo luận (2026-09-23). Chưa có quyết định. Không có thay đổi
 > runtime hay code nào đi kèm tài liệu này.
 > **Người đọc:** owner + Astra, dùng làm đầu vào để chốt 4 phase sửa kiến trúc.
@@ -2063,3 +2073,624 @@ lúc)
 | Q12 | JSON public dựng sẵn trong Rust (R5), với golden khớp byte; dự phòng là Python render? | Có |
 | Q13 | Duyệt dependency Rust mới và topic/ACL mới (R10)? | Duyệt ở P1.0 / P2.0 |
 | Q14 | Key/pubsub tương thích V1 **không** port sang projector Rust (F1: không ai tới được), ghi sunset có quản lý (A7)? | Có |
+
+---
+
+<a id="kn-v220-approved-guide"></a>
+## 18. OWNER-APPROVED - Kafka-Native Rust-First V2.2.0: Five-Phase Execution Guide
+
+> [!IMPORTANT]
+> **BẢN THỐNG NHẤT ĐỂ THỰC THI, KHÔNG TIẾP TỤC CHỌN LẠI GIỮA MỤC 13/14/17.**
+> Owner duyệt phương án năm phase của Astra ngày 2026-09-23 và yêu cầu ghi guide
+> cùng tracker. **Executor: Claude Opus 5.5. Reviewer: Astra sau mỗi phase.**
+> Lượt soạn này chỉ thay tài liệu; không chạy phase, build, rollout, push/merge hay
+> đổi authority. Khi owner giao bắt đầu một phase, thực hiện trọn scope dưới đây,
+> ghi journal, test và bàn giao review; không sinh thêm phase vì một test fail.
+
+### 18.1 Cách đọc, thứ tự ưu tiên và bản đồ năm phase
+
+Đọc theo thứ tự: `/home/bobby/AGENTS.md` -> repo `AGENTS.md` ->
+`/home/bobby/CLAUDE.md` -> phase KN hiện hành trong Unified Plan -> mục 18 này ->
+code/config/runtime receipt và evidence liên quan. Các fact có ngày trong CLAUDE.md
+phải kiểm lại tại execution time; không dùng path/image/revision lịch sử làm mặc định.
+
+- **Guide này** sở hữu thiết kế chi tiết, invariants, work items, test/exit và rollback.
+- **[Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-v220-plan)** sở hữu
+  status, việc đã làm, command/test thực chạy, findings/fixes, evidence và review receipt.
+- **[Guide kiến trúc gốc](quant-data-layer-fund-grade-upgrade-architecture.md)** vẫn
+  sở hữu nguyên tắc canonical/quality/compatibility; mục 18 cụ thể hóa migration này.
+- **[Certification ledger](../CERTIFICATION_LEDGER.md)** giúp kế thừa evidence đúng
+  source/image/config. Dòng chứng nhận cũ không tự chứng nhận backend mới.
+- Sửa mâu thuẫn bằng explicit decision trong journal, không trộn hai phương án cũ.
+
+| Phase | Mục tiêu | Guide | Tracker |
+|---|---|---|---|
+| KN-1 | Contract, baseline và lát dọc Rust có số đo | [18.8](#kn-guide-phase-1) | [KN-1](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-1) |
+| KN-2 | Rust Stream và replay, bỏ single-writer bottleneck | [18.9](#kn-guide-phase-2) | [KN-2](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-2) |
+| KN-3 | Rust materialization, BAR migration và bounded recovery | [18.10](#kn-guide-phase-3) | [KN-3](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-3) |
+| KN-4 | Query/SDK và toàn read plane, hot/cold isolation | [18.11](#kn-guide-phase-4) | [KN-4](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-4) |
+| KN-5 | Tải 50 alpha + TS, cutover, retirement và release | [18.12](#kn-guide-phase-5) | [KN-5](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-5) |
+
+Đây là **năm phase thay thế bốn phase đề xuất**, không cộng thành chín phase. Không
+renumber hay xóa evidence của các chương trình trước. Capacity closure v2.1.1 còn
+chưa đạt được kế thừa thành target của KN-5, không được đánh dấu pass hồi tố. Sau khi
+train này bắt đầu, không song song tối ưu vô hạn writer cũ; chỉ làm safety fix hẹp có
+phạm vi và regression cụ thể nếu cần giữ runtime đang chạy an toàn.
+
+<a id="kn-decisions-and-scope"></a>
+### 18.2 Các quyết định đã thống nhất và phạm vi được giữ
+
+| ID | Quyết định hiện hành | Thay thế/giới hạn đề xuất cũ |
+|---|---|---|
+| KD01 | Rust Stream/replay/projector; Python API/SDK/control/history orchestration | Bỏ Python-first gateway và Python Kafka LatestView của mục 14-15 |
+| KD02 | Stream đọc committed canonical trực tiếp, không chờ Redis/SQLite/HTTP writer | Bỏ lease cho read fan-out, không bỏ producer/sink fencing |
+| KD03 | Projector Rust hai stage: durable state topics, rồi Redis cache idempotent | Kafka EOS không tự bảo vệ Redis; sink generation/CAS vẫn bắt buộc |
+| KD04 | Latest key theo logical product/lifecycle; giữ source coordinates | Không compact snapshot/delta chung một key như physical key hiện tại |
+| KD05 | BAR revision append-only trong history window đã cam kết; có expiry/tombstone | Key có revision không được tăng vô hạn vì "đã bật compaction" |
+| KD06 | Python Query đọc cache thật, không tự consume Kafka | Không dựng thêm 2 consumer canonical bằng Python; snapshot vẫn có consistency proof |
+| KD07 | Giữ cả Subscribe, Replay, GetSnapshot, GetFeedStatus và REST hiện hành | "Ít caller" không cho phép trả UNIMPLEMENTED thay implementation public đang có |
+| KD08 | Cursor v3 đầy đủ claim, signed bytes golden Rust/Python | Canonical offset khác changelog offset; không tự đặt số token từ cache position |
+| KD09 | Chuyển Query + Stream theo một routing revision, có drain/reconnect | Một script đổi alias không được coi là atomic handoff |
+| KD10 | Market cache riêng process với Redis quota/provider-admission | Prefix/DB number không cô lập memory. Thêm đúng một cache role có lý do, không theo symbol |
+| KD11 | Render trước phần immutable khi có lợi; freshness/auth/eligibility lúc read | Không cache nguyên response chứa token, request identity hoặc kết luận freshness |
+| KD12 | Tổng steady-state Data Layer <=5.0 vCPU theo R1.29; resource claims phải đo | 768 MiB cache/256 MiB ring chỉ là giả định cũ, không cấu hình mặc định đã chứng minh |
+| KD13 | Giữ ingestor/canonical business logic, Kafka partition map và provider quotas | Không gộp raw+canonical producer hop hay bỏ raw header trong scope này |
+| KD14 | Một feature train, một bộ harness chính, năm exit; review theo tested slice/phase | Không tạo phase, image, container hoặc binding ceremony cho mỗi retry |
+
+**Trong scope:** backend Stream/replay; projector/state-topic schemas và exact ACL;
+market cache; Query/SDK compatibility hẹp; BAR readback/migration; measured resource
+budgets; no-order consumers; paired read-plane rollout; retire old read path và release.
+`stable_redis` hiện giữ control/quota/admission được giữ nguyên khi tạo market cache.
+Không tự flush/recreate nó để thử khả năng rebuild của cache mới.
+
+**Ngoài scope:** TS risk/order/domain upgrade, signal/sizing alpha, giao dịch sandbox/live,
+DNSE/Spot/Deribit production activation mới, thay canonical domain math, raw retention
+reset, manual offset jump, Kafka partition-count change, Flink/Kubernetes/lakehouse,
+thêm ngôn ngữ, multi-host/regional DR hoặc thay toàn bộ lịch sử nguồn.
+VN capability phải còn đi qua contract chung; route đang deferred không được đổi nhãn
+certified nhờ test Binance/OKX. Bỏ publisher V1-compat không có reader chỉ sau inventory
+và sunset record; không đụng Redis V1 hay endpoint `/v1` đang phục vụ consumer.
+
+**Ranh giới phê duyệt:** thiết kế và năm phase đã được owner duyệt. Đây không phải
+approval xóa production data hoặc recreate một digest chưa tồn tại. Trước runtime
+action, điền packet cụ thể ngay trong phase: role, digest, env/mount/config revision,
+topic/group/ACL/prefix, thời lượng, budget và rollback. Tái sử dụng approval đã cấp
+đúng phạm vi; không hỏi lại cho retry/test không đổi blast radius. Nếu vượt boundary
+hoặc cần quyền phá hủy thì dừng đúng thao tác đó và báo rõ, không dừng mọi việc source
+không bị chặn. Push/merge/release vẫn theo quyền owner cấp và workflow remote.
+
+<a id="kn-architecture-and-reuse"></a>
+### 18.3 Kiến trúc đích, ownership và code tái sử dụng
+
+```text
+Approved provider -> existing ingestor -> Kafka raw -> existing Rust canonical core
+                                                       -> Kafka canonical (committed)
+                                                            |
+                   +----------------------------------------+-------------------+
+                   |                                                            |
+          Rust Stream replicas x2                                    Rust projector
+          indexed fan-out / bounded ring                        A: canonical -> state topics
+          separate bounded replay readers                       (transaction + input offsets)
+          existing public gRPC surface                           B: state topics -> market cache
+                   |                                             (fenced idempotent apply)
+                   |                                                            |
+                   +---------------- SDK / consumer ------------ Python Query x2
+
+Existing control Redis: quota/admission only. New market Redis: rebuildable data cache.
+BAR edge still writes provider-authentic raw; only durable readback backend changes.
+```
+
+| Boundary | Reuse trước khi viết mới | Việc thực sự thay |
+|---|---|---|
+| Canonical domain | `rust/qdl-core`, `qdl-venue-core`, `qdl-realtime-core`, existing golden/provider tests | Không port lại math/identity/sequence chỉ vì đổi backend |
+| Kafka | `rust/qdl-kafka`, committed source và transactional bridge | State topic layout/ownership; source coordinates được giữ trong projection records |
+| Stream | `qdl/stream/grpc_service.py`, generated proto, SDK transport và error map làm oracle | Crate `rust/qdl-stream-gateway` nếu chưa có tương đương; native auth/fan-out/replay |
+| Projector | Existing Rust Redis/Lua patterns, `qdl/projection/stable.py` semantics | Native projector, logical state keys, bounded rebuild/retention |
+| Query | Existing router/service/schema, provider/reference wrappers và interval owner | Backend đọc cache mới; không rewrite public API/framework |
+| BAR | `stable_bar_edge.py`, `final_bar_watermark.py`, governed calendar/repair | Cache readback adapter, history migration receipt và coverage checks |
+| Bench/test | `phase3_consumer_load_acceptance.py`, existing budget/matrix, `report_feed_latency_quantities.py` | Thêm mode/typed evidence còn thiếu, không tạo engine hoặc 5 harness cạnh tranh |
+
+Native gRPC vẫn phải verify identity và scope trong application. Không dựa vào mTLS
+network membership thay authorization. Query cấp cursor, Stream kiểm; manifest/catalog
+JSON/proto canonical được compile một lần và hash, không phát minh parser YAML khác
+semantics. Dùng JOSE/JWT library được duyệt, pinned/audited; không tự lắp JWT từ `ring`.
+Test RS256/ES256, alg allowlist, issuer/audience, kid-subject binding, exp/nbf/lifetime,
+rotation/revocation và shared quota. Không đưa secret/private key vào fixtures hoặc Git.
+
+Hai Stream replica đọc đủ partition độc lập; group riêng hoặc manual assignment phải
+được chọn/test rõ. Hai replica cùng group chia partition không đáp ứng mọi slice trên
+mỗi target. Projector có ownership theo partition, số replica được đo; không đổi thành
+một global lock. Stage A và B có thể cùng image/role với task pools hữu hạn, không cần
+service riêng cho từng topic/stage/symbol. Quota Redis là dependency thực của auth,
+không được nói Stream độc lập mọi Redis khi auth vẫn cần shared quota.
+
+<a id="kn-contracts-and-correctness"></a>
+### 18.4 Contract dữ liệu, durability và consistency bắt buộc
+
+#### 18.4.1 Product identity và delivery policy
+
+- `LogicalProductKey` gồm environment, venue/market, instrument UID, logical feed,
+  interval/session semantics, depth/qualifier khi contract yêu cầu; encoding/version
+  được freeze ở KN-1. Physical Kafka key không thay thế product identity.
+- BOOK snapshot/delta/reset có thể chung physical partition để giữ thứ tự, nhưng latest
+  state phải phân biệt loại; không lấy một delta làm snapshot khi rebuild compacted log.
+- TRADE, book lifecycle, final BAR/revision và quality/authority transition lossless
+  theo invariant 27. Chỉ coalesce lifecycle đã được contract cho phép; không port mù
+  `LATEST_STATE_FEEDS` cũ khi nó mâu thuẫn invariant mới được chốt.
+- State projection có thể giữ latest verified snapshot mà không lưu mọi delta trong
+  cache, nhưng delta stream vẫn lấy canonical; snapshot phải có matching source sequence,
+  generation và canonical watermark để nối đúng delta.
+- Quiet market, session liveness, event recency, gap và execution eligibility là những
+  trường riêng. Không refresh timestamp gốc để che stale; global heartbeat projector
+  không chứng minh provider/slice đang live.
+
+#### 18.4.2 State topics và BAR retention
+
+- Dùng `md.latest.v2` và `md.bars.v2` nếu topic inventory xác nhận tên/schema chưa xung
+  đột. RF/min-ISR/read-committed/ACL phải theo approved broker topology; không rename
+  hoặc overwrite topic cũ để tránh migration. Kafka cùng host không phải multi-host HA.
+- Latest topic key là logical state identity; quality/generation/provenance đủ để dựng
+  lại view. Source generation reset hoặc disable/delist phải có state transition/tombstone
+  có thể replay, không chỉ xóa Redis key cục bộ.
+- BAR durable key phân biệt binding/open-time/revision (hoặc event identity tương đương
+  đã golden). Giữ append-only revision fact, reference tới event bị thay thế. Current
+  cache một row/open-time; equal revision nhưng khác nội dung là conflict, không last-write-wins.
+- Chốt `retained_opens`, revision/audit retention, headroom và tombstone lifetime theo
+  binding/capability ở KN-1. Không tự nâng từ 10k sang infinite; không tự giảm maxlen đã
+  công bố. Expiry controller là task bounded trong projector, không service mới.
+- BAR compacted topic có unique revision key **không tự nhỏ đi**. Expiry phải publish
+  tombstone cho key ngoài cửa sổ đã duyệt; retention floor/watermark phải durable.
+  Không dùng một TTL thời gian ngắn chung cho 1m/1w khiến mất history contract.
+- Tombstone retention đủ cho approved offline/rebuild horizon; vượt horizon phải rebuild
+  fresh generation, không overlay cache cũ đã bỏ lỡ deletes. Không silently trim revisions
+  còn thuộc audit window; hết disk budget thì typed pressure/stop promotion, không giả pass.
+- Chỉ materialize hot/history depth đã có demand; provider wrapper vẫn phục vụ bounded
+  on-demand history ngoài cache theo policy. Request lớn không tự tăng memory cap/authority.
+
+#### 18.4.3 Hai hệ offset và sink fencing
+
+- Mỗi state record giữ original canonical `(topic identity, partition, offset)`, domain
+  event ID/revision, source generation, lineage/hash và materializer schema epoch.
+  Changelog delivery coordinate là metadata riêng; không cấp public cursor từ nó.
+- Stage A produce state + input offset trong Kafka transaction. Chỉ ACK/commit thành
+  công mới được xem state durable. Không dùng Redis ACK thay durable publication.
+- Stage B atomic apply kiểm generation/owner fence, source identity và domain revision;
+  compare transport coordinates trong cùng topic/partition/epoch, không so số offset
+  giữa topics/generations như một global counter. Cursor/watermark phải đúng view đã apply.
+- Crash sau Redis write/trước checkpoint phải idempotent. Kafka producer fencing không
+  chặn Redis client zombie: delayed write sau rebalance/generation swap phải bị sink từ chối.
+- Marker/quality update không được làm mới giá cũ thành execution-ready; late BAR repair
+  có offset cao không làm `latest_final_bar` lùi về open-time cũ.
+- Lua/Redis không đổi u64 offset/epoch-nanosecond sang double mất precision. ZSET index
+  dùng integer milliseconds hoặc encoding chính xác phù hợp, còn timestamp gốc giữ nguyên.
+  Atomic payload + index + quality + checkpoint, không tách thành writes nhìn thấy nửa chừng.
+
+#### 18.4.4 Snapshot, batch và rebuild
+
+- Query đọc payload/quality/watermark/generation nhất quán từ một versioned view. Warmup
+  nhiều page phải pin snapshot/generation hoặc detect/retry bounded nếu view đổi.
+- Shared Redis giảm state duplication, **không** làm hai HTTP reads ở thời điểm khác
+  nhau byte-identical. So parity tại cùng version; report progress/replica lag khi live.
+- `require_all=True` không biến multi-product batch thành atomic global snapshot. Response
+  phải giữ per-item watermark và all-or-nothing contract hiện có, không ghép lỗi thành empty OK.
+- Rebuild cache: allocate staging generation -> capture readable committed boundaries ->
+  restore logical state/retention floors -> tail đến boundary -> verify coverage/quality ->
+  atomic publish ready generation. Cache epoch và public canonical generation khác nhau:
+  cache rebuild không tự bắt mọi consumer reset nếu canonical recovery contract còn hợp lệ.
+- Latest có priority trước cold BAR restore, nhưng readiness chỉ true cho slice thật đủ;
+  không dùng một cờ global để giấu missing key. Feed yên lặng phải có durable latest,
+  không hứa replay 15 phút là đủ. Missing snapshot/retention gap phải typed NOT_READY.
+
+<a id="kn-cursor-security"></a>
+### 18.5 Cursor v3, auth và replay-to-live
+
+Token bind environment, authenticated consumer, normalized requirement digest,
+schema major, stream/logical product, snapshot identity/watermark, topic identity,
+physical partition, partition-plan epoch, source-policy/catalog revision và expiry.
+Golden bytes áp dụng cho signing/canonical encoding; không đòi JSON property order ở
+response không có yêu cầu byte identity. Decimal/unit/null/presence semantics phải exact.
+
+- Token cũ không được diễn giải như Kafka token. Query + Stream cùng approved route
+  generation; migration có typed expiry/resnapshot, tránh vòng snapshot cũ -> stream mới.
+- Per-replica applied boundary khác source event time. Offset jump do filtering/transaction
+  marker hợp lệ; source gap phải chứng minh riêng. Đọc `read_committed` đến readable
+  boundary, không giả log-end là committed completeness.
+- Đăng ký REPLAYING + chốt boundary atomic trong replica; pending buffer giữ events mới;
+  replay bằng reader riêng -> merge dedup theo identity -> LIVE. Không seek live consumer.
+- Replica chưa đạt cursor từ replica khác phải catch-up bounded hoặc trả retryable typed
+  lag, không báo cursor expired giả để bỏ event. Ngoài retention mới resnapshot theo policy.
+- Ring/replay cap theo bytes, time, record scans và concurrency; key thưa không scan vô hạn.
+  Cap 64 MiB/2s/4 reader ở proposal cũ chỉ là starter hypothesis, KN-1/KN-2 phải đo.
+- Overflow lossless trả typed recovery/backpressure, không drop oldest rồi healthy.
+  Cancel/disconnect phải join/terminate task và release permit; request hết deadline
+  không được để reader, buffer hoặc auth quota lease rò rỉ.
+- ACK/checkpoint là client-owned đã có. Không thêm server checkpoint dùng chung identity;
+  hai subscription cùng identity không được làm tiến độ của nhau nhảy lên.
+- Negative auth/quota tests chạy qua gRPC/HTTP thật. Không tái sử dụng token/data/cursor
+  consumer A cho B vì cache dùng chung; cache chỉ giữ immutable product data.
+
+<a id="kn-resources-and-latency"></a>
+### 18.6 Resource, latency và workload: cách đo thống nhất
+
+**CPU:** <=5.0 vCPU steady-state tổng Data Layer phục vụ cuối cùng theo R1.29. Ghi rõ
+service denominator gồm brokers, ingestors, canonical cores, BAR edge, stream, projector,
+Query, control Redis và market cache; tách TS/alpha test compute, build và old rollback
+stack. Không báo <=5 bằng cách bỏ Kafka khỏi tổng. Peak/burst/headroom report riêng.
+Cap không phải usage. Mọi thay cap có before/after, total-cap ledger và evidence lợi ích.
+Shadow exception phải hữu hạn theo role/thời lượng và host/TS stop condition đã ghi;
+không tự vay CPU của TS để làm mới xanh.
+
+**RAM:** market cache process riêng, `noeviction` không thay thế retention. Đo payload
+và Redis overhead thật, reserve cho index/Lua/clients/rebuild headroom. Journal đã ghi
+5.000-row response 10.3 MB; không sizing whole-public-JSON bằng 300 B/row. Không prefill
+mọi interval 10k khi không có demand, cũng không âm thầm cắt depth hiện được cam kết.
+Cold restore/expiry bounded để không chặn hot Redis reads; quota/admission Redis không
+chịu full-memory của market history. Nếu staging rebuild cần gấp đôi RAM thì tính trước,
+hoặc rebuild partition/slice có controlled unavailability; không chờ OOM mới phát hiện.
+
+**Bốn đại lượng owner, không đổi định nghĩa giữa baseline và candidate:**
+
+| Đại lượng | Đo từ đâu đến đâu | Bổ sung bắt buộc |
+|---|---|---|
+| Request latency | SDK trong container consumer gọi -> dữ liệu decode/validate xong, dùng được | cold/warm connection; endpoint, batch shape, result/rejection |
+| Durable event age | age field theo source/component/BAR semantics trong response | không thay age bằng request duration; nêu timestamp nào |
+| Delivery lag | provider event (BAR: close time) -> canonical publish/commit theo receipt | host receive và Kafka commit làm subspan, kiểm clock skew |
+| End-to-end cache | provider event/BAR close -> state đã apply tại alpha/TS client | client CPU/queue tách khỏi server; không chỉ đo response arrival |
+
+Session/gap/generation, reconnect RTO, materializer lag từng partition và correction
+visibility report thêm. Quiet/feed eligibility giữ contract hiện hành; không bỏ rejected
+samples khỏi denominator. BAR history dropout horizon không phải close-to-signal SLA.
+
+**Profile đích:** 20 candle clients (BAR stream + QUOTE 1 Hz), 15 realtime clients
+(TRADE + QUOTE streams, MARK 1 Hz), 10 grid/L2 clients (BAR + QUOTE + BOOK_DELTA,
+snapshot khi bootstrap/recovery, MARK 1 Hz), 5 multi-symbol clients (hai QUOTE streams,
+hai-item MARK batch 1 Hz, một reference/minute), cộng TS 60 route đã inventory.
+Khoảng 90 alpha subscriptions và 50 hot HTTP requests/s **chưa tính TS**; đo cả item/s,
+bytes/s và delivery fan-out. Logical clients phải có identity/quota đúng, không chia
+quota nhỏ rồi gọi offered-load giảm là capacity pass. Lấy symbol/interval/feed/maxlen
+từ manifest thật, không dựng target chỉ cho BTC.
+
+Budget từ `config/v2/v211-target-acceptance-budget.json` và receipt owner hiện hành phải
+được parse/đối chiếu ở KN-1, freeze thành candidate budget có hash. Không hardcode lại
+ngưỡng khác ở từng script. Mốc đề xuất trước đây: hot QUOTE/TRADE p95/p99 100/250ms,
+MARK 250/500ms, L2 300/750ms, BAR-latest 1000/2000ms chỉ áp operation tương ứng khi
+khớp approved budget; không áp chúng cho whole 5k warmup hoặc provider cadence.
+3.000 **canonical** events/s là challenge có real capture/event mix, không đồng nghĩa
+3.000 raw frame/s hoặc synthetic tiny events. Replay tăng tốc không được giả là live
+freshness. Stream direct canonical và Query qua changelog có latency budget riêng;
+stage A transaction/cleaner cost mới phải đo, không tin Rust tự triệt tiêu overhead.
+
+Reuse [`scripts/phase3_consumer_load_acceptance.py`](../scripts/phase3_consumer_load_acceptance.py),
+[`scripts/report_feed_latency_quantities.py`](../scripts/report_feed_latency_quantities.py)
+và [`scripts/measure_consumer_request_latency.py`](../scripts/measure_consumer_request_latency.py).
+Chỉ bổ sung phần thiếu, cùng một evidence schema; không xây harness thành engine thứ hai.
+
+<a id="kn-testing-and-review"></a>
+### 18.7 Test strategy, journal và review contract cho Claude/Astra
+
+1. Mỗi work item = coherent source/test slice, không phải phase con. Trước sửa ghi scope
+   và affected evidence; sau pass commit kèm journal. Không để một commit khổng lồ cuối
+   phase, cũng không commit mỗi assertion/finding. Đúng user identity, không AI trailer.
+2. Fast tests trước runtime: unit/golden/property -> real Kafka/Redis isolated integration
+   -> exact read/protocol matrix -> bounded load -> final consumer acceptance. C2 không
+   dùng làm bug detector cho mỗi lần sửa; test fail phải chỉ binding/layer/code/watermark.
+3. Reuse certified provider/domain evidence có pinned source/image/config không đổi;
+   test lại read/replay/security/migration path bị thay. Không biến con số 132/299/140
+   lịch sử thành denominator vĩnh viễn; inventory hash + exact counts được chốt ở KN-1.
+4. Synthetic chỉ unit/fault fixtures có test provenance. Runtime/cert dùng provider thật
+   hoặc durable capture hợp lệ; chaos Kafka/Redis chỉ namespace test, không giết broker
+   production. Test không được direct venue-bypass read plane để ép thành công.
+5. Real collaborator/transport tests bắt lỗi fake như property/method mismatch. Fault
+   tests dùng kill/restart/timeout thực trong scope isolated khi cần; không chỉ assert
+   tên hàm trong source. Required integration phải fail rõ nếu dependency thiếu, không
+   `skip` lặng rồi ghi phase xanh.
+6. Journal theo mẫu: `work item | SHA | command/test cases/counts | evidence path/hash |
+   observed failure/root cause/fix | runtime mutations | cleanup | next`. Không lưu raw
+   secrets/unbounded logs; evidence ngoài Git theo layout sẵn có.
+7. Claude bàn giao `IMPLEMENTED_PENDING_ASTRA_REVIEW`, không tự ghi Astra PASS. Review
+   dựa source + tests + real evidence, có thể rerun focused cases; không mặc định rerun
+   toàn certified suite. Astra findings in-scope phải sửa/test trong phase đó.
+8. Trạng thái: `READY/PENDING -> IN_PROGRESS -> IMPLEMENTED_PENDING_ASTRA_REVIEW ->
+   REVIEW_CHANGES_REQUIRED hoặc ASTRA_REVIEW_PASS -> CLOSED`. Owner có thể đổi sequencing
+   rõ ràng; không suy ra model tự approve bản thân hoặc certified runtime chưa test.
+9. Sau mỗi phase báo domain behavior, cases pass/fail/skip, evidence chưa có, artifacts,
+   canonical branch/SHA, active image/config và rollback inventory; cleanup done/deferred
+   có lý do. Report consumer readiness khác release readiness, không dùng một chữ PASS
+   cho mọi cấp.
+
+<a id="kn-guide-phase-1"></a>
+### 18.8 KN-1 - Contract, Baseline And Measured Rust Foundation
+
+**Goal:** khóa những quyết định xuyên phase bằng spec/golden/prototype đo được, không
+viết một bản framework mới hay kéo dài planning. **Owner:** Claude; **review:** Astra.
+**Entry:** owner giao bắt đầu; đọc §18.1-18.7, tracker KN-1, source/evidence hiện hành.
+
+| Work item | Implement / kiểm chứng cụ thể | Kết quả phải bàn giao |
+|---|---|---|
+| K1.1 Baseline | Inventory source/branch/images/config, RPC/HTTP/binding, manifest/JWT, TLS expiry/SAN, topics/ACL, quotas và retained history | Baseline receipt, known-failure list và evidence-reuse map; không ghi fact từ trí nhớ |
+| K1.2 Safety regression | Sửa `subscriber_count` property bug bằng class gateway thật; không rollout Stream cũ mặc định | Test fail trên source cũ/pass patch; slice source-only |
+| K1.3 Contracts | Freeze logical keys, cursor v3, source vs changelog coordinates, revision/conflict, cache rebuild epoch và read consistency | Shared vectors/spec trong nơi contracts hiện có; không đổi public field shape |
+| K1.4 Resource/retention | Đo serialized payload/index overhead, history demand, CPU denominator, broker read/transaction budget; freeze expiry/rebuild constraints | Machine-readable budget + sizing; không chốt 768 MiB bằng phỏng đoán |
+| K1.5 Native vertical slice | Reuse Rust Kafka/protobuf; thêm approved tonic/JOSE deps; authenticated TRADE Subscribe qua SDK thật trên shadow | Real commit -> token -> native gateway -> SDK, Binance/OKX capture hoặc bounded live |
+| K1.6 Test/release wiring | Native/Python vectors, isolated integrations và required CI jobs; planned namespace/ports/identities/cleanup | Không skip required gates; một harness path; affected-test command map |
+
+**Tests bắt buộc:**
+- K1-T01: decimal/null/unit/time/identity golden; same feed ở hai venue không cross-mix.
+- K1-T02: cursor signature bytes, env/consumer/requirement/policy/catalog/schema mismatch,
+  expiry, tamper, old token typed reset; u64/nanosecond không mất precision.
+- K1-T03: real JWT/TLS/manifest authority, wrong alg/kid/aud/issuer/expired identity và
+  limit denial; không key/private credentials trong evidence.
+- K1-T04: committed vs aborted Kafka records tới prototype; ACL least privilege, không
+  permission reset/write trên canonical cho read-only clients.
+- K1-T05: SDK thật qua container network decode/validate event; đo bốn đại lượng có
+  source provenance, không dùng same-process timing làm consumer latency.
+- K1-T06: bounded payload-memory benchmark dùng BAR/L2 thật; record bytes/event và
+  fan-out, không so tiny trade với large snapshot để hứa throughput.
+- K1-T07: real gateway property regression; classify existing suite errors by test ID,
+  không tự bỏ chúng khỏi required gates nếu ảnh hưởng path mới.
+
+**Exit:** contract vectors pass cả Python/Rust, minimal real vertical slice hoạt động;
+inventory/budget/retention/compatibility artifacts có hash và rõ boundary; CPU/RAM số đo
+tách actual vs estimate. Các con số chưa có không được gọi certified. Astra review
+spec/source/prototype evidence trước P2/P3; một BTC smoke chỉ là prototype, không cert.
+**Stop:** không rewrite full Query, không migrate data hoặc cutover TS/alpha.
+**Rollback:** stop prototype đúng scope; production unchanged. **Cleanup:** --rm clients,
+scratch/session artifacts và unused test image/cache; giữ builder/candidate cần phase
+tiếp có tên và expiry, không broad prune. **Debt:** lỗi contract trong scope phải fix;
+dependency/license/infra bất khả thi cần quyết định owner, không tự chuyển kiến trúc.
+
+<a id="kn-guide-phase-2"></a>
+### 18.9 KN-2 - Rust Stream, Replay And Public Streaming Compatibility
+
+**Goal:** native realtime delivery/replay không singleton spool/lease, bounded và tương
+thích public RPC. **Entry:** KN-1 Astra PASS; đọc §18.3-18.7 và tracker KN-2.
+
+| Work item | Implement / kiểm chứng cụ thể | Kết quả phải bàn giao |
+|---|---|---|
+| K2.1 Native service | Crate/native entrypoint, TLS/JOSE/manifest/quota; generated service cho bốn public RPC | Subscribe/Replay native; GetSnapshot/status qua read-view interface đúng contract |
+| K2.2 Live delivery | Independent committed readers, indexed fan-out, shared immutable bytes, byte/item bounds | Không global writer lock hoặc Python HTTP per event |
+| K2.3 Replay | Token v3, ring, replay pool riêng, committed barrier, pending merge và cancel/join | Replay không seek live reader; progress/cap metrics |
+| K2.4 Lifecycle | Explicit lossless/coalescible rules, quality/control frames, quiet/session/gap/reset | Same decision oracle với domain policy, không dựa riêng tuổi tick |
+| K2.5 Shadow/oracle | Một replica thường trực bounded trong test window; replica hai cho failover; Kafka oracle theo coordinate | Full demanded stream matrix và real SDK receipt; không mutate old groups |
+
+Read-view interface của snapshot/status được test tại KN-2 với contract fixture/adapter
+đã xác định; integration cache mới thuộc KN-4, được báo **chưa certified Query**. Không
+expose route production `UNIMPLEMENTED`, không ngụy trang fixture thành real data.
+Không mở thêm RPC/endpoint nội bộ nếu interface hiện có dùng lại được.
+
+**Tests bắt buộc:**
+- K2-T01: read_committed, abort/control-marker offsets, duplicate transport delivery,
+  sparse logical key và source sequence gap độc lập với offset jump.
+- K2-T02: replay ring hit/miss, expiry/scan cap, consumer cancellation, no live-reader
+  seek; boundary interleaving property test và real Kafka integration.
+- K2-T03: two subscribers chung identity nhưng ACK riêng; overlapping consumers,
+  per-consumer quota fairness, auth revocation/rotation giữa stream.
+- K2-T04: kill replica, reconnect target đi sau cursor, bounded catch-up, không false
+  expiry/resnapshot loop; no unexplained missing/reordered application events.
+- K2-T05: slow reader/pending overflow, bounded memory, no task/permit/socket leak;
+  repeated connect/disconnect đưa resource count về baseline.
+- K2-T06: BOOK snapshot/delta/reset và BAR final/revision không coalesce sai; quote
+  coalescing chỉ scope được phép; negative cross-product/depth/interval cases.
+- K2-T07: every public RPC schema/error/auth contract; snapshot/status dependency NOT_READY
+  có nghĩa rõ; stream đủ scope Binance/OKX manifest, không chỉ prototype K1.
+- K2-T08: canonical capture challenge + fan-out target, CPU/RSS/lag/queue per replica;
+  giới hạn replay không được làm nóng pipeline chính nghẽn.
+
+**Exit:** native Stream shadow đúng contract và oracle, reconnect/replay qua hai replica
+pass, resource bounded; no loss/cross-mix vượt delivery policy; số đo native stage cost
+và budget rõ. Không dùng ACK Kafka nội bộ làm ACK alpha đã xử lý. Astra review source
+và all-RPC compatibility, không chỉ test count. **Stop:** chưa Query promotion, không
+đụng producer authority/topology/offsets. **Rollback/cleanup:** stop shadow service/client,
+giữ stream cũ; test topics/groups/network chỉ dỡ khi không còn phase sau cần và scope
+cho phép. **Debt:** pending KN-4 integration là dependency khai báo, không gap Stream
+implementation được lén chuyển đi.
+
+<a id="kn-guide-phase-3"></a>
+### 18.10 KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
+
+**Goal:** cache phục vụ được Query thật, dữ liệu bền và rebuild đúng, không RAM/disk tăng
+vô hạn. **Entry:** KN-1 reviewed contracts và mặc định KN-2 Astra PASS. Chỉ làm source
+song song K2/K3 khi owner phân công rõ modules; không hai agent sửa shared files ngầm.
+Đọc §18.2-18.7 và tracker KN-3.
+
+| Work item | Implement / kiểm chứng cụ thể | Kết quả phải bàn giao |
+|---|---|---|
+| K3.1 State topics/ACL | Exact topic identity, schema, partition routing, RF/ISR/compaction/retention, producer/group permissions | Packet/dry-run/idempotent provision; không sửa canonical topic |
+| K3.2 Stage A | Transactional canonical -> logical latest/BAR revision + offsets; keep provenance | Source/change coordinates tách; no source timestamp rewrite |
+| K3.3 Stage B | Native Redis CAS/fence, atomic payload/index/meta/checkpoint, bounded writes | Crash/replay/zombie safe; latest không bị stale write lùi |
+| K3.4 Market cache | Separate process/config from quota/admission Redis; measured cap/noeviction/headroom | Memory-full không phá auth/provider admission; workload sizing receipt |
+| K3.5 History/expiry | BAR current index + immutable revision facts; retention-floor/tombstones; bounded cleaner | Window depth đúng contract và disk slope đo được |
+| K3.6 Migration/readback | Read-only old spool export, history tie-out/import with lineage; BAR edge readback adapter | Count/hash theo binding/open/revision; no invented canonical offset |
+| K3.7 Rebuild/recovery | Fresh cache generation staging, load floors/latest/history, tail barrier và atomic readiness | Cold boot/restart/partial restore đúng RTO; no manual flush runbook phụ thuộc |
+
+BAR import từ legacy khi canonical retention đã hết phải mang `legacy_import` provenance,
+original event/hash/cursor nếu còn, và replay cutoff thật đã capture. Không tạo offset
+giả hoặc publish lại toàn history thành tick realtime. Public handoff cursor gắn live
+canonical boundary của snapshot coherent, không gán offset NULL/0 cho đủ schema. Migration
+rerun phải idempotent và không overwrite correction mới hơn.
+
+**Tests bắt buộc:**
+- K3-T01: Stage A crash/abort/commit, restart/rebalance và duplicate input -> correct
+  durable outputs/offsets; không checkpoint đi trước dữ liệu.
+- K3-T02: Stage B crash trước/sau Redis apply, delayed zombie, generation switch,
+  offsets không comparable; fence rejection và recovery đúng.
+- K3-T03: shared physical book key nhưng latest snapshot không bị delta/reset xóa nhầm;
+  quality/session state cùng generation; MARK/INDEX component clocks không bị gộp.
+- K3-T04: late BAR repair, higher/lower/equal-conflicting revision, final vs in-progress,
+  ZSET precision, current index uniqueness, calendar interval boundary.
+- K3-T05: tombstone/retention floor, missed deletes, sparse/quiet latest, rebuild từ
+  earliest committed changelog; new key chưa có -> typed NOT_READY, không default 0.
+- K3-T06: empty cache, interrupted/staging rebuild, full-memory, cache outage;
+  control Redis unaffected; ready generation publish atomic.
+- K3-T07: migration toàn retained demanded BAR coverage, rerun/crash, count/hash/value
+  parity; long intervals và insufficient provider history được nói đúng.
+- K3-T08: lag/throughput/bytes/disk-cleaner/Redis memory với thực tế payload, latest
+  reads không bị cold rebuild/expiry chiếm hết budget.
+
+**Exit:** projector native và cache shadow đúng oracle; old history giữ coverage; full
+rebuild có measured RTO, không fake authority; expiry policy được implement/test không
+để sau; memory/disk bounded trong workload. Astra review transaction/fence/migration,
+không accept "Kafka EOS nên Redis tự an toàn". **Stop:** chưa query/consumer cutover,
+không delete old SQLite/volumes. **Rollback:** stop candidate projector/cache và BAR
+readback candidate; source writers/control Redis giữ nguyên. **Cleanup:** exact test
+namespace/topic/volume theo packet, không FLUSHDB shared. **Debt:** không còn in-scope
+recovery/correctness thiếu implementation trước exit.
+
+<a id="kn-guide-phase-4"></a>
+### 18.11 KN-4 - Query, SDK And Full Read-Plane Compatibility
+
+**Goal:** mọi endpoint trong declared scope được consume đúng, hot reads không chờ
+warmup nặng, SDK không sửa strategy để thích nghi backend. **Entry:** KN-2/KN-3 Astra
+PASS; đọc §18.3-18.7 và tracker KN-4.
+
+| Work item | Implement / kiểm chứng cụ thể | Kết quả phải bàn giao |
+|---|---|---|
+| K4.1 Backend | Existing Python Query -> market-cache view; typed status/errors/cursors | Không Kafka reader Python; read-time eligibility/auth giữ đúng |
+| K4.2 Render | Cache immutable typed/encoded fields; lightweight per-request envelope; bounded native/cold batch work | No duplicate full Pydantic walk trên hot loop; không cache stale verdict |
+| K4.3 History | Warmup/history/strict batch + stable snapshot/handoff | 2.5k/5k/10k nơi contract cho phép, repairs không làm gap giả |
+| K4.4 API surface | All existing REST/gRPC, diagnostics, reference wrappers, OpenAPI/SDK contracts | Không drop unused RPC; no INTERNAL_STREAM external limiter quay lại |
+| K4.5 Consumers | SDK thật và TS/alpha read adapters qua shadow paired targets | Four classes no-order, cursor/reconnect/allowed fallback/BLOCKED |
+| K4.6 Preflight/load | Fast matrix cả hai replica, targeted protocol + stages 20/35 trên shadow | Typed failures định vị được; không dùng C2 để dò bug |
+
+Cold path không được tự đóng semaphore khi request timeout trong khi worker tiếp tục
+chạy không kiểm soát. Cache read/batch Lua không scan toàn namespace; tránh một script
+Redis dài gây latency cho mọi hot key. Stream snapshot/status read interfaces của KN-2
+được bind cache thật tại đây, rồi test end-to-end cùng all-RPC surface.
+
+**Tests bắt buộc:**
+- K4-T01: exact HTTP/gRPC/SDK contract, schema closed, decimal/unit/null/missing,
+  auth/quota/errors; toàn endpoint đã inventory, không chỉ route mới.
+- K4-T02: strict batches 1/8/16/32/50, per-item identity/policy, cancellation/deadline,
+  partial handling; replica parity ở cùng watermark và progress khi live.
+- K4-T03: 2.500/5.000/10.000 warmup và maxlen thực, calendar/long interval,
+  page consistency, finality/revision/history->stream; không giảm rows để pass.
+- K4-T04: quote/trade/mark/book quiet vs disconnect/gap/reconnect/generation;
+  delayed read làm giá hết hạn thì bị reject dù cached payload lúc tạo còn fresh.
+- K4-T05: L2 snapshot/delta/resync, mark/index component age, native/derived reference
+  lineage; read wrappers không tự trở thành execution authority.
+- K4-T06: hot traffic cùng cold warmup/restore, queue saturation/fairness và canceled
+  worker leak; quota Redis không bị market-cache memory pressure.
+- K4-T07: SDK no-order consumers warmup/stream/ack/reconnect, V2-primary,
+  allowed V1 fallback/return và BLOCKED đúng policy; no direct venue bypass.
+- K4-T08: stages 20/35 shadow theo frozen workload + full two-replica fast matrix;
+  endpoint latency đủ bốn đại lượng, no missing sample denominator.
+
+**Exit:** all-scope affected read matrix, SDK scenarios và shadow 20/35 pass; mọi public
+RPC giữ behavior; hot/cold budgets đạt; no auth/session/gap ambiguity chưa xử lý. Astra
+review actual consumer evidence, không health-only. **Stop:** chưa certified 50 + TS,
+chưa cutover all consumers hoặc release. **Rollback:** Query shadow/backend off, consumers
+test stopped, old targets giữ nguyên. **Cleanup:** scoped read clients/network/state,
+không để compose alpha test chạy nền. **Debt:** deferred venue capability đã kê khai
+không mở rộng; lỗi public read path trong scope phải sửa trước close.
+
+<a id="kn-guide-phase-5"></a>
+### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
+
+**Goal:** dùng chính thức backend mới trong scope đã duyệt, đạt tải đích, retire đường
+cũ và phát hành có provenance; không thêm phase sau để làm phần đã hứa. **Entry:**
+KN-1..KN-4 Astra PASS, fast preflight hiện hành xanh và runtime packet đầy đủ. Đọc
+§18.6-18.7, §18.13-18.14, tracker KN-5 và rules release/cleanup.
+
+| Work item | Implement / kiểm chứng cụ thể | Kết quả phải bàn giao |
+|---|---|---|
+| K5.1 Freeze | Exact candidates/config/manifest/targets/TLS, all endpoints và workload, baseline/rollback matrix | Không đo rồi đổi budget; no generic "prior image" |
+| K5.2 Target load | Stages tới 50 logical alpha + TS 60 routes, real/capture burst, cold work/recovery | Bốn latency, per-partition lag, throughput/bytes và whole-stack resources |
+| K5.3 Paired handoff | Versioned Query+Stream target pair, canary TS data consumer rồi representative no-order alpha | Bounded drain/reconnect, no mixed-generation loop, no order mutation |
+| K5.4 Final acceptance | Fast/protocol matrix trước; một final 300s sau candidate đã ổn; rollback/return rehearsal | All counters và typed policy outcomes, receipt linked to exact artifacts |
+| K5.5 Review/provenance | Astra release review, feature->dev CI->main release flow, immutable artifact attestation | Runtime tree/image/config certified traceable; affected smoke khi artifact đổi |
+| K5.6 Retire/release | Old writer/projector/tick-spool off, ADR/runbook/update guides, cleanup, publish v2.2.0 | One active architecture + named bounded rollback, release notes/capacity envelope |
+
+**Tests bắt buộc:**
+- K5-T01: 50-client offered/admitted/completed/error/timeout/in-flight accounting,
+  TS route-by-route readiness/eligibility; không lấy client throttle làm zero miss.
+- K5-T02: canonical burst và hot partition catch-up, headroom, OOM/throttle, full-stack
+  <=5.0 steady-state vCPU; shadow/rollback overhead tách nhưng không giấu.
+- K5-T03: paired handoff với persistent HTTP/gRPC channels, rolling disconnect,
+  stale DNS/old token/new token, replica lag; no endless resnapshot/fallback loop.
+- K5-T04: controlled rollback V2->old V2 và return; V1 chỉ product policy cho phép;
+  source correctness/retained history/checkpoints không bị reset.
+- K5-T05: cold restart/recovery relevant candidate, key rotation và isolated broker
+  failure evidence còn đúng artifact; không kill broker production để cert.
+- K5-T06: one final 300s actual no-order read acceptance toàn scope đã freeze;
+  auth/quota/freshness/gap/reconnect/cursor + zero order/signal/sizing mutation.
+- K5-T07: immutable image/config/CI release receipt, public compatibility, startup,
+  cleanup inventory/disk before-after và absence of unintended restarts.
+
+**Exit:** workload/correctness/resource/recovery gates pass, Astra review accepted;
+production read routing coherent, old data path không ghi âm thầm; source/image/config
+được chứng nhận đúng và release published qua workflow được duyệt. Nếu chưa được
+publish quyền remote thì ghi `CERTIFIED_PENDING_PUBLICATION`, không nói đã release.
+Không có gate tự sinh phải đợi 72h; retained rollback/background monitor có thời hạn,
+owner kiểm định kỳ, không giữ agent session chạy chờ. 300s không được mô tả là multi-day
+soak hoặc multi-host DR. **Stop:** không mở alpha execution hoặc TS upgrade tiếp theo.
+**Debt:** in-scope failure block exit; single-host/declared retention/deferred venues
+được ghi là external limits, không giả đã giải quyết bằng rename status.
+
+<a id="kn-rollout-and-cleanup"></a>
+### 18.13 Packet runtime, rollback và cleanup chuẩn hóa
+
+Packet được journal trước action, gồm: exact service/container names + compose project;
+source SHA/image digest; config/manifest/JWT/catalog/route revisions; ports/network/SAN;
+groups/topics/ACL/Redis namespaces/mounts; allowed writes; duration/stop conditions;
+rollback từng role và data assumptions. Không chạy bundle generator trên live bundle
+vì có thể xoay keys/secrets (CLAUDE.md coupling 2); build từ immutable source, state ngoài Git.
+
+- Chuyển **read route** không có nghĩa cấp canonical producer authority mới. Giữ owner/
+  source-policy đã đúng; cursor backend change là migration contract được version hóa.
+- Không xem Docker alias edits là transaction. Ưu tiên manifest/config pair và bounded
+  consumer reconnect; nếu cần recreate TS, chỉ `market_data_service` đúng image hiện tại
+  + read-target/config cần đổi, preflight env/mount theo CLAUDE.md; không upgrade image
+  gateway/risk/executor/portfolio hay mặc định từ `.env` gây downgrade service khác.
+- TLS SAN/expiry và JWT-manifest revision phải kiểm execution-time. Không tự đổi CA
+  đồng loạt để thuận tên shadow; chọn target/cert path đúng. Deadline expiry lịch sử
+  không phải chứng minh runtime hiện còn cùng certificate.
+- Old V2 rollback cho L2/reference phải có state/config/replay horizon đủ, không chỉ
+  giữ image. V1 không cover mọi product và không độc lập host failure khi cùng máy.
+- Retire old code/runtime sau dependency inventory; giữ archive chỉ theo tên/hash/
+  expiry đã duyệt. Stop container không đồng nghĩa có quyền xóa production volume.
+  Không dời Kafka offset/flush shared Redis/delete SQLite để ép caught-up/green.
+- Mỗi phase cleanup resources chính phase: --rm client; exact test topics/groups/prefixes;
+  scratch ở session/evidence root có deadline, không `/tmp`/repo dump theo CLAUDE.md;
+  image by digest unreferenced, BuildKit cache scoped. Giữ active và named rollback,
+  candidate cần phase sau có lý do/expiry. No broad-prune collateral.
+- Final report: canonical checkout/branch/SHA; active feature worktrees; released main
+  tag; service->image/config map; artifact retention; disk before/after và restart check.
+  Branch đã merge chỉ xóa sau code-preservation check; không xóa branch người khác còn code.
+
+<a id="kn-review-handoff"></a>
+### 18.14 Handoff review cho Astra và định nghĩa hoàn tất
+
+Claude gửi một receipt mỗi phase, không dán toàn log:
+
+```text
+Phase / status / source SHA / affected files and line counts:
+Approved scope and actual work items completed:
+Domain invariants and behavior changed/preserved:
+Tests: command, cases, pass/fail/skip, isolated/real-provider, evidence hash/path:
+New failures -> root cause -> fix -> regression evidence:
+Runtime: exact mutations or NONE; active/config/rollback map:
+Resources: latency/capacity/memory/disk measured vs budget; untested limits:
+Cleanup: removed/retained artifacts, reason/expiry, disk/restart evidence:
+Remaining decision gates, not relabelled implementation gaps:
+Astra requested review points and next allowed step:
+```
+
+Astra kiểm ít nhất: source/runtime correspondence, domain math/identity/ordering,
+checkpoint/fence/recovery races, auth/cursor boundary, bounded task/memory lifecycle,
+actual consumer behavior, denominator/gate math và cleanup. Reviewer chỉ rerun affected
+or missing evidence, không tái chạy toàn provider certification không đổi.
+
+Finding của Astra ở scope phase được Claude fix/test và append receipt cùng phase;
+không mở `KN-2.1/KN-2-final-final` train mới. Sau `ASTRA_REVIEW_PASS`, ghi CLOSED trong
+tracker nếu goal/exit đúng cấp đã đủ. Final release phải có KN-5 real rollout/provenance,
+không chỉ đủ năm mục docs hoặc source tests.
+
+**Thời gian:** năm phase không đồng nghĩa năm ngày. KN-1 chốt estimate sau prototype
+và sizing; không promise best possible latency/100% mọi failure trong hạ tầng một host.
+Tối ưu thời gian bằng reuse đúng code/evidence, source slices đã test, deterministic
+fault tests và một final acceptance; không bỏ tests hoặc nới SLA cho kịp ngày.
+
+**Tài liệu này được công bố để Claude thực hiện theo lệnh bắt đầu phase của owner.**
+Trạng thái thực thi ban đầu của cả năm phase là NOT STARTED. Source ở thời điểm soạn:
+`74337e71ce8ce7611ca424d33f7a0ab29535733a`; facts runtime trong mục 0-17 là lịch sử,
+không có health/latency certification mới từ việc soạn guide.

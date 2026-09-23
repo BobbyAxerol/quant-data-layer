@@ -1,5 +1,14 @@
 # Quant Data Layer Unified Implementation Plan
 
+> [!IMPORTANT]
+> **CURRENT APPROVED REARCHITECTURE TRACK: [KN-1 TO KN-5](#kn-v220-plan).**
+> Owner approved the consolidated five-phase Rust-first plan on 2026-09-23.
+> Claude Opus 5.5 implements; Astra reviews each completed phase. Read
+> [the authoritative detailed guide, section 18](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-v220-approved-guide).
+> The older status blocks and four-phase proposals below are historical context,
+> not permission to execute a superseded design. The five new phases have not
+> started; documentation approval is not a runtime certification.
+
 > **Status:** Phases 0-5 are complete; Phase 6 implementation and shadow certification pass, while production authority remains `NO-GO` on explicit infrastructure gates. Phase 7 is complete with a protected read-only `BETA-GO`; Phase 8 is complete with an immutable, signed, multi-venue Rust realtime-core candidate fenced to `RUST_SHADOW`; Phase 9.0-A and 9.0-B are complete in isolation; Phase 9.0-C is `COMPLETE_CONTROL_PLANE / NO_GO_EXTERNAL`; Phase 9.1 is `COMPLETE_IMPLEMENTATION / CANARY_NOT_AUTHORIZED`; Phase 9.2 is `COMPLETE_IMPLEMENTATION / PRIMARY_NOT_AUTHORIZED`; Phase 9.3 is `COMPLETE_CONTROL_PLANE / PRODUCTION_HOLD_NOT_STARTED` after isolated hold/closure/expansion governance certification. Authority promotion, production hold/closure and every expansion remain blocked on explicit production infrastructure, real canary/primary evidence and exact-slice approval gates. V1 remains authoritative and no runtime cutover has started.
 > **Working branch:** `feat/v2-stable-rust-binance-okx`, based on `dev`; Phase B artifact certification is complete while the overall multi-venue conclusion remains `PARTIAL_EXTERNAL` for DNSE. No push, merge or authority cutover is implied.
 > **Detailed architecture:** [Fund-grade architecture and migration guide](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
@@ -53224,3 +53233,314 @@ base64 but not tonic, h2 or serde_yaml; `qdl-kafka` provides
 Owner questions Q2', Q4' and Q12-Q14 added (new Rust dependencies, new
 compacted topics and ACLs, byte-identical JSON rendering, V1-compat sunset).
 No source, config or runtime change; no build, push, merge or release.
+
+<a id="kn-v220-plan"></a>
+## Kafka-Native V2.2.0 - Owner-Approved Five-Phase Execution Plan
+
+> [!IMPORTANT]
+> **CLAUDE OPUS 5.5 IMPLEMENTS THIS TRACK; ASTRA REVIEWS EACH PHASE.**
+> Approved design: the owner's five-phase consolidation, 2026-09-23.
+> [Detailed execution guide: section 18](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-v220-approved-guide).
+> This is five replacement phases, not five additions to the previous four.
+> No new implementation, runtime handoff or release has occurred in this plan edit.
+
+### KN Program Status And Operating Contract
+
+**Program status: PLAN APPROVED / IMPLEMENTATION NOT STARTED.**
+**Target:** durable, correct, bounded Rust-first read/distribution plane serving
+the declared Binance/OKX products and 50 logical alpha clients plus TS demand;
+V2 primary in approved scope, V1 fallback only where policy allows, old V2
+rollback for products V1 does not support. Candidate release name: `v2.2.0`.
+Actual provider/source authority is not changed just by replacing readers.
+
+**Read order:** workspace `AGENTS.md`, repository `AGENTS.md`, workspace
+`CLAUDE.md`, this phase tracker, linked section-18 guide and actual source/
+config/evidence. Historical facts in CLAUDE.md or old phase journals must be
+re-verified before runtime action. Main plan owns execution logs/status; the
+review guide owns detailed design. Preserve both agents' earlier discussion.
+
+**Supersession:** section 18 overrides conflicting implementation choices in
+review sections 0-17: no Python-first replacement gateway, Python Kafka latest
+readers or new SQLite data path; no Subscribe-only public regression; no alias
+script treated as atomic cutover; no unfenced Redis sink; no unlimited compacted
+BAR history. The prior v2.1.1 capacity target is carried into KN-5, not declared
+passed retrospectively. Existing domain/provider evidence is reused only for
+unchanged pinned scope; affected reader/replay/recovery paths are re-proven.
+
+**Execution sequence:** KN-1 -> KN-2 -> KN-3 -> KN-4 -> KN-5 by default.
+KN-2/KN-3 source work may overlap only after KN-1 Astra PASS and an explicit
+owner/file assignment; no concurrent edits to shared files without coordination.
+Do not start the next phase merely because the executor's tests passed.
+
+| Phase | Initial status | Executor | Reviewer | Closure evidence |
+|---|---|---|---|---|
+| [KN-1](#kn-plan-phase-1) | READY_FOR_OWNER_START | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
+| [KN-2](#kn-plan-phase-2) | PENDING_KN1_REVIEW | Claude Opus 5.5 | Astra | Full Stream/replay contract, bounded failure/reconnect proof |
+| [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
+| [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
+| [KN-5](#kn-plan-phase-5) | PENDING_KN1_KN4_REVIEW | Claude Opus 5.5 | Astra | 50+TS acceptance, paired cutover, provenance, cleanup and release |
+
+**Common invariants and approved scope:**
+- Follow [decisions/exclusions](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-decisions-and-scope),
+  [architecture/reuse](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-architecture-and-reuse)
+  and [correctness](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness).
+- Rust Stream/projector, Python API/SDK; shared real-provider domain contracts;
+  preserve all public HTTP/gRPC behavior, original timestamps/decimals and V1.
+- Add only the justified market-cache Redis process, separated from existing
+  quota/admission Redis. State topics/ACLs are exact-scope, not a broker overhaul.
+- Resource budget remains <=5.0 vCPU steady-state across the declared whole
+  serving Data Layer. Temporary shadow budget/expiry and actual caps are measured
+  and recorded; no hiding broker cost or borrowing unbounded TS resources.
+- No TS order/risk/domain upgrade, strategy/sizing change, execution orders,
+  DNSE/Spot/Deribit activation, partition-count change, manual offset reset or
+  production data deletion. Producer authority does not migrate again per retry.
+- Runtime packets record roles/digests/configs/groups/namespaces/allowed writes,
+  duration and exact rollback before actions. Reuse valid scope approval; do not
+  ask again for unchanged retries. New destructive/external scope needs approval.
+- [Testing/review rules](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-testing-and-review):
+  fast tests and matrices before final acceptance; same-host is not multi-host HA;
+  documentation/source tests never imply production certification.
+- [Resource/latency contract](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency):
+  report all four owner latency quantities, exact denominators and typed outcomes.
+- [Rollout/cleanup](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-rollout-and-cleanup):
+  stage cleanup each phase; retain active plus named rollback/candidate by purpose;
+  no extra worktree per test; remote feature -> dev -> main/release with approval.
+
+**Status lifecycle:** IN_PROGRESS -> IMPLEMENTED_PENDING_ASTRA_REVIEW ->
+REVIEW_CHANGES_REQUIRED or ASTRA_REVIEW_PASS -> CLOSED at the declared scope.
+Claude must not self-sign Astra's review. Review findings are fixed in the same
+phase; do not create new subphase names to defer unfinished implementation.
+
+<a id="kn-plan-phase-1"></a>
+### KN-1 - Contract, Baseline And Measured Rust Foundation
+
+**Status:** READY_FOR_OWNER_START / NOT STARTED.
+**Goal:** freeze the recovery/security/data/resource contracts and prove a small
+Rust-to-real-SDK path before expanding implementation; no prolonged redesign.
+**Guide index:** [18.8 work items and K1-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-1),
+[18.2 scope](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-decisions-and-scope),
+[18.4 data/state](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness),
+[18.5 cursor/security](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-cursor-security),
+[18.6 budgets](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency).
+
+**To do:**
+- [ ] K1.1 inventory source/runtime, public endpoints/RPCs, manifests, demand,
+  quotas, history, Kafka identity/ACL and TLS; map reusable evidence/known failures.
+- [ ] K1.2 fix source-only subscriber_count property bug with real collaborator regression.
+- [ ] K1.3 shared cursor/auth/identity/offset/revision/generation golden contracts.
+- [ ] K1.4 real payload/cache sizing, retention/rebuild policy and frozen target budget.
+- [ ] K1.5 authenticated native vertical slice -> real SDK; measured, isolated and bounded.
+- [ ] K1.6 affected test/CI wiring, exact namespaces and cleanup map.
+**Completed:** none in this documentation update.
+**Verification:** K1-T01..T07 not run; report exact pass/fail/skip and source
+provenance when executed. Prototype alone does not certify full demanded scope.
+**Exit gate:** contracts/golden/negative auth pass; real SDK slice works; baseline
+and resource/retention evidence recorded; Astra reviewed, no in-scope contract gap.
+**Technical debt / decisions:** none created by this plan. Dependency/license or
+resource impossibility must be surfaced with evidence; not an excuse to skip work.
+**Runtime / rollback:** prototype scope only under packet; stop prototype, keep
+all old services/data/authority. No consumer cutover.
+**Cleanup:** remove disposable clients/test artifacts; inventory reusable candidate
+and rollback with expiry, disk delta for cleanup and no production restart.
+**Astra review:** NOT REQUESTED; inspect contracts, golden oracle, actual SDK and
+baseline/budget honesty. No executor self-approval.
+**Next permitted step:** KN-2 after reviewed exit; no automatic runtime promotion.
+
+#### KN-1 Execution Journal
+- 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
+- Append coherent tested-slice receipts here, including findings/fixes, commands,
+  evidence hashes, cleanup and review outcome; do not scatter progress elsewhere.
+
+<a id="kn-plan-phase-2"></a>
+### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
+
+**Status:** PENDING_KN1_REVIEW / NOT STARTED.
+**Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
+with correct replay, auth, flow control and the existing public RPC contract.
+**Guide index:** [18.9 work items and K2-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-2),
+[18.3 reuse](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-architecture-and-reuse),
+[18.4 product lifecycle](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness),
+[18.5 replay/security](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-cursor-security),
+[18.7 tests/review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-testing-and-review).
+
+**To do:**
+- [ ] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
+- [ ] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
+- [ ] K2.3 signed replay/barrier/ring/pending merge and bounded cancellation-safe reader pool.
+- [ ] K2.4 lifecycle-aware quality/gap/session/control handling and exact coalescing policy.
+- [ ] K2.5 full demanded Stream shadow/oracle, two-replica failover and measured capacity.
+**Completed:** none in this documentation update.
+**Verification:** K2-T01..T08 not run. Snapshot/status interface tests here do not
+claim the real cache integration allocated to KN-4 has already passed.
+**Exit gate:** Stream/replay/auth/public contracts pass; exact canonical oracle,
+zero unexplained loss/cross-mix; bounded memory/tasks/replay and measured replica
+recovery; Astra reviewed. Do not use Kafka commit as proof alpha applied an event.
+**Technical debt / decisions:** no deferred Stream implementation gap allowed;
+KN-4 cache integration is the explicit dependency, not a hidden certification claim.
+**Runtime / rollback:** shadow services only; stop candidate clients/readers;
+old Stream, producer authority, groups and Kafka partition topology untouched.
+**Cleanup:** exact test groups/topics/network allowed by packet; no abandoned
+readers/streams; retain only named necessary candidate and rollback artifacts.
+**Astra review:** NOT REQUESTED; inspect offset/barrier races, negative auth,
+snapshot/delta/reset, cancellation and cross-replica behavior.
+**Next permitted step:** KN-3 after reviewed exit or explicit owner sequencing.
+
+#### KN-2 Execution Journal
+- 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
+- Append tested-slice receipts and Astra findings/resolutions here.
+
+<a id="kn-plan-phase-3"></a>
+### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
+
+**Status:** PENDING_PREREQUISITES / NOT STARTED.
+**Goal:** a native, durable-state-backed cache actually serving readers, with
+correct history, idempotent recovery and bounded memory/disk growth.
+**Guide index:** [18.10 work items and K3-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-3),
+[18.4 state/retention/fences](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness),
+[18.6 sizing](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency),
+[18.13 packets](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-rollout-and-cleanup).
+
+**To do:**
+- [ ] K3.1 exact state-topic schema/partition routing/ACL and idempotent provision packet.
+- [ ] K3.2 Stage A transaction with original canonical provenance and durable offsets.
+- [ ] K3.3 Stage B fenced CAS/atomic view/checkpoint and crash-safe recovery.
+- [ ] K3.4 separate bounded market cache; protect existing quota/admission Redis.
+- [ ] K3.5 current BAR index, append-only revisions, retention floors/tombstones/cleaner.
+- [ ] K3.6 read-only legacy export/migration/tie-out; BAR-edge readback backend change.
+- [ ] K3.7 staging rebuild/tail/ready-generation protocol and measured RTO.
+**Completed:** none in this documentation update.
+**Verification:** K3-T01..T08 not run; required cases include transaction and
+Redis crash windows, zombie writes, logical book keys, BAR revisions, expiry,
+memory-full isolation, migration idempotency and rebuild from real retained state.
+**Exit gate:** no history loss or invented cursor; correct durable/cache state,
+implemented bounded retention, measured rebuild/capacity; Astra reviewed sink
+fencing and provenance. Kafka EOS alone is not external-sink acceptance.
+**Technical debt / decisions:** no unfinished migration/recovery/retention allowed.
+Topic/ACL/cache runtime scope must be concretized; no permission to alter canonical
+offsets or flush/delete shared state is implied by the plan.
+**Runtime / rollback:** candidate topics/cache/projector/readback only under packet;
+stop candidate path and restore readback config, keep old history/source intact.
+**Cleanup:** test prefix/topic/volume exact scope; no FLUSHDB shared; no removal
+of the sole old-history copy. Record before/after disk and retained rollback.
+**Astra review:** NOT REQUESTED; inspect dual offsets, generation/fence, precision,
+revision ordering, compaction/expiry and restore proof.
+**Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
+
+#### KN-3 Execution Journal
+- 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
+- Append tested-slice receipts and Astra findings/resolutions here.
+
+<a id="kn-plan-phase-4"></a>
+### KN-4 - Query, SDK And Full Read-Plane Compatibility
+
+**Status:** PENDING_KN2_KN3_REVIEW / NOT STARTED.
+**Goal:** actual SDK/consumer reads use the new backend correctly across the
+declared endpoint surface; hot latency survives heavy warmup and recovery.
+**Guide index:** [18.11 work items and K4-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-4),
+[18.4 consistency](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-contracts-and-correctness),
+[18.5 cursor](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-cursor-security),
+[18.6 benchmark](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency),
+[18.7 evidence reuse](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-testing-and-review).
+
+**To do:**
+- [ ] K4.1 actual cache Query backend with read-time auth/quality/eligibility.
+- [ ] K4.2 immutable rendering optimization and bounded hot/cold worker lifecycle.
+- [ ] K4.3 warmup/history/batch/consistent cursor handoff, preserve declared maxlen.
+- [ ] K4.4 full existing REST/gRPC/reference/diagnostic/OpenAPI/SDK compatibility.
+- [ ] K4.5 real no-order SDK consumers on paired shadow targets, fallback/return/BLOCKED.
+- [ ] K4.6 both-replica fast matrix, targeted protocols and shadow stages 20/35.
+**Completed:** none in this documentation update.
+**Verification:** K4-T01..T08 not run; full endpoint inventory includes strict
+batch 1/8/16/32/50, 2.5k/5k/10k history where declared, source/session quality,
+book sequence, immutable-vs-dynamic response fields and hot/cold concurrency.
+**Exit gate:** all affected read routes and SDK protocols pass actual boundary
+tests; shadow 20/35 and budget pass; no dropped public RPC or stale cached verdict;
+Astra reviewed. This is not yet 50+TS production capacity certification.
+**Technical debt / decisions:** no in-scope public-read defect can be deferred;
+unsupported/deferred product capabilities remain explicitly unchanged.
+**Runtime / rollback:** shadow Query/read clients only; stop them and retain old
+targets. No strategy/order/sizing mutation, no execution activation.
+**Cleanup:** remove alpha/TS-shaped read clients and exact test resources, not
+production containers; no silently running Compose test overnight.
+**Astra review:** NOT REQUESTED; inspect actual HTTP/gRPC/SDK evidence, dynamic
+freshness/security, replica consistency, warmup/cursor and load methodology.
+**Next permitted step:** KN-5 after reviewed exit and a concrete runtime packet.
+
+#### KN-4 Execution Journal
+- 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
+- Append tested-slice receipts and Astra findings/resolutions here.
+
+<a id="kn-plan-phase-5"></a>
+### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
+
+**Status:** PENDING_KN1_KN4_REVIEW / NOT STARTED.
+**Goal:** prove and deploy the target read plane, retire the old bottleneck,
+publish an immutable stable release and clean safely, without another phase train.
+**Guide index:** [18.12 work items and K5-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),
+[18.6 capacity/latency](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency),
+[18.13 rollout/cleanup](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-rollout-and-cleanup),
+[18.14 Astra handoff](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-review-handoff).
+
+**To do:**
+- [ ] K5.1 freeze candidate artifacts, route pair, exact runtime/rollback packet and workload.
+- [ ] K5.2 50 logical alpha + real TS demand, burst/recovery and full-stack resource proof.
+- [ ] K5.3 paired Query/Stream canary handoff, bounded consumer reconnect and no order path change.
+- [ ] K5.4 fast/protocol preflight then one final 300s no-order acceptance; rollback/return drill.
+- [ ] K5.5 Astra release review, remote feature->dev CI->main, immutable provenance/affected smoke.
+- [ ] K5.6 old writer/projector/tick-spool retirement, ADR/runbooks, cleanup and v2.2.0 publication.
+**Completed:** none in this documentation update.
+**Verification:** K5-T01..T07 not run; report all four owner latency quantities
+for the full inventory, per-route typed failures and offered/completed/timeout
+denominators. Whole-serving-stack steady-state CPU <=5.0 vCPU; no silent loss,
+false eligibility, unbounded lag/memory/disk or unexplained restart.
+**Exit gate:** KN-1..KN-4 and KN-5 review pass, actual target load/cutover/rollback
+proof, coherent source/image/config receipt, old data path off, cleanup documented
+and release published under approved remote workflow. If publication permission
+is pending, state CERTIFIED_PENDING_PUBLICATION, not RELEASED.
+**Technical debt / decisions:** no in-scope implementation gap remains. Single-host
+failure-domain limits, governed retention and deferred venues are explicit limits,
+not evidence of global production HA. Do not introduce a mandatory 72h wait.
+**Runtime / rollback:** exact old V2 image/config/state for V2-only products;
+V1 only by allowed policy. Restore route pair, not offset reset/history deletion.
+TS recreate, if needed, is only market_data_service read-config handoff using its
+correct current image/mounts, never TS core/risk/executor upgrade.
+**Cleanup:** active plus named rollback/candidate only; archive expiry, image-digest
+inventory, scoped BuildKit cleanup and merged-branch/worktree safety verification.
+**Astra review:** NOT REQUESTED; source/runtime/provenance, full capacity/readiness,
+release compatibility, restore/rollback and artifact hygiene.
+**Next permitted step:** return to separately approved TS/alpha work after release;
+no automatic execution or new architecture expansion.
+
+#### KN-5 Execution Journal
+- 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
+- Append tested-slice receipts, release review and publication/cleanup outcome here.
+
+### KN Documentation And Handoff Receipt - 2026-09-23
+
+**Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**
+Owner requested publication of the detailed five-phase consensus for Claude
+Opus 5.5, with Astra reviewing each phase. Added a prominent navigation notice
+and authoritative section 18 to the existing review; earlier discussions remain
+historical and intact. This tracker adds exactly KN-1..KN-5 with guide anchors,
+work items, test IDs, exit/rollback/cleanup, debt and independent review fields.
+No source, config, runtime, test provider, image, broker/cache, TS, alpha or order
+operation is part of this documentation slice. No push, merge, tag or release.
+
+Canonical: `/home/bobby/data_layer`, branch `feat/consumer-endpoint-benchmark`,
+review baseline `74337e71ce8ce7611ca424d33f7a0ab29535733a`; no extra worktree.
+Two pre-existing Unified Plan hunks are preserved and must remain outside this
+commit. Runtime image/config inventory is intentionally not refreshed for this
+documentation task, so no new health/capacity assertion is made. No build/test
+resources were created and no existing active/rollback artifacts were cleaned.
+Contributor: `BobbyAxerol <vugioan11022002@gmail.com>`.
+Validation: `python3 -B` structural check passed: exactly five phases, 30 mapped
+work items, 38 planned test groups, all 55 local links/explicit anchors valid;
+required tracker fields/journals, code fences and added-line whitespace checked.
+The original review and pre-existing working-tree plan bodies were preserved
+byte-for-byte (SHA-256 `5e96f60bee0413735f46997c49791c76b72e22bacb14faae10c528b179ce5646`
+and `00abd3abd34bc7af618ec408d34f7ab3b3a97f7cf137e35097624f10ddfdfedf`).
+These are documentation checks, not 38 executed runtime tests. Scoped staged
+diff must pass `git diff --cached --check`; the pre-existing whitespace hunk is
+excluded, not silently repaired. Added-line counts are in the commit diff.
+Next implementation step belongs to Claude at KN-1 when the owner gives the
+start instruction; Astra has not pre-approved implementation.
