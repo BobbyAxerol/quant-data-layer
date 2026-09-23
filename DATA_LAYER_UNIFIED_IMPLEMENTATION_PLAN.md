@@ -53387,6 +53387,43 @@ baseline/budget honesty. No executor self-approval.
     checkout): first bad `13b3594` (2026-09-22, "isolate hot read capacity
     lanes"); `a3fea33` passes. It is on the Query read path that KN-4 replaces,
     so it stays a required gate owned by KN-4, not dropped.
+- 2026-09-23: **K1.1 | baseline receipt, read-only.** New
+  `scripts/kn_baseline_inventory.py` (source part inside
+  `qdl-v2-python:2.1.1-83fa1bc`, network none, read-only; runtime part on the
+  host with `docker inspect`, Kafka `--describe`/`--list`, SQLite `mode=ro` +
+  `query_only`, Redis `INFO`; secrets reduced to key ids). Evidence
+  `/home/bobby/.local/state/qdl-v2/kn1-20260923/baseline.json`, canonical
+  SHA-256 `891e8733e3adf68e7c740e9d86c10334a7f8c857ceefce9fec021eac7f43c2d8`
+  (source part `35ec988c...`, suite log `suite-d5f3cf4.log`); scanned: no key
+  material. Facts recorded, not recalled:
+  - public surface: `MarketDataStreamService` with **four** RPCs (Subscribe,
+    Replay, GetSnapshot, GetFeedStatus); 11 HTTP operations in
+    `contracts/v2/openapi.snapshot.json`.
+  - catalog revision 9, source-policy revision 1: 22 instruments, 216
+    bindings (BAR 144, BOOK_SNAPSHOT 18, BOOK_DELTA 18, TRADE 14, QUOTE 12,
+    MARK_INDEX 10) on 198 physical keys; 18 physical keys shared by two
+    bindings (book snapshot + delta).
+  - six manifests with revisions/quotas (TS rev 10, 61 requirements, 1,500
+    rpm, 50 streams; alpha Binance rev 13 / OKX rev 12, 2,400 rpm, 60 streams,
+    10,000 warmup rows).
+  - JWT RS256, issuer `https://identity.qdl.stable.internal`, audience
+    `qdl-v2-stable`, 900 s max lifetime, five kid->SPIFFE subjects; cursor
+    key id `stable-k1`, TTL 3,600 s.
+  - TLS: every CA/leaf expires **2026-11-20**; client-CA bundles to
+    2026-12-19; stream SAN carries `qdl-v2-stream(-a|-b)`, query SAN
+    `qdl-v2-query`.
+  - Kafka: `md.canonical.v2` topic id `ljfjPYApRpWQd79McfTtZg`, 6 partitions,
+    RF3, retention 6 h; ACL principals `phase8-consumer|core|producer` and
+    `stable-authority-dispatcher`; kafka1 restart count 5; stale groups
+    `console-consumer-*`/`probe-*` from earlier probes (not removed: outside
+    this scope). Projector lag at collection 35-318 per partition.
+  - spool: 1,513,049 retained rows, 1.35 GB payload; **BAR history 933,977
+    rows / 660 MB protobuf across 140 keys** - half the retained bytes for
+    0.3 % of writes. Control Redis 2.4 MB used of 128 MB.
+  - evidence-reuse map is in the script (`EVIDENCE_REUSE`): provider/domain
+    evidence reused unchanged; stream/replay/cursor, Query endpoints/latency
+    and cache rebuild/boot recovery are re-proven; capacity 50+TS carried to
+    KN-5 as never passed.
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
