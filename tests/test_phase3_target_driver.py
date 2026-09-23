@@ -298,6 +298,16 @@ class DriverHelperTests(unittest.TestCase):
     def test_worker_count_keeps_about_thirteen_sessions_per_process(self):
         self.assertEqual([_DRIVER.target_worker_count(n) for n in sorted(TARGET_STAGE_MIX)], [1, 2, 3, 4])
 
+    def test_reconnect_selection_made_after_open_still_fires(self):
+        stream = _DRIVER._TargetStream(name="s1", session=1, alpha_class="CANDLE", product=_Product())
+        window = asyncio.Event()
+        due = _DRIVER._ReconnectDue(stream, window)
+        self.assertFalse(due.is_set())
+        stream.reconnect = True  # selected after the stream was already open
+        self.assertFalse(due.is_set())
+        window.set()
+        self.assertTrue(due.is_set())
+
     def test_fault_windows_label_cold_and_hot_overlap_separately(self):
         recorder = _Recorder(windows={"BURST": (10.0, 20.0), "RECONNECT": (30.0, 45.0)})
         self.assertEqual([recorder.window(at) for at in (5.0, 10.0, 19.9, 20.0, 31.0, 50.0)],

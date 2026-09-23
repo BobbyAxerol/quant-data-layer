@@ -1895,6 +1895,21 @@ class _EitherSet:
         return any(event.is_set() for event in self._events)
 
 
+class _ReconnectDue:
+    """True once the reconnect window opens for a stream selected for it.
+
+    Read on every check: selection happens after setup, when this stream's
+    session was already open, so a value captured at open time never fires.
+    """
+
+    def __init__(self, stream: "_TargetStream", reconnect_now: asyncio.Event) -> None:
+        self._stream = stream
+        self._reconnect_now = reconnect_now
+
+    def is_set(self) -> bool:
+        return self._stream.reconnect and self._reconnect_now.is_set()
+
+
 async def _target_stream(*, client, stream: _TargetStream, series, recorder, observing, stop,
                          reconnect_now, established, startup=None) -> None:
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
@@ -1926,7 +1941,7 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
                     if not signalled:
                         signalled = True
                         established.set_result(None)
-                    interrupt = _EitherSet(stop, reconnect_now) if stream.reconnect and not resume else stop
+                    interrupt = _EitherSet(stop, _ReconnectDue(stream, reconnect_now)) if not resume else stop
                     async for event, delivered_at, delivered_ns in _stream_events_until_stop(
                         session, interrupt, poll_seconds=1.0
                     ):
@@ -2191,9 +2206,11 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
             )))
             outcome = await asyncio.wait_for(established, timeout=float(budget["startup"]["max_setup_seconds"]))
             if outcome is not None:
+                failed_streams.add(stream.name)
                 raise RuntimeError("stream handoff failed")
 
     session_clients: dict[int, object] = {}
+    failed_streams: set[str] = set()
     poll_tasks: list[asyncio.Task] = []
     setup_seconds: float | None = None
     start: float | None = None
@@ -2211,7 +2228,9 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         gc.freeze()
         final_cfg = budget["final"]
         if final:
-            ordered = sorted(streams, key=lambda item: item.name)
+            # Only streams whose handoff completed can be slowed or reconnected.
+            ordered = sorted((item for item in streams if item.errors == 0 and item.name not in failed_streams),
+                             key=lambda item: item.name)
             live = [item for item in ordered if item.product.feed.value in {"QUOTE", "TRADE"}]
             if worker == 0 and live:
                 live[0].slow = True

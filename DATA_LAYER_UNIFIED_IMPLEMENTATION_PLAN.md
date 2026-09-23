@@ -52860,11 +52860,52 @@ refinement without the owner's next request.
   512 MiB. Then the final stage 50 is rerun. Not touched: Stream, projectors,
   Kafka, Redis, SQLite data, quotas, TS, alpha.
 
-**Remaining:** finish the Phase-3 driver's target path and
-[acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
-BAR-edge recovery, quota A and both reader rollouts are done above);
-optimize and A/B selective caps if a stage needs it; then pass the
-5/20/35/50+TS gates. Complete v2.1.1 remote CI/release,
+- 2026-09-23: **Query memory 512 MiB -> 1 GiB rolled (same image `32581a38...`,
+  CPU 1.50, restarts 0, TS 60/60) and retained**: the final stage 50 rerun at
+  10:57Z completed with no restart or OOM (Query peaks 355 / 397 MB in ten-second
+  samples) where the 512 MiB run was killed. Recorded in
+  `docker-compose.v2-stable.yml` for both readers.
+  **Final stage 50 (20/15/10/5, 300 s, 25 % burst) - FAIL, and what it proves.**
+  Requests: **offered 11,555, completed 11,549, missed 0**, failed 6 (typed
+  `DATA_STALE`). Latency: **9 of 10 gates PASS** - QUOTE p95 42 / 32 ms, p99
+  125 / 108 ms; MARK_INDEX Binance p95 105 ms, p99 207 ms; TRADE p95 62 / 35 ms;
+  L2 p95 196 / 149 ms; BAR_LATEST p95 36 / 70 ms; client wake lag p99 2.2 ms.
+  Burst window measured (10 s, 25 % extra hot reads). Cold 2500/5000 overlap
+  PASS. TS 60/60 in 27 of 29 samples, disconnects 1.9/min within baseline, no
+  auth/manifest code, `v2_error` not increased. **Failing:** (1) **MARK_INDEX
+  OKX p50 420 ms, p95 728 ms, p99 853 ms** (about 100 ms at stage 35; Binance
+  unaffected) - not attributed; (2) **start-up: 13 of 50 sessions failed**
+  after the frozen retry budget (212 retries; 30 simultaneous large warmups
+  through the single-active lane), so 68 of 90 streams opened; (3) the final
+  run's **reconnect and slow-reader windows never ran - a driver defect**: the
+  reconnect flag was captured when each stream opened, before selection, and
+  the slow reader could land on a failed session's stream. Fixed after the run
+  (`_ReconnectDue` reads the flag on every check; selection only among
+  established streams; test added) - not yet exercised live.
+  **Cleanup:** six superseded images removed by digest (`2b177869`, `f7531891`,
+  `72dcf635`, `6c75e501`, `025c4b15`, `fdfc4df7`), 21 MB build context, 2.686 GB
+  unused build cache; disk used 135.99 GB -> **133.25 GB**. Kept: active Query
+  `32581a38` and its rollback `afdb1926`, Stream `37d7f518` and its rollback
+  `23e5088c`, bar edge, the `a231...` base, and everything not built here. No
+  disposable load container remains.
+  **Status at close of this session.** Phase 2 fixes deployed to Query x2
+  (`2.1.1-99e3896`, 1.50 CPU, 1 GiB): off-loop and chunked warmup rendering,
+  spool hot reads on their own connection, exact-index latest BAR, small-warmup
+  lane, GIL interval and GC thresholds. Stream, projectors, bar edge, Kafka,
+  Redis and SQLite data untouched. **Phase 3 has not passed**, so no v2.1.1
+  release, tag, push or merge was made, as the contract requires.
+  **Open, in order:** (a) the cold-start storm - either widen the large-warmup
+  lane (memory/CPU measured first) or accept staggered fleet start as the
+  operating rule (owner decision); (b) attribute OKX MARK_INDEX latency at stage
+  50; (c) the Stream single-writer peaks (1-6 s) that cause fail-closed QUOTE
+  freshness refusals, outside this closure's architecture scope; (d) rerun the
+  final stage 50 with the fixed fault windows; (e) the eight-open OKX 3m/5m/15m
+  repair awaiting the owner (automatic review refused it); (f) owner decision on
+  the resource-neutral rule for Query CPU (compose ceiling sum 23.75 -> 24.75).
+
+**Remaining:** items (a)-(f) of the entry above, then the 50+TS final gate and
+the v2.1.1 publication and provenance steps of the
+[closure contract](#read-plane-v211-target-closure). Complete v2.1.1 remote CI/release,
 source/runtime provenance and scoped cleanup before closing this upgrade.
 **Technical-debt rule:** unresolved in-scope correctness/capacity defects block
 their exit. Real external limitations and explicitly accepted reduced scope must
