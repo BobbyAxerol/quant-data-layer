@@ -115,7 +115,7 @@ class _IngestSpans:
             calls,
             wait / max(1, calls) / 1e6, timing.get("max_wait_ns", 0) / 1e6,
             hold / max(1, calls) / 1e6, timing.get("max_hold_ns", 0) / 1e6,
-            gateway.subscriber_count() if hasattr(gateway, "subscriber_count") else -1,
+            getattr(gateway, "subscriber_count", -1),
         )
         if isinstance(getattr(spool, "append_timing", None), dict):
             spool.append_timing["max_wait_ns"] = 0

@@ -53274,7 +53274,7 @@ Do not start the next phase merely because the executor's tests passed.
 
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
-| [KN-1](#kn-plan-phase-1) | READY_FOR_OWNER_START | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
+| [KN-1](#kn-plan-phase-1) | IN_PROGRESS | Claude Opus 5.5 | Astra | Frozen contracts/baseline and measured authenticated Rust vertical slice |
 | [KN-2](#kn-plan-phase-2) | PENDING_KN1_REVIEW | Claude Opus 5.5 | Astra | Full Stream/replay contract, bounded failure/reconnect proof |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
@@ -53314,7 +53314,7 @@ phase; do not create new subphase names to defer unfinished implementation.
 <a id="kn-plan-phase-1"></a>
 ### KN-1 - Contract, Baseline And Measured Rust Foundation
 
-**Status:** READY_FOR_OWNER_START / NOT STARTED.
+**Status:** IN_PROGRESS (owner start instruction 2026-09-23).
 **Goal:** freeze the recovery/security/data/resource contracts and prove a small
 Rust-to-real-SDK path before expanding implementation; no prolonged redesign.
 **Guide index:** [18.8 work items and K1-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-1),
@@ -53350,6 +53350,43 @@ baseline/budget honesty. No executor self-approval.
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append coherent tested-slice receipts here, including findings/fixes, commands,
   evidence hashes, cleanup and review outcome; do not scatter progress elsewhere.
+- 2026-09-23: **KN-1 started (owner instruction).** Read order done: workspace and
+  repo `AGENTS.md`, `CLAUDE.md`, this tracker, guide 18.1-18.8 and 18.13-18.14.
+  Canonical `/home/bobby/data_layer`, `feat/consumer-endpoint-benchmark` at
+  `d5f3cf4`; no extra worktree. Slice order: K1.2 + K1-T07 baseline, K1.1
+  inventory, K1.3 contracts, K1.4 sizing/budget, K1.5 native slice (runtime
+  packet recorded here before any container starts), K1.6 wiring/cleanup.
+  Evidence root outside Git: `/home/bobby/.local/state/qdl-v2/kn1-20260923/`.
+  Decision boundary: no production restart/recreate, no Stream roll of any
+  source, no offset/ACL/topic change without its own packet; prototype runtime
+  only on an isolated network with bounded caps and `--rm` clients.
+- 2026-09-23: **K1.2 + K1-T07 | real-collaborator regression and suite
+  classification.** `qdl/runtime/stable_ingest.py:118` called
+  `gateway.subscriber_count()` while `DurableStreamGateway.subscriber_count`
+  (`qdl/stream/gateway.py:526-528`) is a property: every ten-second span report
+  on a stream writer running `83fa1bc` would raise after a durable append. Fix
+  reads the property; the test fake now matches the real protocol and a new
+  test drives the real `DurableStreamGateway` + spool
+  (`tests/test_stable_ingest_spans.py`). On the unfixed source: 2 errors
+  (`TypeError: 'int' object is not callable`); fixed: 3/3. Related suites
+  (`test_stable_ingest_spans`, `test_dlv2_r1_delivery_lock`,
+  `test_fund_phase5_e2e`, `test_sqlite_spool_hot_reader`): 45 OK. Source-only;
+  running Stream is `2.1.1-ae2d62a`, which never had the bug; nothing rolled.
+  **K1-T07 (full suite on exported `d5f3cf4`, `qdl-v2-python:2.1.1-83fa1bc`,
+  read-only, network none): 1,987 tests, 5 errors, 7 skipped.** Classified by
+  test ID - earlier journal lines called these "the same five pre-existing
+  errors" too loosely:
+  - environment only (4): `tests.test_crypto_history_contract`,
+    `tests.test_phase3_control_plane`, `tests.test_runtime_source_lifespan`
+    (import) and `Phase0ContractGoldenTests.test_v1_openapi_and_sdk_surface_match_frozen_contract`
+    all fail importing `app.main`, whose logging opens `/app/logs/app.log` on
+    the read-only test root. They do not touch KN paths.
+  - **real regression (1):** `Phase5ApiReplicaLoadTests.test_replicas_serve_concurrently_without_owning_ingestion`
+    fails deterministically (3/3 isolated reruns) with HTTP 429 from the Query
+    hot-read admission lanes. Bisected with `git archive` per commit (no
+    checkout): first bad `13b3594` (2026-09-22, "isolate hot read capacity
+    lanes"); `a3fea33` passes. It is on the Query read path that KN-4 replaces,
+    so it stays a required gate owned by KN-4, not dropped.
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
