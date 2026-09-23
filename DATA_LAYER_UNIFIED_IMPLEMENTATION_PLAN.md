@@ -53180,3 +53180,26 @@ resource-neutral ceilings) needs a bounded exception for shadow roles.
 No source, config, runtime, Kafka, Redis, SQLite, TS or alpha change; no
 build, push, merge or release. Opus executes the consolidated plan once the
 owner approves it.
+
+<a id="kafka-native-opus-invariant-check"></a>
+### 2026-09-23 - Opus Check Of The Kafka-Native Proposal Against Program Invariants
+
+**Status: DOCUMENTATION COMPLETE / FEEDS ASTRA CONSOLIDATION.**
+Appended section 16 to
+[the Kafka-native architecture review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#opus-invariant-check):
+the proposal checked against the owner's goals and invariants 1-42 of this
+plan. Direction C fits invariant 37 (broker-native cursor/barrier) and is
+closer to the invariants than the running design, but needs eleven additions
+A1-A11: complete cursor binding per invariant 29 (the current token at
+`qdl/replay/handoff.py:87-96` lacks environment, requirement digest, schema
+major, source-policy and catalog revisions), append-only BAR revisions
+(35), BAR store as a derived store with a rehearsed provider rebuild (32),
+single-materializer fencing (33), measured readiness (28), lifecycle-aware
+coalescing (27/5), a governed sunset for the unreachable V2 compatibility
+keys (2), shadow-network canary before an all-consumer alias cutover (16),
+bounded replica read skew, DR drills (39) and a pre-cutover baseline of the
+owner's four latency quantities (36). Four limits stay outside the four
+phases: single-host durability, the guide's 7-30 day canonical retention
+(about 595 GB against 159 GB free), certificate expiry on 2026-11-20 and
+multi-venue production certification. Owner questions Q9-Q11 added.
+No source, config or runtime change; no build, push, merge or release.

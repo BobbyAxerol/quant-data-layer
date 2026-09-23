@@ -1782,3 +1782,69 @@ ledger.
 **Cam kết của Opus:** sau khi Astra gửi bản thống nhất (đã có ý kiến owner), Opus làm
 **đúng** bản đó. Nếu trong lúc làm có số đo mâu thuẫn với bản thống nhất, Opus dừng tại
 WI đó, báo số đo và xin quyết định, **không tự đổi hướng**.
+
+---
+
+<a id="opus-invariant-check"></a>
+## 16. Opus: đối chiếu với mục tiêu và 42 invariant của Unified Plan
+
+> **Ngày:** 2026-09-23. Đối chiếu §14–15 với §2 "Program-Wide Rules And Invariants" của
+> `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md` (dòng 25–177) và các mục tiêu owner nêu:
+> kết nối ổn định, latency thấp nhất, tiết kiệm tài nguyên, dữ liệu chính xác tuyệt đối,
+> không nhầm lẫn, bền.
+> **Kết luận ngắn:**
+> - Hướng C **đúng mục tiêu** và **gần invariant hơn** thiết kế hiện tại. Invariant 37
+>   viết gần như nguyên văn lời giải: *"broker-native cursor/barrier"*.
+> - Nhưng **chưa đủ**: cần thêm 11 bổ sung (§16.2) vào bản thống nhất.
+> - Có 4 giới hạn mà 4 phase này **không giải được** (§16.3). Phải ghi rõ, không được coi
+>   là đã đạt.
+
+### 16.1 Đối chiếu theo mục tiêu
+
+| Mục tiêu | Hiện tại | Sau hướng C (§14–15) | Còn thiếu → bổ sung |
+|---|---|---|---|
+| **Kết nối ổn định** | Lease đổi chủ làm đóng mọi stream; TS mất 1–2,5 phút; backlog khi burst | Không lease; replica độc lập; SDK failover nhiều target; không còn phễu tạo backlog | Độ lệch đọc giữa 2 replica Query (A9); diễn tập DR (A10) |
+| **Latency thấp nhất** | Projector chờ batch 0,1 s + HTTP + fsync + SQLite trước khi fan-out; snapshot đọc SQLite | Bỏ chặng chờ batch, HTTP và fsync; snapshot đọc RAM; warmup BAR đọc cột | Đo 4 đại lượng của owner **trước** (baseline) và **sau**, cùng workload (A11) |
+| **Tài nguyên** | ≈7,8 vCPU dùng thật; 6 projector làm việc không ai đọc (F1) | Mục tiêu ≤5,0 vCPU (R1.29) | Là cổng thoát bắt buộc, chưa phải kết quả |
+| **Chính xác tuyệt đối** | Nhiều lớp kiểm tra trùng nhau; token thiếu một phần invariant 29 | Kiểm một lần ở rust_core; oracle là Kafka đã commit | Token v3 đủ invariant 29 (A1); revision BAR append-only (A2) |
+| **Không nhầm lẫn** | Chung một file nên chung watermark | Offset Kafka tất định; test từ chối sai venue/symbol | Coalesce theo vòng đời (A6); độ lệch đọc giữa replica (A9) |
+| **Bền** | Kafka RF3 + SQLite trên một máy | Kafka là nguồn duy nhất cho realtime; kho BAR có backup | Đường dựng lại BAR từ provider phải được diễn tập (A3); giới hạn một host (§16.3) |
+
+### 16.2 Mười một bổ sung bắt buộc cho bản thống nhất
+
+| ID | Invariant | Bổ sung | Phase |
+|---|---|---|---|
+| A1 | **29** (cursor gắn đủ hợp đồng phục hồi) | Token hiện tại (`qdl/replay/handoff.py:87-96`) **thiếu** environment, requirement digest, schema major, source-policy revision, catalog revision. Token v3 phải có đủ: environment, consumer, requirement digest, stream/partition_key, watermark, schema major, plan epoch, source-policy revision, catalog revision, topic identity, expiry. Lệch bất kỳ trường nào → từ chối tất định. **Đây là nâng cấp so với hiện tại**, không chỉ giữ nguyên | P1.2 |
+| A2 | **35** (sửa đổi là sự kiện append-only) | BarStore không được "upsert đè". Dùng bảng `bar_revisions` append-only (mỗi revision kèm event_id và revision bị thay thế) + `bars_current` (bản mới nhất). Warmup đọc `bars_current`; audit đọc `bar_revisions` | P2.1 |
+| A3 | **32** (bền nhân bản trước khi làm authority) | BarStore là **kho dẫn xuất**, không phải authority. Authority là canonical Kafka (6h) + provider (nguồn gốc, dựng lại qua bar_edge → raw → canonical). Phải **diễn tập dựng lại** một interval từ provider qua đường chuẩn, cộng với restore từ backup. Nếu owner muốn bản sao nhân bản thật: topic `md.bars.v2` compacted theo `(binding, open_time)`, do materializer ghi bằng transaction (xem Q9) | P2.3, P2.8 |
+| A4 | **33** (sink có fencing) | Chỉ được có **một** bar_materializer: giữ `fcntl.flock` độc quyền trên file khoá và ghi epoch vào `store_identity`; instance thứ hai thất bại ngay. Zombie của rust_core đã bị Kafka transaction fencing chặn (`transactional.id`) | P2.2 |
+| A5 | **28** (readiness là đo được) | Readiness của replica = đủ 6 partition + lag < 1 s + checkpoint đã nạp + khoá ký cursor + catalog + source policy + auth/JWKS + (Query) BarStore cách head < 5 s. Thiếu bất kỳ cái nào → không `READY`. Readiness **theo từng slice** | P1.5, P2.4 |
+| A6 | **27, 5** (giao theo vòng đời, không mất im lặng) | Key book (snapshot, delta, reset) là **lossless** trong ring và queue, không coalesce. BAR final/revision không bao giờ bị bản in-progress đè. Chỉ BBO/ticker và bar in-progress được coalesce theo key vòng đời | P1.3, P1.5 |
+| A7 | **2** + ranh giới tương thích | Bỏ key/pubsub tương thích V1 trên `stable_redis` phải có **bản ghi sunset có quản lý** (bằng chứng F1: không consumer nào chạm tới được), không xoá âm thầm. Redis V1 (`redis_marketdata`) và `/v1` **không đụng** | P4.2 |
+| A8 | **16** (chuyển consumer theo manifest; không để ownership lẫn lộn) | Đổi alias là chuyển tất cả consumer cùng lúc. Để có bằng chứng canary **trước** cutover: chạy driver stage 20 và 35 **trên mạng shadow** (driver là consumer logic độc lập), rồi mới cutover. Stage 50 chạy sau cutover. Owner chấp nhận cutover toàn phần bằng một manifest version (Q10) | P2.8 → P3 |
+| A9 | "Không nhầm lẫn" | Hai replica Query có LatestView riêng nên có thể lệch nhau vài ms. Response luôn kèm watermark. HTTP của SDK giữ kết nối nên phần lớn dính một replica. **Đo độ lệch p99** và đặt trần. BAR đọc từ một BarStore chung nên hai replica cho kết quả giống hệt (giữ đúng `verify_bar_handoff` của alpha) | P2.8 |
+| A10 | **39** (DR trước khi phụ thuộc thực thi) | Diễn tập trong phạm vi test: xoay khoá cursor; mất checkpoint LatestView; restore BarStore; mất một replica; mất một broker (Kafka test, **không kill broker production**) | P2, P3 |
+| A11 | **36** + rule owner 4 đại lượng | Đo baseline 4 đại lượng trên stack hiện tại **trước P3**, rồi đo lại sau cutover với cùng workload. Budget máy chấm đã đóng băng; PASS chỉ khi mọi tiêu chí đạt | P3.0 (mới) |
+
+### 16.3 Giới hạn mà 4 phase này không giải được (phải ghi rõ)
+
+1. **Một host duy nhất.** Ba broker Kafka và mọi state cùng một máy, cùng một đĩa. RF3
+   chống được lỗi process/broker, **không chống mất host/đĩa**. Invariant 32 ("real
+   deployment topology") và 39 (DR) ở mức production vẫn là quyết định hạ tầng. **V1
+   fallback phải giữ.**
+2. **Retention canonical 7–30 ngày theo Guide (dòng 1016–1026) không khả thi trên đĩa
+   này.** 1,18 GB/h/broker (A4) × 168 h ≈ 198 GB/broker × 3 ≈ **595 GB**, trong khi đĩa
+   trống 159 GB. Bỏ header raw (P2.7) giảm được một phần, chưa đo, vẫn không đủ.
+   Consumer hiện không cần lịch sử tick, nên giữ 6h là hợp lý. Quyết định thuộc owner.
+3. **Chứng chỉ hết hạn 2026-11-20; CA không xoay dần được** (coupling #5). Là mốc cứng
+   cho P4.
+4. **Chứng nhận production đa venue (DNSE/Spot/Deribit)** nằm ngoài phạm vi (§13.11), giữ
+   nguyên trạng.
+
+### 16.4 Câu hỏi bổ sung cho owner
+
+| # | Câu hỏi | Khuyến nghị Opus |
+|---|---|---|
+| Q9 | Độ bền BAR: (i) BarStore + backup + dựng lại từ provider đã diễn tập, hay (ii) thêm topic `md.bars.v2` compacted, nhân bản RF3, ghi bằng transaction? | **(i) trong 4 phase** vì nhanh hơn và đủ invariant 32 khi BarStore chỉ là kho dẫn xuất. (ii) để sau nếu owner muốn bản sao nhân bản |
+| Q10 | Chấp nhận cutover toàn phần bằng một manifest version, với canary là driver stage 20/35 trên mạng shadow (A8)? | Có |
+| Q11 | Giữ retention canonical 6h (§16.3-2)? | Có, đến khi có hạ tầng đĩa/host khác |
