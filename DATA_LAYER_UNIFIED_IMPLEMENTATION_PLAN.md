@@ -50691,7 +50691,7 @@ authorization, change manifests or perform a runtime rollout.
 <a id="read-plane-stability-capacity-plan-20260922"></a>
 ## Read-Plane Stability And Consumer Capacity - Three-Phase Plan (2026-09-22)
 
-**Status: PHASES_1_2_COMPLETE / PHASE_3_REVIEW_AND_CLOSURE_IN_PROGRESS.**
+**Status: PHASE_1_COMPLETE / PHASE_2_REOPENED / PHASE_3_TARGET_CLOSURE_PENDING.**
 The owner has approved implementation of all three phases. The original
 plan-only receipt below remains historical; per-phase journals and named
 runtime packets record actual authorized changes and outstanding exits.
@@ -50788,6 +50788,189 @@ Read this section and the linked guides before implementing each phase:
    preserved mounts/state, stop conditions and rollback. Do not recreate
    unaffected roles for image uniformity. Rollout writes are normal read-plane
    caches/telemetry only, not permission to reset durable state or send orders.
+
+<a id="read-plane-v211-target-closure"></a>
+### V2.1.1 Target Closure - Owner Clarification (2026-09-23)
+
+**Status: PLAN_RECONCILED / IMPLEMENTATION_AND_RUNTIME_ACCEPTANCE_PENDING.**
+This is a completion contract for the SAME three phases, not another phase,
+architecture train or permission to weaken safety. It supersedes earlier
+Phase-3 journal choices that capped the final workload at ten percent of four
+shared identities. Those runs remain preflight evidence only. Repairing the
+current incident is necessary, but is not the owner's capacity/release goal.
+
+**Definition of done:** all known in-scope diagnostic, admission, history-gap
+recovery and consumer-load defects are repaired and deployed; **50 concurrent
+alpha-equivalent workloads, each using 2-5 declared products, PLUS the actual
+60-route TS consumer**, pass the workload below. Optimize first; use the
+already-declared selective cap ceilings only where measured pressure and A/B
+improvement justify them. Release **v2.1.1**, reconcile source/image/config/
+certificate, and finish scoped cleanup. A 20-consumer pass is an intermediate
+milestone, not completion of the 50-consumer target. Do not stop at 'source
+fixed', 'containers healthy', or 'waiting to test capacity'. Do not claim an
+unbounded maximum, arbitrary symbol universe, 50 all-tick/L2-heavy strategies,
+or mainnet order certification from this bounded mixed workload.
+
+**Execute within the existing phases:**
+
+1. **Phase 1 inherited correctness + current repair:** keep passed diagnostic
+   bounds and provider contracts. Preserve exact failure receipts. Apply the
+   tested Query FIFO cancellation fix and BAR recovery fix using role-specific
+   rollback. Re-inspect and repair only the three pinned missing real OKX
+   BNB/ETH/SOL 1m opens at 2026-09-23T00:44:00Z; expected missing count is one
+   per binding. An already-covered open is a verified no-op, not permission
+   to replace it with a different missing open. Publish authentic final BARs
+   through the existing pipeline; never fabricate/cache-write/offset-reset.
+   Prove both Query replicas return all ten MARK/INDEX products, canceled and
+   expired queue heads cannot block later clients, and both replicas expose
+   continuous repaired history without cross-mix or duplicate opens. Any
+   remaining TS UNCLASSIFIED wrapper must preserve the typed item failure at
+   its reader boundary; no Gateway/Risk/order logic change is included.
+2. **Phase 2 optimization + capacity alignment:** fix only measured bottlenecks
+   in shared Query/Stream/SDK admission, connection reuse, latest-view lookup,
+   bounded buffers, singleflight and safe replica routing. Singleflight keys
+   preserve entitlement, product, version/generation and quality policy;
+   delivery revalidates eligibility. Use all streams required by a profile,
+   not one arbitrary stream per alpha. Compute shared identity quota, RPC,
+   pending-byte and reconnect reserve from the workload BEFORE traffic. No
+   lowering the requested workload to fit a pre-existing small test quota.
+   Compare current caps against only the justified selective increase using
+   the same binary and workload; keep cold/diagnostic/provider limits fixed.
+3. **Phase 3 actual capacity + release:** run the short affected matrix, then
+   5/20/35/50 steps. Repair a discovered in-scope defect, add its focused test
+   and resume the affected step; do not restart all inherited certificates.
+   The 50-workload, 300-second run IS the final affected consumer acceptance;
+   do not append a second identical C2. Close only after its latency, quality,
+   recovery, actual TS and cleanup/release gates pass.
+
+**Frozen representative target workload (50 alphas, not counting TS):**
+
+| Class | Count at target | Declared products and steady behavior per alpha |
+| --- | ---: | --- |
+| Candle/signal | 20 | Final BAR 1m stream; QUOTE snapshot at 1 request/second; startup warmup then append/dedup/FIFO, never refetch full history on every bar |
+| Realtime/momentum | 15 | TRADE + QUOTE streams; current MARK_INDEX reference read at 1 request/second |
+| Grid/L2 | 10 | Final BAR 1m + QUOTE + BOOK_DELTA streams; BOOK_SNAPSHOT on startup/resync; MARK_INDEX at 1 request/second; preserve verified snapshot/delta handoff |
+| Multi-symbol/reference | 5 | Two QUOTE streams; one two-item MARK_INDEX batch/second for the same two native instruments; one already-entitled funding/OI/reference product per minute |
+| Trading System | Additional, not inside 50 | Existing market_data_service using its real 60-route manifest and current polling/stream behavior, no signal/order action |
+
+The selected native instruments cover BTC/ETH/SOL/DOGE/BNB on BOTH Binance
+USD-M and OKX Swap, using existing demand only. Each logical alpha owns its
+client state, schedule, cursor/ACK, bounded history and buffers. At target the
+alpha profile yields **90 sustained streams**, approximately **50 steady
+hot HTTP requests/second** plus five low-frequency reference reads/minute,
+startup/resync and the real TS traffic. Compute the exact item, RPC and byte
+counts from the materialized profile; batch wall time is not per-item RTT.
+No extra provider subscriptions or strategy/order execution is required.
+
+Warmup supports declared maxlen 2500/5000: warm every applicable BAR session
+before streaming; during each measured step, overlap one 2500-row and one
+5000-row warmup per venue with hot traffic using the finite cold lane. Count
+requested/returned rows and prove finality, continuity, append/dedup/FIFO.
+Longer-interval correctness inherits the existing binding evidence; a bounded
+sample covers 5m/15m/1h without opening every historic product's stream again.
+
+**Identity/quota truthfulness and offered-load enforcement:**
+
+- Four existing shared identities at 10% quota remain a SAFE PREFLIGHT MODE,
+  not target load. Keep that mode for mapping checks but label it explicitly.
+- Model the actual deployment's shared alpha identities with aggregated quota
+  sufficient for the declared independent sessions, or use scoped temporary
+  identities under existing supported registration. Do not bypass auth, lend
+  TS credentials to alpha traffic, silently raise global quotas, rotate CA,
+  or claim 50 independent security principals from four principals. Record
+  logical alpha count, authenticated identity count and each manifest hash.
+- If aggregate quotas/manifest revisions must change, render one versioned
+  packet with exact identity limits and any required JWT/binding alignment;
+  preserve entitlements, TS reserve and production source policy. Include
+  rollback and cleanup of only the added test material. No hidden broad
+  consumer migration or permanent testing entitlement.
+- Each stage's offered workload is an input, not an outcome of a common
+  ten-percent pacer. Scale class counts proportionally (5: 2/1/1/1;
+  20: 8/6/4/2; 35: 14/10/7/4; 50: 20/15/10/5). Require every scheduled
+  product to be exercised. Record offered/completed/dropped/deferred counts,
+  scheduler lag, per-alpha successful reads and stream bytes/events. No stage
+  passes by reducing request rate when the server slows down. A bounded
+  in-flight limit records unsent/deadline-missed work as failure, not absence.
+- Reconcile 90 alpha streams + ACTUAL TS streams + reconnect/control reserve
+  against the active gateway's RPC/byte limits, not active+passive totals.
+  Add at least 20% control/reconnect headroom in the computed budget. Do not
+  add another gateway or treat the passive replica as extra active capacity.
+- Test the planner/driver before live load: target arithmetic, missing feed,
+  under-issued traffic, per-session starvation, strict quota rejection,
+  cancellation/recovery, cold/hot overlap and bounded memory. The currently
+  committed driver still needs this target-workload update; do not describe
+  a documentation change as implemented throughput.
+
+**Optimize-first resource envelope:** use the existing Phase-2 table. Query
+can move 512 MiB -> 1 GiB and 1 -> 1.5 CPU per replica; Stream can move 1 ->
+2 GiB and 2 -> 3 CPU only if fan-out pressure warrants it. Increase the
+constrained resource, not both automatically; retain an increase only after
+same-workload evidence shows better usable throughput/tail latency or removal
+of measured memory pressure with no neighbor regression. TS is currently
+uncapped: do not invent a '+50%' CPU/RAM baseline or impose a smaller cap.
+If its finite reader budget is constrained, measure and adjust that budget by
+up to 50% with manifest consistency, not order/business changes. Kafka,
+Redis, Rust, projectors and cold/diagnostic quotas are not bulk-scaled.
+
+**Fast verification and numerical acceptance:**
+
+- Offline: inherit passed suites and test only changed recovery/admission/
+  transport/driver paths; explicitly cover repeated timeout/cancel then valid
+  request, queue fairness and zero leaked work after teardown.
+- Before load: both-replica typed MARK/INDEX 10-product matrix, pinned BAR
+  repair read-back, affected diagnostic safety and manifest/budget arithmetic.
+  Keep data validity, event recency, component/session liveness and execution
+  eligibility distinct; no stale-threshold relaxation to pass latency.
+- Run 5/90s, 20/120s, 35/180s, then 50/300s at the exact declared rates.
+  Within the final run include a bounded 25% hot-read burst for 10 seconds,
+  one slow reader and a bounded reconnect burst. Fault windows are labelled
+  separately; no dropped/gapped data may be hidden by excluding them.
+- Freeze a machine-readable acceptance budget before the first target run.
+  Engineering targets for SDK-validated consumer-call-to-usable latency:
+  TRADE/QUOTE snapshot p95 <= 100ms, p99 <= 250ms; MARK_INDEX p95 <= 250ms,
+  p99 <= 500ms; bounded L2 snapshot/delta read p95 <= 300ms, p99 <= 750ms;
+  steady latest/final-BAR read p95 <= 1000ms, p99 <= 2000ms. These are internal
+  workload targets, NOT venue promises or replacement freshness SLAs. Cold
+  2500/5000-row work must finish within its existing declared request deadline
+  without degrading hot reads. A missed target is an open exit to optimize,
+  not a threshold silently edited after seeing results.
+- Report snapshot RTT, whole-batch RTT, SDK validation, admission wait,
+  provider/source age, BAR close-to-usable and stream host-receive-to-usable
+  separately. Do not call tick interarrival or candle age endpoint latency.
+  Report every measured endpoint/binding/venue/symbol/interval/replica with
+  sample count/errors/bytes and p50/p95/p99 only where sample size allows.
+- Observe actual TS 60-route states throughout, not merely its Docker health:
+  zero auth/manifest errors, unexplained stale/reconnect starvation or loss of
+  required execution eligibility caused by the candidate/load. Provider faults
+  remain typed and fail-closed and must show bounded recovery, not be relabelled
+  successful data. Unexpected degradation aborts load for attribution.
+- Collect CPU/throttling, RSS+cgroup peak/page-cache/reclaim, queues/in-flight,
+  event-loop delay, stream buffer bytes, Kafka/projector/Redis lag and disk
+  growth before/during/after. Abort on OOM/restart/deployment drift, unbounded
+  backlog or unexplained TS regression. Stop only disposable load clients.
+- Existing client-side query failover proves transport recovery, not actual
+  shared-service failure or independent failure-domain HA. Exercise process
+  loss only on an isolated reader pair; label its capacity separately. Do not
+  intentionally stop the production pair for a benchmark.
+
+**V2.1.1 publication and cleanup:** after the 50+TS gate passes, attach one
+receipt linking inherited evidence plus new source/image/config/workload hashes,
+per-endpoint latency, 20/35/50 results, exact identity/RPC quotas and capacity
+limits. Push feature -> dev PR/CI -> main release through the approved remote
+workflow, publish new v2.1.1 without moving v2.1.0, and verify the deployed
+immutable artifact matches the certified implementation. Docs/merge-only SHA
+changes may inherit by tree/provenance; changed runtime code requires affected
+verification. Mainnet/order and TS P18 remain excluded. Clean scoped clients,
+identity additions, unused test images/build cache and merged feature worktree/
+branch only after provenance confirms no lost changes; preserve active and
+explicit rollback images, secrets/state/volumes and unrelated work. Report disk
+pre/post and the canonical stable source/tag/image/config map.
+
+**Current safety boundary:** the earlier automatic approval-review rejection
+of the exact three-record Kafka publish still stands; this clarification does
+not bypass it. Prepare one consolidated exact rollout/repair/identity-budget
+packet instead of requesting approval separately for every observation retry.
+No further C2 is appropriate before this repair and target-load preparation.
 
 <a id="read-plane-capacity-phase-1"></a>
 ### Phase 1 - Correctness And Diagnostic Safety
@@ -51306,7 +51489,8 @@ deleted broadly.
 <a id="read-plane-capacity-phase-3"></a>
 ### Phase 3 - Consumer Load Acceptance And Release
 
-**Status: APPROVED / PREFLIGHT_IN_PROGRESS.**
+**Status: APPROVED / TARGET_WORKLOAD_RECONCILIATION_PENDING.**
+**Current closure contract:** [v2.1.1 target, workload and exits](#read-plane-v211-target-closure) supersedes historical preflight-only load choices below.
 **Goal:** demonstrate the declared 20-50 alpha-equivalent data workload plus
 the actual TS reader, then release with an accurate capacity/support statement.
 **Guides:** architecture **16, 25.8, 27, 28, 37.6, 38**; inherited certificates,
@@ -51932,11 +52116,31 @@ refinement without the owner's next request.
   feat/consumer-endpoint-benchmark. Stable tag v2.1.0 resolves to c1e32cb;
   main/dev are the later merge e6955f3. No push/merge/tag was performed.
 
+- 2026-09-23: owner clarified that incident repair alone does not satisfy
+  this upgrade. Added the linked v2.1.1 closure contract inside the SAME three
+  phases: 50 independent workload schedules PLUS real TS, 2-5 declared
+  products, 90 alpha streams / about 50 hot requests per second, explicit
+  identity/quota truthfulness, conditional resource A/B and one final load
+  acceptance. Existing four-identity 10%-quota runs are preflight evidence
+  only; they are not 50-alpha capacity proof. The current driver records
+  latency but does not yet enforce these target latency/under-issued-load
+  gates. Driver/budget implementation and actual load acceptance remain work
+  to finish, not technical debt or completed functionality. This update is
+  plan-only; no runtime/quota/authority/provider/data mutation or new phase.
+  Documentation checks passed: stage counts 5/20/35/50, corresponding alpha
+  streams 9/36/63/90, hot request rate scaling, additional real TS workload,
+  unique three-phase anchors and closure link, explicit pending status and
+  resource/release/rollback boundaries. No certified runtime suite was rerun.
+  No container/image/build-cache artifact was created; cleanup is not needed
+  for this documentation slice. Canonical feature checkout and prior active/
+  rollback images remain unchanged; published v2.1.0 remains the stable tag.
+
 **Remaining:** roll the tested Query FIFO fix, perform the previously denied
-exact three-open BAR repair and BAR-edge-only recovery rollout, verify both
-replicas and the repaired history, then run the exact fast matrix, escalating
-load/failure gates and one final 300-second no-order acceptance. Publication remains a
-separate owner-approved release action.
+exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
+[target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);
+verify both replicas and repaired history; optimize and A/B selective caps if
+necessary; then pass the 5/20/35/50+TS gates. Complete v2.1.1 remote CI/release,
+source/runtime provenance and scoped cleanup before closing this upgrade.
 **Technical-debt rule:** unresolved in-scope correctness/capacity defects block
 their exit. Real external limitations and explicitly accepted reduced scope must
 be named; do not conceal them by omitting a product from the denominator.
