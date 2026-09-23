@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-okx-stable
   environment: paper
-  revision: 11
+  revision: 12
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -20,10 +20,10 @@ spec:
   purposes:
   - INTERNAL_ALPHA
   quotas:
-    requests_per_minute: 180
+    requests_per_minute: 2400
     max_batch_items: 50
     max_warmup_rows: 10000
-    max_streams: 20
+    max_streams: 60
     max_buffer_events: 2000
   requirements:
   - instrument_uid: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7

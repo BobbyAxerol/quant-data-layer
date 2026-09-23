@@ -5,7 +5,7 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-binance-stable
   environment: paper
-  revision: 12
+  revision: 13
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -20,10 +20,10 @@ spec:
   purposes:
   - INTERNAL_ALPHA
   quotas:
-    requests_per_minute: 180
+    requests_per_minute: 2400
     max_batch_items: 50
     max_warmup_rows: 10000
-    max_streams: 20
+    max_streams: 60
     max_buffer_events: 2000
   requirements:
   - instrument_uid: 8aedd349-6999-5874-b0dd-34c6451c0b3a

@@ -52352,6 +52352,48 @@ refinement without the owner's next request.
   active reader image, network-disabled, non-root, 512 MiB / 1 CPU. The
   preflight planner and its driver path are unchanged.
 
+- 2026-09-23: **quota option A, source slice and rollout packet (recorded
+  before execution).** `alpha.binance.paper.stable` revision 12 -> **13** and
+  `alpha.okx.paper.stable` 11 -> **12**, each 180 -> **2,400 rpm** and 20 ->
+  **60 streams**; six lines, nothing else. The real loader accepts both, with
+  requirement counts unchanged (125 and 110), so no product is added or
+  removed; `trading-system` stays revision 10. `ConsumerQuotas` caps neither
+  field.
+  The first full suite on this change **failed: 3 failures and 36 errors**.
+  Run side by side with a `git archive` of HEAD, 34 were new, all
+  `stable release consumer manifest/demand binding differs`:
+  `config/v2/stable-v2-release-routing.yaml` pins each consumer's manifest
+  revision and canonical `manifest_sha256`. It is updated consistently -
+  binance 13 / `e504b606...dd8d9`, okx 12 / `62511d4a...04da2`, both computed by
+  the real loader - and the routing revision moves 22 -> **23**. One test
+  then still differed: `test_stable_scope_opening_budget_is_manifest_derived_and_bounded`
+  pins the derived C2 opening deadline. Component by component the alpha
+  pacing floors fell by exactly 2400/180 (binance 340.0 -> 25.5 s, okx
+  321.3 -> 24.1 s) while the 600 s native-basis deferral, 75 s tail and the
+  TS and monitoring floors are unchanged, so `ceil(25.5 + 600 + 75) = 701.0`
+  replaces 1015.0 with the arithmetic in a comment. Final full suite:
+  **1,924 tests, 0 failures, 5 errors, 7 skipped - the identical five errors
+  of HEAD** (three modules the reader image lacks dependencies for, one
+  read-only `/app/logs`, one frozen-contract test), so none is new.
+  **Runtime does not read the routing file.** No module under `qdl/runtime`,
+  `qdl/query` or `qdl/stream` references it, and the routing copy mounted at
+  `/runtime` still pins `alpha.binance` at revision **10** while Query serves
+  revision 12 today: it is release-certification input, not an admission
+  gate, so it cannot block the rollout.
+  **Packet.** One immutable image from `git archive` of this commit on the
+  `a231...` reader base, network disabled, serving **Query x2 and Stream x2**.
+  Roll `query_v2_1`, `query_v2_2`, then `stream_v2_active`, `stream_v2_passive`,
+  each serial with the reused hash-asserting scripts (environment, mounts,
+  networks, caps `512 MiB/1 CPU` Query and `1 GiB/2 CPU` Stream, read-only).
+  Rollback: Query `fdfc4df7...`, Stream `23e5088c...`; a failure restores the
+  whole pair. Not touched: projectors, bar edge, Rust, ingestors, Kafka, Redis,
+  SQLite, V1, Trading System, alpha, orders. Read-back: TS stays 60/60 with
+  fallback 0; the alpha identities authenticate with the new revisions; the
+  old revisions receive 401 as designed. **Coupling for execution_alpha:** it
+  takes `DATA_LAYER_V2_JWT_MANIFEST_REVISION` from its environment (default 1),
+  so the next alpha deployment must set 13 (binance) and 12 (okx); no alpha
+  container is running, so none is stranded now.
+
 **Remaining:** perform the previously denied
 exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
 [target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);

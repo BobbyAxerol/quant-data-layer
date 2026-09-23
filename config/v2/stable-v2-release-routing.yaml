@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 22
+revision: 23
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -53,8 +53,8 @@ consumers:
     reason: V1_OKX_TRADE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.binance.paper.stable
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
-  manifest_revision: 12
-  manifest_sha256: ed44dc306d62379bfacd8032ad2016da14617aaf44ec8fb6eb82183600dbaaea
+  manifest_revision: 13
+  manifest_sha256: e504b606505b6910e3960c27373a0729f6a3a50b7faf370a8889af3f594dd8d9
   demand_revision: 6
   products:
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:TRADE::crypto_primary_v2
@@ -559,8 +559,8 @@ consumers:
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.okx.paper.stable
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
-  manifest_revision: 11
-  manifest_sha256: 3b39c485e1043a9dd648121e9f62cdd94f4f801565e021ace13d59f56c23bc4e
+  manifest_revision: 12
+  manifest_sha256: 62511d4ab2d77d4a95ccc2db634ec83e98d8096e119493c9dfee57e6cfb04da2
   demand_revision: 6
   products:
   - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:TRADE::crypto_primary_v2
