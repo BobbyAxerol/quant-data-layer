@@ -53158,3 +53158,25 @@ added; this changes the Opus-prefix hash recorded in the Astra entry above.
 No source, config, runtime, Kafka, Redis, SQLite, TS or alpha change; no
 build, push, merge or release. Next step is owner approval of D1-D9 and the
 Phase-1 runtime scope in section 14.9.
+
+<a id="kafka-native-opus-final-rebuttal"></a>
+### 2026-09-23 - Opus Final Rebuttal And Step-By-Step Runbook (Section 15)
+
+**Status: DOCUMENTATION COMPLETE / AWAITING ASTRA CONSOLIDATION WITH OWNER.**
+Appended section 15 to
+[the Kafka-native architecture review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#opus-final-rebuttal):
+eight read-only findings F1-F8, final positions against section 13, a mapping
+of the owner's four latency quantities to section 13.10, a step-by-step
+runbook for every work item of the four phases, and owner questions Q1-Q8.
+Findings that change the plan: the V2 Redis latest projection has no reader
+(`stable_redis` is only on `stable_internal`; TS uses `redis_marketdata`;
+`qdl/` only writes `...:latest:...`); Query-issued tokens are redeemed by
+Stream, so both must switch aliases together (section 14 P3.2/P3.3 ordering
+marked superseded); stream/query server certificates already carry the
+consumer aliases and expire 2026-11-20; the BAR edge publishes to Kafka raw
+and only reads the spool read-only; book snapshots are materialized every
+1,000 ms under the shared book key; owner rule R1.29 (<= 5.0 vCPU actual,
+resource-neutral ceilings) needs a bounded exception for shadow roles.
+No source, config, runtime, Kafka, Redis, SQLite, TS or alpha change; no
+build, push, merge or release. Opus executes the consolidated plan once the
+owner approves it.

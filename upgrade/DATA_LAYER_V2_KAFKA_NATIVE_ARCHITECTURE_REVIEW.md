@@ -1345,8 +1345,8 @@ cập nhật theo slice, không theo từng finding (G4).
 | WI | Việc | Chi tiết |
 |---|---|---|
 | P3.1 | Packet cutover ghi trước | Role nào nhận alias; digest image; lệnh `docker network disconnect/connect --alias`; rollback; phạm vi **không đụng** (TS, alpha, Kafka, offset, V1) |
-| P3.2 | Chuyển alias Stream trước (`qdl-v2-stream-a/b` → stream_v3), giữ Query cũ | TS reconnect: mỗi slice `SNAPSHOT_REPLACED` một lần. Quan sát TS 60/60 ≥2h, có cửa sổ thị trường sôi động |
-| P3.3 | Chuyển alias Query (`qdl-v2-query` → query_v3) | Quan sát như trên; alpha đi theo alias |
+| P3.2 | ~~Chuyển alias Stream trước, giữ Query cũ~~ **Sai — xem §15.1 F2: Stream và Query phải đổi alias cùng lúc trong một script** | TS reconnect: mỗi slice `SNAPSHOT_REPLACED` một lần. Quan sát TS 60/60 ≥2h, có cửa sổ thị trường sôi động |
+| P3.3 | ~~Chuyển alias Query sau~~ **Gộp vào P3.2 (§15.1 F2)** | Quan sát như trên; alpha đi theo alias |
 | P3.4 | Driver đích stage 20 → 35 → 50 với budget đã đóng băng (`config/v2/v211-target-acceptance-budget.json`), đủ 4 đại lượng latency | Dùng nguyên driver hiện có |
 | P3.5 | Burst: một cửa sổ thị trường thật + test đuổi 3.000/s | Lag theo partition có trần và tự hồi |
 | P3.6 | Diễn tập rollback: đổi alias về stack cũ rồi đổi lại | Đo thời gian và ảnh hưởng tới TS |
@@ -1414,3 +1414,371 @@ release có provenance.
    - Không đụng: stream_v2, projector, Query, Redis, SQLite, offset, TS, alpha.
 4. **Sau khi owner duyệt:** cập nhật trạng thái trong Unified Plan, dẫn về anchor
    `#opus-astra-phase-wbs`, và bắt đầu P1.0.
+
+---
+
+<a id="opus-final-rebuttal"></a>
+## 15. Opus: phản biện cuối và chi tiết thực thi từng bước
+
+> **Ngày:** 2026-09-23. **Mục đích:** ý kiến cuối cùng của Opus trước khi Astra hợp nhất
+> với ý kiến owner. Sau mục này, Opus **thực thi theo bản thống nhất**, không theo §14
+> hay §13 riêng lẻ.
+> **Kiểm thêm trong lượt này (chỉ đọc):**
+> - reader của Redis projection;
+> - mạng và client của `stable_redis`;
+> - Redis mà TS dùng;
+> - đường ghi của bar_edge;
+> - SAN và hạn của chứng chỉ TLS;
+> - chu kỳ BOOK_SNAPSHOT;
+> - rule tài nguyên R1.29 của owner.
+>
+> Không thay đổi code hay runtime.
+
+### 15.1 Tám phát hiện mới làm thay đổi kế hoạch
+
+| # | Phát hiện | Bằng chứng | Hệ quả |
+|---|---|---|---|
+| F1 | **Redis latest projection chỉ được ghi, không ai đọc.** Trong `qdl/`, key `…:latest:…` chỉ xuất hiện ở code ghi (`qdl/projection/stable.py:319`, `market.py:31`, `trade.py:109`). Query không đọc Redis cho market data. `stable_redis` chỉ nằm trên mạng `qdl_v2_stable_candidate_stable_internal`. TS (market_data, performance) dùng `redis_marketdata` của V1 (`DATA_LAYER_REDIS_URL=redis://redis_marketdata:6379/0`). Client đang nối vào `stable_redis` đều là `eval` từ projector | `docker inspect` networks/env; `redis-cli CLIENT LIST`; grep `qdl/`, `app/`, `scripts/` | Toàn bộ Lua EVAL mỗi record, cache identity, `ProjectionCacheMismatch`, runbook rebuild và unit boot-recovery đang phục vụ **một cache không có người đọc**. D3 không chỉ đơn giản hơn mà còn **bỏ việc chết**. Key/pubsub tương thích V1 trên `stable_redis` cũng không consumer nào chạm tới được, nên bỏ an toàn. Redis còn giữ: quota JWT, provider admission, lease (bỏ ở P4) |
+| F2 | **Stream và Query phải chuyển cùng lúc.** Token do Query cấp (HTTP warmup/snapshot) được Stream nhận lại (`grpc_service.py:322-328`), và generation gắn với backend (`stable.py:560-571`) | code | **§14.5 P3.2/P3.3 (chuyển Stream trước, Query sau) là sai.** Nếu tách, TS sẽ lặp vô hạn: Query cũ cấp token cũ → Stream mới trả `CURSOR_EXPIRED` → lấy lại snapshot ở Query cũ → token cũ lại. Phải đổi 4 alias trong **một script**, vài giây |
+| F3 | **SAN của chứng chỉ đã có alias.** stream: `qdl-v2-stream`, `qdl-v2-stream-a`, `qdl-v2-stream-b`; query: `qdl-v2-query`. **Hết hạn 2026-11-20** | đọc `server.crt` trong volume `stable_tls` (container `--rm --network none`) | Container mới dùng lại chứng chỉ, không cần cấp mới. Shadow phải gọi bằng tên có trong SAN, tức alias trên mạng test riêng (§15.3 P1.6). **P4 phải xong trước ~2026-11-10**, nếu không sẽ trùng với việc xoay CA, mà CA không roll được (CLAUDE.md coupling #5) |
+| F4 | **bar_edge ghi vào Kafka raw** (`stable_bar_edge.py:1744`) và **xác nhận nến đã bền bằng cách đọc spool read-only** (`:969-989`, identity `:102-109,922`) | code | P2.3 chỉ là đổi đường dẫn + truy vấn sang BarStore (cùng dạng `binding, open_time, final`), không phải thiết kế lại |
+| F5 | **BOOK_SNAPSHOT và BOOK_DELTA chung key;** rust_core phát snapshot đã materialize **mỗi 1.000 ms** (`config/v2/stable-acquisition-bindings.yaml:177,192,421`) | config + `stable_source.py:935-979` | LatestView phải decode record book để tách snapshot khỏi delta. Chi phí nhỏ (18 key book). Tuỳ chọn: rust_core thêm header `qdl-feed` để lọc mà không cần decode |
+| F6 | **Rule owner R1.29:** data layer dùng thật **≤5,0 vCPU**; tăng cap phải bù bằng cắt tương đương; ghi tổng cap cạnh mỗi thay đổi; mỗi cửa sổ chỉ đổi một biến; **không revert khi backlog đang xả** | Plan `dl-v2-r129-method-and-guide-20260918` | Shadow thêm cap nên **cần owner cho ngoại lệ có thời hạn** (§15.4 Q3). ≤5,0 vCPU là **cổng thoát bắt buộc của P3/P4**, không phải mục tiêu mềm |
+| F7 | **Bốn đại lượng latency đã có định nghĩa của owner** (09-18): request latency, durable event age, delivery lag, end-to-end tới cache alpha. §13.10 của Astra dùng bốn định nghĩa khác | memory owner rule; §13.10 | Báo cáo dùng **định nghĩa của owner**; các mốc của Astra ghi thêm như phần phân rã (§15.2) |
+| F8 | **Kafka đã nặng:** kafka2 ≈101% của cap 1,75 (A3). Kiến trúc mới thêm 5 consumer đọc canonical (2 stream, 2 query, 1 bar) | `docker stats` | Đặt `fetch.wait.max.ms` và `fetch.min.bytes` rồi đo CPU broker trước và sau. P2.7 (bỏ header raw, giảm bytes) trở nên có giá trị hơn |
+
+### 15.2 Lập trường cuối so với Astra
+
+**Tôi nhận là Astra đúng và tôi sai hoặc thiếu:**
+- replay tick vẫn bắt buộc;
+- EOS có ranh giới;
+- trần quét tính theo **byte/thời gian** chứ không chỉ số bản ghi;
+- BarStore phải có backup và diễn tập restore;
+- không viết hai gateway hoàn chỉnh;
+- "vài phút" là sai;
+- thời gian 2–3 tuần là quá lạc quan.
+
+**Tôi giữ quan điểm khác (và lý do cuối):**
+1. **D2 — Python trước, có luật chuyển Rust định sẵn.** Thêm một bằng chứng giảm phạm vi:
+   consumer chỉ gọi **`Subscribe`** (TS và alpha không gọi `Replay`, `GetSnapshot`,
+   `GetFeedStatus` qua gRPC). Gateway mới, dù Python hay Rust, chỉ cần `Subscribe` +
+   health. Vì vậy nếu phải chuyển Rust, phạm vi port cũng nhỏ hơn Astra giả định:
+   - `qdl-stream-gateway` = tonic + rdkafka (đã có trong `qdl-kafka`) + JWT RS256/ES256;
+   - codec token HMAC khớp byte với Python, dùng chung golden test;
+   - matching và freshness cho `Subscribe`.
+2. **D3 — bỏ Redis latest.** F1 cho thấy đây là việc chết, không phải một thiết kế cạnh
+   tranh.
+3. **Một bar_materializer**, không chia theo partition: BAR chỉ 0,3% lưu lượng.
+
+**Bốn đại lượng latency: bảng ánh xạ để hai bên dùng chung:**
+
+| Đại lượng owner | Điểm đo | Mốc tương ứng ở §13.10 |
+|---|---|---|
+| 1. Request latency | client SDK trong container consumer | `consumer_call -> usable validated result` |
+| 2. Durable event age | trong response (`measured_freshness_ms`) | một phần của `host_receive -> served_view` |
+| 3. Delivery lag | sự kiện sàn (BAR: close time) → publish canonical | `provider_event -> host_receive` + `-> canonical_commit` |
+| 4. End-to-end tới cache alpha | sự kiện sàn → nằm trong cache alpha/TS | `final_bar_close -> consumer_signal_input_ready` (BAR) |
+
+**Điểm tôi chưa chắc (phải đo, không tuyên bố):**
+- Python có đạt fan-out ở stage 50 không.
+- LatestView trong Query có làm tăng tail latency do GIL không.
+- Ring ≤512 MiB có đủ không.
+- CPU broker khi thêm 5 consumer.
+
+<a id="opus-step-by-step"></a>
+### 15.3 Chi tiết từng bước (runbook cho các work item)
+
+Quy ước chung cho mọi WI:
+- **Trước khi sửa:** `git status`, `git log -5`; không đụng file Codex đang có diff.
+- **Test:** `python3 -B -m pytest …` trong image test có sẵn.
+- **Commit:** một slice đã test = một commit, tác giả BobbyAxerol, không trailer AI; kèm
+  một hunk journal (stage bằng `git apply --cached`).
+- **Runtime:** chỉ làm trong phạm vi đã duyệt.
+- **Evidence:** vào `/home/bobby/.local/state/qdl-v2/kafka-native-<phase>-<date>/`.
+
+#### Phase 1 — Stream Kafka-native (shadow)
+
+**P1.0 — Baseline và chuẩn bị (0,5 ngày)**
+1. Ghi baseline:
+   - digest image từng role (`docker inspect`);
+   - tổng cap CPU hiện tại (R1.29);
+   - topic id, partition, retention (A8);
+   - manifest revision;
+   - 5 lỗi có sẵn của test suite, kèm tên.
+2. Sửa `stable_ingest.py:118` (`subscriber_count` là property). Thêm test dùng
+   **`StreamGateway` thật**, xác nhận test fail trên code cũ và pass trên code mới.
+   Commit riêng. **Không roll** lên Stream trừ khi owner yêu cầu.
+3. Thử ACL: container `--rm` dùng principal `phase8-consumer`, `assign()` partition 0,
+   `enable.auto.commit=false`, đọc 100 bản ghi, **không commit**. Ghi lại có cần quyền
+   READ trên group không. Nếu cần thì dừng, xin owner duyệt ACL.
+4. Chốt các tham số sẽ đo cho spike (xem P1.1).
+
+**P1.1 — Spike có hạn 2 ngày, luật quyết định ghi trước**
+1. Prototype trong scratch, **không commit vào `qdl/`**. Chạy trong container `--rm` từ
+   image `qdl-v2-python` có sẵn, mạng `stable_internal`, chỉ đọc.
+2. Đo bốn thứ:
+   - (a) tiêu thụ: `assign` 6 partition, `consume(1000)`, nhóm theo key; CPU cho mỗi
+     1.000 event;
+   - (b) đuổi: bắt đầu tại offset của (now − 15 phút) để đo tốc độ đọc tối đa, **cách
+     tạo tải 3.000/s mà không publish gì**;
+   - (c) fan-out: 150 subscriber gRPC từ container client dùng SDK thật, phân bố slice
+     như stage 50;
+   - (d) LatestView cho Query: decode bản cuối mỗi key, đo CPU và độ trễ của một luồng
+     hot HTTP song song (GIL).
+3. Ghi sẵn một tối ưu nếu CPU fan-out cao: serialize `StreamRecord` bằng cách **nối các
+   field protobuf đã encode sẵn** (event bytes dùng chung, chỉ token và offset là riêng
+   cho mỗi subscriber).
+4. **Luật (ghi vào journal trước khi chạy):**
+   - Python đạt nếu một replica ≤1,0 vCPU ở tải fan-out stage 50, **và** đuổi được
+     ≥3.000 event/s, **và** p99 latency thêm ≤50 ms, **và** LatestView không làm p99
+     hot HTTP vượt budget.
+   - Không đạt thì chuyển Rust cho Stream (chỉ `Subscribe`). Query vẫn là Python.
+5. Kết quả được ghi vào Plan; owner được báo. Tiếp tục mà không cần hỏi lại **nếu kết quả
+   nằm trong luật đã duyệt**.
+
+**P1.2 — Token v3 (1 ngày)**
+1. `qdl/replay/handoff.py`: payload v3 như §14.4.1.
+   - `generation_id` lấy từ TopicId (đọc bằng AdminClient lúc khởi động),
+     `partition_count` và `plan_epoch`.
+   - Codec v2 vẫn giữ để decode token cũ và trả typed `CURSOR_EXPIRED`.
+2. Test:
+   - golden bytes;
+   - token cũ trả `CURSOR_EXPIRED`;
+   - token bị sửa trả `CURSOR_INVALID`;
+   - xoay key;
+   - sai scope (venue/symbol khác) bị từ chối.
+3. Commit. **P2 bắt đầu song song từ đây.**
+
+**P1.3 — `KafkaPartitionReader` + `LatestView` + ring (1,5 ngày)**
+1. Tạo `qdl/stream/kafka_source.py`:
+   - luồng nền đọc Kafka (`read_committed`, `assign` 6 partition, không commit);
+   - `applied_offset[p]`; bảng key → partition học từ bản ghi đã tiêu thụ;
+   - đẩy batch vào event loop qua queue có trần.
+   - Tham số: `fetch.wait.max.ms` = 20–50 (theo F8), `fetch.min.bytes` đo.
+2. Tạo `qdl/stream/latest_view.py`:
+   - theo từng batch, lấy bản cuối mỗi key rồi mới decode;
+   - key book thì decode để tách snapshot/delta (F5);
+   - trạng thái `READY` / `STALE` / `NOT_READY` theo timestamp nguồn;
+   - checkpoint `latest-checkpoint.sqlite3`: mỗi 5 s, một transaction, trên volume riêng
+     của replica.
+3. Ring theo key, chỉ cho feed lossless và BAR:
+   - lưu **value thôi, bỏ header raw**;
+   - trần theo byte (tổng ≤256 MiB) và theo thời gian (tick 120 s; BAR 128 bản ghi mỗi
+     key).
+4. Test với Kafka thật (`apache/kafka` digest `9516fb7634ba` đã có sẵn), container `--rm`:
+   - transaction abort không lọt vào;
+   - control marker tạo khoảng nhảy offset;
+   - key thưa;
+   - tràn ring;
+   - khởi động lại từ checkpoint;
+   - khởi động không có checkpoint → `NOT_READY` đúng.
+
+**P1.4 — Replay reader riêng (1 ngày)**
+1. Tạo `qdl/stream/kafka_replay.py`: consumer riêng, `assign` một partition, seek X+1,
+   quét tới boundary B, lọc key.
+   - Trần: ≤200.000 bản ghi **hoặc** ≤64 MiB **hoặc** ≤2 s. Vượt trần → typed
+     `CURSOR_EXPIRED` kèm `REPLAY_SCAN_CAP`.
+   - Tối đa 4 replay cùng lúc mỗi replica. Client huỷ thì dừng ngay.
+2. Test: ring hit/miss, ngoài retention, vượt trần, client huỷ giữa chừng.
+
+**P1.5 — `KafkaStreamGateway` (1,5 ngày)**
+1. Lớp mới trong `qdl/stream/gateway.py`, cùng interface `grpc_service.py` đang dùng. Chỉ
+   cần `Subscribe` + health; các RPC còn lại trả `UNIMPLEMENTED` và ghi lý do.
+2. Index `partition_key → [subscription]`, thay vòng quét tuyến tính
+   (`gateway.py:400-407`).
+3. Replay sang live đúng thuật toán §14.4.2: đăng ký + chốt boundary trong cùng một
+   bước của event loop; pending buffer có trần.
+4. Queue theo subscription có trần theo byte và item:
+   - feed latest-state: coalesce;
+   - feed lossless: tràn → `RESOURCE_EXHAUSTED` (giữ hành vi hiện có).
+5. Không lease. Readiness = đủ 6 partition và `lag < 1 s`.
+6. Test:
+   - replay → live không mất, không trùng (property test với chèn ngẫu nhiên);
+   - 2 subscriber cùng identity;
+   - client chậm, client bỏ đi;
+   - xác thực từ chối venue/symbol khác;
+   - payload hỏng → fail-closed.
+
+**P1.6 — Chạy shadow (0,5 ngày)**
+1. Thêm profile compose `kafka-native` với service `stream_v3_1`, `stream_v3_2`:
+   image mới (build `git archive` + mạng tắt, như quy trình hiện có; ghi digest), mount
+   `stable_tls/stream` và cùng env JWT/manifest.
+2. Mạng test tạm `qdl_v2_kafka_native_shadow` (tạo khi chạy, xoá khi xong, ghi vào
+   cleanup) với alias `qdl-v2-stream-a/-b` **chỉ trên mạng này** (F3). **Không** gắn vào
+   `executor_network`.
+3. Khởi động bằng `docker compose --profile kafka-native up -d stream_v3_1` (service mới,
+   không đụng service cũ). Ban đầu chỉ chạy 1 replica (§14.6).
+
+**P1.7 — Oracle so sánh (1 ngày)**
+1. Tạo `scripts/kafka_native_stream_parity.py`:
+   - reader Kafka độc lập làm chân lý;
+   - N client SDK subscribe stream_v3 trên đúng slice của TS + driver;
+   - so theo slice: event_id, giá trị, thứ tự; ghi thiếu / thừa / sai thứ tự.
+2. Thêm log JSON mỗi 10 s ở replica (triển khai công cụ đo **trước** khi tune, R1.29):
+   offset/lag từng partition, event/s, lượt giao/s, byte ring, pending, số subscription,
+   replay đang chạy.
+
+**P1.8 — Chạy shadow và cổng thoát (1 ngày)**
+1. Chạy ≥60 phút, có một cửa sổ thị trường sôi động (theo giờ phiên Mỹ/Á đã ghi).
+2. Bật replica thứ 2, kill replica 1, xác nhận SDK reconnect sang replica 2 với token cũ.
+3. Đọc lại từ (now − 15 phút) để đo đuổi ≥3.000/s trong lúc vẫn phục vụ live.
+4. Cổng thoát như §14.5. Không đạt thì sửa trong P1 hoặc báo owner kèm số đo.
+5. Cleanup: dừng replica 2 nếu không cần, giữ replica 1 cho P2/P3; xoá mạng test khi
+   xong; ghi lại tổng cap.
+
+#### Phase 2 — Query + BarStore (shadow; bắt đầu sau P1.2)
+
+**P2.0 — Kiểm kê (0,5 ngày):** phần lớn đã xong ở F1 và F4. Còn lại:
+- người gọi execution MARK (`/internal/v2/execution/mark-index/latest`);
+- cách `monitor_service` hoặc các script chứng nhận đọc `stable_redis`
+  (grep toàn workspace);
+- chốt danh sách gỡ bỏ cho P4.
+
+**P2.1 — `qdl/history/bar_store.py` (1 ngày)**
+1. Schema theo §14.4.4, WAL, `synchronous=FULL` (tốc độ ghi thấp nên chi phí không đáng
+   kể).
+2. Quy tắc revision tái dùng `final_bar_watermark.py`: upsert chỉ khi
+   `revision ≥ hiện có`; repair không làm latest lùi.
+3. Test: unique, revision, lịch 1m…1w, `read_final_bar_window` tương đương bản cũ.
+
+**P2.2 — `qdl/runtime/bar_materializer.py` (1 ngày)**
+1. `assign` 6 partition, seek theo `materializer_checkpoint`; lọc key `/bar/` trước khi
+   decode.
+2. Mỗi batch: `BEGIN IMMEDIATE` → upsert → cập nhật checkpoint → `COMMIT`.
+3. Entrypoint + service compose `bar_materializer`, cap 0,25 CPU / 256 MiB.
+4. Test: kill -9 giữa batch rồi chạy lại → không lệch; bản ghi trùng; abort.
+
+**P2.3 — Migration + bar_edge (1 ngày)**
+1. Tạo `scripts/migrate_spool_bars_to_bar_store.py`:
+   - đọc spool `mode=ro` + `query_only`, chạy ngoài giờ cao điểm, batch nhỏ để không
+     giữ snapshot WAL lâu;
+   - ghi các dòng BAR với `kafka_offset=NULL`;
+   - báo cáo count/hash theo key.
+2. Materializer bắt đầu từ đầu retention Kafka (6h). Upsert idempotent sẽ điền
+   `kafka_offset` cho các dòng gần đây.
+3. bar_edge: đổi `canonical_cache_path` và truy vấn `_durable_final_bar_opens` sang
+   BarStore; identity chuyển từ `cache_identity.cache_id` sang `store_identity.store_id`
+   (`stable_bar_edge.py:102-109,922,969-989`).
+4. Tie-out cả 140 key: count và hash của `(open_time, OHLCV, revision)` bằng nhau trên cửa
+   sổ chung.
+
+**P2.4 — `KafkaNativeQueryBackend` (1,5 ngày)**
+1. Backend mới cạnh backend cũ trong `qdl/runtime/stable_source.py`:
+   - latest/snapshot/MARK/BOOK_SNAPSHOT lấy từ LatestView;
+   - BAR latest/warmup/history lấy từ BarStore;
+   - cấp cursor v3.
+2. MARK cho alpha và execution đọc thẳng LatestView; bỏ HTTP sang Stream.
+   `qdl/reference/local_mark_index.py` chuyển sang LatestView.
+3. Test:
+   - matrix read-plane 132 ô;
+   - `verify_bar_handoff` của alpha: watermark warmup = watermark view;
+   - batch strict 1/8/16/32/50.
+
+**P2.5 — Hot/cold (1 ngày)**
+1. Warmup BAR render từ cột, không decode protobuf từng dòng.
+2. Giữ lane lạnh có trần và huỷ được.
+3. Đo lại. Chỉ gỡ duty-cycle (`qdl/query/cold_work.py`) khi số đo cho thấy không cần.
+
+**P2.6 — Checkpoint và khởi động lại (0,5 ngày):** đo RTO khi có checkpoint, và hành vi
+`NOT_READY` khi không có checkpoint.
+
+**P2.7 — Tuỳ chọn: bỏ header raw** (`rust/qdl-kafka/src/lib.rs:836-839`)
+1. Chỉ làm khi đã kiểm dependency. Sau P4, không còn reader nào của header này (projector
+   và ingest bị gỡ).
+2. Đo bytes/s và CPU broker trước và sau.
+3. Đây là thay đổi rust_core nên **cần owner duyệt riêng** vì đụng producer.
+
+**P2.8 — Shadow Query (1 ngày)**
+1. `query_v3_1/2` trên mạng test với alias `qdl-v2-query` (có trong SAN).
+2. So parity tại **cùng watermark** với Query cũ, oracle là Kafka.
+3. Diễn tập backup và restore BarStore.
+
+#### Phase 3 — Cutover và nghiệm thu
+
+**P3.1 — Packet cutover (ghi vào Plan trước khi chạy)**
+- Role nhận alias: `stream_v3_1/2` và `query_v3_1/2`.
+- Digest image của từng role.
+- Script `scripts/kafka_native_alias_cutover.py` làm các bước sau:
+  1. Preflight:
+     - 4 replica mới `READY`;
+     - lag < 1 s;
+     - BarStore cách head < 5 s;
+     - baseline TS 60/60;
+     - `python3 -B scripts/preflight_env.py` phía TS **không cần**, vì không recreate TS.
+  2. Gỡ **4 alias cũ trước**: `docker network disconnect executor_network` cho
+     stream_v2_active, stream_v2_passive, query_v2_1, query_v2_2. Container cũ **vẫn
+     chạy** trên các mạng khác.
+  3. Gắn 4 alias mới: `docker network connect --alias qdl-v2-stream-a executor_network
+     stream_v3_1`, tương tự cho `-b` và `qdl-v2-query`. Mục tiêu tổng thời gian < 5 s (F2).
+  4. Kiểm lại: DNS mỗi alias chỉ trả địa chỉ của container mới.
+- Rollback: script ngược lại. Token mới không hợp lệ ở stack cũ, nên rollback cũng gây
+  **một lần** `SNAPSHOT_REPLACED` mỗi slice. Đây là hành vi đã được xử lý.
+- **Không đụng:** image/env TS và alpha, offset Kafka, V1, projector, stream writer cũ
+  (vẫn chạy để phục vụ rollback).
+- **Compose:** đổi alias trong `docker-compose.v2-stable.yml` **trong cùng commit**, để
+  một lần `compose up` sau này không gắn lại alias cũ. Đồng thời ghi rõ vận hành bằng
+  `docker start`, không dùng `compose up` (CLAUDE.md §1).
+
+**P3.2 — Chạy cutover rồi quan sát ≥2h**, có một cửa sổ thị trường sôi động:
+- TS 60/60 (trừ DOGE QUOTE đã miễn);
+- số `SNAPSHOT_REPLACED` bằng số slice rồi dừng;
+- fallback V1 = 0;
+- lag từng partition.
+
+**P3.3 — Driver đích stage 20 → 35 → 50** với budget đã đóng băng, báo cáo đủ 4 đại
+lượng theo định nghĩa owner (§15.2). Mỗi stage chỉ chạy khi stage trước PASS.
+
+**P3.4 — Burst:** một cửa sổ thị trường thật cộng test đuổi. Lag có trần và tự hồi; không
+OOM.
+
+**P3.5 — Diễn tập rollback** (đổi alias về cũ rồi đổi lại), đo thời gian và ảnh hưởng
+tới TS.
+
+**P3.6 — Tài nguyên:** đo CPU V2 dùng thật **sau khi dừng thử projector và stream writer
+cũ trong một cửa sổ**. Cổng thoát: ≤5,0 vCPU (F6).
+- Nếu cần stack cũ cho rollback, cửa sổ này chỉ tính cho các role mới.
+- Tổng cuối được tính ở P4.
+
+#### Phase 4 — Gỡ bỏ và phát hành (xong trước ~2026-11-10, F3)
+
+**P4.1** 72h sau cổng thoát P3:
+1. Dừng projector ×6, stream_v2 ×2, query_v2 ×2 (`docker stop`, chưa `rm`).
+2. Sao chép spool read-only vào vùng lưu 7 ngày.
+3. Ghi tổng cap trước và sau.
+
+**P4.2** Gỡ code, **mỗi nhóm một commit**, sau khi grep không còn caller:
+- HTTP ingest (`stable_ingest.py`);
+- lease Stream (`lease.py` — phần gateway);
+- projector + Redis projection (`stable_projector.py`, `projection/stable.py`);
+- phần tick của spool;
+- `consumer_checkpoints`;
+- execution MARK HTTP;
+- unit `qdl-v2-stable-boot-recovery` và `rebuild_v2_stable_projection_cache.py` (không
+  còn cache identity).
+
+**P4.3** Viết ADR-0007 (Kafka-native, thay ADR-0006); rút gọn runbook; cập nhật CLAUDE.md
+§1 và coupling #4 (stable_redis không còn giữ cache identity).
+
+**P4.4** Chỉnh cap theo số đo, bù theo R1.29. Xoá image không còn tham chiếu **theo
+digest**, giữ active + một bản rollback. Xoá volume/mạng test. Ghi disk trước và sau.
+
+**P4.5** Phát hành v2.2.0: PR feature → dev → main; receipt digest/source/config; ghi
+ledger.
+
+<a id="opus-owner-questions"></a>
+### 15.4 Câu hỏi cho owner (để Astra hợp nhất)
+
+| # | Câu hỏi | Khuyến nghị Opus | Khuyến nghị Astra (§13) |
+|---|---|---|---|
+| Q1 | Hướng C? Dừng A? | Có / có | Có / có |
+| Q2 | Gateway Stream: Python có luật chuyển Rust, hay Rust ngay? | Python + luật P1.1 | Rust-first |
+| Q3 | Ngoại lệ R1.29 cho shadow: thêm tối đa ~2,5 cap CPU (stream_v3 ×1–2, query_v3 ×2, bar_materializer), **tối đa đến hết P3**, kèm điều kiện dừng §14.6? | Đồng ý, có thời hạn | (§13.7: không double-run không kiểm soát) |
+| Q4 | Bỏ Redis latest projection (F1)? | Có | Materializer Rust → Redis |
+| Q5 | Cutover bằng alias, đổi Stream + Query cùng lúc (F2)? | Có | Route theo manifest/config |
+| Q6 | Bỏ header raw (P2.7, đụng rust_core)? | Tuỳ chọn, duyệt riêng | Tuỳ chọn |
+| Q7 | Mốc hoàn tất trước khi chứng chỉ hết hạn (2026-11-20)? | P4 xong trước ~11-10 | — |
+| Q8 | Phạm vi runtime P1 (§14.9 mục 3) + mạng test tạm? | Duyệt | — |
+
+**Cam kết của Opus:** sau khi Astra gửi bản thống nhất (đã có ý kiến owner), Opus làm
+**đúng** bản đó. Nếu trong lúc làm có số đo mâu thuẫn với bản thống nhất, Opus dừng tại
+WI đó, báo số đo và xin quyết định, **không tự đổi hướng**.
