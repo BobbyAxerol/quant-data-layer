@@ -243,14 +243,20 @@ class StableSpoolQueryBackend:
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         binding = self.catalog.binding_for(requirement)
-        records = self._records(
-            requirement,
-            limit=(
-                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-                if requirement.feed is FeedType.BAR
-                else 1
-            ),
+        records = (
+            self._exact_latest_final_bars(requirement, binding)
+            if binding.feed is FeedType.BAR
+            else None
         )
+        if records is None:
+            records = self._records(
+                requirement,
+                limit=(
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                    if requirement.feed is FeedType.BAR
+                    else 1
+                ),
+            )
         if not records:
             return None
         if binding.feed is FeedType.BAR:
@@ -266,6 +272,48 @@ class StableSpoolQueryBackend:
         self._validate_records(binding, quality_records)
         items = self._items(requirement, quality_records)
         return items[-1] if items else None
+
+    def _exact_latest_final_bars(
+        self, requirement: DataRequirement, binding: StableSourceBinding
+    ) -> tuple[_ParsedStoredEvent, ...] | None:
+        """The newest two final BARs by header index, or ``None`` for the tail.
+
+        ``latest`` judges BAR quality over ``max(2, requested)`` rows. For the
+        common ``requested <= 2`` - the alpha runtime's ``latest_bar`` sends no
+        warmup - this reads two indexed rows instead of decoding the ~12,000-row
+        physical window, measured at about 0.5 CPU-s per read on 2026-09-23
+        (v2.1.1 Phase-3 stage 5). Any doubt returns ``None`` and the retained
+        tail stays authoritative, exactly as in ``history_many``.
+        """
+
+        try:
+            requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
+            if max(2, requested) != 2:
+                return None
+            window = self._final_bar_window(
+                requirement=requirement, binding=binding, requested=2,
+                start_ns=start_ns, end_ns=end_ns, expected_opens=expected_opens,
+            )
+            reader = getattr(self.spool, "read_final_bar_window", None)
+            if window is None or not callable(reader):
+                return None
+            exact = reader(
+                stream=binding.canonical_stream,
+                partition_key=binding.partition_key,
+                window=window,
+            )
+            if exact is None:
+                return None
+            rows, expected_closes = exact
+            records = self._select_records(binding, self._parse_records(rows), limit=2)
+            if not self._exact_final_bar_window(
+                binding=binding, records=records, requested=2,
+                expected_closes=expected_closes,
+            ):
+                return None
+            return records
+        except Exception:
+            return None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)

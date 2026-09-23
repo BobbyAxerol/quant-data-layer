@@ -52641,6 +52641,44 @@ refinement without the owner's next request.
   TS a lease-handover dip. Not touched: Stream, projectors, Kafka, Redis,
   SQLite data, quotas, TS, alpha.
 
+- 2026-09-23: **hot-reader image rolled (Query x2, back at 1.00 CPU); the
+  remaining tail has one dominant source.** `2.1.1-434bbe5`
+  (`sha256:f7531891...`, spool file hash equal to the commit) serves both
+  replicas, `ROLLED_HEALTHY`, restarts 0, TS 60/60 after. Stage 5 at 09:26Z:
+  worst cases roughly halved (QUOTE max 5.1 s -> 2.1 s, MARK_INDEX p99
+  3-5 s -> 1.4-1.5 s), 1 error, TS 59/60 in two samples; throttling back to
+  4.93 s / 3.13 s per 100 s at 1.00. The outlier timeline puts **91 of 143
+  slow reads at second 1 of every 5 s** - the probe tick - and most of the
+  rest in the cold window. A latest-BAR read costs about 0.5 CPU-s because
+  `StableSpoolQueryBackend.latest` decodes the whole ~12,000-row physical
+  window whatever the requested window; on a 1-CPU replica each one throttles
+  its neighbours. This is not a probe artefact: the alpha runtime's
+  `latest_bar` (`execution_alpha/.../data_layer_v2.py:1036`) sends no warmup,
+  so a real alpha's latest-BAR read costs the same.
+  **Fix (`qdl/runtime/stable_source.py`, `qdl/transport/sqlite_spool.py`):**
+  when `latest` needs at most two rows (`max(2, requested) == 2`, i.e. no
+  warmup, 1 or 2) and the binding qualifies for the existing exact final-BAR
+  window (final, continuous calendar, no time range), it reads the two newest
+  final BARs through the header index on the hot connection
+  (`read_final_bar_window`: watermark and rows in one snapshot) and applies
+  the same `_exact_final_bar_window` check `history_many` uses; missing,
+  gapped, revised or duplicate windows, a missing watermark or any error
+  return to the full retained tail, which stays authoritative. The live cache
+  has the lookup index (`idx_qdl_spool_events_final_bar_close`) and 140
+  watermarks, so this is an indexed two-row read. A declared 10,000-row
+  warmup still evaluates quality over its whole horizon, unchanged. The
+  exact-lookup helpers take an optional connection; the batch visitor still
+  uses the main one. Tests (`tests/test_phaseb_stable_edge.py`, 2 new): the
+  fast result equals the full-tail result with **zero** tail reads even when
+  a repaired older bar was appended after the newest; missing, gap and
+  revision cases each fall back (one tail read) and still equal the full
+  result. The stable query contract class: 28 tests OK; full suite **1,955
+  tests, the same five pre-existing errors, 7 skipped**.
+  **Packet (recorded before execution):** image from this commit on the
+  `a231...` base, **Query x2 only**, 1.00 CPU / 512 MiB unchanged, serial and
+  hash-asserting; rollback `f7531891...`. Not touched: Stream, projectors,
+  Kafka, Redis, SQLite data, quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);

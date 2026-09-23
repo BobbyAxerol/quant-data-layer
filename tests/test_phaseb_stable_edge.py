@@ -773,6 +773,93 @@ class StableQueryContractTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(fallback_reads, [])
 
+    def _latest_both_ways(self, backend, requirement):
+        """latest() through the exact index and through the full retained tail."""
+
+        tail_reads = []
+        read_tail = self.spool.read_tail
+
+        def tracked_read_tail(**kwargs):
+            tail_reads.append(kwargs["partition_key"])
+            return read_tail(**kwargs)
+
+        self.spool.read_tail = tracked_read_tail
+        try:
+            fast = backend.latest(requirement)
+            fast_tail_reads = len(tail_reads)
+            exact_reader = self.spool.read_final_bar_window
+            self.spool.read_final_bar_window = lambda **_kwargs: None
+            try:
+                full = backend.latest(requirement)
+            finally:
+                self.spool.read_final_bar_window = exact_reader
+        finally:
+            self.spool.read_tail = read_tail
+        return fast, full, fast_tail_reads
+
+    def test_latest_final_bar_reads_the_exact_index_and_matches_the_full_tail(self):
+        newest = []
+        requirements = []
+        for binding_id, fixture in (
+            ("binance-usdm-btcusdt-bar-1m", "binance_usdm_rest_bar.json"),
+            ("okx-swap-btcusdt-bar-1m", "okx_bar.json"),
+        ):
+            binding = next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            older = _final_bar_at(self.catalog, binding, fixture, offset=-1,
+                                  label=f"latest-exact-{binding_id}-older")
+            current = _final_bar_at(self.catalog, binding, fixture, offset=0,
+                                    label=f"latest-exact-{binding_id}-current")
+            _append(self.spool, self.catalog, current, final_bar_watermark=True)
+            # A repair appended after the live bar: append order is not market order.
+            _append(self.spool, self.catalog, older, final_bar_watermark=True)
+            newest.append(current)
+            # warmup 0 is what the alpha runtime's latest_bar sends.
+            requirements.append(_requirement(binding, warmup=0))
+        backend = StableSpoolQueryBackend(
+            self.spool, self.catalog, schema_digest="a" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        for requirement, current in zip(requirements, newest, strict=True):
+            fast, full, tail_reads = self._latest_both_ways(backend, requirement)
+            self.assertIsNotNone(fast)
+            self.assertEqual(fast, full)
+            self.assertEqual(tail_reads, 0)
+
+    def test_latest_final_bar_falls_back_for_missing_gap_or_revision(self):
+        cases = (
+            ("binance-usdm-btcusdt-bar-1m", "missing", (0,)),
+            ("binance-usdm-ethusdt-bar-1m", "gap", (0, 2)),
+            ("binance-usdm-solusdt-bar-1m", "duplicate", (0, 1)),
+        )
+        newest = []
+        requirements = []
+        for binding_id, shape, offsets in cases:
+            binding = next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            values = []
+            for offset in offsets:
+                event = _final_bar_at(self.catalog, binding, "binance_usdm_rest_bar.json",
+                                      offset=offset, label=f"latest-fallback-{shape}-{offset}")
+                _append(self.spool, self.catalog, event, final_bar_watermark=True)
+                values.append(event)
+            if shape == "duplicate":
+                revised = _final_bar_at(self.catalog, binding, "binance_usdm_rest_bar.json",
+                                        offset=offsets[-1], label="latest-fallback-duplicate-revised")
+                revised.bar.revision = 1
+                revised.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+                revised.bar.supersedes_event_id = values[-1].event_id
+                _append(self.spool, self.catalog, revised, final_bar_watermark=True)
+                values.append(revised)
+            newest.extend(values)
+            requirements.append(_requirement(binding, warmup=0))
+        backend = StableSpoolQueryBackend(
+            self.spool, self.catalog, schema_digest="b" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        for requirement in requirements:
+            fast, full, tail_reads = self._latest_both_ways(backend, requirement)
+            self.assertEqual(fast, full)
+            self.assertEqual(tail_reads, 1)
+
     def test_history_many_exact_final_window_supports_emit_revisions_when_unique(self):
         binding = next(
             item for item in self.catalog.bindings

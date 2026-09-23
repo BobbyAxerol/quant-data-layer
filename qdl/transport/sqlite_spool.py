@@ -295,8 +295,8 @@ class SQLiteDurableSpool:
         ).fetchone()
         return row is not None
 
-    def _final_bar_lookup_index_present_locked(self) -> bool:
-        row = self._connection.execute(
+    def _final_bar_lookup_index_present_locked(self, connection=None) -> bool:
+        row = (connection or self._connection).execute(
             """
             SELECT 1 FROM sqlite_master
             WHERE type = 'index' AND name = ?
@@ -322,13 +322,13 @@ class SQLiteDurableSpool:
             raise
         return self._final_bar_lookup_index_present_locked()
 
-    def _final_bar_lookup_events_source_locked(self) -> str:
+    def _final_bar_lookup_events_source_locked(self, connection=None) -> str:
         # SQLite may prefer the primary-key tail scan until a full ANALYZE has
         # run, even when the exact expression index exists. The latter would
         # scan a live multi-thousand-row partition for each requested close.
         # Force the known-compatible index only when it is actually present;
         # legacy caches retain the existing unhinted query and tail fallback.
-        if self._final_bar_lookup_index_present_locked():
+        if self._final_bar_lookup_index_present_locked(connection):
             return f"events INDEXED BY {FINAL_BAR_LOOKUP_INDEX_NAME}"
         return "events"
 
@@ -954,8 +954,10 @@ class SQLiteDurableSpool:
         stream: str,
         partition_key: str,
         window: FinalBarTailWindow,
+        connection=None,
     ) -> tuple[tuple[StoredEvent, ...], tuple[int, ...]] | None:
-        watermark = self._connection.execute(
+        connection = connection or self._connection
+        watermark = connection.execute(
             """
             SELECT close_time_ns FROM final_bar_watermarks
             WHERE stream = ? AND partition_key = ?
@@ -975,8 +977,8 @@ class SQLiteDurableSpool:
             raise PayloadCorruption("final BAR watermark window is invalid")
         placeholders = ",".join("?" for _ in expected_closes)
         try:
-            events_source = self._final_bar_lookup_events_source_locked()
-            rows = self._connection.execute(
+            events_source = self._final_bar_lookup_events_source_locked(connection)
+            rows = connection.execute(
                 f"""
                 SELECT * FROM {events_source}
                 WHERE stream = ? AND partition_key = ?
@@ -995,6 +997,33 @@ class SQLiteDurableSpool:
             tuple(self._stored_event(row) for row in rows),
             expected_closes,
         )
+
+    def read_final_bar_window(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        window: FinalBarTailWindow,
+    ) -> tuple[tuple[StoredEvent, ...], tuple[int, ...]] | None:
+        """Exact newest final-BAR rows on the hot connection, or ``None``.
+
+        The same header-indexed lookup as ``visit_final_bar_windows``, for a
+        single latest read that must not wait behind a batch visit. The
+        watermark and its rows are read in one snapshot. Callers validate the
+        rows and fall back to ``read_tail`` when the window is missing or
+        ambiguous.
+        """
+
+        with self._hot_lock:
+            connection = self._hot_reader_locked()
+            connection.execute("BEGIN")
+            try:
+                return self._final_bar_window_rows_locked(
+                    stream=stream, partition_key=partition_key, window=window,
+                    connection=connection,
+                )
+            finally:
+                connection.execute("COMMIT")
 
     def _read_tail_rows_locked(
         self,
