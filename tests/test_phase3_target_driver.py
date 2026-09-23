@@ -270,6 +270,9 @@ class DriverPollLoopTests(unittest.TestCase):
         self.assertEqual(ledger["offered"], 10)
         self.assertGreater(ledger["missed"], 0)
         self.assertTrue(ledger["balanced"], ledger)
+        # Server slowness is reported as ticks started behind, never as client lag.
+        self.assertTrue(recorder.behind_ms)
+        self.assertLess(max(recorder.lag_ms or [0.0]), 50.0)
 
     def test_a_typed_rejection_is_counted_by_code(self):
         class Rejected(Exception):

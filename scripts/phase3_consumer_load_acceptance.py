@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -319,6 +320,20 @@ def _runtime_fault(before, current):
     return None
 
 
+def _cpu_throttle(states) -> dict[str, dict[str, int]]:
+    """Cumulative cgroup CPU usage/throttling per container (cgroup v2), read-only."""
+
+    values = {}
+    for name, state in states.items():
+        path = Path(f"/sys/fs/cgroup/system.slice/docker-{state['id']}.scope/cpu.stat")
+        try:
+            fields = dict(line.split() for line in path.read_text().splitlines())
+            values[name] = {key: int(fields[key]) for key in ("usage_usec", "nr_periods", "nr_throttled", "throttled_usec")}
+        except (OSError, KeyError, ValueError):
+            continue
+    return values
+
+
 def _run_monitored_client(command, containers, *, timeout, observer=None, observations=None):
     baseline = _runtime_states(containers)
     fault = _runtime_fault(baseline, baseline)
@@ -341,7 +356,8 @@ def _run_monitored_client(command, containers, *, timeout, observer=None, observ
             except subprocess.TimeoutExpired:
                 current = _runtime_states(containers)
                 fault = _runtime_fault(baseline, current)
-                telemetry.append({"at_ns": time.time_ns(), "states": current, "stats": _docker_stats(containers)})
+                telemetry.append({"at_ns": time.time_ns(), "states": current, "stats": _docker_stats(containers),
+                                  "cpu_throttle": _cpu_throttle(current)})
                 if observer is not None:
                     observations.append(observer())
                 if fault:
@@ -1778,11 +1794,19 @@ class _TargetRecorder:
         self.stream_samples = _BoundedSamples(per_group=256)
         self.ledgers: list[dict[str, object]] = []
         self.lag_ms: list[float] = []
+        self.behind_ms: list[float] = []
         self.counters: Counter[str] = Counter()
         self.errors: list[dict[str, object]] = []
         self.error_count = 0
         self.cold: list[dict[str, object]] = []
         self.startup_retries = 0
+        # Bounded timeline of slow reads and scheduler lag, in wall-clock
+        # milliseconds, so a tail can be matched to server-side samples.
+        self.outliers: list[list[object]] = []
+
+    def outlier(self, kind: str, value_ms: float, label: str) -> None:
+        if len(self.outliers) < 400:
+            self.outliers.append([time.time_ns() // 1_000_000, kind, round(value_ms, 1), label])
 
     def window(self, at: float) -> str:
         for name in ("BURST", "RECONNECT"):
@@ -1801,6 +1825,8 @@ class _TargetRecorder:
         name = _TARGET_LATENCY_CLASS.get((product.feed.value, operation), f"{product.feed.value}_{operation}")
         value = round(elapsed_ms, 3)
         self.latency[f"{name}|{product.venue}|{window}"].append(value)
+        if value > 250.0:
+            self.outlier("READ", value, f"{name}|{product.venue}|{_SERVED_BY.get() or '?'}")
         symbols = "+".join(item.native_symbol for item in products)
         self.groups["|".join((name, product.venue, symbols, _SERVED_BY.get() or "?", window))].append(value)
 
@@ -1820,8 +1846,16 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             delay = due - time.monotonic()
             if delay > 0:
                 await asyncio.sleep(delay)
-            sent = time.monotonic()
-            recorder.lag_ms.append(round((sent - due) * 1000.0, 3))
+                sent = time.monotonic()
+                # Only a wake-up after an actual sleep measures this client's
+                # event loop. A tick that is already due because the previous
+                # read was slow is server time, reported separately below.
+                recorder.lag_ms.append(round((sent - due) * 1000.0, 3))
+                if sent - due > 0.1:
+                    recorder.outlier("LAG", (sent - due) * 1000.0, label)
+            else:
+                sent = time.monotonic()
+                recorder.behind_ms.append(round((sent - due) * 1000.0, 3))
             ledger.sent += 1
             window = recorder.window(sent)
             _SERVED_BY.set(None)
@@ -2135,6 +2169,11 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
                 setup_failures.append(f"s{session.ordinal}")
                 recorder.error(operation="SETUP", session=session.ordinal, error=_safe_error(result))
         setup_seconds = round(time.monotonic() - setup_started, 3)
+        # Start-up warmups (up to 5,000 rows per BAR session) leave a large
+        # heap; freezing the survivors keeps later full collections from
+        # sweeping it inside the measured window and stalling this client.
+        gc.collect()
+        gc.freeze()
         final_cfg = budget["final"]
         if final:
             ordered = sorted(streams, key=lambda item: item.name)
@@ -2233,10 +2272,12 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         "stream_samples_seen": {"|".join(key): count for key, count in recorder.stream_samples.seen.items()},
         "poll_ledgers": recorder.ledgers,
         "scheduler_lag_ms": recorder.lag_ms,
+        "started_behind_ms": recorder.behind_ms,
         "streams": [item.evidence() for item in streams],
         "bar_series": {str(key): {"length": len(value), "appended": value.appended, "repeats": value.repeats}
                        for key, value in series_by_session.items()},
         "cold": recorder.cold,
+        "outliers": recorder.outliers,
         "counters": dict(recorder.counters),
         "errors": recorder.errors,
         "error_count": recorder.error_count,
@@ -2254,6 +2295,7 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
     latency: dict[str, list[float]] = defaultdict(list)
     groups: dict[str, list[float]] = defaultdict(list)
     lag: list[float] = []
+    behind: list[float] = []
     stream_samples: list[dict[str, object]] = []
     for result in results:
         for key, values in result["latency_series"].items():
@@ -2261,6 +2303,7 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         for key, values in result["latency_groups"].items():
             groups[key].extend(values)
         lag.extend(result["scheduler_lag_ms"])
+        behind.extend(result.get("started_behind_ms", []))
         stream_samples.extend(result["stream_samples"])
     streams = [item for result in results for item in result["streams"]]
     windows: dict[str, object] = {}
@@ -2315,10 +2358,13 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         "poll_ledgers": [item for result in results for item in result["poll_ledgers"]],
         "scheduler_lag_ms": {"n": len(lag), "p50": nearest_rank(lag, 0.50), "p95": nearest_rank(lag, 0.95),
                              "p99": nearest_rank(lag, 0.99), "max": max(lag) if lag else None},
+        "started_behind_ms": {"n": len(behind), "p50": nearest_rank(behind, 0.50),
+                              "p99": nearest_rank(behind, 0.99), "max": max(behind) if behind else None},
         "streams": streams,
         "stream_latency": stream_summary,
         "bar_series": {key: value for result in results for key, value in result["bar_series"].items()},
         "cold": [item for result in results for item in result["cold"]],
+        "outliers": sorted(entry for result in results for entry in result.get("outliers", [])),
         "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
         "errors": [item for result in results for item in result["errors"]][:40],
         "error_count": sum(item["error_count"] for item in results),

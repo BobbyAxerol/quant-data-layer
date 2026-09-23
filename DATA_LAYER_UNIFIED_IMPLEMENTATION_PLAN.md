@@ -52560,6 +52560,48 @@ refinement without the owner's next request.
   lacks dependencies for, read-only `/app/logs`, the frozen contract test);
   the 26 added tests all pass.
 
+- 2026-09-23: **off-loop render rolled; it is necessary, not sufficient.**
+  Image `2.1.1-8219ecb` (`sha256:2b177869...`, built from `8219ecb`, router
+  hash equal to the commit, API tests passing from the image's own `/app`)
+  now serves Query x2, `ROLLED_HEALTHY`, restarts 0; TS dipped to 59/60 for
+  about 40 s and returned to 60/60 at 08:58:16Z. Stage-5 reruns then showed
+  the stall moving but not leaving: `query_v2_1` 100.02 % at 08:59:12Z and
+  `query_v2_2` 102.87 % at 08:59:50Z in the cold windows - a 5,000-row warmup
+  is several CPU-seconds whichever thread does it.
+  **Driver attribution added**, so tails are matched to causes rather than
+  guessed: a bounded timeline of slow reads (with the replica that served
+  them) and of scheduler lag; the host samples each container's cgroup
+  `cpu.stat` every ten seconds; each worker freezes its post-setup heap
+  (`gc.freeze()`) so start-up warmups cannot be swept inside the window; and
+  scheduler lag now counts only a wake-up after a real sleep - a tick that is
+  already due because the previous read was slow is server time, reported as
+  `started_behind_ms`. The earlier "client lag up to 940 ms" was that server
+  time counted twice.
+  **Stage 5, A arm (Query 1.00 CPU, corrected driver, 09:06Z):** client wake
+  lag p99 **2.1 ms** (the client is valid), **0 errors**, TS **60/60 in all
+  eleven samples**; yet the Query replicas were **throttled 5.55 s and 3.06 s
+  in 100 s at an average of only 0.43 and 0.31 CPU** - bursts above one core
+  inside a 100 ms period pause the whole replica. The timeline shows the tail
+  every five seconds with the BAR_LATEST probe (each latest-BAR read decodes
+  the whole ~12,000-row window, about 0.5 CPU-s) and in the cold window.
+  Latency medians are healthy (QUOTE 9 ms, MARK_INDEX 87-105 ms, L2 119-129
+  ms, TRADE 51-59 ms, BAR 800-1,060 ms); every class fails its tail.
+  **Not changed, deliberately:** bounding the latest-BAR read to
+  `requested + 2,064` rows would be about six times cheaper, but it would
+  silently rely on no more than 2,064 repaired bars ever landing after the
+  newest live bar; a large bootstrap or backfill would then make latest-BAR
+  fail closed for hours. The safe route is the existing header-indexed
+  final-bar window, a separate slice.
+  **B-arm packet (recorded before execution): Query CPU 1.00 -> 1.50**, the
+  contract's pre-declared selective ceiling for Query, one variable only.
+  Same image `2b177869...`, same 512 MiB, same environment/mounts/networks
+  (asserted by hash), roles `query_v2_1` then `query_v2_2`; a failure
+  restores the pair at 1.00. Target metric: cgroup throttling and hot-read
+  tails on the same stage-5 workload. Retained only if the B arm shows lower
+  throttling and better tails with no neighbour regression; otherwise
+  reverted. Not touched: Stream, projectors, Kafka, Redis, SQLite, quotas,
+  TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);
