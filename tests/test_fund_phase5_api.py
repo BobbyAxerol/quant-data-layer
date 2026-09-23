@@ -475,6 +475,23 @@ class Phase5ApiTests(unittest.TestCase):
             JSONResponse(content=model.model_dump(mode="json", by_alias=True)).body,
         )
 
+    def test_chunked_warmup_rendering_is_byte_identical_to_the_full_render(self):
+        router_module = importlib.import_module("qdl.api_v2.router")
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+            params=self.params(limit=2),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        model = WarmupResponse.model_validate_json(response.content)
+        # The served body is exactly what the chunked renderer produces.
+        self.assertEqual(response.content, router_module._render_warmup_chunked(model))
+        for rows in (601, 250, 0):  # across chunk boundaries, one exact chunk, empty
+            sized = model.model_copy(update={"data": (model.data * 301)[:rows], "count": rows})
+            self.assertEqual(
+                router_module._render_warmup_chunked(sized),
+                JSONResponse(content=sized.model_dump(mode="json", by_alias=True)).body,
+            )
+
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(
             **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}

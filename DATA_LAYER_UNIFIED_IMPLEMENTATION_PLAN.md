@@ -52718,6 +52718,28 @@ refinement without the owner's next request.
   compose file or touch these paths pass. Not touched: Stream, projectors,
   Kafka, Redis, SQLite data, quotas, TS, alpha.
 
+- 2026-09-23: **GIL switch interval rolled (`2.1.1-3b65011`,
+  `sha256:6c75e501...`, Query x2 at 1.50, `ROLLED_HEALTHY`, TS 60/60).**
+  Stage 5 at 09:54Z: **QUOTE p95 53.6 / 58.9 ms PASS** (was 264-288),
+  **MARK_INDEX p95 188 / 206 ms, p99 397 / 311 ms PASS**, BAR_LATEST PASS,
+  **0 errors, 0 missed ticks, TS 60/60 in all eleven samples**, client wake lag
+  p99 2.9 ms. Only the probe classes fail, on the frozen small-sample rule (18
+  reads, so one slow read fails): L2 max 1.38 / 1.46 s, TRADE max 1.47 / 0.85 s.
+  All of them sit in the cold window (09:54:47-56Z); at 09:54:51Z every probe on
+  `query_v2_1` took ~1.4 s at once.
+  **Cause and fix (`qdl/api_v2/router.py`):** a switch interval cannot preempt a
+  single C-level call, and the cold render still made two over 5,000 rows - one
+  `model_dump` of the whole response and one `json.dumps` of ~10 MB. The single
+  warmup now renders the envelope with an empty `data` (the model's last field)
+  and encodes the rows in chunks of 250, spliced in, so the GIL is handed back
+  between pieces. Bytes are identical to `JSONResponse(model_dump(...))`,
+  pinned by a test at 601, 250 and 0 rows and against the served body; 52 API /
+  SDK tests pass. `warmup:batch` keeps its full off-loop render.
+  **Packet (recorded before execution):** image from this commit on the
+  `a231...` base, Query x2 at 1.50 CPU / 512 MiB, serial and hash-asserting;
+  rollback `6c75e501...`. Not touched: Stream, projectors, Kafka, Redis, SQLite
+  data, quotas, TS, alpha.
+
 **Remaining:** finish the Phase-3 driver's target path and
 [acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
 BAR-edge recovery, quota A and both reader rollouts are done above);

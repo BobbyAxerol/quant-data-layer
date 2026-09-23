@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from qdl.api_v2.models import (
@@ -419,6 +420,50 @@ async def _json_off_loop(build) -> JSONResponse:
     )
 
 
+_RENDER_CHUNK_ROWS = 250
+
+
+def _render_warmup_chunked(model: WarmupResponse) -> bytes:
+    """Encode a warmup in bounded pieces, byte-identical to ``JSONResponse``.
+
+    One ``model_dump`` and one ``json.dumps`` over 5,000 rows are two C-level
+    calls that each hold the GIL for most of a second, and no switch interval
+    can preempt them: on 2026-09-23 (v2.1.1 Phase-3 stage 5) every probe on
+    the rendering replica took ~1.4 s at once. Per-chunk calls hand the GIL
+    back between pieces. ``data`` is the model's last field, so the envelope
+    is rendered with an empty list and the rows are spliced into it.
+    """
+
+    def encode(value) -> str:
+        return json.dumps(
+            value, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
+        )
+
+    suffix = ',"data":[]}'
+    head = encode(model.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
+    if not head.endswith(suffix):
+        raise RuntimeError("warmup response layout no longer ends with its data list")
+    parts = [head[: -len(suffix)], ',"data":[']
+    rows = model.data
+    for start in range(0, len(rows), _RENDER_CHUNK_ROWS):
+        chunk = encode([
+            item.model_dump(mode="json", by_alias=True)
+            for item in rows[start:start + _RENDER_CHUNK_ROWS]
+        ])
+        if start:
+            parts.append(",")
+        parts.append(chunk[1:-1])
+    parts.append("]}")
+    return "".join(parts).encode("utf-8")
+
+
+async def _warmup_json_off_loop(build) -> Response:
+    """A warmup response rendered off the loop and in chunks (see above)."""
+
+    body = await asyncio.to_thread(lambda: _render_warmup_chunked(build()))
+    return Response(content=body, media_type="application/json")
+
+
 async def _single_warmup_response(request, access, service, requirement, purpose):
     """One warmup, rendered inside the local lease exactly like ``warmup:batch``.
 
@@ -437,7 +482,7 @@ async def _single_warmup_response(request, access, service, requirement, purpose
             )
         # Cursor binding copies every item and reads the durable watermark, so
         # it belongs off the loop with the rest of the response.
-        return await _json_off_loop(lambda: _warmup(type(item.result)(
+        return await _warmup_json_off_loop(lambda: _warmup(type(item.result)(
             item.result.request_id,
             _bind_history_cursor(request, access, requirement, item.result.history),
         )))
