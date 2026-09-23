@@ -301,7 +301,9 @@ def _docker_stats(containers: list[str]) -> list[dict[str, object]]:
 
 
 def _runtime_states(containers):
-    template = '{"name":{{json .Name}},"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"oom":{{json .State.OOMKilled}},"restarts":{{.RestartCount}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"none"{{end}}}'
+    # `index` tolerates a container without a healthcheck; `.State.Health`
+    # fails the whole multi-container inspect ("map has no entry").
+    template = '{"name":{{json .Name}},"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"oom":{{json .State.OOMKilled}},"restarts":{{.RestartCount}},"health":{{with index .State "Health"}}{{json .Status}}{{else}}"none"{{end}}}'
     result = subprocess.run(["docker", "inspect", "--format", template, *containers],
                             capture_output=True, text=True, check=True, timeout=20)
     return {value["name"].lstrip("/"): value for value in map(json.loads, result.stdout.splitlines())}
@@ -317,7 +319,7 @@ def _runtime_fault(before, current):
     return None
 
 
-def _run_monitored_client(command, containers, *, timeout):
+def _run_monitored_client(command, containers, *, timeout, observer=None, observations=None):
     baseline = _runtime_states(containers)
     fault = _runtime_fault(baseline, baseline)
     if fault:
@@ -340,6 +342,8 @@ def _run_monitored_client(command, containers, *, timeout):
                 current = _runtime_states(containers)
                 fault = _runtime_fault(baseline, current)
                 telemetry.append({"at_ns": time.time_ns(), "states": current, "stats": _docker_stats(containers)})
+                if observer is not None:
+                    observations.append(observer())
                 if fault:
                     break
         process.kill()
@@ -821,6 +825,8 @@ def _inside_config() -> dict[str, object]:
         "mode", "logical_sessions", "duration_seconds", "catalog", "acquisition",
         "queries", "stream_targets", "identities",
     }
+    if str(value.get("mode", "")).startswith("target"):
+        expected |= {"budget", "final"}
     if set(value) != expected:
         raise ValueError("Phase-3 inner configuration fields are invalid")
     return value
@@ -1595,12 +1601,1070 @@ async def run_inside() -> dict[str, object]:
     }
 
 
+# ---------------------------------------------------------------------------
+# v2.1.1 target mode (DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md,
+# #read-plane-v211-target-closure). The frozen four-class workload runs at its
+# declared rate on the two alpha identities; nothing is paced to a quota. Each
+# logical alpha owns one SDK client, as an alpha process would. Sessions are
+# spread over worker processes so the load client is not the bottleneck, and
+# the scheduler lag it reports is the proof of that.
+# ---------------------------------------------------------------------------
+
+_TARGET_VENUE_IDENTITY = {
+    "BINANCE": "alpha.binance.paper.stable",
+    "OKX": "alpha.okx.paper.stable",
+}
+_TARGET_BUDGET_PATH = ROOT / "config/v2/v211-target-acceptance-budget.json"
+_TARGET_LATENCY_CLASS = {
+    ("QUOTE", "SNAPSHOT"): "QUOTE_SNAPSHOT",
+    ("TRADE", "SNAPSHOT"): "TRADE_SNAPSHOT",
+    ("MARK_INDEX_PRICE", "REFERENCE_BATCH"): "MARK_INDEX_REFERENCE",
+    ("BOOK_SNAPSHOT", "SNAPSHOT"): "L2_SNAPSHOT",
+    ("BAR", "SNAPSHOT"): "BAR_LATEST",
+    ("FUNDING_RATE", "REFERENCE_BATCH"): "FUNDING_REFERENCE",
+}
+_SERVED_BY: ContextVar[str | None] = ContextVar("phase3_served_by", default=None)
+_QUERY_METHODS = frozenset({
+    "snapshot", "warmup", "warmup_batch", "reference_batch",
+    "feed_status", "instruments", "instrument",
+})
+_TS_HEARTBEAT = """
+import asyncio, json, time
+import redis.asyncio as redis
+from core.config import settings
+async def main():
+    client = redis.from_url(settings.TRADING_REDIS_URL, decode_responses=True)
+    rows = []
+    async for key in client.scan_iter(match="service:heartbeat:market_data:*", count=100):
+        value = await client.get(key)
+        if value:
+            rows.append(json.loads(value))
+    await client.aclose()
+    beat = max(rows, key=lambda row: row.get("last_seen_unix", 0))
+    details = beat["details"]
+    print(json.dumps({"status": beat["status"], "age_s": round(time.time() - beat["last_seen_unix"], 1),
+        "ready": details.get("ready_v2_slices"), "demanded": details.get("demanded_v2_slices"),
+        "fallback": details.get("v1_fallback_count"), "v2_error": details.get("v2_error_count"),
+        "unhealthy": details.get("reported_unhealthy_slices") or []}))
+asyncio.run(main())
+"""
+
+
+def target_worker_count(sessions: int) -> int:
+    return min(4, max(1, math.ceil(sessions / 13)))
+
+
+class _AttributedReplica:
+    """Record which Query replica served the current call, for per-replica latency."""
+
+    def __init__(self, delegate, name: str) -> None:
+        self._delegate = delegate
+        self.base_url = delegate.base_url
+        self.name = name
+
+    def __getattr__(self, attribute):
+        value = getattr(self._delegate, attribute)
+        if attribute not in _QUERY_METHODS:
+            return value
+
+        async def call(*args, **kwargs):
+            _SERVED_BY.set(self.name)
+            return await value(*args, **kwargs)
+
+        return call
+
+
+def _make_target_client(identity, *, queries, stream_targets):
+    from qdl_sdk.client import AsyncDataLayerClient
+    from qdl_sdk.transport import GrpcStreamTransport, ReplicatedRestQueryTransport, RestQueryTransport
+
+    replicas = [
+        _AttributedReplica(
+            RestQueryTransport(url, timeout_seconds=15.0, tls=identity.tls,
+                               credential_provider=identity.credential),
+            url.split("//", 1)[1].split(":", 1)[0],
+        )
+        for url in queries
+    ]
+    return AsyncDataLayerClient(
+        query_transport=ReplicatedRestQueryTransport(replicas, max_attempts=2, cooldown_seconds=1.0),
+        stream_transport=GrpcStreamTransport(stream_targets, tls=identity.tls,
+                                             credential_provider=identity.credential),
+        consumer_id=identity.consumer_id,
+        max_buffer_events=_stream_buffer_bound(identity),
+        max_reconnect_attempts=2,
+    )
+
+
+def _error_code(error: BaseException) -> str:
+    return _safe_error(error)["code"] or type(error).__name__
+
+
+async def _startup_retry(call, *, startup, recorder):
+    """Retry only a typed, declared startup code with bounded jittered backoff."""
+
+    attempt = 0
+    while True:
+        try:
+            return await call()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            code = _error_code(error)
+            attempt += 1
+            if code not in startup["retry_codes"] or attempt >= int(startup["retry_max_attempts"]):
+                raise
+            recorder.counters[f"startup_retry:{code}"] += 1
+            recorder.startup_retries += 1
+            delay = min(float(startup["retry_max_seconds"]),
+                        float(startup["retry_base_seconds"]) * 2 ** (attempt - 1))
+            await asyncio.sleep(delay * (0.5 + random.random() / 2))
+
+
+async def _target_read(client, operation: str, products) -> object:
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl.certification.reference_l2_acceptance import reference_evidence
+
+    if operation == "REFERENCE_BATCH":
+        references = [_reference_product(product, now_ns=time.time_ns()) for product in products]
+        response = await client.reference_batch([item.sdk_requirement for item in references], require_all=True)
+        if response.partial or len(response.results) != len(references):
+            raise ValueError("PARTIAL_RESULT")
+        for reference, result in zip(references, response.results, strict=True):
+            reference_evidence(reference, result, observed_at_ns=time.time_ns())
+        return response
+    (product,) = products
+    response = await client.snapshot(sdk_requirement(product))
+    validate_product_view(product, response.data, require_current_quality=True)
+    return response
+
+
+@dataclass(slots=True)
+class _TargetStream:
+    name: str
+    session: int
+    alpha_class: str
+    product: object
+    slow: bool = False
+    reconnect: bool = False
+    events: int = 0
+    observed_events: int = 0
+    bytes: int = 0
+    errors: int = 0
+    control: int = 0
+    final_bars: int = 0
+    repeats: int = 0
+    reconnects: int = 0
+    restored: int = 0
+    last_offset: int = 0
+
+    def evidence(self) -> dict[str, object]:
+        return {
+            "name": self.name, "session": self.session, "class": self.alpha_class,
+            "venue": self.product.venue, "native_symbol": self.product.native_symbol,
+            "feed": self.product.feed.value, "interval": self.product.interval,
+            "events": self.events, "observed_events": self.observed_events, "bytes": self.bytes,
+            "errors": self.errors, "control_events": self.control, "final_bars": self.final_bars,
+            "repeats": self.repeats, "reconnects": self.reconnects, "restored": self.restored,
+            "slow_reader": self.slow,
+        }
+
+
+class _TargetRecorder:
+    def __init__(self, *, windows: dict[str, tuple[float, float]]) -> None:
+        self.windows = windows
+        self.latency: dict[str, list[float]] = defaultdict(list)
+        self.groups: dict[str, list[float]] = defaultdict(list)
+        self.stream_samples = _BoundedSamples(per_group=256)
+        self.ledgers: list[dict[str, object]] = []
+        self.lag_ms: list[float] = []
+        self.counters: Counter[str] = Counter()
+        self.errors: list[dict[str, object]] = []
+        self.error_count = 0
+        self.cold: list[dict[str, object]] = []
+        self.startup_retries = 0
+
+    def window(self, at: float) -> str:
+        for name in ("BURST", "RECONNECT"):
+            start, end = self.windows.get(name, (math.inf, math.inf))
+            if start <= at < end:
+                return name
+        return "STEADY"
+
+    def error(self, **evidence) -> None:
+        self.error_count += 1
+        if len(self.errors) < 40:
+            self.errors.append(evidence)
+
+    def read(self, *, operation: str, products, elapsed_ms: float, window: str) -> None:
+        product = products[0]
+        name = _TARGET_LATENCY_CLASS.get((product.feed.value, operation), f"{product.feed.value}_{operation}")
+        value = round(elapsed_ms, 3)
+        self.latency[f"{name}|{product.venue}|{window}"].append(value)
+        symbols = "+".join(item.native_symbol for item in products)
+        self.groups["|".join((name, product.venue, symbols, _SERVED_BY.get() or "?", window))].append(value)
+
+
+async def _target_poll_loop(*, client, label, operation, products, period, phase, start, end, recorder,
+                            stop=None) -> None:
+    from qdl.certification.phase3_consumer_load import DeclaredRateTicker, PollLedger
+
+    ticker = DeclaredRateTicker(start=start, period=period, phase=phase, end=end)
+    ledger = PollLedger(offered=ticker.offered)
+    try:
+        while stop is None or not stop.is_set():
+            due, missed = ticker.take(time.monotonic())
+            ledger.missed += missed
+            if due is None:
+                break
+            delay = due - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            sent = time.monotonic()
+            recorder.lag_ms.append(round((sent - due) * 1000.0, 3))
+            ledger.sent += 1
+            window = recorder.window(sent)
+            _SERVED_BY.set(None)
+            try:
+                await _target_read(client, operation, products)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                ledger.record_failure(_error_code(error))
+                recorder.error(operation=operation, poll=label, window=window,
+                               product=_product_evidence(products[0]), error=_safe_error(error))
+                continue
+            done = time.monotonic()
+            ledger.completed += 1
+            if done > due + period:
+                ledger.late += 1
+            recorder.read(operation=operation, products=products, elapsed_ms=(done - sent) * 1000.0,
+                          window=window)
+        # Ticks never reached because the run stopped are missed, not absent.
+        ledger.missed += ticker.take(math.inf)[1]
+    finally:
+        recorder.ledgers.append({"poll": label, **ledger.evidence()})
+
+
+class _EitherSet:
+    def __init__(self, *events) -> None:
+        self._events = events
+
+    def is_set(self) -> bool:
+        return any(event.is_set() for event in self._events)
+
+
+async def _target_stream(*, client, stream: _TargetStream, series, recorder, observing, stop,
+                         reconnect_now, established) -> None:
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl_sdk.models import ControlEvent, StreamEvent
+    from qdl_sdk.projection import market_data_view_from_stream
+
+    product = stream.product
+    requirement = sdk_requirement(product)
+    if product.feed.value == "BAR":
+        # The alpha runtime's bar handoff: one final bar, then the stream.
+        requirement = replace(requirement, warmup_limit=1)
+    resume = False
+    slowed = False
+    signalled = False
+    try:
+        while not stop.is_set():
+            async with client.warmup_then_stream(requirement, resume_restored_state=resume) as session:
+                if resume:
+                    stream.reconnects += 1
+                    stream.restored += int(bool(session.state_restored))
+                    if not session.state_restored:
+                        raise ValueError("signed cursor was not restored on reconnect")
+                template = session.warmup.data[-1]
+                if series is not None:
+                    outcome = series.offer(template.payload.open_time_ns)
+                    stream.repeats += outcome == "REPEAT"
+                if not signalled:
+                    signalled = True
+                    established.set_result(None)
+                interrupt = _EitherSet(stop, reconnect_now) if stream.reconnect and not resume else stop
+                async for event, delivered_at, delivered_ns in _stream_events_until_stop(
+                    session, interrupt, poll_seconds=1.0
+                ):
+                    if isinstance(event, ControlEvent):
+                        stream.control += 1
+                        recorder.counters[f"stream_control:{event.code}"] += 1
+                        continue
+                    if not isinstance(event, StreamEvent):
+                        raise ValueError("stream returned an unknown event type")
+                    view = market_data_view_from_stream(event, template=template, requirement=requirement)
+                    validate_product_view(product, view, require_current_quality=True)
+                    if event.logical_offset <= stream.last_offset:
+                        raise ValueError("stream logical offset regressed")
+                    stream.last_offset = event.logical_offset
+                    session.acknowledge(event)
+                    validated_at = time.perf_counter()
+                    validated_ns = delivered_ns + int((validated_at - delivered_at) * 1_000_000_000)
+                    stream.events += 1
+                    byte_size = getattr(event.event, "ByteSize", None)
+                    stream.bytes += byte_size() if callable(byte_size) else 0
+                    sample = {
+                        "group": _product_group(product, "STREAM", "active"),
+                        "validation_ms": (validated_at - delivered_at) * 1000.0,
+                    }
+                    if event.event.received_at_ns > 0:
+                        sample["host_receive_to_usable_ms"] = max(
+                            0.0, (validated_ns - event.event.received_at_ns) / 1_000_000.0)
+                    if series is not None:
+                        outcome = series.offer(view.payload.open_time_ns)
+                        stream.repeats += outcome == "REPEAT"
+                        if view.payload.lifecycle == "FINAL":
+                            stream.final_bars += 1
+                            sample["source_to_usable_ms"] = max(
+                                0.0, (validated_ns - view.payload.close_time_ns) / 1_000_000.0)
+                    elif event.event.source_event_time_ns > 0:
+                        sample["source_to_usable_ms"] = max(
+                            0.0, (validated_ns - event.event.source_event_time_ns) / 1_000_000.0)
+                    if observing.is_set():
+                        stream.observed_events += 1
+                        recorder.stream_samples.append(sample)
+                        if stream.slow and not slowed:
+                            slowed = True
+                            recorder.counters["slow_reader_pauses"] += 1
+                            await asyncio.sleep(5.0)
+            if stop.is_set():
+                break
+            resume = True
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        stream.errors += 1
+        recorder.error(operation="STREAM", stream=stream.name, product=_product_evidence(product),
+                       error=_safe_error(error))
+    finally:
+        if not signalled:
+            established.set_result("FAILED")
+
+
+def _target_scope(config: dict[str, object]):
+    from qdl.certification.phase103_consumer_acceptance import build_manifest_acceptance_scope
+    from qdl.certification.phase3_consumer_load import build_target_workload_plan
+    from qdl.consumer.manifest import ConsumerManifestLoader
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+    from qdl.runtime.stable_deployment import StableAcquisitionPlan
+
+    catalog = StableSourceCatalog.load(config["catalog"])
+    acquisition = StableAcquisitionPlan.load(config["acquisition"], catalog=catalog)
+    paths = {consumer_id: _PHASE3_CONSUMER_MANIFESTS[consumer_id]
+             for consumer_id in _TARGET_VENUE_IDENTITY.values()}
+    manifests = {consumer_id: ConsumerManifestLoader.load(path) for consumer_id, path in paths.items()}
+    scope = build_manifest_acceptance_scope(
+        tuple(paths.values()), catalog=catalog, acquisition=acquisition,
+        expected_consumer_ids=frozenset(paths), schema="qdl.phase105.consumer-acceptance-scope.v1",
+    )
+    products_by_consumer = {
+        consumer_id: _selected_five(tuple(item for item in scope.products if item.consumer_id == consumer_id))
+        for consumer_id in sorted(paths)
+    }
+    plan = build_target_workload_plan(
+        stage=int(config["logical_sessions"]), manifests=manifests,
+        products_by_consumer=products_by_consumer, venue_identity=_TARGET_VENUE_IDENTITY,
+        instruments={venue: sorted(symbols) for venue, symbols in _FIVE_LIQUID.items()},
+    )
+    return catalog, acquisition, manifests, products_by_consumer, plan
+
+
+def _probe_products(products_by_consumer, feed: str, interval: str | None = None):
+    values = {}
+    for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
+        values[venue] = sorted(
+            (item for item in products_by_consumer[consumer_id]
+             if item.feed.value == feed and (interval is None or item.interval == interval)),
+            key=lambda item: item.native_symbol,
+        )
+        if len(values[venue]) != len(_FIVE_LIQUID[venue]):
+            raise ValueError(f"target probe needs {feed} for every {venue} symbol")
+    return values
+
+
+async def _target_rotating_probe(*, client, venue, feed, products, period, start, end, recorder, stop):
+    """One latency probe per venue and feed, rotating the five symbols."""
+
+    from qdl.certification.phase3_consumer_load import DeclaredRateTicker, PollLedger
+
+    ticker = DeclaredRateTicker(start=start, period=period, phase=0.0, end=end)
+    ledger = PollLedger(offered=ticker.offered)
+    index = 0
+    try:
+        while not stop.is_set():
+            due, missed = ticker.take(time.monotonic())
+            ledger.missed += missed
+            if due is None:
+                break
+            if due > time.monotonic():
+                await asyncio.sleep(due - time.monotonic())
+            product = products[index % len(products)]
+            index += 1
+            sent = time.monotonic()
+            ledger.sent += 1
+            window = recorder.window(sent)
+            _SERVED_BY.set(None)
+            try:
+                await _target_read(client, "SNAPSHOT", (product,))
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                ledger.record_failure(_error_code(error))
+                recorder.error(operation="PROBE", window=window, product=_product_evidence(product),
+                               error=_safe_error(error))
+                continue
+            ledger.completed += 1
+            recorder.read(operation="SNAPSHOT", products=(product,),
+                          elapsed_ms=(time.monotonic() - sent) * 1000.0, window=window)
+        ledger.missed += ticker.take(math.inf)[1]
+    finally:
+        recorder.ledgers.append({"poll": f"probe:{venue}:{feed}", **ledger.evidence()})
+
+
+async def _target_cold(*, client, product, recorder) -> None:
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+
+    for rows in (2500, 5000):
+        started = time.monotonic()
+        entry = {"venue": product.venue, "native_symbol": product.native_symbol, "rows": rows,
+                 "window": recorder.window(started)}
+        try:
+            response = await client.warmup(replace(sdk_requirement(product), warmup_limit=rows))
+            entry["returned"] = len(response.data)
+            for item in response.data:
+                validate_product_view(product, item, require_current_quality=False)
+            validate_product_view(product, response.data[-1], require_current_quality=True)
+            opens = [item.payload.open_time_ns for item in response.data]
+            step = opens[1] - opens[0] if len(opens) > 1 else 0
+            entry["continuous"] = step > 0 and all(b - a == step for a, b in zip(opens, opens[1:]))
+            if not entry["continuous"]:
+                raise ValueError("cold history is not continuous")
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            entry["error"] = _safe_error(error)
+            recorder.error(operation="COLD", product=_product_evidence(product), rows=rows,
+                           error=_safe_error(error))
+        entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+        recorder.cold.append(entry)
+
+
+async def _target_worker(config: dict[str, object], worker: int, workers: int) -> dict[str, object]:
+    from qdl.adapters.intervals import canonical_interval_ms
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl.certification.phase3_consumer_load import BarSeries
+
+    budget = config["budget"]
+    final = bool(config["final"])
+    duration = float(config["duration_seconds"])
+    _, _, manifests, products_by_consumer, plan = _target_scope(config)
+    identities = _identity_map(config, manifests)
+    queries = tuple(config["queries"])
+    stream_targets = tuple(config["stream_targets"])
+    # Index ``workers`` is the cold role: the 2500/5000-row warmups run in their
+    # own process, as a separate alpha would, so parsing thousands of rows
+    # cannot stall the hot readers' event loop and inflate their latency.
+    cold_role = worker == workers
+    mine = [item for item in plan.sessions if (item.ordinal - 1) % workers == worker]
+    windows: dict[str, tuple[float, float]] = {}
+    recorder = _TargetRecorder(windows=windows)
+    stop = asyncio.Event()
+    observing = asyncio.Event()
+    reconnect_now = asyncio.Event()
+    clients = []
+    streams: list[_TargetStream] = []
+    stream_tasks: list[asyncio.Task] = []
+    series_by_session: dict[int, BarSeries] = {}
+    setup_started = time.monotonic()
+    setup_failures: list[str] = []
+
+    def new_client(consumer_id: str):
+        client = _make_target_client(identities[consumer_id], queries=queries, stream_targets=stream_targets)
+        clients.append(client)
+        return client
+
+    async def establish(session) -> None:
+        client = new_client(session.consumer_id)
+        session_clients[session.ordinal] = client
+        bar = next((item for item in session.streams if item.feed.value == "BAR"), None)
+        if bar is not None:
+            rows = 2500 if session.ordinal % 2 else 5000
+            requirement = replace(sdk_requirement(bar), warmup_limit=rows)
+            response = await _startup_retry(lambda: client.warmup(requirement),
+                                            startup=budget["startup"], recorder=recorder)
+            if len(response.data) != rows:
+                raise ValueError("startup BAR warmup coverage differs from the declared maxlen")
+            series = BarSeries(maxlen=rows, interval_ns=canonical_interval_ms(bar.interval) * 1_000_000)
+            for item in response.data:
+                validate_product_view(bar, item, require_current_quality=False)
+                series.offer(item.payload.open_time_ns)
+            series_by_session[session.ordinal] = series
+        for product in session.startup_snapshots:
+            started = time.monotonic()
+            _SERVED_BY.set(None)
+            await _startup_retry(lambda: _target_read(client, "SNAPSHOT", (product,)),
+                                 startup=budget["startup"], recorder=recorder)
+            recorder.read(operation="SNAPSHOT", products=(product,),
+                          elapsed_ms=(time.monotonic() - started) * 1000.0, window="STARTUP")
+        for product in session.streams:
+            stream = _TargetStream(
+                name=f"s{session.ordinal}-{product.feed.value.lower()}-{product.native_symbol}",
+                session=session.ordinal, alpha_class=session.alpha_class, product=product,
+            )
+            streams.append(stream)
+            established = asyncio.get_running_loop().create_future()
+            stream_tasks.append(asyncio.create_task(_target_stream(
+                client=client, stream=stream,
+                series=series_by_session.get(session.ordinal) if product.feed.value == "BAR" else None,
+                recorder=recorder, observing=observing, stop=stop, reconnect_now=reconnect_now,
+                established=established,
+            )))
+            outcome = await asyncio.wait_for(established, timeout=float(budget["startup"]["max_setup_seconds"]))
+            if outcome is not None:
+                raise RuntimeError("stream handoff failed")
+
+    session_clients: dict[int, object] = {}
+    poll_tasks: list[asyncio.Task] = []
+    setup_seconds: float | None = None
+    start: float | None = None
+    try:
+        results = await asyncio.gather(*(establish(item) for item in mine), return_exceptions=True)
+        for session, result in zip(mine, results, strict=True):
+            if isinstance(result, BaseException):
+                setup_failures.append(f"s{session.ordinal}")
+                recorder.error(operation="SETUP", session=session.ordinal, error=_safe_error(result))
+        setup_seconds = round(time.monotonic() - setup_started, 3)
+        final_cfg = budget["final"]
+        if final:
+            ordered = sorted(streams, key=lambda item: item.name)
+            live = [item for item in ordered if item.product.feed.value in {"QUOTE", "TRADE"}]
+            if worker == 0 and live:
+                live[0].slow = True
+            for index, item in enumerate(ordered):
+                item.reconnect = index % round(1 / float(final_cfg["reconnect"]["fraction"])) == 0
+        print(json.dumps({"ready": True, "worker": worker, "setup_seconds": setup_seconds,
+                          "setup_failures": setup_failures}), flush=True)
+        line = await asyncio.get_running_loop().run_in_executor(None, sys.stdin.readline)
+        if not line.startswith("GO "):
+            raise RuntimeError("target worker did not receive a start signal")
+        start = time.monotonic() + (float(line.split()[1]) - time.time())
+        end = start + duration
+        if final:
+            burst = final_cfg["burst"]
+            burst_start = start + duration * float(burst["at_fraction"])
+            windows["BURST"] = (burst_start, burst_start + float(burst["seconds"]))
+            reconnect_start = start + duration * float(final_cfg["reconnect"]["at_fraction"])
+            windows["RECONNECT"] = (reconnect_start, reconnect_start + 15.0)
+        if start > time.monotonic():
+            await asyncio.sleep(start - time.monotonic())
+        observing.set()
+        rng = random.Random(1000 + worker)
+        for session in mine:
+            if f"s{session.ordinal}" in setup_failures:
+                continue
+            client = session_clients[session.ordinal]
+            for number, poll in enumerate(session.polls):
+                phase = rng.random() * poll.period_seconds
+                label = f"s{session.ordinal}:{session.alpha_class}:{number}"
+                poll_tasks.append(asyncio.create_task(_target_poll_loop(
+                    client=client, label=label, operation=poll.operation, products=poll.products,
+                    period=poll.period_seconds, phase=phase, start=start, end=end, recorder=recorder,
+                )))
+                if final and session.ordinal % 4 == 0 and poll.period_seconds <= 1.0:
+                    burst_start, burst_end = windows["BURST"]
+                    poll_tasks.append(asyncio.create_task(_target_poll_loop(
+                        client=client, label=f"{label}:burst", operation=poll.operation,
+                        products=poll.products, period=poll.period_seconds,
+                        phase=(phase + poll.period_seconds / 2) % poll.period_seconds,
+                        start=burst_start, end=burst_end, recorder=recorder,
+                    )))
+        if worker == 0 or cold_role:
+            probe_clients = {venue: new_client(consumer_id) for venue, consumer_id in _TARGET_VENUE_IDENTITY.items()}
+        if worker == 0:
+            probes = budget["probes"]
+            for feed in probes["feeds"]:
+                by_venue = _probe_products(products_by_consumer, feed, "1m" if feed == "BAR" else None)
+                for venue, products in by_venue.items():
+                    poll_tasks.append(asyncio.create_task(_target_rotating_probe(
+                        client=probe_clients[venue], venue=venue, feed=feed, products=products,
+                        period=float(probes["period_seconds"]), start=start + 1.0, end=end,
+                        recorder=recorder, stop=stop,
+                    )))
+        if cold_role:
+            async def cold_later():
+                await asyncio.sleep(max(0.0, start + duration * 0.3 - time.monotonic()))
+                cold = _probe_products(products_by_consumer, "BAR", "1m")
+                await asyncio.gather(*(
+                    _target_cold(client=probe_clients[venue], product=products[0], recorder=recorder)
+                    for venue, products in sorted(cold.items())
+                ))
+
+            poll_tasks.append(asyncio.create_task(cold_later()))
+        if final:
+            async def reconnect_later():
+                await asyncio.sleep(max(0.0, windows["RECONNECT"][0] - time.monotonic()))
+                reconnect_now.set()
+
+            poll_tasks.append(asyncio.create_task(reconnect_later()))
+        await asyncio.sleep(max(0.0, end - time.monotonic()))
+        await asyncio.wait_for(asyncio.gather(*poll_tasks, return_exceptions=True), timeout=60.0)
+    except Exception as error:
+        recorder.error(operation="WORKER", error=_safe_error(error))
+        if setup_seconds is None:
+            setup_seconds = round(time.monotonic() - setup_started, 3)
+    finally:
+        stop.set()
+        observing.set()
+        for task in poll_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*poll_tasks, *stream_tasks, return_exceptions=True)
+        await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+    leaked = [task for task in asyncio.all_tasks() if task is not asyncio.current_task() and not task.done()]
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return {
+        "worker": worker,
+        "sessions": [item.ordinal for item in mine],
+        "setup": {"seconds": setup_seconds, "retries": recorder.startup_retries, "failures": setup_failures},
+        "latency_series": dict(recorder.latency),
+        "latency_groups": dict(recorder.groups),
+        "stream_samples": list(recorder.stream_samples),
+        "stream_samples_seen": {"|".join(key): count for key, count in recorder.stream_samples.seen.items()},
+        "poll_ledgers": recorder.ledgers,
+        "scheduler_lag_ms": recorder.lag_ms,
+        "streams": [item.evidence() for item in streams],
+        "bar_series": {str(key): {"length": len(value), "appended": value.appended, "repeats": value.repeats}
+                       for key, value in series_by_session.items()},
+        "cold": recorder.cold,
+        "counters": dict(recorder.counters),
+        "errors": recorder.errors,
+        "error_count": recorder.error_count,
+        "leaked_tasks": len(leaked),
+        "fault_windows": ({} if start is None else
+                          {name: [round(a - start, 3), round(b - start, 3)] for name, (a, b) in windows.items()}),
+        "cpu_seconds": round(usage.ru_utime + usage.ru_stime, 3),
+        "max_rss_kib": usage.ru_maxrss,
+    }
+
+
+def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dict[str, object]:
+    from qdl.certification.phase3_consumer_load import nearest_rank
+
+    latency: dict[str, list[float]] = defaultdict(list)
+    groups: dict[str, list[float]] = defaultdict(list)
+    lag: list[float] = []
+    stream_samples: list[dict[str, object]] = []
+    for result in results:
+        for key, values in result["latency_series"].items():
+            latency[key].extend(values)
+        for key, values in result["latency_groups"].items():
+            groups[key].extend(values)
+        lag.extend(result["scheduler_lag_ms"])
+        stream_samples.extend(result["stream_samples"])
+    streams = [item for result in results for item in result["streams"]]
+    windows: dict[str, object] = {}
+    if final:
+        worker0 = next((item for item in results if item["worker"] == 0), {})
+        windows = {
+            "BURST": worker0.get("fault_windows", {}).get("BURST"),
+            "SLOW_READER": sum(item["counters"].get("slow_reader_pauses", 0) for item in results),
+            "RECONNECT": sum(item["reconnects"] for item in streams),
+            "reconnect_restored": sum(item["restored"] for item in streams),
+        }
+    stream_summary = []
+    by_group: dict[tuple[str, ...], list[dict[str, object]]] = defaultdict(list)
+    for sample in stream_samples:
+        by_group[tuple(sample["group"])].append(sample)
+    for key, values in sorted(by_group.items()):
+        stream_summary.append({
+            "venue": key[2], "native_symbol": key[3], "feed": key[4], "interval": key[5] or None,
+            "reservoir_samples": len(values),
+            "validation": _percentiles([item["validation_ms"] for item in values if "validation_ms" in item]),
+            "host_receive_to_usable": _percentiles(
+                [item["host_receive_to_usable_ms"] for item in values if "host_receive_to_usable_ms" in item]),
+            "source_or_close_to_usable": _percentiles(
+                [item["source_to_usable_ms"] for item in values if "source_to_usable_ms" in item]),
+        })
+    return {
+        "schema": "qdl.phase3.target-load.v1",
+        "stage": plan.stage,
+        "final": final,
+        "class_counts": dict(zip(("CANDLE", "REALTIME", "GRID", "MULTI"), plan.class_counts)),
+        "planned_streams": plan.stream_count,
+        "hot_requests_per_second": plan.hot_requests_per_second,
+        "identity_demands": [
+            {"consumer_id": item.consumer_id, "sessions": item.sessions,
+             "required_requests_per_minute": item.required_requests_per_minute,
+             "required_streams": item.required_streams, "quota_needed": item.quota_needed,
+             "streams_needed": item.streams_needed,
+             "sealed_requests_per_minute": item.sealed_requests_per_minute,
+             "sealed_max_streams": item.sealed_max_streams}
+            for item in plan.demands
+        ],
+        "workers": len(results),
+        "setup": {
+            "seconds": max(item["setup"]["seconds"] for item in results),
+            "retries": sum(item["setup"]["retries"] for item in results),
+            "failures": [name for item in results for name in item["setup"]["failures"]],
+        },
+        "latency_series": dict(latency),
+        "latency_groups": [
+            {"group": key, **_percentiles(values)} for key, values in sorted(groups.items())
+        ],
+        "poll_ledgers": [item for result in results for item in result["poll_ledgers"]],
+        "scheduler_lag_ms": {"n": len(lag), "p50": nearest_rank(lag, 0.50), "p95": nearest_rank(lag, 0.95),
+                             "p99": nearest_rank(lag, 0.99), "max": max(lag) if lag else None},
+        "streams": streams,
+        "stream_latency": stream_summary,
+        "bar_series": {key: value for result in results for key, value in result["bar_series"].items()},
+        "cold": [item for result in results for item in result["cold"]],
+        "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
+        "errors": [item for result in results for item in result["errors"]][:40],
+        "error_count": sum(item["error_count"] for item in results),
+        "leaked_tasks": sum(item["leaked_tasks"] for item in results),
+        "fault_windows": windows,
+        "worker_cpu_seconds": [item["cpu_seconds"] for item in results],
+        "worker_max_rss_kib": [item["max_rss_kib"] for item in results],
+        "provider_connections": 0,
+        "v1_fallback_calls": 0,
+        "order_actions": 0,
+        "secret_values_recorded": False,
+    }
+
+
+async def run_target_inside() -> dict[str, object]:
+    """Spawn the worker processes, start them together, merge their evidence."""
+
+    config = _inside_config()
+    _, _, _, _, plan = _target_scope(config)
+    workers = target_worker_count(int(config["logical_sessions"]))
+    driver = str(Path(__file__).resolve())
+    # One process per session group plus the cold role (index ``workers``).
+    processes = [
+        await asyncio.create_subprocess_exec(
+            sys.executable, "-B", driver, "--inside-worker", str(index), str(workers),
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            limit=64 * 1024 * 1024,
+        )
+        for index in range(workers + 1)
+    ]
+    ready = []
+    results = []
+    setup_deadline = float(config["budget"]["startup"]["max_setup_seconds"]) + 60.0
+    try:
+        for process in processes:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=setup_deadline)
+            ready.append(json.loads(line))
+        go = time.time() + 2.0
+        for process in processes:
+            process.stdin.write(f"GO {go}\n".encode())
+            await process.stdin.drain()
+        for process in processes:
+            stdout, _ = await asyncio.wait_for(process.communicate(),
+                                               timeout=float(config["duration_seconds"]) + 240.0)
+            lines = [line for line in stdout.decode().splitlines() if line.startswith("{")]
+            results.append(json.loads(lines[-1]))
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+    merged = _merge_target(results, plan=plan, final=bool(config["final"]))
+    merged["worker_ready"] = ready
+    merged["status"] = "COMPLETE" if all(process.returncode == 0 for process in processes) else "WORKER_FAILED"
+    return merged
+
+
+def run_target_worker(index: int, count: int) -> int:
+    config = _inside_config()
+    result = asyncio.run(_target_worker(config, index, count))
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
+    return 0
+
+
+async def run_target_matrix_inside() -> dict[str, object]:
+    """Every read product of the stage-50 profile once through each replica.
+
+    Also the bounded longer-interval sample: one 500-row 5m/15m/1h BAR warmup
+    per venue and replica. Streams are exercised by the stages themselves.
+    """
+
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl_sdk.client import AsyncDataLayerClient
+    from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
+
+    config = _inside_config()
+    _, _, manifests, products_by_consumer, plan = _target_scope(config)
+    identities = _identity_map(config, manifests)
+    reads: dict[tuple[str, tuple[object, ...]], tuple[str, tuple[object, ...]]] = {}
+    for session in plan.sessions:
+        for poll in session.polls:
+            for product in poll.products:
+                reads[(poll.operation, (product.identity,))] = (poll.operation, (product,))
+            if len(poll.products) > 1:
+                reads[(poll.operation, tuple(item.identity for item in poll.products))] = (poll.operation, poll.products)
+        for product in session.startup_snapshots:
+            reads[("SNAPSHOT", (product.identity,))] = ("SNAPSHOT", (product,))
+    for feed in config["budget"]["probes"]["feeds"]:
+        for products in _probe_products(products_by_consumer, feed, "1m" if feed == "BAR" else None).values():
+            for product in products:
+                reads[("SNAPSHOT", (product.identity,))] = ("SNAPSHOT", (product,))
+    results = []
+    for url in config["queries"]:
+        replica = url.split("//", 1)[1].split(":", 1)[0]
+        clients = {}
+        for consumer_id, identity in identities.items():
+            clients[consumer_id] = AsyncDataLayerClient(
+                query_transport=RestQueryTransport(url, timeout_seconds=15.0, tls=identity.tls,
+                                                   credential_provider=identity.credential),
+                stream_transport=GrpcStreamTransport(config["stream_targets"], tls=identity.tls,
+                                                     credential_provider=identity.credential),
+                consumer_id=consumer_id, max_buffer_events=_stream_buffer_bound(identity),
+                max_reconnect_attempts=0,
+            )
+        try:
+            for (operation, _), (_, products) in sorted(reads.items(), key=lambda item: str(item[0])):
+                started = time.monotonic()
+                entry = {"replica": replica, "operation": operation,
+                         "venue": products[0].venue, "feed": products[0].feed.value,
+                         "symbols": [item.native_symbol for item in products]}
+                try:
+                    await _target_read(clients[products[0].consumer_id], operation, products)
+                    entry["status"] = "PASS"
+                except Exception as error:
+                    entry.update(status="FAIL", error=_safe_error(error))
+                entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+                results.append(entry)
+            for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
+                for interval in ("5m", "15m", "1h"):
+                    product = _probe_products(products_by_consumer, "BAR", interval)[venue][0]
+                    started = time.monotonic()
+                    entry = {"replica": replica, "operation": "WARMUP_500", "venue": venue,
+                             "feed": "BAR", "interval": interval, "symbols": [product.native_symbol]}
+                    try:
+                        response = await clients[consumer_id].warmup(
+                            replace(sdk_requirement(product), warmup_limit=500))
+                        opens = [item.payload.open_time_ns for item in response.data]
+                        for item in response.data:
+                            validate_product_view(product, item, require_current_quality=False)
+                        if len(opens) != 500 or len(set(opens)) != 500 or opens != sorted(opens):
+                            raise ValueError("longer-interval sample is not 500 ordered distinct opens")
+                        entry["status"] = "PASS"
+                    except Exception as error:
+                        entry.update(status="FAIL", error=_safe_error(error))
+                    entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+                    results.append(entry)
+        finally:
+            await asyncio.gather(*(client.close() for client in clients.values()), return_exceptions=True)
+    failed = [item for item in results if item["status"] != "PASS"]
+    return {
+        "schema": "qdl.phase3.target-matrix.v1",
+        "status": "PASS" if not failed else "FAIL",
+        "reads": len(results),
+        "failed": failed,
+        "results": results,
+        "order_actions": 0,
+        "secret_values_recorded": False,
+    }
+
+
+def _ts_heartbeat() -> dict[str, object] | None:
+    try:
+        result = subprocess.run(["docker", "exec", "-i", "market_data_service", "python", "-"],
+                                input=_TS_HEARTBEAT, capture_output=True, text=True, timeout=20)
+        value = json.loads(result.stdout.strip().splitlines()[-1])
+        value["at_ns"] = time.time_ns()
+        return value
+    except Exception as error:  # an unreadable heartbeat is itself evidence
+        return {"at_ns": time.time_ns(), "error": _safe_error(error)}
+
+
+def _ts_disconnects(since: str, until: str) -> tuple[int, Counter]:
+    result = subprocess.run(["docker", "logs", "--since", since, "--until", until, "market_data_service"],
+                            capture_output=True, text=True, timeout=60)
+    codes: Counter[str] = Counter()
+    for line in (result.stdout + result.stderr).splitlines():
+        if "slice disconnected" in line:
+            match = re.search(r"code=([A-Z_]+)", line)
+            codes[match.group(1) if match else "UNKNOWN"] += 1
+    return sum(codes.values()), codes
+
+
+def _projector_spans(prefix: str, since: str, until: str) -> dict[str, object]:
+    summary = {}
+    names = subprocess.run(["docker", "ps", "--format", "{{.Names}}", "--filter", f"name={prefix}-projector"],
+                           capture_output=True, text=True, timeout=20).stdout.split()
+    for name in sorted(names):
+        text = subprocess.run(["docker", "logs", "--since", since, "--until", until, name],
+                              capture_output=True, text=True, timeout=60)
+        age_max = append_max = 0.0
+        windows = 0
+        for line in (text.stdout + text.stderr).splitlines():
+            if "qdl_stable_projector_spans" not in line:
+                continue
+            windows += 1
+            for key, target in (("canonical_age_ms", "age"), ("durable_append_ms", "append")):
+                match = re.search(key + r"=\{[^}]*'max': ([0-9.]+)", line)
+                if match:
+                    if target == "age":
+                        age_max = max(age_max, float(match.group(1)))
+                    else:
+                        append_max = max(append_max, float(match.group(1)))
+        summary[name] = {"span_windows": windows, "canonical_age_max_ms": age_max,
+                         "durable_append_max_ms": append_max}
+    return summary
+
+
+def _host_planner():
+    """The planner file alone: the host half imports no SDK or package init."""
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "phase3_consumer_load_host", ROOT / "qdl/certification/phase3_consumer_load.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_target_host(args: argparse.Namespace) -> int:
+    planner = _host_planner()
+    TARGET_STAGE_SECONDS = planner.TARGET_STAGE_SECONDS
+    evaluate_target_acceptance = planner.evaluate_target_acceptance
+    load_target_budget = planner.load_target_budget
+
+    profile = validate_profile(_read_json(args.profile))
+    if {item["id"] for item in profile["identities"]} != set(_TARGET_VENUE_IDENTITY.values()):
+        raise ValueError("target mode runs exactly the two alpha platform identities")
+    budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
+    budget = load_target_budget(json.loads(budget_bytes))
+    matrix = args.mode == "target-matrix"
+    if args.sessions not in TARGET_STAGE_SECONDS:
+        raise ValueError("target sessions must be exactly one of 5,20,35,50")
+    duration = 0 if matrix else TARGET_STAGE_SECONDS[args.sessions]
+    if args.duration_seconds != duration:
+        raise ValueError(f"target stage {args.sessions} runs exactly {duration} s from the frozen budget")
+    final = not matrix and args.sessions == 50
+    workers = 1 if matrix else target_worker_count(args.sessions)
+    output = args.output.resolve()
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    image_id = _docker_image_id(str(profile["image"]))
+    name = "qdl-phase3-target-" + uuid.uuid4().hex[:12]
+    command, inner = docker_command(profile, name=name, image_id=image_id, mode=args.mode,
+                                    sessions=args.sessions, duration_seconds=duration)
+    inner.update(budget=budget, final=final)
+    command[command.index("--cpus") + 1] = f"{float(workers + (0 if matrix else 1)):.1f}"
+    command[command.index("--memory") + 1] = f"{512 * (workers + (0 if matrix else 1))}m"
+    for index, value in enumerate(command):
+        if value.startswith("QDL_PHASE3_LOAD_CONFIG="):
+            command[index] = "QDL_PHASE3_LOAD_CONFIG=" + json.dumps(inner, sort_keys=True, separators=(",", ":"))
+    query_names = list(profile["query_containers"])
+    prefix = query_names[0].split("-query_v2_", 1)[0]
+    monitored = [*query_names, f"{prefix}-stream_v2_active-1", f"{prefix}-stream_v2_passive-1",
+                 "market_data_service"]
+    ts_samples = [] if matrix else [_ts_heartbeat()]
+    started_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    baseline_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+    started = time.monotonic()
+    process = None
+    cleanup_error = None
+    runtime_fault = None
+    telemetry = []
+    try:
+        process, telemetry, runtime_fault = _run_monitored_client(
+            command, monitored, timeout=duration + 720,
+            observer=None if matrix else _ts_heartbeat, observations=ts_samples,
+        )
+    finally:
+        try:
+            _cleanup_exact_container(name)
+        except Exception as error:
+            cleanup_error = _safe_error(error)
+    ended_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if not matrix:
+        ts_samples.append(_ts_heartbeat())
+    stdout = process.stdout if process is not None else ""
+    stderr = process.stderr if process is not None else ""
+    receipt = None
+    for line in reversed(stdout.splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and str(value.get("schema", "")).startswith("qdl.phase3.target-"):
+            receipt = value
+            break
+    trading_system: dict[str, object] = {"samples": [item for item in ts_samples if item and "ready" in item],
+                                         "unreadable_samples": [item for item in ts_samples if item and "error" in item]}
+    evaluation = None
+    if not matrix:
+        run_minutes = max(1e-6, (time.monotonic() - started) / 60.0)
+        base_count, base_codes = _ts_disconnects(baseline_iso, started_iso)
+        run_count, run_codes = _ts_disconnects(started_iso, ended_iso)
+        trading_system.update(
+            baseline_window=[baseline_iso, started_iso], run_window=[started_iso, ended_iso],
+            baseline_disconnects_per_minute=round(base_count / 10.0, 3),
+            baseline_codes=dict(base_codes),
+            run_disconnects_per_minute=round(run_count / run_minutes, 3),
+            disconnect_codes=dict(run_codes),
+        )
+        if receipt is not None and receipt.get("schema") == "qdl.phase3.target-load.v1":
+            evaluation = evaluate_target_acceptance(budget=budget, stage=args.sessions, final=final,
+                                                    receipt=receipt, trading_system=trading_system)
+    passed = (process is not None and process.returncode == 0 and receipt is not None
+              and cleanup_error is None and runtime_fault is None
+              and (receipt.get("status") == "PASS" if matrix else
+                   evaluation is not None and evaluation["status"] == "PASS"
+                   and receipt.get("status") == "COMPLETE"))
+    host = {
+        "schema": "qdl.phase3.target-host.v1",
+        "status": "PASS" if passed else "FAIL",
+        "mode": args.mode, "stage": args.sessions, "final": final, "duration_seconds": duration,
+        "workers": workers, "image_id": image_id,
+        "source_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
+                                     text=True, check=True).stdout.strip(),
+        "tool_sha256": _sha256(Path(__file__).read_bytes()),
+        "planner_sha256": _sha256((ROOT / "qdl/certification/phase3_consumer_load.py").read_bytes()),
+        "budget_sha256": _sha256(budget_bytes),
+        "authenticated_identity_count": len(profile["identities"]),
+        "runtime_fault": runtime_fault,
+        "runtime_observation": telemetry,
+        "trading_system": trading_system,
+        "projector_spans": None if matrix else _projector_spans(prefix, started_iso, ended_iso),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "client_returncode": None if process is None else process.returncode,
+        "client_stderr_tail_sha256": _sha256(stderr.encode()),
+        "cleanup_error": cleanup_error,
+        "inner_config_sha256": _sha256(json.dumps(inner, sort_keys=True, separators=(",", ":")).encode()),
+        "secret_values_recorded": False,
+        "order_actions": 0,
+    }
+    (output / "host.json").write_text(json.dumps(host, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if receipt is not None:
+        (output / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                                             encoding="utf-8")
+    if evaluation is not None:
+        (output / "gates.json").write_text(json.dumps(evaluation, indent=2, sort_keys=True) + "\n",
+                                           encoding="utf-8")
+    if process is not None and process.returncode != 0 and stderr:
+        # Payload-free tail for attribution: exception types and codes only.
+        lines = [line for line in stderr.splitlines() if re.search(r"(Error|Exception)\b", line)][-20:]
+        (output / "stderr-types.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(json.dumps({"schema": host["schema"], "status": host["status"], "output": str(output),
+                      "failed_gates": None if evaluation is None else evaluation["failed_gates"]},
+                     sort_keys=True))
+    return 0 if passed else 1
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     value.add_argument("--profile", type=Path)
     value.add_argument("--output", type=Path)
-    value.add_argument("--mode", choices=("matrix", "load", "final"))
+    value.add_argument("--mode", choices=("matrix", "load", "final", "target-matrix", "target"))
+    value.add_argument("--inside-worker", nargs=2, type=int, metavar=("INDEX", "COUNT"), help=argparse.SUPPRESS)
     value.add_argument("--sessions", type=int)
     value.add_argument("--duration-seconds", type=int)
     return value
@@ -1608,11 +2672,15 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
+    if args.inside_worker is not None:
+        return run_target_worker(*args.inside_worker)
     if args.inside:
         if any(value is not None for value in (args.profile, args.output, args.mode, args.sessions, args.duration_seconds)):
             raise SystemExit("inner Phase-3 client accepts configuration only from its mounted environment")
+        mode = str(json.loads(os.environ.get("QDL_PHASE3_LOAD_CONFIG", "{}")).get("mode", ""))
+        runner = {"target": run_target_inside, "target-matrix": run_target_matrix_inside}.get(mode, run_inside)
         try:
-            result = asyncio.run(run_inside())
+            result = asyncio.run(runner())
         except Exception as error:
             print(json.dumps({
                 "schema": "qdl.phase3.consumer-load.v1", "status": "FAIL",
@@ -1621,9 +2689,11 @@ def main() -> int:
             }, sort_keys=True))
             return 1
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-        return 0 if result["status"] == "PASS" else 1
+        return 0 if result["status"] in {"PASS", "COMPLETE"} else 1
     if None in (args.profile, args.output, args.mode, args.sessions, args.duration_seconds):
         raise SystemExit("host Phase-3 run requires --profile --output --mode --sessions --duration-seconds")
+    if args.mode in {"target", "target-matrix"}:
+        return run_target_host(args)
     return run_host(args)
 
 

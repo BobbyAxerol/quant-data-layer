@@ -1,0 +1,72 @@
+{
+  "schema": "qdl.v211.target-acceptance-budget.v1",
+  "frozen_at": "2026-09-23",
+  "source": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#read-plane-v211-target-closure",
+  "note": "Frozen before the first target run. A missed target is an open exit to optimize, never a threshold edited after results.",
+  "stages": {
+    "5": {"mix": [2, 1, 1, 1], "seconds": 90},
+    "20": {"mix": [8, 6, 4, 2], "seconds": 120},
+    "35": {"mix": [14, 10, 7, 4], "seconds": 180},
+    "50": {"mix": [20, 15, 10, 5], "seconds": 300}
+  },
+  "latency_ms": {
+    "QUOTE_SNAPSHOT": {"feed": "QUOTE", "operation": "SNAPSHOT", "p95": 100, "p99": 250},
+    "TRADE_SNAPSHOT": {"feed": "TRADE", "operation": "SNAPSHOT", "p95": 100, "p99": 250},
+    "MARK_INDEX_REFERENCE": {"feed": "MARK_INDEX_PRICE", "operation": "REFERENCE_BATCH", "p95": 250, "p99": 500},
+    "L2_SNAPSHOT": {"feed": "BOOK_SNAPSHOT", "operation": "SNAPSHOT", "p95": 300, "p99": 750},
+    "BAR_LATEST": {"feed": "BAR", "operation": "SNAPSHOT", "p95": 1000, "p99": 2000}
+  },
+  "latency_scope": "Gated per latency class and venue on the steady window, across symbols and replicas; every venue/symbol/replica group is reported with its own count.",
+  "sample_rule": {
+    "p99_min_samples": 100,
+    "p95_min_samples": 20,
+    "below_p95_min": "max must be within the p99 target"
+  },
+  "requests": {
+    "max_missed_ticks": 0,
+    "max_failed_steady": 0,
+    "max_failed_fault_windows": 0,
+    "client_validity_scheduler_lag_p99_ms": 250
+  },
+  "streams": {
+    "max_stream_errors": 0,
+    "first_event_required_feeds": ["TRADE", "QUOTE", "BOOK_DELTA"],
+    "min_final_bars_per_bar_stream": 1,
+    "bar_continuity": "consecutive final opens differ by exactly one interval; a repeated open is a revision, an older open is a FIFO violation"
+  },
+  "cold": {
+    "rows": [2500, 5000],
+    "per_venue": true,
+    "max_errors": 0,
+    "rows_must_equal_request": true
+  },
+  "startup": {
+    "max_setup_seconds": 240,
+    "retry_codes": ["RATE_LIMITED"],
+    "retry_max_attempts": 10,
+    "retry_base_seconds": 0.25,
+    "retry_max_seconds": 4.0
+  },
+  "probes": {
+    "period_seconds": 5.0,
+    "feeds": ["TRADE", "BOOK_SNAPSHOT", "BAR"],
+    "note": "Per-venue latency probes, rotating the five symbols; not part of the 50-alpha offered load."
+  },
+  "final": {
+    "burst": {"extra_fraction": 0.25, "seconds": 10, "at_fraction": 0.4},
+    "slow_reader": {"streams": 1, "pause_seconds": 5, "at_fraction": 0.2},
+    "reconnect": {"fraction": 0.1, "at_fraction": 0.7}
+  },
+  "trading_system": {
+    "demanded_routes": 60,
+    "every_sample_ready": true,
+    "max_fallback": 0,
+    "max_v2_error_increase": 0,
+    "max_disconnect_rate_over_baseline_per_minute": 10.0,
+    "forbidden_disconnect_codes": ["UNAUTHENTICATED", "PERMISSION_DENIED", "MANIFEST_REVISION_MISMATCH", "INVALID_ARGUMENT"]
+  },
+  "writer_health_report_only": {
+    "projector_canonical_age_ms_max": 60000,
+    "note": "Reported, not a gate: the single-writer ceiling is recorded at dl-v2-r1-outcome-20260916."
+  }
+}

@@ -7,12 +7,14 @@ driver is allowed to contact the V2 Query/Stream plane.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-from typing import Mapping, Sequence
+from collections import Counter, defaultdict, deque
+from dataclasses import dataclass, field
+import math
+from typing import TYPE_CHECKING, Mapping, Sequence
 
-from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
-from qdl.consumer.manifest import ConsumerManifest
+if TYPE_CHECKING:  # annotations only: the host launcher loads this file without the SDK
+    from qdl.certification.phase103_consumer_acceptance import AcceptanceProduct
+    from qdl.consumer.manifest import ConsumerManifest
 
 
 _HOT_FEED_ORDER = {
@@ -500,12 +502,10 @@ class TargetIdentityDemand:
 
     @property
     def quota_needed(self) -> int:
-        import math
         return math.ceil(self.required_requests_per_minute * TARGET_QUOTA_HEADROOM)
 
     @property
     def streams_needed(self) -> int:
-        import math
         return math.ceil(self.required_streams * TARGET_STREAM_HEADROOM)
 
     @property
@@ -634,3 +634,253 @@ def build_target_workload_plan(
                 f"{demand.sealed_requests_per_minute} rpm / {demand.sealed_max_streams} streams")
         demands.append(demand)
     return TargetWorkloadPlan(stage=stage, sessions=tuple(sessions), demands=tuple(demands))
+
+
+# ---------------------------------------------------------------------------
+# Target-run accounting and acceptance. Pure: the driver owns every socket and
+# clock; these types only decide what was offered, what happened to it, and
+# whether the frozen budget holds.
+# ---------------------------------------------------------------------------
+
+
+class DeclaredRateTicker:
+    """Due times of one declared fixed-period read; the period never stretches.
+
+    Tick ``k`` is due at ``start + phase + k * period`` for every due time
+    before ``end``. ``take(now)`` returns the next tick to send and how many
+    earlier ticks were missed on the way. A tick whose whole period elapsed
+    before it could be sent is *missed* - counted, never re-timed - so a slow
+    server or a starved client cannot lower the offered rate and pass.
+    """
+
+    def __init__(self, *, start: float, period: float, phase: float, end: float) -> None:
+        if period <= 0 or not 0 <= phase < period or end <= start:
+            raise ValueError("declared-rate ticker window is invalid")
+        self._first = start + phase
+        self._period = period
+        self._end = end
+        self._next = 0
+
+    @property
+    def offered(self) -> int:
+        if self._first >= self._end:
+            return 0
+        return math.ceil((self._end - self._first) / self._period - 1e-9)
+
+    def take(self, now: float) -> tuple[float | None, int]:
+        missed = 0
+        while self._next < self.offered:
+            due = self._first + self._next * self._period
+            self._next += 1
+            if now < due + self._period:
+                return due, missed
+            missed += 1
+        return None, missed
+
+
+@dataclass(slots=True)
+class PollLedger:
+    """Exact fate of every offered tick of one declared read."""
+
+    offered: int = 0
+    sent: int = 0
+    completed: int = 0
+    failed: int = 0
+    missed: int = 0
+    late: int = 0
+    failure_codes: Counter = field(default_factory=Counter)
+
+    def record_failure(self, code: str) -> None:
+        self.failed += 1
+        self.failure_codes[code] += 1
+
+    @property
+    def balanced(self) -> bool:
+        return (self.offered == self.sent + self.missed
+                and self.sent == self.completed + self.failed)
+
+    def evidence(self) -> dict[str, object]:
+        return {
+            "offered": self.offered, "sent": self.sent, "completed": self.completed,
+            "failed": self.failed, "missed": self.missed, "late": self.late,
+            "balanced": self.balanced,
+            "failure_codes": dict(sorted(self.failure_codes.items())),
+        }
+
+
+class BarSeries:
+    """Bounded append/dedup/FIFO BAR series, kept the way an alpha keeps it.
+
+    A repeated open (a revision, or the handoff bar the warmup already holds)
+    is deduplicated onto the tail; the next open appends; an older
+    open is a FIFO violation and a skipped open is a gap. Both raise, because a
+    strategy that silently accepts either computes on a series that does not
+    exist.
+    """
+
+    def __init__(self, *, maxlen: int, interval_ns: int) -> None:
+        if maxlen < 1 or interval_ns <= 0:
+            raise ValueError("bar series bounds are invalid")
+        self._opens: deque[int] = deque(maxlen=maxlen)
+        self._interval_ns = interval_ns
+        self.appended = 0
+        self.repeats = 0
+
+    def __len__(self) -> int:
+        return len(self._opens)
+
+    @property
+    def last_open_ns(self) -> int | None:
+        return self._opens[-1] if self._opens else None
+
+    def offer(self, open_ns: int) -> str:
+        last = self.last_open_ns
+        if last is None or open_ns == last + self._interval_ns:
+            self._opens.append(open_ns)
+            self.appended += 1
+            return "APPEND"
+        if open_ns == last:
+            self.repeats += 1
+            return "REPEAT"
+        if open_ns < last:
+            raise ValueError("BAR series FIFO violation: an older open arrived after a newer one")
+        raise ValueError("BAR series gap: an open was skipped")
+
+
+def nearest_rank(values: Sequence[float], quantile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, max(0, math.ceil(quantile * len(ordered)) - 1))]
+
+
+def load_target_budget(raw: Mapping[str, object]) -> Mapping[str, object]:
+    if raw.get("schema") != "qdl.v211.target-acceptance-budget.v1":
+        raise ValueError("target acceptance budget schema is unknown")
+    stages = raw.get("stages")
+    if not isinstance(stages, Mapping) or {int(key) for key in stages} != set(TARGET_STAGE_MIX):
+        raise ValueError("target acceptance budget stages differ from the frozen profile")
+    for key, value in stages.items():
+        if tuple(value["mix"]) != TARGET_STAGE_MIX[int(key)] or value["seconds"] != TARGET_STAGE_SECONDS[int(key)]:
+            raise ValueError("target acceptance budget stage mix or duration differs from the frozen profile")
+    return raw
+
+
+def evaluate_latency(values_ms: Sequence[float], target: Mapping[str, object],
+                     rule: Mapping[str, object]) -> dict[str, object]:
+    count = len(values_ms)
+    p95, p99 = nearest_rank(values_ms, 0.95), nearest_rank(values_ms, 0.99)
+    result: dict[str, object] = {
+        "count": count, "p50": nearest_rank(values_ms, 0.50), "p95": p95, "p99": p99,
+        "max": max(values_ms) if values_ms else None,
+        "target_p95": target["p95"], "target_p99": target["p99"],
+    }
+    if count == 0:
+        result.update(status="FAIL", rule="no samples")
+    elif count >= int(rule["p99_min_samples"]):
+        result.update(status="PASS" if p95 <= target["p95"] and p99 <= target["p99"] else "FAIL",
+                      rule="p95 and p99")
+    elif count >= int(rule["p95_min_samples"]):
+        result.update(status="PASS" if p95 <= target["p95"] else "FAIL", rule="p95; p99 reported only")
+    else:
+        result.update(status="PASS" if result["max"] <= target["p99"] else "FAIL",
+                      rule="small sample: max within p99 target")
+    return result
+
+
+def _gate(name: str, passed: bool, **evidence: object) -> dict[str, object]:
+    return {"gate": name, "status": "PASS" if passed else "FAIL", **evidence}
+
+
+def evaluate_target_acceptance(
+    *,
+    budget: Mapping[str, object],
+    stage: int,
+    final: bool,
+    receipt: Mapping[str, object],
+    trading_system: Mapping[str, object],
+) -> dict[str, object]:
+    """Apply the frozen budget to one run. Every gate is listed, pass or fail."""
+
+    gates: list[dict[str, object]] = []
+    classes = budget["latency_ms"]
+    series: Mapping[str, Sequence[float]] = receipt["latency_series"]
+    venues = sorted({key.split("|")[1] for key in series})
+    for name, target in sorted(classes.items()):
+        for venue in venues:
+            result = evaluate_latency(series.get(f"{name}|{venue}|STEADY", ()), target,
+                                      budget["sample_rule"])
+            gates.append({"gate": f"latency:{name}:{venue}", **result})
+    ledgers = receipt["poll_ledgers"]
+    offered = sum(item["offered"] for item in ledgers)
+    missed = sum(item["missed"] for item in ledgers)
+    failed = sum(item["failed"] for item in ledgers)
+    unbalanced = [item for item in ledgers if not item["balanced"]]
+    starved = [item for item in ledgers if item["offered"] and item["completed"] == 0]
+    requests = budget["requests"]
+    gates.append(_gate("requests:offered_equals_sent_plus_missed", not unbalanced,
+                       offered=offered, unbalanced=len(unbalanced)))
+    gates.append(_gate("requests:no_missed_ticks", missed <= requests["max_missed_ticks"], missed=missed))
+    gates.append(_gate("requests:no_failures", failed <= requests["max_failed_steady"],
+                       failed=failed, codes=dict(sum((Counter(item["failure_codes"]) for item in ledgers), Counter()))))
+    gates.append(_gate("requests:no_starved_session", not starved, starved=len(starved)))
+    lag_p99 = receipt["scheduler_lag_ms"].get("p99")
+    gates.append(_gate("client:scheduler_lag_valid",
+                       lag_p99 is not None and lag_p99 <= requests["client_validity_scheduler_lag_p99_ms"],
+                       p99_ms=lag_p99))
+    streams = receipt["streams"]
+    stream_errors = sum(item["errors"] for item in streams)
+    gates.append(_gate("streams:no_errors", stream_errors <= budget["streams"]["max_stream_errors"],
+                       errors=stream_errors, streams=len(streams)))
+    silent = [item["name"] for item in streams
+              if item["feed"] in budget["streams"]["first_event_required_feeds"] and item["events"] < 1]
+    gates.append(_gate("streams:every_live_stream_delivered", not silent, silent=silent))
+    bars = [item for item in streams if item["feed"] == "BAR"]
+    short = [item["name"] for item in bars
+             if item["final_bars"] < budget["streams"]["min_final_bars_per_bar_stream"]]
+    gates.append(_gate("streams:final_bar_every_bar_stream", not short, bar_streams=len(bars), missing=short))
+    cold = receipt["cold"]
+    cold_bad = [item for item in cold if item.get("error") or item.get("returned") != item.get("rows")]
+    wanted = {(venue, rows) for venue in venues for rows in budget["cold"]["rows"]}
+    done = {(item["venue"], item["rows"]) for item in cold if not item.get("error")}
+    gates.append(_gate("cold:2500_5000_overlap_per_venue", not cold_bad and wanted <= done,
+                       runs=len(cold), bad=len(cold_bad)))
+    setup = receipt["setup"]
+    gates.append(_gate("startup:bounded", not setup["failures"]
+                       and setup["seconds"] <= budget["startup"]["max_setup_seconds"],
+                       seconds=setup["seconds"], retries=setup["retries"], failures=setup["failures"]))
+    gates.append(_gate("teardown:no_leaked_work", receipt["leaked_tasks"] == 0, leaked=receipt["leaked_tasks"]))
+    ts_budget = budget["trading_system"]
+    samples = trading_system.get("samples", [])
+    not_ready = [item for item in samples
+                 if item.get("ready") != ts_budget["demanded_routes"]
+                 or item.get("demanded") != ts_budget["demanded_routes"]
+                 or (item.get("fallback") or 0) > ts_budget["max_fallback"]]
+    gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready,
+                       samples=len(samples), not_ready=len(not_ready)))
+    errors = [item.get("v2_error") for item in samples if isinstance(item.get("v2_error"), int)]
+    gates.append(_gate("ts:v2_error_not_increased",
+                       bool(errors) and max(errors) - min(errors) <= ts_budget["max_v2_error_increase"],
+                       first=errors[0] if errors else None, last=errors[-1] if errors else None))
+    codes = trading_system.get("disconnect_codes", {})
+    forbidden = {code: count for code, count in codes.items() if code in ts_budget["forbidden_disconnect_codes"]}
+    rate = trading_system.get("run_disconnects_per_minute")
+    base = trading_system.get("baseline_disconnects_per_minute")
+    gates.append(_gate("ts:no_auth_or_manifest_disconnect", not forbidden, forbidden=forbidden))
+    gates.append(_gate("ts:disconnects_within_baseline",
+                       rate is not None and base is not None
+                       and rate - base <= ts_budget["max_disconnect_rate_over_baseline_per_minute"],
+                       run_per_minute=rate, baseline_per_minute=base, codes=codes))
+    if final:
+        windows = receipt.get("fault_windows", {})
+        gates.append(_gate("final:fault_windows_ran",
+                           all(windows.get(key) for key in ("BURST", "SLOW_READER", "RECONNECT")),
+                           windows=windows))
+        for window in ("BURST", "RECONNECT"):
+            window_values = [value for key, values in series.items()
+                             if key.endswith(f"|{window}") for value in values]
+            gates.append(_gate(f"final:{window.lower()}_window_measured", bool(window_values),
+                               count=len(window_values)))
+    failed_gates = [item["gate"] for item in gates if item["status"] != "PASS"]
+    return {"stage": stage, "final": final, "status": "PASS" if not failed_gates else "FAIL",
+            "failed_gates": failed_gates, "gates": gates}
