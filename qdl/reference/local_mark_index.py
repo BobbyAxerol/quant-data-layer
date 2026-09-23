@@ -18,6 +18,7 @@ spool append and carries the quiet-session evidence execution requires.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import os
 
 import httpx
@@ -32,6 +33,8 @@ from qdl.runtime.execution_mark_index import (
 )
 
 _LOCAL_EPOCH = 1
+# Upper bound of the request freshness the private endpoint accepts.
+_ALPHA_STALE_AFTER_MS = 300_000
 _LOCAL_URL = "http://localhost"
 
 
@@ -49,6 +52,15 @@ class SpoolRefreshingMarkIndexView(ExecutionMarkIndexLiveView):
     def attach(self, *, spool, canonical_stream: str) -> "SpoolRefreshingMarkIndexView":
         self._spool = spool
         self._canonical_stream = canonical_stream
+        # Alpha reads are judged by the alpha's own declared freshness (the
+        # view bounds a read by min(request freshness, binding stale_after)).
+        # The binding's 2 s bound is the execution horizon; applied to alpha it
+        # pushed about 30 % of Binance reads (1 s mark cadence plus spool
+        # latency) back to venue REST. Execution reads never use this view.
+        self._bindings = {
+            uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
+            for uid, binding in self._bindings.items()
+        }
         return self
 
     async def read(self, *, instrument_uid: str, **kwargs):

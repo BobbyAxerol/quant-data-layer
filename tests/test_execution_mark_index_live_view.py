@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from qdl.query.lanes import ReadLaneRejected
 from pathlib import Path
@@ -1545,6 +1546,20 @@ class LocalAlphaMarkIndexReaderTests(unittest.IsolatedAsyncioTestCase):
         await reader.fetch(self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
         current = self.view._records[self.record.instrument_uid]
         self.assertEqual(current.spool_watermark_offset, 11)
+
+    async def test_alpha_reads_use_the_alphas_freshness_not_the_execution_bound(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        envelope = _envelope(self.binding, sequence=1, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, envelope, offset=10))
+        record_age_ms = 5_000  # older than the binding's 2 s execution bound
+        with patch("qdl.runtime.execution_mark_index.time.time_ns",
+                   return_value=NOW_NS + record_age_ms * 1_000_000):
+            ok = await reader_for_view(self.view).fetch(
+                self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+            strict = await reader_for_view(self.view).fetch(
+                self._request(), max_freshness_ms=2_000, source_policy_id="crypto_liquid_v2")
+        self.assertEqual(ok.status, ReferenceStatus.OK)
+        self.assertNotEqual(strict.status, ReferenceStatus.OK)
 
     async def test_an_empty_spool_is_typed_not_ready(self):
         from qdl.reference.local_mark_index import reader_for_view

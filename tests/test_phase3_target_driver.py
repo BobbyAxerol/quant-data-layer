@@ -222,6 +222,18 @@ class AcceptanceTests(unittest.TestCase):
         ts["run_disconnects_per_minute"] = 30.0
         self.assertIn("ts:disconnects_within_baseline", self._evaluate(ts=ts)["failed_gates"])
 
+    def test_only_the_owner_approved_quiet_slice_may_be_unready(self):
+        doge = {"provider": "OKX", "symbol": "DOGE-USDT-SWAP", "feed": "QUOTE", "state": "STALE"}
+        ts = _passing_ts()
+        ts["samples"] = [*ts["samples"], {"ready": 59, "demanded": 60, "fallback": 0, "v2_error": 7,
+                                           "unhealthy": [doge]}]
+        self.assertNotIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        other = {**doge, "symbol": "ETH-USDT-SWAP"}
+        ts["samples"][-1]["unhealthy"] = [other]
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        ts["samples"][-1].update(ready=58, unhealthy=[doge])  # a second, unreported slice is down
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+
     def test_final_run_requires_its_fault_windows(self):
         receipt = _passing_receipt(final=True)
         receipt["fault_windows"]["RECONNECT"] = 0

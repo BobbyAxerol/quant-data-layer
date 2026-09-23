@@ -53027,6 +53027,37 @@ refinement without the owner's next request.
   **Packet (recorded before execution):** image from this commit, Query x2 only
   (1.50 CPU / 1 GiB), rollback `10779794...`; Stream keeps `59f70779...`.
 
+- 2026-09-23: **owner decisions** on the five open items: (1) deploy `94f2db4`
+  - yes; (2) Stream write path - option **A**, measure then optimise inside the
+  single writer, no new service, with a stop point before any sharding; (3) TS
+  gate - **OKX DOGE-USDT-SWAP QUOTE may be stale** (it trades rarely), everything
+  else stays 60/60; (4) historical 15m-4h holes - **controlled, sequential
+  backfill** that must not disturb the stream; (5) **Query 1.5 CPU accepted as a
+  recorded exception** to the resource-neutral rule (ceiling sum 23.75 -> 24.75).
+  **(1) done:** `2.1.1-94f2db4` (`sha256:ca6584f1...`, full suite 1,983 tests,
+  the same five pre-existing errors) on Query x2, `ROLLED_HEALTHY`, TS 60/60; OKX
+  alpha MARK 20/20 in-process at p50 7.3 ms. Binance 6 of 20 fell back to REST:
+  the view bounds a read by `min(request freshness, binding stale_after)`, and
+  the binding's 2 s is the execution horizon - Binance marks arrive each second
+  plus spool latency. **Fix:** the in-process alpha view judges alpha reads by
+  the alpha's declared freshness (bindings' `stale_after_ms` lifted to the
+  endpoint's 300 s ceiling in that view only; execution's stream view unchanged).
+  Test: a 5 s-old record is OK at 60 s requested, refused at 2 s.
+  **(2A) instrumentation:** `qdl_stable_ingest_spans` - one line per 10 s from
+  the stream ingest handler: decode/validation, raw lookup, pre-spool view,
+  publish, post-append view, total, events/s, subscribers, and from the spool's
+  own counters the append **lock wait** and **lock hold** (SQLite work + fsync);
+  fan-out is publish minus wait and hold. Tests: `tests/test_stable_ingest_spans.py` (2).
+  **(3) recorded before the runs:** `trading_system.allowed_quiet_slices` in the
+  frozen budget; a sample passes only if every unready slice is that one and it
+  is the whole shortfall. Tests (3). A runtime relaxation of the DOGE age would
+  need a TS code change, a TS manifest revision (with the paired TS JWT revision)
+  and a `market_data_service` recreate - prepared separately for the owner.
+  **Packet (recorded before execution):** one image from this commit; Query x2
+  (1.50 CPU / 1 GiB), rollback `ca6584f1...`; then Stream passive/active,
+  rollback `59f70779...` (TS handover dip ~1-2.5 min, as recorded). Not touched:
+  projectors, bar edge, Rust, ingestors, Kafka, Redis, SQLite data, TS, alpha.
+
 **Remaining:** items (a)-(f) of the entry above, then the 50+TS final gate and
 the v2.1.1 publication and provenance steps of the
 [closure contract](#read-plane-v211-target-closure). Complete v2.1.1 remote CI/release,

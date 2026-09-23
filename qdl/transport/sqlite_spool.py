@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import hashlib
 import json
 import shutil
@@ -163,6 +165,10 @@ class SQLiteDurableSpool:
         # ``_hot_reader``. Lock order is always ``_lock`` then ``_hot_lock``.
         self._hot_lock = threading.Lock()
         self._hot_connection: sqlite3.Connection | None = None
+        self.append_timing = {
+            "calls": 0, "rows": 0, "wait_ns": 0, "hold_ns": 0,
+            "max_wait_ns": 0, "max_hold_ns": 0,
+        }
         self._retention_data_version: int | None = None
         self._dense_retained_partitions: set[tuple[str, str]] = set()
         config.path.parent.mkdir(parents=True, exist_ok=True)
@@ -536,7 +542,7 @@ class SQLiteDurableSpool:
             raise BackpressureRequired("event exceeds configured per-event bridge bound")
         total_input_bytes = sum(len(event.payload) for event in events)
 
-        with self._lock:
+        with self._timed_append_lock(len(events)):
             self._preflight_disk(total_input_bytes)
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -765,6 +771,31 @@ class SQLiteDurableSpool:
                 (stream, partition_key, limit),
             ).fetchall()
         return [self._stored_event(row) for row in reversed(rows)]
+
+    @contextmanager
+    def _timed_append_lock(self, rows: int):
+        """Hold ``_lock`` for one append and record how long it waited and held.
+
+        Read by the stream ingest spans: a batch append's time splits into
+        waiting for this lock, holding it (SQLite work and fsync), and the
+        gateway's fan-out after it returns.
+        """
+
+        started = time.perf_counter_ns()
+        with self._lock:
+            acquired = time.perf_counter_ns()
+            try:
+                yield
+            finally:
+                held = time.perf_counter_ns() - acquired
+                waited = acquired - started
+                timing = self.append_timing
+                timing["calls"] += 1
+                timing["rows"] += rows
+                timing["wait_ns"] += waited
+                timing["hold_ns"] += held
+                timing["max_wait_ns"] = max(timing["max_wait_ns"], waited)
+                timing["max_hold_ns"] = max(timing["max_hold_ns"], held)
 
     def _hot_reader_locked(self) -> sqlite3.Connection:
         """A second, query-only connection for one-statement hot reads.
