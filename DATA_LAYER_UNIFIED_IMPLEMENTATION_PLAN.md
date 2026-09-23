@@ -53131,3 +53131,30 @@ source `83fa1bc`; no extra worktree, push, merge, tag or release.
 Commit uses `BobbyAxerol <vugioan11022002@gmail.com>` and contains only the
 requested review document and this appended journal. Next step is owner review
 of the proposal, not automatic implementation of Phase 1.
+
+<a id="kafka-native-opus-merged-plan"></a>
+### 2026-09-23 - Opus Assessment Of Astra Addendum And Merged Four-Phase Plan
+
+**Status: DOCUMENTATION COMPLETE / MERGED DECISIONS D1-D9 AWAIT OWNER APPROVAL.**
+Appended section 14 to
+[the Kafka-native architecture review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#opus-astra-merged-plan):
+a point-by-point assessment of Astra section 13, corrections to the Opus
+prefix, merged decisions D1-D9, the technical design (cursor token v3,
+single-replica replay-to-live without a lease, in-process `LatestView` with a
+local checkpoint instead of an external latest sink, one BAR materializer
+committing rows and offsets in one transaction, cutover by consumer-network
+alias), a work-item breakdown for four phases with numeric exits, the shadow
+resource budget and the approval list.
+**Read-only checks this turn:** projector lag at 15:58:30Z (p3 35,292, all
+other partitions below 1,000); Rust workspace members contain no gRPC/HTTP
+server or JWT crate; `stable_bar_edge.py:102-109,922` binds the BAR edge to
+the spool `cache_identity`; `GapFreeHandoff.acknowledge` has no caller under
+`qdl/stream` while SDK acknowledgement is client-local; `phase8-consumer`
+holds topic READ/DESCRIBE; TS reaches Data Layer through the
+`qdl-v2-query` / `qdl-v2-stream-a|b` aliases.
+**Correction:** the Opus appendix A1 first printed the p3/p5 lag pair in the
+reverse direction; the lag was falling. Two figures were corrected and A10
+added; this changes the Opus-prefix hash recorded in the Astra entry above.
+No source, config, runtime, Kafka, Redis, SQLite, TS or alpha change; no
+build, push, merge or release. Next step is owner approval of D1-D9 and the
+Phase-1 runtime scope in section 14.9.
