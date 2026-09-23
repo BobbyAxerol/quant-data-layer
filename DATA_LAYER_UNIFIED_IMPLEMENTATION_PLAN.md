@@ -52394,11 +52394,61 @@ refinement without the owner's next request.
   so the next alpha deployment must set 13 (binance) and 12 (okx); no alpha
   container is running, so none is stranded now.
 
-**Remaining:** perform the previously denied
-exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
-[target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);
-verify both replicas and repaired history; optimize and A/B selective caps if
-necessary; then pass the 5/20/35/50+TS gates. Complete v2.1.1 remote CI/release,
+- 2026-09-23: **quota option A - rollout result.** Image
+  `qdl-v2-python:2.1.1-ae2d62a` (`sha256:37d7f5182ea1...`, `git archive` of
+  `ae2d62a` on the `a231...` reader base, network disabled) now serves
+  **Query x2 and Stream x2**, each rolled serially by the hash-asserting packet
+  scripts, all four `healthy`, receipts `ROLLED_HEALTHY`
+  (`quota-a-query-rollout.json`, `quota-a-stream-rollout.json` in the run
+  directory). **Read-back, against live Query on both replicas:** the OKX alpha
+  identity with revision **12** is admitted on `query_v2_1` and `query_v2_2`;
+  the same identity with the superseded revision **11** is refused by both with
+  `workload token is not bound to the active consumer manifest revision` - the
+  fence works in the direction that matters. TS: `READY 60/60`, fallback 0,
+  `v2_error` 0 at 08:01:06Z and again at 08:03:19Z.
+  **The Stream roll costs the consumer a visible dip, and it is the lease
+  handover.** TS disconnects per minute: 07:58 **35**, 07:59 **34**, 08:00 5,
+  then 1-2 a minute - the same background as before any rollout (07:47-07:55:
+  1-5 a minute). The dip is `MARK_INDEX` `SOURCE_UNAVAILABLE` (plus one BAR
+  `DEPENDENCY_UNAVAILABLE`) while the passive takes the lease; TS was
+  `DEGRADED 51/60` at 08:00:14Z and back to 60/60 52 s later without
+  intervention. Any later Stream rollout carries the same cost.
+- 2026-09-23: **the 07:44Z consumer burst, root-caused before load testing.**
+  At 07:44-07:46Z, before any rollout of this session, TS logged 27 disconnects
+  a minute (`MARK_INDEX` `SOURCE_UNAVAILABLE`, OKX `QUOTE` `DATA_STALE`).
+  **Measured, not inferred:** the upstream did not slow down, it spiked. The
+  three `rust_core` progress lines give canonical rates of 281, **914** and
+  421 per second at 07:44:14-07:45:13Z against 150-300 each before and after,
+  about **1,600/s** combined. All **six** projectors show it in the same
+  10-second window (07:44:35Z): `durable_append_ms` mean went from 36-108 to
+  600-1,600, peaking at 2,500-5,100 at 07:45:20Z - including `projector_v2`,
+  whose batches never filled (its `broker_poll` stayed at its 200 ms idle
+  timeout). A shared wall rising on every writer at once is the stream process
+  that holds the lease, not the projectors. `canonical_age_ms` peaked at
+  **48,070** on `projector_v2_4` (partition 3, the largest) and 1.8-35.7 s on
+  the others; all six were back to 200-400 ms by 07:47:30Z on their own.
+  This is the single-writer ceiling recorded at
+  [DL-V2 R1 outcome](#dl-v2-r1-outcome-20260916) (about 1,240/s then), met by
+  a market burst rather than steady load. The structural lever there - sharding
+  the gateway lease - is new architecture and outside the three-phase scope the
+  owner set. **What is measured about the writer's cost:** the stream container
+  wrote **2,273-4,933 IOs/s (9.5-20.6 MB/s)** in two 20 s samples against about
+  500 canonical events/s, so each event costs several write IOs; the EBS root
+  volume ran 3,384-7,175 write IOPS in total with 1.10 ms mean write latency in
+  the calm sample. **Not verified:** whether EBS itself throttled at 07:44Z -
+  no CloudWatch access from this host and no retained device history - and how
+  the append cost divides between validation, lock wait and fsync, because the
+  stream image carries no profiler and its logs were replaced by the 07:58Z
+  roll. **Consequence for Phase 3:** the alpha load adds read work to the same
+  process, so the Phase-3 runs record projector `durable_append_ms` and
+  `canonical_age_ms` next to consumer latency; if the writer is what fails a
+  stage, the write path is optimized with an A/B there, not before.
+
+**Remaining:** finish the Phase-3 driver's target path and
+[acceptance budget](#read-plane-v211-target-closure) (the BAR repair, the
+BAR-edge recovery, quota A and both reader rollouts are done above);
+optimize and A/B selective caps if a stage needs it; then pass the
+5/20/35/50+TS gates. Complete v2.1.1 remote CI/release,
 source/runtime provenance and scoped cleanup before closing this upgrade.
 **Technical-debt rule:** unresolved in-scope correctness/capacity defects block
 their exit. Real external limitations and explicitly accepted reduced scope must
