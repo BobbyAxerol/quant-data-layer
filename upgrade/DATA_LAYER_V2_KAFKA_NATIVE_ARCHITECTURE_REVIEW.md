@@ -1,0 +1,1117 @@
+# Data Layer V2 — Đánh giá kiến trúc và đề xuất quay về đúng bản chất Kafka
+
+> **Trạng thái:** bản thảo để thảo luận (2026-09-23). Chưa có quyết định. Không có thay đổi
+> runtime hay code nào đi kèm tài liệu này.
+> **Người đọc:** owner + Astra, dùng làm đầu vào để chốt 4 phase sửa kiến trúc.
+> **Quy ước bằng chứng:** mọi con số đều ghi lệnh/nguồn tạo ra nó (Phụ lục A). Chỗ nào chưa
+> kiểm được ghi rõ **[chưa kiểm]**, ước lượng ghi **[ước lượng]**. Đường dẫn code tính trong
+> repo `/home/bobby/data_layer`, commit `83fa1bc`.
+
+---
+
+## 0. Tóm tắt một trang
+
+1. **Kafka đã làm đúng việc, nhưng sau đó bị làm lại một lần nữa theo cách yếu hơn.**
+   rust_core ghi `md.canonical.v2` theo transaction exactly-once, RF3, 6 partition, giữ
+   thứ tự theo key. Sau Kafka, toàn bộ 6 partition lại bị dồn qua HTTP vào **một process
+   Python duy nhất** để ghi thêm một bản log thứ hai (SQLite, fsync). Tính song song của
+   Kafka bị triệt tiêu. Trần hệ thống là ~1.200 event/s, đã đo 4 lần.
+2. **99,7% dữ liệu ghi vào SQLite là loại không consumer nào đọc lại làm lịch sử.**
+   Tick (TRADE/QUOTE/BOOK/MARK) chiếm 99,7% số event trong spool. Trong **cả 6 manifest
+   consumer**, mọi feed tick đều có `warmup_limit: 0`. Chỉ BAR cần lịch sử, và BAR chỉ
+   chiếm **0,3%** lượng ghi. Hệ thống đang trả chi phí fsync + khoá + GIL cho dữ liệu
+   không ai dùng theo cách đó.
+3. **Kiến trúc này là kết quả bồi đắp, không phải một lựa chọn tổng thể.** SQLite (08-13)
+   và gateway active/passive (08-14) có trước Kafka (08-15). Ở Phase B, Kafka được đặt
+   *phía dưới* gateway cũ thay vì xây gateway mới *trên* Kafka. SQLite chỉ đổi nhãn thành
+   "cache", còn thủ tục gỡ bỏ ghi trong ADR-0006 chưa bao giờ được thực hiện.
+4. **Phần đáng giữ rất nhiều.** Hợp đồng với consumer (proto, SDK, cursor ký HMAC, giao
+   thức phục hồi, manifest) **độc lập với backend**. Nhờ vậy có thể thay phần lõi mà TS và
+   alpha gần như không phải sửa.
+5. **Đề xuất (phương án C, "Kafka-native"):**
+   - Kafka là nguồn sự thật duy nhất.
+   - Luồng realtime đọc Kafka trực tiếp, song song, không cần lease.
+   - Giá trị mới nhất (latest) nằm trong Redis như một cache thuần có thể dựng lại.
+   - Chỉ BAR có kho lịch sử riêng (tốc độ ghi thấp, SQLite là đủ).
+   - Bỏ chặng HTTP, bỏ writer đơn, bỏ lưu tick vào SQLite.
+   - Làm trong 4 phase, chạy shadow song song với stack hiện tại, rollback bằng cách
+     trỏ consumer về stack cũ. **[ước lượng]** 2–3 tuần.
+
+---
+
+## 1. Mục tiêu và ràng buộc của owner
+
+| Hạng mục | Mục tiêu |
+|---|---|
+| Thông lượng | Chịu được **2.000–3.000 event/s** bền vững, thị trường sôi động hay không; có dư địa khi burst |
+| Latency (p95 / p99) | QUOTE/TRADE ≤100/≤250 ms · MARK_INDEX ≤250/≤500 ms · L2 ≤300/≤750 ms · BAR ≤1000/≤2000 ms |
+| Tải kiểm chứng | 50 workload alpha (20/15/10/5) + TS 60 route thật (`config/v2/v211-target-acceptance-budget.json`) |
+| Tính đúng | Có thứ tự theo slice, không mất dữ liệu, replay được, phát hiện gap. Đây là lý do có Kafka |
+| Tài nguyên | Tận dụng máy hiện có (16 vCPU / 30 GB), **không phung phí**; không thêm service khi service có sẵn làm được (rule 3b) |
+| Vận hành | V2 là nguồn chính, V1 là fallback; rollback theo digest; không làm gãy TS/alpha |
+| Thời gian | Không kéo dài thêm; mỗi phase có cổng thoát đo được |
+
+---
+
+## 2. Hiện trạng
+
+### 2.1 Đường đi dữ liệu
+
+```text
+Sàn WS ─► ingestor (Rust) ─► Kafka md.raw.realtime.v2
+        ─► rust_core ×3 (transaction EOS) ─► Kafka md.canonical.v2  (6 partition, RF3, 6h)
+        ─► projector ×6 (Python, mỗi cái 1 partition)
+              │  decode + kiểm tra lại + đọc SQLite để dedup + tính lại sha raw
+              │  JSON + base64 + HMAC
+              ▼
+           HTTP POST ─► stream_v2_active  → 409 (không giữ lease)
+                     ─► stream_v2_passive → 200 (đang giữ lease)   ← MỘT process Python
+                            decode + kiểm tra lại lần nữa + sha lần nữa
+                            SQLite append_many (1 file 3,3 GB, synchronous=FULL, fsync)
+                            fan-out gRPC cho ~100 subscriber + live view MARK/INDEX
+              │  (sau ACK) projector đọc lại SQLite để xác minh offset
+              ▼
+           Redis stable_redis: latest + key tương thích V1 + lease + cache identity
+Query ×2 ──► đọc CHUNG file SQLite đó (snapshot, warmup, history)
+```
+
+Bằng chứng: `qdl/runtime/stable_projector.py:341-351,863-1031`,
+`qdl/runtime/stable_ingest.py:141-368,495-578`, `qdl/stream/gateway.py:356-408`,
+`qdl/transport/sqlite_spool.py:196-202,536-702`, `qdl/runtime/lease.py:186-326`,
+`qdl/projection/stable.py:132-416`.
+
+### 2.2 Số đo hôm nay (≈15:00–15:10 UTC, 2026-09-23)
+
+| Chỉ số | Giá trị | Nguồn (Phụ lục A) |
+|---|---|---|
+| Lượng sản sinh canonical (thị trường đang yên) | **≈835 event/s** (53.431 event / 64 s) | A1 |
+| Tốc độ writer tiêu thụ khi có backlog | **≈1.178 event/s** (75.418 / 64 s) | A1 |
+| Trần writer đo trước đó | 1.240/s (09-16), ~1.600/s có backlog 48 s (07:44Z), 1.100–1.200/s (stage 35) | Plan `dl-v2-r1-outcome-20260916`, journal 09-23 |
+| Lượng raw khi thị trường sôi động | 2.749 raw/s (09-16, backlog lên 2,4 triệu) | Plan:38913-38973 |
+| Backlog hiện tại | p3 = 642.232, p5 = 317.506 (đang giảm ~343/s) | A1 |
+| Lệch tải partition | p3 và p5 nhận **57%** lưu lượng; p3 ≈ 4,2 lần p1 | A1 |
+| POST lãng phí | mỗi batch = 1 lần 409 + 1 lần 200 (vd. 85/85 mỗi phút) | A2 |
+| CPU máy | bận ~87% (67% us, 13% sy, 4,6% wa); **V2 dùng ≈7,8 vCPU** | A3 |
+| Kafka canonical / raw trên đĩa (1 broker) | 7.062 MB cho 6h (≈1,18 GB/h) so với 7.940 MB cho 8h (≈0,99 GB/h) | A4 |
+| Spool SQLite | 3,30 GB + WAL 64 MB | A5 |
+| Tỷ lệ event trong spool theo feed | trade 43,5% · book 24,9% · quote 23,4% · mark 7,8% · **bar 0,3%** | A6 |
+| Số key | 188 key, trong đó **140 là BAR** | A6 |
+| Feed cần warmup (`warmup_limit>0`) trong 6 manifest | **chỉ BAR** | A7 |
+| Code đường lõi projector/stream | 13 module, 8.159 dòng; `qdl/` tổng 59.103 dòng | báo cáo đọc code |
+
+Nhận xét: **topic canonical nặng hơn topic raw** tính theo giờ, dù dữ liệu canonical đã
+chuẩn hoá lẽ ra phải nhỏ hơn. Nguyên nhân là mọi bản ghi canonical đều mang theo toàn bộ
+raw envelope trong header `qdl-raw-provider-envelope`
+(`rust/qdl-kafka/src/bin/qdl-realtime-core.rs:412`, `rust/qdl-kafka/src/lib.rs:836-839`).
+Dữ liệu raw vì vậy được lưu 2 lần, rồi nhân 3 bản sao.
+
+### 2.3 Giới hạn tài nguyên từng role (docker inspect)
+
+| Role | CPU | RAM |
+|---|---|---|
+| kafka1 / kafka2 / kafka3 | 1,25 / 1,75 / 1,75 | 1,5 / 2 / 1,5 GiB |
+| rust_core ×3 | 1,0 + 0,5 + 0,5 | 256 MiB mỗi cái |
+| ingestor ×2 | 0,5 mỗi cái | 256 MiB |
+| projector ×6 | 1,0 mỗi cái | 768 MiB |
+| stream active + passive | 2,0 mỗi cái | 1 GiB |
+| query ×2 | 1,5 mỗi cái | 1 GiB |
+| stable_redis | 0,5 | 160 MiB |
+| binance_bar_edge | 0,75 | 512 MiB |
+| **Tổng trần** | **≈19,3 vCPU** trên máy 16 vCPU | |
+
+---
+
+## 3. Tại sao lại thành thiết kế SQLite spool?
+
+Đây là phần quan trọng nhất để không lặp lại sai lầm. Nhìn lại lịch sử, **từng bước đều
+hợp lý tại thời điểm của nó**. Cái sai nằm ở chỗ không bao giờ quay lại xem xét tổng thể.
+
+### 3.1 Dòng thời gian
+
+| Ngày | Quyết định | Lý do được ghi lại |
+|---|---|---|
+| 08-13 | Thêm SQLite WAL spool (`0ea4f52`) | ADR-0006 "Why Not Kafka Yet": chứng minh ngữ nghĩa replay/cursor cho **2 symbol** mà không phải vận hành một cụm Kafka. ADR ghi rõ: *"not the long-term canonical backbone"*, *"single-host failure-domain bridge… must never be promoted to broad-universe/book-delta authority"*, và có **Sunset Procedure 5 bước** |
+| 08-13 | Guide §7.2 | Stage C: chuyển sang Kafka khi thông lượng, số consumer hoặc HA **vượt vùng an toàn của cầu tạm** |
+| 08-14 | Phase 7.1 chọn gateway **active/passive** (`fa8cbb2`) | Plan:1263-1274 ghi 2 lựa chọn: (1) active/passive với lease, (2) **gateway theo partition dùng offset gốc của broker**. Chọn (1), **không ghi so sánh**. Lý do suy ra: ngày đó chưa có Kafka, nên (2) không làm được |
+| 08-14 | Phase 7.2: Query và Stream dùng **chung một file spool** | Để snapshot và stream cursor chung một watermark (PHASE72 report:16-17) |
+| 08-15 | Kafka RF3 ra đời (Phase 8.0) | Muộn hơn quyết định active/passive **một ngày** |
+| 08-19 | Phase B: Kafka thành "replay authority" (`fcfd862`) | Giữ nguyên gateway, endpoint HTTP ingest và spool; thêm projector Python làm cầu Kafka→HTTP→gateway. SQLite được đổi nhãn thành *"rebuildable bounded cache"* (Plan:3992, 4038) |
+| 08-19 | Redis + SQLite gộp thành "một đơn vị cache" có cache identity (`6af2f25`) | Để fence khi rebuild. Hệ quả: Redis mất thì projector từ chối chạy (`ProjectionCacheMismatch`) |
+| 09-16 | Phát hiện trần ~1.240/s (R1) | Hai đòn bẩy: shard lease, hoặc gộp feed latest-state. Đều bị hoãn vì là *"a phase of its own"* |
+| 09-17, 09-23 | Hoãn lần 2 và 3 | *"sharding the gateway lease… is new architecture and outside the three-phase scope"* |
+| 09-23 | Owner chọn phương án A (tối ưu bên trong writer đơn) | Tôi làm theo; kết quả là thêm vá víu, không nâng được trần |
+
+### 3.2 Năm nguyên nhân gốc
+
+1. **Chứng minh ngữ nghĩa trước, hạ tầng sau.** Chọn SQLite ở 08-13 là đúng cho mục tiêu
+   2 symbol. Sai ở chỗ **cầu tạm không bao giờ bị gỡ**: Sunset Procedure của ADR-0006
+   không có dấu vết thực hiện, và sau 08-13 **không có ADR nào** cho stable edge, lease hay
+   việc spool thành "cache".
+2. **Kafka được lắp *phía dưới* gateway cũ, không phải gateway mới được xây *trên* Kafka.**
+   Phase B cần giữ gateway đã chứng nhận và hợp đồng consumer, nên chèn projector làm cầu.
+   Từ đó Kafka chỉ còn là **bộ đệm thượng nguồn**: consumer không bao giờ đọc Kafka
+   (Plan:38891-38900 ghi đúng như vậy).
+3. **Lựa chọn "theo partition" bị loại vì một lý do đã hết hiệu lực.** Nó cần offset gốc
+   của broker, mà ngày 08-14 chưa có. Một ngày sau đã có Kafka, nhưng không ai xem lại.
+   Invariant 37 (Plan:150-153) còn ghi rõ lối đi đúng: *"broker-native cursor/barrier or
+   one active fenced gateway **per partition**"*. Chỉ có 1 shard từng được triển khai.
+4. **Mọi feed bị đối xử như nhau.** Thiết kế chưa bao giờ hỏi "loại dữ liệu nào cần đảm bảo
+   gì". Tick 1.000+/s chỉ cần latest + live + replay ngắn khi reconnect. BAR vài event/s
+   mới cần lịch sử 10k dòng. Cả hai bị ép qua cùng một kho bền có fsync.
+5. **Chứng nhận đóng băng invariant.** Mỗi phase ghi rõ *"No change to the active/passive
+   lease or the single-writer invariant"* (Plan:38743). Đo ở mức thành phần (SQLite đạt
+   40k/s) che mất cái phễu ở mức hệ thống (một process Python). Phiên làm việc hôm nay của
+   tôi cũng rơi vào đúng khuôn này (xem §6).
+
+### 3.3 So với thiết kế đích ban đầu (Guide)
+
+| Guide nói | Thực tế |
+|---|---|
+| Rust sở hữu *"durable publication, projector và replay"* (Guide:33) | Projector và replay là Python |
+| Log bền append-only đặt trước Redis; Redis chỉ là cache (Guide:39) | Có thêm một log bền thứ hai (SQLite) giữa Kafka và consumer |
+| Kafka là *"partitioned durable replay log… consumer groups"* (Guide:461); *"consumer group có thể scale"* (Guide:1002-1006) | Consumer không đọc Kafka; 6 partition dồn về 1 writer |
+| Target flow: Canonical Log → Redis latest / gRPC gateway / Historical materializer (Guide:50-61) | Không có tầng SQLite nào trong target flow |
+| PostgreSQL cho lease/fencing (Guide:40) | Lease nằm trong Redis tạm (tmpfs, không AOF) |
+| Canonical retention 7–30 ngày, raw 24–72h (Guide:1016-1026) | Canonical 6h, raw 8h; spool giữ lâu hơn Kafka. "Cache" đang là bản duy nhất của lịch sử BAR |
+
+---
+
+## 4. Ưu điểm khách quan của hệ thống hiện tại (phải giữ)
+
+1. **Hợp đồng consumer tốt và độc lập backend.** Proto `query.proto` không lộ offset
+   Kafka; cursor là token HMAC mờ (`qdl/replay/handoff.py:86-216`); SDK có giao thức phục
+   hồi rõ ràng: `RECONNECTED`, `SNAPSHOT_REPLACED`, retry theo lỗi
+   (`qdl_sdk/client.py:317-364`), và đã hỗ trợ **nhiều target gRPC**
+   (`qdl_sdk/transport.py:464-502`). **Đây là tài sản lớn nhất**: vì hợp đồng này, thay
+   lõi không kéo theo sửa TS và alpha.
+2. **Tầng thượng nguồn đúng chuẩn.** Ingestor Rust idempotent; rust_core dùng transaction
+   consume-transform-produce (`rust/qdl-kafka/src/lib.rs:826-898`), `read_committed`,
+   RF3, min ISR 2, không cho bầu leader bẩn.
+3. **Thứ tự theo slice và phát hiện gap có ở nhiều tầng**: `partition_sequence` do
+   rust_core cấp một cách tất định từ offset raw (`rust/qdl-realtime-core/src/lib.rs:593-608`);
+   sequence của sàn cho book (`sequence_verified`, `book_generation`).
+4. **Manifest, quota, entitlement, catalog** là một mô hình khai báo tốt, dùng lại được.
+5. **Tầng đọc đã đạt mục tiêu latency** ở stage 20 sau các bản sửa hôm nay (QUOTE p99
+   105–111 ms, MARK_INDEX p99 148–156 ms, 0 lỗi).
+6. **Kỷ luật vận hành**: build theo digest, script roll có kiểm hash và rollback, boot
+   recovery, sổ chứng nhận, driver kiểm chứng tải 50 alpha với budget đóng băng. Driver
+   này độc lập backend và **dùng lại nguyên được** để nghiệm thu kiến trúc mới.
+7. **Tính đúng khi chuyển từ replay sang live**: barrier theo partition trong gateway
+   (`gateway.py:273-349`) đảm bảo subscriber không mất event. Kiến trúc mới phải giữ tính
+   chất này, dù bằng cơ chế khác.
+
+---
+
+## 5. Nhược điểm (phần quan trọng hơn)
+
+### 5.1 Phễu writer đơn triệt tiêu song song của Kafka
+- Chỉ một process giữ lease được ghi (`stable_ingest.py:164-167` trả 409 cho process còn lại).
+  Mọi append đều đi qua một `threading.RLock` (`sqlite_spool.py:163`), trong một process
+  Python bị GIL giới hạn ở một lõi.
+- Trần ~1.200/s, trong khi mục tiêu là 2.000–3.000/s và raw đã từng lên 2.749/s. **Thêm
+  CPU không giải quyết được**, vì vấn đề nằm ở số process có quyền ghi, không ở số lõi.
+- Hệ quả hôm nay: backlog 1,5 triệu, TS còn 35/60.
+
+### 5.2 Ghi bền 99,7% dữ liệu không ai đọc lại làm lịch sử
+- Tick chiếm 99,7% số event trong spool (A6). Mọi manifest đặt `warmup_limit: 0` cho tick
+  (A7). Consumer tick chỉ cần giá trị mới nhất, luồng live, và replay ngắn khi reconnect
+  (TTL cursor là 1h, `stable.py:387`).
+- Chính dữ liệu này tạo ra 2.273–4.933 IO/s (Plan:52433-52437), chiếm khoá và làm GIL
+  tranh chấp với Query.
+
+### 5.3 Ba kho dữ liệu phải giữ khớp nhau
+- Kafka (authority) + SQLite ("cache", nhưng giữ BAR lâu hơn Kafka) + Redis (latest, lease,
+  cache identity, quota).
+- Chúng bị buộc vào nhau bằng `cache_id`: Redis mất thì projector dừng
+  (`projection/stable.py:190-242`). Đó là lý do có runbook rebuild, unit boot-recovery, và
+  lời dặn "không bao giờ recreate `stable_redis`".
+- Retention bị đảo ngược: Kafka canonical 6h, còn spool giữ tới 12.064 dòng mỗi key (BAR
+  1m ≈ 8 ngày). "Cache" thực tế là bản duy nhất của lịch sử BAR ngoài 6h.
+
+### 5.4 Làm lại cùng một việc ở mỗi chặng, cho từng event
+- Protobuf decode khoảng 5 lần (projector 4 lần, stream 1 lần). Sha256 raw tính lại 3 lần.
+  JSON + base64 + HMAC chỉ để đi qua một chặng HTTP nội bộ.
+- Projector đọc SQLite 2 lần mỗi batch (dedup trước khi gửi, xác minh sau ACK), cả hai lần
+  **dưới khoá writer** (`sqlite_spool.py:1102-1132`).
+- Mỗi batch gửi 2 POST (409 + 200) vì danh sách URL chỉ dùng để failover
+  (`stable_ingest.py:504-529`).
+- Fan-out quét tuyến tính mọi subscription cho mọi event (`gateway.py:400-407`).
+- Topic canonical nhúng toàn bộ raw, nên nặng hơn cả topic raw (§2.2).
+
+### 5.5 Đọc và ghi chung một file
+- 11+ process mở cùng `canonical-cache.sqlite3` (compose, volume `stable_state`). Warmup
+  lớn giữ khoá hoặc snapshot lâu. Query phải có lane, duty cycle cho việc lạnh, kết nối
+  "hot" riêng, chỉnh GC và switch interval. **Toàn bộ các bản vá hôm nay là triệu chứng
+  của việc dùng chung file này.**
+
+### 5.6 Lease: failover là bàn giao cả đường ống
+- Chỉ một shard (`stable-stream-v2`). Khi lease đổi chủ: mọi subscription bị đóng, mọi
+  consumer reconnect, projector dò URL. TS mất 1–2,5 phút mỗi lần.
+- Lease nằm trong Redis tmpfs không AOF, và healthcheck `/health/dependencies` luôn trả
+  200 kể cả ở process bị fence.
+
+### 5.7 Độ phức tạp so với giá trị mang lại
+- 8.159 dòng cho đường lõi projector/stream; 76 commit trên 3 file lõi; 4 loại dedup
+  (exact, semantic, recovery-overlap, duplicate-resolution).
+- Để so sánh: V1 dùng 12.310 dòng cho **toàn bộ** hệ, chỉ WS → Redis SET + PUBLISH
+  (`app/cache/redis_cache.py:183-208`). V1 không bền, nhưng cho thấy lõi realtime vốn có
+  thể mỏng.
+
+### 5.8 Tài nguyên
+- V2 dùng ≈7,8 vCPU, máy bận 87% (A3). Tổng trần CPU các role (≈19,3) vượt số lõi thật (16).
+- Phần lớn CPU đi vào việc lặp (§5.4) và vào Kafka phải chở raw hai lần.
+
+### 5.9 Test bằng fake che lỗi thật (quy trình)
+- Commit `83fa1bc` gọi `gateway.subscriber_count()` (`stable_ingest.py:118`), trong khi
+  `subscriber_count` là `@property` (`qdl/stream/gateway.py:526-528`). Cứ ~10 s sẽ có một
+  POST đã ghi bền nhưng trả 500.
+- Test dùng fake có `staticmethod` nên không bắt được lỗi
+  (`tests/test_stable_ingest_spans.py:15-18`).
+- **Không ảnh hưởng runtime hiện tại**: Stream đang chạy `ae2d62a`. Nhưng không được đưa
+  `83fa1bc` lên Stream khi chưa sửa.
+
+---
+
+## 6. Sai lầm phương pháp của tôi trong phiên này
+
+- **Vá triệu chứng thay vì đặt mục tiêu công suất.** Tôi tối ưu từng điểm nghẽn (lane,
+  khoá, GC, duty cycle, MARK) trong khi thông số quyết định là trần writer đơn. Con số này
+  đã được ghi từ 09-16.
+- **Áp tinh chỉnh chỉ dành cho Query sang Stream mà không đo trước** (ngưỡng GC trong
+  `0070d74`). Hậu quả là Stream bị OOM hai lần, phải revert, và backlog 1,5 triệu.
+- **Bản sửa MARK đầu tiên đẩy thêm tải vào Stream**, đúng process đang là nút cổ chai.
+- **Test span bằng fake** nên lọt lỗi ở §5.9.
+
+Nguyên nhân chung: tôi coi kiến trúc là cố định và chỉ tối ưu bên trong nó, thay vì hỏi
+kiến trúc có phù hợp với mục tiêu không.
+
+---
+
+## 7. Nguyên tắc cho kiến trúc mới
+
+1. **Kafka là nguồn sự thật duy nhất cho dữ liệu realtime.** Không có log bền thứ hai cho
+   cùng dữ liệu đó.
+2. **Mỗi loại dữ liệu nhận đúng đảm bảo nó cần:**
+
+   | Loại | Cần gì | Nơi phục vụ |
+   |---|---|---|
+   | Tick lossless (TRADE, BOOK_DELTA) | live có thứ tự + replay ngắn khi reconnect | Kafka (seek theo offset) + bộ đệm RAM |
+   | Tick latest-state (QUOTE, BOOK_SNAPSHOT, MARK, FUNDING…) | giá trị mới nhất + live | Redis latest / RAM |
+   | BAR | lịch sử tới 10k dòng + live + handoff cursor | kho BAR riêng (tốc độ ghi thấp) |
+3. **Song song theo partition từ đầu đến cuối**, không có process nào là phễu chung.
+4. **Kiểm tra một lần, ở rust_core.** Các chặng sau tin bản ghi Kafka đã commit
+   (`read_committed`). Truy vết lineage bằng `raw_capture_id` / hash, không chở raw trong
+   canonical.
+5. **Cache là cache thật:** mất thì tự dựng lại từ Kafka, không dừng hệ thống.
+6. **Không lease cho đường đọc.** Replica độc lập, consumer failover bằng danh sách
+   target mà SDK đã hỗ trợ.
+7. **Tái sử dụng tối đa:** hợp đồng, SDK, catalog, manifest, codec cursor, route HTTP,
+   rust_core, Kafka, driver nghiệm thu. Không thêm loại service mới nếu không có số đo
+   chứng minh.
+
+---
+
+## 8. Các phương án
+
+### A. Giữ writer đơn, tối ưu bên trong (hướng đang được duyệt)
+- Bỏ POST 409, bỏ kiểm tra lặp ở Stream, lập chỉ mục fan-out, dùng batch `executemany`.
+- **[ước lượng]** trần có thể lên 2–3 lần, nhưng **vẫn là một process, một lease**. Vẫn
+  giữ 99,7% ghi thừa, giữ ba kho, giữ failover kiểu bàn giao cả đường ống.
+- Phù hợp nhất như một biện pháp tạm, không phải lời giải.
+
+### B. Shard writer theo partition Kafka (6 file SQLite)
+- Mỗi projector ghi thẳng file của partition mình; Stream đọc theo cách tail file.
+- Trần ×6, nhưng vẫn ghi bền tick không ai cần, vẫn ba kho, live phải poll file (thêm
+  latency), lease thành 6 lease. **Độ phức tạp tăng.**
+
+### C. Kafka-native (đề xuất)
+- Stream đọc Kafka trực tiếp, không lease; Redis chỉ giữ latest; chỉ BAR có kho lịch sử.
+- Bỏ HTTP hop, writer đơn và tick spool. Chi tiết ở §9.
+
+### D. Đích đầy đủ của Guide (gateway Rust + Iceberg/Parquet + Postgres)
+- Đúng về lâu dài, nhưng tốn thời gian và phải thêm hạ tầng (object storage, Postgres).
+  Không phù hợp với yêu cầu "không tốn thêm nhiều thời gian". C là bước đi đúng hướng tới D
+  mà không khoá đường lùi.
+
+### So sánh
+
+| Tiêu chí | A | B | C | D |
+|---|---|---|---|---|
+| Trần thông lượng | ~2–3× hiện tại **[ước lượng]**, vẫn 1 lõi | ~6× | Kafka + số replica; không còn phễu | Cao nhất |
+| Ghi thừa tick | Giữ | Giữ | **Bỏ** | Bỏ |
+| Số kho phải khớp | 3 | 3 (+6 file) | Kafka + Redis latest (cache thuần) + kho BAR nhỏ | Kafka + Redis + lakehouse |
+| Failover | Lease 15 s + reconnect | 6 lease | Reconnect sang replica khác (SDK có sẵn) | Tương tự C |
+| Tác động lên consumer | Không | Không | Một lần `SNAPSHOT_REPLACED` mỗi slice lúc cutover | Như C |
+| Service mới | 0 | 0 | 0–1 (bar materializer, có thể gộp vào projector) | Nhiều |
+| CPU | Như cũ | Tăng | **Giảm** **[ước lượng]** | Tăng hạ tầng |
+| Thời gian | Vài ngày, nhưng không đạt mục tiêu | 1–2 tuần | **2–3 tuần [ước lượng]** | Hàng tháng |
+| Rủi ro | Thấp, nhưng không giải quyết gốc | Trung bình | Trung bình, kiểm soát được bằng shadow | Cao |
+
+---
+
+## 9. Kiến trúc đề xuất chi tiết (phương án C)
+
+### 9.1 Sơ đồ
+
+```text
+Sàn ─► ingestor (Rust, giữ nguyên) ─► Kafka raw
+     ─► rust_core (giữ nguyên, bỏ nhúng raw vào header canonical)
+     ─► Kafka md.canonical.v2  ◄═══ NGUỒN SỰ THẬT DUY NHẤT (RF3, read_committed)
+          │
+          ├─► Stream replica ×2 (không lease; mỗi replica đọc cả 6 partition)
+          │     - RAM: latest theo key + ring buffer ngắn cho tick lossless
+          │     - gRPC Subscribe: replay (ring → nếu thiếu thì seek Kafka) → live
+          │     - cursor = vị trí Kafka của bản ghi (mờ, ký HMAC như cũ)
+          │
+          ├─► Latest projector (projector hiện có, rút gọn)
+          │     - Redis: latest theo key + offset Kafka (không cache identity, không lease)
+          │     - commit offset sau khi ghi Redis; mất Redis → tua lại vài phút là đủ
+          │
+          ├─► BAR materializer (lọc key BAR, ~0,3% lưu lượng)
+          │     - kho BAR (SQLite, 1 writer ghi vài event/s) + offset Kafka của từng bar
+          │
+          └─► Query ×2 (route HTTP giữ nguyên)
+                - snapshot / latest / MARK_INDEX: đọc Redis latest
+                - BAR warmup / history: đọc kho BAR (read-only)
+                - tick warmup: không có consumer nào dùng (warmup_limit 0)
+```
+
+### 9.2 Cursor và tính đúng: giữ hợp đồng, đổi nguồn offset
+- **Offset cho consumer = offset Kafka của bản ghi.** Mỗi `partition_key` nằm trên đúng
+  một partition Kafka (key hash), nên offset tăng nghiêm ngặt theo slice. Điều này thoả
+  kiểm tra của SDK (`client.py:355-364`, cho phép khoảng trống vì bản ghi bị lọc).
+- **Kiểm tra gap "offset liên tục" ở server** (`handoff.py:325-331`) được thay bằng
+  **đọc partition liên tục**: replica đọc tuần tự từ offset X, nên không thể bỏ sót bản ghi
+  của key. Gap ở nguồn vẫn được phát hiện bằng `partition_sequence` và sequence của sàn.
+- **Mọi replica ra cùng một offset cho cùng một bản ghi**, nên Query cấp cursor và Stream
+  nào cũng dùng được. Đây chính là thứ file dùng chung đang được dùng để đảm bảo.
+- **`generation_id`** chuyển từ `spool.cache_id` sang danh tính ổn định: TopicId + số
+  partition + `partition_plan_epoch`.
+- **Replay sang live không mất event:** trong một replica, một luồng tiêu thụ duy nhất theo
+  thứ tự. Subscriber đăng ký tại offset X, được đẩy phần ring từ X, rồi nhận tiếp các bản
+  ghi mới. Không cần barrier giữa các process.
+- **Cutover:** offset đổi hệ đếm, nên mỗi slice nhận một lần `CURSOR_EXPIRED` →
+  `SNAPSHOT_REPLACED`. TS và alpha đã xử lý trường hợp này
+  (`data_layer_v2.py:881,982-1004`).
+- **Ràng buộc mới:** không đổi số partition khi đang chạy, vì key sẽ bị ánh xạ lại. Muốn
+  đổi (ví dụ để sửa lệch p3/p5) thì làm cùng đợt cutover, khi cursor đằng nào cũng reset.
+
+### 9.3 Cần xác minh trước khi cam kết (Phase 1 phải đo)
+
+| Câu hỏi | Vì sao quan trọng | Cách đo |
+|---|---|---|
+| Một replica Python đọc 6 partition + decode + fan-out hết bao nhiêu CPU ở 3.000/s? | Quyết định dùng Python hay chuyển vòng tiêu thụ sang Rust | Replay topic thật bằng image có sẵn, container `--rm` |
+| Ring buffer bao nhiêu phút cho TRADE/BOOK_DELTA, tốn bao nhiêu RAM? | Reconnect trong ring thì nhanh, ngoài ring thì phải seek Kafka | Đo kích thước bản ghi thật × tốc độ theo feed |
+| Seek Kafka để replay dài (tối đa 10k bản ghi của một key) mất bao lâu? | Một key chỉ chiếm 1/30 partition nên phải quét nhiều bản ghi | Thử offset thật |
+| Bỏ header raw khỏi canonical tiết kiệm bao nhiêu CPU/đĩa cho Kafka? | Dự kiến giảm mạnh, nhưng **[chưa kiểm]** | So bytes/s trước và sau trên stack shadow |
+| bar_edge hiện ghi BAR vào đâu, và có phụ thuộc spool không? | Ảnh hưởng thiết kế kho BAR | **[chưa kiểm]**: đọc `qdl/runtime/stable_bar_edge.py` |
+| Còn ai đọc key/pubsub tương thích V1 trong `stable_redis` không? | Nếu không thì bỏ được | **[chưa kiểm hết]**: chưa tìm thấy subscriber nào |
+
+### 9.4 Giữ lại, bỏ đi, thêm mới
+
+| Giữ nguyên | Rút gọn / sửa | Bỏ | Thêm |
+|---|---|---|---|
+| ingestor, rust_core, Kafka ×3, proto, SDK, manifest, catalog, codec cursor HMAC, route HTTP Query, driver nghiệm thu + budget | projector (chỉ ghi Redis latest), gateway gRPC (đọc Kafka thay vì spool), Query backend (Redis + kho BAR), rust_core (bỏ header raw) | HTTP ingest, lease Stream, tick spool, cache identity, 4 lớp dedup, POST 409 | BAR materializer (có thể là một chế độ của projector, không phải service mới) |
+
+### 9.5 Ngân sách tài nguyên mục tiêu **[ước lượng, sẽ đo ở Phase 1]**
+- Mục tiêu tổng V2 ≤ 5 vCPU ở 3.000 event/s (hiện ≈7,8 vCPU ở ~835–1.200/s).
+- Tiết kiệm từ: bỏ 2 container Stream × 2 CPU (thay bằng 2 replica nhẹ); projector không
+  còn decode/sha/SQLite/HTTP; Kafka không chở raw hai lần; SQLite chỉ nhận 0,3% lưu lượng.
+
+---
+
+## 10. Lộ trình 4 phase (đề xuất để thảo luận)
+
+Nguyên tắc chung cho cả 4 phase:
+- Stack hiện tại **tiếp tục chạy** cho tới hết Phase 3.
+- Mọi thứ mới chạy **shadow** trên cùng Kafka, với consumer group riêng và port riêng.
+- Rollback luôn là trỏ consumer về stack cũ.
+
+### Phase 1 — Luồng realtime Kafka-native (shadow)
+- **Bước đầu, bắt buộc: spike đo** các câu hỏi ở §9.3. Nếu Python không đạt mục tiêu CPU
+  thì chuyển vòng tiêu thụ sang Rust trước khi làm tiếp.
+- Stream replica đọc Kafka trực tiếp, không lease, RAM latest + ring, gRPC Subscribe với
+  cursor theo offset Kafka.
+- **Cổng thoát:**
+  - Parity từng event với Stream cũ trên cùng slice (không thiếu, đúng thứ tự).
+  - Chịu 3.000/s tải tổng hợp, không lag.
+  - Latency live nằm trong budget.
+  - Kill một replica: consumer reconnect sang replica kia mà không mất event.
+
+### Phase 2 — Latest + BAR store + Query (shadow)
+- Projector rút gọn chỉ ghi Redis latest. BAR materializer ghi kho BAR. Query mới đọc
+  Redis và kho BAR. rust_core bỏ header raw (chỉ ở shadow, bằng một cờ cấu hình).
+- **Cổng thoát:**
+  - Parity snapshot/warmup/latest_bar/MARK với Query cũ.
+  - Handoff BAR warmup → stream khớp watermark (`verify_bar_handoff` của alpha).
+  - Mất Redis thì tự dựng lại trong vài phút, không dừng.
+
+### Phase 3 — Cutover và nghiệm thu
+- Chuyển TS trước (V1 fallback vẫn giữ), rồi alpha.
+- Chạy driver đích stage 20 → 35 → 50 với budget đã đóng băng.
+- **Cổng thoát:**
+  - Stage 50 + TS 60/60 PASS.
+  - Chịu burst thật (thị trường sôi động) không backlog.
+  - Rollback đã diễn tập một lần.
+
+### Phase 4 — Gỡ bỏ và phát hành
+- Dừng Stream writer, lease, tick spool, HTTP ingest. Dọn image/volume theo digest, chỉnh
+  lại trần CPU theo số đo. Cập nhật ledger, viết ADR mới (thay ADR-0006), phát hành
+  **v2.2.0**.
+- **Cổng thoát:** V2 ≤ ngân sách CPU đã chốt; không còn service thừa; tài liệu vận hành
+  (boot recovery, rebuild) rút gọn tương ứng.
+
+**Thời gian [ước lượng, chưa có số đo]:** P1 3–5 ngày · P2 3–5 ngày · P3 2–3 ngày ·
+P4 1–2 ngày. Spike đầu Phase 1 là điểm dừng: nếu số đo xấu, ta biết ngay trong 1–2 ngày
+thay vì sau 2 tuần.
+
+---
+
+## 11. Rủi ro và câu hỏi mở (để thảo luận với Astra)
+
+1. **Python hay Rust cho Stream replica?** Guide muốn Rust. Python dùng lại được nhiều code
+   (`grpc_service.py`, `handoff.py`). Đề xuất: quyết theo số đo của spike.
+2. **Mỗi replica đọc cả 6 partition, hay chia partition giữa các replica?** Đọc tất cả thì
+   đơn giản, và replica nào cũng phục vụ được mọi subscriber. Chia partition tiết kiệm CPU
+   nhưng phải định tuyến subscriber. Đề xuất: đọc tất cả, trừ khi đo thấy quá tốn.
+3. **Kho BAR là SQLite hay Kafka topic riêng có retention dài?**
+   - (a) SQLite ghi bởi materializer: đơn giản, dùng lại code `read_final_bar_window`.
+   - (b) rust_core ghi BAR thêm vào `md.bars.v2` với retention 14–30 ngày: Kafka giữ luôn
+     lịch sử BAR, SQLite thành cache dựng lại được thật sự.
+   - Đề xuất: (a) trước, (b) nếu cần HA cho lịch sử.
+4. **Có sửa lệch partition (p3/p5 chiếm 57%) không?** Chỉ làm ở lúc cutover nếu cần.
+5. **Retention canonical:** 6h đủ cho replay tick (TTL cursor 1h). Khi bỏ header raw, có
+   thể tăng retention mà không tốn thêm đĩa.
+6. **Key/pubsub tương thích V1 trong `stable_redis`:** giữ hay bỏ? (§9.3)
+7. **Lease cho Redis latest:** projector theo partition thì mỗi key chỉ có một người ghi,
+   nên không cần lease. Cần xác nhận không có người ghi thứ hai (bar_edge?).
+8. **Rủi ro chính:** thay cơ chế cursor. Giảm rủi ro bằng parity shadow từng event và cho
+   consumer cũ chạy song song đến hết Phase 3.
+
+---
+
+## 12. Việc trước mắt (không thuộc 4 phase, cần owner quyết)
+
+1. **Sự cố backlog:** đang tự giảm ~343/s lúc thị trường yên. **[ước lượng]** khoảng
+   45 phút nếu không có burst. Có thể để tự hết, hoặc duyệt phương án B cũ (dời offset).
+2. **Không đưa `83fa1bc` lên Stream** khi chưa sửa §5.9.
+3. **Ghi journal** các sự kiện chưa ghi: Stream OOM (12:29Z, 13:47Z), roll `83fa1bc` lên
+   Stream thất bại và revert về `37d7f518`, roll Query `94f2db4`/`83fa1bc`, sự cố backlog.
+4. **Dừng phương án A** (tối ưu bên trong writer đơn) nếu owner chọn C, để không tiếp tục
+   đầu tư vào đường sẽ bị gỡ.
+
+---
+
+## Phụ lục A — Lệnh đã chạy để ra số liệu (2026-09-23, chỉ đọc)
+
+| Mã | Lệnh / nguồn | Kết quả chính |
+|---|---|---|
+| A1 | `kafka-consumer-groups.sh --describe --group stable-projector-v1`, chạy 2 lần cách nhau 64 s, trong container `--rm` dùng image kafka1 và `admin.properties` | produced 53.431, consumed 75.418; lag p3 = 626.222 → 642.232, p5 = 305.777 → 317.506 |
+| A2 | `docker logs --since 60s projector_v2*`, đếm `200 OK` / `409 Conflict` | 85/85, 87/86, 74/77, 52/53, 67/68, 42/42 |
+| A3 | `top -bn2`; tổng `docker stats` các container `qdl_v2*` | 67,4 us / 13,0 sy / 12,9 id; V2 ≈ 777% |
+| A4 | `du` thư mục topic trên volume `kafka1_data` | canonical 7.062 MB (retention 6h), raw 7.940 MB (retention 8h) |
+| A5 | `find` file > 10 MB trong volume `stable_state` | `canonical-cache.sqlite3` 3.301.470.208 B + WAL 67.108.864 B |
+| A6 | Python `sqlite3` mode=ro, `query_only`, bảng `partitions` (`next_offset-1` gom theo feed), container `--rm --network none` | trade 147,2 triệu · book 84,3 triệu · quote 79,3 triệu · mark 26,4 triệu · bar 1,07 triệu; 188 key |
+| A7 | Python `yaml`, duyệt `consumers/stable/*.yaml`, đếm `feed` × (`warmup_limit>0`) | chỉ BAR có warmup > 0 ở cả 6 manifest |
+| A8 | `kafka-topics --describe` / `kafka-configs --describe --all` cho `md.canonical.v2` | 6 partition, RF3, min ISR 2, retention.ms 21.600.000, segment 16 MiB |
+| A9 | `docker inspect` NanoCpus/Memory của từng role | bảng §2.3 |
+
+## Phụ lục B — Chỉ mục bằng chứng trong code và tài liệu
+
+- ADR-0006: `docs/adr/0006-phase2-bounded-durable-bridge.md:10,25,42,47`
+- Guide target: `upgrade/quant-data-layer-fund-grade-upgrade-architecture.md:33-61, 461, 1002-1006, 1016-1026`
+- Lựa chọn active/passive và theo partition: Plan:1263-1274; invariant 37 Plan:150-153
+- Phase B: Plan:3981-4039, 4298-4306, 5311-5316
+- Trần writer đơn: Plan:38913-38973; hoãn: Plan:39065-39067, 52433-52437; phương án A: Plan:53033-53035
+- Đọc Kafka chưa từng xảy ra ở consumer: Plan:38891-38900
+- Lặp công việc: `stable_projector.py:341,863,953-966`; `stable_ingest.py:183-205,504-555`; `projection/stable.py:306-313`
+- Offset / cursor: `sqlite_spool.py:607-631`; `handoff.py:86-216,295-332`; `stable_source.py:1508-1602`
+- `partition_sequence` tất định: `rust/qdl-realtime-core/src/lib.rs:593-608`
+- Header raw trong canonical: `rust/qdl-kafka/src/lib.rs:836-839`, `qdl-realtime-core.rs:412`
+- Lỗi span: `qdl/runtime/stable_ingest.py:118`, `qdl/stream/gateway.py:526-528`, `tests/test_stable_ingest_spans.py:15-18`
+
+---
+
+<a id="astra-independent-addendum"></a>
+## 13. Astra - Đánh giá độc lập và đề xuất triển khai bổ sung
+
+> **Ngày:** 2026-09-23. **Trạng thái:** đề xuất để owner duyệt, chưa phải lệnh triển khai.
+> **Phạm vi lượt này:** chỉ bổ sung tài liệu bên dưới bản Opus; giữ nguyên toàn bộ phần trên.
+> **Source đã đối chiếu:** canonical `/home/bobby/data_layer`, branch
+> `feat/consumer-endpoint-benchmark`, HEAD `83fa1bc56411e0dfb1f4d91b456e48ddd9b080b4`.
+> **Evidence:** đọc source, ADR, guide và journal; không benchmark lại, không gọi provider,
+> không kiểm kê runtime mới, không build/rollout hay thay dữ liệu trong lượt đánh giá này.
+> Các số throughput/CPU/latency kế thừa phần Opus là số đo lịch sử tại cửa sổ ghi ở đó,
+> không phải bảo đảm về trạng thái runtime hiện tại hay kết quả của kiến trúc đề xuất.
+
+### 13.1 Kết luận và nguồn sự thật
+
+**Đề xuất chọn phương án C có điều chỉnh: Kafka-native distribution, Rust sở hữu hot
+data plane, Python giữ API/SDK và orchestration. Không rewrite toàn bộ Data Layer.**
+Vấn đề không phải đã chọn Kafka sai; vấn đề là phía sau Kafka vẫn giữ bridge tạm,
+single-writer spool và cơ chế phục hồi dành cho một mô hình nhỏ hơn mục tiêu hiện tại.
+
+Các tài liệu phải đọc cùng phần bổ sung này:
+
+- [Guide kiến trúc gốc](quant-data-layer-fund-grade-upgrade-architecture.md), các mục
+  0-7 về trách nhiệm Rust/Python; 8-19 về canonical, replay, history, handoff, API/SDK.
+- [ADR-0006](../docs/adr/0006-phase2-bounded-durable-bridge.md): bounded durable bridge
+  có phạm vi nhỏ và điều kiện sunset; không được suy ra quyền mở rộng làm tick/L2 log chính.
+- [Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md): source/runtime status,
+  quyết định owner, evidence đã pass/fail, workload 50 alpha + TS và journal thực hiện.
+- Phần Opus ở trên: lịch sử quyết định và số đo; phần Astra ở dưới: đánh giá độc lập,
+  điều chỉnh giả định và quy trình đề xuất. Hai phần không tự động thay thế một approved plan.
+
+Owner đã yêu cầu **ghi lại đề xuất**, chưa phê duyệt triển khai bốn phase này trong lượt
+này. Tất cả phase dưới đây là `PROPOSED / NOT STARTED`. Khi được duyệt, cập nhật status,
+execution scope và journal ở Unified Plan, link về các anchor dưới đây; không tách thêm
+các phase mang tên mới sau mỗi lỗi. Nếu chọn C, phải ghi rõ nó thay phần capacity closure
+nào của kế hoạch cũ, tránh tiếp tục song song cả hướng A và C mà không có điểm dừng.
+
+### 13.2 Những gì đồng ý, những gì đã kiểm chứng
+
+| Nhận định | Đánh giá Astra | Hệ quả triển khai |
+|---|---|---|
+| Kafka song song bị gom về một writer | Đồng ý. `StreamGateway.publish_many` chờ durable sink trước fan-out; lease giới hạn một active writer | Thay đường phân phối, không tiếp tục lấy tăng projector làm giải pháp chính |
+| SQLite bridge đã vượt phạm vi ban đầu | Đồng ý theo ADR-0006 và lịch sử Phase B | Sunset tick spool có kiểm soát, không xóa lịch sử để che vấn đề |
+| Nhiều tầng lặp decode/hash/lookup | Có trong projector/ingest/projection; chi phí cụ thể cần profile | Bỏ việc lặp được chứng minh dư thừa, không xóa mọi kiểm tra an toàn |
+| Cache recovery bị coupling | BAR edge kiểm `cache_identity` và checkpoint; Redis projection cũng kiểm cache identity | Phải chuyển cả BAR recovery và Query, không chỉ thay gRPC Stream |
+| Fan-out chưa hiệu quả theo số subscriber | Source duyệt subscriptions cho từng stored record | Dùng index theo stream key/binding, shared immutable payload và queue hữu hạn |
+| Cold warmup ảnh hưởng hot read | Journal có probe 5.000-row warmup làm QUOTE tail tăng; duty-cycle chỉ giảm triệu chứng | Cô lập CPU-heavy decode/serialization khỏi hot executor |
+| Test fake có thể che lỗi thật | `stable_ingest.py` gọi `subscriber_count()` trong khi gateway thật dùng property | Sửa/test với collaborator thật trước khi dùng source này làm baseline Stream |
+
+Source đối chiếu: [gateway](../qdl/stream/gateway.py),
+[handoff](../qdl/replay/handoff.py), [ingest](../qdl/runtime/stable_ingest.py),
+[projector](../qdl/runtime/stable_projector.py),
+[Redis projection](../qdl/projection/stable.py),
+[BAR edge](../qdl/runtime/stable_bar_edge.py),
+[Rust Kafka](../rust/qdl-kafka/src/lib.rs).
+
+**Không kết luận rằng toàn bộ code/gate trước đây vô ích.** Instrument identity, decimal,
+venue normalization, finality, L2 sequence/checksum, auth và provider admission vẫn có giá
+trị. Sai sót phương pháp là dùng các pass riêng lẻ như bằng chứng cho sức tải end-to-end,
+rồi tối ưu queue/timeout/resource quá lâu mà chưa thay chỗ tuần tự hóa toàn hệ thống.
+Parity giữa hai implementation cùng sai cũng không đủ; oracle phải là contract và dữ liệu
+provider/canonical đã commit, không mặc định output của stack cũ là chân lý.
+
+### 13.3 Các giả định cần sửa trước khi chốt hướng C
+
+1. **Không warmup tick không có nghĩa không cần replay tick.** TRADE và BOOK_DELTA vẫn
+   cần reconnect/replay trong retention; loại bỏ bản sao SQLite, không loại bỏ Kafka
+   event history. QUOTE/MARK latest có thể coalesce ở projection nếu contract cho phép,
+   nhưng không âm thầm biến một subscription lossless thành latest-only.
+2. **Không thể bỏ toàn bộ dedup/fencing.** Canonical domain validation nên tập trung ở
+   Rust; sink vẫn phải idempotent. Reader vẫn kiểm auth, schema, identity, generation,
+   source quality và execution eligibility. Consumer chậm hoặc reconnect không được
+   nhận dữ liệu sai account/venue/instrument vì upstream đã kiểm một lần.
+3. **Redis replay vài phút không bảo đảm đủ state.** Feed ít thay đổi có latest cũ hơn
+   cửa sổ replay; BAR dài có history ngoài Kafka retention. Phải xác định bootstrap,
+   checkpoint, durable backup và bounded provider recovery theo từng product.
+4. **Hai replica đọc tất cả partition không nhân đôi ingest capacity miễn phí.** Hai
+   replica cùng decode cùng dữ liệu, nhưng chia subscriber và cho failover. Chọn cách này
+   trước vì đơn giản; đo CPU/bytes/fan-out trước khi thêm routing theo partition.
+5. **Kafka offset không liên tiếp không tự chứng minh có gap.** Transaction/control
+   records và lọc theo key tạo khoảng nhảy hợp lệ. Kiểm coverage bằng vị trí đọc partition
+   và kiểm market gap bằng source sequence; không dùng `offset == previous + 1` cho slice.
+6. **EOS Kafka không bao phủ Redis/SQLite.** Kafka transaction bảo vệ input offset và
+   output record trong Kafka. Sink ngoài Kafka vẫn cần atomic state/checkpoint hoặc
+   compare-and-apply idempotent, kể cả crash sau sink write nhưng trước offset commit.
+7. **Không hứa recovery backlog từ số tổng.** A1 ghi lag p3 và p5 tăng dù aggregate
+   consumed lớn hơn produced; partition khác có thể đang drain. Không suy ra mọi slice
+   tự hồi phục trong 45 phút. Theo dõi lag/age/throughput riêng từng partition.
+8. **99,7% là phân bố counter tích lũy, không phải số byte hiện giữ.** Không được suy ra
+   tiết kiệm 99,7% RAM/disk/CPU. Raw/canonical có retention, compression và event mix khác;
+   bỏ raw header tiết kiệm bao nhiêu phải đo serialized bytes/s thực tế.
+9. **Tổng CPU cap vượt số core không tự là bug.** Phải xem usage, throttle, pressure và
+   latency đồng thời. RF3 trên cùng host cũng không chứng minh independent-host HA.
+10. **`3.000 event/s` và `<=5 vCPU` là mục tiêu thử, chưa phải certificate.** Cần nói rõ
+    event canonical hay raw, bytes/event, L2 depth, fan-out và workload consumer; không
+    benchmark bản ghi nhỏ rồi suy ra tất cả book/event mix đều chịu được.
+
+Nguồn semantics Kafka: [Consumer API](https://kafka.apache.org/41/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html)
+về group/offset/replay; [Kafka design](https://kafka.apache.org/41/design/design/) về
+transaction và external sinks. Chúng không thay thế phép đo trên deployment này.
+
+<a id="astra-target-architecture"></a>
+### 13.4 Kiến trúc đích và ranh giới trách nhiệm
+
+```text
+Approved real providers / durably captured provider replay
+    -> existing Rust/Python venue adapters
+    -> Kafka raw
+    -> existing Rust canonical core / L2 / quality / admission
+    -> Kafka canonical, committed records only
+         |
+         +-> Rust Stream replicas
+         |     bounded RAM latest/ring, indexed fan-out
+         |     isolated bounded replay readers -> existing gRPC public contract
+         |
+         +-> Rust latest materialization -> Redis latest + typed quality
+         |                                      -> Python Query / SDK
+         |
+         +-> BAR materialization -> BAR history + atomic checkpoints
+                                                -> Python Query / SDK
+
+Historical/reference provider wrappers remain a bounded cold path.
+Alpha/TS never need Kafka credentials or a Kafka client.
+```
+
+- **Rust:** consume/decode, hot projection, ordering, replay, L2 và bounded fan-out.
+  Tái sử dụng `qdl-core`, `qdl-kafka`, generated protobuf và native normalization đã có.
+  Không đặt một Python HTTP bridge per event trở lại giữa Rust và consumer.
+- **Python:** REST/SDK compatibility, entitlement/control configuration, historical
+  orchestration, reference wrappers, provider SDK phù hợp và admin tooling.
+  Endpoint gRPC có thể do Rust phục vụ trực tiếp nhưng phải giữ auth/contract hiện hành.
+- **Stream replicas:** không leader lease cho read delivery. Mỗi replica có group riêng
+  hoặc cơ chế assignment rõ ràng để đọc đủ partition; hai replica cùng group sẽ chia
+  partition và không còn tự phục vụ được mọi slice như thiết kế này yêu cầu.
+- **Materializers:** ownership theo partition; Redis và BAR là projection khác nhau,
+  không cần distributed transaction giữa chúng. Mỗi output có watermark riêng; Query
+  không ghép các output lệch watermark rồi giả vờ là một atomic global snapshot.
+- **History:** bars-only SQLite là lựa chọn khởi đầu hợp lý vì write rate thấp. Không
+  tạo PostgreSQL/Iceberg/lakehouse mới trong bốn phase. Nếu history đã vượt retention
+  Kafka, phải coi nó là dữ liệu cần backup/recovery, không đặt nhãn cache để miễn bảo vệ.
+- **Redis:** latest cache có thể dựng lại; không nguồn authority cho event đã commit.
+  Chỉ hỗ trợ `READY` khi state + checkpoint + quality của slice đã coherent.
+- **Venue/product:** core chung cho Binance/OKX và adapter VN. DNSE/Spot đang deferred
+  giữ nguyên certification/routing hiện tại; không tuyên bố được nâng cert qua test crypto.
+
+Không tạo container theo symbol/interval. Dùng lại service boundary và deployment naming
+chuẩn; số materializer replica cuối cùng quyết theo ownership, sink concurrency và số đo,
+không mặc định phải giữ sáu Python projector hoặc gộp tất cả thành một process mới.
+
+### 13.5 Contract theo từng loại dữ liệu
+
+| Product | Nguồn phục vụ đề xuất | Bất biến phải giữ | Không được suy diễn |
+|---|---|---|---|
+| TRADE | Committed Kafka -> Stream; latest projection khi gọi snapshot | Native identity, price/qty/units, source/session quality, replay trong retention | Không có tick mới không tự là disconnect; quiet không đồng nghĩa giá luôn eligible |
+| QUOTE/BBO | Latest projection và Stream | Bid/ask/sizes, venue, generation; coalescing chỉ theo delivery class đã công bố | Không suy ra market liveness từ một field age đơn lẻ |
+| MARK_INDEX_PRICE | Typed latest state và Stream | Giữ timestamp riêng của mark/index và session/component quality | Không thay timestamp gốc bằng receive time hoặc refresh time để pass SLA |
+| BOOK_SNAPSHOT/DELTA | Verified Rust book view + committed deltas | Snapshot sequence tương ứng delta, checksum/gap, depth, resync generation | Không lấy snapshot tùy ý rồi nối delta của generation khác |
+| Final BAR | BAR history + canonical stream | Closed-only, interval/calendar alignment, OHLCV/units, correction, continuous warmup | Không dùng ingest offset mới nhất để suy ra toàn bộ history đã đủ |
+| Funding/OI/long-short/taker/basis/metadata | Wrapper hiện có; materialize khi có demand/contract phù hợp | Missing không thành 0, native/derived lineage, applicability và unit | Reference input không tự thành execution/risk authority |
+| VN/legacy product | Route/adapter đã được owner công bố | Session calendar và capability thực | Không tăng phạm vi cert khi chưa test provider/market-hours |
+
+Bootstrap BAR từ provider vẫn đi qua validation/canonical path đã được định nghĩa,
+không ghi trực tiếp fake rows vào Query để làm xanh matrix. Existing history đã chứng
+minh phải được migrate có hash/count/identity và checkpoint; không bắt owner chờ history
+đầy lại chỉ vì thay backend. Wrapper cold path không được tạo WS/subscription mới cho
+mỗi request hoặc mỗi alpha.
+
+<a id="astra-cursor-recovery"></a>
+### 13.6 Cursor, replay, snapshot và recovery đúng domain
+
+#### Cursor và compatibility
+
+- Giữ token opaque, ký HMAC và ràng buộc identity/product theo contract. Payload nội bộ
+  cần phân biệt transport version, topic identity/generation, physical partition,
+  Kafka offset, logical slice và plan epoch; không đổi public response shape tùy tiện.
+- Broker offset và provider sequence là hai khái niệm riêng. `read_committed` không được
+  expose aborted/uncommitted output; boundary replay phải dựa vào readable committed
+  progress, không lấy log-end offset làm bằng chứng mọi record đã có thể đọc.
+- Query trả dữ liệu cùng watermark thực sự áp dụng cho chính view đó. Batch nhiều slice
+  giữ cursor riêng hoặc vector semantics đã khai báo; không hứa atomic toàn thị trường.
+- Cutover token SQLite cũ phải trả typed `CURSOR_EXPIRED`/resnapshot theo SDK hiện có,
+  không diễn giải cùng số offset sang Kafka. Failover giữa replica cùng generation
+  không được reset cursor liên tục hoặc phụ thuộc RAM của replica trước.
+- ACK là tiến độ xử lý của subscription/consumer scope đúng hợp đồng, không phải vị trí
+  fetch của server. Hai alpha dùng chung identity không được làm checkpoint của nhau
+  tiến lên rồi bỏ qua dữ liệu chưa đọc của một alpha.
+
+#### Replay sang live
+
+1. Đăng ký subscription và chốt boundary của live buffer một cách atomic trong replica.
+2. Replay từ cursor tới boundary qua ring hoặc reader Kafka riêng có giới hạn; không
+   `seek` consumer live ngược về lịch sử vì một client reconnect.
+3. Buffer phần mới trong lúc replay, merge theo transport identity, sau đó chuyển live.
+   Queue/ring đầy phải trả typed recovery/reset, không silent drop.
+4. Cursor ngoài retention hoặc book thiếu snapshot gốc phải resnapshot rõ ràng. Không
+   nhảy đến latest rồi báo đã replay đủ; scan được cap theo bytes/time/records, không
+   chỉ đếm số record matching vì một key có thể rất thưa trong partition.
+
+#### Redis và materializer
+
+- Reuse Lua/atomic compare-and-apply hiện có: giá trị, typed quality, generation và
+  applied offset được cập nhật nhất quán; chỉ commit Kafka sau khi sink xác nhận.
+- Crash sau sink write/trước offset commit sẽ replay và phải idempotent. Rebalance có
+  thể để worker cũ hoàn tất write muộn: ownership/fence hoặc generation+offset CAS phải
+  chặn rollback state. Không giữ global reader lease nhưng không bỏ write correctness.
+- Rebuild dùng namespace/generation riêng và publish readiness sau khi state/checkpoint
+  đúng. Mất Redis có thể làm slice tạm unavailable; không hứa zero downtime nếu không
+  có replica/storage recovery bảo đảm, cũng không dừng toàn bộ ingestion vì cache mất.
+- Chọn recovery artifact nhỏ nhất đáp ứng RTO: durable checkpointed latest snapshot
+  hoặc approved compacted-state projection nếu thực sự cần. Không bật compaction trên
+  lossless TRADE/BOOK_DELTA topic. Existing state storage được ưu tiên, không thêm stack.
+- Một provider refresh có giới hạn chỉ phục hồi latest được contract cho phép; nó không
+  chứng minh đã replay đủ trade/delta bị mất. Cache rỗng không được tái sử dụng checkpoint
+  cũ rồi đánh dấu recovered khi state chưa được dựng lại.
+
+#### BAR history và L2
+
+- BAR upsert và materializer offset/checkpoint nằm trong cùng transaction. Crash không
+  được tạo offset đi trước rows hoặc rows nhận hai lần thành hai candle.
+- Repair nến cũ phải giữ event/revision lineage; không làm `latest_final_bar` lùi về
+  timestamp cũ. Checkpoint ingest cao không thay thế continuity check theo open-time.
+- BAR edge chuyển sang interface history/checkpoint mới thay vì gắn vào tick spool
+  `cache_id`; finality, bounded bootstrap và count-fenced repair hiện có được tái sử dụng.
+- 5.000 nến 1m đã dài hơn 6 giờ; 5.000 nến 1h dài hơn nhiều nữa. Khai báo rõ maxlen,
+  coverage và provider pagination, trả typed insufficient history nếu provider không có.
+- Book rebuild phải có snapshot/checkpoint tương ứng delta sequence và generation.
+  Retention còn delta không đồng nghĩa còn snapshot cần thiết. SDK nhận resync typed,
+  không coi reconstructed partial book là execution-ready.
+
+### 13.7 Tối ưu tài nguyên mà không chuyển lỗi sang chỗ khác
+
+- Fan-out theo index binding -> subscribers, tránh `events x all_subscribers`; payload
+  immutable dùng chung khi có thể, không stringify/base64/hash lại cho từng consumer.
+- Ring/queue/replay concurrency bị giới hạn theo **bytes và số item**, có metrics đầy,
+  slow-consumer policy và cancellation. L2 message lớn không được chỉ tính như một tick.
+- Materializer latest được coalesce theo semantics product; lossless stream và book
+  delta không được drop để cải thiện throughput. Session/quality update phải được giữ.
+- Hot Query có bounded executor riêng; heavy warmup decode/serialize không giữ GIL
+  hoặc chiếm toàn bộ slot của hot path. Ưu tiên native batch work hoặc bounded cold
+  worker thích hợp, không dùng sleep/duty-cycle như lời giải dài hạn cho CPU contention.
+- Không chuyển heavy warmup từ spool sang Redis rồi quét toàn cache trong request nóng.
+  Warmup có pagination/limit/cancellation, lịch sử được index theo instrument/interval/time.
+- Raw header chỉ được rút gọn sau khi kiểm tất cả downstream dependency. Lineage mới
+  phải có capture reference/hash và transport coordinates cần thiết; raw hết retention
+  phải được diễn đạt đúng, hash không có nghĩa payload vẫn tải lại được mãi mãi.
+- Chỉ bỏ header bằng thay đổi backward-compatible đã test, không sửa business event ID
+  hoặc làm replay cũ không đọc được. Đây là tối ưu trong Phase 2 nếu an toàn; không bắt
+  dựng cả raw/canonical stack thứ hai chỉ để chạy A/B headers trên production.
+- Bắt đầu với partition topology hiện có; đo skew p3/p5. Đổi partition làm đổi mapping
+  key/cursor nên không coi là config tweak vô hại. Chỉ làm nếu số đo chứng minh cần,
+  trong cutover đã version hóa; không tự thêm phase sharding hoặc routing mesh.
+- Không double-run toàn stack trên host đang bận. Shadow dùng group riêng, caps, duration
+  và stop condition theo ảnh hưởng lên runtime hiện tại; fault injection dùng scope test.
+
+<a id="astra-four-phase-plan"></a>
+### 13.8 Bốn phase đề xuất: goal, scope, test, exit và rollback
+
+Các checklist dưới đây là work items bên trong đúng **bốn phase**, không phải phê duyệt
+các phase con vô hạn. Hoàn thành scope thì dừng, ghi journal và chuyển phase đã được duyệt.
+Bug do implementation mới phải sửa tại phase sở hữu; missing implementation không được
+đổi tên thành technical debt. External limitation phải ghi rõ ảnh hưởng và owner decision.
+
+<a id="astra-phase-1-stream"></a>
+#### Phase 1 - Kafka-Native Stream And Replay Foundation
+
+**Status:** `PROPOSED / NOT STARTED`.
+**Goal:** bỏ phụ thuộc singleton durable writer khỏi đường realtime, giữ protocol và
+proof replay; xác nhận hướng mới giảm bottleneck trước khi chuyển toàn bộ Query.
+**Đọc:** §13.3-13.7; guide canonical/replay/SDK; Opus §9.2-9.3; ADR-0006.
+
+**Phải làm:**
+
+1. Freeze source/image/config baseline, source topic/partition identity và consumer
+   manifest đang dùng. Record các fail có sẵn để không đổ lỗi nhầm cho bản mới.
+2. Kiểm inventory source tái sử dụng. Rust Kafka và protobuf đã có; native gateway,
+   auth interceptors, cancellation và replay scheduler không được giả định đã viết xong.
+3. Prototype nhỏ dùng dữ liệu đã capture để đo native consume/decode/fan-out cost,
+   event bytes và memory. Đây là một checkpoint trong phase, không một train riêng.
+4. Thay Stream backend bằng Kafka committed read, bounded ring và replay workers;
+   giữ port/protocol/schema/entitlement của public API theo migration config.
+5. Hai replica đọc đủ partition độc lập; implement subscription-index, flow control,
+   per-client cancellation và cursor thế hệ mới theo §13.6.
+6. Shadow với group/port/identity test rõ ràng; không commit/reset group cũ, không đưa
+   load-test event vào topic production. Không chỉ test BTC mà dùng captured/live scope
+   Binance/OKX hiện có, gồm bar, trade, quote, mark và L2.
+
+**Test bắt buộc:** unit/property/golden cho token/ordering; integration Kafka thật với
+commit/abort/rebalance; reconnect ring-hit/ring-miss/expired cursor; duplicate và source
+gap riêng; hai subscriber chung identity; kill một test replica; slow/abandoned client;
+auth cross-venue/symbol denial; byte cap/queue cap; malformed payload fail-closed.
+
+**Exit:** canonical oracle và output mới khớp về event identity/value/order theo delivery
+class; zero unexplained loss/cross-mix; failover không cần writer lease handoff; đo được
+capacity/cost ở baseline và target canonical event mix. Target 3.000/s là benchmark có
+provenance, không là permission publish 3.000 synthetic events/s lên production.
+Nếu chưa đạt, sửa bottleneck thuộc phase hoặc báo số đo và quyết định thiết kế trước
+khi đi tiếp; không giấu bằng tăng freshness budget.
+
+**Rollback/cleanup:** không chuyển consumer production trong phase; stop đúng shadow
+replica/client, giữ offsets cũ. Dọn image/cache test không referenced; giữ artifact cần
+Phase 2 và evidence compact. Không xóa source history/volume.
+**Dừng scope:** chưa đổi Query backend, BAR authority, Kafka partition count hoặc TS.
+
+<a id="astra-phase-2-materialization"></a>
+#### Phase 2 - Latest, BAR History And Query Convergence
+
+**Status:** `PROPOSED / REQUIRES PHASE 1 EXIT`.
+**Goal:** Query nóng không chờ tick spool; history và rebuild đúng domain, không mất
+warmup đã có. Chuẩn bị backend mới đầy đủ cho consumer mà không đổi alpha business logic.
+**Đọc:** §13.4-13.7; guide warmup/history/quality; existing BAR edge, Redis projection,
+Query adapters và provider reference wrappers.
+
+**Phải làm:**
+
+1. Materialize latest bằng native bounded path, atomic generation/offset/state; retain
+   legacy Redis keys/pubsub chỉ nếu inventory xác nhận consumer còn dùng.
+2. Tách BAR history khỏi tick log; migrate verified rows/checkpoint, validate uniqueness,
+   correction và calendar semantics. Backup/restore có bounded rehearsal trước cutover.
+3. Chuyển BAR edge checkpoint/recovery sang interface mới; không đổi thuật toán provider
+   finality và không bổ sung artificial close delay để làm test dễ hơn.
+4. Query snapshot/latest/mark đọc projection mới; BAR history đọc store mới. Book snapshot
+   chỉ từ verified native view; warmup cursor là watermark thật, không watermark Kafka
+   global mới nhất. Reference cold wrappers và public SDK shape được giữ nguyên.
+5. Cô lập hot-read/cold-work scheduling; cancellation phải giải phóng work budget thực,
+   không để request timeout nhưng background job tiếp tục làm nghẽn Query.
+6. Chọn/implement recovery snapshot + replay cho latest và durable BAR recovery; readiness
+   per slice, không global cache identity khiến mọi product cùng ngừng không cần thiết.
+7. Rút raw header có kiểm chứng dependency nếu đáp ứng §13.7; nếu chưa thể bỏ an toàn,
+   giữ nguyên và report chi phí, không che lineage loss bằng một hash không đủ ngữ cảnh.
+
+**Test bắt buộc:** crash trước/sau sink commit; duplicate/rebalance/zombie write;
+Redis empty/partial rebuild; interrupted restore; BAR old-open repair/correction;
+warmup 2.500/5.000 và maxlen công bố; interval/native calendar alignment;
+strict batch 1/8/16/32/50; two-replica snapshot/cursor parity tại cùng watermark;
+quiet/disconnect/session generation cho từng feed; simultaneous cold warmup + hot reads.
+
+**Exit:** full read-plane matrix qua hai replica pass; history đủ theo manifest, không
+âm thầm giảm maxlen; cache restart recovery có RTO đo được; hot p95/p99 không bị cold
+work làm vượt ngân sách đã freeze; invalid/stale/gap vẫn bị chặn đúng. Không yêu cầu
+byte-equal latest tại hai thời điểm khác nhau nếu update đang tiếp tục; so đúng identity,
+watermark/progress và bounded replica lag.
+
+**Rollback/cleanup:** Query cũ và spool cũ giữ nguyên; shadow history/Redis namespace
+riêng. Rollback backend/config về baseline đã ghi, không reset Kafka/flush cache chung.
+Xóa đúng test namespace được cho phép, không xóa bản history duy nhất.
+**Dừng scope:** chưa promote toàn bộ consumer, chưa gỡ stack cũ, chưa release.
+
+<a id="astra-phase-3-acceptance"></a>
+#### Phase 3 - Real Consumer Load, Handoff And Recovery Acceptance
+
+**Status:** `PROPOSED / REQUIRES PHASE 2 EXIT`.
+**Goal:** chứng minh sức tải workload mục tiêu, latency consumer thực và phục hồi trước
+khi chuyển authority rộng. Không dùng health-up hoặc số container làm chứng nhận tải.
+**Đọc:** §13.9-13.11; workload/budget trong Unified Plan; SDK/TS adapter và manifest thực.
+
+**Phải làm:**
+
+1. Freeze workload, per-identity quotas, route set, source/image/config và budget trước
+   run. Driver phải phân biệt offered, admitted, completed, rejected, timed-out,
+   in-flight và missed; không chặn load generation rồi gọi đó là zero miss.
+2. Chạy fast exact matrix toàn affected product trên hai replica: warmup, latest,
+   reference, typed status, snapshot/cursor và gap diagnostics; không stream/order.
+3. Chạy targeted protocol/fault matrix của backend mới; lỗi nào xác định layer/binding
+   thì sửa/test đúng layer trước, không chạy lại full C2 để tìm lỗi.
+4. Dùng no-order consumers thực qua SDK với staged workload 20 -> 35 -> 50 alpha +
+   TS 60 route, bắt đầu bằng smoke nhỏ nếu cần. Không cần dựng 50 strategy engine để
+   benchmark Data Layer, nhưng phải giữ đúng 50 logical clients, quota và data requests.
+5. Canary consumer routing theo manifest/versioned config: TS data consumer trước,
+   sau đó representative alpha read clients. Không đổi signal/sizing/order path.
+6. Đo burst bằng real capture replay trong scope test và lưu lượng provider thật; kiểm
+   lag từng partition, replay/catch-up và cold-warmup interference. Kafka fault drills
+   không được kill broker production chỉ để lấy evidence.
+7. Diễn tập rollback/return và chỉ khi các matrix xanh mới chạy acceptance cuối 300s.
+   SDK snapshot/reconnect/allowed fallback phải đúng, product BLOCKED không lén fallback.
+
+**Exit:** đạt tải 50 + TS theo denominator đã freeze; no unexplained data loss/duplicate
+application/cross-mix; latency và recovery đúng budget; không backlog tăng không giới hạn,
+OOM hoặc resource pressure chưa giải thích. Được có backlog hữu hạn khi burst nếu
+catch-up/RTO đã chốt và dữ liệu quá hạn không được coi eligible.
+TS report đủ từng route và classification; exception OKX DOGE QUOTE đã được owner ghi
+chỉ áp đúng scope đó, không âm thầm biến nó thành nới SLA cho mọi feed.
+
+**Rollback/cleanup:** route về V2 baseline cho product V1 không support; V1 chỉ fallback
+khi policy cho phép. Restore exact image/config và SDK route revision, không dời offset.
+Stop/delete read clients sau run; giữ một rollback set và evidence, không để test client
+chạy qua đêm không chủ đích. Mọi order mutation ngoài scope là test failure.
+**Dừng scope:** chưa tuyên bố cross-host HA, all-venue production certification hoặc
+unbounded alpha capacity; chưa tag khi source/runtime/certificate chưa hội tụ.
+
+<a id="astra-phase-4-release"></a>
+#### Phase 4 - Final Cutover, Retirement And Stable Release
+
+**Status:** `PROPOSED / REQUIRES PHASE 3 EXIT`.
+**Goal:** một runtime rõ ràng, không giữ hai kiến trúc không thời hạn; phát hành candidate
+`v2.2.0` đã chứng minh trong scope, cleanup an toàn và đủ hướng dẫn vận hành.
+**Đọc:** §13.11-13.13; workspace/project AGENTS; release/rollback procedures hiện có.
+
+**Phải làm:**
+
+1. Hoàn tất versioned route handoff cho scope được duyệt; mỗi role có source SHA,
+   image digest, config/manifest revision, mount/volume và rollback entry chính xác.
+2. Đối chiếu group progress, history backup, replay retention và readiness. Sau đó
+   dừng writer/HTTP ingest/lease/tick-spool path cũ; không gọi stop container là đã
+   được phép xóa volume. Lập retention/expiry cho rollback và archive cần giữ.
+3. Gỡ code/flags không còn caller sau inventory; không xóa compatibility contract vì
+   không nhìn thấy traffic trong một cửa sổ ngắn. Cập nhật ADR sunset và runbook recovery.
+4. Source -> feature PR -> dev/CI -> release PR -> main theo workflow repo. Build/attest
+   immutable image từ revision release; receipt liên kết exact runtime/config và
+   source tested. Nếu merge SHA khác, xác minh tree/provenance và chạy affected smoke;
+   không ghi image cũ là build từ SHA mới, không force-push để giả hội tụ.
+5. Publish release khi gate đạt, cùng benchmark consumer-call-to-usable, capacity
+   envelope, unsupported/deferred products và known external limitations rõ ràng.
+6. Cleanup từng artifact theo reference: active set + named rollback, xóa test image
+   và unused build cache trong scope được duyệt; remove merged worktree/branch sau khi
+   xác nhận code đã nằm ở dev/main. Disk before/after và restart check ghi vào plan.
+
+**Exit:** CI/test/receipt/source/image/config cùng được trace; endpoints/SDK cũ tương
+thích; target workload đã pass; không writer cũ âm thầm tiếp tục ghi; old-state removal
+có approval và restore path; canonical checkout, dev, main/release và runtime rõ ràng.
+
+**Rollback:** còn hiệu lực trong cửa sổ đã công bố, có image **và** config/data recovery
+cần thiết; chỉ giữ image nhưng bỏ state bắt buộc không phải rollback có thể chạy.
+**Dừng scope:** không mở hạ tầng mới, trading-system upgrade, order test, P19 hay migrate
+DNSE/Spot ngoài phạm vi chỉ để đóng release này.
+
+<a id="astra-test-and-evidence"></a>
+### 13.9 Matrix test tập trung và cách dùng lại evidence
+
+| Nhóm | Case tối thiểu phải cover | Evidence / phase sở hữu |
+|---|---|---|
+| Canonical input | committed/aborted transaction, corrupt schema, wrong identity, out-of-order source | Rust/golden + real Kafka integration, P1 |
+| Stream delivery | ring hit/miss, filtered offsets, sparse key, expiry, reconnect replica, overlapping subscribers, slow client, cancellation | Event ID/value/order comparison và memory limits, P1 |
+| Auth/SDK | JWT/manifest revision, cross-slice denial, cursor tamper, expired token, correct renewal/reconnect | Existing SDK dùng server thật, P1-P3 |
+| Latest projection | crash/retry, rebalanced old worker, generation switch, empty/partial Redis, quiet state older than short replay | State + checkpoint + typed readiness, P2 |
+| L2 | snapshot/delta boundary, duplicate, sequence gap, checksum failure, resync, missing snapshot, depth preservation | Verified book oracle, P1-P2 |
+| BAR | finality, calendar intervals, 5k history, missing old opens, late correction, repair không lùi latest, history-to-live | Provider/canonical/history tie-out, P2 |
+| Query | strict batches, replica progress, hot/cold fairness, canceled cold work, partial vs require_all semantics, diagnostics unavailable | Typed item results + queue/latency, P2 |
+| Reference | native/derived basis lineage, missing/unit, MARK/INDEX component quality, unchanged provider limits | Reuse adapter cert + changed read-path tests, P2 |
+| Recovery/load | 20/35/50 clients + TS, burst, per-partition lag, one replica failure, cache recovery và rollback | Timelines/metrics/route outcomes, P3 |
+| Release | exact provenance, cold boot, allowed rollback, resource inventory và cleanup | Release receipt/CI/disk inventory, P4 |
+
+- **Không chạy lại toàn bộ venue research/normalization đã certified nếu source/domain
+  đó không đổi.** Ghi evidence ID/source scope được kế thừa, không chỉ nói "đã test rồi".
+- **Phải test lại affected read/replay path của toàn demanded scope** vì backend/cursor
+  thay đổi. Reuse 299-product inventory/fixtures nếu vẫn là inventory hiện hành; không
+  mặc định con số 299 là bất biến hoặc một BTC smoke bao phủ mọi product.
+- Unit dùng synthetic có test provenance; integration dùng captured/provider data đúng
+  nguồn. Replay tăng tốc không được sửa event timestamp rồi gọi đó là live freshness.
+- Khi fake cần thiết, khóa protocol/spec của collaborator; ít nhất một test dùng class
+  thật để bắt lỗi property/method như `subscriber_count`. Existing five suite errors
+  phải được phân loại; không gọi toàn suite xanh khi chúng vẫn lỗi.
+- Test fail ghi `identity + endpoint + replica + typed code + watermark/generation +
+  quality hash + latency components`, không chỉ `DataLayerError` chung chung.
+- Một final C2 300s là bước certification sau matrix, không công cụ dò bug mỗi vòng.
+  Nếu binary/routing đổi sau certificate, đánh giá affected scope và cập nhật receipt
+  trung thực; không tái dùng receipt cũ cho đường thực thi mới chưa kiểm.
+
+<a id="astra-benchmark-contract"></a>
+### 13.10 Benchmark: đo đúng thứ consumer cần và đúng sức tải
+
+**Bốn loại thời gian bắt buộc tách riêng:**
+
+1. `provider_event -> host_receive`: network + provider timing, dùng clock có kiểm tra skew.
+2. `host_receive -> canonical_commit -> served_view`: pipeline/projection age và lag.
+3. `consumer_call -> usable validated result`: đo trong container client qua SDK thật,
+   gồm DNS/TLS/auth/network/queue/decode/quality check; không chỉ thời gian server handler.
+4. `final_bar_close -> consumer_signal_input_ready`: BAR reaction delay; khác dropout
+   budget của một history window. Record rejected/not-ready observations, không chỉ các
+   response thành công được chọn lọc.
+
+Stream còn report inter-arrival/progress, replay catch-up, reconnect recovery và
+source/session liveness. Event age của quiet feed không đồng nghĩa transport chết;
+session live cũng không tự làm stale price đủ điều kiện execution.
+
+**Workload đích kế thừa và phải xác minh bằng manifest thực trước run:**
+
+| Class | Số client | Traffic mỗi client |
+|---|---:|---|
+| Candle/signal | 20 | BAR 1m stream + QUOTE poll 1 Hz |
+| Realtime | 15 | TRADE + QUOTE streams + MARK_INDEX poll 1 Hz |
+| Grid/L2 | 10 | BAR + QUOTE + BOOK_DELTA streams, snapshot bootstrap/recovery, MARK_INDEX 1 Hz |
+| Multi-symbol | 5 | Hai QUOTE streams + hai-item MARK batch 1 Hz + reference một lần/phút |
+| Trading System | Consumer thật | 60 route hiện hành, giữ freshness/policy và frequency thực |
+
+Đây là khoảng 90 alpha subscriptions và 50 hot HTTP requests/s, chưa tính TS,
+bootstrap/recovery/reference. Phải đếm thêm item/s, messages/s và bytes/s: batch hai item
+không bằng một item, và một canonical event có thể fan-out đến nhiều subscriber.
+Không tự chia cùng identity quota nhỏ cho 50 clients rồi benchmark throughput bị kìm.
+
+Budget consumer-call-to-usable dùng mốc đã thảo luận, cần freeze theo đúng operation
+trước test, không diễn giải thành provider-age SLA:
+
+| Operation | Mốc p95 / p99 | Điều kiện |
+|---|---|---|
+| Hot QUOTE/TRADE read | 100 / 250 ms | Warm connection và cold connection report riêng |
+| MARK_INDEX read | 250 / 500 ms | Component freshness và eligibility vẫn kiểm riêng |
+| L2 read | 300 / 750 ms | Snapshot size/depth và replay không trộn một histogram |
+| BAR latest read | 1.000 / 2.000 ms | Không phải toàn bộ warmup 5k hoặc close-to-signal SLA |
+
+Nếu budget hiện hành khác, agent phải đối chiếu/ghi quyết định trước run, không chọn
+ngưỡng có lợi sau khi thấy kết quả. Warmup 2.500/5.000, reference batch, cursor replay,
+diagnostics và stream-open có histogram/error/recovery riêng, không bị giấu khỏi báo cáo.
+
+**Báo cáo mỗi stage:** actual source rate/mix/bytes; per-partition lag và oldest age;
+offered/admitted/completed/error/timeout/in-flight; p50/p95/p99/max và sample count theo
+venue/feed/operation/replica; CPU usage/throttle, RSS/working set, queue/ring peaks,
+Kafka/Redis/SQLite disk và I/O. Freshness rejection đúng domain vẫn là unavailable
+observation cần báo, không được bỏ mẫu để làm latency đẹp.
+
+Target `<=5 vCPU @3.000 canonical events/s` ở Opus chỉ là hypothesis. Chốt resource
+envelope sau P1 rồi xác nhận lại với fan-out/cold load ở P3; không cam kết trước kết quả.
+Tăng cap chỉ khi profile chứng minh throughput/tail cải thiện tương xứng, và không
+đẩy áp lực sang TS/DB/consumer. Single-host RF3 và 300s acceptance không chứng minh
+regional DR, nhiều ngày ổn định hoặc chịu được mọi tương lai không giới hạn.
+
+### 13.11 Scope, rollout, rollback và cleanup thống nhất
+
+- **Giữ:** venue adapters/domain contracts/provider quotas; SDK/public endpoint shape;
+  data truth và source timestamps; no-order boundary; existing authority policies.
+- **Cho phép trong đề xuất:** thay internal Stream/projector/Query/BAR-state dependency,
+  typed cursor version, scoped materialization/recovery và affected tests.
+- **Không bao gồm:** order/risk/alpha strategy changes; V1 overhaul; move/reset Kafka
+  offsets để bỏ backlog; broker topology change tự phát; flush/delete shared state;
+  bật DNSE/Spot/Deribit production entitlement; lakehouse/Kubernetes/new message bus.
+- Approval execution sau này phải bao gồm đúng roles/images/configs/state transitions
+  trong scope. Không hỏi lại cho từng retry đã nằm trong approval, nhưng việc viết tài
+  liệu hôm nay không cấp quyền restart/xóa dữ liệu hoặc đổi authority.
+- Không xóa old spool khi chưa có migrated history + replay/restore proof. Dừng group
+  cũ không đồng nghĩa phải reset nó; giữ rollback checkpoints với retention hữu hạn.
+- V1 fallback chỉ cho sản phẩm policy cho phép; advanced V2 rollback cần old V2 binary
+  và state/config tương ứng. Không giữ old stack chạy mãi chỉ vì chưa định nghĩa expiry.
+- Mỗi phase inventory test artifacts, dọn đúng scope sau test, ghi retention và disk
+  trước/sau khi có cleanup. Không tạo image mới khi chỉ thay harness/config có thể chạy
+  bằng candidate hiện có; build khi binary/dependency thực thay đổi.
+- Một canonical checkout, một feature train cho thay đổi này; không mở worktree/branch
+  cho từng symbol, lần test hay lần retry. Feature -> dev -> main/release, không push
+  hoặc merge ngoài quyền owner đã cấp. Giữ các branch khác có code riêng chưa merge.
+
+### 13.12 Thời gian, decision boundary và cách tránh lặp lại vòng cũ
+
+Đây là thay backend có state/cursor, **không phải một config hotfix vài giờ**. Mốc 2-3
+tuần ở Opus là ước lượng chưa đo, không deadline đã được chứng minh. Trong P1 cần một
+prototype nhỏ/timebox được ghi trước để biết native path có cải thiện thật; sau đó mới
+chốt lịch theo khối lượng auth/SDK/replay/materializer thực, không hứa hoàn thành 1-2 ngày.
+
+Để làm nhanh đúng cách:
+
+1. Bỏ hướng tối ưu vô hạn single writer sau khi owner chọn C; chỉ vá lỗi an toàn cấp bách
+   của runtime cũ nếu được chấp thuận, không chạy song song hai chương trình nâng cấp.
+2. Giữ contract/domain và test fixture đã tốt; thay backend qua adapter/interface có sẵn.
+   Không thêm abstraction tổng quát cho một tương lai chưa có requirement.
+3. Rust-first cho hot path, nhưng không rewrite SDK/control plane/provider lịch sử chỉ
+   để đồng nhất ngôn ngữ. Không làm hai gateway hoàn chỉnh Python rồi Rust liên tiếp.
+4. Freeze workload/evidence schema trước implementation để cùng một bug được phát hiện
+   bằng matrix ngắn; full acceptance ở cuối, không tạo ceremony mới sau từng lỗi.
+5. Commit mỗi coherent tested slice với identity owner; journal scope/results/remaining
+   work tại Unified Plan. Source pass, shadow pass, runtime pass và release là bốn trạng
+   thái khác nhau, không đổi tên chúng để tạo cảm giác đã xong.
+6. Nếu benchmark không đạt, chỉ ra bottleneck/correctness failure cụ thể và sửa ở phase
+   hiện hành. Chỉ xin quyết định thiết kế khi thật sự vượt scope/semantics/resources đã
+   duyệt; không gọi code chưa viết xong là external technical debt.
+
+### 13.13 Quyết định đề nghị owner chốt và trạng thái tài liệu
+
+| Quyết định | Khuyến nghị Astra | Trạng thái |
+|---|---|---|
+| Hướng kiến trúc | C có các điều chỉnh tại §13; không A dài hạn, không D toàn bộ | Đề xuất, chưa triển khai |
+| Hot runtime | Rust consume/replay/materialization/fan-out; Python API/SDK/control | Đề xuất, prototype P1 phải đo |
+| Stream replica | Hai replica độc lập đọc đủ partition, bounded buffers/replay | Đề xuất; xác minh CPU/fan-out |
+| History | BAR-only durable store với checkpoint/backup; provider backfill có giới hạn | Đề xuất; migration P2 |
+| Topology | Giữ Kafka hiện có; chưa tăng partition/service theo phỏng đoán | Đề xuất mặc định |
+| Target acceptance | 50 logical alpha theo workload thật + TS, matrix trước C2 | Không hạ mục tiêu cũ |
+| Release | Candidate v2.2.0 sau source/runtime/consumer/provenance gates | Chưa certified/published |
+
+**Kết luận:** giữ Kafka và những contract/domain đã đúng, thay điểm ghi tuần tự dư thừa
+và ràng buộc cache đang cản toàn pipeline. Kafka giữ durable replay, Redis giữ latest,
+BAR store giữ history, Stream phục vụ từ committed log mà không buộc mỗi tick phải
+fsync thêm một lần vào SQLite. Tốc độ đến từ bỏ công việc/đợi không cần thiết, không từ
+bỏ finality, nới freshness, đổi timestamp hay im lặng mất event.
+
+**Receipt của lần bổ sung này:** documentation-only; phần Opus nguyên vẹn; bốn phase
+vẫn pending approval. Chưa có code/runtime/resource cleanup mới và không tự phát hành
+release. Journal tương ứng nằm ở
+[Unified Plan - Astra review addendum](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kafka-native-astra-review-addendum).

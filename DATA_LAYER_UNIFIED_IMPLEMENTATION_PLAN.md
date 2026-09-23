@@ -53084,3 +53084,50 @@ be named; do not conceal them by omitting a product from the denominator.
   deliberately not rerun for a plan-only change. No build/test resource was
   created, so there is nothing new to prune; active/rollback artifacts remain
   untouched. No push, merge or release in this documentation task.
+
+<a id="kafka-native-astra-review-addendum"></a>
+### 2026-09-23 - Astra Kafka-Native Architecture Review Addendum
+
+**Status: DOCUMENTATION COMPLETE / FOUR PROPOSED PHASES AWAIT OWNER APPROVAL.**
+The owner requested an append-only independent assessment beneath Opus's
+existing review in
+[the Kafka-native architecture review, Astra section 13](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#astra-independent-addendum).
+Scope is documentation only: qualified findings, reusable architecture,
+four proposed phases, correctness/capacity tests, exits, rollback and cleanup.
+The original review and unrelated existing plan edits must be preserved.
+No source/config/runtime change, new feature phase execution, build, provider
+request, Docker cleanup, push, merge or release is authorized by this edit.
+The original detailed architecture guide remains authoritative until the
+owner approves the proposed implementation scope.
+
+**Work and verification receipt:** appended 586 lines in 13 Astra sections,
+including four proposed phases with scope, goals, tests, exit gates, rollback,
+cleanup and stop boundaries. The addendum distinguishes reusable domain
+evidence from unproven capacity, corrects Kafka offset/external-sink/rebuild
+assumptions, specifies Rust/Python roles and preserves the 50-alpha + TS target.
+Dependency-free Python structural checks passed: four complete phase blocks,
+13 sections, 11 valid local file/anchor links, balanced fences and clean
+append whitespace. The original Opus prefix is byte-for-byte unchanged:
+37,192 bytes, SHA-256
+`617d75aad642067a95a08dc0ccf7c9ab13edb25c20bfe9ee01d36cd16875e113`.
+The first link check found an incorrect replay-module path in the new text;
+it was corrected to `qdl/replay/handoff.py` and the complete check passed.
+Node is unavailable on the host, so validation used the existing Python
+standard library without installing dependencies or producing bytecode.
+
+**Scope preservation:** two pre-existing Unified Plan hunks remain untouched
+and are excluded from the documentation commit. Working-tree `git diff --check`
+reports their existing trailing whitespace at line 13058; it is not a defect
+introduced by this append. The staged documentation must pass its own
+`git diff --cached --check` before commit.
+
+**Runtime/cleanup:** no source, config, provider, Kafka, Redis, SQLite, TS,
+alpha or order mutation; no runtime test, build or new Docker resource.
+No cleanup is needed for this documentation-only slice, and no existing
+active/rollback artifact is removed. Runtime image/config inventory was not
+refreshed, so this is not a new health/capacity certification. Canonical remains
+`/home/bobby/data_layer`, feature `feat/consumer-endpoint-benchmark`, reviewed
+source `83fa1bc`; no extra worktree, push, merge, tag or release.
+Commit uses `BobbyAxerol <vugioan11022002@gmail.com>` and contains only the
+requested review document and this appended journal. Next step is owner review
+of the proposal, not automatic implementation of Phase 1.
