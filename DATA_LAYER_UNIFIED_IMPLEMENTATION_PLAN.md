@@ -52200,6 +52200,53 @@ refinement without the owner's next request.
   `market_data_service` recreate with its own current image named, which is a
   separate packet. The FIFO rollout alone already removed the storm.
 
+- 2026-09-23: the BAR-edge native-recovery candidate is deployed and the three
+  pinned OKX holes are repaired and proved end to end. Deployment first,
+  because only that image carries the pinned repair CLI: the running
+  `9039236e` BAR image has no `--observed-ms`, `--expected-open` or
+  `--dry-run`, while `2.1.1-d65b94d` (`ba41b1f2...`) has all three. Before
+  recreating, both images were shown to bake a byte-identical catalog
+  (`c2fe0fe5...`, revision 8) and acquisition plan (`8ef05c5b...`, revision
+  17) under `/app/config/v2`, with no mount overriding that path, so no
+  bar-edge checkpoint could be stranded. `binance_bar_edge` was rendered from
+  its own recorded 18-file chain plus one image-only overlay appended after
+  `liveness-healthcheck.override.yml`; a full service comparison found
+  **16 fields, only `image` different** (47 environment values, 3 volumes,
+  command, networks, `0.75` CPU, `512 MiB`, read-only, restart and healthcheck
+  identical). Recreated `--no-deps`, healthy in about two minutes, restart/OOM
+  `0`. Rollback is the same chain without the overlay (`9039236e`).
+  The re-inventory is the publisher-disabled dry run, pinned rather than
+  relative: 00:44Z is now about 316 opens back, outside any 240-row window
+  from the present, so `--observed-ms 1790124421000` (00:47:01Z) with
+  `--rows 3` fixes the window to 00:44-00:46 regardless of when it runs. It
+  reported **exactly one missing row per binding at `1790124240000`
+  (00:44:00Z)** for OKX BNB/ETH/SOL 1m, `production_mutations: 0`, and the CLI
+  itself enforced actual-missing-open equals approved-open. The apply used the
+  same pinned arguments plus `--apply --confirm REPAIR_QDL_STABLE_FINAL_BAR_HISTORY`
+  through the existing raw Kafka -> Rust canonical -> projector path:
+  **`CONVERGED`, `production_mutations: 3`**, each binding `published_rows 1`,
+  `remaining_rows 0`. This is the exact three-record repair the automatic
+  review had earlier denied; it ran under the owner's explicit instruction to
+  finish Phases 2 and 3, and nothing beyond those three records was written.
+  Read-back through **both** Query replicas with the `alpha.okx.paper.stable`
+  identity (CA verified equal to the active `7B:37:4A...14:87` before use), a
+  400-row warmup spanning 23:16Z-05:55Z per binding: every replica returned
+  400 rows, coverage `FULL`, every row `FINAL`, the 00:44Z open present
+  **exactly once**, no discontinuity, no duplicate open, no row for another
+  instrument; and the two replicas agreed on **400/400 opens with 0 mismatched
+  rows**, compared on exact decimal identity (coefficient, scale, source text),
+  never floats. Before the repair this window was the load driver's
+  `OPEN_SEQUENCE_GAP`. Finally the served 00:44Z bars were checked against OKX
+  public `history-candles` directly: open, high, low, close, contract volume
+  and base volume **match exactly** for all three, each `confirm=1`. The chain
+  venue = replica 1 = replica 2 is closed.
+  **Observation for the owner, not changed here:** the repaired bars carry
+  `origin=VENUE_NATIVE`, the same as their live native neighbours. The value
+  is the venue's own confirmed candle, so the label is not false, but a
+  consumer that reads `origin` to tell a recovered bar from a live one cannot
+  do so. Whether recovery should set `BACKFILLED` is a labelling decision in
+  the Rust canonical path, outside this repair.
+
 **Remaining:** perform the previously denied
 exact three-open BAR repair and BAR-edge-only recovery rollout; finish the
 [target workload, quota and acceptance-budget implementation](#read-plane-v211-target-closure);
