@@ -61,6 +61,12 @@ _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # reports real coverage rather than inventing missing rows.
 _BOOTSTRAP_HISTORY_LOOKBACK_DAYS = 1_095
 _BOOTSTRAP_HISTORY_LOOKBACK_MS = _BOOTSTRAP_HISTORY_LOOKBACK_DAYS * 86_400_000
+# Native websocket BAR delivery is primary. These bounds only govern the
+# provider-history repair path after durable evidence proves a native hole.
+_NATIVE_RECOVERY_LOOKBACK_ROWS = 3
+_NATIVE_RECOVERY_GRACE_SECONDS = 3.0
+_NATIVE_RECOVERY_VISIBILITY_SECONDS = 10.0
+_NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +164,17 @@ def _latest_source_closed_boundary_ms(
     )
 
 
+def native_recovery_bar_bindings(pairs: tuple) -> tuple:
+    """Return Rust-native BARs eligible only for bounded gap recovery.
+
+    This is deliberately distinct from recurring REST polling. A native lane
+    remains the normal final-BAR authority; the edge consults provider history
+    only after its durable tail proves an unresolved gap beyond the grace.
+    """
+
+    return tuple(pair for pair in pairs if pair[1].mode == "RUST_NATIVE")
+
+
 def recurring_rest_bar_bindings(pairs: tuple) -> tuple:
     """The BAR bindings this edge keeps polling once the bootstrap has run.
 
@@ -200,6 +217,9 @@ class StableBinanceBarEdge:
         final_settlement_max_reads: int = 10,
         final_settlement_min_age_seconds: float = 6.0,
         max_concurrent_requests: int = 32,
+        native_recovery_lookback_rows: int = _NATIVE_RECOVERY_LOOKBACK_ROWS,
+        native_recovery_grace_seconds: float = _NATIVE_RECOVERY_GRACE_SECONDS,
+        native_recovery_visibility_seconds: float = _NATIVE_RECOVERY_VISIBILITY_SECONDS,
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
         canonical_cache_path: str | Path | None = None,
@@ -229,6 +249,14 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR retry bounds are invalid")
         if not 1 <= max_concurrent_requests <= 64:
             raise ValueError("stable BAR request concurrency must be between 1 and 64")
+        if not 2 <= native_recovery_lookback_rows <= max_catchup_rows:
+            raise ValueError(
+                "stable native BAR recovery lookback must be between 2 and max catch-up rows"
+            )
+        if not 0.10 <= native_recovery_grace_seconds <= 30.0:
+            raise ValueError("stable native BAR recovery grace must be between 0.10 and 30 seconds")
+        if not 0.10 <= native_recovery_visibility_seconds <= 60.0:
+            raise ValueError("stable native BAR recovery visibility wait must be between 0.10 and 60 seconds")
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority
@@ -244,6 +272,9 @@ class StableBinanceBarEdge:
         self.final_settlement_min_age_seconds = final_settlement_min_age_seconds
         self.settlement_reads = 0
         self.max_concurrent_requests = max_concurrent_requests
+        self.native_recovery_lookback_rows = native_recovery_lookback_rows
+        self.native_recovery_grace_seconds = native_recovery_grace_seconds
+        self.native_recovery_visibility_seconds = native_recovery_visibility_seconds
         self.state_path = Path(state_path) if state_path is not None else None
         self.repair_only = repair_only
         if repair_only and (self.state_path is None or not self.state_path.is_file()):
@@ -276,6 +307,9 @@ class StableBinanceBarEdge:
         self._retry_attempts: dict[str, int] = {}
         self._next_retry_at: dict[str, float] = {}
         self._last_retry_log: dict[str, float] = {}
+        self._native_recovery_next_at: dict[str, float] = {}
+        self._native_gap_first_seen_at: dict[str, float] = {}
+        self._native_recovery_visible_after: dict[str, float] = {}
         self._history_bootstrapped = False
         self._stopped = threading.Event()
 
@@ -312,6 +346,19 @@ class StableBinanceBarEdge:
         # Native websocket BARs stay owned by their Rust acquisition lane.
         self.bindings = recurring_rest_bar_bindings(self.history_bindings)
         self.okx_bindings = recurring_rest_bar_bindings(self.history_okx_bindings)
+        self.native_recovery_bindings = native_recovery_bar_bindings(self.history_bindings)
+        self.native_recovery_okx_bindings = native_recovery_bar_bindings(
+            self.history_okx_bindings
+        )
+        self._native_recovery_active = bool(
+            self.native_recovery_bindings or self.native_recovery_okx_bindings
+        )
+        self._native_recovery_next_at = {
+            source.binding_id: 0.0
+            for source, _acquisition in (
+                self.native_recovery_bindings + self.native_recovery_okx_bindings
+            )
+        }
         self._heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         # Keyed by binding id so a capture can ask what channel the core has this
         # binding registered under; see `_binance_binding`.
@@ -1222,6 +1269,189 @@ class StableBinanceBarEdge:
         previous_open = self._last_open_ms.get(source.binding_id)
         return previous_open is None or previous_open < newest_closed_open
 
+    def _native_expected_opens(
+        self,
+        source: StableSourceBinding,
+        *,
+        observed_ms: int,
+    ) -> frozenset[int]:
+        """Return the small current final-BAR window used to detect a native hole."""
+
+        newest_open_ms = self._expected_closed_open_ms(
+            source, observed_ms=observed_ms
+        )
+        if newest_open_ms is None:
+            return frozenset()
+        interval_ms = _bar_interval_ms(source.interval or "")
+        opens = frozenset(
+            newest_open_ms - index * interval_ms
+            for index in range(self.native_recovery_lookback_rows)
+        )
+        if any(value <= 0 for value in opens):
+            return frozenset()
+        return opens
+
+    def _next_native_recovery_check_at(
+        self,
+        source: StableSourceBinding,
+        *,
+        observed_ms: int,
+        now: float,
+    ) -> float:
+        interval_ms = _bar_interval_ms(source.interval or "")
+        boundary_ms = _latest_source_closed_boundary_ms(source, observed_ms)
+        return max(
+            now + 0.01,
+            (boundary_ms + interval_ms) / 1000 + self.settlement_delay_seconds,
+        )
+
+    def _prepare_native_history_repair(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        *,
+        expected_opens: frozenset[int],
+        observed_ms: int,
+    ) -> StableBarHistoryRepairPlan:
+        """Fetch exactly the observed native-gap window, never a wider tail."""
+
+        plan = self.prepare_history_repair(
+            source.binding_id,
+            rows=len(expected_opens),
+            observed_ms=observed_ms,
+        )
+        if plan.expected_opens != expected_opens:
+            raise RuntimeError(
+                "stable native BAR recovery provider window differs from the durable gap "
+                f"binding={source.binding_id}"
+            )
+        if plan.acquisition != acquisition:
+            raise RuntimeError("stable native BAR recovery acquisition differs from binding")
+        return plan
+
+    def run_native_recovery_cycle(self) -> int:
+        """Repair a proven native BAR hole without polling the healthy fast path."""
+
+        if self.repair_only or not getattr(self, "_native_recovery_active", False):
+            return 0
+        observed_ms = self._settled_observed_ms()
+        now = observed_ms / 1000
+        next_at = self._native_recovery_next_at
+        due = tuple(
+            (source, acquisition)
+            for source, acquisition in (
+                self.native_recovery_bindings + self.native_recovery_okx_bindings
+            )
+            if next_at.get(source.binding_id, 0.0) <= now
+        )
+        if not due:
+            return 0
+
+        candidates: list[tuple[StableSourceBinding, StableAcquisitionBinding, frozenset[int]]] = []
+        for source, acquisition in due:
+            expected_opens = self._native_expected_opens(
+                source, observed_ms=observed_ms
+            )
+            if not expected_opens:
+                next_at[source.binding_id] = self._next_native_recovery_check_at(
+                    source, observed_ms=observed_ms, now=now
+                )
+                continue
+            covered = self._durable_final_bar_opens(source, expected_opens)
+            if covered == expected_opens:
+                self._native_gap_first_seen_at.pop(source.binding_id, None)
+                self._native_recovery_visible_after.pop(source.binding_id, None)
+                self._clear_retry(source.binding_id)
+                next_at[source.binding_id] = self._next_native_recovery_check_at(
+                    source, observed_ms=observed_ms, now=now
+                )
+                continue
+
+            first_seen = self._native_gap_first_seen_at.setdefault(
+                source.binding_id, now
+            )
+            visible_after = self._native_recovery_visible_after.get(
+                source.binding_id, 0.0
+            )
+            retry_at = self._next_retry_at.get(source.binding_id, 0.0)
+            eligible_at = max(
+                first_seen + self.native_recovery_grace_seconds,
+                visible_after,
+                retry_at,
+            )
+            if now < eligible_at:
+                next_at[source.binding_id] = eligible_at
+                continue
+            candidates.append((source, acquisition, expected_opens))
+
+        if not candidates:
+            return 0
+
+        prepared: list[tuple[StableSourceBinding, StableAcquisitionBinding, StableBarHistoryRepairPlan]] = []
+        # Recovery is exceptional and provider-bound. Keep it below the
+        # normal edge polling concurrency so a multi-binding native outage
+        # cannot turn the repair loop into a provider rate-limit incident.
+        workers = min(
+            len(candidates),
+            self.max_concurrent_requests,
+            _NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS,
+        )
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="qdl-native-bar-repair",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    self._prepare_native_history_repair,
+                    source,
+                    acquisition,
+                    expected_opens=expected_opens,
+                    observed_ms=observed_ms,
+                ): (source, acquisition)
+                for source, acquisition, expected_opens in candidates
+            }
+            for future in as_completed(futures):
+                source, acquisition = futures[future]
+                try:
+                    prepared.append((source, acquisition, future.result()))
+                except Exception as error:
+                    self._schedule_retry(source.binding_id, now=now, error=error)
+                    next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+
+        published = 0
+        for source, _acquisition, plan in prepared:
+            try:
+                emitted = self.apply_history_repair(
+                    plan,
+                    expected_missing_rows=len(plan.missing_envelopes),
+                )
+            except Exception as error:
+                self._schedule_retry(source.binding_id, now=now, error=error)
+                next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+                continue
+            published += emitted
+            self._clear_retry(source.binding_id)
+            if emitted:
+                # Kafka acknowledgement precedes canonical/projector visibility.
+                # Wait once before inspecting again so a healthy projector cannot
+                # induce duplicate provider recovery requests.
+                visible_at = now + self.native_recovery_visibility_seconds
+                self._native_recovery_visible_after[source.binding_id] = visible_at
+                next_at[source.binding_id] = visible_at
+                logger.warning(
+                    "stable native final BAR recovery ACK binding=%s venue=%s rows=%s",
+                    source.binding_id,
+                    plan.acquisition.runtime,
+                    emitted,
+                )
+            else:
+                self._native_gap_first_seen_at.pop(source.binding_id, None)
+                self._native_recovery_visible_after.pop(source.binding_id, None)
+                next_at[source.binding_id] = self._next_native_recovery_check_at(
+                    source, observed_ms=observed_ms, now=now
+                )
+        return published
+
     def _next_ready_at(self, now: float) -> float:
         """Wake for a due target retry or the next provider BAR boundary."""
         candidates = []
@@ -1254,6 +1484,10 @@ class StableBinanceBarEdge:
                     (boundary_ms + interval_ms) / 1000
                     + self.settlement_delay_seconds
                 )
+        candidates.extend(
+            max(now, value)
+            for value in getattr(self, "_native_recovery_next_at", {}).values()
+        )
         return min(candidates) if candidates else now + 60.0
 
     def _fetch_latest(
@@ -1389,7 +1623,9 @@ class StableBinanceBarEdge:
         return len(acknowledgements)
 
     def _loop_sleep_seconds(self, now: float) -> float:
-        if not self._rest_fallback_active:
+        if not self._rest_fallback_active and not getattr(
+            self, "_native_recovery_active", False
+        ):
             return 60.0
         # The configured 100ms first poll/retry cannot work when the outer
         # scheduler imposes a larger arbitrary sleep floor.
@@ -1426,6 +1662,8 @@ class StableBinanceBarEdge:
                 self.bootstrap_history()
                 if self._rest_fallback_active:
                     self.run_cycle()
+                if getattr(self, "_native_recovery_active", False):
+                    self.run_native_recovery_cycle()
                 failures = 0
             except Exception:
                 failures += 1
@@ -1442,11 +1680,22 @@ class StableBinanceBarEdge:
         self.publisher.close()
 
 
+class _ReadOnlyRepairPublisher:
+    """A proof-only publisher that makes accidental repair writes impossible."""
+
+    def publish_many(self, _values):
+        raise RuntimeError("read-only stable BAR repair probe cannot publish")
+
+    def close(self) -> None:
+        return None
+
+
 def build_from_environment(
     *,
     state_path: str | Path | None = None,
     client_id: str | None = None,
     repair_only: bool = False,
+    publisher: KafkaRawPublisher | _ReadOnlyRepairPublisher | None = None,
 ) -> StableBinanceBarEdge:
     """Build the shared edge or an isolated repair client from one runtime env."""
 
@@ -1456,15 +1705,16 @@ def build_from_environment(
     )
     runtime_dir = Path(os.environ["QDL_STABLE_RUNTIME_DIR"])
     authority = json.loads((runtime_dir / "authority.json").read_text(encoding="utf-8"))
-    cert_root = Path(os.environ["QDL_KAFKA_CERT_ROOT"])
-    publisher = KafkaRawPublisher(KafkaRawPublisherConfig(
-        bootstrap_servers=os.environ["QDL_KAFKA_BOOTSTRAP_SERVERS"],
-        client_id=client_id or os.environ["QDL_KAFKA_CLIENT_ID"],
-        topic=acquisition.raw_topic,
-        ca_path=cert_root / "ca.crt",
-        certificate_path=cert_root / "client.crt",
-        key_path=cert_root / "client.key",
-    ))
+    if publisher is None:
+        cert_root = Path(os.environ["QDL_KAFKA_CERT_ROOT"])
+        publisher = KafkaRawPublisher(KafkaRawPublisherConfig(
+            bootstrap_servers=os.environ["QDL_KAFKA_BOOTSTRAP_SERVERS"],
+            client_id=client_id or os.environ["QDL_KAFKA_CLIENT_ID"],
+            topic=acquisition.raw_topic,
+            ca_path=cert_root / "ca.crt",
+            certificate_path=cert_root / "client.crt",
+            key_path=cert_root / "client.key",
+        ))
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(
@@ -1510,6 +1760,15 @@ def build_from_environment(
         max_concurrent_requests=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")
         ),
+        native_recovery_lookback_rows=int(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_LOOKBACK_ROWS", "3")
+        ),
+        native_recovery_grace_seconds=float(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_GRACE_SECONDS", "3.0")
+        ),
+        native_recovery_visibility_seconds=float(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_VISIBILITY_SECONDS", "10.0")
+        ),
         state_path=state_path or os.environ.get(
             "QDL_STABLE_BAR_STATE_PATH",
             str(
@@ -1525,6 +1784,19 @@ def build_from_environment(
         canonical_cache_id=_canonical_cache_id(canonical_cache_path),
         canonical_cache_path=canonical_cache_path,
         repair_only=repair_only,
+    )
+
+
+def build_readonly_repair_probe_from_environment(
+    *,
+    state_path: str | Path | None = None,
+) -> StableBinanceBarEdge:
+    """Build a provider/cache inspection client with no Kafka write capability."""
+
+    return build_from_environment(
+        state_path=state_path,
+        repair_only=True,
+        publisher=_ReadOnlyRepairPublisher(),
     )
 
 

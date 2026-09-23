@@ -51753,6 +51753,55 @@ refinement without the owner's next request.
   real-provider, no-apply history-repair dry run for exactly those three
   affected OKX `1m` bindings; it must prove provider coverage and exact missing
   row counts before any separate publish packet can be proposed.
+- 2026-09-23: Phase 3 recovery closure is approved as one bounded source slice.
+  The actual `OPEN_SEQUENCE_GAP` is an ownership hole: native BAR transport is
+  correctly Rust-primary, but the existing Python BAR edge only performs
+  recurring reconciliation for `PYTHON_REST` bindings. The correction keeps
+  native WebSocket delivery authoritative and fast. After a bounded native
+  final-BAR tail check observes an unresolved suffix or internal open-time gap
+  beyond a short configured grace, the existing edge may fetch only the same
+  binding's real provider history, require an exact contiguous calendar window,
+  and publish only still-missing final rows through the existing raw Kafka ->
+  Rust canonical -> projector path. It never polls REST on the normal native
+  fast path, writes cache directly, changes a BAR timestamp/finality policy,
+  emits a duplicate covered open, changes V1/manifest/TLS/authority/topology,
+  or adds a service/container/worker. Required source gates cover clean native
+  delivery with zero provider call, suffix and internal-gap repair after grace,
+  provider-window mismatch/no publish, duplicate/idempotent recovery, bounded
+  retry/visibility wait and the existing no-native-recurring-poll ownership
+  rule. Only after those gates pass may a bar-edge-only immutable candidate be
+  proposed; the real three-binding repair remains separately count-fenced by a
+  provider inspection before any data-plane publication.
+- 2026-09-23: implemented the approved source correction. `StableBinanceBarEdge`
+  now maintains an independent native-recovery schedule: it examines only a
+  three-open durable final-BAR window, waits three seconds for native delivery,
+  requires provider history to equal that exact window, and uses the existing
+  count-fenced repair path for still-missing rows. Recovery has a four-request
+  concurrency ceiling and a ten-second post-Kafka visibility wait; it is not
+  a recurring native REST poll. The repair CLI now exposes explicit
+  `--dry-run`, which constructs a publisher-disabled edge and therefore cannot
+  produce a Kafka write even if a later code path calls `publish_many`.
+  Deterministic, network-disabled verification passed: `62` tests in `25.010s`
+  for the repair CLI, native recovery, bootstrap, ownership and scheduling;
+  the wider native BAR/bootstrap/projector materialization matrix passed
+  `198` tests with `1` existing isolated Redis skip in `106.990s`. Expected
+  fault-injection warnings were emitted by fixtures only. `py_compile` and
+  `git diff --check` passed. No runtime role, Kafka/Redis/SQLite data, V1,
+  manifest, authority, provider subscription, Trading System, alpha or order
+  path changed in this source slice.
+- 2026-09-23: a publisher-disabled, real-provider dry run used the active
+  bar-edge's non-secret catalog/acquisition files (catalog `8`, acquisition
+  `17`, hashes `c2fe0fe5...8df18d3b` / `8ef05c5b...7d260`) and its read-only
+  runtime/checkpoint/cache mounts. It made `0` production mutations and
+  independently confirmed exactly one missing final `1m` BAR in each of
+  `okx-swap-bnb-usdt-swap-bar-1m`, `okx-swap-eth-usdt-swap-bar-1m` and
+  `okx-swap-sol-usdt-swap-bar-1m`, while authenticated OKX history supplied
+  the complete matching 240-row window. The source image/config provenance
+  mismatch was first rejected by the checkpoint fence; the probe was then
+  re-run only with copied non-secret active config files and passed. The next
+  bounded action is an exact count-fenced publish of those three rows through
+  the existing pipeline, followed by cache convergence and the failed
+  replacement `load-5-r5`; it requires the explicit Kafka data-plane packet.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a

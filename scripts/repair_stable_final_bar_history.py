@@ -15,7 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from qdl.runtime.stable_bar_edge import build_from_environment
+from qdl.runtime.stable_bar_edge import (
+    build_from_environment,
+    build_readonly_repair_probe_from_environment,
+)
 
 
 CONFIRM = "REPAIR_QDL_STABLE_FINAL_BAR_HISTORY"
@@ -56,6 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-missing", action="append", required=True)
     parser.add_argument("--wait-seconds", type=float, default=180.0)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="use a publisher-disabled provider/cache inspection client",
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--confirm")
     args = parser.parse_args(argv)
@@ -73,12 +81,18 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(str(error)) from error
     if set(expected) != set(bindings):
         raise SystemExit("--expected-missing must name exactly the requested bindings")
+    if args.dry_run and args.apply:
+        raise SystemExit("--dry-run and --apply are mutually exclusive")
     if args.apply and args.confirm != CONFIRM:
         raise SystemExit(f"--apply requires --confirm {CONFIRM}")
 
-    edge = build_from_environment(
-        client_id=f"qdl-v2-final-bar-repair-{os.getpid()}",
-        repair_only=True,
+    edge = (
+        build_readonly_repair_probe_from_environment()
+        if args.dry_run
+        else build_from_environment(
+            client_id=f"qdl-v2-final-bar-repair-{os.getpid()}",
+            repair_only=True,
+        )
     )
     try:
         plans = tuple(
