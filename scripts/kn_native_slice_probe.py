@@ -23,6 +23,9 @@ Subcommands:
            logging each record's commit time for commit->client latency;
   run      the SDK slice and the negative matrix (default).
 Replayed capture is never reported as live freshness.
+
+``run`` exits 0 only when ``slice_verdict`` finds no failure (KN-1 review F3);
+the result file always carries the verdict and its failure list.
 """
 from __future__ import annotations
 
@@ -44,6 +47,51 @@ ISSUER = "https://identity.qdl.stable.internal"
 AUDIENCE = "qdl-v2-stable"
 ROLES = ("historical_reader", "market_data_reader", "stream_consumer")
 SUBSCRIBE = "/qdl.query.v2.MarketDataStreamService/Subscribe"
+# The negative matrix below defines this many cases; fewer results means a
+# case was dropped, which is a failure, not a smaller pass.
+EXPECTED_NEGATIVES = 24
+
+
+def slice_verdict(result: dict[str, Any], *, expected_products: int) -> list[str]:
+    """Every reason the slice did not pass; empty means PASS.
+
+    Per product: records delivered, no decode or resume-token error, strictly
+    increasing offsets, resume from a mid-stream token yields exactly the next
+    record, the SDK proto path digests like the Python domain requirement, and
+    the controls went REPLAYING then LIVE. Then every negative case observed
+    its expected status and none is missing.
+    """
+
+    failures: list[str] = []
+    products = result.get("products") or []
+    if len(products) != expected_products or not products:
+        failures.append(f"products: {len(products)} of {expected_products}")
+    for product in products:
+        name = product.get("product", "?")
+        if not product.get("records"):
+            failures.append(f"{name}: no records delivered")
+        if product.get("decode_errors") != 0:
+            failures.append(f"{name}: decode_errors={product.get('decode_errors')}")
+        if product.get("token_errors") != 0:
+            failures.append(f"{name}: token_errors={product.get('token_errors')}")
+        if product.get("offsets_strictly_increasing") is not True:
+            failures.append(f"{name}: offsets not strictly increasing")
+        if product.get("resume_exactly_next_record") is not True:
+            failures.append(f"{name}: resume did not deliver exactly the next record")
+        if product.get("digest_python_equals_proto_path") is not True:
+            failures.append(f"{name}: requirement digest differs between Python and proto path")
+        controls = list(product.get("controls") or [])
+        if ("REPLAYING" not in controls or "LIVE" not in controls
+                or controls.index("REPLAYING") > controls.index("LIVE")):
+            failures.append(f"{name}: controls {controls} are not REPLAYING then LIVE")
+    negatives = result.get("negatives") or []
+    if len(negatives) != EXPECTED_NEGATIVES:
+        failures.append(f"negatives: {len(negatives)} of {EXPECTED_NEGATIVES} cases ran")
+    for case in negatives:
+        if case.get("observed") != case.get("expected"):
+            failures.append(f"negative {case.get('case')}: expected {case.get('expected')}, "
+                            f"observed {case.get('observed')}")
+    return failures
 
 
 def _dist(values: Sequence[float]) -> dict[str, float]:
@@ -276,7 +324,8 @@ class Slice:
 
     # ------------------------------------------------------------- negative run
     async def expect_status(self, consumer_id: str, requirement_domain, token: str,
-                            metadata: Sequence[tuple[str, str]], tls_consumer: str | None) -> str:
+                            metadata: Sequence[tuple[str, str]], tls_consumer: str | None,
+                            mutate=None) -> str:
         import grpc
         from qdl.certification.phase103_consumer_acceptance import sdk_requirement
         from qdl.query.v2 import query_pb2
@@ -289,7 +338,10 @@ class Slice:
             channel = grpc.aio.secure_channel(self.args.target, self.tls(tls_consumer).grpc_credentials())
         call = channel.unary_stream(SUBSCRIBE, request_serializer=query_pb2.SubscribeRequest.SerializeToString,
                                     response_deserializer=query_pb2.SubscribeResponse.FromString)
-        request = query_pb2.SubscribeRequest(consumer_id=consumer_id, requirement=sdk.to_proto(),
+        requirement = sdk.to_proto()
+        if mutate is not None:
+            mutate(requirement)
+        request = query_pb2.SubscribeRequest(consumer_id=consumer_id, requirement=requirement,
                                              cursor_token=token, max_buffer_events=100)
         try:
             async for _ in call(request, metadata=tuple(metadata), timeout=15):
@@ -351,10 +403,25 @@ class Slice:
                                                                       catalog_revision=999)),
              meta(self.jwt(okx)), okx, domain, "OUT_OF_RANGE"),
         ]
+        # KN-1 review F2 over the wire: exp - iat overflowed i64 and wrapped
+        # into an accepted lifetime; it must be a lifetime refusal.
+        cases.append(("jwt_iat_i64_min", good, meta(self.jwt(okx, iat=-(2**63))), okx, domain, "UNAUTHENTICATED"))
         results = []
         for name, token, metadata, consumer, requirement_domain, expected in cases:
             code = await self.expect_status(consumer, requirement_domain, token, metadata, consumer)
             results.append({"case": name, "expected": expected, "observed": code, "pass": code == expected})
+        # KN-1 review F1 over the wire: a requirement the Python server refuses
+        # (execution grade without full coverage) is INVALID_ARGUMENT before any
+        # manifest check; the pre-fix gateway answered PERMISSION_DENIED.
+        def partial_execution(requirement) -> None:
+            from qdl.query.v2 import query_pb2
+
+            requirement.grade = query_pb2.CONSUMER_GRADE_EXECUTION
+            requirement.require_full_coverage = False
+
+        code = await self.expect_status(okx, domain, good, meta(self.jwt(okx)), okx, mutate=partial_execution)
+        results.append({"case": "requirement_invalid_execution_partial", "expected": "INVALID_ARGUMENT",
+                        "observed": code, "pass": code == "INVALID_ARGUMENT"})
         # No client certificate: the mTLS handshake itself must fail.
         code = await self.expect_status(okx, domain, good, meta(self.jwt(okx)), None)
         results.append({"case": "no_client_certificate", "expected": "UNAVAILABLE", "observed": code,
@@ -518,11 +585,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(load(args)), file=sys.stderr)
         return 0
     result = asyncio.run(main_async(args))
+    probes = json.loads(Path(args.probes).read_text(encoding="utf-8"))
+    failures = slice_verdict(result, expected_products=len(probes))
+    result["verdict"] = {"pass": not failures, "failures": failures}
     result["sha256"] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
     Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"out": args.out, "sha256": result["sha256"],
+    print(json.dumps({"out": args.out, "sha256": result["sha256"], "pass": not failures,
+                      "failures": failures[:20],
                       "negatives": f"{result['negatives_pass']}/{result['negatives_total']}"}), file=sys.stderr)
-    return 0
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":

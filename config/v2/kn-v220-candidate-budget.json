@@ -1,6 +1,7 @@
 {
   "schema": "qdl.kn.v220.candidate-budget.v1",
   "frozen_at": "2026-09-23",
+  "refrozen": "2026-09-23 after Astra KN-1 review F5: the BAR cache row is sized contract-complete; the earlier 275 B compact row omitted coordinates, quality and provenance",
   "source": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-1 (K1.4); guide upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency",
   "note": "Frozen before any KN runtime exists. Latency, stages, workload and TS gates are inherited unchanged from the v2.1.1 budget by hash; resource and retention values are measured or derived from measurements named below. A missed target is an open exit, never a threshold edited after results.",
   "inherits": {
@@ -67,34 +68,42 @@
     "canonical_protobuf_mean": {"TRADE": 546, "QUOTE": 570, "MARK_INDEX_PRICE": 685, "BAR": 709, "BOOK": 2160},
     "book_canonical_max": 56495,
     "public_json_row": {"BAR": 1932, "TRADE": 1415, "QUOTE": 1473, "MARK_INDEX_PRICE": 1350, "BOOK_SNAPSHOT_okx_doge": 39503},
-    "bar_compact_row": 255
+    "bar_compact_row": 255,
+    "bar_contract_complete_row": {"evidence": "kn1-20260923/sizing-f5/payloads.json (2,000 real final OKX DOGE 1m bars)", "identity_stripped_canonical_plus_state_trailer_mean": 546, "canonical_plus_state_trailer_mean": 735, "every_field_json_mean": 1390, "identity_roundtrip_mismatches": 0}
   },
   "market_cache": {
     "process": "separate Redis process and config from the control/quota/admission Redis (KD10)",
     "image": "same redis image digest as stable_redis",
-    "bar_row_encoding": "compact typed record (decimal strings exact, integer ns times, final, revision, event id)",
-    "bar_layout": "per-product hash buckets of 120 opens in listpack encoding; open time in integer milliseconds",
-    "required_config": {"hash-max-listpack-entries": 128, "hash-max-listpack-value": 512, "maxmemory-policy": "noeviction", "save": "", "appendonly": "no"},
+    "bar_row_encoding": "contract-complete and lossless: the canonical EventEnvelope protobuf with the product-identity fields (schema name/major/minor, instrument uid/id, venue, market, product type, native symbol, provider, source id/role, bar interval) held once in a per-product header, behind a 48-byte state trailer (source offset u64, materializer epoch u64, canonical content SHA-256). Merging the header back reproduces the canonical bytes exactly (2,000/2,000 real rows). Values, revision, final, origin, lifecycle, supersedes, event id, all times, sequences, quality flags and provenance/generation fields stay in the row.",
+    "bar_layout": "per-product hash buckets of 64 opens in listpack encoding; open time in integer milliseconds",
+    "required_config": {"hash-max-listpack-entries": 128, "hash-max-listpack-value": 2048, "maxmemory-policy": "noeviction", "save": "", "appendonly": "no"},
     "measured_bytes_per_bar_row": {
-      "evidence": "kn1-20260923/sizing/redis-listpack512.json (2,000 real OKX DOGE 1m bars, Redis 7.2.14)",
-      "compact_listpack_bucket120": 274.9,
-      "compact_hash_plus_zset": 462.7,
-      "canonical_hash_plus_zset": 935.7,
-      "public_json_hash_plus_zset": 2190.5
+      "evidence": "kn1-20260923/sizing-f5/redis-listpack2048.json and redis-listpack512.json (Redis 7.2.14, stable_redis image digest; 2,000 real final OKX DOGE 1m bars; max row 558 B)",
+      "identity_stripped_state_listpack_bucket64": 641.7,
+      "identity_stripped_state_listpack_bucket120": 680.8,
+      "canonical_state_listpack_bucket64": 770.0,
+      "every_field_json_listpack_bucket64": 1537.7,
+      "canonical_hash_plus_zset": 935.1,
+      "public_json_hash_plus_zset": 2190.4,
+      "superseded_compact_listpack_bucket120_not_contract_complete": 275.2,
+      "with_hash_max_listpack_value_512": "every contract-complete encoding converts to hashtable (identity-stripped 690.3, canonical 818.3 B/row); 512 is not a valid setting for this row"
     },
     "sizing": {
       "demanded_bar_products": 141,
       "demanded_rows_max": 1400500,
       "retained_opens_cap_rule": "demanded rows + 2064 headroom per product (10,000 -> 12,064; VN 500 -> 2,564)",
       "rows_at_cap": 1691524,
-      "steady_bytes_at_cap": 465000000,
+      "steady_bytes_at_cap": 1085000000,
       "retained_today_rows": 933977,
-      "steady_bytes_today": 257000000,
-      "staging_rebuild": "full staging generation beside the ready one",
-      "peak_bytes_during_rebuild": 930000000,
+      "steady_bytes_today": 599000000,
+      "staging_rebuild": "per-product generation swap: a product is rebuilt into staging keys and published on its own, so the peak is steady plus the largest product (12,064 rows). A full staging generation beside the ready one would need about 2,171 MB, above maxmemory; that alternative needs an owner-approved RAM increase and is not taken by default.",
+      "largest_product_bytes": 7741000,
+      "peak_bytes_during_rebuild": 1093000000,
+      "headroom_below_maxmemory_bytes": 195000000,
+      "fallback_without_identity_header": "canonical_state_listpack_bucket64 770.0 B/row -> 1,302 MB steady at cap, above maxmemory; the per-product header is required for the cap",
       "maxmemory_bytes": 1288490188,
       "container_memory_limit_bytes": 1610612736,
-      "status": "starting cap for KN-3; re-measured with the real projector and all feeds before promotion"
+      "status": "starting cap for KN-3: re-measured with the real projector and all feeds before promotion; the per-product staging rule is a KN-3 design constraint for Astra review; if the real projector does not fit, typed memory pressure stops promotion - the limit is never raised silently"
     }
   },
   "retention": {

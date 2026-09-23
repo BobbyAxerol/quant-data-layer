@@ -53846,6 +53846,62 @@ Astra requested review points and next allowed step:
     tests). No dependency change.
   - Normative spec `contracts/v2/kn-v220-contracts.md` updated (full-match
     rule, requirement validation, strict decoding).
+- 2026-09-23: **KN-1 F5/F6 runtime packet (recorded before running).**
+  Blast radius: read-only on production. (1) `kn_resource_sizing.py payloads`
+  in a `--rm` `qdl-v2-python:2.1.1-83fa1bc` container, `--network none`,
+  `--cpus 1 --memory 2g`, stable state volume mounted **read-only**, spool
+  opened `mode=ro` + `query_only`, rendered copy in tmpfs; the new sample
+  replaces the removed one (new hash recorded). (2) A disposable Redis of the
+  `stable_redis` image digest, `--rm --network none --memory 1g --cpus 1`,
+  no persistence, one run per listpack config; the Python client joins its
+  network namespace. The guarded helper refuses a non-empty target and
+  deletes its own namespace. Not touched: production Redis, Kafka, spool
+  writes, any running container. Rollback: none needed (nothing mutated);
+  cleanup = containers are `--rm`, verified 0 left by name.
+- 2026-09-23: **KN-1 fix slice 2 - F3, F5, F6 (harness, sizing, budget):
+  implemented, tested locally; F5 measured on real bars.**
+  - F3: `scripts/kn_native_slice_probe.py` gains `slice_verdict` (products
+    present, records > 0, 0 decode/token errors, strictly increasing offsets,
+    exact next-record resume, Python-vs-proto digest parity, REPLAYING before
+    LIVE, all `EXPECTED_NEGATIVES` = 24 cases observed as expected); `run`
+    writes the verdict into the result and exits 1 on any failure. Two wire
+    negatives added for this review: `jwt_iat_i64_min` (F2, expect
+    UNAUTHENTICATED) and `requirement_invalid_execution_partial` (F1, expect
+    INVALID_ARGUMENT; the pre-fix gateway answered PERMISSION_DENIED).
+    `tests/test_kn_native_slice_probe.py` 7 OK: one test per failing
+    condition, missing fields fail closed, exit code 0/1 through `main`.
+  - F6: `redis_memory_with` refuses a non-empty target before any write
+    (`NonEmptyTarget`), writes only under `kn-sizing:<run-id>:`, deletes
+    exactly those keys in `finally` and reports `keys_left_after_cleanup`;
+    no FLUSHALL/FLUSHDB anywhere in the script. `tests/test_kn_resource_sizing.py`
+    8 OK (fake Redis: refusal with zero commands, namespace-only writes,
+    cleanup on mid-run error, no flush in source; F5 encoders below).
+  - F5, run under the packet above: new read-only capture of 2,000 real final
+    OKX DOGE 1m bars (sample SHA-256 `883236a2...`, raw sample deleted; evidence
+    `/home/bobby/.local/state/qdl-v2/kn1-20260923/sizing-f5/`: `payloads.json`
+    `f56d6c67...`, `redis-listpack512.json` `9446544b...`,
+    `redis-listpack2048.json` `80501edb...` (file SHA-256); both disposable
+    Redis runs: 217 keys written, 0 left, 0 containers left).
+    Row bytes (mean): old compact 255; every-field JSON 1,390; canonical +
+    48 B state trailer 735; **identity-stripped canonical + trailer 546**
+    (product identity in one per-product header; merge-back reproduces the
+    canonical bytes for 2,000/2,000 rows). A coverage check fails the
+    measurement if any envelope/Bar field is neither in the row nor identity.
+    Redis bytes/row: at `hash-max-listpack-value 512` every contract-complete
+    encoding silently becomes hashtable (690-818); at 2048, listpack buckets
+    of 64: identity-stripped **641.7**, canonical 770.0, JSON 1,537.7; the
+    superseded compact figure was 275.2.
+  - Budget re-frozen (`config/v2/kn-v220-candidate-budget.json` SHA-256
+    `325a5a5e...`, was `9fd24b67...`): row encoding and layout above,
+    `hash-max-listpack-value 2048`; 1,691,524 rows at cap = **1,085 MB
+    steady** (today 599 MB). Consequence stated, not hidden: a full staging
+    generation (2,171 MB) no longer fits the unchanged 1,288 MB maxmemory, so
+    the budget requires a per-product generation swap (peak 1,093 MB, headroom
+    195 MB); without the identity header the cap itself (1,302 MB) does not
+    fit. Both are KN-3 design constraints for Astra; a RAM increase needs the
+    owner and is not taken by default. `test_kn_v220_budget` 4 OK (asserts the
+    arithmetic, that 2x steady exceeds maxmemory, maxmemory unchanged, and
+    listpack threshold >= measured row).
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

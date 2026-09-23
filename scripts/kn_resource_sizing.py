@@ -9,7 +9,9 @@ denominator and Kafka bytes/s - so the candidate budget is frozen on numbers.
 Boundary: read-only against production. The spool is opened ``mode=ro`` +
 ``query_only``; rendered rows come from a bounded copy in a tmpfs scratch
 spool inside a ``--rm`` container; Redis measurements use a disposable Redis
-of the production image digest with ``--network none``; CPU and Kafka figures
+of the production image digest with ``--network none``, refuse a non-empty
+target, write only under a per-run key namespace and delete exactly the keys
+they wrote (never ``FLUSHALL``; KN-1 review F6); CPU and Kafka figures
 come from ``docker stats`` and ``kafka-log-dirs --describe``. Nothing is
 written to production state.
 
@@ -68,6 +70,108 @@ def _compact_bar(envelope) -> bytes:
         "id": envelope.event_id.hex(),
     }
     return json.dumps(row, separators=(",", ":")).encode()
+
+
+# Product identity: fixed by the logical product key / binding, so it is held
+# once per product (cache header), never per row. Every other envelope and
+# Bar field is carried by the contract-complete row (KN-1 review F5).
+PRODUCT_IDENTITY_FIELDS = frozenset({
+    "schema_name", "schema_major", "schema_minor", "instrument_uid", "instrument_id", "venue", "market",
+    "product_type", "native_symbol", "provider", "source_id", "source_role",
+})
+BAR_IDENTITY_FIELDS = frozenset({"interval"})
+# State-contract integers are sized at their widest encodable value (2^63-1),
+# so the measured bytes are an upper bound, not a sample of small numbers.
+WIDEST_U63 = 2**63 - 1
+
+
+def _complete_bar(envelope, payload: bytes) -> bytes:
+    """One BAR cache row carrying everything the contract needs per open time.
+
+    Values (exact decimal text), revision/final/origin/lifecycle and the
+    replaced event, every provenance and quality field of the envelope, and
+    the state contract (canonical content hash, source offset, materializer
+    epoch). Only product identity is left to the per-product header; a proto
+    field that is neither mapped here nor identity fails the measurement.
+    """
+
+    from qdl.runtime.stable_source import _decimal_text
+
+    bar = envelope.bar
+    optional = lambda name: _decimal_text(getattr(bar, name)) if bar.HasField(name) else None  # noqa: E731
+    bar_row = {
+        "open": _decimal_text(bar.open), "high": _decimal_text(bar.high), "low": _decimal_text(bar.low),
+        "close": _decimal_text(bar.close), "volume": _decimal_text(bar.volume),
+        "base_volume": optional("base_volume"), "quote_volume": optional("quote_volume"),
+        "contract_volume": optional("contract_volume"), "volume_unit": int(bar.volume_unit),
+        "trade_count": int(bar.trade_count), "open_time_ns": int(bar.open_time_ns),
+        "close_time_ns": int(bar.close_time_ns), "is_final": bool(bar.is_final), "revision": int(bar.revision),
+        "origin": int(bar.origin), "lifecycle": int(bar.lifecycle),
+        "supersedes_event_id": bar.supersedes_event_id.hex() if bar.HasField("supersedes_event_id") else None,
+    }
+    envelope_row = {
+        "event_id": envelope.event_id.hex(), "instrument_revision": int(envelope.instrument_revision),
+        "lease_epoch": int(envelope.lease_epoch), "source_event_time_ns": int(envelope.source_event_time_ns),
+        "received_at_ns": int(envelope.received_at_ns), "normalized_at_ns": int(envelope.normalized_at_ns),
+        "published_at_ns": int(envelope.published_at_ns), "source_sequence": envelope.source_sequence,
+        "partition_sequence": int(envelope.partition_sequence),
+        "normalizer_version": envelope.normalizer_version, "adapter_version": envelope.adapter_version,
+        "quality_flags": [int(flag) for flag in envelope.quality_flags],
+        "raw_payload_hash": envelope.raw_payload_hash.hex(), "correlation_id": envelope.correlation_id,
+        "config_revision": int(envelope.config_revision), "source_session_id": envelope.source_session_id,
+        "connection_generation": int(envelope.connection_generation),
+        "authority_revision": int(envelope.authority_revision),
+        "partition_plan_epoch": int(envelope.partition_plan_epoch),
+        "canonical_payload_hash": envelope.canonical_payload_hash.hex(),
+        "raw_capture_id": envelope.raw_capture_id.hex(),
+    }
+    covered = set(envelope_row) | PRODUCT_IDENTITY_FIELDS | {"bar"}
+    missing = [f.name for f in envelope.DESCRIPTOR.fields
+               if f.name not in covered and f.containing_oneof is None]
+    missing += [f"bar.{f.name}" for f in bar.DESCRIPTOR.fields
+                if f.name not in set(bar_row) | BAR_IDENTITY_FIELDS]
+    if missing:
+        raise ValueError(f"contract-complete BAR row does not map {missing}")
+    state = {"content_sha256": hashlib.sha256(payload).hexdigest(), "source_offset": WIDEST_U63,
+             "materializer_epoch": WIDEST_U63}
+    return json.dumps({"b": bar_row, "e": envelope_row, "s": state}, separators=(",", ":")).encode()
+
+
+def _canonical_state(payload: bytes) -> bytes:
+    """Lossless alternative: the canonical protobuf bytes unchanged, prefixed
+    by a fixed 48-byte state trailer (source offset, materializer epoch as
+    big-endian u64 at their widest value, canonical content SHA-256)."""
+
+    return (WIDEST_U63.to_bytes(8, "big") + WIDEST_U63.to_bytes(8, "big")
+            + hashlib.sha256(payload).digest() + payload)
+
+
+def _identity_stripped_state(envelope, payload: bytes) -> tuple[bytes, bool]:
+    """Lossless given the per-product header: the canonical envelope with the
+    product-identity fields cleared, behind the same 48-byte state trailer.
+
+    Returns the row and whether merging the identity back reproduces the
+    canonical bytes exactly (the measurement counts every mismatch).
+    """
+
+    stripped = type(envelope)()
+    stripped.CopyFrom(envelope)
+    header = type(envelope)()
+    for name in PRODUCT_IDENTITY_FIELDS:
+        stripped.ClearField(name)
+    for name in BAR_IDENTITY_FIELDS:
+        stripped.bar.ClearField(name)
+    for field in envelope.DESCRIPTOR.fields:
+        if field.name in PRODUCT_IDENTITY_FIELDS:
+            setattr(header, field.name, getattr(envelope, field.name))
+    for name in BAR_IDENTITY_FIELDS:
+        setattr(header.bar, name, getattr(envelope.bar, name))
+    body = stripped.SerializeToString()
+    rebuilt = type(envelope)()
+    rebuilt.CopyFrom(type(envelope).FromString(body))
+    rebuilt.MergeFrom(header)
+    trailer = WIDEST_U63.to_bytes(8, "big") + WIDEST_U63.to_bytes(8, "big") + hashlib.sha256(payload).digest()
+    return trailer + body, rebuilt.SerializeToString() == payload
 
 
 def payloads(sample_path: Path, rows_per_key: int, render_rows: int) -> dict[str, Any]:
@@ -174,12 +278,23 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
                                      "public_row_bytes": _dist([len(x) for x in public]),
                                      "canonical_row_bytes": _dist([len(x) for x in protobufs])}
             if feed == "BAR":
-                compact = []
+                compact, complete, canonical_state, stripped, open_ms = [], [], [], [], []
+                mismatches = 0
                 for payload in protobufs:
                     envelope = market_data_pb2.EventEnvelope.FromString(payload)
                     if envelope.WhichOneof("payload") == "bar" and envelope.bar.is_final:
                         compact.append(_compact_bar(envelope))
+                        complete.append(_complete_bar(envelope, payload))
+                        canonical_state.append(_canonical_state(payload))
+                        row, exact = _identity_stripped_state(envelope, payload)
+                        stripped.append(row)
+                        mismatches += 0 if exact else 1
+                        open_ms.append(int(envelope.bar.open_time_ns // 1_000_000))
                 entry["compact_row_bytes"] = _dist([len(x) for x in compact])
+                entry["complete_row_bytes"] = _dist([len(x) for x in complete])
+                entry["canonical_state_row_bytes"] = _dist([len(x) for x in canonical_state])
+                entry["identity_stripped_state_row_bytes"] = _dist([len(x) for x in stripped])
+                entry["identity_stripped_roundtrip_mismatches"] = mismatches
                 sample["bar"] = {
                     "binding": binding.binding_id,
                     "open_ms": [int(market_data_pb2.EventEnvelope.FromString(p).bar.open_time_ns // 1_000_000)
@@ -187,6 +302,11 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
                     "canonical": [p.hex() for p in protobufs],
                     "public": [x.decode() for x in public],
                     "compact": [x.decode() for x in compact],
+                    # Final bars only, aligned with their own open times.
+                    "final_open_ms": open_ms,
+                    "complete": [x.decode() for x in complete],
+                    "canonical_state": [x.hex() for x in canonical_state],
+                    "identity_stripped_state": [x.hex() for x in stripped],
                 }
             else:
                 sample["latest"][feed] = {"canonical": protobufs[-1].hex(), "public": public[-1].decode()}
@@ -199,72 +319,137 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
 
 # --------------------------------------------------------------------- redis
 
+class NonEmptyTarget(RuntimeError):
+    """The sizing Redis already holds keys: it is not a disposable target."""
+
+
+class _Namespace:
+    """Every key this run writes, under one per-run prefix, for exact cleanup."""
+
+    def __init__(self, run_id: str) -> None:
+        self.prefix = f"kn-sizing:{run_id}:"
+        self.keys: set[str] = set()
+
+    def __call__(self, suffix: str) -> str:
+        key = self.prefix + suffix
+        self.keys.add(key)
+        return key
+
+
+def _bar_rows(bar: dict[str, Any], encoding: str) -> tuple[list[int], list[bytes]]:
+    values = bar[encoding]
+    if encoding in ("compact", "complete", "canonical_state", "identity_stripped_state"):
+        opens = bar["final_open_ms"] if "final_open_ms" in bar else bar["open_ms"]
+    else:
+        opens = bar["open_ms"]
+    binary = encoding in ("canonical", "canonical_state", "identity_stripped_state")
+    rows = [bytes.fromhex(value) if binary else value.encode() for value in values]
+    count = min(len(opens), len(rows))
+    return opens[:count], rows[:count]
+
+
+def redis_memory_with(client, sample: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Measure BAR/latest layouts on ``client``; refuses a non-empty target.
+
+    Deletes exactly the keys it wrote, also on error; ``FLUSHALL``/``FLUSHDB``
+    are never sent (KN-1 review F6).
+    """
+
+    existing = int(client.dbsize())
+    if existing:
+        raise NonEmptyTarget(f"refusing to size on a Redis holding {existing} keys; use a disposable instance")
+    key = _Namespace(run_id)
+    used = lambda: int(client.info("memory")["used_memory"])  # noqa: E731
+    result: dict[str, Any] = {"redis_version": client.info("server")["redis_version"], "baseline_used": used(),
+                              "namespace": key.prefix}
+    bar = sample["bar"]
+    try:
+        # Index (ZSET, score = open ms) + payload HASH, per encoding.
+        for encoding in ("canonical", "public", "compact", "complete", "canonical_state",
+                         "identity_stripped_state"):
+            if encoding not in bar:
+                continue
+            opens, rows = _bar_rows(bar, encoding)
+            before = used()
+            zkey, hkey = key(f"z:{encoding}"), key(f"h:{encoding}")
+            pipe = client.pipeline(transaction=False)
+            for open_ms, row in zip(opens, rows):
+                pipe.zadd(zkey, {str(open_ms): open_ms})
+                pipe.hset(hkey, str(open_ms), row)
+            pipe.execute()
+            after = used()
+            result[f"bar_{encoding}"] = {
+                "rows": len(rows), "max_row_bytes": max((len(r) for r in rows), default=0),
+                "zset_usage": int(client.memory_usage(zkey) or 0),
+                "hash_usage": int(client.memory_usage(hkey) or 0),
+                "used_memory_delta": after - before,
+                "bytes_per_row": round((after - before) / max(1, len(rows)), 1),
+            }
+        # Compact rows as ZSET members (no separate index).
+        opens, rows = _bar_rows(bar, "compact")
+        before = used()
+        pipe = client.pipeline(transaction=False)
+        zonly = key("zonly:compact")
+        for open_ms, row in zip(opens, rows):
+            pipe.zadd(zonly, {row: open_ms})
+        pipe.execute()
+        after = used()
+        result["bar_compact_zset_only"] = {"rows": len(rows), "used_memory_delta": after - before,
+                                           "bytes_per_row": round((after - before) / max(1, len(rows)), 1)}
+        # Per-product hash buckets that stay listpack-encoded when every row
+        # fits hash-max-listpack-value; the encoding of every bucket is read
+        # back, so a row that silently converts a bucket is visible.
+        for encoding in ("compact", "complete", "canonical_state", "identity_stripped_state"):
+            if encoding not in bar:
+                continue
+            opens, rows = _bar_rows(bar, encoding)
+            for bucket in (64, 120):
+                before = used()
+                pipe = client.pipeline(transaction=False)
+                names = []
+                for index, (open_ms, row) in enumerate(zip(opens, rows)):
+                    name = key(f"b{bucket}:{encoding}:{index // bucket}")
+                    if not names or names[-1] != name:
+                        names.append(name)
+                    pipe.hset(name, str(open_ms), row)
+                pipe.execute()
+                after = used()
+                encodings = {}
+                for name in names:
+                    value = client.object("encoding", name)
+                    value = value.decode() if isinstance(value, bytes) else str(value)
+                    encodings[value] = encodings.get(value, 0) + 1
+                label = "" if encoding == "compact" else f"_{encoding}"
+                result[f"bar_compact_bucket{bucket}" if not label else f"bar{label}_bucket{bucket}"] = {
+                    "rows": len(rows), "buckets": len(names), "bucket_encodings": encodings,
+                    "encoding": max(encodings, key=encodings.get) if encodings else None,
+                    "max_row_bytes": max((len(r) for r in rows), default=0),
+                    "used_memory_delta": after - before,
+                    "bytes_per_row": round((after - before) / max(1, len(rows)), 1)}
+        latest = {}
+        for feed, value in sample["latest"].items():
+            for encoding in ("canonical", "public"):
+                name = key(f"latest:{feed}:{encoding}")
+                payload = bytes.fromhex(value["canonical"]) if encoding == "canonical" else value["public"].encode()
+                client.set(name, payload)
+                latest[f"{feed}:{encoding}"] = int(client.memory_usage(name) or 0)
+        result["latest_key_usage"] = latest
+        result["final_used"] = used()
+    finally:
+        written = sorted(key.keys)
+        for start in range(0, len(written), 500):
+            client.delete(*written[start:start + 500])
+        result["keys_written"] = len(written)
+        result["keys_left_after_cleanup"] = int(client.dbsize())
+    return result
+
+
 def redis_memory(sample_path: Path, host: str, port: int) -> dict[str, Any]:
     import redis
 
     sample = json.loads(sample_path.read_text(encoding="utf-8"))
     client = redis.Redis(host=host, port=port)
-    client.flushall()  # disposable, isolated Redis only (network namespace of a --rm container)
-    info0 = int(client.info("memory")["used_memory"])
-    result: dict[str, Any] = {"redis_version": client.info("server")["redis_version"], "baseline_used": info0}
-    bar = sample["bar"]
-    rows = len(bar["open_ms"])
-    for encoding in ("canonical", "public", "compact"):
-        values = bar[encoding]
-        count = min(rows, len(values))
-        before = int(client.info("memory")["used_memory"])
-        zkey, hkey = f"kn:z:{encoding}", f"kn:h:{encoding}"
-        pipe = client.pipeline(transaction=False)
-        for index in range(count):
-            member = bytes.fromhex(values[index]) if encoding == "canonical" else values[index].encode()
-            # Index: ZSET score = open time ms (exact below 2**53); payload in a HASH field.
-            pipe.zadd(zkey, {str(bar["open_ms"][index]): bar["open_ms"][index]})
-            pipe.hset(hkey, str(bar["open_ms"][index]), member)
-        pipe.execute()
-        after = int(client.info("memory")["used_memory"])
-        result[f"bar_{encoding}"] = {
-            "rows": count,
-            "zset_usage": int(client.memory_usage(zkey) or 0),
-            "hash_usage": int(client.memory_usage(hkey) or 0),
-            "used_memory_delta": after - before,
-            "bytes_per_row": round((after - before) / max(1, count), 1),
-        }
-    # Layout variants for the compact encoding: one ZSET whose member is the
-    # row (no separate index), and small per-bucket hashes that stay in
-    # Redis's listpack encoding (default hash-max-listpack-entries 128).
-    compact = bar["compact"]
-    count = min(rows, len(compact))
-    before = int(client.info("memory")["used_memory"])
-    pipe = client.pipeline(transaction=False)
-    for index in range(count):
-        pipe.zadd("kn:zonly:compact", {compact[index]: bar["open_ms"][index]})
-    pipe.execute()
-    after = int(client.info("memory")["used_memory"])
-    result["bar_compact_zset_only"] = {"rows": count, "used_memory_delta": after - before,
-                                       "bytes_per_row": round((after - before) / max(1, count), 1)}
-    for bucket in (64, 120):
-        before = int(client.info("memory")["used_memory"])
-        pipe = client.pipeline(transaction=False)
-        for index in range(count):
-            pipe.hset(f"kn:b{bucket}:{index // bucket}", str(bar["open_ms"][index]), compact[index])
-        pipe.execute()
-        after = int(client.info("memory")["used_memory"])
-        encoding = client.object("encoding", f"kn:b{bucket}:0")
-        result[f"bar_compact_bucket{bucket}"] = {
-            "rows": count, "buckets": (count + bucket - 1) // bucket,
-            "encoding": encoding.decode() if isinstance(encoding, bytes) else encoding,
-            "used_memory_delta": after - before, "bytes_per_row": round((after - before) / max(1, count), 1)}
-    latest = {}
-    for feed, value in sample["latest"].items():
-        for encoding in ("canonical", "public"):
-            key = f"kn:latest:{feed}:{encoding}"
-            payload = bytes.fromhex(value["canonical"]) if encoding == "canonical" else value["public"].encode()
-            client.set(key, payload)
-            latest[f"{feed}:{encoding}"] = int(client.memory_usage(key) or 0)
-    result["latest_key_usage"] = latest
-    result["final_used"] = int(client.info("memory")["used_memory"])
-    client.flushall()
-    return result
+    return redis_memory_with(client, sample, run_id=f"{time.time_ns():x}")
 
 
 # ------------------------------------------------------------------- runtime
