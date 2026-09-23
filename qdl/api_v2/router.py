@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from qdl.query.cold_work import cold_yield, run_cold
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
@@ -400,7 +401,7 @@ def _warmup(result) -> WarmupResponse:
         watermark_offset=history.watermark_offset,
         coverage=history.coverage.value,
         count=len(history.items),
-        data=[_market_item(item) for item in history.items],
+        data=[_market_item(item) for item in _cold_rows(history.items)],
     )
 
 
@@ -421,6 +422,12 @@ async def _json_off_loop(build) -> JSONResponse:
 
 
 _RENDER_CHUNK_ROWS = 250
+
+
+def _cold_rows(values):
+    for value in values:
+        cold_yield()
+        yield value
 
 
 def _render_warmup_chunked(model: WarmupResponse) -> bytes:
@@ -448,7 +455,7 @@ def _render_warmup_chunked(model: WarmupResponse) -> bytes:
     for start in range(0, len(rows), _RENDER_CHUNK_ROWS):
         chunk = encode([
             item.model_dump(mode="json", by_alias=True)
-            for item in rows[start:start + _RENDER_CHUNK_ROWS]
+            for item in _cold_rows(rows[start:start + _RENDER_CHUNK_ROWS])
         ])
         if start:
             parts.append(",")
@@ -460,7 +467,7 @@ def _render_warmup_chunked(model: WarmupResponse) -> bytes:
 async def _warmup_json_off_loop(build) -> Response:
     """A warmup response rendered off the loop and in chunks (see above)."""
 
-    body = await asyncio.to_thread(lambda: _render_warmup_chunked(build()))
+    body = await asyncio.to_thread(run_cold, lambda: _render_warmup_chunked(build()))
     return Response(content=body, media_type="application/json")
 
 

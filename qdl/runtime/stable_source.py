@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Callable
 
+from qdl.query.cold_work import cold_yield
 from qdl.adapters.intervals import (
     canonical_interval_ms,
     latest_closed_boundary_ms,
@@ -188,6 +189,14 @@ class _ParsedStoredEvent:
 class _GapDiagnosticIncomplete(RuntimeError):
     """The global gap diagnostic reached a declared safe work bound."""
 
+
+
+def _cold_iter(values):
+    """Iterate, pausing cooperatively when the thread runs cold work."""
+
+    for value in values:
+        cold_yield()
+        yield value
 
 class StableSpoolQueryBackend:
     """Provider-neutral stable query view over a Kafka-rebuildable SQLite cache."""
@@ -855,6 +864,7 @@ class StableSpoolQueryBackend:
         """Fail closed on lineage mismatch within the returned data window."""
 
         for parsed in records:
+            cold_yield()
             resolved = self.catalog.binding_for_envelope(parsed.envelope)
             if resolved.binding_id != binding.binding_id:
                 raise ValueError("canonical event resolves to a different stable binding")
@@ -942,7 +952,7 @@ class StableSpoolQueryBackend:
                 stored=row,
                 envelope=market_data_pb2.EventEnvelope.FromString(row.event.payload),
             )
-            for row in rows
+            for row in _cold_iter(rows)
         )
 
     def _records(
@@ -1004,7 +1014,7 @@ class StableSpoolQueryBackend:
                 parsed.envelope,
                 effective_gap,
             )
-            for parsed in records
+            for parsed in _cold_iter(records)
         )
 
     def _quality(
@@ -1548,7 +1558,7 @@ class StableConsumerCursorIssuer:
             stream_cursor=token,
             items=tuple(
                 replace(item, snapshot_id=history.snapshot_id, cursor=token)
-                for item in history.items
+                for item in _cold_iter(history.items)
             ),
         )
 

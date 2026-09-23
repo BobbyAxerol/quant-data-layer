@@ -52951,6 +52951,45 @@ refinement without the owner's next request.
   Redis, SQLite data, quotas, TS, alpha. Then the target matrix, stage 20, 35
   and the final stage 50 are rerun.
 
+- 2026-09-23: **fix-all image rolled** (`2.1.1-0070d74`, `sha256:59f70779...`;
+  full suite 1,967 tests, the same five pre-existing errors). Query x2 first
+  (`ROLLED_HEALTHY`, TS 60/60), then Stream passive/active (`ROLLED_HEALTHY`;
+  TS 43/60 -> **60/60 at 11:39:39Z**, about 2.5 min of handover, longer than the
+  ~1 min of the quota-A roll; projectors back to append mean 43-57 ms).
+  **OKX MARK_INDEX, verified live:** 20 alpha reads per venue all came from
+  `qdl://stable-stream/internal/v2/execution/mark-index/latest` - no venue call
+  - at **p50 12.8 ms (OKX)** and 9.8 ms (Binance), the driver's lineage and
+  freshness validation accepting every one.
+  **Eight-open OKX repair applied with the owner's approval:** `CONVERGED`,
+  `production_mutations: 8`, each binding `published_rows 1 / remaining 0`.
+  **Target matrix 132/132 PASS** on both replicas (was 128/132): the 500-row
+  5m/15m/1h sample passes; MARK_INDEX median 24 ms, latest BAR 7 ms.
+  **Stage 20 at 11:42Z:** MARK_INDEX p50 20 / 21 ms, BAR_LATEST and L2 PASS, no
+  `RATE_LIMITED`, TS disconnects 0.36/min - but 4 sessions failed start-up with
+  **client `ReadTimeout`** (the queued lane waited up to the 20 s request
+  deadline, the client gave up at 15 s, and the abandoned work kept Query busy)
+  and QUOTE p99 314-326 ms, MARK_INDEX p99 541-575 ms. Tails cluster at the
+  start of observation (abandoned start-up work) and in the cold window.
+  **Cold versus hot, reproduced live on one replica:** QUOTE snapshots at 20/s
+  to `query_v2_1`, one 5,000-row warmup at t=10 s: before p50 9.5 ms; **during
+  the 4.1 s warmup only 13 reads completed, p50 156 ms, max 1,440 ms**; after
+  p50 8.9 ms. cgroup: CPU pinned at 1.02-1.08, **no disk read, no throttling**.
+  The CPU-bound cold threads hold the GIL and a hot HTTP request needs many GIL
+  turns (TLS, auth, routing, response). Offline, a single-hop hot read showed
+  only p99 45 ms under the same cold load, which is why the HTTP path matters.
+  **Fix:** `qdl/query/cold_work.py` - cold threads (the cold pool, and the
+  warmup render thread) run a cooperative duty cycle: after each 4 ms of work
+  they sleep 2 ms, a real GIL release; hot threads never pause, and cold work
+  shorter than one slice never pauses. Yields sit in record parsing, validation,
+  item building, cursor binding, model conversion and chunk encoding. The queued
+  large-warmup lane now waits at most **8 s** (below the 15 s client timeout),
+  after which the client gets a typed retryable refusal instead of a timeout.
+  Tests: `tests/test_query_cold_work.py` (5); 197 tests across the affected
+  suites pass. Separate worker processes for cold reads would remove the
+  contention entirely but rework the warmup pipeline - not attempted.
+  **Packet (recorded before execution):** image from this commit, Query x2
+  only (1.50 CPU / 1 GiB), rollback `59f70779...`; Stream keeps `59f70779...`.
+
 **Remaining:** items (a)-(f) of the entry above, then the 50+TS final gate and
 the v2.1.1 publication and provenance steps of the
 [closure contract](#read-plane-v211-target-closure). Complete v2.1.1 remote CI/release,

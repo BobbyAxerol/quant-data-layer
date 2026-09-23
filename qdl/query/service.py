@@ -33,6 +33,7 @@ from qdl.query.contracts import (
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
+from qdl.query.cold_work import run_cold
 from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
@@ -260,6 +261,9 @@ def _small_local_warmup_lane_policy() -> ReadLanePolicy:
     )
 
 
+_QUEUED_LOCAL_BATCH_MAX_WAIT_MS = 8_000
+
+
 def _queued_local_batch_lane_policy() -> ReadLanePolicy:
     """The single-active large-warmup lane with a bounded queue per identity.
 
@@ -365,6 +369,7 @@ class _LocalBatchAdmission:
         return self._lane.stats()
 
 
+
 class _QueryWorkPools:
     """Small, explicit worker pools so cold reads cannot occupy hot threads."""
 
@@ -380,7 +385,8 @@ class _QueryWorkPools:
         return await self._run(self._hot, work, *args, **kwargs)
 
     async def cold(self, work: Callable, /, *args, **kwargs):
-        return await self._run(self._cold, work, *args, **kwargs)
+        # Cold threads run with a cooperative duty cycle (qdl.query.cold_work).
+        return await self._run(self._cold, run_cold, work, *args, **kwargs)
 
     async def diagnostic(self, work: Callable, /, *args, **kwargs):
         return await self._run(self._diagnostic, work, *args, **kwargs)
@@ -434,6 +440,7 @@ class V2QueryService:
         # Opt-in: the stable runtime enables it; the default keeps every local
         # warmup in the single-active lane.
         self._small_local_warmup_lane = small_local_warmup_lane
+        self._queued_local_batch_lane = queued_local_batch_lane
         self._local_batch_admission = (
             _LocalBatchAdmission(policy=_queued_local_batch_lane_policy())
             if queued_local_batch_lane
@@ -930,6 +937,15 @@ class V2QueryService:
         local_admission_wait_ms = min(
             deadline(requirement) for requirement in local_requirements
         ) if local_requirements else None
+        if local_admission_wait_ms is not None and getattr(
+            self, "_queued_local_batch_lane", False
+        ):
+            # A queued large warmup must be refused while its client is still
+            # waiting: stage 20 (2026-09-23) saw 15 s client timeouts on queued
+            # 20 s waits, and the abandoned work then competed with hot reads.
+            local_admission_wait_ms = min(
+                local_admission_wait_ms, _QUEUED_LOCAL_BATCH_MAX_WAIT_MS
+            )
 
         def assemble_batch(executions) -> BatchQueryResult:
             results = []
