@@ -51730,6 +51730,29 @@ refinement without the owner's next request.
   authorizes exactly one replacement `load-5-r5` no-order run at five logical
   sessions for at most ninety seconds; it does not authorize C2 or later load
   stages.
+- 2026-09-23: the approved Stream packet completed `ROLLED_HEALTHY` in order
+  (`stream_v2_active`, then `stream_v2_passive`). Both now use
+  `sha256:23e5088caeb4046e9e36ef4c2898103054cf65f310b63e9bb08fbcf58f7aabf0`,
+  remain `healthy`, restart/OOM `0`, read-only rootfs, and retain their prior
+  environment/mount/network hashes and `1 GiB / 2 CPU` caps. Compose reported
+  unrelated project orphans but this packet deliberately did not use
+  `--remove-orphans`; none were changed. The one permitted replacement client
+  `load-5-r5-f288182` then failed closed after `20.337s` host / `10.597s`
+  client observation on `OPEN_SEQUENCE_GAP` for
+  `alpha.okx.paper.stable` / `OKX` / `BNB-USDT-SWAP` / final `BAR 1m`.
+  It made zero V1 fallback, direct-provider, provider-connection or order
+  actions and the disposable container cleanup passed. This is not a Stream
+  freshness regression: query-only canonical-tail evidence finds an actual
+  missing `00:44Z` bar between `00:43Z` and `00:45Z` for OKX BNB; the same
+  missing minute is present for OKX ETH and SOL, while the declared Binance
+  USD-M tail and OKX BTC/DOGE tail are contiguous. The OKX BUSINESS lane logged
+  a generation-44 disconnect in that time window. Existing recurring REST
+  polling intentionally owns only `PYTHON_REST` BAR bindings, so it did not
+  close this `RUST_NATIVE` recovery hole. No retry, policy relaxation, cache
+  reset or provider write has occurred. The next bounded diagnostic is a
+  real-provider, no-apply history-repair dry run for exactly those three
+  affected OKX `1m` bindings; it must prove provider coverage and exact missing
+  row counts before any separate publish packet can be proposed.
 
 **Remaining:** run the exact fast matrix, then the escalating load/failure
 gates and one final 300-second no-order acceptance. Publication remains a
