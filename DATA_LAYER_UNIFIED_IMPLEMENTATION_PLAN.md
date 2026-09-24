@@ -55682,6 +55682,42 @@ revision ordering, compaction/expiry and restore proof.
   | real catalog -> bundle: (physical key, feed) unique, load checks pass for all 216 bindings, every real golden record finds its binding with the same LPK | `python -B -m unittest tests.test_kn_products tests.test_kn_gateway_bundle` (image `qdl-v2-python:2.1.1-83fa1bc`) | 6/6 |
   | real bundle (216 bindings, sha256 `e8aa9c95...36fb`) + the 114-record read-only canonical sample (BAR 84, book delta 6, snapshot 6, mark/index 6, quote 6, trade 6): every record classified, frame decodes, canonical bytes unchanged, 144 BAR caps all 12,064 | one-off scratch run (inputs are not in Git) | 114/114 |
   | gateway after the move; contracts | `cargo test -p qdl-stream-gateway -p qdl-contracts`, clippy `-D warnings` | green |
+- 2026-09-24: **KN-3 slice 6 - K3.5 BAR expiry (D11): implemented, tested
+  locally + isolated Kafka and Redis.** Helper-built, Claude-reviewed and
+  re-run: `rust/qdl-projector/src/expiry.rs` (`plan_expiry`,
+  `continue_expiry`, `publish_expiry`, `ExpirySink`, `ExpiryTask`),
+  `tests/expiry_redis.rs`, `tests/expiry_kafka.rs`.
+  - Implementation decisions: typed `ExpiryError` (an undecodable row or
+    `rk` suffix is an `Integrity` stop, D12); target floor = open of the
+    cap-th newest row (pipelined `HKEYS` walking buckets down, 16 per round
+    trip, never SCAN/KEYS); a bounded step's floor is the first open **not**
+    collected, so every step is exact and on the grid; the slack gate
+    (`rows <= cap + 116`) applies to a new plan only - `continue_expiry` walks
+    toward an already decided target; the task does not re-plan a product
+    until stage B applied its last published floor (`pending`), and drops
+    progress when the ready generation changes; caps are validated (BAR,
+    fixed interval, > 0) and visited round robin, every product examined
+    counting toward the per-tick bound.
+  - **D11 amendment (gap found by the helper):** a fact that reaches stage B
+    below the floor (`STALE_BELOW_FLOOR`) is not recorded anywhere, and a fact
+    applied between the plan's read and the floor frame loses its row with the
+    `F` op - both would leave fact keys in the compacted topic forever. They
+    are removed by the bounded **bars-topic cleaner** (K3.5 "bounded
+    cleaner"): a periodic sweep of each bars partition (assign mode,
+    `read_committed`, earliest -> end snapshot) that tombstones every fact key
+    below its product's floor whose last record is not a tombstone, in
+    bounded transactions (id prefix `kn-projector-v3-cleaner-`). The topic is
+    the truth, no Lua bookkeeping; memory is bounded by below-floor keys.
+    Next helper slice.
+  | Check | Command | Result |
+  |---|---|---|
+  | task refuses non-BAR / zero caps; round robin bounded per tick | `cargo test -p qdl-projector --lib` | 17/17 |
+  | 301 rows incl. in-progress-only, in-progress->final, revised, conflict and stale-revision extras: plan at cap 100 = floor 201 min, 404 keys = every written fact key below the floor + `p` keys, no duplicate; after stage B rows 100, `rk` only the kept open, late fact below floor refused, next plan none; slack 216 rows none / 217 rows floor at open 117; lower floor refused, log unchanged; bounded steps (60) -> 60/120/180/201 min, union = unbounded plan, second tick `pending`; 3 products (over, under, no pointer) 2 per tick; undecodable row -> Integrity, nothing planned | `expiry_redis` | 5/5 |
+  | real Kafka: 250 bars built by stage B, plan published via `BaseProducer`: exactly 300 tombstones then the floor frame on the product partition, stage B -> 100 rows; injected send failure aborted, fenced producer refused, only the newer committed publish visible | `expiry_kafka` | 2/2 |
+  | whole ignored projector set (stage A Kafka 4, cache 5+1, stage B 7+1, expiry 5+2), fmt, clippy `-D warnings` | staged content, disposable `kn3-lead-*` Kafka + 2 Redis | green 3 rounds in a row |
+  - Not covered yet: non-1m/calendar intervals and the `ThreadedProducer`
+    sink run (assigned with the cleaner slice); wiring into the projector role
+    loop (binary not built yet).
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
