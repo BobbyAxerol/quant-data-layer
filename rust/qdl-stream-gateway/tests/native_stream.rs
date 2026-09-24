@@ -824,6 +824,99 @@ fn bare<T>(body: T) -> Request<T> {
 
 // ------------------------------------------------------------------ K2-T01
 
+#[derive(Default)]
+struct BootstrapView(Mutex<Option<query::GetSnapshotResponse>>);
+
+#[tonic::async_trait]
+impl ReadView for BootstrapView {
+    async fn snapshot(
+        &self,
+        _requirement: &StreamRequirement,
+        _consumer_id: &str,
+    ) -> Result<query::GetSnapshotResponse, ReadViewError> {
+        self.0.lock().unwrap().clone().ok_or(ReadViewError {
+            code: "DATA_NOT_READY".into(),
+            detail: "test fixture: no applied product state".into(),
+        })
+    }
+
+    async fn status(
+        &self,
+        requirement: &StreamRequirement,
+    ) -> Result<query::GetFeedStatusResponse, ReadViewError> {
+        NotReadyReadView.status(requirement).await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
+    for ring_max_bytes in [0, 32 << 20] {
+        let view = Arc::new(BootstrapView::default());
+        let harness = Harness::new(Options {
+            log: Some(Log::new(&PARTITIONS)), // No seed/genesis record.
+            read_view: view.clone(),
+            ring_max_bytes,
+            ..Options::default()
+        });
+        let request = || {
+            harness.authorized(query::GetSnapshotRequest {
+                requirement: Some(requirement("TRADE", None)),
+                consumer_id: CONSUMER.into(),
+            })
+        };
+        let empty = harness.gateway.get_snapshot(request()).await.err().unwrap();
+        assert_eq!(empty.code(), Code::FailedPrecondition);
+        assert!(empty.message().starts_with("DATA_NOT_READY:"));
+
+        let first = trade(100);
+        assert_eq!(harness.log.append(0, TRADE_KEY, &first), 0);
+        harness.settle();
+        // KN-2 ReadView fixture; persisted coverage is tested in KN-3/KN-4.
+        *view.0.lock().unwrap() = Some(query::GetSnapshotResponse {
+            request_id: "test-bootstrap".into(),
+            snapshot_id: "kn2-test-snapshot".into(),
+            stream_cursor: harness.cursor("TRADE", None, 0, 0),
+            data_as_of_ns: now_ns(),
+            watermark_offset: 0,
+            events: vec![first.clone()],
+        });
+        let snapshot = harness
+            .gateway
+            .get_snapshot(request())
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(snapshot.watermark_offset, 0);
+        assert_eq!(snapshot.events, vec![first]);
+        assert_eq!(harness.log.append(0, TRADE_KEY, &trade(101)), 1);
+        harness.settle();
+        let response = harness
+            .gateway
+            .subscribe(harness.authorized(query::SubscribeRequest {
+                consumer_id: CONSUMER.into(),
+                requirement: Some(requirement("TRADE", None)),
+                cursor_token: snapshot.stream_cursor,
+                max_buffer_events: 100,
+            }))
+            .await
+            .unwrap();
+        let mut stream = Stream(response.into_inner());
+        assert_eq!(stream.until_live().await, vec![1]);
+        assert_eq!(harness.log.append(0, TRADE_KEY, &trade(102)), 2);
+        harness.settle();
+        assert_eq!(stream.collect(1).await.1, vec![2]);
+        let mut replay = harness.replay_rpc("TRADE", 0, 100).await.unwrap();
+        let mut offsets = Vec::new();
+        while let Some(result) = replay.next().await {
+            offsets.push(result.unwrap().record.unwrap().logical_offset);
+        }
+        assert_eq!(offsets, vec![1, 2]);
+        drop(stream);
+        drop(replay);
+        harness.baseline().await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t01_markers_duplicates_and_a_sparse_key_deliver_exactly_the_committed_records() {
     let harness = Harness::new(Options {

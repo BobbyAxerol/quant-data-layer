@@ -50,10 +50,12 @@ pub struct LiveRecord {
     pub envelope: EventEnvelope,
 }
 
-/// Heap bytes of a decoded record per payload byte, upper bound: measured
+/// Empirical decoded-size allowance per payload byte: measured
 /// 2.25 (BAR) to 4.8 (BOOK_SNAPSHOT) on average and 7.28 at most over 54,970
 /// real canonical records (K2-T08 capture, counting allocator). Anything
 /// that holds a decoded record is charged `raw + DECODED_FACTOR x payload`.
+/// This is not a bound for arbitrary protobuf shapes; new product/depth
+/// profiles need RSS/decode sizing before promotion (KN contract section 7).
 pub const DECODED_FACTOR: usize = 8;
 
 /// [`LiveRecord::weight`] of a raw record, before it is decoded.

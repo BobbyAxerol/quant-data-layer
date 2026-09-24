@@ -2485,6 +2485,37 @@ giữ stream cũ; test topics/groups/network chỉ dỡ khi không còn phase sa
 cho phép. **Debt:** pending KN-4 integration là dependency khai báo, không gap Stream
 implementation được lén chuyển đi.
 
+**Astra KN-2 R2 entry clarification (2026-09-24, owner decisions):**
+- Cursor v3 remains snapshot-then-replay. A real record at canonical offset 0
+  is included in the first valid snapshot; the token names that applied offset
+  and replay starts at 1. An empty/insufficient product view is DATA_NOT_READY,
+  without a manufactured cursor. No genesis record, offset shifting or topic
+  mutation is required. Contract section 1 and the KN-2 bootstrap regression
+  freeze this behavior; KN-3/K3.2-K3.7 and KN-4/K4.3 prove persisted coverage
+  and actual SDK handoff, as already planned. A before-first archive iterator
+  is not the public v3 snapshot-handoff API.
+- The 384 Subscribe + 32 Replay / 256 MiB profile is the measured KN-2
+  profile, not a reduction of the program capacity target. The owner permits
+  measured resources after optimization; the 1,024 + 32 candidate is budgeted
+  at 307 MiB with a 384 MiB container planning envelope (77 MiB headroom).
+  No runtime cap is changed here and 1,024 concurrency is not yet certified.
+  Account for old-plus-new peak; reclaim old services only after safe cutover.
+- Decode factor eight and transport/reserve allowances are empirical, not
+  universal heap/OOM guarantees. Keep typed bounded admission/backpressure;
+  remeasure new payload/depth profiles, not every already-passed unchanged test.
+- DNSE/VN remains V1_PRIMARY by explicit owner decision, outside KN V2
+  promotion. Preserve negative/expected-filtered results, never count them as
+  event-positive delivery or claim dated-book freshness from them.
+- Existing tracked capture/oracle CLI and `kn-native-integration` CI already
+  cover the reusable KN-2 tests. Retain hashed historical orchestration as
+  evidence; do not copy host paths/secrets into Git or block KN-3 on a wholesale
+  1,458-line harness refactor. Future reusable operations belong in `scripts/`
+  with explicit isolated inputs, using the existing CI job rather than a new
+  duplicate job. Four production end-to-end latency quantities remain KN-4/5
+  measurements, not inferred from captured-Kafka stage latency.
+- Authoritative review/entry receipt:
+  [Unified Plan KN-2 Astra R2](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn2-astra-review-r2).
+
 <a id="kn-guide-phase-3"></a>
 ### 18.10 KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 

@@ -58,6 +58,19 @@ EXPIRED is gRPC `OUT_OF_RANGE` and the SDK answers it with a fresh snapshot
 which the SDK raises; a normal migration or rollback must never produce it.
 Only the active key signs; any configured key verifies (rotation).
 
+**First-record bootstrap (Astra KN-2 R2).** Offset zero is a valid canonical
+record and a valid snapshot watermark. Cursor v3 is a *snapshot handoff*, not
+an archive iterator with a before-first position: the snapshot/warmup must
+already include the state through its claimed source offset, including zero.
+Only then may it issue a cursor at zero; Subscribe/Replay return offsets
+strictly greater than zero. Empty or insufficient product state returns typed
+`DATA_NOT_READY` without a cursor, never a manufactured empty snapshot at zero.
+A new partition follows the same rule. Archive recovery may read Kafka from
+offset zero internally; it must not invent a public negative/shifted offset.
+No genesis record is required, and a data record at zero is not corruption.
+KN-2 tests this boundary with a fixture ReadView; actual persisted snapshot
+coverage and SDK handoff remain the already planned KN-3/KN-4 integration.
+
 **Requirement digest.** SHA-256 over UTF-8 lines joined by `\n`:
 `qdl.requirement-digest.v1`, then `name=value` for `instrument_uid`, `feed`,
 `interval`, `consumer_grade`, `source_policy_id`, `max_freshness_ms`,
@@ -203,7 +216,16 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   permission or entitlement. At most the two responses already handed to the
   transport can precede the status. Additive rotation keeps streams.
 - **Every held record is inside one replica byte budget**, charged once
-  (`raw + 8 x payload`, the measured decoded upper bound) from the moment it
+  (`raw + 8 x payload`, an empirical decoded-size allowance) from the moment it
   enters a queue, replay channel or ring replay until the transport takes it.
   Concurrent Replay RPCs are admitted per replica and per consumer (manifest
   `max_streams`); refusal is `RESOURCE_EXHAUSTED RATE_LIMITED`.
+  The factor eight exceeds the largest measured ratio (7.28) in the retained
+  capture; it is not a proof for arbitrary protobuf payloads or a guarantee
+  against OOM. The byte-credit ceiling is enforced; process RSS, transport,
+  decoder temporaries and allocator overhead must also fit the measured
+  reserve. New payload shapes/depths require remeasurement before promotion.
+  Replay and Subscribe have separate per-consumer counters, each capped by
+  `max_streams`; Replay also has a separate replica cap of 32. Successful
+  payload/cursor semantics do not change; overload is typed and retryable,
+  never silently truncated or reinterpreted as an empty successful page.

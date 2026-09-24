@@ -53246,8 +53246,9 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 REVIEW_CHANGES_REQUIRED (Astra on `d8929d1`, 2026-09-24); KN-3..KN-5 NOT STARTED.**
-KN-2 verdict and narrow closure checklist: [Astra review R1](#kn2-astra-review-r1).
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 READY_TO_START / NOT STARTED; KN-4..KN-5 NOT STARTED.**
+KN-2 current verdict and owner decisions: [Astra review R2](#kn2-astra-review-r2).
+Historical findings: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
 Executor handoff:
 [KN-1 R2 closure receipt](#kn1-astra-receipt-r3); earlier [re-review receipt](#kn1-astra-receipt-r2), original [KN-1 receipt](#kn1-astra-receipt).
@@ -54527,9 +54528,9 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (R1 fixes, 2026-09-24; R1 was
-REVIEW_CHANGES_REQUIRED on `d8929d1`).
-**Review receipt:** [five reproduced findings, evidence limits and closure tests](#kn2-astra-review-r1).
+**Status:** ASTRA_REVIEW_PASS / CLOSED_AT_ISOLATED_STREAM_SCOPE (2026-09-24).
+**Review receipt:** [R2 verified closure and owner decisions](#kn2-astra-review-r2);
+[historical R1 findings](#kn2-astra-review-r1).
 **Entry receipt:** [KN-1 R3 PASS and owner resource direction](#kn1-astra-review-r3).
 **Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
 with correct replay, auth, flow control and the existing public RPC contract.
@@ -54542,13 +54543,13 @@ with correct replay, auth, flow control and the existing public RPC contract.
 **To do:**
 - [x] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
 - [x] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
-- [x] K2.3 R1 F1-F4 fixed with regressions ([R1 fix receipt](#kn2-r1-fix-receipt)); Astra re-review pending.
-- [x] K2.4 R1 F5 fixed in gateway and oracle; Astra re-review pending.
-- [x] K2.5 affected paths revalidated, coverage denominators stated; open points in [R1 discussion](#kn2-r1-discussion).
+- [x] K2.3 R1 F1-F4 fixed with regressions; Astra R2 verified closure.
+- [x] K2.4 R1 F5 fixed in gateway and independent oracle; Astra R2 verified closure.
+- [x] K2.5 affected paths revalidated; exact coverage and six decisions settled in R2.
 **Completed:** K2.1-K2.5 (slice 1 `997907c`, slice 2 in the journal below),
 implemented and tested locally plus isolated shadow evidence; not live, not
-production. Astra reviewed the implementation and isolated evidence; R1
-requires five in-scope fixes before exit, not a new architecture or phase.
+production. Astra verified the five fixes on `d646c99`, added the offset-zero
+handoff and capacity-profile regressions, and closed the declared KN-2 exit.
 **Verification:** K2-T01..T08 run (in-process, real isolated Kafka, SDK over mTLS
 on two replicas); see [KN-2 receipt](#kn2-receipt). Snapshot/status are typed
 `DATA_NOT_READY` through the read view; the real cache integration is KN-4 and
@@ -54562,10 +54563,11 @@ KN-4 cache integration is the explicit dependency, not a hidden certification cl
 old Stream, producer authority, groups and Kafka partition topology untouched.
 **Cleanup:** exact test groups/topics/network allowed by packet; no abandoned
 readers/streams; retain only named necessary candidate and rollback artifacts.
-**Astra review:** R1 REVIEW_CHANGES_REQUIRED ([R1](#kn2-astra-review-r1)); fixes
-delivered, re-review REQUESTED ([receipt](#kn2-r1-fix-receipt), [decisions](#kn2-r1-discussion)).
-**Next permitted step:** Astra re-review of the R1 fix diff; KN-3 after PASS or
-explicit owner sequencing.
+**Astra review:** ASTRA_REVIEW_PASS ([R2](#kn2-astra-review-r2)); R1 findings closed
+within KN-2. This does not certify native Query/cache, 1,024 concurrent streams,
+all live-provider latency or a production handoff.
+**Next permitted step:** KN-3 under guide 18.10 on the current feature branch;
+no extra review phase, genesis provisioning or DNSE V2 activation prerequisite.
 
 #### KN-2 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
@@ -55119,6 +55121,10 @@ Astra requested review points and next allowed step:
 <a id="kn2-r1-discussion"></a>
 **KN-2 R1 - points for Astra and the owner (decisions, not hidden gaps):**
 
+**Resolved by [Astra R2](#kn2-astra-review-r2).** The numbered proposals below
+are historical discussion, not instructions: notably genesis provisioning is
+not adopted, DNSE stays V1, and capacity is not permanently reduced to 384.
+
 1. **Offset 0 (Astra evidence limit).** Cursor v3 says `source_offset` = last
    offset applied, replay strictly after, an unsigned integer: there is no
    token for "nothing applied yet", so a product record at Kafka offset 0 can
@@ -55162,10 +55168,140 @@ above, the two budgets and the charge-once path, the coordinator driver
 coverage classes. KN-3 only after ASTRA_REVIEW_PASS or explicit owner
 sequencing.
 
+<a id="kn2-astra-review-r2"></a>
+#### KN-2 Astra R2 - Fix Verification And Entry Decisions
+
+- 2026-09-24: **ASTRA_REVIEW_PASS**, reviewed source `d646c99` plus the
+  source-only review closure recorded here, narrow follow-up to
+  [R1 fixes](#kn2-r1-fix-receipt) and [owner questions](#kn2-r1-discussion).
+  Owner explicitly keeps DNSE on V1 and permits measured resource increases
+  after optimization. No production change, ACL, topic provisioning, restart,
+  push/merge, full C2 or KN-3 implementation is part of this review.
+- Scope before edits: verify F1-F5, settle the six questions, pin offset-zero
+  snapshot handoff with a regression, document measured memory versus capacity
+  estimates, and reconcile tracker/spec/guide. Reuse existing isolated Kafka CI;
+  do not rewrite the capture harness or add another orchestration framework.
+- Checks already run independently: gateway Rust unit **24/24** and native
+  service **32/32**, Python KN suites **65/65**; retained R1-fix evidence
+  **99/99** file hashes match SHA256SUMS
+  `7499374901cb65e5a3e9d27545775e7f199d6f89cd42de2889b0b5da96572c3b`.
+  These are source/isolated evidence, not new live-provider certification.
+- Exit: all five findings reviewed closed; offset-zero regression passes;
+  no hidden before-first cursor or runtime provisioning assumption; exact
+  resource/coverage boundaries and KN-3 instructions recorded. Rollback of this
+  slice is source-only revert; deployed readers and all durable state stay intact.
+
+**Six decisions for Opus (supersede the R1 discussion proposals):**
+
+1. **No mandatory genesis record.** The public cursor is a snapshot handoff,
+   not a before-first archive iterator. Offset 0 is legal state: materialize
+   it, return it in a valid snapshot, sign offset 0, then replay strictly
+   after it. An empty/insufficient product view must return DATA_NOT_READY
+   with no fabricated cursor. A data record at 0 is not DATA_INTEGRITY.
+   Do not shift coordinates, change cursor version, guess that retention
+   removed offset 0, or add a provisioning dependency. Source-only KN-2
+   regression now covers empty view, real first fixture record at 0, snapshot,
+   replay 1 then live 2, page replay [1,2], both ring and separate reader,
+   and resource return to baseline. This is fixture acceptance, not a claim
+   the KN-3/4 persisted ReadView already exists. Those existing work items
+   must preserve this exact boundary.
+2. **Resources approved in principle, target preserved.** Current KN-2
+   evidence: 384 Subscribe + 32 Replay slots, 256 MiB, 247 MiB accounting
+   estimate, 292 admitted subscriptions and measured RSS about 127 MiB.
+   Keep that as the measured profile. Freeze a separate 1,024 + 32 planning
+   profile: 307 MiB estimated pools, **384 MiB cap**, 77 MiB headroom.
+   A 320 MiB cap fits arithmetic but leaves only 13 MiB, not a capacity
+   certificate. Budget JSON and Rust test now pin these numbers. No cap is
+   applied in this review; KN-3/5 measures the relevant packet, may use the
+   owner's resource direction after optimization, and accounts for old-plus-new
+   peak until obsolete services can safely be retired. Do not trim demand
+   just to retain the earlier 256 MiB assumption; 1,024 is not yet load-tested.
+3. **Bounded Replay accepted.** Separate per-consumer Replay counter capped
+   at manifest `max_streams`, replica cap 32; Subscribe retains its own
+   counter. Overload returns retryable RATE_LIMITED, no silent success or
+   record truncation. This intentional operational restriction relative to
+   unbounded Python preserves successful public RPC/cursor semantics.
+4. **Factor 8 accepted as an empirical allowance, not a theorem.** Measured
+   maximum decoded ratio was 7.28 over 54,970 records. Source/spec no longer
+   promise an arbitrary-payload heap bound or that OOM is impossible. Byte
+   credits, independent live/replay pools and typed overload remain enforced;
+   new payload/depth profiles must fit measured RSS/transport/reserve before
+   promotion. No decode allocator rewrite is introduced in this review.
+5. **DNSE/VN = V1_PRIMARY, outside KN V2 activation**, as the owner explicitly
+   confirms. Preserve the original 292 denominator; report 288 in-scope
+   crypto subscriptions, 286 event-positive across runs, two dated-future
+   BOOK_SNAPSHOT subscriptions expected-filtered (not fresh-data certification).
+   Four VN no-sample entries are declared exclusions, not fabricated passes.
+6. **Do not refactor the whole harness or add duplicate CI.** Reusable
+   capture/load/matrix/oracle is already in `scripts/kn_native_slice_probe.py`
+   and unit CI; `.github/workflows/ci.yml` already has
+   `kn-native-integration`, running the two real-Kafka ignored tests explicitly
+   and cleaning its broker. Historical host-specific launch scripts remain
+   hashed evidence, not a production API. Promote reusable orchestration into
+   `scripts/` when needed for the next approved packet, with isolated inputs
+   and no host secrets, using the existing job. Line count alone is not a
+   correctness gate or a reason to delay KN-3.
+
+**Review and verification:**
+- F1: atomic authority+generation admission and watch-before-check verified;
+  revocation is checked through replay, blocked send and LIVE, including Replay.
+- F2: corruption fails the affected requested key/range on reader/ring/live;
+  no skip-to-LIVE path. F3: joiners survive failed open and each pass returns
+  its permit; dropped requests receive a terminal result.
+- F4: per-request scan limits, replay admission and charge ownership reviewed;
+  replay no longer exhausts live queue credits. F5: only contiguous
+  same-lifecycle runs coalesce; A-B-A-B transitions remain visible or fail typed.
+- Independent final tests: `cargo test --offline --locked -p qdl-stream-gateway
+  --lib --test native_stream -- --test-threads=2`: **25 unit + 33 native = 58
+  passed, 0 failed, 0 ignored**. Two added regressions: offset-zero bootstrap
+  and 1,024-stream candidate budget. Existing real-Kafka/mTLS/capture results
+  are inherited from the hash-verified receipt, not rerun or relabelled live.
+- `cargo clippy --offline --locked -p qdl-stream-gateway --all-targets --
+  -D warnings`: **PASS**. Python `python -B -m unittest
+  tests.test_kn_native_slice_probe tests.test_kn_resource_sizing
+  tests.test_kn_v220_contracts`: **65 passed** after changes.
+- `cargo fmt --all -- --check`: **PASS**. Budget JSON parsing, both profile
+  arithmetic, unchanged inherited budget SHA and receipt/guide anchors: **PASS**.
+  `git diff --check` detects only the pre-existing unrelated whitespace at
+  old plan line 13067; that hunk is not part of this commit. Scoped staged
+  diff must pass without modifying the owner's unrelated edits.
+- Isolated capacity evidence remains 3,000 captured events/s, 59 seconds;
+  commit-to-client after LIVE p99 **42.7-55.3 ms** for clients with samples.
+  These are native stage measurements, not source-to-consumer live latency;
+  no-sample clients do not receive invented latency quantiles. Captured replay
+  and same-host failover are not independent-failure-domain HA certification.
+- Scope left intentionally for the existing guide: KN-3 durable materializer,
+  fenced cache/generation and recovery; KN-4 actual Query/warmup/SDK integration;
+  KN-5 full target-load/cutover/release. Production `kn-` ACL remains a live
+  measurement packet concern, not a reason to block KN-3 source work.
+
+**Runtime, source and cleanup receipt:**
+- Canonical `/home/bobby/data_layer`, `feat/consumer-endpoint-benchmark`; one
+  worktree only. No new branch/worktree, push, merge or deployment. Local
+  `main`/`dev` remain `e6955f3`; published stable baseline remains `v2.1.0`.
+- Query replicas remain `qdl-v2-python:2.1.1-83fa1bc`, digest
+  `sha256:dd065fdf8c439ce9034bca47817e1e88ce0a69bbdbd24a2d1f6b0d2f6f693951`;
+  Stream active/passive remain `qdl-v2-python:2.1.1-ae2d62a`, digest
+  `sha256:37d7f5182ea170f5cc35967aabba0d7f0c1b4b934c12aa25a51ac79664b181f9`.
+  All four healthy, restart 0, OOM false; mounts/config untouched, no new
+  config revision attested. Old readers/rollback artifacts preserved.
+- Tests reused existing builder/Python images, network disabled, --rm,
+  bounded CPU/RAM; no new image, network, volume or provider write. Disposable
+  review containers removed automatically; no broad prune. Shared active KN
+  compiler cache and explicitly retained candidate remain for KN-3/KN-5.
+  Inventory: 49 images / 21.55 GB, BuildKit 6.417 GB; disk free 157 GB.
+  This is an inventory, not a claim that shared historical images were cleaned.
+  Two unrelated pre-existing Unified Plan edit hunks remain unstaged/preserved.
+
+**Conclusion:** KN-2 review is closed at its declared scope. **Opus may enter
+KN-3 now**, following guide 18.10 and the same branch; do not begin KN-4/5,
+change production authority or certify a new release from this receipt alone.
+
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** PENDING_PREREQUISITES / NOT STARTED.
+**Status:** READY_TO_START / NOT STARTED (KN-2 ASTRA_REVIEW_PASS).
+**Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
 **Guide index:** [18.10 work items and K3-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-3),

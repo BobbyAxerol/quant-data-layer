@@ -1,8 +1,9 @@
 //! Memory bounds of one gateway replica.
 //!
-//! Every bounded pool must fit the container memory limit, so an overload
-//! ends in typed backpressure and never in an OOM kill; the replica refuses
-//! to start when they do not fit. The pools:
+//! Every budgeted pool must fit the container memory limit; the replica
+//! refuses to start otherwise. The accounting uses measured allowances,
+//! not a proof of process RSS or an OOM guarantee for arbitrary payloads.
+//! The pools:
 //! - the replay ring (raw records);
 //! - two byte budgets for everything holding decoded records (charged
 //!   `raw + 8 x payload`, see `hub::DECODED_FACTOR`, until the transport takes
@@ -139,6 +140,20 @@ mod tests {
         }
         .check()
         .is_err());
+    }
+
+    #[test]
+    fn the_1024_stream_candidate_keeps_measured_defaults_and_extra_headroom() {
+        let candidate = MemoryPlan {
+            streams: 1_024 + 32,
+            ..plan(Some(384 * MIB))
+        };
+        assert_eq!(candidate.required(), 307 * MIB);
+        assert_eq!(candidate.limit.unwrap() - candidate.required(), 77 * MIB);
+        assert!(candidate.check().is_ok());
+        // 320 MiB fits on paper but leaves just 13 MiB; neither profile is
+        // a 1,024-stream load certificate without an actual capacity run.
+        assert_eq!(320 * MIB - candidate.required(), 13 * MIB);
     }
 
     #[test]
