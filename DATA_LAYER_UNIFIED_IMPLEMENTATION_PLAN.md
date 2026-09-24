@@ -55300,7 +55300,8 @@ change production authority or certify a new release from this receipt alone.
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** READY_TO_START / NOT STARTED (KN-2 ASTRA_REVIEW_PASS).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-24, source `bc397e7`;
+production packet gated on owner decisions - see [KN-3 receipt](#kn3-receipt)).
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55310,17 +55311,20 @@ correct history, idempotent recovery and bounded memory/disk growth.
 [18.13 packets](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-rollout-and-cleanup).
 
 **To do:**
-- [ ] K3.1 exact state-topic schema/partition routing/ACL and idempotent provision packet.
-- [ ] K3.2 Stage A transaction with original canonical provenance and durable offsets.
-- [ ] K3.3 Stage B fenced CAS/atomic view/checkpoint and crash-safe recovery.
-- [ ] K3.4 separate bounded market cache; protect existing quota/admission Redis.
-- [ ] K3.5 current BAR index, append-only revisions, retention floors/tombstones/cleaner.
-- [ ] K3.6 read-only legacy export/migration/tie-out; BAR-edge readback backend change.
-- [ ] K3.7 staging rebuild/tail/ready-generation protocol and measured RTO.
-**Completed:** none in this documentation update.
-**Verification:** K3-T01..T08 not run; required cases include transaction and
-Redis crash windows, zombie writes, logical book keys, BAR revisions, expiry,
-memory-full isolation, migration idempotency and rebuild from real retained state.
+- [x] K3.1 exact state-topic schema/partition routing/ACL and idempotent provision packet
+  (slice 2; production apply = owner gate: principal, segment settings).
+- [x] K3.2 Stage A transaction with original canonical provenance and durable offsets (slices 1, 5).
+- [x] K3.3 Stage B fenced CAS/atomic view/checkpoint and crash-safe recovery (slices 4, 7, 10).
+- [x] K3.4 separate bounded market cache; protect existing quota/admission Redis
+  (slice 4 + sizing receipt slice 10; production maxmemory = owner gate).
+- [x] K3.5 current BAR index, append-only revisions, retention floors/tombstones/cleaner (slices 6, 7).
+- [x] K3.6 read-only legacy export/migration/tie-out; BAR-edge readback backend change (slices 8, 10).
+- [x] K3.7 staging rebuild/tail/ready-generation protocol and measured RTO (slices 4, 7, 10).
+**Completed:** slices 1-10 (`0b6cea6`..`bc397e7`), decisions D1-D17 below.
+**Verification:** K3-T01..T08 run - unit/integration on isolated Kafka/Redis
+(projector 40 ignored tests green 3 rounds, workspace 293/0) and the isolated
+full flow on real data (slice 10): parity, recovery RTO, expiry/cleaner,
+resources. Tested locally + isolated; not production-applied.
 **Exit gate:** no history loss or invented cursor; correct durable/cache state,
 implemented bounded retention, measured rebuild/capacity; Astra reviewed sink
 fencing and provenance. Kafka EOS alone is not external-sink acceptance.
@@ -55331,8 +55335,9 @@ offsets or flush/delete shared state is implied by the plan.
 stop candidate path and restore readback config, keep old history/source intact.
 **Cleanup:** test prefix/topic/volume exact scope; no FLUSHDB shared; no removal
 of the sole old-history copy. Record before/after disk and retained rollback.
-**Astra review:** NOT REQUESTED; inspect dual offsets, generation/fence, precision,
-revision ordering, compaction/expiry and restore proof.
+**Astra review:** REQUESTED 2026-09-24 ([receipt](#kn3-receipt)); inspect dual
+offsets, generation/fence, precision, revision ordering, compaction/expiry and
+restore proof.
 **Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
 
 #### KN-3 Execution Journal
@@ -55978,6 +55983,80 @@ revision ordering, compaction/expiry and restore proof.
     name (named volumes untouched); raw capture deleted after hashing; kept:
     evidence 896 KB + run dir (binary, bundle, check receipts) to the KN-3
     review.
+
+<a id="kn3-receipt"></a>
+**KN-3 receipt for Astra (guide 18.14), 2026-09-24.**
+
+```text
+Phase / status / source SHA / affected files and line counts:
+  KN-3 / IMPLEMENTED_PENDING_ASTRA_REVIEW / feat/consumer-endpoint-benchmark,
+  slices 0b6cea6 916883c 65443fa e3d3746 a413c41 1abf811 ed0275f 0fa25bd
+  1f9e220 bc397e7 (+ this journal commit); 45 files +19,041/-344 incl. plan.
+  rust/qdl-projector src: stage_b 1367, expiry 823, cache 810, products 613,
+  main 609, cleaner 447, stage_a 429, kafka_state 317, apply.lua 252,
+  kafka_pipe 229; tests stage_b_redis 1011, expiry_redis 828, cleaner_kafka
+  605, stage_b_kafka 465, cache_redis 428, expiry_kafka 394, stage_a_kafka
+  374, cache_redis_memory 107. qdl-contracts state_codec 1513, gateway_bundle
+  288 (moved), interval 60 (moved). Python: kn_state_codec 611,
+  kn_bar_readback 278, stable_bar_edge (+53/-8, default path unchanged);
+  scripts kn_state_topics_packet 756, kn_state_codec_golden 691,
+  kn_bar_legacy_import 621, kn3_flow_check 756, kn_native_slice_probe
+  (--no-filler); tests 2,394 lines in 6 files; golden state_codec.json.
+Approved scope and actual work items completed:
+  K3.1-K3.7 per guide 18.10 with decisions D1-D17; D10 superseded by D17
+  (no dual write), D11 amended (bars-topic cleaner), D15 amended (budget cap
+  rule). Production packet (topics/ACL/market cache/projector role) not run.
+Domain invariants and behavior changed/preserved:
+  Canonical bytes carried unchanged (no timestamp rewrite); source and
+  changelog coordinates separate; BAR CONFLICT keeps the first fact (never
+  last-write-wins); offsets only move with applied data (stage A: Kafka
+  transaction with offsets; stage B: Lua script with checkpoint); a record
+  that cannot be interpreted stops the stage (never skipped); missing
+  products are typed NOT_READY; legacy rows carry lineage, never a canonical
+  offset; the running projector/Query/edge and control Redis untouched.
+Tests: command, cases, pass/fail/skip, isolated/real-provider, evidence hash/path:
+  cargo test --workspace 293/0 (43 ignored); qdl-projector --ignored 40/40
+  x3 rounds on disposable Kafka + 2 Redis; Python KN suites 110 OK (3
+  optional-input skips); full flow on a real canonical capture + legacy
+  import (not live): BAR parity 937,255/937,255 byte-equal, latest 66/66,
+  floor-aware 417,605/417,605; evidence
+  /home/bobby/.local/state/qdl-v2/kn3-20260924/evidence SHA256SUMS 605476a2...
+New failures -> root cause -> fix -> regression evidence:
+  D10 dual write diverges under keep-first CONFLICT -> D17 replay in the
+  owner; latest tombstone applied after the batch's writes -> log-order
+  collapse; interrupted cold build left staged products NOT_READY -> staged-
+  only product forces rebuild; no Redis reconnect / idle owner blind to a
+  wiped cache -> reconnect, owner-fence probe, fenced backoff; seek raced the
+  committed-offset fetch -> explicit-offset data consumer; D15 above the
+  budget -> budget rule; KN-2 filler at offset 0 -> --no-filler. Tests named
+  in the slice receipts.
+Runtime: exact mutations or NONE; active/config/rollback map:
+  Production NONE (read-only spool reads only). Isolated kn3-flow-* /
+  kn3-lead-* / helper containers only, all removed.
+Resources: latency/capacity/memory/disk measured vs budget; untested limits:
+  cold build 206 products in 162-179 s at 0.5 CPU per replica (CPU-bound);
+  3,000/s challenge ~0.38 CPU for two replicas (budget 0.3 unverified);
+  projector RSS max 173 MiB; latest reads p99 1.1 ms during expiry, SLOWLOG
+  0 > 5 ms; cache 824 B/row real vs 707 budget -> cap does not fit 1.288 GB;
+  bars topic compacts 1.41 GB -> 546 MB once segments roll. Untested: live
+  production traffic, soak, production broker ACLs/TLS, failover tuning.
+Cleanup: removed/retained artifacts, reason/expiry, disk/restart evidence:
+  containers/networks 0, 17 empty anonymous volumes removed, capture deleted
+  after hashing; kept evidence 896 KB + run dir to KN-3 review; target/ build
+  cache kept (KN-5). Free disk 150 GB. No production restart.
+Remaining decision gates, not relabelled implementation gaps:
+  Owner: (1) projector principal (new CA / mesh rotation before 2026-11-20 vs
+  phase8-consumer); (2) market-cache memory at cap (bucket 112 + maxmemory
+  ~1.5 GB vs lower headroom); (3) state-topic segment.ms/segment.bytes in the
+  budget/packet; then the production packet (topics, ACL, market cache,
+  projector role, legacy import --confirm) as its own approved step.
+  KN-4: Query/ReadView on the market cache; KN-5: readback cutover.
+Astra requested review points and next allowed step:
+  apply.lua CAS/fence/checkpoint atomicity; D17 rebuild interleaving; stage B
+  source (paused group + explicit-offset data consumer); expiry/cleaner key
+  completeness; legacy import provenance and receipt; parity checker
+  judgement; sizing finding. Next: KN-4 after KN-2/KN-3 reviewed exits.
+```
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
