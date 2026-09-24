@@ -223,6 +223,7 @@ class StableBinanceBarEdge:
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
         canonical_cache_path: str | Path | None = None,
+        bar_readback=None,
         repair_only: bool = False,
         clock=time.time,
         generation_clock_ns=time.time_ns,
@@ -296,6 +297,13 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR canonical cache identity is invalid")
         if self.canonical_cache_path is not None and self.canonical_cache_id is None:
             raise ValueError("stable BAR canonical cache path requires its identity")
+        # KN-3 market-cache readback (`kn_bar_readback`) replaces the SQLite
+        # cache path and derives the cache identity itself (below).
+        self.bar_readback = bar_readback
+        if bar_readback is not None and (
+            self.canonical_cache_path is not None or self.canonical_cache_id is not None
+        ):
+            raise ValueError("stable BAR market-cache readback replaces the SQLite cache identity")
         self.clock = clock
         self.generation_clock_ns = generation_clock_ns
         authority_revision = int(authority.get("revision", 0))
@@ -387,6 +395,8 @@ class StableBinanceBarEdge:
                 "stable crypto BAR edge does not bootstrap every configured BAR "
                 "binding: " + ",".join(sorted(expected_history - history_owned))
             )
+        if self.bar_readback is not None:
+            self.canonical_cache_id = self._observed_canonical_cache_id()
         validate_shared_authority_record(authority)
         self._history_bootstrap_active = bool(expected_history)
         self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
@@ -614,7 +624,7 @@ class StableBinanceBarEdge:
         the normal real-provider pipeline on the next edge loop.
         """
 
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return {}
         sources = {
             source.binding_id: source
@@ -919,12 +929,29 @@ class StableBinanceBarEdge:
         covered = self._durable_final_bar_opens(plan.source, plan.expected_opens)
         return len(plan.expected_opens - covered)
 
+    @property
+    def _durable_cache_configured(self) -> bool:
+        return (
+            self.canonical_cache_path is not None
+            or getattr(self, "bar_readback", None) is not None
+        )
+
+    def _observed_canonical_cache_id(self) -> str:
+        """The SQLite cache_id, or the KN-3 market-cache generation identity."""
+        readback = getattr(self, "bar_readback", None)
+        if readback is not None:
+            return readback.cache_identity(
+                source
+                for source, _acquisition in self.history_bindings + self.history_okx_bindings
+            )
+        return _canonical_cache_id(self.canonical_cache_path)
+
     def _assert_canonical_cache_identity(self) -> None:
         """Refuse to certify a bootstrap if its durable generation changed."""
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return
         assert self.canonical_cache_id is not None
-        if _canonical_cache_id(self.canonical_cache_path) != self.canonical_cache_id:
+        if self._observed_canonical_cache_id() != self.canonical_cache_id:
             raise RuntimeError("stable BAR canonical cache generation changed during bootstrap")
 
     def _rebase_if_canonical_cache_generation_changed(self) -> bool:
@@ -937,10 +964,10 @@ class StableBinanceBarEdge:
         edge's watermarks, issue a new provider-session generation, and let the
         existing bounded provider-history bootstrap replenish the cache.
         """
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return False
         assert self.canonical_cache_id is not None
-        observed_cache_id = _canonical_cache_id(self.canonical_cache_path)
+        observed_cache_id = self._observed_canonical_cache_id()
         if observed_cache_id == self.canonical_cache_id:
             return False
 
@@ -980,9 +1007,14 @@ class StableBinanceBarEdge:
         captured durable event and fill only missing opens; reconciliation is a
         distinct, explicitly revisioned product.
         """
-        if not expected_opens or self.canonical_cache_path is None:
+        if not expected_opens or not self._durable_cache_configured:
             return frozenset()
         self._assert_canonical_cache_identity()
+        readback = getattr(self, "bar_readback", None)
+        if readback is not None:
+            covered = readback.durable_final_bar_opens(source, expected_opens)
+            self._assert_canonical_cache_identity()
+            return covered
         connection = None
         try:
             connection = sqlite3.connect(
@@ -1746,6 +1778,16 @@ def build_from_environment(
             certificate_path=cert_root / "client.crt",
             key_path=cert_root / "client.key",
         ))
+    # Durable BAR readback backend: the SQLite canonical cache (default) or
+    # the KN-3 market cache (`QDL_STABLE_BAR_READBACK=kn3`, until KN-5 cutover).
+    readback_backend = os.environ.get("QDL_STABLE_BAR_READBACK", "sqlite")
+    if readback_backend not in ("sqlite", "kn3"):
+        raise ValueError(f"stable BAR readback backend is unsupported: {readback_backend}")
+    bar_readback = None
+    if readback_backend == "kn3":
+        from qdl.runtime.kn_bar_readback import readback_from_environment
+
+        bar_readback = readback_from_environment(os.environ)
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(
@@ -1812,8 +1854,11 @@ def build_from_environment(
                 / "stable-crypto-bar-edge.json"
             ),
         ),
-        canonical_cache_id=_canonical_cache_id(canonical_cache_path),
-        canonical_cache_path=canonical_cache_path,
+        canonical_cache_id=(
+            _canonical_cache_id(canonical_cache_path) if bar_readback is None else None
+        ),
+        canonical_cache_path=canonical_cache_path if bar_readback is None else None,
+        bar_readback=bar_readback,
         repair_only=repair_only,
     )
 

@@ -55772,6 +55772,47 @@ revision ordering, compaction/expiry and restore proof.
   | real Kafka: orphans from the plan->floor race and from a late fact below the floor tombstoned exactly (2 of 22 below-floor keys), second sweep 0, other partition/above-floor keys untouched; bad floor/key -> Integrity, 0 published; cap 2 -> (2,2,3),(2,2,1),(1,1,0),(0,0,0); aborted sweep invisible | `cleaner_kafka` | 4/4 |
   | 1d (16:00 UTC grid) and 1w (Monday) bars expire on the venue grid, bucket bound kept, `1M` refused; `ThreadedProducer` publish read back | `expiry_redis`, `expiry_kafka` | 6/6, 2/2 |
   | whole ignored projector set + fmt + clippy `-D warnings` | staged content, disposable `kn3-lead-*` Kafka + 2 Redis | green 3 rounds in a row |
+- 2026-09-24: **KN-3 slice 8 - K3.6 legacy BAR import and BAR-edge readback
+  (D16): implemented, tested locally + isolated Kafka and Redis (production
+  import NOT run).** Helper-built, Claude-reviewed and re-run:
+  `scripts/kn_bar_legacy_import.py`, `qdl/runtime/kn_bar_readback.py`,
+  `tests/test_kn_bar_legacy_import.py`, `tests/test_kn_bar_readback.py`;
+  `qdl/runtime/stable_bar_edge.py` selects the backend
+  (`QDL_STABLE_BAR_READBACK=sqlite|kn3`, default `sqlite`: the SQLite path's
+  code and behavior unchanged).
+  - Decisions: a product that is not READY (no pointer, or staging only)
+    makes the readback raise `KnBarReadbackNotReady`, never an empty set (an
+    empty set would re-publish history; parity with the SQLite path raising
+    on an unreadable cache, the edge loop backs off); identity per product
+    `kn3:<env>:<lpk>@<ready|->`, edge-wide = first 32 hex of SHA-256 over the
+    sorted identities of its BAR bindings (one pipeline) - checkpoint v4 and
+    the rebase logic unchanged, so a cold build or a per-product rebuild
+    rebases the whole edge (a bounded provider re-bootstrap that fills only
+    missing opens; per-binding rebase left for KN-5 if measured necessary);
+    import transactional id `kn-projector-v3-legacy-import-<16 hex>` over
+    environment, topic, partitions, epoch, catalog revision and spool
+    `cache_id` (bootstrap excluded, so a rerun fences a crashed run); the
+    `--confirm` token `IMPORT_QDL_KN3_LEGACY_BARS_<16>` is sealed over the
+    plan; spool pages forced through the primary key (`INDEXED BY` the `pk`
+    autoindex, EXPLAIN QUERY PLAN `SEARCH ... (stream=? AND partition_key=?
+    AND logical_offset>? AND logical_offset<?)`, no scan/sort/
+    `accepted_at_ns`); refusals (payload hash, not an envelope, identity,
+    event id, codec refusal) name binding + logical offset, and bindings
+    committed before a refusal stay (rerun idempotent); `--isolated` refuses
+    TLS, `kafka1..3` and the production project, the bars topic never equals
+    the canonical topic, topics are never created. The receipt has no
+    timestamps (deterministic export): per binding rows/finals/in-progress,
+    first/last open, spool first/cutoff offset, state partition,
+    `facts_sha256` over sorted `open|revision|content_sha256`, key-set
+    count+hash; canonical earliest/latest offsets per partition captured
+    before publishing (import mode only).
+  | Check | Command | Result |
+  |---|---|---|
+  | import: 144 BAR bindings exported from a fixture spool of the 15 real golden BARs (47 rows), LEGACY_BAR frames with original event id/hash and spool lineage, deterministic receipt (page 1 vs 1000), read-only spool (DELETE fails, file hash unchanged), plan assertion, refusals, LPK = gateway bundle, real 114-record sample 84/84 BARs; Kafka: 30 transactions / 47 frames read back committed, facts hash = receipt, cutoff = watermarks, rerun identical keys and bytes. readback: FINAL/REVISED only, one HMGET per asked bucket, legacy and canonical rows, not-ready raises, identity mismatch fails closed, generation change during read raises, SQLite vs market cache parity through the real edge, real Redis 130/142 covered | `python -B -m unittest tests.test_kn_bar_legacy_import tests.test_kn_bar_readback` with isolated Kafka/Redis + sample | 23/23, 3 rounds |
+  | existing BAR edge suites (10 modules) + `test_kn_products`, `test_kn_state_codec`, `test_kn_gateway_bundle` | same image, no services | 212 OK (1 skipped: optional sample input) |
+  - Open: readback against rows written by the Rust stage B (not by the
+    Python fixture) and the import applied by stage B - both in the K3-T08
+    full-flow run.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
