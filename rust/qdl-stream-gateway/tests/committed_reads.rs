@@ -222,7 +222,7 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
     }
     let barrier = hub.next_offset(0).expect("partition 0");
     assert_eq!(barrier, high, "the live reader reached the committed end");
-    let range = KafkaRangeSource { settings };
+    let range = KafkaRangeSource::new(settings, 2);
     let mut replayed = Vec::new();
     let end = tokio::task::spawn_blocking(move || {
         let mut emit = |record: qdl_stream_gateway::hub::RawRecord| {
@@ -241,16 +241,42 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
             &ReplayMetrics::default(),
             &mut emit,
         );
-        (end, replayed)
+        (end, replayed, range)
     })
     .await
     .expect("replay task");
-    assert_eq!(end.0, ReplayEnd::Complete);
+    let (end, replayed, range) = end;
+    assert_eq!(end, ReplayEnd::Complete);
     assert_eq!(
-        end.1,
+        replayed,
         ["p1", "p2", "p3", "l2"],
         "committed K records below the barrier only: aborted ones never, O never"
     );
+    // The reader went back to the pool and a second replay reuses it.
+    assert_eq!(range.idle(), 1);
+    let again = tokio::task::spawn_blocking(move || {
+        let mut seen = Vec::new();
+        let mut emit = |record: qdl_stream_gateway::hub::RawRecord| {
+            seen.push(record.offset);
+            Emit::Sent
+        };
+        let end = scan_range(
+            &range,
+            0,
+            -1,
+            barrier,
+            b"O",
+            &ReplayLimits::default(),
+            None,
+            &AtomicBool::new(false),
+            &ReplayMetrics::default(),
+            &mut emit,
+        );
+        (end, seen.len(), range.idle())
+    })
+    .await
+    .expect("second replay");
+    assert_eq!(again, (ReplayEnd::Complete, 2, 1));
     hub.stop();
     reader.join().expect("reader thread");
 }

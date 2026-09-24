@@ -183,3 +183,166 @@ class SliceExitCodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _item(offset, policy="LOSSLESS", key=None, signature=("a",), filtered="no"):
+    return {"offset": offset, "partition": 0, "policy": policy, "key": key, "signature": signature,
+            "filtered": filtered}
+
+
+class MatrixJudgeTests(unittest.TestCase):
+    """KN-2 K2.5: per-subscription exactness against the Kafka oracle."""
+
+    def test_an_exact_lossless_delivery_is_clean(self):
+        counts = PROBE.judge_subscription([_item(3), _item(5), _item(9)], [3, 5, 9])
+        self.assertEqual(set(counts.values()), {0})
+
+    def test_every_lossless_defect_is_counted(self):
+        expected = [_item(3), _item(5), _item(9)]
+        self.assertEqual(PROBE.judge_subscription(expected, [3, 9])["missing_lossless"], 1)
+        self.assertEqual(PROBE.judge_subscription(expected, [3, 5, 5, 9])["duplicates"], 1)
+        self.assertEqual(PROBE.judge_subscription(expected, [5, 3, 9])["out_of_order"], 1)
+        self.assertEqual(PROBE.judge_subscription(expected, [3, 5, 7, 9])["unexpected"], 1)
+
+    def test_a_coalesced_record_must_be_superseded_by_a_delivered_one(self):
+        latest = [_item(1, "LATEST_STATE"), _item(2, "LATEST_STATE"), _item(3, "LATEST_STATE")]
+        self.assertEqual(PROBE.judge_subscription(latest, [3])["unsuperseded_drops"], 0)
+        # The newest record itself was dropped: nothing supersedes it.
+        self.assertEqual(PROBE.judge_subscription(latest, [1, 2])["unsuperseded_drops"], 1)
+        # A quality transition is a different signature: dropping the last
+        # record of the old state is a defect.
+        transition = [_item(1, "LATEST_STATE", signature=("a",)), _item(2, "LATEST_STATE", signature=("b",))]
+        self.assertEqual(PROBE.judge_subscription(transition, [2])["unsuperseded_drops"], 1)
+        # In-progress bars supersede only within one open time.
+        bars = [_item(1, "LIFECYCLE_COALESCE", key=60), _item(2, "LOSSLESS", key=120)]
+        self.assertEqual(PROBE.judge_subscription(bars, [2])["unsuperseded_drops"], 1)
+
+    def test_age_filtered_records_must_not_be_delivered(self):
+        expected = [_item(1, filtered="must"), _item(2, filtered="either"), _item(3)]
+        counts = PROBE.judge_subscription(expected, [1, 3])
+        self.assertEqual(counts["delivered_filtered"], 1)
+        self.assertEqual(counts["missing_lossless"], 0)
+        self.assertEqual(PROBE.judge_subscription(expected, [3])["missing_lossless"], 0)
+
+
+def _matrix_passing(ids):
+    subscriptions = [{"id": name, "reached_live": True, "errors": [], "failovers": [],
+                      "duplicates": 0, "out_of_order": 0, "unexpected": 0, "missing_lossless": 0,
+                      "unsuperseded_drops": 0, "delivered_filtered": 0, "token_errors": 0, "cross_mix": 0}
+                     for name in ids]
+    subscriptions[0]["failovers"] = [{"at_ms": 1.0, "resumed": True, "rto_ms": 5.0}]
+    subscriptions[0]["errors"] = [{"code": "DEPENDENCY_UNAVAILABLE", "detail": "replica gone"}]
+    negatives = [{"case": name, "expected": status, "observed": status}
+                 for name, status in PROBE.NEGATIVE_CASES.items()]
+    rpcs = [{"rpc": "Replay", "consumer_id": "c", "pass": True, "detail": "ok"}]
+    return {"subscriptions": subscriptions, "negatives": negatives, "rpcs": rpcs, "failover_expected": 1}
+
+
+class MatrixVerdictTests(unittest.TestCase):
+    IDS = ["c|k1|TRADE|-", "c|k2|QUOTE|-", "d|k3|BAR|1m"]
+
+    def test_a_complete_matrix_passes(self):
+        self.assertEqual(PROBE.matrix_verdict(_matrix_passing(self.IDS), expected_ids=self.IDS), [])
+
+    def test_coverage_defects_fail(self):
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"].pop()
+        self.assertTrue(any("missing" in item for item in PROBE.matrix_verdict(result, expected_ids=self.IDS)))
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"].append(dict(result["subscriptions"][1]))
+        self.assertTrue(any("duplicated" in item for item in PROBE.matrix_verdict(result, expected_ids=self.IDS)))
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"] = [{} for _ in self.IDS]
+        self.assertTrue(PROBE.matrix_verdict(result, expected_ids=self.IDS))
+        self.assertTrue(PROBE.matrix_verdict(_matrix_passing(self.IDS), expected_ids=[]))
+
+    def test_exactness_errors_and_failover_defects_fail(self):
+        for field in ("duplicates", "missing_lossless", "unsuperseded_drops", "token_errors", "cross_mix"):
+            with self.subTest(field):
+                result = _matrix_passing(self.IDS)
+                result["subscriptions"][2][field] = 1
+                self.assertEqual(len(PROBE.matrix_verdict(result, expected_ids=self.IDS)), 1)
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"][1]["errors"] = [{"code": "CURSOR_EXPIRED", "detail": "false expiry"}]
+        self.assertEqual(len(PROBE.matrix_verdict(result, expected_ids=self.IDS)), 1)
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"][0]["failovers"][0]["resumed"] = False
+        self.assertEqual(len(PROBE.matrix_verdict(result, expected_ids=self.IDS)), 1)
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"][0]["failovers"] = []
+        self.assertIn("failover: no subscription failed over (replica A was not killed?)",
+                      PROBE.matrix_verdict(result, expected_ids=self.IDS))
+        result = _matrix_passing(self.IDS)
+        result["subscriptions"][1]["reached_live"] = False
+        self.assertEqual(len(PROBE.matrix_verdict(result, expected_ids=self.IDS)), 1)
+
+    def test_negatives_and_rpcs_are_exact(self):
+        result = _matrix_passing(self.IDS)
+        result["negatives"].pop()
+        self.assertTrue(PROBE.matrix_verdict(result, expected_ids=self.IDS))
+        result = _matrix_passing(self.IDS)
+        result["rpcs"] = []
+        self.assertIn("rpcs: Replay/GetSnapshot/GetFeedStatus not checked",
+                      PROBE.matrix_verdict(result, expected_ids=self.IDS))
+        result = _matrix_passing(self.IDS)
+        result["rpcs"][0]["pass"] = False
+        self.assertEqual(len(PROBE.matrix_verdict(result, expected_ids=self.IDS)), 1)
+
+
+class ExpectedDeliveryTests(unittest.TestCase):
+    def test_product_identity_and_the_strict_freshness_predicate(self):
+        from types import SimpleNamespace
+
+        from qdl.marketdata.v2 import market_data_pb2
+
+        now = 10_000_000_000_000
+        def envelope(kind, age_ms, interval="1m"):
+            value = market_data_pb2.EventEnvelope(source_event_time_ns=now - age_ms * 1_000_000)
+            if kind == "bar":
+                value.bar.interval = interval
+                value.bar.close_time_ns = now - age_ms * 1_000_000
+                value.bar.lifecycle = 2
+            else:
+                value.trade.native_trade_id = "t"
+            return value.SerializeToString()
+
+        records = [(0, 1, envelope("trade", 10)), (0, 2, envelope("bar", 10)),
+                   (0, 3, envelope("bar", 10, "5m")), (0, 4, envelope("bar", 600_000)), (0, 5, b"")]
+        strict = SimpleNamespace(max_freshness_ms=180_000,
+                                 effective_event_recency_policy=SimpleNamespace(value="BLOCK"))
+        row = {"feed": "BAR", "interval": "1m", "requirement": strict}
+        items = PROBE.expected_delivery(row, records, 0, now)
+        self.assertEqual([(item["offset"], item["filtered"]) for item in items], [(2, "no"), (4, "must")])
+        # A record fresh at the start but past the bound by the end: either.
+        aging = PROBE.expected_delivery(row, records, 0, now, now + 200_000 * 1_000_000)
+        self.assertEqual([item["filtered"] for item in aging], ["either", "must"])
+        observe = SimpleNamespace(max_freshness_ms=180_000,
+                                  effective_event_recency_policy=SimpleNamespace(value="OBSERVE"))
+        items = PROBE.expected_delivery({**row, "requirement": observe}, records, 0, now)
+        self.assertEqual([item["filtered"] for item in items], ["no", "no"])
+
+
+class CommitToClientTests(unittest.TestCase):
+    def test_latency_pairs_by_coordinate_and_splits_catchup_from_live(self):
+        # The same event id at offsets 7 and 9: a skipped copy cannot shift
+        # the pairing, because a delivery is matched by its coordinate.
+        commits = {(0, 7): 10, (0, 9): 1000, (1, 3): 400}
+        received = [
+            (0, 9, 1005, 500),   # committed after LIVE (500): live path
+            (1, 3, 600, 500),    # committed before LIVE, delivered after: catch-up
+            (0, 7, 20, None),    # during replay: neither
+            (2, 1, 700, 500),    # no commit logged (history phase): ignored
+        ]
+        live, catchup = PROBE.commit_to_client_ms(received, commits)
+        self.assertEqual(live, [5 / 1e6])
+        self.assertEqual(catchup, [200 / 1e6])
+
+
+class MatrixSubsetTests(unittest.TestCase):
+    def test_a_client_process_without_checks_is_judged_on_its_streams_only(self):
+        ids = ["c|k1|TRADE|-"]
+        result = _matrix_passing(ids)
+        result["negatives"], result["rpcs"], result["checks"] = [], [], 0
+        self.assertEqual(PROBE.matrix_verdict(result, expected_ids=ids), [])
+        result["checks"] = 1
+        self.assertTrue(PROBE.matrix_verdict(result, expected_ids=ids))

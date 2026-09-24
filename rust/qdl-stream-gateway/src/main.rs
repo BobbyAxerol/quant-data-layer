@@ -14,9 +14,10 @@ use qdl_stream_gateway::bundle::Bundle;
 use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
 use qdl_stream_gateway::hub::{Hub, HubConfig};
+use qdl_stream_gateway::memory::{container_memory_limit, MemoryPlan};
 use qdl_stream_gateway::reader::{latest_for_key, KafkaLogSource, KafkaRangeSource, KafkaSettings};
 use qdl_stream_gateway::readview::NotReadyReadView;
-use qdl_stream_gateway::replay::{ReplayLimits, ReplayPool};
+use qdl_stream_gateway::replay::{ReplayCoordinator, ReplayLimits};
 use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
 use qdl_stream_gateway::subscription::ByteBudget;
 use qdl_stream_gateway::tls;
@@ -172,7 +173,7 @@ fn limits() -> Result<StreamLimits, String> {
         replay: ReplayLimits {
             max_scanned_records: parsed("QDL_KN_REPLAY_MAX_SCAN_RECORDS", "2000000")?,
             max_scanned_bytes: parsed("QDL_KN_REPLAY_MAX_SCAN_BYTES", "1073741824")?,
-            max_duration: Duration::from_millis(parsed("QDL_KN_REPLAY_MAX_MS", "20000")?),
+            max_duration: Duration::from_millis(parsed("QDL_KN_REPLAY_MAX_MS", "30000")?),
             max_matched: parsed("QDL_KN_MAX_REPLAY_EVENTS", "10000")?,
         },
         catchup_deadline: Duration::from_millis(parsed("QDL_KN_CATCHUP_DEADLINE_MS", "10000")?),
@@ -189,30 +190,42 @@ async fn serve() -> Result<(), String> {
         &env("QDL_KN_QUOTA_REDIS_URL")?,
         &env("QDL_KN_QUOTA_PREFIX")?,
     )?;
+    let readers: usize = parsed("QDL_KN_REPLAY_READERS", "4")?;
+    // Defaults fit a 256 MiB replica (K2-T08 sizing); checked, fail closed.
+    let memory = MemoryPlan {
+        ring_total: parsed("QDL_KN_RING_BYTES_TOTAL", "67108864")?,
+        queue_total: parsed("QDL_KN_QUEUE_BYTES_TOTAL", "67108864")?,
+        replay_readers: readers as u64,
+        reserve: parsed("QDL_KN_MEMORY_RESERVE_BYTES", "67108864")?,
+        limit: container_memory_limit(),
+    };
+    memory.check()?;
     let settings = kafka_settings()?;
-    let (source, starts) = KafkaLogSource::open_at_end(&settings)?;
+    let (source, starts) =
+        KafkaLogSource::open_warm(&settings, parsed("QDL_KN_RING_WARM_RECORDS", "20000")?)?;
     let hub = Arc::new(Hub::new(
         &starts,
         HubConfig {
-            ring_max_bytes: parsed("QDL_KN_RING_BYTES_PER_PARTITION", "33554432")?,
+            ring_max_bytes: memory.ring_per_partition(starts.len()),
             ring_max_age: Duration::from_secs(parsed("QDL_KN_RING_MAX_AGE_SECONDS", "120")?),
         },
     ));
     let reader = hub.run(Box::new(source));
+    let limits = limits()?;
+    let replay = ReplayCoordinator::new(
+        Arc::new(KafkaRangeSource::new(settings, readers)),
+        readers,
+        limits.replay.clone(),
+    );
     let state = Arc::new(GatewayState::new(
         authority.clone(),
         Arc::new(quota),
         cursor_codec()?,
         hub.clone(),
-        Arc::new(KafkaRangeSource { settings }),
-        ReplayPool::new(
-            parsed("QDL_KN_REPLAY_READERS", "4")?,
-            parsed("QDL_KN_REPLAY_READERS_PER_CONSUMER", "2")?,
-            Duration::from_millis(parsed("QDL_KN_REPLAY_ADMISSION_WAIT_MS", "2000")?),
-        ),
+        replay,
         Arc::new(NotReadyReadView),
-        ByteBudget::new(parsed("QDL_KN_QUEUE_BYTES_TOTAL", "268435456")?),
-        limits()?,
+        ByteBudget::new(memory.queue_total as usize),
+        limits,
     ));
     let tls_config = tls::server_config(
         &read("QDL_KN_TLS_CERT_FILE")?,
@@ -256,7 +269,7 @@ async fn serve() -> Result<(), String> {
             tick.tick().await;
             let metrics = &reporter.metrics;
             let hub = &reporter.hub.metrics;
-            let replay = &reporter.pool.metrics;
+            let replay = &reporter.replay.metrics;
             let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
             let (rss, cpu) = process_usage();
             println!(
@@ -278,6 +291,9 @@ async fn serve() -> Result<(), String> {
                     "expired": load(&metrics.expired),
                     "replay_rpcs": load(&metrics.replay_rpcs),
                     "hub_records": load(&hub.records),
+                    "dispatch_lag_ms": hub.dispatch_lag.summary(),
+                    "queue_wait_ms": metrics.queue_wait.summary(),
+                    "handoff_wait_ms": metrics.handoff_wait.summary(),
                     "hub_bytes": load(&hub.bytes),
                     "hub_duplicates": load(&hub.duplicates),
                     "hub_decode_failures": load(&hub.decode_failures),
@@ -291,7 +307,9 @@ async fn serve() -> Result<(), String> {
                     "replay_scanned": load(&replay.scanned),
                     "replay_refused_capacity": load(&replay.refused_capacity),
                     "replay_scan_limited": load(&replay.scan_limited),
-                    "replay_permits_free": reporter.pool.available(),
+                    "replay_readers_free": reporter.replay.available(),
+                    "replay_in_flight": reporter.replay.in_flight(),
+                    "replay_detached": load(&replay.detached),
                     "queue_bytes": reporter.budget.used(),
                     "rss_bytes": rss,
                     "cpu_seconds": cpu,
@@ -307,15 +325,30 @@ async fn serve() -> Result<(), String> {
         serde_json::json!({"event": "qdl_kn_gateway_start", "listen": env_or("QDL_KN_LISTEN", "0.0.0.0:8210"),
             "bundle_sha256": state.authority.current().bundle.sha256,
             "route_generation": state.authority.current().expectation.route_generation,
-            "partitions": starts})
+            "partitions": starts, "memory": memory.summary()})
     );
     let incoming = tls::incoming(address, tls_config)
         .await
         .map_err(|error| format!("listen: {error}"))?;
+    let stopping = state.clone();
     let served = Server::builder()
         .add_service(MarketDataStreamServiceServer::new(Gateway { state }))
-        .serve_with_incoming_shutdown(incoming, async {
-            let _ = tokio::signal::ctrl_c().await;
+        .serve_with_incoming_shutdown(incoming, async move {
+            // SIGTERM (`docker stop`) or SIGINT: end every stream typed and
+            // retryable, give the tasks a moment to send it, then stop.
+            let mut terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            println!(
+                "{}",
+                serde_json::json!({"event": "qdl_kn_gateway_stopping"})
+            );
+            stopping.shut_down();
+            tokio::time::sleep(Duration::from_secs(2)).await;
         })
         .await
         .map_err(|error| error.to_string());

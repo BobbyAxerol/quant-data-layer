@@ -22,6 +22,11 @@ Subcommands:
            ``history`` at once, ``live`` paced by the original arrival gaps,
            logging each record's commit time for commit->client latency;
   run      the SDK slice and the negative matrix (default).
+  matrix   KN-2 K2.5: every demanded (consumer, stream requirement) of the
+           manifests through the real SDK against two replicas in waves that
+           respect each consumer's stream quota, a Kafka oracle by coordinate,
+           failover by resuming from the last token when replica A dies, the
+           negative matrix, Replay and the snapshot/status read view.
 Replayed capture is never reported as live freshness.
 
 ``run`` exits 0 only when ``slice_verdict`` finds no failure (KN-1 review F3);
@@ -31,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -262,7 +268,17 @@ class Slice:
             algorithm="RS256", issuer=ISSUER, audience=AUDIENCE, subject=manifest.subject,
             environment=manifest.environment, roles=ROLES, venues=("BINANCE", "OKX"),
             consumer_manifest_revision=manifest.manifest_revision, lifetime_seconds=300, refresh_before_seconds=60)
-        return GrpcStreamTransport(self.args.target, tls=self.tls(consumer_id), credential_provider=credential)
+        targets = getattr(self.args, "targets", None) or self.args.target
+        return GrpcStreamTransport(targets, tls=self.tls(consumer_id), credential_provider=credential)
+
+    def shared_transport(self, consumer_id: str):
+        """One transport (one channel and connection per target, one JWT
+        provider) per consumer, as a consumer process holds it: a stream matrix
+        must not cost the gateway a TLS handshake per stream."""
+        cache = self.__dict__.setdefault("_transports", {})
+        if consumer_id not in cache:
+            cache[consumer_id] = self.transport(consumer_id)
+        return cache[consumer_id]
 
     # ------------------------------------------------------------- positive run
     async def run_product(self, probe: dict[str, Any]) -> dict[str, Any]:
@@ -520,7 +536,11 @@ def capture(args: argparse.Namespace) -> dict[str, Any]:
     live = sqlite3.connect(f"file:{args.spool}?mode=ro", uri=True, timeout=5)
     live.execute("PRAGMA query_only=ON")
     rows = []
-    for spec in args.keys:
+    keys = list(args.keys or [])
+    if args.demand:
+        keys += [f"{key}={args.demand}" for key in sorted({row["physical_key"] for row in demanded_streams()})]
+    args.keys = keys
+    for spec in keys:
         key, _, limit = spec.partition("=")
         for event_id, payload, accepted in live.execute(
                 "SELECT event_id, payload, accepted_at_ns FROM events WHERE stream='md.canonical.v2' "
@@ -544,6 +564,20 @@ def load(args: argparse.Namespace) -> dict[str, Any]:
 
     rows = [json.loads(line) for line in Path(args.capture).read_text(encoding="utf-8").splitlines() if line]
     split = int(len(rows) * float(args.history_fraction))
+    if args.split == "key":
+        # Every key keeps its oldest share as history, so a subscriber of any
+        # captured product has committed records before the live phase.
+        by_key: dict[str, list] = {}
+        for row in rows:
+            by_key.setdefault(row["key"], []).append(row)
+        history, live = [], []
+        for key_rows in by_key.values():
+            cut = max(1, int(len(key_rows) * float(args.history_fraction) + 0.999))
+            history += key_rows[:cut]
+            live += key_rows[cut:]
+        order = lambda row: (row["accepted_at_ns"], row["event_id"])  # noqa: E731
+        rows = sorted(history, key=order) + sorted(live, key=order)
+        split = len(history)
     admin = AdminClient({"bootstrap.servers": args.bootstrap})
     if args.topic not in admin.list_topics(timeout=10).topics:
         for future in admin.create_topics([NewTopic(args.topic, num_partitions=6, replication_factor=1)]).values():
@@ -553,15 +587,72 @@ def load(args: argparse.Namespace) -> dict[str, Any]:
     producer.init_transactions(20)
     selected = rows[:split] if args.phase == "history" else rows[split:]
     commits = []
+    aborted = 0
     if args.phase == "history":
+        # Offset 0 of every partition holds a filler record: the SDK's
+        # StreamEvent requires a positive logical offset (recorded KN-2
+        # finding), and a fresh isolated topic starts at 0.
+        producer.begin_transaction()
+        for partition in range(6):
+            producer.produce(args.topic, key=b"kn-filler", value=b"", partition=partition)
+        producer.commit_transaction(30)
         for start in range(0, len(selected), 500):
             producer.begin_transaction()
             for row in selected[start:start + 500]:
                 producer.produce(args.topic, key=row["key"].encode(), value=base64.b64decode(row["payload"]))
             producer.commit_transaction(30)
+    elif float(args.rate or 0) > 0:
+        # Capacity challenge (K2-T08): the captured records at a fixed rate,
+        # 25 ms transactions. Accelerated capture, never live freshness.
+        rate = float(args.rate)
+        began = time.monotonic()
+        index = 0
+        batches = 0
+        # `--repeat` cycles the capture to sustain the rate for the whole
+        # window (capacity only: repeated records are new offsets, so this
+        # mode is never used for the exactness oracle).
+        total = len(selected) * (int(args.repeat) if int(args.repeat or 1) > 1 else 1)
+        # A repeated record is the same event id at a new offset, and the
+        # gateway may rightly skip one copy (coalescing, cursor floor): commit
+        # times are logged by Kafka coordinate from the delivery reports.
+        coordinates: list[tuple[int, int]] = []
+
+        def delivered(error: Any, message: Any) -> None:
+            if error is None:
+                coordinates.append((message.partition(), message.offset()))
+
+        while index < total and time.monotonic() - began < float(args.live_seconds):
+            due = began + index / rate
+            time.sleep(max(0.0, due - time.monotonic()))
+            producer.begin_transaction()
+            batch = []
+            coordinates.clear()
+            window_end = time.monotonic() + 0.025
+            while index < total and began + index / rate <= window_end:
+                row = selected[index % len(selected)]
+                producer.produce(args.topic, key=row["key"].encode(), value=base64.b64decode(row["payload"]),
+                                 on_delivery=delivered)
+                batch.append(row["event_id"])
+                index += 1
+            producer.commit_transaction(30)
+            committed_ns = time.time_ns()
+            commits.extend({"partition": partition, "offset": offset, "commit_ns": committed_ns}
+                           for partition, offset in coordinates)
+            batches += 1
+            if int(args.abort_every or 0) and batch and batches % int(args.abort_every) == 0:
+                producer.begin_transaction()
+                for position in range(index - len(batch), index):
+                    row = selected[position % len(selected)]
+                    producer.produce(args.topic, key=row["key"].encode(), value=b"kn-aborted")
+                producer.abort_transaction(30)
+                aborted += len(batch)
+        with open(args.commit_log, "w", encoding="utf-8") as handle:
+            for row in commits:
+                handle.write(json.dumps(row) + "\n")
     else:
         # Original inter-arrival gaps; batches close every 25 ms like the
         # canonical core, and each record's commit wall time is logged.
+        batches = 0
         began = time.monotonic()
         origin = selected[0]["accepted_at_ns"] if selected else 0
         index = 0
@@ -581,11 +672,508 @@ def load(args: argparse.Namespace) -> dict[str, Any]:
             producer.commit_transaction(30)
             committed_ns = time.time_ns()
             commits.extend({"event_id": event_id, "commit_ns": committed_ns} for event_id in batch)
+            # Aborted batches leave offsets a committed reader never sees
+            # (K2-T01 over real Kafka): the same keys, then abort.
+            batches += 1
+            if int(args.abort_every or 0) and batch and batches % int(args.abort_every) == 0:
+                producer.begin_transaction()
+                for row in selected[index - len(batch):index]:
+                    producer.produce(args.topic, key=row["key"].encode(), value=b"kn-aborted")
+                producer.abort_transaction(30)
+                aborted += len(batch)
         with open(args.commit_log, "w", encoding="utf-8") as handle:
             for row in commits:
                 handle.write(json.dumps(row) + "\n")
-    return {"phase": args.phase, "published": len(selected) if args.phase == "history" else len(commits),
+    return {"aborted": aborted, "phase": args.phase, "published": len(selected) if args.phase == "history" else len(commits),
             "history_fraction": float(args.history_fraction)}
+
+
+
+# ------------------------------------------------------------------ matrix
+STREAM_FEEDS = frozenset({"TRADE", "QUOTE", "BAR", "BOOK_SNAPSHOT", "BOOK_DELTA", "MARK_INDEX_PRICE"})
+MATRIX_ALLOWED_ERRORS = frozenset({"DEPENDENCY_UNAVAILABLE"})
+
+
+def demanded_streams() -> list[dict[str, Any]]:
+    """Every (consumer, requirement) a manifest may stream from a stable
+    binding, from the Python manifest and catalog loaders."""
+    from qdl.consumer.manifest import ConsumerManifestLoader
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+
+    catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
+    rows = []
+    for path in sorted((ROOT / "consumers/stable").glob("*.yaml")):
+        manifest = ConsumerManifestLoader.load(path)
+        permissions = {getattr(item, "value", item) for item in manifest.allowed_permissions}
+        if "stream:read" not in permissions:
+            continue
+        for requirement in manifest.requirements:
+            if requirement.feed.value not in STREAM_FEEDS:
+                continue
+            try:
+                binding = catalog.binding_for(requirement)
+            except Exception:  # noqa: BLE001 - pass-through products have no stable binding
+                continue
+            rows.append({"consumer_id": manifest.consumer_id, "requirement": requirement,
+                         "physical_key": binding.partition_key, "feed": requirement.feed.value,
+                         "interval": requirement.interval, "max_streams": int(manifest.quotas.max_streams),
+                         "buffer": int(manifest.quotas.max_buffer_events)})
+    return rows
+
+
+def kafka_oracle(bootstrap: str, topic: str) -> dict[str, list[tuple[int, int, bytes]]]:
+    """Every committed record per physical key, by coordinate (read_committed)."""
+    from confluent_kafka import OFFSET_BEGINNING, Consumer, KafkaError, TopicPartition
+
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-oracle-{uuid.uuid4().hex[:8]}",
+                         "enable.auto.commit": False, "isolation.level": "read_committed",
+                         "enable.partition.eof": True})
+    try:
+        partitions = sorted(consumer.list_topics(topic, timeout=10).topics[topic].partitions)
+        consumer.assign([TopicPartition(topic, partition, OFFSET_BEGINNING) for partition in partitions])
+        done: set[int] = set()
+        records: dict[str, list[tuple[int, int, bytes]]] = {}
+        deadline = time.monotonic() + 180
+        while len(done) < len(partitions) and time.monotonic() < deadline:
+            message = consumer.poll(0.5)
+            if message is None:
+                continue
+            if message.error():
+                if message.error().code() == KafkaError._PARTITION_EOF:
+                    done.add(message.partition())
+                    continue
+                raise RuntimeError(str(message.error()))
+            key = (message.key() or b"").decode()
+            records.setdefault(key, []).append((message.partition(), message.offset(), message.value() or b""))
+        if len(done) < len(partitions):
+            raise RuntimeError("oracle did not reach the end of every partition")
+        return records
+    finally:
+        consumer.close()
+
+
+def _signature(envelope) -> tuple:
+    return (tuple(sorted(envelope.quality_flags)), envelope.authority_revision, envelope.source_id,
+            envelope.source_role, envelope.provider, envelope.source_session_id,
+            envelope.connection_generation, envelope.lease_epoch)
+
+
+def _policy(feed: str, envelope) -> str:
+    """`qdl_contracts::delivery`: the domain policy (LOSSLESS is fail-safe)."""
+    if feed in {"TRADE", "BOOK_SNAPSHOT", "BOOK_DELTA"}:
+        return "LOSSLESS"
+    if feed == "BAR":
+        return "LIFECYCLE_COALESCE" if envelope.bar.lifecycle == 1 else "LOSSLESS"
+    return "LATEST_STATE"
+
+
+def expected_delivery(row: dict[str, Any], records: list[tuple[int, int, bytes]], after: int,
+                      started_ns: int, ended_ns: int | None = None) -> list[dict[str, Any]]:
+    """The oracle view of one subscription: every product record after the
+    cursor with its policy, lifecycle key/signature and whether the strict
+    freshness predicate (BLOCK/PAUSE with a bound) must filter it."""
+    from qdl.marketdata.v2 import market_data_pb2
+    from qdl.runtime.stable_catalog import canonical_payload_interval
+
+    requirement = row["requirement"]
+    bound = requirement.max_freshness_ms
+    strict = bound is not None and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
+    out = []
+    for partition, offset, payload in records:
+        if offset <= after or not payload:
+            continue
+        try:
+            envelope = market_data_pb2.EventEnvelope.FromString(payload)
+        except Exception:  # noqa: BLE001 - aborted copies are never committed; defensive
+            continue
+        if (envelope.WhichOneof("payload") != row["feed"].lower()
+                or canonical_payload_interval(envelope) != row["interval"]):
+            continue
+        observed = envelope.bar.close_time_ns if row["feed"] == "BAR" else envelope.source_event_time_ns
+        # The gateway checks age when it delivers, anywhere in the run: a
+        # record already too old at the start must be filtered, one still
+        # fresh at the end of the run must be delivered, anything that aged
+        # out during the run may go either way. Capture keeps original times.
+        age_start_ms = (started_ns - int(observed)) / 1e6
+        age_end_ms = ((ended_ns or started_ns) - int(observed)) / 1e6
+        filtered = "must" if strict and age_start_ms > bound + 5_000 else (
+            "no" if not strict or age_end_ms < bound - 5_000 else "either")
+        out.append({"offset": offset, "partition": partition, "policy": _policy(row["feed"], envelope),
+                    "key": envelope.bar.open_time_ns if row["feed"] == "BAR" else None,
+                    "signature": _signature(envelope), "filtered": filtered})
+    return out
+
+
+def judge_subscription(expected: list[dict[str, Any]], delivered: list[int]) -> dict[str, int]:
+    """Exactness of one subscription against its oracle view."""
+    index = {item["offset"]: item for item in expected}
+    seen = set()
+    counts = {"duplicates": 0, "out_of_order": 0, "unexpected": 0, "missing_lossless": 0,
+              "unsuperseded_drops": 0, "delivered_filtered": 0}
+    for position, offset in enumerate(delivered):
+        if offset in seen:
+            counts["duplicates"] += 1
+        seen.add(offset)
+        if position and offset <= delivered[position - 1]:
+            counts["out_of_order"] += 1
+        item = index.get(offset)
+        if item is None:
+            counts["unexpected"] += 1
+        elif item["filtered"] == "must":
+            counts["delivered_filtered"] += 1
+    delivered_items = [index[offset] for offset in delivered if offset in index]
+    for item in expected:
+        if item["filtered"] != "no" or item["offset"] in seen:
+            continue
+        if item["policy"] == "LOSSLESS":
+            counts["missing_lossless"] += 1
+        elif not any(other["offset"] > item["offset"] and other["key"] == item["key"]
+                     and other["signature"] == item["signature"] for other in delivered_items):
+            counts["unsuperseded_drops"] += 1
+    return counts
+
+
+def matrix_verdict(result: dict[str, Any], *, expected_ids: Sequence[str]) -> list[str]:
+    """Every reason the matrix did not pass; empty means PASS. Exact coverage
+    of the demanded subscriptions, per-subscription exactness, typed errors
+    only, at least one failover with every failed-over stream resumed, the
+    exact negative matrix, Replay pages and the typed read view."""
+    failures: list[str] = []
+    subscriptions = result.get("subscriptions")
+    if not isinstance(subscriptions, list):
+        subscriptions = []
+        failures.append("subscriptions: missing or not a list")
+    ids = [item.get("id") if isinstance(item, dict) else None for item in subscriptions]
+    if _duplicates(ids):
+        failures.append(f"subscriptions: duplicated {_duplicates(ids)[:5]}")
+    missing = sorted(set(expected_ids) - set(ids))
+    unexpected = sorted(set(ids) - set(expected_ids), key=str)
+    if missing:
+        failures.append(f"subscriptions: {len(missing)} missing, e.g. {missing[:3]}")
+    if unexpected:
+        failures.append(f"subscriptions: unexpected {unexpected[:3]}")
+    if not expected_ids:
+        failures.append("subscriptions: no expected identities")
+    failovers = 0
+    for item in subscriptions:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("id", "?")
+        for field in ("duplicates", "out_of_order", "unexpected", "missing_lossless",
+                      "unsuperseded_drops", "delivered_filtered", "token_errors", "cross_mix"):
+            value = item.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value != 0:
+                failures.append(f"{name}: {field}={value}")
+        if item.get("reached_live") is not True:
+            failures.append(f"{name}: never reached LIVE")
+        for error in item.get("errors") or []:
+            if error.get("code") not in MATRIX_ALLOWED_ERRORS:
+                failures.append(f"{name}: error {error.get('code')}: {str(error.get('detail'))[:80]}")
+        for failover in item.get("failovers") or []:
+            failovers += 1
+            if failover.get("resumed") is not True:
+                failures.append(f"{name}: failover at {failover.get('at_ms')} ms did not resume")
+    if int(result.get("failover_expected", 1)) and failovers == 0:
+        failures.append("failover: no subscription failed over (replica A was not killed?)")
+    if not int(result.get("checks", 1)):
+        return failures
+    negatives = result.get("negatives") or []
+    wanted = dict(NEGATIVE_CASES)
+    got = {case.get("case"): case for case in negatives if isinstance(case, dict)}
+    if set(got) != set(wanted) or len(negatives) != len(wanted):
+        failures.append(f"negatives: {len(negatives)} cases, expected exactly {len(wanted)}")
+    for name, status in wanted.items():
+        case = got.get(name, {})
+        if case.get("expected") != status or case.get("observed") != status:
+            failures.append(f"negative {name}: expected {status}, observed {case.get('observed')}")
+    rpcs = result.get("rpcs") or []
+    if not rpcs:
+        failures.append("rpcs: Replay/GetSnapshot/GetFeedStatus not checked")
+    for check in rpcs:
+        if check.get("pass") is not True:
+            failures.append(f"rpc {check.get('rpc')} {check.get('consumer_id')}: {check.get('detail')}")
+    return failures
+
+
+def commit_to_client_ms(received: list[tuple[int, int, int, int | None]],
+                        commits: dict[tuple[int, int], int]) -> tuple[list[float], list[float]]:
+    """Commit -> client latency by Kafka coordinate, from deliveries
+    `(partition, offset, received_ns, live_since_ns)`. Returns `(live,
+    catchup)`: records committed at or after the stream reached LIVE (the
+    steady live path), and records committed before LIVE but delivered after
+    it (queued while the replay ran: the catch-up, not the live path)."""
+    live: list[float] = []
+    catchup: list[float] = []
+    for partition, offset, received_ns, live_since_ns in received:
+        committed_ns = commits.get((partition, offset))
+        if committed_ns is None or live_since_ns is None or received_ns < live_since_ns:
+            continue
+        (live if committed_ns >= live_since_ns else catchup).append((received_ns - committed_ns) / 1e6)
+    return live, catchup
+
+
+def _stream_id(row: dict[str, Any]) -> str:
+    return f"{row['consumer_id']}|{row['physical_key']}|{row['feed']}|{row['interval'] or '-'}"
+
+
+async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, until_ns: int,
+                         started_ns: int, replay_back: int) -> dict[str, Any]:
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement
+    from qdl.replay.cursor_v3 import CursorV3Expectation, requirement_digest
+    from qdl.runtime.stable_catalog import canonical_payload_interval
+    from qdl_sdk.errors import DataLayerError
+    from qdl_sdk.models import ControlEvent, StreamEvent
+
+    consumer_id = row["consumer_id"]
+    requirement = row["requirement"]
+    product = expected_delivery(row, records, -1, started_ns)
+    offsets = [item["offset"] for item in product]
+    if len(offsets) > replay_back:
+        after = offsets[-replay_back - 1]
+    elif offsets:
+        after = max(0, offsets[0] - 1)
+    else:
+        after = max((offset for _, offset, _ in records), default=0)
+    partition = records[0][0] if records else 0
+    token = runner.codec.encode(runner.claims(consumer_id, requirement, after, partition=partition))
+    expectation = CursorV3Expectation(
+        environment=runner.bundle["environment"], stream=runner.bundle["catalog"]["canonical_stream"],
+        source_topic_id=runner.args.topic_id, partition_plan_epoch=1,
+        source_policy_revision=runner.bundle["catalog"]["source_policy_revision"],
+        catalog_revision=runner.bundle["catalog"]["catalog_revision"],
+        route_generation=runner.args.route_generation)
+    digest = requirement_digest(requirement)
+    sdk = sdk_requirement(types.SimpleNamespace(requirement=requirement))
+    transport = runner.shared_transport(consumer_id)
+    delivered: list[int] = []
+    received: list[tuple[int, int, int, int | None]] = []
+    controls: list[str] = []
+    errors: list[dict[str, Any]] = []
+    failovers: list[dict[str, Any]] = []
+    token_errors = cross_mix = 0
+    reached_live = False
+    live_since_ns: int | None = None
+    reconnect_from = None
+    # Events per connection (segment 0 on the first replica, then one per
+    # resume): reconciled against each replica's per-subscription report.
+    segments: list[int] = []
+    # The transport is the consumer's, shared by its streams (closed when
+    # the matrix run ends).
+    while time.time_ns() < until_ns:
+        segments.append(0)
+        stream = transport.subscribe(sdk, consumer_id=consumer_id, cursor_token=token,
+                                     max_buffer_events=row["buffer"]).__aiter__()
+        try:
+            while True:
+                remaining = (until_ns - time.time_ns()) / 1e9
+                if remaining <= 0:
+                    break
+                try:
+                    item = await asyncio.wait_for(stream.__anext__(), timeout=remaining)
+                except (asyncio.TimeoutError, StopAsyncIteration):
+                    break
+                if reconnect_from is not None:
+                    failovers[-1]["resumed"] = True
+                    failovers[-1]["rto_ms"] = round((time.time_ns() - reconnect_from) / 1e6, 1)
+                    reconnect_from = None
+                if isinstance(item, ControlEvent):
+                    controls.append(item.code)
+                    reached_live = reached_live or item.code == "LIVE"
+                    # Per connection: a resume replays again first.
+                    live_since_ns = time.time_ns() if item.code == "LIVE" else (
+                        None if item.code == "REPLAYING" else live_since_ns)
+                    continue
+                if not isinstance(item, StreamEvent):
+                    continue
+                envelope = item.event
+                if (envelope.instrument_uid != requirement.instrument_uid
+                        or envelope.WhichOneof("payload") != row["feed"].lower()
+                        or canonical_payload_interval(envelope) != row["interval"]):
+                    cross_mix += 1
+                try:
+                    claims = runner.codec.verify(item.resume_token, consumer_id=consumer_id,
+                                                 environment=runner.bundle["environment"],
+                                                 requirement_digest_value=digest, expected=expectation,
+                                                 now_ns=time.time_ns())
+                    if claims.source_offset != item.logical_offset:
+                        token_errors += 1
+                except Exception:  # noqa: BLE001
+                    token_errors += 1
+                delivered.append(item.logical_offset)
+                segments[-1] += 1
+                received.append((partition, item.logical_offset, time.time_ns(), live_since_ns))
+                token = item.resume_token
+            break
+        except DataLayerError as error:
+            errors.append({"code": error.code, "detail": str(error)[:200],
+                           "at_ms": round((time.time_ns() - started_ns) / 1e6, 1)})
+            if error.code in MATRIX_ALLOWED_ERRORS and error.retryable:
+                failovers.append({"at_ms": errors[-1]["at_ms"], "resumed": False})
+                reconnect_from = time.time_ns()
+                await asyncio.sleep(0.2)
+                continue
+            break
+        finally:
+            with contextlib.suppress(Exception):
+                await stream.aclose()
+    filtered_all = bool(product) and all(item["filtered"] == "must" for item in product)
+    # Judged after the run against the final oracle (live records included).
+    return {"id": _stream_id(row), "consumer_id": consumer_id, "feed": row["feed"], "after": after,
+            "delivered": len(delivered), "age_filtered_capture": filtered_all, "controls": controls[:6],
+            "reached_live": reached_live, "errors": errors, "failovers": failovers,
+            "token_errors": token_errors, "cross_mix": cross_mix, "segments": segments,
+            "_delivered": delivered,
+            "_received": received}
+
+
+async def _rpc_checks(runner: Slice, rows: list[dict[str, Any]], oracle: dict, target: str) -> list[dict]:
+    """Replay pages the cursor's product; snapshot/status are typed not-ready."""
+    import grpc
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement
+    from qdl.query.v2 import query_pb2
+
+    checks = []
+    for consumer_id in sorted({row["consumer_id"] for row in rows}):
+        consumer_rows = [row for row in rows if row["consumer_id"] == consumer_id]
+        channel = grpc.aio.secure_channel(target, runner.tls(consumer_id).grpc_credentials())
+        metadata = (("authorization", f"Bearer {runner.jwt(consumer_id)}"),
+                    ("x-qdl-consumer-id", consumer_id),
+                    ("x-qdl-purpose", sorted(p.value for p in runner.manifests[consumer_id].allowed_purposes)[0]))
+        try:
+            row = next((item for item in consumer_rows if len([
+                o for o in expected_delivery(item, oracle.get(item["physical_key"], []), -1, time.time_ns())]) > 12),
+                None)
+            if row is not None:
+                product = [item["offset"] for item in expected_delivery(
+                    row, oracle[row["physical_key"]], -1, time.time_ns())]
+                after = product[0]
+                partition = oracle[row["physical_key"]][0][0]
+                token = runner.codec.encode(runner.claims(consumer_id, row["requirement"], after,
+                                                          partition=partition))
+                call = channel.unary_stream("/qdl.query.v2.MarketDataStreamService/Replay",
+                                            request_serializer=query_pb2.ReplayRequest.SerializeToString,
+                                            response_deserializer=query_pb2.ReplayResponse.FromString)
+                got = []
+                async for response in call(query_pb2.ReplayRequest(consumer_id=consumer_id, cursor_token=token,
+                                                                   limit=10), metadata=metadata, timeout=30):
+                    got.append(response.record.logical_offset)
+                checks.append({"rpc": "Replay", "consumer_id": consumer_id, "pass": got == product[1:11],
+                               "detail": f"{len(got)} records, exact={got == product[1:11]}"})
+            requirement = sdk_requirement(types.SimpleNamespace(requirement=consumer_rows[0]["requirement"])).to_proto()
+            for rpc, request_type, response_type, body in (
+                    ("GetSnapshot", query_pb2.GetSnapshotRequest, query_pb2.GetSnapshotResponse,
+                     query_pb2.GetSnapshotRequest(consumer_id=consumer_id, requirement=requirement)),
+                    ("GetFeedStatus", query_pb2.GetFeedStatusRequest, query_pb2.GetFeedStatusResponse,
+                     query_pb2.GetFeedStatusRequest(consumer_id=consumer_id, requirement=requirement))):
+                call = channel.unary_unary(f"/qdl.query.v2.MarketDataStreamService/{rpc}",
+                                           request_serializer=request_type.SerializeToString,
+                                           response_deserializer=response_type.FromString)
+                try:
+                    await call(body, metadata=metadata, timeout=15)
+                    checks.append({"rpc": rpc, "consumer_id": consumer_id, "pass": False,
+                                   "detail": "answered data before the KN-4 read view exists"})
+                except grpc.aio.AioRpcError as error:
+                    typed = (error.code() is grpc.StatusCode.FAILED_PRECONDITION
+                             and (error.details() or "").startswith("DATA_NOT_READY:"))
+                    permission = error.code() is grpc.StatusCode.PERMISSION_DENIED
+                    checks.append({"rpc": rpc, "consumer_id": consumer_id, "pass": typed or permission,
+                                   "detail": f"{error.code().name}:{(error.details() or '')[:60]}"})
+        finally:
+            await channel.close()
+    return checks
+
+
+def selected_streams(consumers: Sequence[str] | None) -> list[dict[str, Any]]:
+    """The demanded streams, optionally only those of some consumers (one
+    client process per consumer, as in the target profile)."""
+    rows = demanded_streams()
+    if consumers:
+        wanted = set(consumers)
+        unknown = wanted - {row["consumer_id"] for row in rows}
+        if unknown:
+            raise ValueError(f"no demanded streams for {sorted(unknown)}")
+        rows = [row for row in rows if row["consumer_id"] in wanted]
+    return rows
+
+
+async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
+    rows = selected_streams(args.consumers)
+    oracle = kafka_oracle(args.bootstrap, args.topic)
+    # Negative matrix products: the alpha TRADE streams with records.
+    everything = demanded_streams()
+    probes = []
+    for consumer_id in ("alpha.okx.paper.stable", "alpha.binance.paper.stable"):
+        row = next((item for item in everything if item["consumer_id"] == consumer_id and item["feed"] == "TRADE"
+                    and oracle.get(item["physical_key"])), None)
+        if row is None:
+            raise RuntimeError(f"no committed TRADE record for {consumer_id}: the capture/load is incomplete")
+        partition, offset, _ = oracle[row["physical_key"]][-1]
+        probes.append({"consumer_id": consumer_id, "instrument_uid": row["requirement"].instrument_uid,
+                       "feed": "TRADE", "physical_key": row["physical_key"], "partition": partition,
+                       "offset": offset})
+    probes_path = Path(args.out).with_suffix(".probes.json")
+    probes_path.write_text(json.dumps(probes), encoding="utf-8")
+    args.probes = str(probes_path)
+    args.target = args.targets[0]
+    runner = Slice(args)
+    started_ns = time.time_ns()
+    by_consumer: dict[str, list] = {}
+    for row in rows:
+        by_consumer.setdefault(row["consumer_id"], []).append(row)
+    waves: list[list] = []
+    for consumer_rows in by_consumer.values():
+        size = max(1, consumer_rows[0]["max_streams"] - 4)
+        for wave, start in enumerate(range(0, len(consumer_rows), size)):
+            while len(waves) <= wave:
+                waves.append([])
+            waves[wave].extend(consumer_rows[start:start + size])
+    results = []
+    for wave, members in enumerate(waves):
+        seconds = float(args.window_seconds) if wave == 0 else float(args.tail_seconds)
+        until = time.time_ns() + int(seconds * 1e9)
+        results += await asyncio.gather(*(
+            _matrix_stream(runner, row, oracle.get(row["physical_key"], []), until, started_ns,
+                           int(args.replay_back)) for row in members))
+    # After the waves: the committed log grew during the live phase; judge
+    # every subscription against the final oracle.
+    ended_ns = time.time_ns()
+    final = kafka_oracle(args.bootstrap, args.topic)
+    commits: dict[tuple[int, int], int] = {}
+    if args.commit_log and Path(args.commit_log).exists():
+        for line in Path(args.commit_log).read_text(encoding="utf-8").splitlines():
+            entry = json.loads(line)
+            if "offset" in entry:
+                commits[(int(entry["partition"]), int(entry["offset"]))] = int(entry["commit_ns"])
+    latency_by_feed: dict[str, list[float]] = {}
+    catchup_by_feed: dict[str, list[float]] = {}
+    for row, item in zip([row for members in waves for row in members], results, strict=True):
+        live, catchup = commit_to_client_ms(item.pop("_received"), commits)
+        latency_by_feed.setdefault(row["feed"], []).extend(live)
+        catchup_by_feed.setdefault(row["feed"], []).extend(catchup)
+        delivered = item.pop("_delivered")
+        expected = expected_delivery(row, final.get(row["physical_key"], []), item["after"], started_ns,
+                                     ended_ns)
+        item["expected_deliverable"] = sum(1 for entry in expected if entry["filtered"] == "no")
+        item.update(judge_subscription(expected, delivered))
+    for transport in runner.__dict__.get("_transports", {}).values():
+        with contextlib.suppress(Exception):
+            await transport.close()
+    runner.args.target = args.targets[-1]
+    negatives = await runner.negatives() if args.checks else []
+    # Every consumer's RPCs, also from a one-consumer client process.
+    rpcs = await _rpc_checks(runner, everything, final, args.targets[-1]) if args.checks else []
+    latency = {feed: _dist(values) for feed, values in sorted(latency_by_feed.items())}
+    latency["all"] = _dist([value for values in latency_by_feed.values() for value in values])
+    catchup = {feed: _dist(values) for feed, values in sorted(catchup_by_feed.items())}
+    catchup["all"] = _dist([value for values in catchup_by_feed.values() for value in values])
+    return {"schema": "qdl.kn.v220.native-matrix.v1", "targets": args.targets, "source_mode": "capture",
+            "commit_to_client_after_live_ms": {"not_live": "capture replay; isolated broker commit times",
+                                               **latency},
+            "catchup_commit_to_client_ms": catchup,
+            "waves": [len(members) for members in waves], "subscriptions": results,
+            "consumers": sorted({row["consumer_id"] for row in rows}), "checks": int(args.checks),
+            "negatives": negatives, "rpcs": rpcs, "failover_expected": int(args.failover_expected),
+            "oracle_keys": len(final), "oracle_records": sum(len(value) for value in final.values())}
 
 
 async def main_async(args: argparse.Namespace) -> dict[str, Any]:
@@ -625,7 +1213,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     cap = sub.add_parser("capture")
     cap.add_argument("--spool", default="/state/shared/canonical-cache.sqlite3")
-    cap.add_argument("--keys", nargs="+", required=True, help="physical_key=limit")
+    cap.add_argument("--keys", nargs="*", help="physical_key=limit")
+    cap.add_argument("--demand", type=int, help="also every demanded stream key, this many records each")
     cap.add_argument("--out", required=True)
     lod = sub.add_parser("load")
     lod.add_argument("--capture", required=True)
@@ -635,6 +1224,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     lod.add_argument("--history-fraction", default="0.6")
     lod.add_argument("--live-seconds", default="70")
     lod.add_argument("--commit-log", default="/dev/null")
+    lod.add_argument("--rate", default="0", help="live phase at this many records/s (capacity challenge)")
+    lod.add_argument("--abort-every", default="0", help="abort a copy of every Nth live batch")
+    lod.add_argument("--repeat", default="1", help="with --rate: cycle the capture this many times at most")
+    lod.add_argument("--split", choices=("time", "key"), default="time",
+                     help="history/live split: by global time (KN-1) or per key (matrix)")
     run = sub.add_parser("run")
     run.add_argument("--target", required=True)
     run.add_argument("--profile", required=True)
@@ -651,7 +1245,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--replay-back", type=int, default=2000)
     run.add_argument("--buffer", type=int, default=2000)
     run.add_argument("--out", required=True)
+    mat = sub.add_parser("matrix")
+    mat.add_argument("--targets", nargs=2, required=True, help="replica A (killed during the run), replica B")
+    mat.add_argument("--bootstrap", required=True)
+    mat.add_argument("--topic", default="md.canonical.v2")
+    mat.add_argument("--profile", required=True)
+    mat.add_argument("--bundle", required=True)
+    mat.add_argument("--cursor-keys", required=True)
+    mat.add_argument("--topic-id", required=True)
+    mat.add_argument("--route-generation", required=True)
+    mat.add_argument("--quota-redis-url", required=True)
+    mat.add_argument("--quota-prefix", required=True)
+    mat.add_argument("--window-seconds", type=float, default=90.0)
+    mat.add_argument("--tail-seconds", type=float, default=20.0)
+    mat.add_argument("--replay-back", type=int, default=25)
+    mat.add_argument("--failover-expected", type=int, default=1)
+    mat.add_argument("--commit-log", help="loader commit log for commit->client latency")
+    mat.add_argument("--consumers", nargs="*", help="only these consumers' streams (one process each)")
+    mat.add_argument("--checks", type=int, default=1, help="run the negative matrix and RPC checks")
+    mat.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.command == "matrix":
+        result = asyncio.run(matrix_async(args))
+        failures = matrix_verdict(result, expected_ids=[_stream_id(row) for row in selected_streams(args.consumers)])
+        result["verdict"] = {"pass": not failures, "failures": failures}
+        result["sha256"] = hashlib.sha256(json.dumps(result, sort_keys=True, default=str).encode()).hexdigest()
+        Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True, default=str) + "\n",
+                                  encoding="utf-8")
+        print(json.dumps({"out": args.out, "sha256": result["sha256"], "pass": not failures,
+                          "failures": failures[:25], "subscriptions": len(result["subscriptions"])}),
+              file=sys.stderr)
+        return 0 if not failures else 1
     if args.command == "capture":
         print(json.dumps(capture(args)), file=sys.stderr)
         return 0

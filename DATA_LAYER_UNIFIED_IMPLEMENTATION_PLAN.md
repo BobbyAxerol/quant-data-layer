@@ -54526,7 +54526,7 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
 
-**Status:** IN_PROGRESS (owner start 2026-09-24).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-24; owner start 2026-09-24).
 **Entry receipt:** [KN-1 R3 PASS and owner resource direction](#kn1-astra-review-r3).
 **Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
 with correct replay, auth, flow control and the existing public RPC contract.
@@ -54537,14 +54537,18 @@ with correct replay, auth, flow control and the existing public RPC contract.
 [18.7 tests/review](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-testing-and-review).
 
 **To do:**
-- [ ] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
-- [ ] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
-- [ ] K2.3 signed replay/barrier/ring/pending merge and bounded cancellation-safe reader pool.
-- [ ] K2.4 lifecycle-aware quality/gap/session/control handling and exact coalescing policy.
-- [ ] K2.5 full demanded Stream shadow/oracle, two-replica failover and measured capacity.
-**Completed:** none in this documentation update.
-**Verification:** K2-T01..T08 not run. Snapshot/status interface tests here do not
-claim the real cache integration allocated to KN-4 has already passed.
+- [x] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
+- [x] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
+- [x] K2.3 signed replay/barrier/ring/pending merge and bounded cancellation-safe reader pool.
+- [x] K2.4 lifecycle-aware quality/gap/session/control handling and exact coalescing policy.
+- [x] K2.5 full demanded Stream shadow/oracle, two-replica failover and measured capacity.
+**Completed:** K2.1-K2.5 (slice 1 `997907c`, slice 2 in the journal below),
+implemented and tested locally plus isolated shadow evidence; not live, not
+production, Astra review pending.
+**Verification:** K2-T01..T08 run (in-process, real isolated Kafka, SDK over mTLS
+on two replicas); see [KN-2 receipt](#kn2-receipt). Snapshot/status are typed
+`DATA_NOT_READY` through the read view; the real cache integration is KN-4 and
+is not claimed.
 **Exit gate:** Stream/replay/auth/public contracts pass; exact canonical oracle,
 zero unexplained loss/cross-mix; bounded memory/tasks/replay and measured replica
 recovery; Astra reviewed. Do not use Kafka commit as proof alpha applied an event.
@@ -54554,8 +54558,8 @@ KN-4 cache integration is the explicit dependency, not a hidden certification cl
 old Stream, producer authority, groups and Kafka partition topology untouched.
 **Cleanup:** exact test groups/topics/network allowed by packet; no abandoned
 readers/streams; retain only named necessary candidate and rollback artifacts.
-**Astra review:** NOT REQUESTED; inspect offset/barrier races, negative auth,
-snapshot/delta/reset, cancellation and cross-replica behavior.
+**Astra review:** REQUESTED 2026-09-24 ([receipt](#kn2-receipt)); inspect offset/barrier
+races, negative auth, snapshot/delta/reset, cancellation and cross-replica behavior.
 **Next permitted step:** KN-3 after reviewed exit or explicit owner sequencing.
 
 #### KN-2 Execution Journal
@@ -54678,6 +54682,161 @@ snapshot/delta/reset, cancellation and cross-replica behavior.
   - Not claimed here: transport-level (mTLS + Python SDK) evidence, the full
     demanded matrix, two-replica failover over the wire and capacity (K2.5,
     K2-T04/T07/T08 over real transport) - next slice.
+- 2026-09-24: **KN-2 K2.5 isolated runtime packet (recorded before start).**
+  Blast radius: shadow only; the running Stream/Query, their groups,
+  producers, topics, Redis and ACLs are not touched; no production Kafka.
+  - Network `qdl_v2_kn2_shadow` (`--internal`), removed after.
+  - `kn2-kafka`: stack Kafka image `apache/kafka@sha256:9516fb76...`, single
+    KRaft node advertising `kn2-kafka:9092`, `--rm`, 1 CPU / 1 GiB, plaintext,
+    no ACL; topic `md.canonical.v2` 6 partitions, loaded from a read-only
+    spool capture of the 190 demanded physical keys (committed records,
+    bytes unmodified; one filler at offset 0 per partition); the live phase
+    adds aborted copies of every 5th batch.
+  - `kn2-stream-a` / `kn2-stream-b`: runtime image `qdl-v2-rust:2.0.26-62241bc`
+    with the release gateway binary built from the KN-2 source mounted
+    read-only; aliases `qdl-v2-stream-a` / `-b` (in the stream cert SAN),
+    groups `kn-stream-a` / `kn-stream-b`, 0.5 CPU / 256 MiB each (shadow
+    exception <= 1.5 vCPU actual), stable stream TLS identity (read-only),
+    shadow JWT config file = the running public keyring + test-only keys for
+    subjects without a usable test identity, fresh shadow cursor key.
+    Replica A is stopped during the window (failover); B serves the rest.
+  - `kn2-quota-redis`: disposable Redis of the `stable_redis` digest, `--rm`.
+  - Harness `kn_native_slice_probe.py matrix` in `qdl-v2-python:2.1.1-83fa1bc`
+    (`--rm`, 1 CPU / 1 GiB), existing test identities read-only.
+  - Stop at once if host idle < 5 % for 60 s, TS ready routes drop, or any
+    production container restarts. Duration <= 30 minutes.
+  - Superseded and reclaimed: the KN-1 prototype binary in the slice dir is
+    replaced by this build; no KN-1 container/network exists.
+  - Cleanup: stop the `kn2-*` containers (auto-removed), remove the network,
+    delete cursor key, JWT config, test keys, profile, capture and commit
+    log; keep bounded results and hashes.
+- 2026-09-24: **K2.5 packet deviations (recorded after the runs, not
+  approved in advance).** (1) The harness ran as 2 CPU / 1.5 GiB, then as six
+  `kn2-matrix-client-<n>` containers of 1 CPU / 1.5 GiB (one per consumer, as
+  consumers run), not one 1 CPU / 1 GiB container; capture and loader ran as
+  `--rm` containers of the same image (`--network none` for capture). (2) The
+  host stop condition was measured, not automated: host idle 20-47 %
+  (`vmstat 5`) during the 3,000/s run, no production container started or
+  restarted today (`docker inspect` StartedAt/RestartCount), every kn2 run
+  <= 6 min. (3) One final-run attempt failed at setup (run dir not writable
+  by uid 10001) and spliced an error string into `docker run`, which asked
+  the registry for a non-existent image `while` (pull denied, nothing
+  pulled); the cycle now refuses to start gateways without a capture and a
+  valid topic id. Production blast radius unchanged: isolated network only.
+- 2026-09-24: **KN-2 slice 2 - K2.3 coordinator, K2.5 matrix/failover/capacity,
+  bounded memory: implemented, tested locally, isolated shadow evidence (not
+  live, not production).** Rows per guide 18.7:
+
+  | Work item | SHA | Command / cases / counts | Evidence | Failure -> root cause -> fix | Runtime mutations | Cleanup | Next |
+  |---|---|---|---|---|---|---|---|
+  | K2.3 D4 amendment: coalesced replay | slice-2 commit | `native_stream` t02 storm (1 reader, 3 ms/record) + committed_reads pooled reuse | gateway `replay_*` metrics in final runs | per-stream readers under a cold storm: 266 `RATE_LIMITED`, 1.09M records scanned for 5,946 replayed, RSS 268 MB -> one pass per partition serves every pending request (joiners fit while position <= after+1), a request that cannot keep up detaches after 200 ms and requeues with its own cursor, pooled range consumers, librdkafka prefetch 16 MiB live / 4 MiB replay | none | - | - |
+  | Shutdown + per-subscription report | slice-2 commit | t04 stopping replica | `evidence/stop/gateway-{a,b}.log` | client 10,452 vs gateway ~4.9k: gateway was PID 1 without a SIGTERM handler (`docker stop` waited 10 s, logs cut) -> SIGTERM/SIGINT end every stream `UNAVAILABLE GATEWAY_SHUTTING_DOWN` (2 s grace), `qdl_kn_subscription_closed` per stream | none | - | - |
+  | Send-path attribution | slice-2 commit | hub lag unit test; capacity reruns | `evidence/summary.json` `diagnostic` | "3.8 s p50 commit->client": (a) harness paired the k-th delivery of an event id with its k-th commit, wrong once a copy is rightly skipped -> pair by Kafka coordinate from delivery reports; (b) records queued during a cold replay were counted as live -> split `catchup` from the live path; (c) one Python process for 292 streams and one TLS connection per stream (client CPU cap, RSA-2048 handshake per stream) -> one client process and one transport per consumer, as consumers run; (d) warm-range records counted as dispatch lag -> only records produced after start. Gateway now reports `queue_wait_ms` / `handoff_wait_ms` | none | - | - |
+  | Memory bound (K2-T05/T08) | slice-2 commit | `memory.rs` 3 unit tests; binary in a 128 MiB container refuses start, 256 MiB passes | final runs `memory` in start line | ring 32 MiB x 6 partitions + 256 MiB queues + librdkafka exceeded the 256 MiB replica (OOM instead of typed backpressure) -> `QDL_KN_RING_BYTES_TOTAL` 64 MiB split per partition, `QDL_KN_QUEUE_BYTES_TOTAL` 64 MiB, kafka 32 MiB, reserve 64 MiB (measured ~60 MiB beyond the ring) = 224 MiB; start fails closed when bounds exceed cgroup `memory.max` | none | - | - |
+  | K2.5 matrix + K2-T04/T07 | slice-2 commit | `kn2_matrix_cycle.sh CLIENTS=split KILL=1 KILLMODE=stop|kill` | `evidence/stop`, `evidence/hardkill`, summary `5e87acb0...` (SHA256SUMS) | SDK `StreamEvent` requires logical offset > 0 but Kafka offset 0 is valid -> KN-4 SDK item; loader writes an offset-0 filler per partition | isolated only | removed | Astra |
+  | K2-T08 capacity | slice-2 commit | `CLIENTS=split KILL=0 RATE=3000 REPEAT=8` | `evidence/capacity` | - | isolated only | removed | Astra |
+
+  - Tests: Rust workspace fmt + clippy `-D warnings` clean, 246 passed /
+    0 failed / 3 ignored; the ignored real-Kafka `committed_reads` 2/2 on a
+    disposable broker (`qdl_v2_kn2_it`, removed); `native_stream` 19 (five
+    consecutive runs stable), gateway unit 19; Python
+    `test_kn_native_slice_probe` + `test_kn_resource_sizing` +
+    `test_kn_v220_contracts` 57 OK. No shared Python module changed, so the
+    full Python suite was not rerun.
+  - Final isolated evidence, binary `63a56243...`, bundle `b4b34222...`
+    (`/home/bobby/.local/state/qdl-v2/kn2-20260924/evidence`, SHA256SUMS `1a4bbfbc...`; the harness
+    orchestration is kept under `evidence/orchestration` for focused reruns):
+    - Matrix, graceful stop of A at 45 s: 292/292 demanded (consumer, stream)
+      pairs over 190 physical keys and 6 consumers LIVE, 6/6 client verdicts
+      PASS; missing lossless / unsuperseded drops / duplicates / out of order /
+      unexpected / filtered delivered / token errors / cross-mix all 0;
+      failover 185/185 resumed, RTO p50 457 ms, max 559 ms; negatives 24/24;
+      Replay exact on 5 consumers, GetSnapshot/GetFeedStatus typed
+      `DATA_NOT_READY` on 6 (17/17); reconciliation client = gateway close
+      reports per replica: A 2,712 = 2,712, B 8,035 = 8,035.
+    - Matrix, SIGKILL of A: same exactness, failover 185/185, RTO p50 402 ms,
+      max 543 ms; B 8,018 = 8,018 (A has no reports after SIGKILL).
+    - Capacity (K2-T08), challenge 3,000 canonical events/s from real capture
+      for 59 s (175,840 committed + 35,137 aborted), 292 streams, warm ring
+      (production default): 6/6 PASS, 65,369 delivered = A's reports; live
+      path commit->client per client p50 7.5-10.5 ms, p95 20.5-30.7 ms, p99
+      33.9-48.7 ms, max 82.9 ms (n 47,923); catch-up 10 records <= 246 ms.
+      Serving replica A: dispatch lag p50 <= 10, p95 <= 50, p99 <= 100 ms;
+      queue wait p99 <= 50 ms; handoff p99 <= 10 ms; CPU 0.13 core mean in
+      load windows, 0.28 core max 5-s window, 10.7 s total; RSS max 176 MiB
+      (limit 256), ring max 63 MiB (bound 64), overflow 0; replay: 185 ring
+      hits, then 12 coordinated reader passes (343,775 scanned) after the ring
+      aged out. Reader-only replica B: 0.034 core, RSS 103 MiB. A's 0.5 CPU cap
+      throttled 52 of 2,053 periods, all in stream-open/replay bursts; the
+      isolated broker (1 CPU) was the saturated component (352 of 2,420).
+  - Resources vs budget: stream gateway measured ~0.16 core for both
+    replicas at the 3,000/s challenge against the unverified 0.4 vCPU
+    allocation; memory bounded at 224 MiB of 256 MiB. **No extra RAM/CPU is
+    requested.** Not measured: live freshness (capture replay), the four
+    owner quantities end to end (needs live), the target client profile
+    through a real alpha, long soak.
+  - Superseded and reclaimed: the KN-2 slice-1 binaries (6a68c39b, 4cb57a9b,
+    b13d97ad) were replaced in place by `63a56243`; no kn2 container, network
+    or volume remains; no image was built.
+  - Cleanup: shadow cursor key, JWT config, test keys and profile deleted;
+    capture, commit logs and raw run dirs deleted (1,305 MiB scratch freed);
+    evidence 1.7 MiB kept. Kept to KN-2 Astra PASS / KN-5: binary and bundle.
+    `target/` 6.8 GB (to KN-5). Four anonymous dangling volumes from
+    2026-09-21/23 predate KN-2 and are not ours to remove without an owner.
+
+<a id="kn2-receipt"></a>
+**KN-2 receipt for Astra (guide 18.14), 2026-09-24.**
+
+```text
+Phase / status / source SHA / affected files and line counts:
+  KN-2 / IMPLEMENTED_PENDING_ASTRA_REVIEW / feat/consumer-endpoint-benchmark,
+  slice 1 997907c + slice 2 (this commit). rust/qdl-stream-gateway src:
+  service 1064, replay 522, reader 472, main 430, subscription 420, hub 418,
+  auth 799, requirement 304, bundle 287, tls 133, memory 123, authority 102,
+  readview 68; tests native_stream 1806, committed_reads 282;
+  qdl-contracts delivery.rs + cursor_v3 verify_scope; scripts/
+  kn_native_slice_probe.py 1298 (matrix mode) + tests 348.
+Approved scope and actual work items completed:
+  K2.1-K2.5 per guide 18.9 and decisions D1-D8, with the D4 amendment
+  (coalesced replay passes instead of one reader per request).
+Domain invariants and behavior changed/preserved:
+  Public RPC shape, statuses and control frames of the Python service kept;
+  delivery policy = domain policy + invariant 27 (BOOK never coalesced, BAR
+  in-progress only with the same open time and signature); no Kafka commit
+  by a gateway reader; cursor v3 unchanged (Replay uses verify_scope).
+Tests: command, cases, pass/fail/skip, isolated/real-provider, evidence hash/path:
+  Rust workspace 246/0/3 + committed_reads 2/2 on an isolated broker;
+  native_stream 19, gateway unit 19; Python KN 57 OK. Isolated shadow on
+  real canonical capture (not live): matrix stop / SIGKILL / 3,000/s
+  capacity, 6/6 PASS each, exact oracle, 0 defects, failover 185/185.
+  /home/bobby/.local/state/qdl-v2/kn2-20260924/evidence, SHA256SUMS 1a4bbfbc...,
+  summary.json 5e87acb0...
+New failures -> root cause -> fix -> regression evidence:
+  Journal slice 2 rows: storm refusals -> coordinator; missing SIGTERM ->
+  graceful shutdown + close reports; harness latency pairing, catch-up
+  mixing and per-stream transports -> coordinate pairing, split, shared
+  transport; memory bounds over the container -> total bounds + fail-closed
+  check (128 MiB refuses, 256 MiB starts).
+Runtime: exact mutations or NONE; active/config/rollback map:
+  Production NONE. Isolated qdl_v2_kn2_shadow / qdl_v2_kn2_it only, removed.
+  Running Stream, its groups, producers, topics, Redis and ACLs untouched.
+Resources: latency/capacity/memory/disk measured vs budget; untested limits:
+  3,000/s challenge: live path p99 <= 49 ms per client; gateway ~0.16 core
+  for two replicas vs 0.4 allocation; memory bounded 224/256 MiB, RSS max
+  176 MiB. Untested: live freshness and the four owner quantities end to end,
+  the target client profile via real alpha, soak, production broker.
+Cleanup: removed/retained artifacts, reason/expiry, disk/restart evidence:
+  Shadow keys/config/profile, capture and commit logs deleted; binary 63a56243
+  and bundle kept to KN-2 PASS / KN-5; evidence 1.7 MiB; no production restart.
+Remaining decision gates, not relabelled implementation gaps:
+  Owner: kn- DESCRIBE ACL for a live shadow on the production broker.
+  KN-4: market cache behind ReadView (snapshot/status), SDK logical offset 0.
+Astra requested review points and next allowed step:
+  hub register/dispatch barrier under the partition lock; coordinator
+  joiner/detach correctness; latest-state coalescing vs lossless; revocation
+  mid-stream; shutdown; memory plan; harness judge and oracle. Next: KN-3
+  after ASTRA_REVIEW_PASS or explicit owner sequencing.
+```
 
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery

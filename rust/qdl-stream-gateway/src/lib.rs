@@ -13,6 +13,7 @@ pub mod authority;
 pub mod bundle;
 pub mod generated;
 pub mod hub;
+pub mod memory;
 pub mod reader;
 pub mod readview;
 pub mod replay;

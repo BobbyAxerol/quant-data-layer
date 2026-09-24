@@ -31,6 +31,8 @@ pub struct RawRecord {
     pub offset: i64,
     pub key: Vec<u8>,
     pub payload: Vec<u8>,
+    /// Kafka record timestamp (producer create time), 0 when unknown.
+    pub timestamp_ms: i64,
 }
 
 impl RawRecord {
@@ -80,8 +82,54 @@ impl Default for HubConfig {
     }
 }
 
+/// Upper bounds (ms) of the commit -> dispatch lag buckets; one more bucket
+/// counts everything above the last bound.
+pub const LAG_BOUNDS_MS: [i64; 12] = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000];
+
+/// Commit -> dispatch lag of the live reader (K2-T08 lag per replica):
+/// how long after the producer's record timestamp the hub dispatched it.
+#[derive(Default)]
+pub struct LagHistogram {
+    buckets: [AtomicU64; LAG_BOUNDS_MS.len() + 1],
+}
+
+impl LagHistogram {
+    pub fn record(&self, lag_ms: i64) {
+        let index = LAG_BOUNDS_MS
+            .iter()
+            .position(|bound| lag_ms <= *bound)
+            .unwrap_or(LAG_BOUNDS_MS.len());
+        self.buckets[index].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `{n, p50_le, p95_le, p99_le}`: the bucket upper bound each quantile
+    /// falls in (`-1` = above the last bound).
+    pub fn summary(&self) -> serde_json::Value {
+        let counts: Vec<u64> = self
+            .buckets
+            .iter()
+            .map(|bucket| bucket.load(Ordering::Relaxed))
+            .collect();
+        let total: u64 = counts.iter().sum();
+        let quantile = |q: f64| {
+            let wanted = (total as f64 * q).ceil() as u64;
+            let mut seen = 0;
+            for (index, count) in counts.iter().enumerate() {
+                seen += count;
+                if seen >= wanted.max(1) {
+                    return LAG_BOUNDS_MS.get(index).copied().unwrap_or(-1);
+                }
+            }
+            -1
+        };
+        serde_json::json!({"n": total, "p50_le": quantile(0.5), "p95_le": quantile(0.95),
+            "p99_le": quantile(0.99), "buckets": counts})
+    }
+}
+
 #[derive(Default)]
 pub struct HubMetrics {
+    pub dispatch_lag: LagHistogram,
     pub records: AtomicU64,
     pub bytes: AtomicU64,
     pub duplicates: AtomicU64,
@@ -115,6 +163,9 @@ pub struct Hub {
     config: HubConfig,
     pub metrics: HubMetrics,
     stop: AtomicBool,
+    /// Records produced before this replica started (the warm range, a
+    /// restart backlog) are not live-path lag and stay out of the histogram.
+    started_ms: i64,
 }
 
 fn now_ns() -> i64 {
@@ -147,6 +198,7 @@ impl Hub {
             config,
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
+            started_ms: now_ns() / 1_000_000,
         }
     }
 
@@ -194,6 +246,11 @@ impl Hub {
         self.metrics
             .bytes
             .fetch_add(record.payload.len() as u64, Ordering::Relaxed);
+        if record.timestamp_ms >= self.started_ms {
+            self.metrics
+                .dispatch_lag
+                .record(now_ns() / 1_000_000 - record.timestamp_ms);
+        }
         let now = Instant::now();
         state.ring_bytes += record.weight();
         state.ring.push_back((now, record.clone()));
@@ -330,5 +387,32 @@ impl Hub {
                 }
             })
             .expect("spawn live reader thread")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(offset: i64, timestamp_ms: i64) -> RawRecord {
+        RawRecord {
+            partition: 0,
+            offset,
+            key: b"k".to_vec(),
+            payload: Vec::new(),
+            timestamp_ms,
+        }
+    }
+
+    #[test]
+    fn records_produced_before_the_replica_started_are_not_dispatch_lag() {
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        let started = hub.started_ms;
+        hub.dispatch(record(0, started - 60_000));
+        hub.dispatch(record(1, 0));
+        hub.dispatch(record(2, started));
+        let summary = hub.metrics.dispatch_lag.summary();
+        assert_eq!(summary["n"], 1);
+        assert_eq!(hub.metrics.records.load(Ordering::Relaxed), 3);
     }
 }

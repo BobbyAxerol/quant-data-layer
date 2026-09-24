@@ -15,6 +15,7 @@ use qdl_contracts::delivery::{DeliveryPolicy, RecordLifecycle};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::Notify;
 
 /// A latest-state subscription holds at most this many records (DL-V2 R1.8,
@@ -58,11 +59,13 @@ pub struct Queued {
     pub record: Arc<LiveRecord>,
     lifecycle: RecordLifecycle,
     weight: usize,
+    enqueued: Instant,
 }
 
 #[derive(Debug)]
 pub enum Next {
-    Record(Arc<LiveRecord>),
+    /// A record and when it was queued (the send-path queue wait).
+    Record(Arc<LiveRecord>, Instant),
     Overflow,
     Failed(String),
     Closed,
@@ -208,6 +211,7 @@ impl Subscription {
             record: record.clone(),
             lifecycle,
             weight,
+            enqueued: Instant::now(),
         });
         drop(state);
         self.notify.notify_one();
@@ -238,7 +242,7 @@ impl Subscription {
                 if let Some(item) = state.queue.pop_front() {
                     state.bytes -= item.weight;
                     self.budget.release(item.weight);
-                    return Next::Record(item.record);
+                    return Next::Record(item.record, item.enqueued);
                 }
                 if state.closed {
                     return Next::Closed;
@@ -305,6 +309,7 @@ mod tests {
                 offset,
                 key: b"k".to_vec(),
                 payload: envelope.encode_to_vec(),
+                timestamp_ms: 0,
             }),
             envelope,
         })
@@ -322,7 +327,7 @@ mod tests {
         let mut offsets = Vec::new();
         while subscription.queued().0 > 0 {
             match subscription.next().await {
-                Next::Record(record) => offsets.push(record.raw.offset),
+                Next::Record(record, _) => offsets.push(record.raw.offset),
                 other => panic!("{other:?}"),
             }
         }

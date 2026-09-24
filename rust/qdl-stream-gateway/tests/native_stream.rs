@@ -25,7 +25,9 @@ use qdl_stream_gateway::generated::query_v2 as query;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamService;
 use qdl_stream_gateway::hub::{Hub, HubConfig, LogSource, RawRecord};
 use qdl_stream_gateway::readview::{NotReadyReadView, ReadView, ReadViewError};
-use qdl_stream_gateway::replay::{RangeCursor, RangeError, RangeSource, ReplayLimits, ReplayPool};
+use qdl_stream_gateway::replay::{
+    RangeCursor, RangeError, RangeSource, ReplayCoordinator, ReplayLimits,
+};
 use qdl_stream_gateway::requirement::StreamRequirement;
 use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
 use qdl_stream_gateway::subscription::ByteBudget;
@@ -73,6 +75,7 @@ impl Log {
             offset,
             key: key.as_bytes().to_vec(),
             payload: envelope.encode_to_vec(),
+            timestamp_ms: 0,
         });
         offset
     }
@@ -191,12 +194,15 @@ impl LogSource for LiveSource {
 
 struct Range {
     log: Log,
+    /// Per-record read time, so a pass takes time as it does on a broker.
+    delay: Duration,
 }
 
 struct RangeReader {
     log: Log,
     partition: i32,
     position: i64,
+    delay: Duration,
 }
 
 impl RangeSource for Range {
@@ -209,12 +215,16 @@ impl RangeSource for Range {
             log: self.log.clone(),
             partition,
             position: from,
+            delay: self.delay,
         }))
     }
 }
 
 impl RangeCursor for RangeReader {
     fn next(&mut self, _timeout: Duration) -> Result<Option<RawRecord>, RangeError> {
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
         match self.log.first_at_or_after(self.partition, self.position) {
             Some(record) => {
                 self.position = record.offset + 1;
@@ -506,6 +516,7 @@ struct Options {
     duplicate_every: Option<u64>,
     log: Option<Log>,
     max_streams: u64,
+    range_delay: Duration,
 }
 
 impl Default for Options {
@@ -524,6 +535,7 @@ impl Default for Options {
             duplicate_every: None,
             log: None,
             max_streams: 64,
+            range_delay: Duration::ZERO,
         }
     }
 }
@@ -571,8 +583,14 @@ impl Harness {
             )
             .unwrap(),
             hub.clone(),
-            Arc::new(Range { log: log.clone() }),
-            ReplayPool::new(options.replay_readers, 2, Duration::from_millis(300)),
+            ReplayCoordinator::new(
+                Arc::new(Range {
+                    log: log.clone(),
+                    delay: options.range_delay,
+                }),
+                options.replay_readers,
+                options.limits.replay.clone(),
+            ),
             options.read_view,
             ByteBudget::new(options.budget),
             options.limits,
@@ -816,6 +834,25 @@ async fn t01_markers_duplicates_and_a_sparse_key_deliver_exactly_the_committed_r
     let (_, live) = stream.collect(expected.len() - replayed.len()).await;
     let delivered: Vec<u64> = replayed.iter().chain(live.iter()).copied().collect();
     assert_eq!(delivered, expected, "every committed record once, in order");
+    // The gateway counts a record after the transport accepted it, so the
+    // client may read it a moment before the counter moves.
+    let metrics = &harness.state().metrics;
+    let wanted = (replayed.len() as u64, live.len() as u64);
+    let counted = || {
+        (
+            metrics.replayed.load(Ordering::Relaxed),
+            metrics.delivered.load(Ordering::Relaxed),
+        )
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while counted() != wanted && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        counted(),
+        wanted,
+        "gateway counters equal what the client received"
+    );
     assert!(harness.hub.metrics.duplicates.load(Ordering::Relaxed) > 0);
 }
 
@@ -843,7 +880,7 @@ async fn t02_ring_hit_and_replay_reader_deliver_the_same_records() {
             replayed,
             as_offsets(&harness.log.records_of(TRADE_KEY, cursor))
         );
-        let metrics = &harness.state().pool.metrics;
+        let metrics = &harness.state().replay.metrics;
         assert_eq!(metrics.ring_hits.load(Ordering::Relaxed) == 1, expect_hit);
         assert_eq!(
             metrics.reader_replays.load(Ordering::Relaxed) == 1,
@@ -1011,15 +1048,15 @@ async fn t02_cancelled_replays_release_readers_permits_and_memory() {
     let state = harness.state().clone();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline
-        && (state.pool.available() != 4
-            || state.pool.metrics.active.load(Ordering::Relaxed) != 0
+        && (state.replay.available() != 4
+            || state.replay.metrics.active.load(Ordering::Relaxed) != 0
             || harness.hub.subscriber_count() != 0)
     {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert_eq!(state.pool.available(), 4, "replay permits returned");
-    assert_eq!(state.pool.metrics.active.load(Ordering::Relaxed), 0);
-    assert_eq!(state.pool.consumers_in_replay(), 0);
+    assert_eq!(state.replay.available(), 4, "replay readers returned");
+    assert_eq!(state.replay.metrics.active.load(Ordering::Relaxed), 0);
+    assert_eq!(state.replay.in_flight(), 0);
     assert_eq!(
         harness.hub.subscriber_count(),
         0,
@@ -1031,6 +1068,42 @@ async fn t02_cancelled_replays_release_readers_permits_and_memory() {
         0
     );
     assert_eq!(state.open_streams(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t02_a_reconnect_storm_queues_for_replay_readers_instead_of_failing() {
+    // One reader in the pool, a ring that covers nothing: every stream needs
+    // the reader, all of one consumer, opened at once.
+    let harness = Harness::new(Options {
+        ring_max_bytes: 256,
+        replay_readers: 1,
+        range_delay: Duration::from_millis(3),
+        ..Options::default()
+    });
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    for index in 0..30u64 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+        harness
+            .log
+            .append(0, QUOTE_KEY, &quote(index as u32, vec![]));
+    }
+    harness.settle();
+    let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+    let mut streams = Vec::new();
+    for _ in 0..12 {
+        streams.push(harness.subscribe("TRADE", None, cursor, 100).await.unwrap());
+    }
+    for mut stream in streams {
+        assert_eq!(
+            stream.until_live().await,
+            expected,
+            "every stream replayed in turn"
+        );
+    }
+    // Coalesced: one reader served all twelve in a few shared passes.
+    let metrics = &harness.state().replay.metrics;
+    let passes = metrics.reader_replays.load(Ordering::Relaxed);
+    assert!((1..12).contains(&passes), "{passes} passes for 12 replays");
 }
 
 // ------------------------------------------------------------------ K2-T03
@@ -1132,6 +1205,31 @@ async fn t04_a_replica_behind_the_cursor_waits_bounded_then_answers_retryable() 
     assert!(controls.contains(&"LIVE".to_owned()));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t04_a_stopping_replica_ends_streams_retryable_and_they_resume_exactly() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.settle();
+    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
+    stream.until_live().await;
+    let first = harness.log.append(0, TRADE_KEY, &trade(2));
+    assert_eq!(stream.collect(1).await.1, vec![first as u64]);
+    harness.state().shut_down();
+    let (code, message) = stream.error().await;
+    assert_eq!(code, Code::Unavailable, "retryable: the client fails over");
+    assert!(message.starts_with("GATEWAY_SHUTTING_DOWN"), "{message}");
+    // Resuming after the last delivered record (on this or another replica)
+    // continues exactly.
+    let next = harness.log.append(0, TRADE_KEY, &trade(3));
+    let replica = Harness::new(Options {
+        log: Some(harness.log.clone()),
+        ..Options::default()
+    });
+    replica.settle();
+    let mut resumed = replica.subscribe("TRADE", None, first, 100).await.unwrap();
+    assert_eq!(resumed.until_live().await, vec![next as u64]);
+}
+
 // ------------------------------------------------------------------ K2-T05
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1177,7 +1275,7 @@ async fn t05_a_slow_lossless_reader_ends_typed_and_resources_return_to_baseline(
     assert_eq!(harness.hub.subscriber_count(), 0);
     assert_eq!(state.budget.used(), 0);
     assert_eq!(state.open_streams(), 0);
-    assert_eq!(state.pool.available(), 4);
+    assert_eq!(state.replay.available(), 4);
     assert!(state.metrics.overflow.load(Ordering::Relaxed) >= 1);
 }
 
@@ -1189,6 +1287,7 @@ async fn t05_the_replica_byte_budget_bounds_all_queues_together() {
         offset: 0,
         key: TRADE_KEY.as_bytes().to_vec(),
         payload: trade(1).encode_to_vec(),
+        timestamp_ms: 0,
     };
     let harness = Harness::new(Options {
         budget: record.weight() * 3 + 10,

@@ -3,7 +3,7 @@
 //! Every RPC follows `qdl/stream/grpc_service.py` step for step - access
 //! checks, their order, status codes and control frames - on top of the
 //! shared committed reader ([`crate::hub`]), bounded subscriber queues
-//! ([`crate::subscription`]), the bounded replay pool ([`crate::replay`]) and
+//! ([`crate::subscription`]), the coalesced replay coordinator ([`crate::replay`]) and
 //! the snapshot/status read view ([`crate::readview`]).
 //!
 //! Subscribe: REPLAYING -> replay `(cursor, barrier)` from the ring or a
@@ -18,9 +18,9 @@ use crate::auth::{HISTORY_READ, SNAPSHOT_READ, STATUS_READ};
 use crate::authority::{reauthorize, Authority, AuthorityHandle};
 use crate::generated::query_v2 as query;
 use crate::generated::query_v2::market_data_stream_service_server::MarketDataStreamService;
-use crate::hub::{Hub, LiveRecord, RawRecord};
+use crate::hub::{Hub, LagHistogram, LiveRecord};
 use crate::readview::ReadView;
-use crate::replay::{scan_range, RangeSource, ReplayEnd, ReplayLimits, ReplayPool};
+use crate::replay::{ReplayCoordinator, ReplayEnd, ReplayLimits, ReplayRequest, REPLAY_CHANNEL};
 use crate::requirement::{
     delivery_decision, is_product, require_requirement, Delivery, StreamRequirement,
 };
@@ -81,6 +81,11 @@ pub struct Metrics {
     pub lagging: AtomicU64,
     pub expired: AtomicU64,
     pub replay_rpcs: AtomicU64,
+    /// Send path of live records: queued -> taken by the stream task, and
+    /// the wait for the transport to accept it (HTTP/2 flow control and a
+    /// slow client show up here, not in the dispatch lag).
+    pub queue_wait: LagHistogram,
+    pub handoff_wait: LagHistogram,
 }
 
 pub struct GatewayState {
@@ -88,14 +93,16 @@ pub struct GatewayState {
     pub quota: Arc<dyn RequestQuota>,
     pub codec: CursorV3Codec,
     pub hub: Arc<Hub>,
-    pub range: Arc<dyn RangeSource>,
-    pub pool: ReplayPool,
+    pub replay: Arc<ReplayCoordinator>,
     pub read_view: Arc<dyn ReadView>,
     pub budget: Arc<ByteBudget>,
     pub limits: StreamLimits,
     pub metrics: Metrics,
     streams: Mutex<HashMap<String, u64>>,
     next_id: AtomicU64,
+    /// Set on SIGTERM/SIGINT: every open stream ends with a typed,
+    /// retryable UNAVAILABLE so clients fail over at once.
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl GatewayState {
@@ -105,8 +112,7 @@ impl GatewayState {
         quota: Arc<dyn RequestQuota>,
         codec: CursorV3Codec,
         hub: Arc<Hub>,
-        range: Arc<dyn RangeSource>,
-        pool: ReplayPool,
+        replay: Arc<ReplayCoordinator>,
         read_view: Arc<dyn ReadView>,
         budget: Arc<ByteBudget>,
         limits: StreamLimits,
@@ -116,15 +122,20 @@ impl GatewayState {
             quota,
             codec,
             hub,
-            range,
-            pool,
+            replay,
             read_view,
             budget,
             limits,
             metrics: Metrics::default(),
             streams: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            shutdown: tokio::sync::watch::channel(false).0,
         }
+    }
+
+    /// Begin a graceful stop (planned restart / `docker stop`).
+    pub fn shut_down(&self) {
+        self.shutdown.send_replace(true);
     }
 
     pub fn open_streams(&self) -> u64 {
@@ -416,6 +427,10 @@ impl MarketDataStreamService for Gateway {
         };
         let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
         let task = SubscriptionTask {
+            report: Report {
+                outcome: Mutex::new("ended"),
+                ..Report::default()
+            },
             state,
             _slot: slot,
             _registered: registered,
@@ -481,24 +496,18 @@ impl MarketDataStreamService for Gateway {
             .hub
             .next_offset(partition)
             .ok_or_else(|| state.refuse(Status::invalid_argument("CURSOR_INVALID:PARTITION")))?;
-        let permit = state.pool.acquire(&body.consumer_id).await.ok_or_else(|| {
-            state.refuse(Status::resource_exhausted(
-                "RATE_LIMITED:replay reader capacity is exhausted",
-            ))
-        })?;
         let (sender, receiver) = mpsc::channel(32);
         let after = claims.source_offset as i64;
         let key = binding.physical_key.clone().into_bytes();
         tokio::spawn(async move {
             let (records, cancel, reader) = spawn_scan(
-                state.clone(),
+                &state,
                 partition,
                 after,
                 barrier,
                 key,
                 (binding.feed.clone(), binding.interval.clone()),
                 Some(limit),
-                permit,
             );
             let _cancel = CancelOnDrop(cancel);
             let mut records = records;
@@ -519,7 +528,7 @@ impl MarketDataStreamService for Gateway {
             }
             let end = reader
                 .await
-                .unwrap_or(ReplayEnd::Error("replay task failed".into()));
+                .unwrap_or(ReplayEnd::Error("replay coordinator dropped".into()));
             if let Some(status) = replay_end_status(&state, &end) {
                 let _ = sender.send(Err(status)).await;
             }
@@ -632,80 +641,74 @@ fn replay_end_status(state: &GatewayState, end: &ReplayEnd) -> Option<Status> {
             "RETENTION:the cursor is below the retained committed log; a fresh snapshot is required"
                 .into(),
         ),
-        ReplayEnd::ScanLimit(reason) => {
-            state.pool.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
-            expired(format!(
-                "{reason}:replay exceeds the bounded scan; a fresh snapshot is required"
-            ))
-        }
+        // Out of time under load: retryable, the resume token has advanced
+        // through everything already delivered, so a retry makes progress.
+        ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT") => Some(Status::resource_exhausted(
+            "RATE_LIMITED:REPLAY_TIME_LIMIT:replay did not complete within its time bound; \
+             resume from the last token",
+        )),
+        ReplayEnd::ScanLimit(reason) => expired(format!(
+            "{reason}:replay exceeds the bounded scan; a fresh snapshot is required"
+        )),
         ReplayEnd::Error(error) => Some(Status::unavailable(format!(
             "DEPENDENCY_UNAVAILABLE:replay reader failed: {error}"
         ))),
     }
 }
 
-/// Run a replay reader on a blocking thread. Records of the product flow
-/// through a bounded channel (the reader waits for the client); the join
-/// handle yields how the scan ended. The permit is held until the reader
-/// thread finishes; setting the cancel flag stops it within one poll.
-#[allow(clippy::too_many_arguments)]
+/// Submit a replay to the coordinator. Records of the product flow through a
+/// bounded channel in offset order; the receiver yields how the replay ended.
+/// Setting the cancel flag (or dropping the channel) ends it at the next
+/// record or poll.
 fn spawn_scan(
-    state: Arc<GatewayState>,
+    state: &Arc<GatewayState>,
     partition: i32,
     after: i64,
     barrier: i64,
     key: Vec<u8>,
     product: (String, Option<String>),
     page: Option<u64>,
-    permit: crate::replay::ReplayPermit,
 ) -> (
     mpsc::Receiver<Arc<LiveRecord>>,
     Arc<AtomicBool>,
-    tokio::task::JoinHandle<ReplayEnd>,
+    tokio::sync::oneshot::Receiver<ReplayEnd>,
 ) {
-    let (sender, receiver) = mpsc::channel::<Arc<LiveRecord>>(256);
+    let (sender, receiver) = mpsc::channel::<Arc<LiveRecord>>(REPLAY_CHANNEL);
+    let (done, end) = tokio::sync::oneshot::channel();
     let cancel = Arc::new(AtomicBool::new(false));
-    let flag = cancel.clone();
-    state
-        .pool
-        .metrics
-        .reader_replays
-        .fetch_add(1, Ordering::Relaxed);
-    let handle = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        state.pool.metrics.active.fetch_add(1, Ordering::Relaxed);
-        let limits = state.limits.replay.clone();
-        let mut emit = |raw: RawRecord| -> crate::replay::Emit {
-            let Ok(record) = LiveRecord::decode(Arc::new(raw)) else {
-                return crate::replay::Emit::Skip;
-            };
-            if !is_product(&product.0, product.1.as_deref(), &record.envelope) {
-                return crate::replay::Emit::Skip;
-            }
-            if sender.blocking_send(record).is_err() {
-                return crate::replay::Emit::Stop;
-            }
-            crate::replay::Emit::Sent
-        };
-        let end = scan_range(
-            state.range.as_ref(),
-            partition,
+    let deadline = Instant::now() + state.limits.replay.max_duration;
+    state.replay.submit(
+        partition,
+        ReplayRequest::new(
             after,
             barrier,
-            &key,
-            &limits,
+            key,
+            product,
             page,
-            &flag,
-            &state.pool.metrics,
-            &mut emit,
-        );
-        state.pool.metrics.active.fetch_sub(1, Ordering::Relaxed);
-        end
-    });
-    (receiver, cancel, handle)
+            sender,
+            done,
+            cancel.clone(),
+            deadline,
+        ),
+    );
+    (receiver, cancel, end)
+}
+
+/// What one subscription did, logged once when it ends (the native
+/// `qdl_stream_subscription` report): the evidence that reconciles a client's
+/// view with this replica.
+#[derive(Default)]
+struct Report {
+    replayed: AtomicU64,
+    delivered: AtomicU64,
+    aged_out: AtomicU64,
+    /// `ended` (client closed or run window over), a status description,
+    /// or `backpressure`.
+    outcome: Mutex<&'static str>,
 }
 
 struct SubscriptionTask {
+    report: Report,
     state: Arc<GatewayState>,
     _slot: StreamSlot,
     _registered: Registered,
@@ -726,7 +729,41 @@ enum Sent {
     Slow,
 }
 
+impl Drop for SubscriptionTask {
+    fn drop(&mut self) {
+        let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        let counters = &self.subscription.counters;
+        let (queued, queued_bytes) = self.subscription.queued();
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "qdl_kn_subscription_closed",
+                "subscription_id": self.subscription.id,
+                "consumer_id": self.subscription.consumer_id,
+                "physical_key": String::from_utf8_lossy(&self.key),
+                "feed": self.subscription.requirement.delivery.feed,
+                "interval": self.subscription.requirement.delivery.interval,
+                "after": self.after,
+                "replayed": load(&self.report.replayed),
+                "delivered": load(&self.report.delivered),
+                "aged_out_at_read": load(&self.report.aged_out),
+                "rejected_at_push": load(&counters.rejected_at_push),
+                "coalesced": load(&counters.coalesced),
+                "queued": queued,
+                "queued_bytes": queued_bytes,
+                "outcome": self.report.outcome.lock().map(|value| *value).unwrap_or("?"),
+            })
+        );
+    }
+}
+
 impl SubscriptionTask {
+    fn outcome(&self, value: &'static str) {
+        if let Ok(mut outcome) = self.report.outcome.lock() {
+            *outcome = value;
+        }
+    }
+
     async fn send(&self, response: Result<query::SubscribeResponse, Status>) -> Sent {
         match tokio::time::timeout(
             self.state.limits.slow_consumer_after,
@@ -741,11 +778,13 @@ impl SubscriptionTask {
     }
 
     async fn fail(&self, status: Status) {
+        self.outcome(status.code().description());
         let _ = tokio::time::timeout(Duration::from_secs(5), self.sender.send(Err(status))).await;
     }
 
     /// End the stream with the public BACKPRESSURE contract.
     async fn backpressure(&self, last: i64, detail: &str) {
+        self.outcome("backpressure");
         self.state.metrics.overflow.fetch_add(1, Ordering::Relaxed);
         let high = self.state.hub.next_offset(self.partition).unwrap_or(0) - 1;
         if let Ok(token) = self.state.sign(&self.claims, last) {
@@ -800,6 +839,20 @@ impl SubscriptionTask {
         }
     }
 
+    /// [`Self::deliver`] for a live record, recording its send-path waits.
+    async fn deliver_timed(&self, record: &LiveRecord, enqueued: Instant) -> Option<bool> {
+        let taken = Instant::now();
+        let result = self.deliver(record).await;
+        let metrics = &self.state.metrics;
+        metrics
+            .queue_wait
+            .record(taken.duration_since(enqueued).as_millis() as i64);
+        metrics
+            .handoff_wait
+            .record(taken.elapsed().as_millis() as i64);
+        result
+    }
+
     async fn run(self, barrier: i64, ring: Option<Vec<crate::hub::SharedRecord>>) {
         let replaying = subscribe_control(
             query::StreamControlState::Replaying,
@@ -818,7 +871,7 @@ impl SubscriptionTask {
             match ring {
                 Some(records) => {
                     self.state
-                        .pool
+                        .replay
                         .metrics
                         .ring_hits
                         .fetch_add(1, Ordering::Relaxed);
@@ -846,6 +899,7 @@ impl SubscriptionTask {
                             Some(delivered) => {
                                 if delivered {
                                     self.state.metrics.replayed.fetch_add(1, Ordering::Relaxed);
+                                    self.report.replayed.fetch_add(1, Ordering::Relaxed);
                                 }
                                 last = record.raw.offset;
                             }
@@ -854,28 +908,15 @@ impl SubscriptionTask {
                     }
                 }
                 None => {
-                    let Some(permit) = self
-                        .state
-                        .pool
-                        .acquire(&self.subscription.consumer_id)
-                        .await
-                    else {
-                        self.fail(Status::resource_exhausted(
-                            "RATE_LIMITED:replay reader capacity is exhausted",
-                        ))
-                        .await;
-                        return;
-                    };
                     let requirement = &self.subscription.requirement.delivery;
                     let (mut records, cancel, reader) = spawn_scan(
-                        self.state.clone(),
+                        &self.state,
                         self.partition,
                         self.after,
                         barrier,
                         self.key.clone(),
                         (requirement.feed.clone(), requirement.interval.clone()),
                         None,
-                        permit,
                     );
                     let _cancel = CancelOnDrop(cancel);
                     while let Some(record) = records.recv().await {
@@ -883,6 +924,7 @@ impl SubscriptionTask {
                             Some(delivered) => {
                                 if delivered {
                                     self.state.metrics.replayed.fetch_add(1, Ordering::Relaxed);
+                                    self.report.replayed.fetch_add(1, Ordering::Relaxed);
                                 }
                                 last = record.raw.offset;
                             }
@@ -891,7 +933,7 @@ impl SubscriptionTask {
                     }
                     let end = reader
                         .await
-                        .unwrap_or(ReplayEnd::Error("replay task failed".into()));
+                        .unwrap_or(ReplayEnd::Error("replay coordinator dropped".into()));
                     if let Some(status) = replay_end_status(&self.state, &end) {
                         self.fail(status).await;
                         return;
@@ -938,10 +980,19 @@ impl SubscriptionTask {
             return;
         }
         let mut revocation = self.state.authority.watch();
+        let mut shutdown = self.state.shutdown.subscribe();
         let mut filtered_since_delivery = 0usize;
         loop {
+            if *shutdown.borrow() {
+                self.fail(Status::unavailable(
+                    "GATEWAY_SHUTTING_DOWN:this replica is stopping; resume from the last token",
+                ))
+                .await;
+                return;
+            }
             let next = tokio::select! {
                 next = self.subscription.next() => next,
+                _ = shutdown.changed() => continue,
                 changed = revocation.changed() => {
                     if changed.is_err() {
                         return;
@@ -963,11 +1014,13 @@ impl SubscriptionTask {
                 () = self.sender.closed() => return,
             };
             match next {
-                Next::Record(record) => match self.deliver(&record).await {
+                Next::Record(record, enqueued) => match self.deliver_timed(&record, enqueued).await
+                {
                     Some(true) => {
                         filtered_since_delivery = 0;
                         last = record.raw.offset;
                         self.state.metrics.delivered.fetch_add(1, Ordering::Relaxed);
+                        self.report.delivered.fetch_add(1, Ordering::Relaxed);
                     }
                     Some(false) => {
                         // Aged out while queued: the cursor moves past it, and
@@ -979,6 +1032,7 @@ impl SubscriptionTask {
                             .metrics
                             .aged_out_at_read
                             .fetch_add(1, Ordering::Relaxed);
+                        self.report.aged_out.fetch_add(1, Ordering::Relaxed);
                         if filtered_since_delivery > self.subscription.depth {
                             self.backpressure(
                                 last,

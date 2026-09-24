@@ -31,6 +31,8 @@ pub struct KafkaSettings {
     pub fetch_wait_ms: u32,
 }
 
+use crate::memory::{LIVE_QUEUE_KBYTES, REPLAY_QUEUE_KBYTES};
+
 /// Groups the shared read principal may touch in production; a gateway reader
 /// must never use them (it never commits, but a mistaken id could).
 const PRODUCTION_GROUP_PREFIXES: [&str; 4] = [
@@ -67,6 +69,7 @@ impl KafkaSettings {
             .set("enable.partition.eof", "false")
             .set("fetch.wait.max.ms", self.fetch_wait_ms.to_string())
             .set("fetch.min.bytes", "1")
+            .set("queued.max.messages.kbytes", LIVE_QUEUE_KBYTES.to_string())
             .set("socket.timeout.ms", "10000");
         config.set("group.id", &self.group_id);
         if let Some((ca, cert, key)) = &self.tls {
@@ -101,6 +104,10 @@ impl KafkaSettings {
         let mut config = self.client_config();
         config
             .set("auto.offset.reset", "error")
+            .set(
+                "queued.max.messages.kbytes",
+                REPLAY_QUEUE_KBYTES.to_string(),
+            )
             .set("client.id", format!("{}-replay", self.client_id));
         config
             .create()
@@ -133,14 +140,28 @@ pub struct KafkaLogSource {
 impl KafkaLogSource {
     /// Returns the source and the first offset it will deliver per partition.
     pub fn open_at_end(settings: &KafkaSettings) -> Result<(Self, Vec<(i32, i64)>), String> {
+        Self::open_warm(settings, 0)
+    }
+
+    /// Start `warm_records` offsets before the high watermark (never below
+    /// the retention floor) so the ring already covers recent cursors after a
+    /// restart: a reconnect storm then replays from memory, not from a reader
+    /// per stream. The ring's byte/age bounds still apply.
+    pub fn open_warm(
+        settings: &KafkaSettings,
+        warm_records: i64,
+    ) -> Result<(Self, Vec<(i32, i64)>), String> {
         let consumer = settings.base_consumer()?;
         let mut list = TopicPartitionList::new();
         let mut starts = Vec::new();
         for partition in settings.partitions(&consumer)? {
-            let high = high_watermark(&consumer, &settings.topic, partition)?;
-            list.add_partition_offset(&settings.topic, partition, Offset::Offset(high))
+            let (low, high) = consumer
+                .fetch_watermarks(&settings.topic, partition, Duration::from_secs(10))
                 .map_err(|error| error.to_string())?;
-            starts.push((partition, high));
+            let start = (high - warm_records.max(0)).max(low);
+            list.add_partition_offset(&settings.topic, partition, Offset::Offset(start))
+                .map_err(|error| error.to_string())?;
+            starts.push((partition, start));
         }
         consumer.assign(&list).map_err(|error| error.to_string())?;
         Ok((
@@ -161,6 +182,7 @@ impl LogSource for KafkaLogSource {
                 offset: message.offset(),
                 key: message.key().unwrap_or_default().to_vec(),
                 payload: message.payload().unwrap_or_default().to_vec(),
+                timestamp_ms: message.timestamp().to_millis().unwrap_or(0),
             })),
             Some(Err(error)) => Err(error.to_string()),
             None => Ok(None),
@@ -181,15 +203,58 @@ impl LogSource for KafkaLogSource {
     }
 }
 
-/// Opens one bounded replay reader per replay (the pool bounds how many).
+/// Replay readers over Kafka. Connected consumers are kept for reuse (at
+/// most `idle_max`, the pool's reader count), so a replay does not pay a new
+/// connection, metadata fetch and group coordinator lookup each time.
 pub struct KafkaRangeSource {
     pub settings: KafkaSettings,
+    idle: std::sync::Arc<std::sync::Mutex<Vec<BaseConsumer>>>,
+    idle_max: usize,
+}
+
+impl KafkaRangeSource {
+    pub fn new(settings: KafkaSettings, idle_max: usize) -> Self {
+        Self {
+            settings,
+            idle: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            idle_max,
+        }
+    }
+
+    pub fn idle(&self) -> usize {
+        self.idle.lock().map(|idle| idle.len()).unwrap_or(0)
+    }
+
+    fn release(&self, consumer: BaseConsumer) {
+        release(&self.idle, self.idle_max, consumer);
+    }
+}
+
+/// Only an unassigned, healthy consumer goes back to the pool.
+fn release(idle: &std::sync::Mutex<Vec<BaseConsumer>>, idle_max: usize, consumer: BaseConsumer) {
+    if consumer.unassign().is_ok() {
+        if let Ok(mut idle) = idle.lock() {
+            if idle.len() < idle_max {
+                idle.push(consumer);
+            }
+        }
+    }
 }
 
 pub struct KafkaRangeCursor {
-    consumer: BaseConsumer,
+    consumer: Option<BaseConsumer>,
     topic: String,
     partition: i32,
+    idle: std::sync::Arc<std::sync::Mutex<Vec<BaseConsumer>>>,
+    idle_max: usize,
+}
+
+impl Drop for KafkaRangeCursor {
+    fn drop(&mut self) {
+        if let Some(consumer) = self.consumer.take() {
+            release(&self.idle, self.idle_max, consumer);
+        }
+    }
 }
 
 fn is_out_of_range(error: &KafkaError) -> bool {
@@ -201,39 +266,57 @@ fn is_out_of_range(error: &KafkaError) -> bool {
 
 impl RangeSource for KafkaRangeSource {
     fn open(&self, partition: i32, from: i64) -> Result<Box<dyn RangeCursor>, RangeError> {
-        let consumer = self.settings.range_consumer().map_err(RangeError::Other)?;
+        let reused = self.idle.lock().ok().and_then(|mut idle| idle.pop());
+        let consumer = match reused {
+            Some(consumer) => consumer,
+            None => self.settings.range_consumer().map_err(RangeError::Other)?,
+        };
         let (low, _) = consumer
             .fetch_watermarks(&self.settings.topic, partition, Duration::from_secs(10))
             .map_err(|error| RangeError::Other(error.to_string()))?;
         if from < low {
+            self.release(consumer);
             return Err(RangeError::Retention);
         }
         assign_from(&consumer, &self.settings.topic, partition, from).map_err(RangeError::Other)?;
         Ok(Box::new(KafkaRangeCursor {
-            consumer,
+            consumer: Some(consumer),
             topic: self.settings.topic.clone(),
             partition,
+            idle: self.idle.clone(),
+            idle_max: self.idle_max,
         }))
     }
 }
 
 impl RangeCursor for KafkaRangeCursor {
     fn next(&mut self, timeout: Duration) -> Result<Option<RawRecord>, RangeError> {
-        match self.consumer.poll(timeout) {
+        let Some(consumer) = self.consumer.as_ref() else {
+            return Err(RangeError::Other("replay reader closed".into()));
+        };
+        match consumer.poll(timeout) {
             Some(Ok(message)) => Ok(Some(RawRecord {
                 partition: message.partition(),
                 offset: message.offset(),
                 key: message.key().unwrap_or_default().to_vec(),
                 payload: message.payload().unwrap_or_default().to_vec(),
+                timestamp_ms: message.timestamp().to_millis().unwrap_or(0),
             })),
-            Some(Err(error)) if is_out_of_range(&error) => Err(RangeError::Retention),
-            Some(Err(error)) => Err(RangeError::Other(error.to_string())),
+            Some(Err(error)) if is_out_of_range(&error) => {
+                // A consumer that hit an error is not reused.
+                self.consumer = None;
+                Err(RangeError::Retention)
+            }
+            Some(Err(error)) => {
+                self.consumer = None;
+                Err(RangeError::Other(error.to_string()))
+            }
             None => Ok(None),
         }
     }
 
     fn position(&self) -> Option<i64> {
-        position(&self.consumer, &self.topic, self.partition)
+        position(self.consumer.as_ref()?, &self.topic, self.partition)
     }
 }
 
