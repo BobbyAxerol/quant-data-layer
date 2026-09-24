@@ -55300,8 +55300,9 @@ change production authority or certify a new release from this receipt alone.
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-24, source `bc397e7`;
-production packet gated on owner decisions - see [KN-3 receipt](#kn3-receipt)).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - R1 findings F1-F4 fixed, re-review
+requested (2026-09-24, see [R1](#kn3-astra-review-r1) and the slice 11 receipt;
+production packet gated on owner decisions).
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55335,9 +55336,9 @@ offsets or flush/delete shared state is implied by the plan.
 stop candidate path and restore readback config, keep old history/source intact.
 **Cleanup:** test prefix/topic/volume exact scope; no FLUSHDB shared; no removal
 of the sole old-history copy. Record before/after disk and retained rollback.
-**Astra review:** REQUESTED 2026-09-24 ([receipt](#kn3-receipt)); inspect dual
-offsets, generation/fence, precision, revision ordering, compaction/expiry and
-restore proof.
+**Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> fixed in slice 11;
+re-review REQUESTED 2026-09-24 to record ASTRA_REVIEW_PASS and open KN-4
+([R1](#kn3-astra-review-r1)).
 **Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
 
 #### KN-3 Execution Journal
@@ -56057,6 +56058,199 @@ Astra requested review points and next allowed step:
   completeness; legacy import provenance and receipt; parity checker
   judgement; sizing finding. Next: KN-4 after KN-2/KN-3 reviewed exits.
 ```
+
+<a id="kn3-astra-review-r1"></a>
+#### KN-3 Astra Review R1 - Recovery Branches Before PASS
+
+- 2026-09-24: **REVIEW_CHANGES_REQUIRED** at `c65d72e` (source flow review,
+  37/37 evidence hashes verified, no fault injection by the reviewer).
+  Direction accepted (two-stage Rust projector, Kafka as durable state,
+  separate market cache, canonical bytes/lineage/revision rules kept); the
+  gaps are specific failure branches, not a rewrite. Fixes stay inside KN-3.
+  - **R1-F1 [P1] memory pressure skips an unapplied batch.** Stage B has
+    already taken the batch from Kafka; on `MemoryPressure` the loop slept and
+    read on, so a later batch could move the checkpoint past unapplied
+    records, and a build could be declared finished from the consumer
+    position. Regression: OOM between two batches, memory freed, continue
+    without restart - no lost record, checkpoint never ahead of the data, no
+    early READY (normal and build mode).
+  - **R1-F2 [P1] BAR rows and a retention floor in one batch leave buckets.**
+    The buckets to delete came from the cache before the batch while the
+    batch's rows are written before the floor; buckets created by the same
+    batch below the floor were not deleted and `first` jumped to the floor, so
+    reclaim could never find them. Regression: one batch with many buckets and
+    a floor (fresh and existing generation), rows, physical keys, late repair.
+  - **R1-F3 [P1] generation leak on recovery.** A new staging generation
+    replaced an interrupted one without reclaiming it; publish and reclaim
+    were two steps, so a crash between them lost the generation to reclaim.
+    Regression: crash at both windows, restart repeatedly - READY correct,
+    key count/RAM not accumulating; resumable retirement, no new service.
+  - **R1-F4 [P1, contract section 5] full rebuild memory.** The stale-
+    checkpoint branch built a whole partition beside the old generations
+    (peak up to two caches); the contract wants product swaps, one product in
+    staging at a time, peak = steady + two largest products. Regression:
+    cache near full, checkpoint expired, old copy present - measure the peak,
+    reclaim before the next staging.
+  - Owner decisions relayed in the review: (1) Kafka identity - a dedicated
+    projector principal, not the shared `phase8-consumer`; the transition
+    adds a new client CA to the truststore beside the old one and issues the
+    projector certificate (broker config and rollout to be verified in the
+    production packet; not packet-ready here). (2) RAM - bucket 112 and a
+    higher cap after the recovery fixes: candidate `maxmemory`
+    1,500,000,000 B, container 1.75 GiB, confirmed only by a full-cap
+    measurement (staging, metadata, RSS); bucket 112 changed together in the
+    Rust writer, Python readback, checker, budget and tests. (3) Segments -
+    `segment.ms` 3,600,000 and `segment.bytes` 134,217,728 on the two state
+    topics only (budget, packet allowlist, verifier, tests); cleaner lag and
+    disk still measured. CPU: 0.38 measured at the 3,000/s challenge, so the
+    0.3 allocation is no longer treated as met - the budget is updated to the
+    measurement.
+- 2026-09-24: **Design decisions D18-D21 for R1 (recorded before code).**
+  - D18 (F1) An apply failure of a batch (cache error, memory pressure, CAS
+    exhaustion) seeks every partition of that batch back to its applied
+    checkpoint before the error is returned, so the same records are read
+    again; a build finishes only from positions of applied data. A rebuild
+    replay that fails is abandoned (staging retired) and stays queued.
+  - D19 (F2) Floor operations are built after all rows of the batch: the
+    bucket range starts at the lowest open the batch itself writes for that
+    product/generation when it is below the cached `first`.
+  - D20 (F3) Retirement is recorded atomically: the Lua stage / publish /
+    unpublish ops add every superseded generation of the product to the set
+    `kn3:<env>:retire` (`<generation>|<lpk>`) in the same script; the owner
+    reclaims and removes the member afterwards, and every replica resumes
+    pending members (bounded per step; a member that is a live ready/staging
+    generation is dropped without reclaim).
+  - D21 (F4) A partition is built as a whole only when none of its products
+    has a ready generation (empty cache: peak = the new data). Otherwise - a
+    checkpoint beyond the horizon or below the earliest offset, a missing
+    checkpoint with ready products, or products left staged by an
+    interrupted build - the partition tails from `max(checkpoint, earliest)`
+    and every such product is rebuilt with the D17 replay, one product in
+    staging per replica (two replicas = two largest products), the next
+    staging only after the previous generation is reclaimed. The obligations
+    are kept in the rebuild request set (`kn3:<env>:rebuild`) and removed
+    only when the product is published, so a restart resumes them; a product
+    without a ready generation that is queued is not written by the live
+    path (the replay builds it, no dual write).
+- 2026-09-24: **R1 isolated flow runtime packet (recorded before running).**
+  Same scope, services and production read-only boundary as the K3-T08
+  packet above, with: market cache candidate `maxmemory` 1,500,000,000 B in a
+  1.75 GiB container (bucket 112 build), state topics with `segment.ms`
+  3,600,000 / `segment.bytes` 134,217,728, the R1 projector binary. Steps: (1)
+  capture + history load (`--no-filler`) and legacy import as before; (2)
+  **synthetic fill to the D15 cap** - for every BAR product below its cap,
+  copies of its own imported rows re-timed to earlier opens (same bytes except
+  times/event id, `LEGACY_BAR` lineage stream `kn3-synthetic-fill`), so the
+  cache holds 1,699,216 rows of real row sizes (labelled synthetic in every
+  receipt; never parity evidence); (3) cold build at full cap - time, Redis
+  `used_memory`, container RSS, CPU; (4) 3,000/s challenge - CPU per replica;
+  (5) **warm rebuild at full cap**: every checkpoint made older than the
+  horizon, both replicas restarted - rolling per-product rebuild duration,
+  peak `used_memory` and RSS vs steady + two largest products, no memory
+  pressure, products READY throughout; SIGKILL of one replica during it and
+  resume; (6) parity (`ready`, `latest`, `bars --import-receipt`) and key /
+  generation accounting (no generation other than ready); (7) bars-topic
+  bytes and cleaner lag with the segment settings. Cleanup as before
+  (`docker stop` so anonymous volumes go; exact `kn3-flow-*` scope).
+- 2026-09-24: **KN-3 slice 11 - Astra R1 F1-F4 fixed (D18-D21), bucket 112,
+  segment settings, measured sizing: implemented, tested locally + isolated
+  Kafka/Redis + isolated full flow at cap.**
+  - Source: `rust/qdl-projector/src/stage_b.rs` (D18 rewind, D19 floor ops
+    after rows, D20 retirement processing, D21 rolling per-product rebuild,
+    obligations, key filter before decode, zero-record product unpublished),
+    `apply.lua` (S/P/U ops retire the superseded generation in the same
+    script), `cache.rs` (`BUCKET_OPENS` 112, retire / rebuild-request /
+    lazyfree helpers), `main.rs` (request taking moved into stage B; probe
+    cadence = `QDL_KN_REBUILD_POLL_S`; status fields). Tests: new
+    `tests/common/mod.rs` (shared log/source/reader fixtures; the in-memory
+    log now keeps the high watermark across compaction, as Kafka does),
+    `tests/stage_b_memory.rs`, `tests/recovery_kafka.rs`, R1 cases in
+    `tests/stage_b_redis.rs`, horizon test rewritten for D21, expiry slack
+    test on `BUCKET_OPENS`. Helper-built, Claude-reviewed and re-run:
+    `config/v2/kn-v220-candidate-budget.json` (segments, bucket 112 real-mix
+    sweep, CPU `projector_total` 0.4 measured / 0.5 per replica, sum 4.7 <=
+    5.0), `scripts/kn_state_topics_packet.py` + tests (segment settings
+    created, required and verified; config allowlist; old-config topic =
+    verify FAIL / apply HARD_STOP), `qdl/runtime/kn_bar_readback.py` +
+    tests (112; readback constant tied to `cache.rs`), `tests/
+    test_kn3_flow_check.py`, `tests/test_kn_v220_budget.py`. Claude:
+    budget `sizing_measured_kn3_r1` (below) + its test.
+  - Regressions (each **fails on the old source `c65d72e`** - run on a
+    separate target directory - and passes now):
+    | Finding | Test | Old source | Now |
+    |---|---|---|---|
+    | F1 tailing | `stage_b_memory::r1_f1_memory_pressure_between_batches_loses_nothing_while_tailing` (OOM between batches, freed, same stage continues: rows = checkpoint at every refusal, then 1,550/1,550) | checkpoint ran to the end with rows missing | pass |
+    | F1 build | `stage_b_memory::r1_f1_memory_pressure_during_a_cold_build_never_publishes_early` | product READY before its rows were applied | pass |
+    | F2 | `stage_b_redis::r1_f2_a_floor_in_the_batch_of_its_rows_leaves_no_bucket_below_it` (fresh and existing generation, one batch: rows 20, no bucket below the boundary, meta rows = bucket rows, `rk` above the floor, late repair not kept, reclaim leaves no key) | 252 rows kept | pass |
+    | F3 | `stage_b_redis::r1_f3_interrupted_builds_and_swaps_leave_no_generation_behind` (5 interrupted builds, then a replaced staging + a publish without reclaim, resumed by the next owner) | generations {1,3,5,7,9} leaked | pass |
+    | F4 | `stage_b_memory::r1_f4_a_rolling_rebuild_of_a_near_full_cache_stays_within_two_products` (cap = steady + 2 products; 6 products x 2,000 rows) | several products staged at once | pass: peak = steady + 1.16 products |
+    | combined | `recovery_kafka::r1_memory_pressure_crashes_and_a_rolling_rebuild_converge_to_the_log` (real Kafka: OOM while tailing + crash, horizon rolling rebuild + crash, third owner resumes; all rows, one generation per product, no retirement/request left) | - | pass |
+  - Test totals (working tree): workspace 293 passed / 0 failed / 49
+    ignored; all ignored `qdl-projector` tests 46/46 on disposable Kafka + 2
+    Redis; KN Python suites 121 OK offline (6 service cases skipped offline,
+    run with services by the helper: 47 OK x 2 rounds, packet broker
+    integration 28 OK x 2 rounds). Staged content (exact commit tree):
+    fmt + clippy `-D warnings` clean; workspace 293/0/49; ignored
+    `qdl-projector` 46/46 x 3 rounds (disposable Kafka + 2 Redis); KN Python
+    suites with Kafka/Redis 2 rounds OK (1 skip: the packet's authorizer-
+    broker integration, run by the helper as above); BAR-edge suites (8
+    modules) OK.
+  - **R1 isolated flow (packet above), evidence
+    `/home/bobby/.local/state/qdl-v2/kn3-20260924-r1/evidence` `SHA256SUMS`
+    `c8f2fde4...d88b`**, binary `3b3c2d35...cbaf`, production read only via the
+    read-only spool (container set identical before/after):
+    - Data: capture 185,653 real records / 190 keys; history 111,409;
+      legacy import 938,667 rows (receipt `ee774852...147d`, PASS); synthetic
+      fill 599,143 rows -> 1,537,810 BAR rows (90.5 % of the 1,699,216-row
+      cap; long intervals stop at 1970).
+    - Cold build at that size, bucket 112, `maxmemory` 1.5e9 / 1.75 GiB:
+      206 products READY in 244 s; `used_memory` 1,162,574,104 B (756.0
+      B/row all structures), RSS 1,154 MB, fragmentation 0.98; one replica
+      CPU-bound at 0.5, the cache at 0.436 of its 0.5.
+    - 3,000/s challenge: 180,061 committed + 35,969 aborted; stage A lag 6;
+      projectors 0.347 vCPU together (0.130 + 0.217).
+    - **Warm rebuild at cap** (every checkpoint beyond the horizon, both
+      replicas restarted, replica b SIGKILLed at 90 s and restarted): 206
+      products rebuilt one per replica in 2,747 s; READY never below 206;
+      at most 2 products staged; peak `used_memory` 1,183,558,488 B = steady
+      + 20,991,944 B (about two largest products); final = steady; retire set
+      max 0 pending at every sample, 0 abandoned. The duration is dominated
+      by one partition replay per product (about 256 k frames at 0.5 vCPU) -
+      a multi-product replay pass within the same memory bound is the known
+      optimisation, not needed for correctness.
+    - Parity after the rebuild: `latest` 66/66; `bars --import-receipt`
+      937,432/937,432 byte-equal (1,235 trimmed / 1,541 appended by the live
+      spool since the import); `ready` 206 READY, 10 ABSENT (no source);
+      14,094 data keys, all in the ready generation of their product.
+    - Segments: rolled 128 MB segments were cleaned in 0.4-2.4 s per pass
+      (0 % reduction there: all keys distinct); `md.bars.v2` 1.50 GB.
+    - Sizing adopted into the budget (`market_cache.sizing_measured_kn3_r1`):
+      steady at cap 1,284,607,296 B, peak 1,305,599,240 B, `maxmemory`
+      1,500,000,000 B (headroom 194 MB), container 1,879,048,192 B (1.75
+      GiB). The KN-1 cap (1,288,490,188 B) would hold steady by < 4 MB and not
+      a rebuild. Budget SHA-256 `b192a98b...940a`; production review token
+      (offline, `User:kn-projector`) `APPLY_QDL_KN3_STATE_TOPICS_7fb233698c952c01`.
+    - Cleanup: 0 `kn3-*` containers/networks, no anonymous volume left;
+      capture deleted after hashing; evidence 8.1 MB kept to review.
+  - Owner decisions recorded, still gates of the production packet (not
+    KN-3 implementation gaps): dedicated projector principal via an added
+    client CA in the truststore (broker config and rollout to verify);
+    `maxmemory` 1.5e9 / 1.75 GiB; segment settings (packet ready).
+- 2026-09-24: **R1 resolution and re-review request (Claude -> Astra).**
+  | Item | Resolution | Evidence |
+  |---|---|---|
+  | F1 memory pressure skips a batch | D18: failed batch sought back to its checkpoint; failed replay abandoned and re-queued; build never finishes past unapplied data | two `stage_b_memory` F1 tests; combined `recovery_kafka` |
+  | F2 floor + rows in one batch | D19: floor bucket range includes the batch's own lowest write | `stage_b_redis` F2 test (fresh + existing generation) |
+  | F3 generation leak | D20: retirement written by the same Lua script as the swap; resumed by any replica; staging replacement retired | `stage_b_redis` F3 test; flow: 14,094 keys all in ready generations, retire set 0 |
+  | F4 full-rebuild memory | D21: rolling per-product swaps (one staging per replica, next after reclaim); whole-partition build only with no served product | `stage_b_memory` F4 (peak steady + 1.16 products); flow at cap: peak steady + 21 MB, READY 206 throughout |
+  | RAM decision | bucket 112 in writer/readback/checker/budget/tests; `maxmemory` 1.5e9 / 1.75 GiB measured at cap | `sizing_measured_kn3_r1` |
+  | Segment decision | 1 h / 128 MiB on both state topics in budget, packet allowlist, verifier, tests | packet tests incl. real broker drift case |
+  | CPU | 0.3 no longer claimed; 0.4 total measured / 0.5 per replica, sum 4.7 <= 5.0 | budget `projector_measured`, flow 0.347 |
+  Not claimed: production apply of anything; live freshness or consumer
+  endpoint latency (KN-4/KN-5); the dedicated principal's broker rollout.
+  **Request:** Astra re-review of slice 11 for **ASTRA_REVIEW_PASS on KN-3**
+  and, on PASS, KN-4 entry per the tracker ("KN-4 only after KN-2 and KN-3
+  reviewed exits"; KN-2 already PASS).
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

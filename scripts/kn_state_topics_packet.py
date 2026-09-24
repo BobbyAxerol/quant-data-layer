@@ -31,6 +31,16 @@ Modelled on ``scripts/phase103_apply_shared_primary_broker_scope.py``:
   (missing and extra entries, including ``User:*`` and wildcard/prefixed
   patterns that cover a planned resource).
 
+Topic configs (allowlist ``ALLOWED_TOPIC_CONFIGS``): ``cleanup.policy``,
+``min.insync.replicas``, ``delete.retention.ms``, ``min.compaction.lag.ms``
+(``md.bars.v2`` only), ``segment.ms`` and ``segment.bytes`` (owner decision,
+Astra KN-3 review R1: 3,600,000 ms / 134,217,728 B on both state topics, never
+on ``md.canonical.v2``) from the budget, plus the fixed
+``unclean.leader.election.enable=false`` and ``compression.type=producer``.
+``--create`` passes each as ``--config``. A state topic created before the
+segment settings (no ``segment.*`` override) is drift: verify FAIL, apply
+HARD_STOP; the packet never alters it.
+
 Boundary: never alters, deletes or re-partitions any topic, never touches
 ``md.canonical.v2`` beyond granting READ/DESCRIBE on it, never removes ACLs,
 never resets offsets, never uses ``kafka-configs.sh``. Topics and ACLs are
@@ -90,10 +100,22 @@ DEFAULT_TRANSACTIONAL_PREFIX = "kn-projector-v3-"
 # the budget is refused so a budget edit is never silently ignored.
 _BUDGET_CONFIG_KEYS = (
     "cleanup.policy", "min.insync.replicas", "delete.retention.ms", "min.compaction.lag.ms",
+    "segment.ms", "segment.bytes",
+)
+# Every state topic must carry these (owner decision, Astra KN-3 review R1:
+# the segment settings bound the never-compacted active segment). A budget
+# that drops one is refused, so the packet never provisions or verifies a
+# topic with the broker's default segments by accident.
+_REQUIRED_BUDGET_CONFIG_KEYS = (
+    "cleanup.policy", "min.insync.replicas", "delete.retention.ms", "segment.ms", "segment.bytes",
 )
 _BUDGET_STRUCTURAL_KEYS = ("key", "partitions", "replication_factor")
 # Same fixed policy as every existing stable topic (phaseb bootstrap).
 _FIXED_TOPIC_CONFIGS = {"unclean.leader.election.enable": "false", "compression.type": "producer"}
+# The only topic configs a plan may create or accept on the broker. verify
+# compares the exact set (a planned key missing or different, or any other
+# override present, is drift).
+ALLOWED_TOPIC_CONFIGS = frozenset(_BUDGET_CONFIG_KEYS) | frozenset(_FIXED_TOPIC_CONFIGS)
 
 _CLI_OPERATION = {"READ": "Read", "WRITE": "Write", "DESCRIBE": "Describe",
                   "IDEMPOTENT_WRITE": "IdempotentWrite"}
@@ -142,6 +164,9 @@ def load_state_topic_specs(budget_path: Path = BUDGET) -> tuple[dict[str, Any], 
         unknown = set(specs[name]) - set(_BUDGET_CONFIG_KEYS) - set(_BUDGET_STRUCTURAL_KEYS)
         if unknown:
             raise Refused(f"budget topic {name} has keys this packet does not provision: {sorted(unknown)}")
+        absent = [key for key in _REQUIRED_BUDGET_CONFIG_KEYS if key not in specs[name]]
+        if absent:
+            raise Refused(f"budget topic {name} lacks required configs: {absent}")
     return {name: dict(specs[name]) for name in names}, hashlib.sha256(raw).hexdigest()
 
 
@@ -251,6 +276,13 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
     for topic in topics:
         if topic["name"] in PROTECTED_TOPICS:
             raise Refused(f"plan touches protected topic {topic['name']}")
+        configs = topic.get("configs") or {}
+        outside = sorted(set(configs) - ALLOWED_TOPIC_CONFIGS)
+        if outside:
+            raise Refused(f"topic {topic['name']} configs outside the allowlist: {outside}")
+        absent = sorted(set(_REQUIRED_BUDGET_CONFIG_KEYS) - set(configs))
+        if absent:
+            raise Refused(f"topic {topic['name']} lacks required configs: {absent}")
     if plan.get("replication_override") is not None and plan["target"].get("backend") != "isolated-plaintext":
         raise Refused("replication override outside isolated mode")
     principal = plan.get("principal")
@@ -322,6 +354,9 @@ def validate_commands(plan: Mapping[str, Any], commands: Sequence[Sequence[str]]
                 raise Refused("topic commands may only be --create --if-not-exists")
             if args[3] in PROTECTED_TOPICS or args[3] not in STATE_TOPICS:
                 raise Refused(f"topic command on {args[3]} is not permitted")
+            keys = [args[i + 1].partition("=")[0] for i, token in enumerate(args) if token == "--config"]
+            if set(keys) - ALLOWED_TOPIC_CONFIGS:
+                raise Refused(f"topic configs {sorted(set(keys) - ALLOWED_TOPIC_CONFIGS)} are not permitted")
         else:
             if args[:3] != ["--add", "--allow-principal", plan["principal"]]:
                 raise Refused("ACL commands may only --add ALLOW for the plan principal")

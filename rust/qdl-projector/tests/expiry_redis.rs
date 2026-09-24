@@ -13,7 +13,7 @@ use qdl_contracts::qdl::marketdata::v2::{
 };
 use qdl_contracts::state_codec::{bar_key, floor_key, StateFrame};
 use qdl_contracts::state_contract::{LogicalProductKey, SourceCoordinate};
-use qdl_projector::cache::{bucket_of, Cache, Layout};
+use qdl_projector::cache::{bucket_of, Cache, Layout, BUCKET_OPENS};
 use qdl_projector::expiry::{
     plan_expiry, publish_expiry, ExpiryError, ExpiryPlan, ExpiryPublish, ExpirySink, ExpiryTask,
 };
@@ -481,25 +481,31 @@ fn a_plan_tombstones_every_fact_below_the_cap_and_stage_b_converges() {
 fn within_one_bucket_of_slack_there_is_no_plan() {
     let log = Log::default();
     let lpk = bar_lpk(UID);
-    for minute in 0..216u64 {
+    let slack = 100 + BUCKET_OPENS;
+    for minute in 0..slack {
         push_bar(&log, &lpk, minute, BarLifecycle::Final, 0, 1);
     }
     let mut stage = stage(&log, &environment("slack"));
     drain(&mut stage);
-    assert_eq!(meta(&mut stage, &lpk, "rows").as_deref(), Some("216"));
+    assert_eq!(meta(&mut stage, &lpk, "rows"), Some(slack.to_string()));
     assert_eq!(
         plan(&mut stage, &lpk, 100, 10_000),
         None,
-        "rows == cap + 116"
+        "rows == cap + one bucket"
     );
-    push_bar(&log, &lpk, 216, BarLifecycle::Final, 0, 1);
+    push_bar(&log, &lpk, slack, BarLifecycle::Final, 0, 1);
     drain(&mut stage);
-    let plan = plan(&mut stage, &lpk, 100, 10_000).expect("rows == cap + 117");
-    assert_eq!(plan.floor_ms, 117 * MIN, "the 100th newest of 0..=216");
-    assert_eq!(plan.expired_opens, 117);
+    let plan = plan(&mut stage, &lpk, 100, 10_000).expect("rows == cap + one bucket + 1");
+    let expired = BUCKET_OPENS + 1;
     assert_eq!(
-        plan.tombstone_keys.len(),
-        2 * 117,
+        plan.floor_ms,
+        expired * MIN,
+        "the 100th newest of 0..=slack"
+    );
+    assert_eq!(plan.expired_opens, expired);
+    assert_eq!(
+        plan.tombstone_keys.len() as u64,
+        2 * expired,
         "final + in-progress key per open"
     );
     // A floor never goes down: a plan whose floor does not rise is refused
@@ -791,7 +797,7 @@ fn day_and_week_bars_expire_on_the_venue_grid_and_months_are_refused() {
         publish(&log, &step);
         drain(&mut stage);
         assert_eq!(meta(&mut stage, &lpk, "rows").as_deref(), Some("100"));
-        // Every retained open is in its bucket, every bucket <= 116 opens,
+        // Every retained open is in its bucket, every bucket <= BUCKET_OPENS,
         // nothing below the floor is left.
         let lpk_text = lpk.encode();
         let mut retained = Vec::new();
@@ -802,7 +808,10 @@ fn day_and_week_bars_expire_on_the_venue_grid_and_months_are_refused() {
                 .arg(stage.cache.layout.bar_bucket(generation, &lpk_text, bucket))
                 .query(stage.cache.connection())
                 .unwrap();
-            assert!(fields.len() as u64 <= 116, "{interval}: bucket {bucket}");
+            assert!(
+                fields.len() as u64 <= BUCKET_OPENS,
+                "{interval}: bucket {bucket}"
+            );
             for field in fields {
                 let open: u64 = field.parse().unwrap();
                 assert_eq!(bucket_of(open, interval_ms), bucket);

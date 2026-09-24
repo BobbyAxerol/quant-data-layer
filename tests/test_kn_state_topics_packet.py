@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from scripts import kn_state_topics_packet as packet
@@ -34,6 +35,8 @@ from scripts.kn_state_topics_packet import (
 )
 
 PRINCIPAL = "User:kn-projector"
+# Owner decision, Astra KN-3 review R1: both state topics, never md.canonical.v2.
+SEGMENT_CONFIGS = {"segment.ms": "3600000", "segment.bytes": "134217728"}
 ISO = {"backend": "isolated-plaintext", "bootstrap": "localhost:9092", "exec_container": "kn3-pkt-kafka"}
 
 EXACT_ACLS = {
@@ -166,9 +169,12 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(topic["partitions"], spec["partitions"])
             self.assertEqual(topic["replication_factor"], spec["replication_factor"])
             expected = {k: str(spec[k]) for k in ("cleanup.policy", "min.insync.replicas",
-                                                  "delete.retention.ms", "min.compaction.lag.ms") if k in spec}
+                                                  "delete.retention.ms", "min.compaction.lag.ms",
+                                                  "segment.ms", "segment.bytes") if k in spec}
             expected.update({"unclean.leader.election.enable": "false", "compression.type": "producer"})
             self.assertEqual(topic["configs"], expected)
+            self.assertEqual({k: topic["configs"][k] for k in SEGMENT_CONFIGS}, SEGMENT_CONFIGS, name)
+            self.assertLessEqual(set(topic["configs"]), packet.ALLOWED_TOPIC_CONFIGS)
         self.assertEqual(by_name["md.bars.v2"]["configs"]["min.compaction.lag.ms"], "3600000")
         self.assertNotIn("min.compaction.lag.ms", by_name["md.latest.v2"]["configs"])
         self.assertEqual(by_name["md.latest.v2"]["replication_factor"], 3)
@@ -186,6 +192,11 @@ class PlanTests(unittest.TestCase):
                        "--resource-pattern-type", "prefixed"], commands)
         self.assertIn(["kafka-acls.sh", "--add", "--allow-principal", PRINCIPAL, "--operation",
                        "IdempotentWrite", "--cluster"], commands)
+        for create in commands[:2]:
+            configs = [create[i + 1] for i, token in enumerate(create) if token == "--config"]
+            self.assertIn("segment.ms=3600000", configs, create[4])
+            self.assertIn("segment.bytes=134217728", configs, create[4])
+            self.assertEqual(len(configs), 8 if create[4] == "md.bars.v2" else 7, configs)
         flat = [token for command in commands for token in command]
         for forbidden in ("--alter", "--delete", "--remove", "kafka-configs.sh", "All", "*"):
             self.assertNotIn(forbidden, flat)
@@ -210,6 +221,9 @@ class PlanTests(unittest.TestCase):
             variants.append(changed)
         changed = json.loads(json.dumps(base))
         changed["topics"][1]["configs"]["delete.retention.ms"] = "1"
+        variants.append(changed)
+        changed = json.loads(json.dumps(base))
+        changed["topics"][0]["configs"]["segment.ms"] = "604800000"
         variants.append(changed)
         changed = json.loads(json.dumps(base))
         changed["budget"]["sha256"] = "0" * 64
@@ -243,6 +257,34 @@ class RefusalTests(unittest.TestCase):
             tampered["topics"][0]["name"] = bad
             with self.assertRaises(Refused):
                 validate_plan(tampered)
+
+    def test_topic_configs_outside_the_allowlist_or_missing_segments_are_refused(self):
+        plan = _plan()
+        for mutate in (
+            lambda configs: configs.update({"retention.ms": "1000"}),
+            lambda configs: configs.update({"segment.jitter.ms": "0"}),
+            lambda configs: configs.pop("segment.ms"),
+            lambda configs: configs.pop("segment.bytes"),
+        ):
+            tampered = json.loads(json.dumps(plan))
+            mutate(tampered["topics"][1]["configs"])
+            with self.assertRaises(Refused):
+                validate_plan(tampered)
+        command = plan_commands(plan)[0] + ["--config", "retention.ms=1000"]
+        with self.assertRaises(Refused):
+            validate_commands(plan, [command, *plan_commands(plan)[1:]])
+
+    def test_budget_without_segment_settings_is_refused(self):
+        budget = json.loads(packet.BUDGET.read_text())
+        for topic in ("md.latest.v2", "md.bars.v2"):
+            for key in SEGMENT_CONFIGS:
+                edited = json.loads(json.dumps(budget))
+                del edited["retention"]["state_topics"][topic][key]
+                with tempfile.TemporaryDirectory(prefix="kn3-pkt-") as directory:
+                    path = Path(directory) / "budget.json"
+                    path.write_text(json.dumps(edited), encoding="utf-8")
+                    with self.assertRaises(Refused, msg=(topic, key)):
+                        _plan(budget_path=path)
 
     def test_forbidden_acls_are_refused(self):
         plan = _plan()
@@ -398,6 +440,11 @@ class ApplyVerifyTests(unittest.TestCase):
             ("md.latest.v2", "config", ("unclean.leader.election.enable", "true"),
              "config:unclean.leader.election.enable"),
             ("md.bars.v2", "drop", "compression.type", "config:compression.type"),
+            ("md.latest.v2", "config", ("segment.ms", "604800000"), "config:segment.ms"),
+            ("md.bars.v2", "config", ("segment.bytes", "1073741824"), "config:segment.bytes"),
+            ("md.bars.v2", "drop", "segment.ms", "config:segment.ms"),
+            ("md.latest.v2", "drop", "segment.bytes", "config:segment.bytes"),
+            ("md.latest.v2", "config", ("segment.jitter.ms", "0"), "config:segment.jitter.ms"),
         ]
         for topic, kind, value, field in cases:
             broker = _provisioned(plan)
@@ -464,6 +511,29 @@ class ApplyVerifyTests(unittest.TestCase):
         self.assertEqual(broker.mutations(), [])
         self.assertIn("md.bars.v2", result["hard_stop"]["topics"])
         self.assertEqual(broker.topics["md.bars.v2"]["configs"]["cleanup.policy"], "delete", "never altered")
+
+    def test_topics_created_with_the_old_config_are_drift(self):
+        """Topics created before the segment settings (the pre-R1 budget: no
+        segment override) fail verify and stop apply; nothing is altered."""
+        plan = _plan()
+        broker = FakeBroker()
+        for topic in plan["topics"]:
+            old = {k: v for k, v in topic["configs"].items() if k not in SEGMENT_CONFIGS}
+            broker.add_topic(topic["name"], topic["partitions"], topic["replication_factor"], old)
+        checked = verify(plan, broker)
+        self.assertEqual(checked["status"], "FAIL")
+        for name in ("md.latest.v2", "md.bars.v2"):
+            mismatches = {m["field"]: m for m in checked["verify"]["topics"][name]["mismatches"]}
+            self.assertEqual(set(mismatches), {"config:segment.ms", "config:segment.bytes"}, name)
+            self.assertEqual((mismatches["config:segment.ms"]["expected"], mismatches["config:segment.ms"]["actual"]),
+                             ("3600000", None))
+            self.assertEqual(mismatches["config:segment.bytes"]["expected"], "134217728")
+        result = apply(plan, broker, seal(plan)[1])
+        self.assertEqual((result["status"], result["mutations"]), ("HARD_STOP", 0))
+        self.assertEqual(set(result["hard_stop"]["topics"]), {"md.latest.v2", "md.bars.v2"})
+        self.assertEqual(broker.mutations(), [])
+        for name in ("md.latest.v2", "md.bars.v2"):
+            self.assertFalse(set(SEGMENT_CONFIGS) & set(broker.topics[name]["configs"]), "never altered")
 
     def test_extra_acl_is_a_hard_stop_before_any_mutation(self):
         plan = _plan()
@@ -579,6 +649,36 @@ class IsolatedBrokerIntegrationTest(unittest.TestCase):
             removed = runner.run(["kafka-acls.sh", "--remove", "--force", "--allow-principal", PRINCIPAL,
                                   "--operation", "Alter", "--topic", "md.latest.v2"])
             self.assertEqual(removed.returncode, 0)
+
+        # A topic with the pre-R1 config (no segment override): the harness
+        # deletes the two overrides with kafka-configs (the packet never can),
+        # verify FAILs on exactly those, apply stops; then the harness restores.
+        strip = ["kafka-configs.sh", "--alter", "--entity-type", "topics", "--entity-name", "md.latest.v2",
+                 "--delete-config", "segment.ms,segment.bytes"]
+        self.assertEqual(runner.run(strip).returncode, 0)
+        try:
+            deadline = time.monotonic() + 30
+            while True:
+                drift = verify(plan, runner)
+                fields = sorted(m["field"] for m in drift["verify"]["topics"]["md.latest.v2"]["mismatches"])
+                if fields or time.monotonic() > deadline:
+                    break
+                time.sleep(0.5)
+            self.assertEqual(drift["status"], "FAIL")
+            self.assertEqual(fields, ["config:segment.bytes", "config:segment.ms"])
+            self.assertEqual(drift["verify"]["topics"]["md.bars.v2"]["mismatches"], [])
+            stopped = apply(plan, runner, token)
+            self.assertEqual((stopped["status"], stopped["mutations"]), ("HARD_STOP", 0))
+            self.assertEqual(list(stopped["hard_stop"]["topics"]), ["md.latest.v2"])
+        finally:
+            restore = ["kafka-configs.sh", "--alter", "--entity-type", "topics", "--entity-name", "md.latest.v2",
+                       "--add-config", "segment.ms=3600000,segment.bytes=134217728"]
+            self.assertEqual(runner.run(restore).returncode, 0)
+        deadline = time.monotonic() + 30
+        while verify(plan, runner)["status"] != "PASS" and time.monotonic() < deadline:
+            time.sleep(0.5)
+        self.assertEqual(verify(plan, runner)["status"], "PASS")
+        evidence.update(old_config_drift={"fields": fields, "verify": drift["status"], "apply": stopped["status"]})
 
         # A divergent spec against the existing topic is a hard stop, never an alter.
         divergent = json.loads(json.dumps(plan))

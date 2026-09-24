@@ -40,12 +40,23 @@
       "rust_core": 0.9,
       "binance_bar_edge": 0.05,
       "stream_gateway_total": 0.4,
-      "projector": 0.3,
+      "projector_total": 0.4,
       "query_total": 0.4,
       "control_redis": 0.05,
       "market_cache": 0.1,
-      "sum": 4.6,
-      "status": "hypothesis to verify in KN-2..KN-5; not a result"
+      "sum": 4.7,
+      "status": "hypothesis to verify in KN-2..KN-5; not a result - except projector_total, which is measured (projector_measured)",
+      "projector_measured": {
+        "status": "measured in the isolated KN-3 slice 10 full-flow run (real canonical capture + legacy import, 2 replicas, docker stats every 5 s); not production and not a soak",
+        "evidence": "/home/bobby/.local/state/qdl-v2/kn3-20260924/evidence: resources-cold-and-live.txt (sha256 d31d3d70dd2863005e2430df1878f9eb81c9e8db41f5b5e0ae8b5363b5d61ab2), resources-whole-run.txt (48cde5dfdf30ea85eee8fee80552fc11604bda5ac830a31de8c32a4a55458511)",
+        "replicas": 2,
+        "allocation_vcpu_per_replica": 0.5,
+        "allocation_rule": "each replica is allocated 0.5 vCPU (its CPU cap): the cold build is CPU-bound at that cap. projector_total counts the steady draw of both replicas at the 3,000/s challenge (0.376, rounded up to 0.4) against steady_state_vcpu_max; counting the two per-replica allocations instead (1.0) would make the sum 5.3, above 5.0",
+        "superseded": "projector 0.3 for both replicas (KN-1 hypothesis) is not met: 0.376 measured at the 3,000/s challenge",
+        "challenge_3000_per_s": {"window": "live 3,000/s real-capture challenge, 10 samples per replica", "two_replicas_vcpu_mean": 0.376, "replica_a_vcpu_mean": 0.125, "replica_b_vcpu_mean": 0.251, "replica_a_vcpu_max": 0.327, "replica_b_vcpu_max": 0.396},
+        "whole_run": {"samples": [809, 825], "replica_vcpu_p95": [0.337, 0.391], "replica_vcpu_max": [0.53, 0.522], "replica_rss_max_mib": [100.2, 173.3]},
+        "cold_build": {"samples": 24, "replica_a_vcpu_mean": 0.051, "replica_b_vcpu_mean": 0.426, "replica_a_vcpu_max": 0.506, "replica_b_vcpu_max": 0.522, "note": "CPU-bound at the 0.5 cap per replica (206 products READY in 162-179 s)"}
+      }
     },
     "shadow_exception": {
       "max_actual_vcpu": 1.5,
@@ -75,13 +86,24 @@
     "process": "separate Redis process and config from the control/quota/admission Redis (KD10)",
     "image": "same redis image digest as stable_redis",
     "bar_row_encoding": "contract-complete and lossless: the canonical EventEnvelope protobuf without only the LPK-derived fields (instrument uid, venue, market, bar interval), behind a 48-byte state trailer (source offset u64, materializer epoch u64, canonical content SHA-256). Those four are restored from the product's LPK, which is the cache key, so no header is stored; every other field (schema name/version, provider, source id/role, native symbol, instrument id/revision, values, revision, final, supersedes, times, sequences, quality, provenance) stays in the row. A row whose uid/venue/market/interval differ from its key is refused; decode is verified against the stored hash. Mixed-history test: schema, source, provider, role, symbol and instrument transitions plus a correction decode byte-exact with one key.",
-    "bar_layout": "per-product hash buckets of 116 opens in listpack encoding; open time in integer milliseconds. The bucket size is a sizing parameter: bucket bytes land in allocator size classes, so bytes/row moved between 707 and 854 across the measured sizes for the same rows",
+    "bar_layout": "per-product hash buckets of 112 opens in listpack encoding; open time in integer milliseconds (owner decision, Astra KN-3 review R1: changed together in the Rust writer, Python readback, flow checker, budget and tests). The bucket size is a sizing parameter: bucket bytes land in allocator size classes, so bytes/row moved between 743.1 and 850.0 across the measured sizes on the real mix (707 to 854 on the earlier DOGE sample). 112 is the lowest real-mix point and leaves about 1 % before the next allocator size class, so a mix with slightly larger rows can cross it",
     "required_config": {"hash-max-listpack-entries": 128, "hash-max-listpack-value": 2048, "maxmemory-policy": "noeviction", "save": "", "appendonly": "no"},
     "measured_bytes_per_bar_row": {
-      "evidence": "kn1-20260923/sizing-r2/redis-buckets.json and redis-listpack2048.json (Redis 7.2.14, stable_redis image digest; 2,000 real final OKX DOGE 1m bars; max row 694 B); sizing-f5/redis-listpack512.json for the 512 result",
-      "lpk_state_listpack_bucket116": 707.4,
-      "lpk_state_listpack_bucket58": 708.1,
-      "lpk_state_listpack_by_bucket": {"40": 714.9, "48": 853.8, "56": 732.7, "58": 708.1, "64": 769.4, "72": 795.9, "80": 717.9, "96": 848.8, "112": 738.1, "116": 707.4, "120": 815.9, "128": 766.7},
+      "real_mix_kn3": {
+        "evidence": "/home/bobby/.local/state/qdl-v2/kn3-20260924/evidence: bucket-size-sweep.txt (sha256 5375a0d20bee5379cf2f6b54f7f9ccdb7690bbca9d2c3c24e9c9ce033ad1daca), cache-sizing-cold.txt (9395fdc0a6e5fec37e702349b48d1ed0c8d6876a986e474607f147a66bcd16b7), cache-encoding.txt (3628b77a6f6b78da706941815016da57d6ad3a8f1feb9d828cc6fdf3f5183d61); KN-3 slice 10 isolated full-flow run on a real canonical capture plus the legacy import",
+        "sample": "one-variable bucket sweep over 280,762 real rows of 45 products, OKX + Binance, all intervals; Redis 7.2 stable_redis image digest; every bucket listpack",
+        "lpk_state_listpack_bucket112": 743.1,
+        "lpk_state_listpack_by_bucket": {"58": 817.2, "64": 769.0, "72": 794.7, "80": 772.5, "88": 745.5, "96": 850.0, "100": 819.4, "104": 788.2, "108": 759.0, "112": 743.1, "116": 816.9, "120": 816.6, "128": 768.6},
+        "size_class_margin_bucket112": "about 1 % before the next allocator size class",
+        "whole_cache_bucket116": {"bar_rows": 938061, "dataset_bytes_per_row": 823.7, "used_memory_bytes_per_row": 825.2, "binance_bucket_bytes_per_row": 836.2, "okx_bucket_bytes_per_row": 786.1, "binance_rows": 475896, "okx_rows": 462165, "encoding": "listpack only", "note": "all BAR products of the full flow at bucket 116, measured before the bucket change; not re-measured at 112"}
+      },
+      "doge_1m_kn1": {
+        "evidence": "kn1-20260923/sizing-r2/redis-buckets.json and redis-listpack2048.json (Redis 7.2.14, stable_redis image digest; 2,000 real final OKX DOGE 1m bars; max row 694 B); sizing-f5/redis-listpack512.json for the 512 result",
+        "status": "earlier single-product sample (OKX DOGE 1m only); kept for provenance, superseded for sizing by real_mix_kn3 (824 B/row whole cache at 116 vs 707.4 here)",
+        "lpk_state_listpack_bucket116": 707.4,
+        "lpk_state_listpack_bucket58": 708.1,
+        "lpk_state_listpack_by_bucket": {"40": 714.9, "48": 853.8, "56": 732.7, "58": 708.1, "64": 769.4, "72": 795.9, "80": 717.9, "96": 848.8, "112": 738.1, "116": 707.4, "120": 815.9, "128": 766.7}
+      },
       "canonical_state_best_bucket64": 769.5,
       "every_field_json_listpack_bucket64": 1793.7,
       "canonical_hash_plus_zset": 935.6,
@@ -96,6 +118,7 @@
       "retained_opens_cap_rule": "demanded rows + 2064 headroom per product (10,000 -> 12,064; VN 500 -> 2,564)",
       "rows_at_cap": 1691524,
       "bar_rows_bytes_at_cap": 1197000000,
+      "bytes_per_row_basis": "KN-1 figures: every byte figure in this block is rows_at_cap x measured_bytes_per_bar_row.doge_1m_kn1.lpk_state_listpack_bucket116 (707.4). The real mix costs more (real_mix_kn3: 743.1 at bucket 112, 823.7 whole cache at 116); the measured full-cap sizing and the adopted limits are sizing_measured_kn3_r1",
       "other_structures_bytes": {"evidence": "kn1-20260923/sizing-f5/redis-keys.json (MEMORY USAGE of one string key per value size, LPK-length key)", "bar_identity_headers": 0, "latest_state_keys": 2100184, "empty_redis_baseline": 978880, "latest_rule": "67 demanded latest products (TRADE 11, QUOTE 10, MARK_INDEX_PRICE 10, BOOK_SNAPSHOT 18, BOOK_DELTA 18) at the largest observed canonical size + 48 B trailer; book 56,495 B bounds both book feeds", "header_rule": "none: the LPK-derived fields come from the key itself (R2); the R1 per-product header is withdrawn"},
       "steady_bytes_at_cap": 1200000000,
       "retained_today_rows": 933977,
@@ -108,7 +131,27 @@
       "fit_sensitivity": "fits only with the LPK row at an allocator-aligned bucket: at 64 opens (769.4 B/row) the cap is 1,305 MB and the full canonical row's best (769.5) also exceeds maxmemory. Headroom is 5.6 %. KN-3 sets each product's bucket size from its measured row size and re-measures every product before promotion",
       "maxmemory_bytes": 1288490188,
       "container_memory_limit_bytes": 1610612736,
-      "status": "starting cap for KN-3: re-measured with the real projector and all feeds before promotion; per-product staging is frozen in contract section 5; if the real projector does not fit, typed memory pressure stops promotion - the limit is never raised silently (a RAM increase is an owner decision)"
+      "status": "KN-1 hypothesis (DOGE 1m row sample), superseded for KN-3 by sizing_measured_kn3_r1 below; kept unchanged for provenance"
+    },
+    "sizing_measured_kn3_r1": {
+      "status": "owner-approved candidate (Astra KN-3 review R1: bucket 112 and a higher cap after the recovery fixes), confirmed by the full-cap measurement below; the production value is applied only by the production packet, never silently",
+      "evidence": "/home/bobby/.local/state/qdl-v2/kn3-20260924-r1/evidence (SHA256SUMS c8f2fde4b80f1c898f358cf33d8586c0f95804f6b9a28c9076f5fa80279cd88b): cold-build-full-cap.json, warm-rebuild-summary.json, synthetic-fill.json, generation-accounting.json",
+      "method": "isolated flow, bucket 112 projector, 2 replicas: real canonical capture + legacy import of 938,667 real rows, plus 599,143 synthetic rows (copies of each product's own rows re-timed to earlier opens, real row sizes, lineage kn3-synthetic-fill) up to the D15 cap where opens >= 0 allow it (long intervals cannot reach 12,064 opens after 1970)",
+      "rows_measured": 1537810,
+      "used_memory_measured_bytes": 1162574104,
+      "used_memory_rss_measured_bytes": 1154244608,
+      "bytes_per_row_all_structures": 756.0,
+      "rows_at_cap": 1699216,
+      "rows_at_cap_rule": "D15 on the current bundle: 140 x 12,064 + 1 x 4,064 + 3 x 2,064",
+      "steady_bytes_at_cap": 1284607296,
+      "warm_rebuild_peak_delta_measured_bytes": 20991944,
+      "warm_rebuild_rule": "rolling per-product rebuild (D21): one product in staging per replica, next staging after reclaim; measured peak = steady + 20,991,944 B over 206 products with 2 replicas (max 2 staged), 2,747 s, every product READY throughout, final memory = steady",
+      "peak_bytes_during_rebuild": 1305599240,
+      "maxmemory_bytes": 1500000000,
+      "headroom_below_maxmemory_bytes": 194400760,
+      "container_memory_limit_bytes": 1879048192,
+      "container_note": "1.75 GiB; Redis maxmemory is not the whole process memory (RSS 1,154 MB at 1,537,810 rows, fragmentation 0.98), so the container keeps about 570 MB above maxmemory",
+      "cpu_note": "the market cache reached its 0.5 vCPU cap during cold builds (mean 0.436); steady 0.1 is unchanged"
     }
   },
   "native_stream_profiles": {
@@ -122,10 +165,11 @@
     "bar_retained_opens_headroom": 2064,
     "bar_revision_audit": "append-only revision facts kept for every open inside the retained window; below the durable retention floor a tombstone is published",
     "tombstone_lifetime_ms": 604800000,
-    "rebuild_horizon": "a cache generation offline longer than the tombstone lifetime rebuilds from a fresh generation; it never overlays a cache that may have missed deletes",
+    "rebuild_horizon": "a cache generation offline longer than the tombstone lifetime never overlays a cache that may have missed deletes: every product is rebuilt from the state topics into a fresh generation and swapped one at a time (Astra KN-3 R1 D21; a partition with no served product is built as a whole)",
     "state_topics": {
-      "md.latest.v2": {"cleanup.policy": "compact", "key": "logical product key", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000},
-      "md.bars.v2": {"cleanup.policy": "compact", "key": "binding|open_time_ms|revision", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "min.compaction.lag.ms": 3600000},
+      "md.latest.v2": {"cleanup.policy": "compact", "key": "logical product key", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "segment.ms": 3600000, "segment.bytes": 134217728},
+      "md.bars.v2": {"cleanup.policy": "compact", "key": "binding|open_time_ms|revision", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "min.compaction.lag.ms": 3600000, "segment.ms": 3600000, "segment.bytes": 134217728},
+      "segments": "Owner decision, Astra KN-3 review R1 (2026-09-24), state topics only (never md.canonical.v2): segment.ms 3,600,000 (= md.bars.v2 min.compaction.lag.ms) and segment.bytes 134,217,728. The active segment is never compacted; with the broker defaults (7 d / 1 GiB) a partition could hold up to 1 GiB of superseded facts and tombstones. KN-3 slice 10 (kn3-20260924/evidence/compaction-slope.txt) measured md.bars.v2 1,414,806,714 B after expiry tombstones -> 545,833,261 B once segments rolled and compacted. Cleaner lag and disk are still measured, not certified by this setting.",
       "approval": "topic creation and ACLs are a separate KN-3 runtime packet"
     },
     "demand_only": "only products with manifest demand are materialized; provider wrappers keep serving bounded on-demand history outside the cache"

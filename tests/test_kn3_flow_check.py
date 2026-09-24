@@ -31,6 +31,8 @@ from qdl.adapters.intervals import canonical_interval_ms
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.kn_state_codec import encode_bar_row, encode_latest_value
 from qdl.projection.state_contract import MAX_OFFSET
+from qdl.runtime import kn_bar_readback
+from qdl.runtime.kn_bar_readback import bucket_of
 from tests.test_kn_bar_legacy_import import (
     build_spool,
     derived_bar,
@@ -119,7 +121,7 @@ def write_bars(client, env: str, generation: int, lpk, interval: str, payloads, 
         open_ms = open_ms_of(payload)
         if floor is not None and open_ms < floor:
             continue  # the floor removed it (op F)
-        key = f"{prefix}b:{generation}:{lpk.encode()}:{open_ms // (116 * interval_ms)}"
+        key = f"{prefix}b:{generation}:{lpk.encode()}:{bucket_of(open_ms, interval_ms)}"
         client.hset(key, str(open_ms), encode_bar_row(payload, lpk, offset, EPOCH))
         opens.append(open_ms)
         if market_data_pb2.EventEnvelope.FromString(payload).bar.is_final:
@@ -292,6 +294,14 @@ class BarsCheckTests(unittest.TestCase):
         return run_cli(["bars", "--sqlite", str(self.sqlite), "--catalog", str(CATALOG), "--environment", self.ENV,
                         "--cache-url", "redis://unused", "--out", str(self.dir / "bars.json"), "--page-rows", "2",
                         *extra], client=client)
+
+    def test_the_checker_buckets_with_the_readback_rule(self):
+        # One owner of the bucket rule (112 opens, `cache.rs` BUCKET_OPENS):
+        # the checker uses the readback's function, never its own literal.
+        self.assertIs(CHECK.bucket_of, kn_bar_readback.bucket_of)
+        self.assertEqual(kn_bar_readback.BUCKET_OPENS, 112)
+        self.assertNotRegex((ROOT / "scripts/kn3_flow_check.py").read_text(encoding="utf-8"),
+                            r"\b11[26]\b")
 
     def test_a_faithful_cache_passes_and_reads_only(self):
         client = FakeRedis()

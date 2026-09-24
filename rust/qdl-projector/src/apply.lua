@@ -147,6 +147,12 @@ local results = {}
 for index, op in ipairs(ops) do
   local code, lpk = op[1], op[2]
   if code == 'S' then
+    -- A staging generation replaced here (interrupted build or rebuild) is
+    -- retired in the same script, so no crash can lose it (D20).
+    local replaced = redis.call('HGET', key('ptr', lpk), 'staging')
+    if replaced and replaced ~= op[6] then
+      redis.call('SADD', key('retire'), replaced .. '|' .. lpk)
+    end
     redis.call('HSET', key('ptr', lpk), 'staging', op[6])
     -- A product's first pointer starts at fence 0.
     redis.call('HSETNX', key('ptr', lpk), 'fence', '0')
@@ -159,13 +165,21 @@ for index, op in ipairs(ops) do
     redis.call('HSET', ptr, 'ready', staged)
     redis.call('HDEL', ptr, 'staging')
     redis.call('HINCRBY', ptr, 'fence', 1)
-    -- The superseded generation (if any) is returned for reclaim.
+    -- The superseded generation (if any) is retired and returned for reclaim.
+    if op[3] ~= '' then
+      redis.call('SADD', key('retire'), op[3] .. '|' .. lpk)
+    end
     results[index] = op[3]
   elseif code == 'U' then
     -- The product has no state any more: its pointer goes (NOT_READY) and
     -- its generations are returned for reclaim ("ready,staging").
     redis.call('DEL', key('ptr', lpk))
     redis.call('SREM', key('parts', topic, partition), lpk)
+    for _, gone in ipairs({op[3], op[4]}) do
+      if gone ~= '' then
+        redis.call('SADD', key('retire'), gone .. '|' .. lpk)
+      end
+    end
     results[index] = op[3] .. ',' .. op[4]
   elseif code == 'L' then
     redis.call('HSET', key('l', op[3], lpk), 'v', op[8], 't', op[9], 'p', op[10], 'o', op[11])

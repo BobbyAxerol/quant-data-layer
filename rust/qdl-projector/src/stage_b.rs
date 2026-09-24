@@ -32,7 +32,7 @@ use qdl_contracts::state_contract::{
     bar_revision_decision, latest_apply_decision, ApplyDecision, BarState, LogicalProductKey,
     SourceCoordinate, MAX_OFFSET,
 };
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 /// The trailer offset of a legacy-imported row: no canonical coordinate
@@ -131,6 +131,12 @@ pub struct StageBMetrics {
     /// Partitions whose owner key vanished (cache state lost): rebuilt.
     pub ownership_lost: u64,
     pub cache_reconnects: u64,
+    /// Partitions tailed with every product rebuilt one by one (D21).
+    pub rolling_rebuilds: u64,
+    /// Superseded generations reclaimed from the retirement set (D20).
+    pub retired: u64,
+    /// Batches whose partitions were sought back after a failed apply (D18).
+    pub rewinds: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +178,26 @@ struct ActiveRebuild {
     topic: String,
     partition: i32,
     generation: u64,
+    /// Records of the product replayed so far (0 at the end = state gone).
+    records: u64,
+}
+
+/// A retention floor met in a batch; its bucket range is fixed after every
+/// row of the batch is known (D19).
+struct PendingFloor {
+    lpk: String,
+    generation: u64,
+    pointer: Pointer,
+    floor_ms: u64,
+    interval_ms: u64,
+    first: Option<u64>,
+    floor: Option<u64>,
+}
+
+/// A record key belongs to the product: the LPK itself (latest) or a BAR key
+/// `<lpk>|...`. Lets the replay skip other products without decoding.
+fn key_is_product(key: &[u8], lpk: &str) -> bool {
+    key.starts_with(lpk.as_bytes()) && (key.len() == lpk.len() || key.get(lpk.len()) == Some(&b'|'))
 }
 
 pub struct StageB<S: StateSource> {
@@ -190,6 +216,10 @@ pub struct StageB<S: StateSource> {
     /// time (ms) unless they leave the assignment first.
     fenced: HashMap<(String, i32), u64>,
     last_probe_ms: u64,
+    /// Products with a pending rebuild obligation in the cache request set
+    /// (D21): while one has no ready generation the live path leaves it to
+    /// the replay (no dual write).
+    obligations: HashSet<String>,
 }
 
 fn system_now_ms() -> u64 {
@@ -264,6 +294,7 @@ impl<S: StateSource> StageB<S> {
             rebuild: None,
             fenced: HashMap::new(),
             last_probe_ms: 0,
+            obligations: HashSet::new(),
         }
     }
 
@@ -302,6 +333,7 @@ impl<S: StateSource> StageB<S> {
             return Ok(());
         }
         self.last_probe_ms = now;
+        self.take_requests()?;
         let owned = self.owned();
         let owners = self.cache.owners(&owned)?;
         for ((topic, partition), owner) in owned.into_iter().zip(owners) {
@@ -419,16 +451,84 @@ impl<S: StateSource> StageB<S> {
             groups.entry(key).or_default().push(input);
         }
         let mut applied = 0;
+        let batch_partitions: Vec<(String, i32)> = groups.keys().cloned().collect();
         for ((topic, partition), inputs) in groups {
-            applied += self.partition_batch(&topic, partition, inputs)?;
+            match self.partition_batch(&topic, partition, inputs) {
+                Ok(count) => applied += count,
+                Err(error) => {
+                    // D18: nothing of this batch may be skipped - read it again.
+                    self.rewind(&batch_partitions);
+                    return Err(error);
+                }
+            }
         }
         // Idle builders may have reached their boundary (trailing markers).
         for (topic, partition) in assigned {
             self.finish_build_if_done(&topic, partition)?;
         }
         self.probe_ownership()?;
+        self.process_retirements(16)?;
         self.advance_rebuild()?;
         Ok(applied)
+    }
+
+    /// Seek every partition of a failed batch back to its applied checkpoint
+    /// (a partition that cannot be sought is prepared again).
+    fn rewind(&mut self, partitions: &[(String, i32)]) {
+        self.metrics.rewinds += 1;
+        for (topic, partition) in partitions {
+            let key = (topic.clone(), *partition);
+            let Some(next) = self.partitions.get(&key).map(|state| state.next) else {
+                continue;
+            };
+            if self.source.seek(topic, *partition, next).is_err() {
+                self.partitions.remove(&key);
+            }
+        }
+    }
+
+    /// Reclaim up to `max` retired generations (any replica may; a retired
+    /// generation is never written again, D20).
+    fn process_retirements(&mut self, max: usize) -> Result<usize, StageBError> {
+        let members = self.cache.retirements(max)?;
+        for member in &members {
+            let parsed = member
+                .split_once('|')
+                .and_then(|(generation, lpk)| Some((generation.parse::<u64>().ok()?, lpk)));
+            if let Some((generation, lpk)) = parsed {
+                let pointer = self.cache.pointer(lpk)?;
+                if pointer.ready != Some(generation) && pointer.staging != Some(generation) {
+                    self.metrics.reclaimed_keys +=
+                        self.cache
+                            .reclaim(generation, lpk, Self::bar_interval(lpk))?;
+                    self.metrics.retired += 1;
+                }
+            }
+            self.cache.retired(member)?;
+        }
+        Ok(members.len())
+    }
+
+    /// Take the requests of products held by this instance's partitions
+    /// into the rebuild queue (D17/D21); members stay until published.
+    fn take_requests(&mut self) -> Result<(), StageBError> {
+        let requested = self.cache.rebuild_requests()?;
+        let mut held = HashSet::new();
+        if !requested.is_empty() {
+            for (topic, partition) in self.owned() {
+                held.extend(self.cache.registry(&topic, partition)?);
+            }
+        }
+        let mut mine: Vec<String> = requested
+            .into_iter()
+            .filter(|lpk| held.contains(lpk))
+            .collect();
+        mine.sort();
+        self.obligations = mine.iter().cloned().collect();
+        for lpk in mine {
+            self.request_rebuild(&lpk);
+        }
+        Ok(())
     }
 
     fn prepare(&mut self, topic: &str, partition: i32) -> Result<PartitionState, StageBError> {
@@ -440,45 +540,63 @@ impl<S: StateSource> StageB<S> {
             .map_err(StageBError::Source)?;
         let now = (self.now_ms)();
         let horizon = self.limits.rebuild_horizon.as_millis() as u64;
-        // A product staged but never published means an owner stopped in
-        // the middle of a cold build (or before publishing a first-seen
-        // product): its checkpoint is fresh, but tailing from it would leave
-        // such products NOT_READY forever. Build the partition again.
-        let mut interrupted = false;
-        if checkpoint.is_some() {
-            for lpk in self.cache.registry(topic, partition)? {
-                let pointer = self.cache.pointer(&lpk)?;
-                if pointer.staging.is_some() && pointer.ready.is_none() {
-                    interrupted = true;
-                    break;
-                }
+        let mut any_ready = false;
+        let mut staged = Vec::new();
+        let mut held = Vec::new();
+        for lpk in self.cache.registry(topic, partition)? {
+            let pointer = self.cache.pointer(&lpk)?;
+            any_ready |= pointer.ready.is_some();
+            if pointer.staging.is_some() {
+                staged.push(lpk.clone());
+            }
+            if pointer.ready.is_some() || pointer.staging.is_some() {
+                held.push(lpk);
             }
         }
-        let state = match checkpoint {
-            Some(checkpoint)
-                if !interrupted
-                    && now.saturating_sub(checkpoint.at_ms) <= horizon
-                    && checkpoint.next >= earliest =>
-            {
-                PartitionState {
-                    fence,
-                    mode: Mode::Normal,
-                    next: checkpoint.next,
-                }
-            }
-            _ => {
-                self.metrics.builds += 1;
-                PartitionState {
-                    fence,
-                    mode: Mode::Build {
-                        generation: self.cache.allocate_generation()?,
-                        boundary: end,
-                    },
-                    next: earliest,
-                }
+        let fresh = checkpoint
+            .as_ref()
+            .filter(|checkpoint| {
+                now.saturating_sub(checkpoint.at_ms) <= horizon && checkpoint.next >= earliest
+            })
+            .map(|checkpoint| checkpoint.next);
+        // D21: build the partition as a whole only when none of its products
+        // is served (empty cache, or an interrupted first build): the peak is
+        // the new data. Otherwise tail and rebuild product by product.
+        if !any_ready && (fresh.is_none() || !staged.is_empty()) {
+            self.metrics.builds += 1;
+            return Ok(PartitionState {
+                fence,
+                mode: Mode::Build {
+                    generation: self.cache.allocate_generation()?,
+                    boundary: end,
+                },
+                next: earliest,
+            });
+        }
+        let (next, obligations) = match fresh {
+            // Products left staged by a stopped build/rebuild/first publish.
+            Some(next) => (next, staged),
+            // Beyond the horizon or below the earliest offset: the cache may
+            // have missed deletes, so every product is rebuilt from the log.
+            None => {
+                self.metrics.rolling_rebuilds += 1;
+                let start = checkpoint
+                    .map(|checkpoint| checkpoint.next)
+                    .unwrap_or(earliest)
+                    .max(earliest);
+                (start, held)
             }
         };
-        Ok(state)
+        self.cache.request_rebuilds(&obligations)?;
+        for lpk in obligations {
+            self.obligations.insert(lpk.clone());
+            self.request_rebuild(&lpk);
+        }
+        Ok(PartitionState {
+            fence,
+            mode: Mode::Normal,
+            next,
+        })
     }
 
     fn partition_batch(
@@ -652,10 +770,13 @@ impl<S: StateSource> StageB<S> {
         }
     }
 
-    /// The generations a product's record is written to in this mode.
-    fn targets(state: &PartitionState, pointer: &Pointer) -> Vec<u64> {
+    /// The generations a product's record is written to in this mode. A
+    /// product with a rebuild obligation and no ready generation is left to
+    /// its replay (D21: no dual write into the staging generation).
+    fn targets(&self, state: &PartitionState, lpk: &str, pointer: &Pointer) -> Vec<u64> {
         match state.mode {
             Mode::Build { generation, .. } => vec![generation],
+            Mode::Normal if pointer.ready.is_none() && self.obligations.contains(lpk) => Vec::new(),
             Mode::Normal => pointer.targets(),
         }
     }
@@ -671,6 +792,7 @@ impl<S: StateSource> StageB<S> {
         let mut order: Vec<(u64, String, Option<u64>)> = Vec::new();
         let mut groups: HashMap<(u64, String, Option<u64>), Group> = HashMap::new();
         let mut tail_ops: Vec<Op> = Vec::new();
+        let mut floors: Vec<PendingFloor> = Vec::new();
         let mut fresh = Vec::new();
         for (key, frame) in frames {
             let Some(lpk) = Self::product(key, frame) else {
@@ -681,13 +803,14 @@ impl<S: StateSource> StageB<S> {
                 if state.mode == Mode::Normal
                     && pointer.ready.is_none()
                     && pointer.staging.is_some()
+                    && !self.obligations.contains(&lpk)
                 {
                     fresh.push(lpk.clone());
                 }
                 pointers.insert(lpk.clone(), pointer);
             }
             let pointer = pointers[&lpk].clone();
-            let targets = Self::targets(state, &pointer);
+            let targets = self.targets(state, &lpk, &pointer);
             let Some(frame) = frame else {
                 // Latest tombstone: the product's state is gone - in log
                 // order with the other changes of the entry in this batch.
@@ -723,25 +846,23 @@ impl<S: StateSource> StageB<S> {
                         if floor.is_some_and(|floor| floor >= floor_ms) {
                             continue;
                         }
-                        let boundary = bucket_of(floor_ms, interval_ms);
-                        let buckets = match first {
-                            Some(first) => (bucket_of(first, interval_ms)..boundary).collect(),
-                            None => Vec::new(),
-                        };
                         self.metrics.floors += 1;
-                        tail_ops.push(Op::Floor {
+                        floors.push(PendingFloor {
                             lpk: lpk.clone(),
                             generation,
                             pointer: pointer.clone(),
                             floor_ms,
-                            buckets,
-                            boundary: Some(boundary),
+                            interval_ms,
+                            first,
+                            floor,
                         });
                     }
                 }
             }
         }
         let mut ops = Vec::new();
+        // Lowest open each (generation, product) row of this batch writes.
+        let mut written: HashMap<(u64, String), u64> = HashMap::new();
         for entry in order {
             let pointer = pointers[&entry.1].clone();
             match groups.remove(&entry) {
@@ -770,6 +891,9 @@ impl<S: StateSource> StageB<S> {
                 Some(Group::Bar(pending)) => {
                     if let Some((row, is_final)) = pending.write {
                         self.metrics.bars_applied += 1;
+                        let open_ms = entry.2.unwrap_or_default();
+                        let lowest = written.entry((entry.0, entry.1.clone())).or_insert(open_ms);
+                        *lowest = (*lowest).min(open_ms);
                         ops.push(Op::Bar {
                             lpk: entry.1.clone(),
                             generation: entry.0,
@@ -787,9 +911,43 @@ impl<S: StateSource> StageB<S> {
                 None => {}
             }
         }
-        // Notes, floors and deletes after the rows of this batch.
+        // Notes, then floors, after the rows of this batch.
         ops.extend(tail_ops);
+        ops.extend(Self::floor_ops(floors, &written));
         Ok((ops, fresh))
+    }
+
+    /// D19: a floor deletes every bucket from the lowest retained open -
+    /// the cached `first` or a lower open written by this very batch (rows are
+    /// applied before floors in the script) - up to its boundary bucket. A
+    /// batch row below the cached floor is refused by the script, so it does
+    /// not widen the range.
+    fn floor_ops(floors: Vec<PendingFloor>, written: &HashMap<(u64, String), u64>) -> Vec<Op> {
+        floors
+            .into_iter()
+            .map(|pending| {
+                let batch_low = written
+                    .get(&(pending.generation, pending.lpk.clone()))
+                    .copied()
+                    .filter(|open| pending.floor.is_none_or(|floor| *open >= floor));
+                let low = match (pending.first, batch_low) {
+                    (Some(first), Some(batch)) => Some(first.min(batch)),
+                    (first, batch) => first.or(batch),
+                };
+                let boundary = bucket_of(pending.floor_ms, pending.interval_ms);
+                let buckets = low
+                    .map(|low| (bucket_of(low, pending.interval_ms)..boundary).collect())
+                    .unwrap_or_default();
+                Op::Floor {
+                    lpk: pending.lpk,
+                    generation: pending.generation,
+                    pointer: pending.pointer,
+                    floor_ms: pending.floor_ms,
+                    buckets,
+                    boundary: Some(boundary),
+                }
+            })
+            .collect()
     }
 
     /// The batch group of a latest entry, created from the cache state
@@ -1099,6 +1257,9 @@ impl<S: StateSource> StageB<S> {
                         .filter_map(|value| value.parse::<u64>().ok())
                     {
                         self.metrics.reclaimed_keys += self.cache.reclaim(old, lpk, interval_ms)?;
+                        // Retired by the script in the same call as the swap.
+                        self.cache.retired(&format!("{old}|{lpk}"))?;
+                        self.metrics.retired += 1;
                     }
                 }
                 Ok(())
@@ -1122,16 +1283,23 @@ impl<S: StateSource> StageB<S> {
     }
 
     /// Start the next queued rebuild on a partition this instance tails.
+    /// Contract section 5: the next product's staging starts only after every
+    /// superseded generation is reclaimed and freed.
     fn start_rebuild(&mut self) -> Result<(), StageBError> {
+        if self.rebuild_queue.is_empty() {
+            return Ok(());
+        }
+        self.process_retirements(64)?;
+        if !self.cache.retirements(1)?.is_empty() || self.cache.lazyfree_pending()? > 0 {
+            return Ok(());
+        }
         while let Some(lpk) = self.rebuild_queue.pop_front() {
             if self.rebuild_reader.is_none() {
                 self.refuse_rebuild(&lpk, "no rebuild reader configured");
                 continue;
             }
             let mut owner = None;
-            let mut owned: Vec<(String, i32)> = self.partitions.keys().cloned().collect();
-            owned.sort();
-            for (topic, partition) in owned {
+            for (topic, partition) in self.owned() {
                 if self.cache.registry(&topic, partition)?.contains(&lpk) {
                     owner = Some((topic, partition));
                     break;
@@ -1143,16 +1311,16 @@ impl<S: StateSource> StageB<S> {
             };
             let state = self.partitions[&(topic.clone(), partition)].clone();
             if state.mode != Mode::Normal {
-                self.refuse_rebuild(&lpk, "its partition is building");
+                // Taken again from the request set once the build finished.
                 continue;
             }
             let pointer = self.cache.pointer(&lpk)?;
-            if pointer.ready.is_none() {
-                self.refuse_rebuild(&lpk, "not READY (a cold build covers it)");
+            if pointer.ready.is_none() && pointer.staging.is_none() {
+                self.refuse_rebuild(&lpk, "no generation (a cold build covers it)");
                 continue;
             }
             let generation = self.cache.allocate_generation()?;
-            let stale = pointer.staging;
+            // A replaced staging generation is retired by the script (D20).
             match self.cache.apply(
                 &topic,
                 partition,
@@ -1178,10 +1346,7 @@ impl<S: StateSource> StageB<S> {
                     return Ok(());
                 }
             }
-            if let Some(stale) = stale {
-                self.metrics.reclaimed_keys +=
-                    self.cache.reclaim(stale, &lpk, Self::bar_interval(&lpk))?;
-            }
+            self.process_retirements(64)?;
             let (earliest, _) = self
                 .source
                 .watermarks(&topic, partition)
@@ -1197,6 +1362,7 @@ impl<S: StateSource> StageB<S> {
                 topic,
                 partition,
                 generation,
+                records: 0,
             });
             return Ok(());
         }
@@ -1245,7 +1411,7 @@ impl<S: StateSource> StageB<S> {
             return self.abandon_rebuild("partition building");
         }
         let pointer = self.cache.pointer(&active.lpk)?;
-        if pointer.staging != Some(active.generation) || pointer.ready.is_none() {
+        if pointer.staging != Some(active.generation) {
             return self.abandon_rebuild("pointer changed");
         }
         let Some(reader) = self.rebuild_reader.as_mut() else {
@@ -1258,22 +1424,58 @@ impl<S: StateSource> StageB<S> {
             .position(&active.topic, active.partition)
             .map_err(StageBError::Source)?;
         let mut frames = Vec::new();
-        for input in inputs
-            .iter()
-            .filter(|input| input.topic == active.topic && input.partition == active.partition)
-        {
+        for input in inputs.iter().filter(|input| {
+            input.topic == active.topic
+                && input.partition == active.partition
+                && key_is_product(&input.key, &active.lpk)
+        }) {
             let frame = self.decode(&active.topic, active.partition, input)?;
             if Self::product(&frame.0, &frame.1).as_deref() == Some(active.lpk.as_str()) {
                 frames.push(frame);
             }
         }
-        if !frames.is_empty() && !self.rebuild_apply(&active, &state, &frames)? {
-            return Ok(());
+        if !frames.is_empty() {
+            match self.rebuild_apply(&active, &state, &frames) {
+                Ok(true) => {
+                    if let Some(current) = self.rebuild.as_mut() {
+                        current.records += frames.len() as u64;
+                    }
+                }
+                Ok(false) => return Ok(()),
+                Err(error) => {
+                    // D18: the replay read past records it could not apply.
+                    // Drop this attempt; the request stays queued (and in the
+                    // cache set) for a fresh replay.
+                    let lpk = active.lpk.clone();
+                    let _ = self.abandon_rebuild("apply failed");
+                    self.rebuild_queue.push_front(lpk);
+                    return Err(error);
+                }
+            }
         }
         let replayed = position
             .or_else(|| inputs.last().map(|input| input.offset + 1))
             .unwrap_or(0);
         if replayed < state.next {
+            return Ok(());
+        }
+        let records = self.rebuild.as_ref().map_or(0, |current| current.records);
+        if records == 0 {
+            // The log holds nothing of the product any more: its state is
+            // gone (NOT_READY), both generations retired.
+            let pointer = self.cache.pointer(&active.lpk)?;
+            self.apply_pointer_ops(
+                &active.topic,
+                active.partition,
+                &state,
+                vec![Op::Unpublish {
+                    lpk: active.lpk.clone(),
+                    pointer,
+                }],
+            )?;
+            if self.cache.pointer(&active.lpk)?.staging.is_none() {
+                self.complete_rebuild(&active.lpk)?;
+            }
             return Ok(());
         }
         // The staged generation now holds every record ready applied.
@@ -1299,11 +1501,18 @@ impl<S: StateSource> StageB<S> {
             }],
         )?;
         if self.cache.pointer(&active.lpk)?.ready == Some(active.generation) {
-            self.metrics.rebuilds_completed += 1;
-            self.rebuild = None;
-            if let Some(reader) = self.rebuild_reader.as_mut() {
-                reader.stop().map_err(StageBError::Source)?;
-            }
+            self.complete_rebuild(&active.lpk)?;
+        }
+        Ok(())
+    }
+
+    fn complete_rebuild(&mut self, lpk: &str) -> Result<(), StageBError> {
+        self.metrics.rebuilds_completed += 1;
+        self.rebuild = None;
+        self.cache.rebuild_done(lpk)?;
+        self.obligations.remove(lpk);
+        if let Some(reader) = self.rebuild_reader.as_mut() {
+            reader.stop().map_err(StageBError::Source)?;
         }
         Ok(())
     }

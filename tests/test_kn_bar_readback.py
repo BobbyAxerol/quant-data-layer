@@ -2,7 +2,8 @@
 
 The cache is populated in the exact layout of ``rust/qdl-projector/src/cache.rs``
 and ``apply.lua`` (``kn3:<env>:ptr:<lpk>`` {ready, staging, fence},
-``kn3:<env>:b:<g>:<lpk>:<open div (116 x interval)>`` {<open_ms>: trailer+row})
+``kn3:<env>:b:<g>:<lpk>:<open div (BUCKET_OPENS x interval)>`` {<open_ms>: trailer+row},
+``BUCKET_OPENS`` = 112)
 with rows encoded by the shared codec from real canonical BAR records (the
 committed codec golden) and synthetic derivations marked ``k36-test``.
 
@@ -14,7 +15,9 @@ itself belongs to the full-flow run (K3-T08), not to this file.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import tempfile
 import time
 import unittest
@@ -132,7 +135,7 @@ class ReadbackUnitTests(unittest.TestCase):
     def test_counts_only_final_rows_of_the_asked_opens(self):
         in_progress = derived_bar(self.real, 1, final=False)
         revised = derived_bar(self.real, -1, revision=1)
-        older = [derived_bar(self.real, -shift) for shift in range(2, 250)]  # spans three buckets
+        older = [derived_bar(self.real, -shift) for shift in range(2, 250)]  # spans several buckets
         put_rows(self.redis, ENVIRONMENT, self.source, 5, [self.real, in_progress, revised, *older])
         asked = frozenset(self.base + shift * self.interval_ms for shift in range(-300, 3))
         covered = self.readback.durable_final_bar_opens(self.source, asked)
@@ -216,6 +219,19 @@ class ReadbackUnitTests(unittest.TestCase):
         self.assertEqual(len(pointer_reads), 2 + 2 * len(bars))
         self.redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "13")
         self.assertNotEqual(self.readback.cache_identity(bars), first)
+
+    def test_bucket_size_matches_the_rust_writer_and_the_budget(self):
+        # Owner decision, Astra KN-3 review R1: 112 opens, changed together in
+        # the Rust writer, this readback, the checker and the budget.
+        self.assertEqual(BUCKET_OPENS, 112)
+        rust = (ROOT / "rust/qdl-projector/src/cache.rs").read_text(encoding="utf-8")
+        match = re.search(r"^pub const BUCKET_OPENS: u64 = (\d+);$", rust, flags=re.M)
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), BUCKET_OPENS)
+        budget = json.loads((ROOT / "config/v2/kn-v220-candidate-budget.json").read_text(encoding="utf-8"))
+        self.assertIn(f"buckets of {BUCKET_OPENS} opens", budget["market_cache"]["bar_layout"])
+        self.assertEqual(bucket_of(BUCKET_OPENS * 60_000 - 1, 60_000), 0)
+        self.assertEqual(bucket_of(BUCKET_OPENS * 60_000, 60_000), 1)
 
     def test_environment_selection(self):
         with self.assertRaises(ValueError):

@@ -17,7 +17,8 @@ Rust projector stage B writes (``rust/qdl-projector/src/cache.rs`` +
   SQLite path raises when its cache cannot be read, never an empty "nothing is
   durable" answer that would make the edge re-publish history;
 * only the asked opens are read: one ``HMGET`` per bucket
-  ``b:<g>:<lpk>:<open_ms div (116 x interval_ms)>`` (no SCAN/KEYS);
+  ``b:<g>:<lpk>:<open_ms div (BUCKET_OPENS x interval_ms)>`` with
+  ``BUCKET_OPENS`` = 112 (no SCAN/KEYS);
 * every returned row is decoded with ``decode_bar_row`` (trailer hash proven)
   and must be a BAR of the binding's full identity (the same predicate as the
   SQLite path, ``bar_envelope_matches_binding``) at the asked open; anything
@@ -49,10 +50,14 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.kn_state_codec import StateCodecError, decode_bar_row
 from qdl.projection.state_contract import CacheReadState, LogicalProductKey
 
-# The listpack bucket size of the Rust cache (`cache.rs` BUCKET_OPENS).
-BUCKET_OPENS = 116
+# The listpack bucket size of the Rust cache (`cache.rs` BUCKET_OPENS): 112
+# opens (owner decision, Astra KN-3 review R1; the lowest bytes/row of the
+# real-mix sweep, `market_cache.bar_layout` in the KN v2.2.0 budget). Writer,
+# readback and checker must agree or reads miss rows.
+BUCKET_OPENS = 112
 # Buckets per pipeline round trip; 10,000 opens of any fixed interval span at
-# most 88 buckets, so one or two round trips answer a full warmup window.
+# most 91 buckets (12,064 at most 109), so two round trips answer a full
+# warmup window.
 MAX_BUCKETS_PER_ROUND_TRIP = 64
 READBACK_ENV = "QDL_STABLE_BAR_READBACK"
 MARKET_CACHE_URL_ENV = "QDL_KN3_MARKET_CACHE_URL"
@@ -114,7 +119,7 @@ def bar_envelope_matches_binding(envelope: market_data_pb2.EventEnvelope, source
 
 
 def bucket_of(open_ms: int, interval_ms: int) -> int:
-    """``cache.rs`` ``bucket_of``: ``open_ms div (116 x interval_ms)``."""
+    """``cache.rs`` ``bucket_of``: ``open_ms div (BUCKET_OPENS x interval_ms)``."""
 
     return open_ms // (BUCKET_OPENS * max(interval_ms, 1))
 

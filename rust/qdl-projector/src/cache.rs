@@ -10,13 +10,14 @@
 
 use redis::{Connection, Script};
 
-/// Opens per BAR bucket: the listpack bucket size measured in KN-1.
-pub const BUCKET_OPENS: u64 = 116;
+/// Opens per BAR bucket (listpack). 112 after the KN-3 R1 real-mix sweep:
+/// 743.1 B/row vs 816.9 at the KN-1 value 116 (allocator size classes).
+pub const BUCKET_OPENS: u64 = 112;
 
 const APPLY_LUA: &str = include_str!("apply.lua");
 
-/// The bucket of an open: `open_ms div (116 x interval_ms)`, so a bucket
-/// never holds more than 116 opens of a fixed-duration interval.
+/// The bucket of an open: `open_ms div (BUCKET_OPENS x interval_ms)`, so a
+/// bucket never holds more than `BUCKET_OPENS` opens of a fixed interval.
 pub fn bucket_of(open_ms: u64, interval_ms: u64) -> u64 {
     open_ms / (BUCKET_OPENS * interval_ms.max(1))
 }
@@ -67,6 +68,11 @@ impl Layout {
     }
     pub fn checkpoint(&self, topic: &str, partition: i32) -> String {
         self.key(&["ckpt", topic, &partition.to_string()])
+    }
+    /// Superseded generations waiting for reclaim: `<generation>|<lpk>`
+    /// members added by `apply.lua` in the same script as the swap (D20).
+    pub fn retire(&self) -> String {
+        self.key(&["retire"])
     }
     /// Products staged from `topic`/`partition` (cold build registry).
     pub fn registry(&self, topic: &str, partition: i32) -> String {
@@ -374,6 +380,69 @@ impl Cache {
             connection,
             apply: Script::new(APPLY_LUA),
         })
+    }
+
+    /// Up to `max` pending retirement members `<generation>|<lpk>` (D20).
+    pub fn retirements(&mut self, max: usize) -> Result<Vec<String>, CacheError> {
+        redis::cmd("SRANDMEMBER")
+            .arg(self.layout.retire())
+            .arg(max)
+            .query(&mut self.connection)
+            .map_err(CacheError::from)
+    }
+
+    /// A retirement member has been handled (reclaimed or found live).
+    pub fn retired(&mut self, member: &str) -> Result<(), CacheError> {
+        redis::cmd("SREM")
+            .arg(self.layout.retire())
+            .arg(member)
+            .query::<u64>(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(())
+    }
+
+    /// Objects UNLINK has not freed yet: memory still counted (contract
+    /// section 5: the next staging starts only after reclaim).
+    pub fn lazyfree_pending(&mut self) -> Result<u64, CacheError> {
+        let info: String = redis::cmd("INFO")
+            .arg("memory")
+            .query(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(info
+            .lines()
+            .find_map(|line| line.strip_prefix("lazyfree_pending_objects:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0))
+    }
+
+    /// Products an operator or a recovery asked to rebuild (D17/D21); a member
+    /// is removed only when its product is published.
+    pub fn rebuild_requests(&mut self) -> Result<Vec<String>, CacheError> {
+        redis::cmd("SMEMBERS")
+            .arg(self.layout.rebuild_requests())
+            .query(&mut self.connection)
+            .map_err(CacheError::from)
+    }
+
+    pub fn request_rebuilds(&mut self, lpks: &[String]) -> Result<(), CacheError> {
+        if lpks.is_empty() {
+            return Ok(());
+        }
+        redis::cmd("SADD")
+            .arg(self.layout.rebuild_requests())
+            .arg(lpks)
+            .query::<u64>(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(())
+    }
+
+    pub fn rebuild_done(&mut self, lpk: &str) -> Result<(), CacheError> {
+        redis::cmd("SREM")
+            .arg(self.layout.rebuild_requests())
+            .arg(lpk)
+            .query::<u64>(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(())
     }
 
     /// A fresh connection after an I/O error (the market cache restarted or
@@ -704,7 +773,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_bucket_never_holds_more_than_116_opens() {
+    fn a_bucket_never_holds_more_than_bucket_opens() {
         for interval_ms in [60_000u64, 900_000, 86_400_000, 604_800_000] {
             // Opens on any grid offset (OKX calendar bars follow the venue).
             for offset in [0u64, 1, 28_800_000 % interval_ms] {

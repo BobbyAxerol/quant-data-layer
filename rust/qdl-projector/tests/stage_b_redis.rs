@@ -5,301 +5,9 @@
 //!
 //! `QDL_KN_TEST_REDIS=redis://host:port cargo test -p qdl-projector --test stage_b_redis -- --ignored`.
 
-use prost::Message;
-use qdl_contracts::qdl::marketdata::v2::{
-    event_envelope::Payload, Bar, BarLifecycle, EventEnvelope, MarkIndexPrice, OrderBookDelta,
-    OrderBookSnapshot, Quote,
-};
-use qdl_contracts::state_codec::{decode_bar_row, decode_latest_value, StateFrame};
-use qdl_contracts::state_contract::{LogicalProductKey, SourceCoordinate};
-use qdl_projector::cache::{bucket_of, Cache, Layout};
-use qdl_projector::stage_b::{
-    PartitionReader, StageB, StageBError, StageBLimits, StateInput, StateSource,
-};
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+mod common;
 
-const LATEST: &str = "md.latest.v2";
-const BARS: &str = "md.bars.v2";
-const TOPIC_ID: &str = "ljfjPYApRpWQd79McfTtZg";
-const UID: &str = "fb26214c-7b9b-5961-95b2-55154755af0f";
-const MIN: u64 = 60_000;
-
-// ------------------------------------------------------------ memory log
-
-#[derive(Default)]
-struct LogInner {
-    records: BTreeMap<(String, i32), Vec<StateInput>>,
-}
-
-#[derive(Clone, Default)]
-struct Log(Arc<Mutex<LogInner>>);
-
-impl Log {
-    fn append(&self, topic: &str, partition: i32, key: &str, value: Option<Vec<u8>>) -> i64 {
-        let mut inner = self.0.lock().unwrap();
-        let records = inner.records.entry((topic.into(), partition)).or_default();
-        let offset = records.last().map(|r| r.offset + 1).unwrap_or(0);
-        records.push(StateInput {
-            topic: topic.into(),
-            partition,
-            offset,
-            key: key.as_bytes().to_vec(),
-            value,
-        });
-        offset
-    }
-}
-
-/// One consumer: its own positions over the shared log.
-struct Source {
-    log: Log,
-    assigned: Vec<(String, i32)>,
-    position: BTreeMap<(String, i32), i64>,
-}
-
-impl StateSource for Source {
-    fn poll(&mut self, max: usize, _timeout: Duration) -> Result<Vec<StateInput>, String> {
-        let inner = self.log.0.lock().unwrap();
-        let mut batch = Vec::new();
-        for key in &self.assigned {
-            let from = *self.position.get(key).unwrap_or(&0);
-            let records: Vec<StateInput> = inner
-                .records
-                .get(key)
-                .map(|records| {
-                    records
-                        .iter()
-                        .filter(|r| r.offset >= from)
-                        .take(max)
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-            if let Some(last) = records.last() {
-                self.position.insert(key.clone(), last.offset + 1);
-            }
-            batch.extend(records);
-        }
-        Ok(batch)
-    }
-    fn seek(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), String> {
-        self.position.insert((topic.into(), partition), offset);
-        Ok(())
-    }
-    fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
-        let inner = self.log.0.lock().unwrap();
-        let end = inner
-            .records
-            .get(&(topic.into(), partition))
-            .and_then(|r| r.last())
-            .map(|r| r.offset + 1)
-            .unwrap_or(0);
-        Ok((0, end))
-    }
-    fn position(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, String> {
-        Ok(self.position.get(&(topic.into(), partition)).copied())
-    }
-    fn assigned(&mut self) -> Result<Vec<(String, i32)>, String> {
-        Ok(self.assigned.clone())
-    }
-    fn commit(&mut self, _topic: &str, _partition: i32, _next: i64) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-/// The rebuild replay reader over the same log (assign mode).
-struct Reader {
-    log: Log,
-    at: Option<(String, i32, i64)>,
-}
-
-impl PartitionReader for Reader {
-    fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
-        let inner = self.log.0.lock().unwrap();
-        let end = inner
-            .records
-            .get(&(topic.into(), partition))
-            .and_then(|r| r.last())
-            .map(|r| r.offset + 1)
-            .unwrap_or(0);
-        Ok((0, end))
-    }
-    fn start(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), String> {
-        self.at = Some((topic.into(), partition, offset));
-        Ok(())
-    }
-    fn poll(&mut self, max: usize, _timeout: Duration) -> Result<Vec<StateInput>, String> {
-        let Some((topic, partition, from)) = self.at.clone() else {
-            return Ok(Vec::new());
-        };
-        let inner = self.log.0.lock().unwrap();
-        let records: Vec<StateInput> = inner
-            .records
-            .get(&(topic.clone(), partition))
-            .map(|records| {
-                records
-                    .iter()
-                    .filter(|r| r.offset >= from)
-                    .take(max)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        if let Some(last) = records.last() {
-            self.at = Some((topic, partition, last.offset + 1));
-        }
-        Ok(records)
-    }
-    fn position(&mut self, _topic: &str, _partition: i32) -> Result<Option<i64>, String> {
-        Ok(self.at.as_ref().map(|at| at.2))
-    }
-    fn stop(&mut self) -> Result<(), String> {
-        self.at = None;
-        Ok(())
-    }
-}
-
-// ------------------------------------------------------------ fixtures
-
-fn lpk(feed: &str, interval: Option<&str>) -> LogicalProductKey {
-    LogicalProductKey::new("paper", "OKX", "SWAP", UID, feed, interval).unwrap()
-}
-
-static EVENT: AtomicU64 = AtomicU64::new(1);
-
-fn envelope(payload: Payload) -> EventEnvelope {
-    EventEnvelope {
-        event_id: EVENT.fetch_add(1, Ordering::Relaxed).to_be_bytes().to_vec(),
-        instrument_uid: UID.into(),
-        venue: "OKX".into(),
-        market: "SWAP".into(),
-        payload: Some(payload),
-        ..Default::default()
-    }
-}
-
-fn quote(level: u32) -> Vec<u8> {
-    envelope(Payload::Quote(Quote {
-        level,
-        ..Default::default()
-    }))
-    .encode_to_vec()
-}
-
-fn bar(open_min: u64, lifecycle: BarLifecycle, revision: u32, close: u32) -> Vec<u8> {
-    envelope(Payload::Bar(Bar {
-        interval: "1m".into(),
-        open_time_ns: (open_min * MIN * 1_000_000) as i64,
-        close_time_ns: ((open_min + 1) * MIN * 1_000_000 - 1) as i64,
-        is_final: lifecycle != BarLifecycle::InProgress,
-        revision,
-        lifecycle: lifecycle as i32,
-        trade_count: u64::from(close),
-        ..Default::default()
-    }))
-    .encode_to_vec()
-}
-
-fn source(offset: u64) -> SourceCoordinate {
-    SourceCoordinate {
-        topic_id: TOPIC_ID.into(),
-        partition: 2,
-        offset,
-    }
-}
-
-fn latest_frame(lpk: &LogicalProductKey, envelope: Vec<u8>, offset: u64) -> (String, Vec<u8>) {
-    let frame = StateFrame::latest(&envelope, lpk, source(offset), 1).unwrap();
-    (frame.key().unwrap(), frame.encode().unwrap())
-}
-
-fn bar_frame(lpk: &LogicalProductKey, envelope: Vec<u8>, offset: u64) -> (String, Vec<u8>) {
-    let frame = StateFrame::bar_revision(&envelope, lpk, source(offset), 1).unwrap();
-    (frame.key().unwrap(), frame.encode().unwrap())
-}
-
-fn floor_frame(lpk: &LogicalProductKey, floor_ms: u64) -> (String, Vec<u8>) {
-    let frame = StateFrame::retention_floor(lpk, floor_ms, 1).unwrap();
-    (frame.key().unwrap(), frame.encode().unwrap())
-}
-
-fn push(log: &Log, topic: &str, (key, value): (String, Vec<u8>)) -> i64 {
-    log.append(topic, 0, &key, Some(value))
-}
-
-fn environment(label: &str) -> String {
-    format!(
-        "{label}{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    )
-}
-
-fn stage(log: &Log, environment: &str) -> StageB<Source> {
-    let url = std::env::var("QDL_KN_TEST_REDIS")
-        .expect("QDL_KN_TEST_REDIS must name an isolated test Redis; never the control Redis");
-    let cache = Cache::connect(&url, Layout::new(environment)).unwrap();
-    StageB::new(
-        Source {
-            log: log.clone(),
-            assigned: vec![(LATEST.into(), 0), (BARS.into(), 0)],
-            position: BTreeMap::new(),
-        },
-        cache,
-        StageBLimits {
-            max_batch_records: 7,
-            poll_timeout: Duration::ZERO,
-            ..StageBLimits::default()
-        },
-    )
-}
-
-fn drain(stage: &mut StageB<Source>) {
-    for _ in 0..200 {
-        stage.step().expect("step");
-    }
-}
-
-/// The ready generation's latest canonical bytes of `lpk`, if READY.
-fn read_latest(stage: &mut StageB<Source>, lpk: &LogicalProductKey) -> Option<(Vec<u8>, u64)> {
-    let pointer = stage.cache.pointer(&lpk.encode()).unwrap();
-    let generation = pointer.ready?;
-    let value: Option<Vec<u8>> = redis::cmd("HGET")
-        .arg(stage.cache.layout.latest(generation, &lpk.encode()))
-        .arg("v")
-        .query(stage.cache.connection())
-        .unwrap();
-    let decoded = decode_latest_value(&value?).unwrap();
-    Some((decoded.canonical, decoded.source_offset))
-}
-
-fn read_bar(stage: &mut StageB<Source>, lpk: &LogicalProductKey, open_min: u64) -> Option<Vec<u8>> {
-    let generation = stage.cache.pointer(&lpk.encode()).unwrap().ready?;
-    let open_ms = open_min * MIN;
-    let row = stage
-        .cache
-        .bar_row(generation, &lpk.encode(), bucket_of(open_ms, MIN), open_ms)
-        .unwrap()?;
-    Some(decode_bar_row(&row, lpk).unwrap().canonical)
-}
-
-fn meta(stage: &mut StageB<Source>, lpk: &LogicalProductKey, field: &str) -> Option<String> {
-    let generation = stage.cache.pointer(&lpk.encode()).unwrap().ready?;
-    redis::cmd("HGET")
-        .arg(stage.cache.layout.bar_meta(generation, &lpk.encode()))
-        .arg(field)
-        .query(stage.cache.connection())
-        .unwrap()
-}
-
-fn skip_redis() {
-    // Present only so the ignore reason is uniform.
-}
+use common::*;
 
 // ------------------------------------------------------------ tests
 
@@ -383,7 +91,7 @@ fn a_restart_tails_from_the_checkpoint_and_the_old_owner_is_a_zombie() {
 
 #[test]
 #[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
-fn beyond_the_rebuild_horizon_a_fresh_generation_replaces_the_cache() {
+fn beyond_the_rebuild_horizon_every_product_is_swapped_one_by_one() {
     let log = Log::default();
     let quotes = lpk("QUOTE", None);
     let gone = lpk("MARK_INDEX_PRICE", None);
@@ -407,19 +115,43 @@ fn beyond_the_rebuild_horizon_a_fresh_generation_replaces_the_cache() {
         let records = inner.records.get_mut(&(LATEST.into(), 0)).unwrap();
         records.retain(|record| record.key != gone.encode().into_bytes());
     }
-    let mut late = stage(&log, &environment).with_clock(|| u64::MAX / 2);
-    drain(&mut late);
-    assert_eq!(
-        late.metrics.builds, 2,
-        "no overlay of a cache that may have missed deletes"
+    let mut late = rebuild_stage(&log, &environment).with_clock(|| u64::MAX / 2);
+    // D21: no partition build beside the served generations; the products
+    // are rebuilt one at a time and stay READY on the old generation until
+    // their swap.
+    late.step().unwrap();
+    assert_eq!(late.metrics.rolling_rebuilds, 1, "the latest partition");
+    assert_eq!(late.metrics.builds, 1, "only the empty bars partition");
+    assert!(
+        read_latest(&mut late, &quotes).is_some(),
+        "served meanwhile"
     );
+    for _ in 0..200 {
+        late.step().unwrap();
+        let staged = [&quotes, &gone]
+            .iter()
+            .filter(|lpk| late.cache.pointer(&lpk.encode()).unwrap().staging.is_some())
+            .count();
+        assert!(staged <= 1, "one product in staging at a time");
+    }
     let pointer = late.cache.pointer(&quotes.encode()).unwrap();
-    assert!(pointer.ready.unwrap() > old_generation);
+    assert!(
+        pointer.ready.unwrap() > old_generation,
+        "{:?} {:?} {:?}",
+        late.metrics,
+        late.last_rebuild_error,
+        late.rebuilding()
+    );
+    assert_eq!(
+        read_latest(&mut late, &quotes).map(|(_, offset)| offset),
+        Some(10)
+    );
     assert_eq!(
         late.cache.pointer(&gone.encode()).unwrap().ready,
         None,
         "gone -> NOT_READY"
     );
+    assert_eq!(late.metrics.rebuilds_completed, 2);
     assert!(late.metrics.unpublished >= 1);
     assert!(late.metrics.reclaimed_keys >= 1);
     let old_keys: Vec<String> = redis::cmd("KEYS")
@@ -433,6 +165,16 @@ fn beyond_the_rebuild_horizon_a_fresh_generation_replaces_the_cache() {
         old_keys.is_empty(),
         "old generation reclaimed: {old_keys:?}"
     );
+    let pending: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(late.cache.layout.rebuild_requests())
+        .query(late.cache.connection())
+        .unwrap();
+    assert!(pending.is_empty(), "obligations cleared: {pending:?}");
+    let retiring: u64 = redis::cmd("SCARD")
+        .arg(late.cache.layout.retire())
+        .query(late.cache.connection())
+        .unwrap();
+    assert_eq!(retiring, 0, "every superseded generation reclaimed");
 }
 
 #[test]
@@ -604,32 +346,6 @@ fn a_retention_floor_removes_old_rows_and_refuses_late_ones() {
     assert!(read_bar(&mut stage, &bars, 5).is_none());
     assert!(read_bar(&mut stage, &bars, 280).is_some());
     assert!(stage.metrics.below_floor >= 1);
-}
-
-fn rebuild_stage(log: &Log, environment: &str) -> StageB<Source> {
-    stage(log, environment).with_rebuild_reader(Box::new(Reader {
-        log: log.clone(),
-        at: None,
-    }))
-}
-
-fn until_rebuilt(stage: &mut StageB<Source>) {
-    for _ in 0..200 {
-        stage.step().expect("step");
-        if stage.rebuilding().is_none() {
-            return;
-        }
-    }
-    panic!("the rebuild did not finish");
-}
-
-fn meta_exists(stage: &mut StageB<Source>, generation: u64, lpk: &str) -> bool {
-    let key = stage.cache.layout.bar_meta(generation, lpk);
-    redis::cmd("EXISTS")
-        .arg(key)
-        .query::<u64>(stage.cache.connection())
-        .unwrap()
-        == 1
 }
 
 #[test]
@@ -1008,4 +724,295 @@ fn a_broken_cache_connection_is_recovered() {
         read_latest(&mut stage, &quotes).map(|(_, offset)| offset),
         Some(11)
     );
+}
+
+// ------------------------------------------------------------ Astra R1
+
+fn wide(log: &Log, environment: &str) -> StageB<Source> {
+    let mut stage = stage(log, environment);
+    stage.limits.max_batch_records = 5_000;
+    stage
+}
+
+/// Generations that still own keys of `lpk` (latest, BAR meta/buckets/facts,
+/// conflicts).
+fn key_generations(stage: &mut StageB<Source>, lpk: &LogicalProductKey) -> BTreeSet<u64> {
+    let prefix = stage.cache.layout.prefix().to_owned();
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("{prefix}*"))
+        .query(stage.cache.connection())
+        .unwrap();
+    let product = lpk.encode();
+    keys.iter()
+        .filter_map(|key| {
+            let rest = key.strip_prefix(&prefix)?;
+            let (kind, rest) = rest.split_once(':')?;
+            if !matches!(kind, "l" | "bm" | "b" | "rk" | "cx") {
+                return None;
+            }
+            let (generation, rest) = rest.split_once(':')?;
+            rest.starts_with(&product)
+                .then(|| generation.parse().ok())?
+        })
+        .collect()
+}
+
+fn bucket_ids(stage: &mut StageB<Source>, generation: u64, lpk: &LogicalProductKey) -> Vec<u64> {
+    let pattern = format!(
+        "{}b:{generation}:{}:*",
+        stage.cache.layout.prefix(),
+        lpk.encode()
+    );
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(pattern)
+        .query(stage.cache.connection())
+        .unwrap();
+    let mut ids: Vec<u64> = keys
+        .iter()
+        .map(|key| key.rsplit(':').next().unwrap().parse().unwrap())
+        .collect();
+    ids.sort();
+    ids
+}
+
+fn assert_floor_state(stage: &mut StageB<Source>, bars: &LogicalProductKey, floor_min: u64) {
+    let generation = stage.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+    let boundary = bucket_of(floor_min * MIN, MIN);
+    let ids = bucket_ids(stage, generation, bars);
+    assert!(
+        ids.iter().all(|id| *id >= boundary),
+        "no bucket below the floor's boundary {boundary}: {ids:?}"
+    );
+    let (rows, counted) = stage
+        .cache
+        .bar_row_count(generation, &bars.encode(), MIN)
+        .unwrap();
+    assert_eq!(rows, counted, "meta rows = rows in buckets");
+    assert_eq!(
+        meta(stage, bars, "floor"),
+        Some((floor_min * MIN).to_string())
+    );
+    let facts: Vec<String> = redis::cmd("HKEYS")
+        .arg(stage.cache.layout.fact_keys(generation, &bars.encode()))
+        .query(stage.cache.connection())
+        .unwrap();
+    assert!(facts
+        .iter()
+        .all(|open| open.parse::<u64>().unwrap() >= floor_min * MIN));
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r1_f2_a_floor_in_the_batch_of_its_rows_leaves_no_bucket_below_it() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    for minute in 0..300u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    push(&log, BARS, floor_frame(&bars, 280 * MIN));
+    // A late repair below the floor, after it in the same batch.
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(5, BarLifecycle::Revised, 1, 2), 999),
+    );
+    let fresh_env = environment("r1f2fresh");
+    let mut stage = wide(&log, &fresh_env);
+    drain(&mut stage);
+    assert!(
+        stage.metrics.batches <= 2,
+        "one batch carries rows and floor"
+    );
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("20"));
+    assert_eq!(
+        meta(&mut stage, &bars, "first"),
+        Some((280 * MIN).to_string())
+    );
+    assert!(
+        read_bar(&mut stage, &bars, 5).is_none(),
+        "late repair not kept"
+    );
+    assert!(read_bar(&mut stage, &bars, 280).is_some());
+    assert_floor_state(&mut stage, &bars, 280);
+
+    // An existing generation: older rows and the floor arrive together.
+    let log = Log::default();
+    for minute in 100..300u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("r1f2existing");
+    let mut stage = wide(&log, &environment);
+    drain(&mut stage);
+    for minute in 10..60u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(
+                &bars,
+                bar(minute, BarLifecycle::Final, 0, 1),
+                1_000 + minute,
+            ),
+        );
+    }
+    push(&log, BARS, floor_frame(&bars, 280 * MIN));
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(50, BarLifecycle::Revised, 1, 2), 2_000),
+    );
+    drain(&mut stage);
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("20"));
+    assert!(read_bar(&mut stage, &bars, 50).is_none());
+    assert_floor_state(&mut stage, &bars, 280);
+    // A later reclaim of the generation leaves nothing behind.
+    let generation = stage.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+    stage
+        .cache
+        .reclaim(generation, &bars.encode(), Some(MIN))
+        .unwrap();
+    assert!(key_generations(&mut stage, &bars).is_empty());
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r1_f3_interrupted_builds_and_swaps_leave_no_generation_behind() {
+    let log = Log::default();
+    let quotes = lpk("QUOTE", None);
+    let bars = lpk("BAR", Some("1m"));
+    for level in 0..20u32 {
+        push(
+            &log,
+            LATEST,
+            latest_frame(&quotes, quote(level), 10 + u64::from(level)),
+        );
+    }
+    for minute in 0..300u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("r1f3");
+    // Crash in the middle of the cold build, five times in a row.
+    for _ in 0..5 {
+        let mut interrupted = stage(&log, &environment);
+        interrupted.step().unwrap();
+        interrupted.step().unwrap();
+        drop(interrupted);
+    }
+    let mut stage = rebuild_stage(&log, &environment);
+    drain(&mut stage);
+    for product in [&quotes, &bars] {
+        let pointer = stage.cache.pointer(&product.encode()).unwrap();
+        assert_eq!(pointer.staging, None);
+        let live: BTreeSet<u64> = pointer.ready.into_iter().collect();
+        assert_eq!(
+            key_generations(&mut stage, product),
+            live,
+            "{}",
+            product.encode()
+        );
+    }
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("300"));
+    // Crash windows of a swap: a staging generation replaced by another
+    // (interrupted rebuild) and a publish whose reclaim never ran.
+    let old = stage
+        .cache
+        .pointer(&quotes.encode())
+        .unwrap()
+        .ready
+        .unwrap();
+    let mut pointer = stage.cache.pointer(&quotes.encode()).unwrap();
+    let fence = stage.cache.take_ownership(LATEST, 0).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let mut staged = Vec::new();
+    for _ in 0..2 {
+        let generation = stage.cache.allocate_generation().unwrap();
+        assert!(matches!(
+            stage
+                .cache
+                .apply(
+                    LATEST,
+                    0,
+                    fence,
+                    20,
+                    now,
+                    &[Op::Stage {
+                        lpk: quotes.encode(),
+                        pointer: pointer.clone(),
+                        generation,
+                    }],
+                )
+                .unwrap(),
+            Applied::Ok(_)
+        ));
+        pointer = stage.cache.pointer(&quotes.encode()).unwrap();
+        assert!(matches!(
+            stage
+                .cache
+                .apply(
+                    LATEST,
+                    0,
+                    fence,
+                    20,
+                    now,
+                    &[Op::Latest {
+                        lpk: quotes.encode(),
+                        generation,
+                        pointer: pointer.clone(),
+                        expected_offset: None,
+                        value: vec![1; 64],
+                        topic_id: "t".into(),
+                        partition: 0,
+                        offset: 1,
+                    }],
+                )
+                .unwrap(),
+            Applied::Ok(_)
+        ));
+        staged.push(generation);
+    }
+    assert!(matches!(
+        stage
+            .cache
+            .apply(
+                LATEST,
+                0,
+                fence,
+                20,
+                now,
+                &[Op::Publish {
+                    lpk: quotes.encode(),
+                    pointer: pointer.clone(),
+                }],
+            )
+            .unwrap(),
+        Applied::Ok(_)
+    ));
+    drop(stage);
+    // The next owner resumes the retirements (the old ready and the replaced
+    // staging generation) without any other trigger.
+    let mut next = rebuild_stage(&log, &environment);
+    drain(&mut next);
+    let live: BTreeSet<u64> = [staged[1]].into_iter().collect();
+    assert_eq!(key_generations(&mut next, &quotes), live);
+    assert!(!key_generations(&mut next, &quotes).contains(&old));
+    let retiring: u64 = redis::cmd("SCARD")
+        .arg(next.cache.layout.retire())
+        .query(next.cache.connection())
+        .unwrap();
+    assert_eq!(retiring, 0);
+    assert!(next.metrics.retired >= 2);
 }

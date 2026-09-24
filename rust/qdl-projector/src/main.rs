@@ -32,7 +32,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn env(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required"))
@@ -245,6 +245,7 @@ fn status_json(status: &Status) -> serde_json::Value {
             "rebuilds_abandoned": b.rebuilds_abandoned, "rebuilds_refused": b.rebuilds_refused,
             "rebuild_records": b.rebuild_records,
             "ownership_lost": b.ownership_lost, "cache_reconnects": b.cache_reconnects,
+            "rolling_rebuilds": b.rolling_rebuilds, "retired": b.retired, "rewinds": b.rewinds,
             "owned": status.owned.iter().map(|(t, p)| format!("{t}/{p}")).collect::<Vec<_>>(),
             "rebuilding": status.rebuilding.as_ref().map(|(lpk, g)| json!({"lpk": lpk, "generation": g})),
             "last_rebuild_error": status.last_rebuild_error,
@@ -340,9 +341,16 @@ fn run_stage_b(config: Config, status: Shared) {
     .unwrap_or_else(|error| fatal(&status, "stage_b", error));
     let cache = Cache::connect(&config.cache_url, layout.clone())
         .unwrap_or_else(|error| fatal(&status, "stage_b", format!("{error:?}")));
-    let mut stage =
-        StageB::new(source, cache, StageBLimits::default()).with_rebuild_reader(Box::new(reader));
-    let mut next_rebuild_poll = Instant::now();
+    let mut stage = StageB::new(
+        source,
+        cache,
+        StageBLimits {
+            // Owner-fence probe and rebuild-request cadence.
+            ownership_probe: config.rebuild_poll,
+            ..StageBLimits::default()
+        },
+    )
+    .with_rebuild_reader(Box::new(reader));
     let mut source_errors = 0u32;
     loop {
         match stage.step() {
@@ -388,10 +396,6 @@ fn run_stage_b(config: Config, status: Shared) {
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
-        if Instant::now() >= next_rebuild_poll {
-            next_rebuild_poll = Instant::now() + config.rebuild_poll;
-            take_rebuild_requests(&mut stage, &status);
-        }
         if let Ok(mut shared) = status.lock() {
             shared.stage_b = stage.metrics.clone();
             shared.owned = stage.owned();
@@ -399,34 +403,6 @@ fn run_stage_b(config: Config, status: Shared) {
                 .rebuilding()
                 .map(|(lpk, generation)| (lpk.to_owned(), generation));
             shared.last_rebuild_error = stage.last_rebuild_error.clone();
-        }
-    }
-}
-
-/// Requests for products this replica owns move into the rebuild queue.
-fn take_rebuild_requests<S: qdl_projector::stage_b::StateSource>(
-    stage: &mut StageB<S>,
-    status: &Shared,
-) {
-    let key = stage.cache.layout.rebuild_requests();
-    let requested: Vec<String> = match redis::cmd("SMEMBERS")
-        .arg(&key)
-        .query(stage.cache.connection())
-    {
-        Ok(requested) => requested,
-        Err(error) => return record_error(status, "rebuild", error.to_string()),
-    };
-    for lpk in requested {
-        match stage.holds_product(&lpk) {
-            Ok(true) => {
-                stage.request_rebuild(&lpk);
-                let _: Result<u64, _> = redis::cmd("SREM")
-                    .arg(&key)
-                    .arg(&lpk)
-                    .query(stage.cache.connection());
-            }
-            Ok(false) => {}
-            Err(error) => record_error(status, "rebuild", format!("{error:?}")),
         }
     }
 }
