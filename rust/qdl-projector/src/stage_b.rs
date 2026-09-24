@@ -268,6 +268,28 @@ impl<S: StateSource> StageB<S> {
         }
     }
 
+    /// Partitions this instance currently owns (tailing or building).
+    pub fn owned(&self) -> Vec<(String, i32)> {
+        let mut owned: Vec<(String, i32)> = self.partitions.keys().cloned().collect();
+        owned.sort();
+        owned
+    }
+
+    /// Whether a partition this instance owns holds the product.
+    pub fn holds_product(&mut self, lpk: &str) -> Result<bool, StageBError> {
+        for (topic, partition) in self.owned() {
+            if self
+                .cache
+                .registry(&topic, partition)?
+                .iter()
+                .any(|item| item == lpk)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The product being rebuilt and its staged generation, if any.
     pub fn rebuilding(&self) -> Option<(&str, u64)> {
         self.rebuild

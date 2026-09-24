@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 description = "Kafka-native V2 projector (KN-3): stage A canonical -> state topics in Kafka transactions, stage B state topics -> fenced market cache."
 
+[[bin]]
+name = "qdl-projector"
+path = "src/main.rs"
+
 [dependencies]
 prost.workspace = true
 qdl-contracts.workspace = true

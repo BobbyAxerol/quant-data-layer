@@ -19,8 +19,6 @@ use qdl_contracts::state_codec::{payload_feed, state_partition, StateFrame};
 use qdl_contracts::state_contract::{LogicalProductKey, SourceCoordinate};
 use std::collections::HashMap;
 
-/// Public BAR window every product keeps (the spool keeps the same today).
-pub const PUBLIC_BAR_WINDOW: u64 = 10_000;
 /// Rows kept beyond the demanded window (repairs, late revisions).
 pub const BAR_HEADROOM: u64 = 2_064;
 
@@ -118,8 +116,9 @@ impl ProductMap {
     }
 }
 
-/// D15: per BAR product, `max(public window, largest demanded warmup) +
-/// headroom`, keyed by encoded LPK.
+/// D15 (as amended, the KN-1 budget rule): per BAR product, the largest
+/// `max_warmup_rows` of a manifest requiring it (0 without demand) + headroom,
+/// keyed by encoded LPK.
 pub fn retained_caps(bundle: &Bundle, products: &ProductMap) -> HashMap<String, u64> {
     products
         .bar_products()
@@ -138,10 +137,7 @@ pub fn retained_caps(bundle: &Bundle, products: &ProductMap) -> HashMap<String, 
                 .map(|manifest| manifest.quotas.max_warmup_rows)
                 .max()
                 .unwrap_or(0);
-            (
-                product.lpk.encode(),
-                demanded.max(PUBLIC_BAR_WINDOW) + BAR_HEADROOM,
-            )
+            (product.lpk.encode(), demanded + BAR_HEADROOM)
         })
         .collect()
 }
@@ -592,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_cap_is_the_public_window_or_the_largest_demand_plus_headroom() {
+    fn retained_cap_is_the_largest_demand_plus_headroom() {
         let bars = vec![
             binding("BAR", Some("1m"), "k/bar/1m"),
             binding("BAR", Some("5m"), "k/bar/5m"),
@@ -610,8 +606,8 @@ mod tests {
         let caps = retained_caps(&bundle, &ProductMap::from_bundle(&bundle).unwrap());
         let cap = |interval: &str| caps[&format!("lpk1|paper|OKX|SWAP|{UID}|BAR|{interval}")];
         assert_eq!(caps.len(), 3, "BAR products only");
-        assert_eq!(cap("1m"), 12_064);
+        assert_eq!(cap("1m"), 12_064, "largest of 2,000 and 10,000");
         assert_eq!(cap("5m"), 27_064);
-        assert_eq!(cap("1h"), 12_064, "no demand keeps the spool's window");
+        assert_eq!(cap("1h"), 2_064, "no demand: headroom only (budget rule)");
     }
 }

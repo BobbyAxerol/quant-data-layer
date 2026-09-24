@@ -72,6 +72,11 @@ impl Layout {
     pub fn registry(&self, topic: &str, partition: i32) -> String {
         self.key(&["parts", topic, &partition.to_string()])
     }
+    /// Set of LPKs an operator asked to rebuild (D17); the owner of each
+    /// product takes its request.
+    pub fn rebuild_requests(&self) -> String {
+        self.key(&["rebuild"])
+    }
 }
 
 /// A product's pointer (contract section 5).

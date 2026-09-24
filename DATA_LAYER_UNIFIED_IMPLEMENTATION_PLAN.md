@@ -55813,6 +55813,75 @@ revision ordering, compaction/expiry and restore proof.
   - Open: readback against rows written by the Rust stage B (not by the
     Python fixture) and the import applied by stage B - both in the K3-T08
     full-flow run.
+- 2026-09-24: **D15 amendment (defect in D15 found against the budget).**
+  The KN-1 reviewed budget sizes the market cache with "demanded rows + 2,064
+  headroom per product" (`config/v2/kn-v220-candidate-budget.json`
+  `market_cache.sizing`, 141 demanded products, 1,691,524 rows at cap);
+  D15's `max(10,000, demand) + 2,064` gave undemanded products 12,064 rows
+  and exceeded that sizing. Corrected: cap = largest `max_warmup_rows` of a
+  manifest requiring the product (0 without demand) + 2,064. Real bundle
+  (`e8aa9c95...36fb`): 140 products 12,064, 1 product 4,064 (demand 2,000),
+  3 undemanded 2,064 = 1,699,216 rows (+7,692 vs the budget figure, the
+  undemanded ones being materialized for parity with the running projector,
+  about 5 MB at 707 B/row). Unit test updated (2,000/10,000 -> 12,064;
+  25,000 -> 27,064; none -> 2,064).
+- 2026-09-24: **KN-3 slice 9 - `qdl-projector` binary (D1): implemented,
+  smoke-run in the runtime image; runtime evidence = the K3-T08 packet
+  below.** `rust/qdl-projector/src/main.rs` (`qdl-projector run`, environment
+  only): threads for stage A (group `kn-projector-v3-a`, transactional id
+  `kn-projector-v3-a-<replica>`), stage B (group `kn-projector-v3-b`, rebuild
+  reader `kn-projector-v3-rebuild-<replica>`, rebuild requests from the cache
+  set `kn3:<env>:rebuild` taken only for products this replica owns), expiry
+  (`kn-projector-v3-expiry-<replica>`, only BAR products of the bars
+  partitions this replica owns, caps per D15) and the cleaner (same
+  partitions, default every 6 h); status JSON file + one stdout line per
+  interval. State-topic partition counts are read from the broker. An
+  integrity stop or fatal Kafka error exits 2 (fail closed, restart resumes at
+  the same committed offset and stops again - never skips); cache memory
+  pressure backs off with the checkpoint behind (D12).
+  `QDL_KN_BAR_CAP_CLAMP` lowers caps for isolated evidence runs only; a
+  production packet never sets it. Release binary 6,395,224 B, SHA-256
+  `507d2b64...1650` (before this journal edit; rebuilt for the run), runs in
+  the existing `qdl-v2-rust:2.0.26-62241bc` (no image built).
+- 2026-09-24: **K3-T08 / K3-T07 / K3.7 isolated full-flow runtime packet
+  (recorded before running).** Scope: disposable services only; production
+  is read, never written.
+  - Reads of production: the canonical cache spool through the volume
+    `qdl_v2_stable_candidate_stable_state` mounted **read-only** at `/state`
+    (`mode=ro`, `query_only`, primary-key index only) by
+    `kn_native_slice_probe.py capture` (demanded keys, real committed records,
+    bytes unmodified) and `kn_bar_legacy_import.py import --isolated`; nothing
+    else of the running stack is touched (no exec, no restart, no Kafka or
+    Redis access).
+  - Services (prefix `kn3-flow-`, `--rm`, internal network `kn3-flow-net`):
+    Kafka `apache/kafka@sha256:9516fb76...` KRaft single node 1 CPU / 1.5 GiB,
+    topics `md.canonical.v2` (6 partitions, delete), `md.latest.v2` and
+    `md.bars.v2` (6 partitions, compact, `delete.retention.ms` 604800000, bars
+    `min.compaction.lag.ms` 3600000; RF 1 isolated); market cache
+    `redis@sha256:dfa18828...` with the D6 config (`maxmemory` 1288490188,
+    noeviction, listpack 128/2048, no persistence), 0.5 CPU / 1,536 MiB;
+    projector replicas `kn3-flow-proj-a/-b`: `qdl-v2-rust:2.0.26-62241bc` +
+    the release binary and the compiled bundle mounted read-only, 0.5 CPU /
+    256 MiB each; loaders/checkers in `qdl-v2-python:2.1.1-83fa1bc` (repo
+    read-only). Peak ~3.5 GiB RAM / ~3 CPU for the window (host 14 GiB
+    available); nothing persists after cleanup.
+  - Steps: (1) capture demanded keys and load the history into the isolated
+    canonical topic; (2) legacy import of every BAR binding into the isolated
+    `md.bars.v2`; (3) start both replicas (cold build) - stage A lag,
+    throughput, state-topic bytes, cache memory, build time; (4) live phase at
+    the 3,000/s challenge with aborted copies of every 5th batch; (5) parity:
+    `kn3_flow_check.py bars` (spool vs cache, readback on Rust-written rows),
+    `latest` (Kafka oracle vs cache), `ready`; (6) expiry + cleaner under
+    `QDL_KN_BAR_CAP_CLAMP=4000` - convergence time, tombstones, cleaner sweep,
+    memory/disk slope, `bars --floor-aware` parity; (7) recovery: SIGKILL of
+    replica A (takeover by B, no rebuild), market cache restart empty (cold
+    rebuild from the state topics -> all products READY = measured RTO),
+    one per-product rebuild request.
+  - Rollback: stop and remove the `kn3-flow-*` containers; production state
+    unchanged by construction. Cleanup: containers, network, anonymous
+    volumes 0; capture and import receipts hashed into the evidence dir
+    `/home/bobby/.local/state/qdl-v2/kn3-20260924/evidence`, raw capture
+    deleted; results appended here.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
