@@ -53374,10 +53374,13 @@ capture/commit-log deleted after hashing; no image built. Retained with
 reason: candidate binary `13a5e2e1...` + bundle `e8aa9c95...` (expire at KN-2
 exit), Rust build cache `target/` 2.4 -> 6.3 GB (prune at KN-5 or when free
 disk < 100 GB), cargo registry volume 159 -> 175 MB. Free disk 151 GB.
-**Astra review:** REQUESTED 2026-09-23 -
-[KN-1 Astra receipt](#kn1-astra-receipt). No executor self-approval.
-**Next permitted step:** KN-2 after Astra PASS and the owner's ACL decision;
-no automatic runtime promotion.
+**Astra review:** initial review `REVIEW_CHANGES_REQUIRED` on `14c19a7`;
+fixes now `IMPLEMENTED_PENDING_ASTRA_REVIEW`, not reviewer-approved. Read the
+[Astra review and closure checklist](#kn1-astra-review-r1) and the
+[executor re-review receipt](#kn1-astra-receipt-r2). No executor self-approval.
+**Next permitted step:** focused Astra re-review, then KN-2 after Astra PASS.
+A production ACL/live-reader change still needs its own approved runtime scope;
+capture evidence permitted by K1.5 does not require inventing a live-only exit.
 
 #### KN-1 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
@@ -53784,6 +53787,7 @@ Astra requested review points and next allowed step:
   Next: KN-2 only after ASTRA_REVIEW_PASS and the owner ACL decision.
 ```
 
+<a id="kn1-astra-findings-r1"></a>
 - 2026-09-23: **Astra review of KN-1: REVIEW_CHANGES_REQUIRED (six findings,
   all in KN-1 scope; fixed here, no new phase).** Recorded before the fixes:
   - F1 [P1] Rust requirement validation is weaker than Python (execution
@@ -54021,6 +54025,80 @@ Astra requested review points and next allowed step:
   per product) and the re-frozen arithmetic; the F6 guard. Next: KN-2 only
   after ASTRA_REVIEW_PASS; live latency only after the owner's ACL decision.
 ```
+
+<a id="kn1-astra-review-r1"></a>
+#### KN-1 Astra Review Receipt And Remaining Verification
+
+- 2026-09-24: **Reviewer receipt recorded at owner request.** The initial
+  Astra review covered `d5f3cf4..14c19a7`, not the subsequent fixes. Verdict:
+  `REVIEW_CHANGES_REQUIRED`, six in-scope findings. This note corrects the
+  missing reviewer journal; it does not restart KN-1 or implement another
+  phase. Guide: [18.7 review policy](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-testing-and-review),
+  sections 18.8 K1.5 and 18.14 receipt/closure.
+- **Current state differs from the initial verdict:** Claude has since
+  committed `f163d14` (F1/F2/F4), `80d94f9` (F3/F5/F6) and `bc9664e`
+  (capture rerun and receipt). These are executor-reported fixes, **pending
+  independent Astra verification**. Keep the tracker
+  `IMPLEMENTED_PENDING_ASTRA_REVIEW`; do not claim either that the fixes are
+  absent or that Astra has accepted them.
+
+**Initial independent checks actually performed:**
+- 62 Python golden cases: 25 cursor, 6 requirement digest, 31 state cases;
+  all passed. Loaded source with `python3 -B`, without runtime writes.
+- Seven retained Rust-binary tests passed: four auth, one bundle, one
+  production-group refusal and one unspecified-enum contract test. These
+  were focused executions of existing binaries, not a fresh workspace build.
+- Adversarial Python probes reproduced untyped schema errors, newline/type
+  validation gaps and acceptance exit 0 on a failed result. Static review
+  found missing native requirement checks, JWT subtraction overflow,
+  incomplete sizing fields and the unguarded `FLUSHALL` path. Passing golden
+  tests did not cover these cases; no live attack or Redis flush was run.
+- Verified baseline embedded hash `891e8733...` and original capture receipt
+  file hash `3d17996d27bfd663c8b3dad9313507728d522069c263636bbbe2dc5da357da32`
+  under `/home/bobby/.local/state/qdl-v2/kn1-20260923/`. Original capture
+  reported 22/22 negative wire cases, exact resume and zero token/decode
+  errors. This supports capture behavior, not four live latency quantities.
+- Read-only Kafka ACL listing for prefixed group `kn-` confirmed the temporary
+  entry was absent. No `kn1` containers remained. The review made no ACL,
+  service, broker, source-code or production-data mutation and ran no C2.
+
+**Required focused re-review, not a new implementation backlog:**
+
+| Finding | Executor fix reported | Evidence Astra must verify before closing |
+| --- | --- | --- |
+| F1 [P1] native requirement validation weaker than Python | `f163d14` | Both digest and gateway use the shared validator; shared negative vectors cover execution/full coverage, session SLA, interval, warmup and numeric boundaries with consistent rejection order. |
+| F2 [P1] JWT lifetime overflow | `f163d14` | Extreme `iat/exp/nbf` cannot panic/wrap or accept an overlong lifetime; unit and captured wire negatives prove fail-closed behavior. |
+| F3 [P1] acceptance runner exits successfully on failure | `80d94f9` | Every failed required predicate yields failure and nonzero CLI exit, including empty records, errors, ordering/resume/digest, control-state sequence and missing negative cases. |
+| F4 [P2] cursor/state malformed-input divergence | `f163d14` | Non-string schema, trailing newline and bool/float coordinates give typed failures; original valid bytes and INVALID/EXPIRED behavior remain compatible. |
+| F5 [P2] incomplete BAR memory budget | `80d94f9` | Lossless identity/header reconstruction, coordinates/quality/provenance, Redis encoding threshold, measured footprint and rebuild peak are all counted. Review the proposed per-product generation swap against snapshot/read consistency; this note does not approve a new recovery design or RAM increase. |
+| F6 [P2] sizing helper can flush an arbitrary Redis target | `80d94f9` | Non-empty target is refused before writes; no broad flush remains; cleanup deletes only this run's exact keys, including failure paths. |
+
+Detailed initial findings and fixes: [F1-F6 journal](#kn1-astra-findings-r1).
+Updated test counts and evidence references:
+[executor re-review receipt](#kn1-astra-receipt-r2). Its 2,028-test full-suite
+run still reports five classified errors and seven skips; do not rename that
+suite green. Verify the classification/ownership when deciding KN-1 exit.
+
+**Next action for Claude/Astra:** Astra checks the changed source and affected
+regressions plus the existing rerun evidence; Claude fixes any remaining
+in-scope finding in KN-1. Do not rerun unchanged provider certification or
+start C2 merely to document this review. Per-subscription prototype readers
+and later RPC integration remain explicit KN-2 work, not hidden KN-1 passes.
+KN-2 stays `NOT STARTED` until a recorded `ASTRA_REVIEW_PASS`; production
+ACL/identity decisions are separate from accepting a permitted capture slice.
+
+**This documentation slice:** only this Unified Plan changed; no tests of the
+new fixes were rerun and no new reviewer PASS was issued. Validation PASS:
+four review/phase anchors are unique, guide link resolves, and the staged
+scope/`git diff --cached --check` are clean. Worktree `git diff --check` flags
+pre-existing whitespace at line 13067; both unrelated hunks remain unstaged
+and unchanged. Canonical `/home/bobby/data_layer`, branch
+`feat/consumer-endpoint-benchmark`, source HEAD before this note `bc9664e`.
+Last review observed healthy Query `2.1.1-83fa1bc` (`dd065fdf...`) and Stream
+`2.1.1-ae2d62a` (`37d7f518...`); not remeasured in this documentation slice.
+Runtime config, active/rollback images and released stable line are unchanged;
+no image build, restart, push, merge or cleanup/prune. No disposable artifacts
+were created, so no disk reclamation is claimed.
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
