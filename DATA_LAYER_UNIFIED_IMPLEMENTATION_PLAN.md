@@ -53246,7 +53246,8 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 IN_PROGRESS (owner start 2026-09-24); KN-3..KN-5 NOT STARTED.**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 REVIEW_CHANGES_REQUIRED (Astra on `d8929d1`, 2026-09-24); KN-3..KN-5 NOT STARTED.**
+KN-2 verdict and narrow closure checklist: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
 Executor handoff:
 [KN-1 R2 closure receipt](#kn1-astra-receipt-r3); earlier [re-review receipt](#kn1-astra-receipt-r2), original [KN-1 receipt](#kn1-astra-receipt).
@@ -53278,7 +53279,7 @@ Do not start the next phase merely because the executor's tests passed.
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
 | [KN-1](#kn-plan-phase-1) | ASTRA_REVIEW_PASS / CLOSED | Claude Opus 5.5 | Astra | R3 on `078f994`: F3/F5 accepted; F1/F2/F4/F6 accepted in R2; not live capacity certification |
-| [KN-2](#kn-plan-phase-2) | IN_PROGRESS | Claude Opus 5.5 | Astra | Owner started 2026-09-24; native Stream/replay/all-RPC implementation and isolated proof in progress |
+| [KN-2](#kn-plan-phase-2) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Five reproduced correctness/boundedness defects on `d8929d1`; focused closure inside KN-2, no new phase |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
 | [KN-5](#kn-plan-phase-5) | PENDING_KN1_KN4_REVIEW | Claude Opus 5.5 | Astra | 50+TS acceptance, paired cutover, provenance, cleanup and release |
@@ -54526,7 +54527,8 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-24; owner start 2026-09-24).
+**Status:** REVIEW_CHANGES_REQUIRED (Astra on `d8929d1`, 2026-09-24).
+**Review receipt:** [five reproduced findings, evidence limits and closure tests](#kn2-astra-review-r1).
 **Entry receipt:** [KN-1 R3 PASS and owner resource direction](#kn1-astra-review-r3).
 **Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
 with correct replay, auth, flow control and the existing public RPC contract.
@@ -54539,12 +54541,13 @@ with correct replay, auth, flow control and the existing public RPC contract.
 **To do:**
 - [x] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
 - [x] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
-- [x] K2.3 signed replay/barrier/ring/pending merge and bounded cancellation-safe reader pool.
-- [x] K2.4 lifecycle-aware quality/gap/session/control handling and exact coalescing policy.
-- [x] K2.5 full demanded Stream shadow/oracle, two-replica failover and measured capacity.
+- [ ] K2.3 implementation exists; close R1 F1-F4 replay/auth/error/byte-budget regressions.
+- [ ] K2.4 implementation exists; close R1 F5 alternating lifecycle transitions and oracle.
+- [ ] K2.5 isolated evidence exists; revalidate affected paths and state actual delivery coverage per R1.
 **Completed:** K2.1-K2.5 (slice 1 `997907c`, slice 2 in the journal below),
 implemented and tested locally plus isolated shadow evidence; not live, not
-production, Astra review pending.
+production. Astra reviewed the implementation and isolated evidence; R1
+requires five in-scope fixes before exit, not a new architecture or phase.
 **Verification:** K2-T01..T08 run (in-process, real isolated Kafka, SDK over mTLS
 on two replicas); see [KN-2 receipt](#kn2-receipt). Snapshot/status are typed
 `DATA_NOT_READY` through the read view; the real cache integration is KN-4 and
@@ -54558,9 +54561,9 @@ KN-4 cache integration is the explicit dependency, not a hidden certification cl
 old Stream, producer authority, groups and Kafka partition topology untouched.
 **Cleanup:** exact test groups/topics/network allowed by packet; no abandoned
 readers/streams; retain only named necessary candidate and rollback artifacts.
-**Astra review:** REQUESTED 2026-09-24 ([receipt](#kn2-receipt)); inspect offset/barrier
-races, negative auth, snapshot/delta/reset, cancellation and cross-replica behavior.
-**Next permitted step:** KN-3 after reviewed exit or explicit owner sequencing.
+**Astra review:** REVIEW_CHANGES_REQUIRED ([R1](#kn2-astra-review-r1)).
+**Next permitted step:** fix and test R1 F1-F5 inside KN-2, narrow evidence
+closure, then focused Astra re-review; KN-3 after PASS or explicit owner sequencing.
 
 #### KN-2 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
@@ -54837,6 +54840,175 @@ Astra requested review points and next allowed step:
   mid-stream; shutdown; memory plan; harness judge and oracle. Next: KN-3
   after ASTRA_REVIEW_PASS or explicit owner sequencing.
 ```
+
+<a id="kn2-astra-review-r1"></a>
+#### KN-2 Astra Review R1 - Correctness Before Capacity Certification
+
+- 2026-09-24: **REVIEW_CHANGES_REQUIRED**, source `d8929d1` (slice 1
+  `997907c`, slice 2 `d8929d1`; base `6802b33`). Reviewed guide 18.3-18.9,
+  contracts, native service/hub/replay/subscription/authority/reader/memory,
+  tests and retained K2.5 evidence. Scope is review and plan journal only:
+  no product code patch, production ACL, rollout, resource-cap change or C2.
+  Source implementation delta: 25 files, +6,606/-367 including plan.
+- **Direction accepted:** shared committed reader per replica, indexed
+  fan-out, separate/coalesced range readers, immutable shared records,
+  typed read-view dependency, two-replica SDK transport proof and explicit
+  capture-vs-live attribution. No need to re-architect these components.
+  The five failures below are reproducible implementation gaps, not RAM
+  approval gates and not grounds to throw away valid earlier evidence.
+
+**Blocking findings and required focused tests**
+
+1. **F1 / P1 - Revocation during REPLAYING can be permanently missed.**
+   `rust/qdl-stream-gateway/src/service.rs:982` creates the authority watcher
+   only after replay and the LIVE control. A key removed while a slow replay
+   is running therefore becomes the watcher's already-seen generation; the
+   subscription continues delivering LIVE data for the revoked identity.
+   Reproduced with 30 replay records at 20 ms/record: revoke after REPLAYING;
+   the service still emits LIVE event offset 32. Replay RPC also has no
+   ongoing reauthorization (`service.rs:504`). Fix: bind authority generation
+   at admission, watch/recheck throughout ring replay, reader replay,
+   catch-up and handoff; close typed on revoked key/manifest/entitlement.
+   Test revocation before first record, mid-replay, before LIVE, during a
+   blocked send, and on Replay; additive rotation must keep authorized
+   readers alive. Do not rely on a later second reload to notice the first.
+2. **F2 / P1 - Corrupt matched replay records are silently skipped.**
+   `rust/qdl-stream-gateway/src/replay.rs:444` continues after protobuf
+   decode failure, unlike ring/live paths. The scan then completes and
+   `service.rs:945` advances the resume boundary beyond the missing fact.
+   Reproduced with one malformed committed TRADE between two valid facts:
+   only the later fact is emitted and the stream declares LIVE. Fix: fail
+   the affected requested product with a typed data-integrity error; never
+   silently acknowledge past it. Test corrupted first/middle/last records,
+   ring vs range parity, shared-pass isolation and replay retry. Preserve
+   unrelated products' valid progress without certifying the corrupt one.
+3. **F3 / P1 - Joiners can remain stranded after a reader-open failure.**
+   `replay.rs:295,317,359`: requests joining an active pass enter `joiners`;
+   if `source.open()` fails, the error path drains the current batch only.
+   The next `take_batch` sees empty `pending`, marks scanning false and
+   leaves the joiner with no worker/deadline processing. Reproduced with a
+   blocked open, a second request, then an injected open error: first request
+   fails typed; second remains pending after its 200 ms deadline and a 1 s
+   wait, `in_flight=1`. Fix: own/drain or requeue every request on every
+   exit, including retention/dependency/decode failure and cancellation.
+   Test a joiner at source-open, last-record and empty-pass boundaries;
+   all futures, permits, queues and subscription slots must return to baseline.
+4. **F4 / P1 - New replay coordinator bypasses the declared byte bound.**
+   `max_scanned_bytes` is enforced by the old `scan_range` at `replay.rs:141`,
+   but not by the active `ReplayCoordinator::pass` at line 359. Setting the
+   byte limit to 1 still delivers a larger record and completes replay.
+   Source inspection also finds pending/joiner admission and the per-request
+   256-record channel outside the shared byte accounting; Replay RPC's
+   32-record handoff and open requests have no explicit concurrent-request
+   admission matching Subscribe. The 224/256 MiB startup arithmetic is not
+   a proof of a bound for these paths. Fix the active coordinator's record/
+   byte/time accounting and bounded/fair request admission, include retained
+   decoded/channel/ring-reference memory, and ensure slow/cancelled Replay
+   clients release resources. Test large BOOK payloads, sparse keys, cold
+   reconnect storms, several consumers, deadline and slow-reader pressure;
+   measured higher caps are allowed, missing bounds are not. No production
+   OOM or successful memory-exhaustion attack was run or claimed here.
+5. **F5 / P1 - Coalescing across a returning state loses transitions.**
+   `subscription.rs:185-190` permits any later matching signature to replace
+   an older one, even across an intervening different state. With queue
+   depth 2 and QUOTE states `A1 -> B2 -> A3 -> B4`, it drops the first two
+   and returns offset 3, instead of preserving the transitions or emitting
+   typed backpressure. `scripts/kn_native_slice_probe.py:807` repeats the
+   same rule: judging only deliveries `[3,4]` returns zero defects. Fix both
+   implementation and independent oracle: coalesce only inside a contiguous
+   equivalent lifecycle segment, never across a quality/authority/session
+   boundary. Test `A-B-A`, `A-B-A-B`, repeated same-state bursts, BAR
+   in-progress/final/revised boundaries, BOOK/reset and negative cross-scope
+   cases. Do not make an oracle that merely copies the reducer's mistake.
+
+**Evidence limits to close or explicitly narrow, not new production incidents**
+
+- **SDK offset-zero compatibility:** `qdl_sdk/models.py:882` rejects
+  `logical_offset=0`, while `service.rs:620` exposes the Kafka offset directly.
+  The loader deliberately inserts a filler at offset zero
+  (`kn_native_slice_probe.py:592`) and the receipt assigns the SDK fix to
+  KN-4. Independent constructor probe confirms the rejection. Existing
+  nonzero-offset evidence remains valid; filler is not an offset-zero test.
+  Resolve and test initial snapshot boundary/resume/Replay semantics with
+  the real SDK before claiming full native public compatibility; do not
+  silently shift signed Kafka coordinates. This is distinct from KN-4's
+  explicitly permitted real-market-cache ReadView dependency.
+- **LIVE is not per-product event-delivery coverage:** hashes of all 88
+  retained evidence files match `SHA256SUMS` (`1a4bbfbc...ed72f`). Each final
+  run has 292 subscription rows, but zero-event rows are 51 (stop), 55
+  (hardkill), 41 (capacity). The intersection is 41 subscriptions with zero
+  events in all three runs: 14 BOOK_SNAPSHOT, 15 MARK_INDEX_PRICE, 6 TRADE,
+  4 BOOK_DELTA, 2 BAR. Some are legitimately age-filtered or quiet, not
+  unexplained loss; do not falsify timestamps or weaken policy to fill them.
+  Report admitted/LIVE, event-positive, expected-filtered and no-sample
+  denominators separately. Close missing transport coverage with suitable
+  authentic capture and explicit snapshot/reset+delta cases; classify
+  undeployed/out-of-scope routes honestly. A capture with no expected events
+  proves idle admission, not positive delivery for that binding.
+
+**Independent verification and retained evidence**
+
+- Review artifacts outside Git:
+  `/home/bobby/.local/state/qdl-v2/kn2-astra-review-20260924/`.
+  `probes.rs` SHA `51b1e5aa...a0072d7`; `native_stream_review.rs` is a
+  mechanical copy of the existing fixture plus one include, mounted over
+  the test file only inside the disposable builder. No canonical Rust or
+  Python source was edited. Synthetic records exist only in the in-process
+  test log, never in a real broker.
+- Commands: `cargo test --offline --locked -p qdl-stream-gateway --test
+  native_stream -- --test-threads=2` with the overlay: original 19 PASS,
+  five new expected-safety assertions FAIL (five reproduced defects), zero
+  ignored. Final repeat took 3.87 s; `native-review.log` SHA
+  `e3b6598a...ef4beb0`. Restored the canonical test overlay and ran
+  `cargo test --offline --locked -p qdl-stream-gateway --lib --test
+  native_stream -- --test-threads=2`: 38 PASS, zero fail/ignored.
+- Python `python -B -m unittest -v tests.test_kn_native_slice_probe
+  tests.test_kn_resource_sizing tests.test_kn_v220_contracts`: 57 PASS,
+  zero fail/skip, 0.768 s (`python-review.log`, SHA `3737eb14...e34553`).
+  Independent oracle probe on the dropped `A1,B2` reports zero defects,
+  confirming the correlated-oracle gap. SDK offset-zero probe raises the
+  documented ValueError. Two initial builder launches failed before tests
+  due to mounting a registry volume as Cargo home; corrected by mounting
+  `qdl-cargo-home` at `/usr/local/cargo/registry`, offline; no install/pull.
+- Reused, not rerun: Opus's isolated Kafka/mTLS matrix, stop/SIGKILL failover
+  and 3,000 canonical events/s capture challenge. The reported 185/185
+  failovers and per-client commit-to-client p99 33.884-48.710 ms in the
+  capacity run match retained summaries. Serving RSS peak 184,799,232 bytes
+  (~176.2 MiB); this measures that workload, not a bound for untested slow
+  replay paths. These are replay-capture numbers, not live provider latency,
+  full consumer-call-to-usable latency or certification of 50 alpha clients.
+
+**Owner resources, next steps and cleanup**
+
+- Bobby reaffirmed: optimize first; if measured KN-2/KN-3 demand still needs
+  RAM/CPU, additional bounded resources are permitted. Do not turn the old
+  cap or KN-1's 71.8 MB modeled Redis margin into a fixed blocker. Record
+  actual hot/replay load, peak RSS/allocator/buffer cost, smallest cap delta,
+  rollback and old/new overlap; reclaim superseded services after accepted
+  cutover. More RAM cannot repair F1-F5 or substitute for byte accounting.
+- Opus's isolated run used more client CPU/RAM than the initial packet and
+  manually observed its stop condition; that deviation is already recorded
+  above and is not erased. Future runs record their actual bounded packet
+  first and automate the abort condition when practical. No retroactive
+  production authority or ACL approval is inferred.
+- **Next:** fix F1-F5 together inside KN-2, reuse these counterexamples as
+  durable regressions; resolve/declare the SDK and delivery evidence limits.
+  Run fast affected tests first, then only affected isolated SDK/replay/
+  failover/load cases with corrected oracle. No new phase, architecture,
+  blanket C2 rerun or production rollout. Astra re-reviews the narrow diff
+  before KN-3 entry; no ASTRA_REVIEW_PASS is issued in this receipt.
+- Canonical `/home/bobby/data_layer`, branch `feat/consumer-endpoint-benchmark`;
+  no new worktree. Review clients/builders used existing images, network
+  disabled, read-only source, bounded tmpfs and existing target cache. All
+  `kn2-astra-*` containers auto-removed (inventory zero); no image built,
+  production restart or broad prune. Small review sources/logs retained for
+  Opus reproduction; existing named builder/cache retained for KN-2 fixes,
+  not a new archive. No disk-reclamation claim. Production Query remains
+  `83fa1bc` / `sha256:dd065fdf...f693951`, Stream `ae2d62a` /
+  `sha256:37d7f518...b181f9`; all four healthy, restart 0, OOM false.
+  Runtime configuration, published release and rollback set unchanged.
+  Two unrelated pre-existing plan hunks preserved outside this commit.
+  No push, merge, release, TS/alpha/order action or production data mutation.
 
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
