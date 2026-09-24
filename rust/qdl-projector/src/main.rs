@@ -19,7 +19,7 @@ use qdl_contracts::state_codec::state_partition;
 use qdl_contracts::state_contract::LogicalProductKey;
 use qdl_projector::cache::{Cache, CacheError, Layout};
 use qdl_projector::cleaner::{sweep_partition, CleanerKafkaSettings, SweepLimits, SweepReport};
-use qdl_projector::expiry::{ExpiryPublish, ExpiryReport, ExpiryTask};
+use qdl_projector::expiry::{ExpiryError, ExpiryPublish, ExpiryReport, ExpiryTask};
 use qdl_projector::kafka_pipe::{KafkaPipe, KafkaPipeSettings};
 use qdl_projector::kafka_state::{KafkaPartitionReader, KafkaStateSettings, KafkaStateSource};
 use qdl_projector::products::{retained_caps, ProductMap, ProductTransform, TransformSettings};
@@ -244,6 +244,7 @@ fn status_json(status: &Status) -> serde_json::Value {
             "rebuilds_started": b.rebuilds_started, "rebuilds_completed": b.rebuilds_completed,
             "rebuilds_abandoned": b.rebuilds_abandoned, "rebuilds_refused": b.rebuilds_refused,
             "rebuild_records": b.rebuild_records,
+            "ownership_lost": b.ownership_lost, "cache_reconnects": b.cache_reconnects,
             "owned": status.owned.iter().map(|(t, p)| format!("{t}/{p}")).collect::<Vec<_>>(),
             "rebuilding": status.rebuilding.as_ref().map(|(lpk, g)| json!({"lpk": lpk, "generation": g})),
             "last_rebuild_error": status.last_rebuild_error,
@@ -369,6 +370,15 @@ fn run_stage_b(config: Config, status: Shared) {
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
+            Err(StageBError::Cache(CacheError::Redis(reason))) => {
+                // Reconnect and prepare every partition again (tail if the
+                // cache kept its state, rebuild if it lost it).
+                record_error(&status, "stage_b", format!("cache: {reason}"));
+                std::thread::sleep(Duration::from_secs(1));
+                if let Err(error) = stage.recover_cache() {
+                    record_error(&status, "stage_b", format!("reconnect: {error:?}"));
+                }
+            }
             Err(error) => {
                 source_errors += 1;
                 record_error(&status, "stage_b", format!("{error:?}"));
@@ -487,7 +497,12 @@ fn run_expiry(config: Config, status: Shared, bars: u32) {
                     total.expired_opens += report.expired_opens;
                 }
             }
-            Err(error) => record_error(&status, "expiry", format!("{error:?}")),
+            Err(error) => {
+                record_error(&status, "expiry", format!("{error:?}"));
+                if matches!(error, ExpiryError::Cache(CacheError::Redis(_))) {
+                    let _ = cache.reconnect();
+                }
+            }
         }
     }
 }

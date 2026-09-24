@@ -701,11 +701,14 @@ def load(args: argparse.Namespace) -> dict[str, Any]:
     if args.phase == "history":
         # Offset 0 of every partition holds a filler record: the SDK's
         # StreamEvent requires a positive logical offset (recorded KN-2
-        # finding), and a fresh isolated topic starts at 0.
-        producer.begin_transaction()
-        for partition in range(6):
-            producer.produce(args.topic, key=b"kn-filler", value=b"", partition=partition)
-        producer.commit_transaction(30)
+        # finding), and a fresh isolated topic starts at 0. The KN-3
+        # projector flow loads without it (`--no-filler`): offset 0 is data
+        # (KN-2 R2) and a record outside the catalog stops stage A.
+        if not getattr(args, "no_filler", False):
+            producer.begin_transaction()
+            for partition in range(6):
+                producer.produce(args.topic, key=b"kn-filler", value=b"", partition=partition)
+            producer.commit_transaction(30)
         for start in range(0, len(selected), 500):
             producer.begin_transaction()
             for row in selected[start:start + 500]:
@@ -1382,6 +1385,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     lod.add_argument("--spool", default="/state/shared/canonical-cache.sqlite3",
                      help="tail: the stable spool, read-only (indexed committed_at_ns range)")
     lod.add_argument("--history-fraction", default="0.6")
+    lod.add_argument("--no-filler", action="store_true",
+                     help="history phase without the offset-0 filler records (KN-3 projector flow)")
     lod.add_argument("--live-seconds", default="70")
     lod.add_argument("--commit-log", default="/dev/null")
     lod.add_argument("--rate", default="0", help="live phase at this many records/s (capacity challenge)")

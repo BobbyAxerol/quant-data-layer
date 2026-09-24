@@ -84,6 +84,13 @@ pub struct StageBLimits {
     /// rebuilds the partition instead of overlaying the cache.
     pub rebuild_horizon: Duration,
     pub max_cas_retries: usize,
+    /// How often owned partitions check their owner fence in the cache even
+    /// without records: a cache that lost its state (restart, flush) is
+    /// rebuilt, and a newer owner is not fought.
+    pub ownership_probe: Duration,
+    /// How long a partition fenced by a newer owner is left alone while it
+    /// is still in this member's assignment (group rebalance catches up).
+    pub fenced_backoff: Duration,
 }
 
 impl Default for StageBLimits {
@@ -93,6 +100,8 @@ impl Default for StageBLimits {
             poll_timeout: Duration::from_millis(50),
             rebuild_horizon: Duration::from_secs(6 * 86_400),
             max_cas_retries: 5,
+            ownership_probe: Duration::from_secs(5),
+            fenced_backoff: Duration::from_secs(60),
         }
     }
 }
@@ -119,6 +128,9 @@ pub struct StageBMetrics {
     pub rebuilds_abandoned: u64,
     pub rebuilds_refused: u64,
     pub rebuild_records: u64,
+    /// Partitions whose owner key vanished (cache state lost): rebuilt.
+    pub ownership_lost: u64,
+    pub cache_reconnects: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,6 +186,10 @@ pub struct StageB<S: StateSource> {
     rebuild_reader: Option<Box<dyn PartitionReader + Send>>,
     rebuild_queue: VecDeque<String>,
     rebuild: Option<ActiveRebuild>,
+    /// Partitions fenced by a newer owner: not prepared again before the
+    /// time (ms) unless they leave the assignment first.
+    fenced: HashMap<(String, i32), u64>,
+    last_probe_ms: u64,
 }
 
 fn system_now_ms() -> u64 {
@@ -246,7 +262,61 @@ impl<S: StateSource> StageB<S> {
             rebuild_reader: None,
             rebuild_queue: VecDeque::new(),
             rebuild: None,
+            fenced: HashMap::new(),
+            last_probe_ms: 0,
         }
+    }
+
+    /// After a cache I/O error: reconnect and forget every partition's state,
+    /// so each is prepared again - tailing from its checkpoint if the cache
+    /// kept it, rebuilding if the cache lost it.
+    pub fn recover_cache(&mut self) -> Result<(), StageBError> {
+        self.cache.reconnect()?;
+        self.metrics.cache_reconnects += 1;
+        self.partitions.clear();
+        self.fenced.clear();
+        if self.rebuild.take().is_some() {
+            self.metrics.rebuilds_abandoned += 1;
+            self.last_rebuild_error = Some("cache reconnect".into());
+            if let Some(reader) = self.rebuild_reader.as_mut() {
+                reader.stop().map_err(StageBError::Source)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A newer owner holds the partition: stop applying it and do not take
+    /// it back for `fenced_backoff`.
+    fn fence_out(&mut self, topic: &str, partition: i32) {
+        self.metrics.zombies += 1;
+        let key = (topic.to_owned(), partition);
+        self.partitions.remove(&key);
+        let until = (self.now_ms)() + self.limits.fenced_backoff.as_millis() as u64;
+        self.fenced.insert(key, until);
+    }
+
+    /// Compare each owned partition's owner key with this instance's fence.
+    fn probe_ownership(&mut self) -> Result<(), StageBError> {
+        let now = (self.now_ms)();
+        if now.saturating_sub(self.last_probe_ms) < self.limits.ownership_probe.as_millis() as u64 {
+            return Ok(());
+        }
+        self.last_probe_ms = now;
+        let owned = self.owned();
+        let owners = self.cache.owners(&owned)?;
+        for ((topic, partition), owner) in owned.into_iter().zip(owners) {
+            let fence = self.partitions[&(topic.clone(), partition)].fence;
+            match owner {
+                Some(owner) if owner == fence => {}
+                Some(owner) if owner > fence => self.fence_out(&topic, partition),
+                _ => {
+                    // The cache lost the partition's state: prepare it again.
+                    self.metrics.ownership_lost += 1;
+                    self.partitions.remove(&(topic, partition));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The reader per-product rebuilds replay with (without one, a request
@@ -321,13 +391,17 @@ impl<S: StateSource> StageB<S> {
         let assigned = self.source.assigned().map_err(StageBError::Source)?;
         self.partitions
             .retain(|key, _| assigned.iter().any(|(t, p)| t == &key.0 && *p == key.1));
+        let now = (self.now_ms)();
+        self.fenced.retain(|key, until| {
+            *until > now && assigned.iter().any(|(t, p)| t == &key.0 && *p == key.1)
+        });
         // Newly assigned partitions: take ownership, choose the mode and seek.
         // Their records in this batch were fetched before the seek and are
         // dropped (librdkafka purges the partition's queue on seek).
         let mut fresh_partitions = std::collections::BTreeSet::new();
         for (topic, partition) in &assigned {
             let key = (topic.clone(), *partition);
-            if !self.partitions.contains_key(&key) {
+            if !self.partitions.contains_key(&key) && !self.fenced.contains_key(&key) {
                 let state = self.prepare(topic, *partition)?;
                 self.source
                     .seek(topic, *partition, state.next)
@@ -352,6 +426,7 @@ impl<S: StateSource> StageB<S> {
         for (topic, partition) in assigned {
             self.finish_build_if_done(&topic, partition)?;
         }
+        self.probe_ownership()?;
         self.advance_rebuild()?;
         Ok(applied)
     }
@@ -365,9 +440,24 @@ impl<S: StateSource> StageB<S> {
             .map_err(StageBError::Source)?;
         let now = (self.now_ms)();
         let horizon = self.limits.rebuild_horizon.as_millis() as u64;
+        // A product staged but never published means an owner stopped in
+        // the middle of a cold build (or before publishing a first-seen
+        // product): its checkpoint is fresh, but tailing from it would leave
+        // such products NOT_READY forever. Build the partition again.
+        let mut interrupted = false;
+        if checkpoint.is_some() {
+            for lpk in self.cache.registry(topic, partition)? {
+                let pointer = self.cache.pointer(&lpk)?;
+                if pointer.staging.is_some() && pointer.ready.is_none() {
+                    interrupted = true;
+                    break;
+                }
+            }
+        }
         let state = match checkpoint {
             Some(checkpoint)
-                if now.saturating_sub(checkpoint.at_ms) <= horizon
+                if !interrupted
+                    && now.saturating_sub(checkpoint.at_ms) <= horizon
                     && checkpoint.next >= earliest =>
             {
                 PartitionState {
@@ -444,8 +534,7 @@ impl<S: StateSource> StageB<S> {
                 }
                 Applied::Zombie { .. } => {
                     // Another replica owns the partition now.
-                    self.metrics.zombies += 1;
-                    self.partitions.remove(&key);
+                    self.fence_out(topic, partition);
                     return Ok(0);
                 }
                 Applied::Miss(_) => {
@@ -553,8 +642,7 @@ impl<S: StateSource> StageB<S> {
         )? {
             Applied::Ok(_) => Ok(true),
             Applied::Zombie { .. } => {
-                self.metrics.zombies += 1;
-                self.partitions.remove(&(topic.to_owned(), partition));
+                self.fence_out(topic, partition);
                 Ok(false)
             }
             Applied::Miss(_) => {
@@ -1016,8 +1104,7 @@ impl<S: StateSource> StageB<S> {
                 Ok(())
             }
             Applied::Zombie { .. } => {
-                self.metrics.zombies += 1;
-                self.partitions.remove(&(topic.to_owned(), partition));
+                self.fence_out(topic, partition);
                 Ok(())
             }
             Applied::Miss(_) => {
@@ -1080,8 +1167,7 @@ impl<S: StateSource> StageB<S> {
             )? {
                 Applied::Ok(_) => {}
                 Applied::Zombie { .. } => {
-                    self.metrics.zombies += 1;
-                    self.partitions.remove(&(topic, partition));
+                    self.fence_out(&topic, partition);
                     self.refuse_rebuild(&lpk, "partition lost");
                     continue;
                 }
@@ -1261,9 +1347,7 @@ impl<S: StateSource> StageB<S> {
                     return Ok(true);
                 }
                 Applied::Zombie { .. } => {
-                    self.metrics.zombies += 1;
-                    self.partitions
-                        .remove(&(active.topic.clone(), active.partition));
+                    self.fence_out(&active.topic, active.partition);
                     self.abandon_rebuild("partition lost")?;
                     return Ok(false);
                 }

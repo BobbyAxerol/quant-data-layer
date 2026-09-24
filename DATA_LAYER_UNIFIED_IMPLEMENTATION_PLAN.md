@@ -55882,6 +55882,102 @@ revision ordering, compaction/expiry and restore proof.
     volumes 0; capture and import receipts hashed into the evidence dir
     `/home/bobby/.local/state/qdl-v2/kn3-20260924/evidence`, raw capture
     deleted; results appended here.
+- 2026-09-24: **KN-3 slice 10 - K3-T08 / K3-T07 / K3.7 isolated full-flow run
+  on real data: executed per the packet above; three defects found by the run
+  and fixed; findings that need owner decisions.** Evidence
+  `/home/bobby/.local/state/qdl-v2/kn3-20260924/evidence` (`SHA256SUMS`
+  `605476a2...0513`); binary rebuilt from this commit's source for each fix
+  (last `bf689be9...1f97`); production containers identical before/after;
+  production touched only by read-only spool reads.
+  - Data: real canonical capture 184,945 records / 190 demanded keys (247 MB,
+    `98b11223...3ec4`, 44 s, spool `mode=ro`); history 110,986 loaded
+    without filler (new `kn_native_slice_probe.py load --no-filler`: offset 0
+    is data after KN-2 R2; the filler record stopped stage A with
+    `PRODUCT_NOT_IN_BUNDLE`, i.e. fail closed as designed); legacy import of
+    all 144 BAR bindings, 140 with rows, 938,061 frames in 426 s, receipt
+    `14314c13...59f4` (PASS).
+  - Cold build (2 replicas, empty cache): stage A 110,986 records in ~30 s;
+    stage B 951,061 BAR applies + 73,815 duplicates recognised; 206 products
+    READY in 162 s. The 10 NOT_READY products have 0 source records (4 DNSE on
+    V1 by owner decision, 6 spot BTCUSDT without data) - typed NOT_READY, no
+    default. Live challenge 3,000/s for 60 s: 180,087 committed + 35,645
+    aborted; stage A received exactly 291,073 = history + live committed;
+    stage A lag 6 after 15 s; 0 conflicts / stale / zombies / CAS retries.
+  - Parity (K3-T07, new `scripts/kn3_flow_check.py`, helper-built,
+    Claude-reviewed and run): `latest` 66/66 equal to the Kafka oracle (also
+    after the full rebuild, 303,083 canonical records); `bars` with
+    `--import-receipt`: 937,255/937,255 spool finals covered and **byte-equal**
+    (SHA-256 of the canonical envelope), 0 missing, 0 differs, readback over
+    Rust-written rows equal for every product (806 rows trimmed and 1,000
+    appended by the live spool since the import, accounted separately);
+    after expiry `bars --floor-aware`: 417,605/417,605 equal, 519,439 below
+    the floor, 0 missing/differs. `ready`: 206 READY, 10 ABSENT (no source).
+  - Recovery (K3.7): SIGKILL of replica A -> B owned all 12 partitions after
+    51.7 s (Kafka session timeout 45 s dominates), no rebuild, lag 6;
+    cold start on an empty cache with group offsets at the partition ends ->
+    206 READY in 179 s; cache wiped while running -> both replicas
+    reconnected and rebuilt, 206 READY in 146.8 s (first products 7 s);
+    per-product rebuild via `SADD kn3:<env>:rebuild` -> published in 19.5 s
+    (5 s request poll included, 4,000 rows) by the owning replica only; a
+    request for a product nobody holds stays pending (not dropped).
+  - Expiry/cleaner (K3.5) under `QDL_KN_BAR_CAP_CLAMP=4000`: every product at
+    cap in 121 s; 938,061 -> 417,861 rows, cache 763 -> 341 MB; 520,456 opens
+    expired, 580 floors, 1,040,912 tombstones; cleaner 10 sweeps, 0 orphans
+    (none created in this run). Latest reads while expiring 188,585 more opens
+    (clamp 2,000): p50 0.434 / p95 0.631 / p99 1.097 / max 7.744 ms vs idle
+    p50 0.432 / p99 1.217 ms, 0 errors; Redis SLOWLOG 0 commands > 5 ms.
+  - Resources (whole run, `docker stats` 5 s): projector max 173 MiB of 256,
+    CPU p95 0.34-0.39 (0.5 cap, saturated only during cold build: cold build
+    is CPU-bound); market cache max 685 MiB; broker max 737 MiB. At 3,000/s
+    the two replicas together used ~0.38 CPU (budget 0.3 unverified); state
+    topic bytes: bars 1.31 GB after import + duplicates, 1.41 GB after
+    expiry tombstones, **546 MB after compaction once segments rolled**.
+  - **Defects found and fixed (each with a regression test):**
+    (1) an owner that stopped in the middle of a cold build left staged, never
+    published products while its checkpoint looked fresh -> the next owner
+    tailed and those products stayed NOT_READY; now a registry product with
+    staging and no ready forces a rebuild (`stage_b_redis`
+    `an_interrupted_cold_build_is_built_again_by_the_next_owner`).
+    (2) cache outage: one sync Redis connection never reconnected, and an
+    idle owner never noticed a wiped cache (0 READY for > 10 min); now
+    `Cache::reconnect` + `StageB::recover_cache` on a Redis error, 10 s I/O
+    timeouts, a periodic owner-fence probe (5 s) that rebuilds a partition
+    whose owner key vanished, and a partition fenced by a newer owner is left
+    alone for 60 s instead of being taken back (no ping-pong)
+    (3 `stage_b_redis` tests). (3) a cold build seeked to the partition start
+    raced librdkafka's asynchronous committed-offset fetch; the committed
+    offset (the partition end, from informational commits) won and the build
+    "finished" without reading (49 products never READY); the stage B source
+    now uses the group consumer only for ownership (partitions paused) and an
+    assign-mode data consumer started at explicit offsets,
+    `auto.offset.reset=error` (`stage_b_kafka`
+    `a_wiped_cache_is_built_from_the_start_even_with_group_offsets_at_the_end`
+    passes; it could not force the race timing - the flow rerun of the exact
+    failing condition is the proof: 206/206 READY).
+  - **Findings needing owner decisions before the production packet:**
+    (a) **market-cache memory**: real rows cost 824 B/row (Binance 836, OKX
+    786; all listpack; value mean 690-708 B) vs the budget's 707 B/row (OKX
+    DOGE 1m only); at the D15 cap (1,699,216 rows) that is ~1.40 GB >
+    `maxmemory` 1.288 GB. One-variable sweep on 280,762 real rows
+    (`bucket-size-sweep.txt`): 116 -> 816.9, 112 -> 743.1, 108 -> 759.0,
+    104 -> 788.2, 88 -> 745.5 B/row (allocator size classes; 112 leaves ~1%
+    margin before the next class). Even at 112, the cap needs ~1.26 GB of
+    rows alone. Options: bucket 112 + `maxmemory` ~1.5 GB (container 1.75
+    GiB), or lower headroom - **owner decision (RAM)**; no setting changed.
+    (b) **state-topic segments**: the active segment is never compacted; with
+    the default `segment.ms` 7 d / `segment.bytes` 1 GiB each partition can
+    hold up to 1 GiB of superseded facts and tombstones. Proposed for the K3.1
+    packet/budget: `segment.ms` 3,600,000 (= `min.compaction.lag.ms`) and
+    `segment.bytes` 134,217,728 for `md.bars.v2`/`md.latest.v2` - budget
+    change for owner/Astra; the packet is unchanged. (c) failover time is the
+    group session timeout (45 s default); lowering it is a later one-variable
+    tuning. (d) cleaner cost: ~560 MB read per replica sweep at this data size
+    (2 passes) - fine at the 6 h default.
+  - Cleanup: 0 `kn3-*` containers/networks; 17 empty anonymous volumes left
+    by `docker rm -f` of this session's disposable containers removed by
+    name (named volumes untouched); raw capture deleted after hashing; kept:
+    evidence 896 KB + run dir (binary, bundle, check receipts) to the KN-3
+    review.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

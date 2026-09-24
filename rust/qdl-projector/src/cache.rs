@@ -340,8 +340,24 @@ impl CacheError {
 
 pub struct Cache {
     pub layout: Layout,
+    client: redis::Client,
     connection: Connection,
     apply: Script,
+}
+
+/// Bound on one Redis round trip: a hung market cache surfaces as an error
+/// (and a reconnect) instead of blocking stage B forever.
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn open_connection(client: &redis::Client) -> Result<Connection, CacheError> {
+    let connection = client.get_connection().map_err(CacheError::from)?;
+    connection
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(CacheError::from)?;
+    connection
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(CacheError::from)?;
+    Ok(connection)
 }
 
 fn parse_u64(value: Option<String>) -> Option<u64> {
@@ -351,12 +367,36 @@ fn parse_u64(value: Option<String>) -> Option<u64> {
 impl Cache {
     pub fn connect(url: &str, layout: Layout) -> Result<Self, CacheError> {
         let client = redis::Client::open(url).map_err(CacheError::from)?;
-        let connection = client.get_connection().map_err(CacheError::from)?;
+        let connection = open_connection(&client)?;
         Ok(Self {
             layout,
+            client,
             connection,
             apply: Script::new(APPLY_LUA),
         })
+    }
+
+    /// A fresh connection after an I/O error (the market cache restarted or
+    /// the link broke); the Lua script is reloaded on first use.
+    pub fn reconnect(&mut self) -> Result<(), CacheError> {
+        self.connection = open_connection(&self.client)?;
+        Ok(())
+    }
+
+    /// The current owner fence of each partition (`None`: the key is gone,
+    /// i.e. the cache lost its state).
+    pub fn owners(&mut self, partitions: &[(String, i32)]) -> Result<Vec<Option<u64>>, CacheError> {
+        if partitions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut command = redis::cmd("MGET");
+        for (topic, partition) in partitions {
+            command.arg(self.layout.owner(topic, *partition));
+        }
+        let values: Vec<Option<String>> = command
+            .query(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(values.into_iter().map(parse_u64).collect())
     }
 
     pub fn connection(&mut self) -> &mut Connection {

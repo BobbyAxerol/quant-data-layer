@@ -20,6 +20,7 @@ use qdl_projector::stage_b::{StageB, StageBLimits};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
+use rdkafka::consumer::Consumer as _;
 use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -377,4 +378,88 @@ async fn a_product_rebuild_replays_the_committed_partition_through_a_second_read
         .query(stage.cache.connection())
         .unwrap();
     assert_eq!(rows.as_deref(), Some("121"));
+}
+
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA and QDL_KN_TEST_REDIS (isolated); run by the kn-native-integration job"]
+async fn a_wiped_cache_is_built_from_the_start_even_with_group_offsets_at_the_end() {
+    let bootstrap = env("QDL_KN_TEST_KAFKA");
+    let id = stamp();
+    let topic = format!("kn3-wipe-{id}");
+    create_compacted(&bootstrap, &topic).await;
+    let producer: BaseProducer = ClientConfig::new()
+        .set("bootstrap.servers", &bootstrap)
+        .set("transactional.id", format!("kn3-wipe-test-{id}"))
+        .set("enable.idempotence", "true")
+        .create()
+        .unwrap();
+    producer.init_transactions(Duration::from_secs(20)).unwrap();
+    let bars = LogicalProductKey::new("paper", "OKX", "SWAP", UID, "BAR", Some("1m")).unwrap();
+    let history: Vec<_> = (0..300u64)
+        .map(|minute| bar_frame(&bars, minute, 1, minute))
+        .collect();
+    produce(&producer, &topic, &bars, &history, true);
+    let group = format!("kn-projector-test-wipe-{id}");
+    let environment = format!("wipe{id}");
+    let mut first = instance(&bootstrap, &topic, &group, &environment, "w-0");
+    assert!(until(Duration::from_secs(30), || {
+        first.step().unwrap();
+        trade_count(&mut first, &bars, 299).is_some()
+    }));
+    // Group offsets reach the end (informational commits), then the member
+    // stops and the cache loses everything.
+    for _ in 0..20 {
+        first.step().unwrap();
+    }
+    drop(first);
+    // Group offsets at the partition ends, committed synchronously (what the
+    // informational commits of a long-running member leave behind).
+    let committer: rdkafka::consumer::BaseConsumer = ClientConfig::new()
+        .set("bootstrap.servers", &bootstrap)
+        .set("group.id", &group)
+        .create()
+        .unwrap();
+    let mut ends = rdkafka::TopicPartitionList::new();
+    for partition in 0..PARTITIONS as i32 {
+        let (_, end) = committer
+            .fetch_watermarks(&topic, partition, Duration::from_secs(10))
+            .unwrap();
+        ends.add_partition_offset(&topic, partition, rdkafka::Offset::Offset(end))
+            .unwrap();
+    }
+    rdkafka::consumer::Consumer::commit(&committer, &ends, rdkafka::consumer::CommitMode::Sync)
+        .unwrap();
+    drop(committer);
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("kn3:{environment}:*"))
+        .query(
+            &mut redis::Client::open(env("QDL_KN_TEST_REDIS").as_str())
+                .unwrap()
+                .get_connection()
+                .unwrap(),
+        )
+        .unwrap();
+    let mut connection = redis::Client::open(env("QDL_KN_TEST_REDIS").as_str())
+        .unwrap()
+        .get_connection()
+        .unwrap();
+    for key in keys {
+        let _: u64 = redis::cmd("DEL").arg(key).query(&mut connection).unwrap();
+    }
+    let mut second = instance(&bootstrap, &topic, &group, &environment, "w-1");
+    assert!(
+        until(Duration::from_secs(60), || {
+            second.step().unwrap();
+            trade_count(&mut second, &bars, 0).is_some()
+                && trade_count(&mut second, &bars, 299).is_some()
+        }),
+        "every open rebuilt from the partition start"
+    );
+    let generation = second.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+    let rows: Option<String> = redis::cmd("HGET")
+        .arg(second.cache.layout.bar_meta(generation, &bars.encode()))
+        .arg("rows")
+        .query(second.cache.connection())
+        .unwrap();
+    assert_eq!(rows.as_deref(), Some("300"));
 }

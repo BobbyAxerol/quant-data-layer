@@ -13,7 +13,9 @@ use qdl_contracts::qdl::marketdata::v2::{
 use qdl_contracts::state_codec::{decode_bar_row, decode_latest_value, StateFrame};
 use qdl_contracts::state_contract::{LogicalProductKey, SourceCoordinate};
 use qdl_projector::cache::{bucket_of, Cache, Layout};
-use qdl_projector::stage_b::{PartitionReader, StageB, StageBLimits, StateInput, StateSource};
+use qdl_projector::stage_b::{
+    PartitionReader, StageB, StageBError, StageBLimits, StateInput, StateSource,
+};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -839,4 +841,171 @@ fn a_latest_tombstone_takes_effect_in_log_order_within_one_batch() {
     drain(&mut stage);
     assert_eq!(read_latest(&mut stage, &revived), Some((newest, 11)));
     assert_eq!(read_latest(&mut stage, &deleted), None);
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn an_interrupted_cold_build_is_built_again_by_the_next_owner() {
+    let log = Log::default();
+    let uids: Vec<String> = (0..6u32)
+        .map(|index| format!("fb26214c-7b9b-5961-95b2-55154755af{index:02x}"))
+        .collect();
+    let products: Vec<LogicalProductKey> = uids
+        .iter()
+        .map(|uid| LogicalProductKey::new("paper", "OKX", "SWAP", uid, "QUOTE", None).unwrap())
+        .collect();
+    for (index, (uid, product)) in uids.iter().zip(&products).enumerate() {
+        for level in 0..3u32 {
+            let mut quote = EventEnvelope::decode(quote(level).as_slice()).unwrap();
+            quote.instrument_uid = uid.clone();
+            push(
+                &log,
+                LATEST,
+                latest_frame(
+                    product,
+                    quote.encode_to_vec(),
+                    10 * index as u64 + u64::from(level),
+                ),
+            );
+        }
+    }
+    let environment = environment("interrupted");
+    let mut first = stage(&log, &environment);
+    // Two batches of 7: the build stops half way (a crash).
+    first.step().unwrap();
+    first.step().unwrap();
+    assert!(first.building(LATEST, 0), "still building");
+    drop(first);
+    let mut next = stage(&log, &environment);
+    drain(&mut next);
+    for product in &products {
+        assert!(
+            read_latest(&mut next, product).is_some(),
+            "{} READY after the takeover",
+            product.encode()
+        );
+    }
+}
+
+fn wipe(stage: &mut StageB<Source>, environment: &str) {
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("kn3:{environment}:*"))
+        .query(stage.cache.connection())
+        .unwrap();
+    for key in keys {
+        let _: u64 = redis::cmd("DEL")
+            .arg(key)
+            .query(stage.cache.connection())
+            .unwrap();
+    }
+}
+
+fn probing(log: &Log, environment: &str) -> StageB<Source> {
+    let mut stage = stage(log, environment);
+    stage.limits.ownership_probe = Duration::ZERO;
+    stage
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn an_idle_owner_rebuilds_a_cache_that_lost_its_state() {
+    let log = Log::default();
+    let quotes = lpk("QUOTE", None);
+    let bars = lpk("BAR", Some("1m"));
+    let newest = quote(4);
+    push(&log, LATEST, latest_frame(&quotes, newest.clone(), 10));
+    for minute in 0..30u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("wiped");
+    let mut stage = probing(&log, &environment);
+    drain(&mut stage);
+    assert!(read_latest(&mut stage, &quotes).is_some());
+    // The cache loses everything (restart without persistence); no record
+    // arrives afterwards.
+    wipe(&mut stage, &environment);
+    drain(&mut stage);
+    assert_eq!(stage.metrics.ownership_lost, 2, "both partitions noticed");
+    assert_eq!(stage.metrics.builds, 4, "and were built again");
+    assert_eq!(read_latest(&mut stage, &quotes), Some((newest, 10)));
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("30"));
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn a_fenced_member_does_not_take_the_partition_back() {
+    let log = Log::default();
+    let quotes = lpk("QUOTE", None);
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 10));
+    let environment = environment("fenced");
+    let mut old = probing(&log, &environment);
+    drain(&mut old);
+    let mut new = probing(&log, &environment);
+    drain(&mut new);
+    let owner = |stage: &mut StageB<Source>| -> u64 {
+        redis::cmd("GET")
+            .arg(stage.cache.layout.owner(LATEST, 0))
+            .query(stage.cache.connection())
+            .unwrap()
+    };
+    let taken = owner(&mut new);
+    // The old member still believes it is assigned: it notices the newer
+    // fence and stays away instead of incrementing the owner key again.
+    drain(&mut old);
+    assert!(old.metrics.zombies >= 1);
+    assert_eq!(owner(&mut old), taken, "no ping-pong");
+    assert!(old.owned().iter().all(|(topic, _)| topic != LATEST));
+    push(&log, LATEST, latest_frame(&quotes, quote(2), 11));
+    drain(&mut new);
+    drain(&mut old);
+    assert_eq!(new.metrics.zombies, 0, "the new owner keeps applying");
+    assert_eq!(
+        read_latest(&mut new, &quotes).map(|(_, offset)| offset),
+        Some(11)
+    );
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn a_broken_cache_connection_is_recovered() {
+    let log = Log::default();
+    let quotes = lpk("QUOTE", None);
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 10));
+    let environment = environment("reconnect");
+    let mut stage = probing(&log, &environment);
+    drain(&mut stage);
+    let id: u64 = redis::cmd("CLIENT")
+        .arg("ID")
+        .query(stage.cache.connection())
+        .unwrap();
+    // Kill this connection from another client (a restart or a broken link).
+    let url = std::env::var("QDL_KN_TEST_REDIS").unwrap();
+    let mut other = redis::Client::open(url.as_str())
+        .unwrap()
+        .get_connection()
+        .unwrap();
+    let _: u64 = redis::cmd("CLIENT")
+        .arg("KILL")
+        .arg("ID")
+        .arg(id)
+        .query(&mut other)
+        .unwrap();
+    let error = (0..5).find_map(|_| stage.step().err());
+    assert!(matches!(error, Some(StageBError::Cache(_))), "{error:?}");
+    stage.recover_cache().unwrap();
+    push(&log, LATEST, latest_frame(&quotes, quote(2), 11));
+    drain(&mut stage);
+    assert_eq!(stage.metrics.cache_reconnects, 1);
+    assert_eq!(
+        stage.metrics.builds, 2,
+        "the cache kept its state: tail, no rebuild"
+    );
+    assert_eq!(
+        read_latest(&mut stage, &quotes).map(|(_, offset)| offset),
+        Some(11)
+    );
 }
