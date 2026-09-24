@@ -157,3 +157,100 @@ async fn only_committed_records_reach_the_reader_and_nothing_is_committed() {
         .iter()
         .all(|element| !matches!(element.offset(), rdkafka::Offset::Offset(_))));
 }
+
+/// K2-T02 over real Kafka: the shared live reader (hub) and a separate replay
+/// reader split the committed log exactly at the registration barrier, with
+/// aborted batches and transaction markers in the range; the live reader is
+/// never sought.
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker); run by the kn-native-integration job"]
+async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
+    use qdl_stream_gateway::hub::{Hub, HubConfig};
+    use qdl_stream_gateway::reader::{KafkaLogSource, KafkaRangeSource};
+    use qdl_stream_gateway::replay::{scan_range, Emit, ReplayEnd, ReplayLimits, ReplayMetrics};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let bootstrap = bootstrap();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let topic = format!("kn2-barrier-{stamp}");
+    create_topic(&bootstrap, &topic).await;
+    let producer = transactional_producer(&bootstrap, &format!("kn2-test-tx-{stamp}"));
+    // Before the hub starts: committed, aborted and other-key records.
+    send_batch(
+        &producer,
+        &topic,
+        &[("K", "p1"), ("O", "x1"), ("K", "p2")],
+        true,
+    );
+    send_batch(&producer, &topic, &[("K", "aborted")], false);
+    send_batch(&producer, &topic, &[("K", "p3")], true);
+    let settings = KafkaSettings {
+        bootstrap: bootstrap.clone(),
+        topic: topic.clone(),
+        group_id: format!("kn-barrier-{stamp}"),
+        client_id: "kn2-barrier-test".into(),
+        tls: None,
+        fetch_wait_ms: 10,
+    };
+    // The hub starts at the end; the cursor below its start forces the
+    // replay reader (no ring), the range after it comes live.
+    let (source, starts) = KafkaLogSource::open_at_end(&settings).expect("live source");
+    let hub = Arc::new(Hub::new(&starts, HubConfig::default()));
+    let reader = hub.run(Box::new(source));
+    send_batch(
+        &producer,
+        &topic,
+        &[("K", "l1"), ("K", "aborted-live")],
+        false,
+    );
+    send_batch(&producer, &topic, &[("O", "x2"), ("K", "l2")], true);
+    // Wait until the live reader has passed everything committed so far,
+    // transaction markers included (it advances on idle polls).
+    let high = settings
+        .base_consumer()
+        .expect("probe consumer")
+        .fetch_watermarks(&topic, 0, Duration::from_secs(10))
+        .expect("watermarks")
+        .1;
+    let started = Instant::now();
+    while hub.next_offset(0).unwrap_or(0) < high && started.elapsed() < Duration::from_secs(20) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let barrier = hub.next_offset(0).expect("partition 0");
+    assert_eq!(barrier, high, "the live reader reached the committed end");
+    let range = KafkaRangeSource { settings };
+    let mut replayed = Vec::new();
+    let end = tokio::task::spawn_blocking(move || {
+        let mut emit = |record: qdl_stream_gateway::hub::RawRecord| {
+            replayed.push(String::from_utf8_lossy(&record.payload).into_owned());
+            Emit::Sent
+        };
+        let end = scan_range(
+            &range,
+            0,
+            -1,
+            barrier,
+            b"K",
+            &ReplayLimits::default(),
+            None,
+            &AtomicBool::new(false),
+            &ReplayMetrics::default(),
+            &mut emit,
+        );
+        (end, replayed)
+    })
+    .await
+    .expect("replay task");
+    assert_eq!(end.0, ReplayEnd::Complete);
+    assert_eq!(
+        end.1,
+        ["p1", "p2", "p3", "l2"],
+        "committed K records below the barrier only: aborted ones never, O never"
+    );
+    hub.stop();
+    reader.join().expect("reader thread");
+}

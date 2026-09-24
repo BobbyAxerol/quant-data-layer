@@ -1,17 +1,22 @@
-//! Kafka-native V2 stream gateway, KN-1 vertical slice (guide 18.8, K1.5).
+//! Kafka-native V2 stream gateway (guide 18.9, KN-2).
 //!
-//! Scope of this slice: an authenticated `Subscribe` that reads committed
-//! canonical records straight from Kafka and delivers them through the
-//! existing public gRPC contract to the real SDK, with cursor v3. It proves
-//! the path and measures its cost before KN-2 builds the full service
-//! (shared live readers, ring, replay pool, every public RPC). Each
-//! subscription owns one bounded Kafka reader here; that is a prototype
-//! choice, recorded as such, not the KN-2 design.
+//! The public `MarketDataStreamService` served natively from committed
+//! canonical Kafka records: one shared committed reader per replica with an
+//! indexed fan-out ([`hub`]), bounded subscriber queues with the lifecycle
+//! delivery policy ([`subscription`]), replay-to-live through a barrier and a
+//! bounded replay reader pool ([`replay`]), cursor v3, the Python access
+//! rules ([`auth`], [`authority`]) and the snapshot/status read view
+//! ([`readview`], market cache attached in KN-4).
 
 pub mod auth;
+pub mod authority;
 pub mod bundle;
 pub mod generated;
+pub mod hub;
 pub mod reader;
+pub mod readview;
+pub mod replay;
 pub mod requirement;
 pub mod service;
+pub mod subscription;
 pub mod tls;

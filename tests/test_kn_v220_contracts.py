@@ -194,6 +194,41 @@ class RequirementValidationGoldenTests(unittest.TestCase):
         self.assertEqual(exercised, set(doc["rules"]))
 
 
+class DeliveryPolicyGoldenTests(unittest.TestCase):
+    """KN-2 D1: the native stream's delivery policy is the domain policy
+    (``qdl.ingestion.contracts.delivery_policy``); Rust reads the same file."""
+
+    def test_every_public_feed_matches_the_domain_function(self):
+        from qdl.domain.lifecycle import BarLifecycle
+        from qdl.ingestion.contracts import FeedType as DomainFeed, delivery_policy
+
+        mapping = {"TRADE": DomainFeed.TRADE, "QUOTE": DomainFeed.BBO, "BAR": DomainFeed.BAR,
+                   "BOOK_SNAPSHOT": DomainFeed.BOOK, "BOOK_DELTA": DomainFeed.BOOK}
+        doc = _load("delivery_policy.json")
+        feeds = {name.removeprefix("FEED_TYPE_") for name in query_pb2.FeedType.keys()} - {"UNSPECIFIED"}
+        self.assertEqual({case["feed"] for case in doc["cases"]}, feeds)
+        for case in doc["cases"]:
+            with self.subTest(case["feed"], lifecycle=case["bar_lifecycle"]):
+                lifecycle = case["bar_lifecycle"]
+                try:
+                    got = delivery_policy(
+                        mapping.get(case["feed"], DomainFeed.BBO),
+                        bar_lifecycle=None if lifecycle is None else BarLifecycle[lifecycle],
+                    ).value
+                except ValueError:
+                    got = "ERROR"
+                self.assertEqual(got, case["policy"])
+
+    def test_book_records_are_lossless_unlike_the_old_stream_coalescing(self):
+        from qdl.stream.grpc_service import LATEST_STATE_FEEDS
+
+        doc = {(case["feed"], case["bar_lifecycle"]): case["policy"]
+               for case in _load("delivery_policy.json")["cases"]}
+        self.assertEqual(doc[("BOOK_SNAPSHOT", None)], "LOSSLESS")
+        # Recorded divergence (KN-2 D1): the Python stream coalesces it.
+        self.assertIn("BOOK_SNAPSHOT", {feed.value for feed in LATEST_STATE_FEEDS})
+
+
 class StateContractGoldenTests(unittest.TestCase):
     def setUp(self) -> None:
         self.doc = _load("state_contract.json")

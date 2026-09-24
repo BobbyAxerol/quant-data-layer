@@ -47,6 +47,12 @@ languages):
 | schema major, stream, topic id, plan epoch, source-policy, catalog, route generation (in this order) | `SCHEMA_MAJOR` ... `ROUTE_GENERATION` | **EXPIRED** |
 | `now >= expires_at_ns` | `EXPIRED` | **EXPIRED** |
 
+**Replay (no requirement).** `ReplayRequest` carries no requirement, so
+Replay verifies with the same order minus the digest comparison
+(`verify_scope`) and then binds the claims' `product_key` to a catalog binding
+and the consumer's feed scope (`require_feed_scope`), as the Python Replay
+does; Subscribe always compares the digest.
+
 EXPIRED is gRPC `OUT_OF_RANGE` and the SDK answers it with a fresh snapshot
 (`qdl_sdk/client.py` `CursorExpiredError`). INVALID is `INVALID_ARGUMENT`, on
 which the SDK raises; a normal migration or rollback must never produce it.
@@ -159,3 +165,18 @@ coherent per product and no read promises a cross-product snapshot.
   fence never enters a public cursor; a rebuild does not reset consumers whose
   cursor contract is still valid, and cursor v3 validity never depends on it.
 - Readiness is per product: a global flag never hides a missing key.
+
+## 6. Stream delivery policy (binding on KN-2 and every materializer)
+
+`contracts/golden/kn_v220/delivery_policy.json`, produced from
+`qdl.ingestion.contracts.delivery_policy`: TRADE, BOOK_SNAPSHOT and
+BOOK_DELTA are LOSSLESS; BAR is LOSSLESS when FINAL, REVISED or CANCELLED and
+LIFECYCLE_COALESCE when IN_PROGRESS (a BAR without a lifecycle is refused by the
+domain and treated as LOSSLESS); every other public feed is LATEST_STATE.
+Invariant 27 adds: a record may be dropped only when a later record with the
+same lifecycle key (BAR open time; the product for latest-state feeds) and the
+same lifecycle signature (sorted quality flags, authority revision, source
+id/role, provider, source session, connection generation, lease epoch)
+supersedes it, and only under buffer pressure. A quality-state or
+source-authority transition changes the signature and is never coalesced
+away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.

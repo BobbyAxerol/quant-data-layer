@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 READY / NOT STARTED; KN-3..KN-5 NOT STARTED.**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 IN_PROGRESS (owner start 2026-09-24); KN-3..KN-5 NOT STARTED.**
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
 Executor handoff:
 [KN-1 R2 closure receipt](#kn1-astra-receipt-r3); earlier [re-review receipt](#kn1-astra-receipt-r2), original [KN-1 receipt](#kn1-astra-receipt).
@@ -53278,7 +53278,7 @@ Do not start the next phase merely because the executor's tests passed.
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
 | [KN-1](#kn-plan-phase-1) | ASTRA_REVIEW_PASS / CLOSED | Claude Opus 5.5 | Astra | R3 on `078f994`: F3/F5 accepted; F1/F2/F4/F6 accepted in R2; not live capacity certification |
-| [KN-2](#kn-plan-phase-2) | READY / NOT STARTED | Claude Opus 5.5 | Astra | Entry cleared; full Stream/replay contract, bounded failure/reconnect proof still to implement |
+| [KN-2](#kn-plan-phase-2) | IN_PROGRESS | Claude Opus 5.5 | Astra | Owner started 2026-09-24; native Stream/replay/all-RPC implementation and isolated proof in progress |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
 | [KN-5](#kn-plan-phase-5) | PENDING_KN1_KN4_REVIEW | Claude Opus 5.5 | Astra | 50+TS acceptance, paired cutover, provenance, cleanup and release |
@@ -54526,7 +54526,7 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
 
-**Status:** READY_AFTER_KN1_ASTRA_REVIEW / NOT STARTED.
+**Status:** IN_PROGRESS (owner start 2026-09-24).
 **Entry receipt:** [KN-1 R3 PASS and owner resource direction](#kn1-astra-review-r3).
 **Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
 with correct replay, auth, flow control and the existing public RPC contract.
@@ -54561,6 +54561,123 @@ snapshot/delta/reset, cancellation and cross-replica behavior.
 #### KN-2 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append tested-slice receipts and Astra findings/resolutions here.
+- 2026-09-24: **Owner start and standing direction.** Bobby started KN-2 after
+  the KN-1 R3 PASS. Direction recorded: every new run names the services of a
+  superseded/wrong-direction version and how they are reclaimed, and always
+  carries a cleanup plan; when KN-2/KN-3 is optimized as far as it goes and a
+  measured shortfall remains, the owner approves extra RAM/resources (smallest
+  justified delta, evidence, rollback, recorded before applying). The
+  production `kn-` DESCRIBE ACL is still a separate, undecided live-measurement
+  gate: KN-2 source and isolated tests proceed without it.
+- 2026-09-24: **KN-2 design decisions (recorded before code).** Oracle:
+  `qdl/stream/grpc_service.py` + `qdl/stream/gateway.py` for RPC shape,
+  checks, statuses and control frames; `qdl/ingestion/contracts.py:delivery_policy`
+  + invariant 27 for lifecycle.
+  - D1 Delivery policy follows the domain policy and invariant 27, **not** the
+    Python stream's `LATEST_STATE_FEEDS`: TRADE, BOOK_SNAPSHOT/DELTA (reset
+    included), final/revised/cancelled BAR and any quality-state or
+    source-authority transition are lossless; QUOTE, MARK_INDEX_PRICE, TICKER
+    and the reference feeds are latest-state; an in-progress BAR coalesces
+    only with a later in-progress/final record of the same open time. A record
+    is dropped only when a later queued record of the same lifecycle key and
+    signature supersedes it, and only under buffer pressure (as today). The
+    old stream coalesces BOOK_SNAPSHOT; that contradicts invariant 27 and is
+    not ported (guide 18.4.1). Shared golden produced from the Python domain
+    function.
+  - D2 One shared committed reader per replica: its own `kn-` group, manual
+    assignment of every partition, `read_committed`, never commits. Dispatch
+    per partition under that partition's lock only (no global writer lock);
+    index physical key -> subscriptions; records are shared immutable bytes
+    (`Arc`), decoded once per interested record.
+  - D3 Replay-to-live: registration under the partition lock captures the
+    barrier (next undispatched offset) atomically; the subscription enters
+    REPLAYING with a bounded pending buffer (items + bytes); the range
+    (cursor, barrier) is served from the partition ring on a hit or by a
+    separate bounded Kafka reader pool on a miss - the live reader is never
+    sought; pending merges with dedup (offset > last emitted); then LIVE.
+  - D4 Typed limits: ring bounded by bytes and age per partition; replay pool
+    bounded globally and per consumer; each replay bounded by scanned records,
+    bytes and time -> `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT`
+    (resnapshot); cursor below retention -> `CURSOR_EXPIRED:RETENTION`; a
+    replica behind the cursor waits a bounded time for its reader, then
+    `UNAVAILABLE REPLICA_LAGGING` (retryable, never a false expiry).
+  - D5 Overflow keeps the public contract: BACKPRESSURE control
+    `RATE_LIMITED` + `RESOURCE_EXHAUSTED`, resume token = last delivered;
+    never drop-oldest-and-stay-healthy for a lossless record.
+  - D6 GetSnapshot/GetFeedStatus run the Python auth/permission/requirement
+    checks, then a `ReadView` interface. Until KN-4 attaches the market cache
+    the view is typed not-ready: `FAILED_PRECONDITION DATA_NOT_READY:...`
+    (the precedent of `UnavailableSnapshotLoader`), never UNIMPLEMENTED, never
+    fixture data outside tests. Reported as "not certified Query".
+  - D7 Rotation/revocation: the gateway reloads its bundle and JWT key files
+    when they change; every open subscription is re-authorized against the
+    new authority and closed typed if its key, manifest revision or
+    requirement entitlement is gone.
+  - D8 Two replicas: each an independent reader of every partition (own
+    group), so either serves any cursor; failover is a client reconnect with
+    its last token.
+  Runtime for KN-2 stays isolated (disposable broker loaded from durable
+  capture, shadow network, disposable quota Redis) until the owner decides
+  the `kn-` ACL; nothing here touches the running Stream, its groups,
+  producers or topology.
+- 2026-09-24: **KN-2 slice 1 - K2.1..K2.4 native service, source + fast and
+  isolated-Kafka tests: implemented, tested locally.**
+  - K2.1: all four RPCs are native (`service.rs`); no route returns
+    UNIMPLEMENTED. Subscribe/Replay/GetSnapshot/GetFeedStatus run the Python
+    access sequence and statuses; role -> permission mapping of
+    `qdl/security/policy.py` (`require_permission`, snapshot:read /
+    history:read for a warmup / status:read / stream:read), consumer, buffer,
+    feed-scope checks, time-range warmup quota arithmetic (interval owner
+    ported). Snapshot/status go through `ReadView`; the default is typed
+    `FAILED_PRECONDITION DATA_NOT_READY` until KN-4 (not certified Query).
+    Replay verifies with `CursorV3Codec::verify_scope` (no requirement in the
+    request) and binds the product key to an entitled binding.
+  - K2.2: `hub.rs` - one shared committed reader per replica (all
+    partitions, manual assignment at the high watermark, never commits),
+    dispatch under the partition lock only, index physical key ->
+    subscribers, one decode per record shared by `Arc`, per-partition ring
+    bounded by bytes/age, duplicate transport deliveries ignored.
+    `subscription.rs` - per-subscriber queue bounded by items and bytes plus a
+    replica-wide byte budget; latest-state depth 8 (R1.8); outbound handoff to
+    the transport kept at 2 records so stale state cannot hide behind it.
+  - K2.3: registration under the partition lock returns the barrier; the
+    range (cursor, barrier) comes from the ring on a hit or from a separate
+    bounded reader (`replay.rs`, pool: 4 global / 2 per consumer by default)
+    with caps on scanned records/bytes/time and matched records; retention,
+    scan limit and backlog are typed `OUT_OF_RANGE CURSOR_EXPIRED:...`; a
+    replica behind the cursor waits `catchup_deadline` then answers
+    `UNAVAILABLE REPLICA_LAGGING`. Cancellation (client gone) sets the reader's
+    cancel flag; the permit is released when the reader thread ends.
+  - K2.4: `qdl_contracts::delivery` + golden `delivery_policy.json` from the
+    domain function (17 cases, both languages). Coalescing only under
+    pressure and only when a later record of the same key and signature
+    supersedes; transitions stay (D1).
+  - D7: `authority.rs` - bundle/JWT file reload bumps a generation; open
+    streams re-authorize and close typed on revocation.
+  - Tests: `rust/qdl-stream-gateway/tests/native_stream.rs` 17 (service trait
+    in-process over an in-memory committed log with markers, duplicate
+    deliveries, retention floor, paused replica): T01 markers/duplicates/
+    sparse key; T02 ring hit = replay reader, retention/scan/backlog typed,
+    12-seed interleaving property (subscribe at random moments while the
+    reader dispatches: exact records once, in order, REPLAYING then one
+    LIVE), cancelled replays release permits/readers/memory/slots; T03 same
+    identity independent, stream quota, rotation keeps streams, revocation
+    closes UNAUTHENTICATED; T04 lagging replica -> UNAVAILABLE then exact next
+    record after catch-up; T05 slow lossless reader -> BACKPRESSURE +
+    RESOURCE_EXHAUSTED, budget bound, 25 connect/disconnect back to baseline;
+    T06 book snapshot/delta never cross or coalesce, quotes coalesce keeping
+    transitions, in-progress bars coalesce, finals and other intervals never;
+    T07 snapshot/status checks + NOT_READY + fixture mapping, every RPC
+    refuses missing/mismatched identity, Replay pages/tokens/feed scope. Five
+    consecutive runs 17/17. Queue unit tests 3, delivery-policy 4 (Rust),
+    Python delivery golden 2. Real Kafka (isolated broker `--network none`,
+    removed): `committed_reads` 2/2 including the hub barrier + replay reader
+    split with committed/aborted/marker offsets. Workspace fmt/clippy
+    `-D warnings` clean, 240+ passed / 0 failed / 3 ignored (the ignored are
+    the isolated-Kafka tests, run separately above). No dependency change.
+  - Not claimed here: transport-level (mTLS + Python SDK) evidence, the full
+    demanded matrix, two-replica failover over the wire and capacity (K2.5,
+    K2-T04/T07/T08 over real transport) - next slice.
 
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery

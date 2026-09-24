@@ -1,0 +1,92 @@
+{
+ "cases": [
+  {
+   "bar_lifecycle": null,
+   "feed": "TRADE",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "QUOTE",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": "UNSPECIFIED",
+   "feed": "BAR",
+   "policy": "ERROR"
+  },
+  {
+   "bar_lifecycle": "IN_PROGRESS",
+   "feed": "BAR",
+   "policy": "LIFECYCLE_COALESCE"
+  },
+  {
+   "bar_lifecycle": "FINAL",
+   "feed": "BAR",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": "REVISED",
+   "feed": "BAR",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": "CANCELLED",
+   "feed": "BAR",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "BOOK_SNAPSHOT",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "BOOK_DELTA",
+   "policy": "LOSSLESS"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "FUNDING_RATE",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "OPEN_INTEREST",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "MARK_INDEX_PRICE",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "TICKER",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "LONG_SHORT_RATIO",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "TAKER_FLOW",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "BASIS",
+   "policy": "LATEST_STATE"
+  },
+  {
+   "bar_lifecycle": null,
+   "feed": "CONTRACT_METADATA",
+   "policy": "LATEST_STATE"
+  }
+ ],
+ "note": "ERROR = the domain refuses a BAR without an explicit lifecycle; the stream treats it as LOSSLESS (fail-safe)",
+ "schema": "qdl.kn.v220.golden.delivery-policy.v1",
+ "source": "qdl.ingestion.contracts.delivery_policy; query feed -> domain feed: {\"TRADE\": \"trade\", \"QUOTE\": \"bbo\", \"BAR\": \"bar\", \"BOOK_SNAPSHOT\": \"book\", \"BOOK_DELTA\": \"book\"}, any other public feed -> not lossless (LATEST_STATE)"
+}

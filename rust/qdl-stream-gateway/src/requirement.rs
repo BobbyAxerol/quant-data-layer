@@ -1,4 +1,4 @@
-//! Requirement handling shared by Subscribe: the proto mapping of
+//! Requirement handling shared by every RPC: the proto mapping of
 //! `requirement_from_proto`, the entitlement checks of `DataPlaneAccess` and
 //! the delivery predicate of `GrpcMarketDataService._matches_requirement`.
 
@@ -13,7 +13,11 @@ use qdl_contracts::requirement::{ValidatedRequirement, WarmupHorizon};
 pub struct StreamRequirement {
     pub delivery: DeliveryRequirement,
     pub warmup_rows: u64,
-    pub time_range: bool,
+    /// `(start_time_ns, end_time_ns)` of a time-range warmup.
+    pub time_range: Option<(i64, i64)>,
+    /// `DataRequirement.warmup_specification is not None`: an explicit
+    /// warmup, or a positive `warmup_limit` (GetSnapshot needs history:read).
+    pub has_warmup: bool,
 }
 
 impl StreamRequirement {
@@ -22,11 +26,15 @@ impl StreamRequirement {
     pub fn from_proto(value: &query::DataRequirement) -> Result<Self, String> {
         let validated = ValidatedRequirement::from_proto(value).map_err(|error| error.message)?;
         let (warmup_rows, time_range) = match validated.warmup.as_ref().map(|w| &w.horizon) {
-            Some(WarmupHorizon::Rows(rows)) => (u64::from(*rows), false),
-            Some(WarmupHorizon::TimeRange { .. }) => (0, true),
-            None => (u64::from(validated.warmup_limit), false),
+            Some(WarmupHorizon::Rows(rows)) => (u64::from(*rows), None),
+            Some(WarmupHorizon::TimeRange {
+                start_time_ns,
+                end_time_ns,
+            }) => (0, Some((*start_time_ns, *end_time_ns))),
+            None => (u64::from(validated.warmup_limit), None),
         };
         Ok(Self {
+            has_warmup: validated.warmup.is_some() || validated.warmup_limit > 0,
             delivery: validated.delivery,
             warmup_rows,
             time_range,
@@ -70,14 +78,25 @@ pub fn require_requirement(
             "data requirement is outside the registered consumer manifest".into(),
         ));
     }
-    if requirement.time_range {
-        // Time-range warmups are sized from interval arithmetic that KN-2
-        // ports with the full service; the slice refuses them explicitly.
-        return Err(AccessError::PermissionDenied(
-            "time-range warmup is not served by the KN-1 prototype".into(),
-        ));
+    let mut requested_rows = requirement.warmup_rows;
+    if let Some((start, end)) = requirement.time_range {
+        let interval = wanted.interval.as_deref().unwrap_or_default();
+        if interval.is_empty() {
+            return Err(AccessError::PermissionDenied(
+                "time-range warmup requires an interval".into(),
+            ));
+        }
+        let interval_ns =
+            i128::from(canonical_interval_ms(interval).map_err(AccessError::Invalid)?) * 1_000_000;
+        let duration_ns = i128::from(end) - i128::from(start);
+        if duration_ns % interval_ns != 0 {
+            return Err(AccessError::PermissionDenied(
+                "time-range warmup is not aligned to the interval".into(),
+            ));
+        }
+        requested_rows = u64::try_from(duration_ns / interval_ns).unwrap_or(u64::MAX);
     }
-    if requirement.warmup_rows > manifest.quotas.max_warmup_rows {
+    if requested_rows > manifest.quotas.max_warmup_rows {
         return Err(AccessError::PermissionDenied(
             "warmup limit exceeds the registered consumer quota".into(),
         ));
@@ -85,15 +104,67 @@ pub fn require_requirement(
     Ok(())
 }
 
-/// Interval carried by the canonical payload (`canonical_payload_interval`):
-/// only BAR carries one among the feeds this slice serves.
-fn payload_interval(envelope: &EventEnvelope) -> Option<String> {
-    match &envelope.payload {
-        Some(event_envelope::Payload::Bar(bar)) if !bar.interval.is_empty() => {
-            Some(bar.interval.clone())
-        }
-        _ => None,
+/// `qdl.adapters.intervals.canonical_interval_ms` for the canonical
+/// lowercase `<count><unit>` spelling (calendar months are refused).
+pub fn canonical_interval_ms(interval: &str) -> Result<u64, String> {
+    let value = interval.trim();
+    if value.is_empty() {
+        return Err("canonical interval is required".into());
     }
+    if value.ends_with('M') {
+        return Err(format!(
+            "calendar-month bars have no fixed duration and are not canonical intervals; \
+             'M' is never folded into minutes: {interval:?}"
+        ));
+    }
+    if value != value.to_lowercase() {
+        return Err(format!(
+            "canonical interval must be lowercase, venue spelling is derived: {interval:?}"
+        ));
+    }
+    let (count, unit) = value.split_at(value.len() - 1);
+    let unit_ms: u64 = match unit {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        "w" => 604_800_000,
+        _ => {
+            return Err(format!(
+                "canonical interval must use a fixed s/m/h/d/w duration: {interval:?}"
+            ))
+        }
+    };
+    let count: u64 = count
+        .parse()
+        .map_err(|_| format!("canonical interval count must be an integer: {interval:?}"))?;
+    if count == 0 {
+        return Err(format!("canonical interval must be positive: {interval:?}"));
+    }
+    count
+        .checked_mul(unit_ms)
+        .ok_or_else(|| format!("canonical interval is too large: {interval:?}"))
+}
+
+/// Interval carried by the canonical payload (`canonical_payload_interval`).
+fn payload_interval(envelope: &EventEnvelope) -> Option<String> {
+    let interval = match &envelope.payload {
+        Some(event_envelope::Payload::Bar(bar)) => &bar.interval,
+        Some(event_envelope::Payload::LongShortRatio(value)) => &value.sampling_interval,
+        Some(event_envelope::Payload::TakerFlow(value)) => &value.sampling_interval,
+        Some(event_envelope::Payload::Basis(value)) => &value.sampling_interval,
+        Some(event_envelope::Payload::OpenInterest(value)) => &value.sampling_interval,
+        _ => return None,
+    };
+    (!interval.is_empty()).then(|| interval.clone())
+}
+
+/// Whether a record is the product `(feed, interval)`: payload type and
+/// carried interval, the product-identity half of `_matches_requirement`.
+/// Used by Replay, whose cursor names the product but carries no freshness.
+pub fn is_product(feed: &str, interval: Option<&str>, envelope: &EventEnvelope) -> bool {
+    payload_name(envelope).is_some_and(|name| name.eq_ignore_ascii_case(feed))
+        && payload_interval(envelope).as_deref() == interval
 }
 
 fn payload_name(envelope: &EventEnvelope) -> Option<&'static str> {

@@ -1,14 +1,17 @@
-//! Committed canonical reads for the slice.
+//! Committed canonical reads: the live [`LogSource`] and the replay
+//! [`RangeSource`] over Kafka.
 //!
 //! Every consumer here is read-only by construction: `read_committed`, no
 //! auto-commit, no offset store and no call that commits; it is positioned by
-//! explicit assignment from a cursor, never by a group. Aborted transactional
-//! records and transaction markers are therefore invisible, which is why the
-//! stream decides "caught up" from the consumer position, not from the last
-//! record it saw.
+//! explicit assignment, never by a group. Aborted transactional records and
+//! transaction markers are therefore invisible, which is why "caught up" is
+//! decided from the consumer position, not from the last record seen.
 
+use crate::hub::{LogSource, RawRecord};
+use crate::replay::{RangeCursor, RangeError, RangeSource};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::message::Message;
 use rdkafka::{Offset, TopicPartitionList};
 use std::time::{Duration, Instant};
@@ -89,6 +92,148 @@ impl KafkaSettings {
         self.client_config()
             .create()
             .map_err(|error| format!("kafka consumer: {error}"))
+    }
+
+    /// A replay reader: an out-of-range start is an error, never a silent
+    /// reset to the log end or start.
+    fn range_consumer(&self) -> Result<BaseConsumer, String> {
+        self.validate()?;
+        let mut config = self.client_config();
+        config
+            .set("auto.offset.reset", "error")
+            .set("client.id", format!("{}-replay", self.client_id));
+        config
+            .create()
+            .map_err(|error| format!("kafka replay consumer: {error}"))
+    }
+
+    pub fn partitions(&self, consumer: &impl Consumer) -> Result<Vec<i32>, String> {
+        let metadata = consumer
+            .fetch_metadata(Some(&self.topic), Duration::from_secs(10))
+            .map_err(|error| error.to_string())?;
+        let mut partitions: Vec<i32> = metadata
+            .topics()
+            .iter()
+            .flat_map(|topic| topic.partitions().iter().map(|partition| partition.id()))
+            .collect();
+        partitions.sort_unstable();
+        if partitions.is_empty() {
+            return Err(format!("topic {} has no partitions", self.topic));
+        }
+        Ok(partitions)
+    }
+}
+
+/// The replica's one live reader: every partition, from its high watermark.
+pub struct KafkaLogSource {
+    consumer: BaseConsumer,
+    topic: String,
+}
+
+impl KafkaLogSource {
+    /// Returns the source and the first offset it will deliver per partition.
+    pub fn open_at_end(settings: &KafkaSettings) -> Result<(Self, Vec<(i32, i64)>), String> {
+        let consumer = settings.base_consumer()?;
+        let mut list = TopicPartitionList::new();
+        let mut starts = Vec::new();
+        for partition in settings.partitions(&consumer)? {
+            let high = high_watermark(&consumer, &settings.topic, partition)?;
+            list.add_partition_offset(&settings.topic, partition, Offset::Offset(high))
+                .map_err(|error| error.to_string())?;
+            starts.push((partition, high));
+        }
+        consumer.assign(&list).map_err(|error| error.to_string())?;
+        Ok((
+            Self {
+                consumer,
+                topic: settings.topic.clone(),
+            },
+            starts,
+        ))
+    }
+}
+
+impl LogSource for KafkaLogSource {
+    fn poll(&mut self, timeout: Duration) -> Result<Option<RawRecord>, String> {
+        match self.consumer.poll(timeout) {
+            Some(Ok(message)) => Ok(Some(RawRecord {
+                partition: message.partition(),
+                offset: message.offset(),
+                key: message.key().unwrap_or_default().to_vec(),
+                payload: message.payload().unwrap_or_default().to_vec(),
+            })),
+            Some(Err(error)) => Err(error.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    fn positions(&self) -> Vec<(i32, i64)> {
+        let Ok(list) = self.consumer.position() else {
+            return Vec::new();
+        };
+        list.elements_for_topic(&self.topic)
+            .iter()
+            .filter_map(|element| match element.offset() {
+                Offset::Offset(offset) => Some((element.partition(), offset)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// Opens one bounded replay reader per replay (the pool bounds how many).
+pub struct KafkaRangeSource {
+    pub settings: KafkaSettings,
+}
+
+pub struct KafkaRangeCursor {
+    consumer: BaseConsumer,
+    topic: String,
+    partition: i32,
+}
+
+fn is_out_of_range(error: &KafkaError) -> bool {
+    matches!(
+        error.rdkafka_error_code(),
+        Some(RDKafkaErrorCode::OffsetOutOfRange)
+    )
+}
+
+impl RangeSource for KafkaRangeSource {
+    fn open(&self, partition: i32, from: i64) -> Result<Box<dyn RangeCursor>, RangeError> {
+        let consumer = self.settings.range_consumer().map_err(RangeError::Other)?;
+        let (low, _) = consumer
+            .fetch_watermarks(&self.settings.topic, partition, Duration::from_secs(10))
+            .map_err(|error| RangeError::Other(error.to_string()))?;
+        if from < low {
+            return Err(RangeError::Retention);
+        }
+        assign_from(&consumer, &self.settings.topic, partition, from).map_err(RangeError::Other)?;
+        Ok(Box::new(KafkaRangeCursor {
+            consumer,
+            topic: self.settings.topic.clone(),
+            partition,
+        }))
+    }
+}
+
+impl RangeCursor for KafkaRangeCursor {
+    fn next(&mut self, timeout: Duration) -> Result<Option<RawRecord>, RangeError> {
+        match self.consumer.poll(timeout) {
+            Some(Ok(message)) => Ok(Some(RawRecord {
+                partition: message.partition(),
+                offset: message.offset(),
+                key: message.key().unwrap_or_default().to_vec(),
+                payload: message.payload().unwrap_or_default().to_vec(),
+            })),
+            Some(Err(error)) if is_out_of_range(&error) => Err(RangeError::Retention),
+            Some(Err(error)) => Err(RangeError::Other(error.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    fn position(&self) -> Option<i64> {
+        position(&self.consumer, &self.topic, self.partition)
     }
 }
 

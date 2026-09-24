@@ -1,4 +1,4 @@
-//! `qdl-stream-gateway` binary (KN-1 slice).
+//! `qdl-stream-gateway` binary (KN-2 native Stream).
 //!
 //! `qdl-stream-gateway serve` runs the authenticated gRPC stream on mTLS;
 //! `qdl-stream-gateway probe-latest <physical-key>` prints the latest
@@ -9,11 +9,16 @@
 use prost::Message as _;
 use qdl_contracts::cursor_v3::{CursorV3Codec, CursorV3Expectation};
 use qdl_stream_gateway::auth::{JwtConfig, RedisMinuteQuota};
+use qdl_stream_gateway::authority::{Authority, AuthorityHandle};
 use qdl_stream_gateway::bundle::Bundle;
 use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
-use qdl_stream_gateway::reader::{latest_for_key, KafkaSettings};
-use qdl_stream_gateway::service::{Gateway, GatewayState};
+use qdl_stream_gateway::hub::{Hub, HubConfig};
+use qdl_stream_gateway::reader::{latest_for_key, KafkaLogSource, KafkaRangeSource, KafkaSettings};
+use qdl_stream_gateway::readview::NotReadyReadView;
+use qdl_stream_gateway::replay::{ReplayLimits, ReplayPool};
+use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
+use qdl_stream_gateway::subscription::ByteBudget;
 use qdl_stream_gateway::tls;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -68,73 +73,228 @@ fn cursor_codec() -> Result<CursorV3Codec, String> {
     CursorV3Codec::new(&keys, &env("QDL_KN_CURSOR_ACTIVE_KEY_ID")?)
 }
 
-async fn serve() -> Result<(), String> {
-    let bundle = Bundle::parse(&read("QDL_KN_BUNDLE_FILE")?)?;
-    let environment = env_or("QDL_ENVIRONMENT", "paper").to_lowercase();
-    if bundle.environment != environment {
-        return Err("gateway bundle environment differs from QDL_ENVIRONMENT".into());
+fn parsed<T: std::str::FromStr>(name: &str, default: &str) -> Result<T, String> {
+    env_or(name, default)
+        .parse()
+        .map_err(|_| format!("{name} must be a number"))
+}
+
+fn jwt_config(environment: &str) -> Result<JwtConfig, String> {
+    // A JWT config file makes key rotation/revocation reloadable (D7); the
+    // environment variables of the Python service remain the fallback.
+    if let Ok(path) = std::env::var("QDL_KN_JWT_CONFIG_FILE") {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|error| format!("QDL_KN_JWT_CONFIG_FILE={path}: {error}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|error| format!("jwt config: {error}"))?;
+        let text = |name: &str| {
+            value[name]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("jwt config field {name} must be a string"))
+        };
+        return JwtConfig::from_json(
+            environment,
+            &text("issuer")?,
+            &text("audience")?,
+            &value["keys"].to_string(),
+            &value["subjects"].to_string(),
+            &text("algorithms")?,
+            value["max_lifetime_seconds"]
+                .as_i64()
+                .ok_or("jwt config max_lifetime_seconds must be an integer")?,
+        );
     }
-    let jwt = JwtConfig::from_json(
-        &environment,
+    JwtConfig::from_json(
+        environment,
         &env("QDL_DATA_JWT_ISSUER")?,
         &env("QDL_DATA_JWT_AUDIENCE")?,
         &env("QDL_DATA_JWT_KEYS_JSON")?,
         &env("QDL_DATA_JWT_KEY_SUBJECTS_JSON")?,
         &env_or("QDL_DATA_JWT_ALGORITHMS", "RS256,ES256"),
-        env_or("QDL_DATA_JWT_MAX_LIFETIME_SECONDS", "900")
-            .parse()
-            .map_err(|_| "QDL_DATA_JWT_MAX_LIFETIME_SECONDS must be an integer")?,
-    )?;
-    let quota = RedisMinuteQuota::new(
-        &env("QDL_KN_QUOTA_REDIS_URL")?,
-        &env("QDL_KN_QUOTA_PREFIX")?,
-    )?;
+        parsed("QDL_DATA_JWT_MAX_LIFETIME_SECONDS", "900")?,
+    )
+}
+
+fn load_authority() -> Result<Authority, String> {
+    let bundle = Bundle::parse(&read("QDL_KN_BUNDLE_FILE")?)?;
+    let environment = env_or("QDL_ENVIRONMENT", "paper").to_lowercase();
+    if bundle.environment != environment {
+        return Err("gateway bundle environment differs from QDL_ENVIRONMENT".into());
+    }
     let expectation = CursorV3Expectation {
         environment: environment.clone(),
         stream: bundle.canonical_stream.clone(),
         source_topic_id: env("QDL_KN_TOPIC_ID")?,
-        partition_plan_epoch: env_or("QDL_KN_PARTITION_PLAN_EPOCH", "1")
-            .parse()
-            .map_err(|_| "QDL_KN_PARTITION_PLAN_EPOCH must be an integer")?,
+        partition_plan_epoch: parsed("QDL_KN_PARTITION_PLAN_EPOCH", "1")?,
         source_policy_revision: bundle.source_policy_revision,
         catalog_revision: bundle.catalog_revision,
         route_generation: env("QDL_KN_ROUTE_GENERATION")?,
         schema_major: 2,
     };
-    let state = Arc::new(GatewayState::new(
-        jwt,
+    Ok(Authority {
+        jwt: jwt_config(&environment)?,
         bundle,
+        expectation,
+    })
+}
+
+/// Bytes of every file the authority is built from, to detect a change.
+fn authority_sources() -> Vec<u8> {
+    ["QDL_KN_BUNDLE_FILE", "QDL_KN_JWT_CONFIG_FILE"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .flat_map(|path| std::fs::read(path).unwrap_or_default())
+        .collect()
+}
+
+/// Resident set and CPU seconds of this process, for per-replica evidence.
+fn process_usage() -> (u64, f64) {
+    let rss = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|text| text.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096);
+    let cpu = std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|text| {
+            let fields: Vec<&str> = text.rsplit_once(')')?.1.split_whitespace().collect();
+            let user: f64 = fields.get(11)?.parse().ok()?;
+            let system: f64 = fields.get(12)?.parse().ok()?;
+            Some((user + system) / 100.0)
+        })
+        .unwrap_or(0.0);
+    (rss, cpu)
+}
+
+fn limits() -> Result<StreamLimits, String> {
+    Ok(StreamLimits {
+        cursor_ttl_seconds: parsed("QDL_KN_CURSOR_TTL_SECONDS", "3600")?,
+        replay: ReplayLimits {
+            max_scanned_records: parsed("QDL_KN_REPLAY_MAX_SCAN_RECORDS", "2000000")?,
+            max_scanned_bytes: parsed("QDL_KN_REPLAY_MAX_SCAN_BYTES", "1073741824")?,
+            max_duration: Duration::from_millis(parsed("QDL_KN_REPLAY_MAX_MS", "20000")?),
+            max_matched: parsed("QDL_KN_MAX_REPLAY_EVENTS", "10000")?,
+        },
+        catchup_deadline: Duration::from_millis(parsed("QDL_KN_CATCHUP_DEADLINE_MS", "10000")?),
+        slow_consumer_after: Duration::from_millis(parsed("QDL_KN_SLOW_CONSUMER_MS", "10000")?),
+        queue_bytes_per_subscription: parsed("QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION", "33554432")?,
+        max_subscriptions: parsed("QDL_KN_MAX_SUBSCRIPTIONS", "1024")?,
+        replay_page_default: 1_000,
+    })
+}
+
+async fn serve() -> Result<(), String> {
+    let authority = AuthorityHandle::new(load_authority()?);
+    let quota = RedisMinuteQuota::new(
+        &env("QDL_KN_QUOTA_REDIS_URL")?,
+        &env("QDL_KN_QUOTA_PREFIX")?,
+    )?;
+    let settings = kafka_settings()?;
+    let (source, starts) = KafkaLogSource::open_at_end(&settings)?;
+    let hub = Arc::new(Hub::new(
+        &starts,
+        HubConfig {
+            ring_max_bytes: parsed("QDL_KN_RING_BYTES_PER_PARTITION", "33554432")?,
+            ring_max_age: Duration::from_secs(parsed("QDL_KN_RING_MAX_AGE_SECONDS", "120")?),
+        },
+    ));
+    let reader = hub.run(Box::new(source));
+    let state = Arc::new(GatewayState::new(
+        authority.clone(),
         Arc::new(quota),
         cursor_codec()?,
-        expectation,
-        kafka_settings()?,
-        env_or("QDL_KN_CURSOR_TTL_SECONDS", "3600")
-            .parse()
-            .map_err(|_| "QDL_KN_CURSOR_TTL_SECONDS must be an integer")?,
+        hub.clone(),
+        Arc::new(KafkaRangeSource { settings }),
+        ReplayPool::new(
+            parsed("QDL_KN_REPLAY_READERS", "4")?,
+            parsed("QDL_KN_REPLAY_READERS_PER_CONSUMER", "2")?,
+            Duration::from_millis(parsed("QDL_KN_REPLAY_ADMISSION_WAIT_MS", "2000")?),
+        ),
+        Arc::new(NotReadyReadView),
+        ByteBudget::new(parsed("QDL_KN_QUEUE_BYTES_TOTAL", "268435456")?),
+        limits()?,
     ));
     let tls_config = tls::server_config(
         &read("QDL_KN_TLS_CERT_FILE")?,
         &read("QDL_KN_TLS_KEY_FILE")?,
         &read("QDL_KN_TLS_CLIENT_CA_FILE")?,
     )?;
-    let reporter = state.clone();
+    let reload_every = Duration::from_secs(parsed("QDL_KN_AUTHORITY_RELOAD_SECONDS", "5")?);
+    let watched = authority.clone();
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(10));
+        let mut known = authority_sources();
+        let mut tick = tokio::time::interval(reload_every);
+        loop {
+            tick.tick().await;
+            let current = authority_sources();
+            if current == known {
+                continue;
+            }
+            known = current;
+            match load_authority() {
+                Ok(next) => {
+                    let sha = next.bundle.sha256.clone();
+                    watched.replace(next);
+                    println!(
+                        "{}",
+                        serde_json::json!({"event": "qdl_kn_authority_reloaded",
+                            "generation": watched.generation(), "bundle_sha256": sha})
+                    );
+                }
+                Err(error) => println!(
+                    "{}",
+                    serde_json::json!({"event": "qdl_kn_authority_reload_refused", "error": error})
+                ),
+            }
+        }
+    });
+    let reporter = state.clone();
+    let report_every = Duration::from_secs(parsed("QDL_KN_METRICS_SECONDS", "10")?);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(report_every);
         loop {
             tick.tick().await;
             let metrics = &reporter.metrics;
+            let hub = &reporter.hub.metrics;
+            let replay = &reporter.pool.metrics;
+            let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
+            let (rss, cpu) = process_usage();
             println!(
                 "{}",
                 serde_json::json!({
                     "event": "qdl_kn_gateway_metrics",
-                    "bundle_sha256": reporter.bundle.sha256,
-                    "subscriptions_opened": metrics.subscriptions_opened.load(Ordering::Relaxed),
-                    "subscriptions_active": metrics.subscriptions_active.load(Ordering::Relaxed),
-                    "delivered": metrics.delivered.load(Ordering::Relaxed),
-                    "other_product": metrics.other_product.load(Ordering::Relaxed),
-                    "too_old": metrics.too_old.load(Ordering::Relaxed),
-                    "overflow": metrics.overflow.load(Ordering::Relaxed),
-                    "refused": metrics.refused.load(Ordering::Relaxed),
+                    "bundle_sha256": reporter.authority.current().bundle.sha256,
+                    "authority_generation": reporter.authority.generation(),
+                    "subscriptions_opened": load(&metrics.subscriptions_opened),
+                    "subscriptions_active": load(&metrics.subscriptions_active),
+                    "hub_subscribers": reporter.hub.subscriber_count(),
+                    "delivered": load(&metrics.delivered),
+                    "replayed": load(&metrics.replayed),
+                    "aged_out_at_read": load(&metrics.aged_out_at_read),
+                    "overflow": load(&metrics.overflow),
+                    "refused": load(&metrics.refused),
+                    "revoked": load(&metrics.revoked),
+                    "lagging": load(&metrics.lagging),
+                    "expired": load(&metrics.expired),
+                    "replay_rpcs": load(&metrics.replay_rpcs),
+                    "hub_records": load(&hub.records),
+                    "hub_bytes": load(&hub.bytes),
+                    "hub_duplicates": load(&hub.duplicates),
+                    "hub_decode_failures": load(&hub.decode_failures),
+                    "hub_offers": load(&hub.offers),
+                    "hub_reader_errors": load(&hub.reader_errors),
+                    "ring_bytes": reporter.hub.ring_bytes(),
+                    "ring_evictions": load(&hub.ring_evictions),
+                    "replay_ring_hits": load(&replay.ring_hits),
+                    "replay_readers": load(&replay.reader_replays),
+                    "replay_active": load(&replay.active),
+                    "replay_scanned": load(&replay.scanned),
+                    "replay_refused_capacity": load(&replay.refused_capacity),
+                    "replay_scan_limited": load(&replay.scan_limited),
+                    "replay_permits_free": reporter.pool.available(),
+                    "queue_bytes": reporter.budget.used(),
+                    "rss_bytes": rss,
+                    "cpu_seconds": cpu,
                 })
             );
         }
@@ -145,18 +305,23 @@ async fn serve() -> Result<(), String> {
     println!(
         "{}",
         serde_json::json!({"event": "qdl_kn_gateway_start", "listen": env_or("QDL_KN_LISTEN", "0.0.0.0:8210"),
-            "bundle_sha256": state.bundle.sha256, "route_generation": state.expectation.route_generation})
+            "bundle_sha256": state.authority.current().bundle.sha256,
+            "route_generation": state.authority.current().expectation.route_generation,
+            "partitions": starts})
     );
     let incoming = tls::incoming(address, tls_config)
         .await
         .map_err(|error| format!("listen: {error}"))?;
-    Server::builder()
+    let served = Server::builder()
         .add_service(MarketDataStreamServiceServer::new(Gateway { state }))
         .serve_with_incoming_shutdown(incoming, async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    hub.stop();
+    let _ = reader.join();
+    served
 }
 
 fn probe_latest(physical_key: &str) -> Result<(), String> {

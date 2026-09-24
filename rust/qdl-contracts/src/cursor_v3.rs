@@ -306,6 +306,40 @@ impl CursorV3Codec {
         expected: &CursorV3Expectation,
         now_ns: u64,
     ) -> Result<CursorV3Claims, CursorError> {
+        self.verify_inner(
+            token,
+            consumer_id,
+            environment,
+            Some(requirement_digest),
+            expected,
+            now_ns,
+        )
+    }
+
+    /// `Replay` carries no requirement, so there is no digest to compare; the
+    /// caller must bind the claims' product key to an entitled binding (the
+    /// Python Replay checks feed scope the same way). Every other check, in
+    /// the same order, is identical to [`Self::verify`].
+    pub fn verify_scope(
+        &self,
+        token: &str,
+        consumer_id: &str,
+        environment: &str,
+        expected: &CursorV3Expectation,
+        now_ns: u64,
+    ) -> Result<CursorV3Claims, CursorError> {
+        self.verify_inner(token, consumer_id, environment, None, expected, now_ns)
+    }
+
+    fn verify_inner(
+        &self,
+        token: &str,
+        consumer_id: &str,
+        environment: &str,
+        requirement_digest: Option<&str>,
+        expected: &CursorV3Expectation,
+        now_ns: u64,
+    ) -> Result<CursorV3Claims, CursorError> {
         if token.len() > MAX_TOKEN_BYTES || token.matches('.').count() != 1 {
             return Err(CursorError::Invalid("ENCODING"));
         }
@@ -345,7 +379,7 @@ impl CursorV3Codec {
         if claims.environment != environment || environment != expected.environment {
             return Err(CursorError::Invalid("ENVIRONMENT"));
         }
-        if claims.requirement_digest != requirement_digest {
+        if requirement_digest.is_some_and(|digest| claims.requirement_digest != digest) {
             return Err(CursorError::Invalid("REQUIREMENT"));
         }
         let checks: [(&'static str, bool); 7] = [
@@ -553,6 +587,45 @@ mod tests {
                 "{}",
                 case["name"]
             );
+        }
+    }
+
+    #[test]
+    fn scope_verification_differs_only_on_the_requirement_digest() {
+        let doc = golden("cursor_v3.json");
+        let codec = codec(&doc);
+        for case in doc["cases"].as_array().expect("cases") {
+            let expected = expectation(&case["expectation"]);
+            let token = case["token"].as_str().expect("token");
+            let consumer = case["consumer_id"].as_str().expect("consumer");
+            let environment = case["environment"].as_str().expect("environment");
+            let now = case["now_ns"].as_u64().expect("now");
+            let full = codec.verify(
+                token,
+                consumer,
+                environment,
+                case["requirement_digest"].as_str().expect("digest"),
+                &expected,
+                now,
+            );
+            let scope = codec.verify_scope(token, consumer, environment, &expected, now);
+            match &full {
+                Err(CursorError::Invalid("REQUIREMENT")) => {
+                    // The only difference: no digest to compare. The next
+                    // checks still run, so a later reason may surface.
+                    assert!(
+                        !matches!(scope, Err(CursorError::Invalid("REQUIREMENT"))),
+                        "{}",
+                        case["name"]
+                    );
+                }
+                other => assert_eq!(
+                    other.as_ref().map(|claims| claims.source_offset),
+                    scope.as_ref().map(|claims| claims.source_offset),
+                    "{}",
+                    case["name"]
+                ),
+            }
         }
     }
 

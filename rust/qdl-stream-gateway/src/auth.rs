@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const STREAM_READ: &str = "stream:read";
+pub const SNAPSHOT_READ: &str = "snapshot:read";
+pub const HISTORY_READ: &str = "history:read";
+pub const STATUS_READ: &str = "status:read";
 const KNOWN_ROLES: [&str; 8] = [
     "market_data_reader",
     "historical_reader",
@@ -34,6 +37,8 @@ pub enum AccessError {
     PermissionDenied(String),
     RateLimited(String),
     Unavailable(String),
+    /// A `ValueError` raised inside an access check (the handler prefixes it).
+    Invalid(String),
 }
 
 impl AccessError {
@@ -43,6 +48,7 @@ impl AccessError {
             AccessError::PermissionDenied(detail) => tonic::Status::permission_denied(detail),
             AccessError::RateLimited(detail) => tonic::Status::resource_exhausted(detail),
             AccessError::Unavailable(detail) => tonic::Status::unavailable(detail),
+            AccessError::Invalid(detail) => tonic::Status::invalid_argument(detail),
         }
     }
 }
@@ -190,8 +196,16 @@ pub struct Principal {
 }
 
 impl Principal {
-    fn has_stream_consume(&self) -> bool {
-        self.roles.contains("stream_consumer") || self.roles.contains("platform_admin")
+    /// `_ROLE_PERMISSIONS` of `qdl/security/policy.py` for the principal
+    /// permission each data-plane permission requires
+    /// (`DataPlaneAccess.require_permission`).
+    fn grants(&self, data_plane_permission: &str) -> bool {
+        let role = match data_plane_permission {
+            STREAM_READ => "stream_consumer",
+            HISTORY_READ => "historical_reader",
+            _ => "market_data_reader",
+        };
+        self.roles.contains(role) || self.roles.contains("platform_admin")
     }
 }
 
@@ -411,7 +425,13 @@ pub struct Access {
 impl Access {
     /// `DataPlaneAccess.require_permission(STREAM_READ)`.
     pub fn require_stream_read(&self) -> Result<(), AccessError> {
-        if !self.principal.has_stream_consume() {
+        self.require_permission(STREAM_READ)
+    }
+
+    /// `DataPlaneAccess.require_permission`: the token's role must grant the
+    /// principal permission, then the manifest must list the permission.
+    pub fn require_permission(&self, permission: &str) -> Result<(), AccessError> {
+        if !self.principal.grants(permission) {
             return Err(AccessError::PermissionDenied(
                 "workload token does not grant the requested data-plane scope".into(),
             ));
@@ -420,11 +440,46 @@ impl Access {
             .manifest
             .allowed_permissions
             .iter()
-            .any(|item| item == STREAM_READ)
+            .any(|item| item == permission)
         {
             return Err(AccessError::PermissionDenied(format!(
-                "consumer is not entitled to {STREAM_READ}"
+                "consumer is not entitled to {permission}"
             )));
+        }
+        Ok(())
+    }
+
+    /// `DataPlaneAccess.require_consumer`.
+    pub fn require_consumer(&self, consumer_id: &str) -> Result<(), AccessError> {
+        if consumer_id != self.manifest.consumer_id {
+            return Err(AccessError::PermissionDenied(
+                "authenticated workload is not bound to the requested consumer".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `DataPlaneAccess.require_stream_buffer`.
+    pub fn require_stream_buffer(&self, size: u64) -> Result<(), AccessError> {
+        if size < 1 || size > self.manifest.quotas.max_buffer_events {
+            return Err(AccessError::PermissionDenied(
+                "stream buffer exceeds the registered consumer quota".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `DataPlaneAccess.require_feed_scope` (Replay: the cursor's product).
+    pub fn require_feed_scope(&self, instrument_uid: &str, feed: &str) -> Result<(), AccessError> {
+        if !self
+            .manifest
+            .requirements
+            .iter()
+            .any(|item| item.instrument_uid == instrument_uid && item.feed == feed)
+        {
+            return Err(AccessError::PermissionDenied(
+                "stream cursor scope is outside the registered consumer manifest".into(),
+            ));
         }
         Ok(())
     }

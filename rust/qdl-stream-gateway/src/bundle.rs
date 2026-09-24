@@ -208,6 +208,13 @@ impl Bundle {
             .find(|item| item.environment == environment && item.subject == subject)
     }
 
+    /// The binding whose logical product key a cursor names.
+    pub fn binding_by_product(&self, product_key: &str) -> Option<&Binding> {
+        self.bindings
+            .iter()
+            .find(|item| item.product_key == product_key)
+    }
+
     /// `StableSourceCatalog.binding_for`: (uid, feed, interval), then policy.
     pub fn binding_for(
         &self,
