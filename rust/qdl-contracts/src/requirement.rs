@@ -454,11 +454,17 @@ mod tests {
             let outcome = ValidatedRequirement::from_proto(&proto(&case["requirement"]));
             match case["rule"].as_str() {
                 None => assert!(outcome.is_ok(), "{name}: {outcome:?}"),
-                Some(rule) => assert_eq!(
-                    outcome.as_ref().map_err(|error| error.rule),
-                    Err(rule),
-                    "{name}"
-                ),
+                Some(rule) => {
+                    let error = outcome.expect_err(name);
+                    assert_eq!(error.rule, rule, "{name}");
+                    // Same message as the Python server (INVALID_ARGUMENT detail).
+                    let prefix = golden["rule_messages"][rule].as_str().expect("message");
+                    assert!(
+                        error.message.starts_with(prefix),
+                        "{name}: {}",
+                        error.message
+                    );
+                }
             }
         }
     }

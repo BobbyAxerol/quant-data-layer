@@ -135,6 +135,15 @@ class RedisSizingSafetyTests(unittest.TestCase):
             SIZING.redis_memory_with(client, _sample(), run_id="t3")
         self.assertEqual(client.data, {})
 
+    def test_string_key_sizing_is_guarded_and_cleans_up(self):
+        with self.assertRaises(SIZING.NonEmptyTarget):
+            SIZING.string_key_usage_with(FakeRedis({"x": 1}), {"TRADE": 10}, run_id="t4")
+        client = FakeRedis()
+        result = SIZING.string_key_usage_with(client, {"TRADE": 10, "BOOK": 20}, run_id="t5")
+        self.assertEqual(set(result["usage_bytes"]), {"TRADE", "BOOK"})
+        self.assertEqual(client.data, {})
+        self.assertEqual(result["keys_left_after_cleanup"], 0)
+
     def test_the_script_never_sends_a_flush(self):
         source = (ROOT / "scripts/kn_resource_sizing.py").read_text(encoding="utf-8")
         self.assertNotIn(".flushall(", source)

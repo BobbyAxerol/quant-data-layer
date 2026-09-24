@@ -444,6 +444,37 @@ def redis_memory_with(client, sample: dict[str, Any], run_id: str) -> dict[str, 
     return result
 
 
+# Latest-state rows and per-product BAR identity headers are single Redis
+# strings: their cost depends only on key and value length, so they are
+# measured at the largest observed canonical size of each feed plus the 48-byte
+# state trailer (KN-1 review F5: every cache structure is counted).
+STATE_TRAILER_BYTES = 48
+LPK_KEY_TEMPLATE = "kn-cache:g{generation:020d}:lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|{feed}|-"
+
+
+def string_key_usage_with(client, value_bytes: dict[str, int], run_id: str) -> dict[str, Any]:
+    """MEMORY USAGE of one string key per named value size; guarded like
+    ``redis_memory_with`` (non-empty target refused, exact keys deleted)."""
+
+    existing = int(client.dbsize())
+    if existing:
+        raise NonEmptyTarget(f"refusing to size on a Redis holding {existing} keys; use a disposable instance")
+    key = _Namespace(run_id)
+    result: dict[str, Any] = {"namespace": key.prefix, "usage_bytes": {}, "value_bytes": dict(value_bytes)}
+    try:
+        for name, length in sorted(value_bytes.items()):
+            name_key = key(LPK_KEY_TEMPLATE.format(generation=2**63 - 1, feed=name))
+            client.set(name_key, b"\xa5" * length)
+            result["usage_bytes"][name] = int(client.memory_usage(name_key) or 0)
+    finally:
+        written = sorted(key.keys)
+        for start in range(0, len(written), 500):
+            client.delete(*written[start:start + 500])
+        result["keys_written"] = len(written)
+        result["keys_left_after_cleanup"] = int(client.dbsize())
+    return result
+
+
 def redis_memory(sample_path: Path, host: str, port: int) -> dict[str, Any]:
     import redis
 
@@ -529,6 +560,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--host", default="127.0.0.1")
     r.add_argument("--port", type=int, default=6379)
+    k = sub.add_parser("redis-keys")
+    k.add_argument("--value-bytes", required=True, help="JSON object name -> value length in bytes")
+    k.add_argument("--out", type=Path, required=True)
+    k.add_argument("--host", default="127.0.0.1")
+    k.add_argument("--port", type=int, default=6379)
     t = sub.add_parser("runtime")
     t.add_argument("--out", type=Path, required=True)
     t.add_argument("--minutes", type=float, default=10.0)
@@ -538,6 +574,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         payload = payloads(args.sample, args.rows_per_key, args.render_rows)
     elif args.part == "redis":
         payload = redis_memory(args.sample, args.host, args.port)
+    elif args.part == "redis-keys":
+        import redis
+
+        payload = string_key_usage_with(redis.Redis(host=args.host, port=args.port),
+                                        json.loads(args.value_bytes), run_id=f"{time.time_ns():x}")
     else:
         payload = runtime(args.minutes, args.interval)
     payload = {"schema": SCHEMA, "part": args.part, "collected_at_ns": time.time_ns(), **payload}

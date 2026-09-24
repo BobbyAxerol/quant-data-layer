@@ -180,8 +180,13 @@ class RequirementValidationGoldenTests(unittest.TestCase):
                 if case["rule"] is None:
                     requirement_from_proto(proto)
                 else:
-                    with self.assertRaises(ValueError):
+                    # The rule that fires first, identified by its message, so
+                    # the rejection order is pinned, not only the refusal.
+                    with self.assertRaises(ValueError) as raised:
                         requirement_from_proto(proto)
+                    self.assertTrue(
+                        str(raised.exception).startswith(doc["rule_messages"][case["rule"]]),
+                        str(raised.exception))
 
     def test_every_rule_is_exercised(self):
         doc = _load("requirement_validation.json")

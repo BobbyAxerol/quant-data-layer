@@ -637,6 +637,26 @@ mod tests {
     }
 
     #[test]
+    fn extreme_not_before_never_panics_and_only_a_past_value_passes() {
+        let (encoding, decoding) = keypair();
+        let config = config(decoding);
+        let now = now_seconds().floor() as i64;
+        let verify = |nbf: Value| {
+            let mut value = claims(now);
+            value["nbf"] = nbf;
+            verify_token(&config, &token(&encoding, "k1", value), now as f64)
+        };
+        // Far past (as int() sees it) is accepted; far future is refused.
+        assert!(verify(i64::MIN.into()).is_ok());
+        assert!(verify(serde_json::json!(-1e300)).is_ok());
+        assert!(verify(i64::MAX.into()).is_err());
+        assert!(verify(u64::MAX.into()).is_err());
+        assert!(verify(serde_json::json!(1e300)).is_err());
+        assert!(verify((now + 1).into()).is_err());
+        assert!(verify(now.into()).is_ok());
+    }
+
+    #[test]
     fn lifetime_arithmetic_is_checked_at_the_i128_edges() {
         assert!(lifetime_exceeds_policy(i128::MIN, i128::MAX, 900));
         assert!(lifetime_exceeds_policy(i128::MAX, i128::MIN, 900));

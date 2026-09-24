@@ -53720,6 +53720,7 @@ capture evidence permitted by K1.5 does not require inventing a live-only exit.
 | Review F1/F2/F4 | `f163d14` | `test_kn_v220_contracts` 18 OK (pre-fix Python: 29 subtests fail); Rust workspace 214/0/2, fmt/clippy clean | `contracts/golden/kn_v220/requirement_validation.json` (44 cases) + new malformed vectors | Rust requirement weaker than Python -> one native validator; JWT i64 overflow -> i128 checked; `re.match`+`$`, unhashable schema, bool/float coords -> fullmatch/strict types | none | none | slice rerun |
 | Review F3/F5/F6 | `80d94f9` | `test_kn_native_slice_probe` 7, `test_kn_resource_sizing` 8, `test_kn_v220_budget` 4 OK | `.../kn1-20260923/sizing-f5/` (payloads `f56d6c67...`, listpack2048 `80501edb...`); budget `325a5a5e...` | exit 0 regardless -> verdict + exit 1; FLUSHALL -> guarded namespace; 275 B row incomplete -> 641.7 B contract-complete lossless row, per-product staging | read-only spool capture; 2 disposable Redis (217 keys, 0 left) | containers `--rm`, raw sample deleted | slice rerun |
 | Review slice rerun | this entry | capture slice PASS (verdict, exit 0), negatives 24/24, 2,266 + 2,625 records, 0 decode/token errors, exact resume; full Python suite 2,028 / same 5 classified / 7 skipped | `.../kn1-20260923/slice-evidence-f1f2/slice-result.json` `87831765...`; binary `3031c5f5...`; suite log `ee367c09...` | none new | shadow network, quota Redis, isolated broker, gateway created + removed; no ACL | 0 kn1 containers/networks; key/env/profile/capture deleted | Astra re-review |
+| Closure slice (Astra receipt) | this commit | requirement golden 76 cases (edges + 17 order cases, rule + message asserted in both languages); `nbf` extremes; pre-fix Rust proof (46/58 accepted, 2 overflow panics); KN Python 41 OK; Rust 215/0/2; 5 suite errors re-classified with evidence | `.../kn1-20260923/sizing-f5/redis-keys.json` `e2c33926...`; budget `cfb6f1e0...` | evidence gaps vs Astra's table -> vectors/tests/counting added; PERMISSION_DENIED wording was inferred -> corrected | disposable Redis only | 0 left; scratch trees deleted | Astra focused re-review |
 
 <a id="kn1-astra-receipt"></a>
 - 2026-09-23: **KN-1 receipt for Astra (guide 18.14 format).**
@@ -54099,6 +54100,102 @@ Last review observed healthy Query `2.1.1-83fa1bc` (`dd065fdf...`) and Stream
 Runtime config, active/rollback images and released stable line are unchanged;
 no image build, restart, push, merge or cleanup/prune. No disposable artifacts
 were created, so no disk reclamation is claimed.
+
+#### KN-1 Closure Slice (Claude, response to the Astra receipt)
+
+- 2026-09-24: **Claude closure-slice packet (recorded before running).**
+  Scope: close the gaps found when checking each "evidence Astra must verify"
+  row against the delivered work (F1 edge/order vectors, F2 `nbf` and pre-fix
+  proof, F5 header/latest-state counting and the per-product swap analysis,
+  suite-error classification). Runtime: one disposable Redis of the
+  `stable_redis` digest, `--rm --network none`, listpack 2048, measuring
+  string keys only (guarded helper, exact-key cleanup); the five
+  classified suite tests re-run in `--rm` Python containers, one of them with
+  a tmpfs `/app/logs`. No production container, Kafka, Redis or ACL touched.
+- 2026-09-24: **Closure slice result: implemented, tested locally; for
+  Astra's focused re-review (no reviewer PASS claimed).** Each row of the
+  table above was checked against the delivered work; the gaps found are
+  closed here.
+  - **F1 evidence gaps:** the shared oracle now has 76 cases (was 44; the 44
+    are unchanged): numeric edges on both sides (rows 1 / 10,000 public /
+    100,000 structural, `warmup_limit` 10,000, deadline 99 / 100 / 120,000,
+    cache age 86,400,000, time range 1..2 and 1..i64::MAX, negative start,
+    session SLA 1 ms, freshness and SLA at u64::MAX, negative enum wire
+    value) and 17 `order_*` cases with several violations each, pinning which
+    rule is reported first across the whole chain (enums -> warmup parse ->
+    warmup bounds -> instrument -> source policy -> limits -> recency ->
+    interval -> execution). `rule_messages` is in the golden; Python and Rust
+    now assert the rule **and** the message prefix (the Python test used to
+    check only that something was raised). Validator code unchanged: Rust
+    matched all 32 new cases as written.
+  - **F2 evidence gaps:** new `nbf` extreme test (i64::MIN, -1e300 accepted as
+    past; i64::MAX, u64::MAX, 1e300, now+1 refused). Pre-fix proof, run on a
+    scratch tree of the `14c19a7` Rust sources with the new tests grafted in
+    (deleted after): the digest path accepted **46 of 58** Python refusals;
+    the gateway requirement test failed; `delivery_decision` and the `iat`
+    test panicked with `attempt to subtract with overflow` (auth.rs:256); the
+    `nbf` test passed on old code too (no arithmetic there - coverage, not a
+    regression).
+  - **Correction (E6):** slice 2 and the probe comment said the pre-fix
+    gateway *answered* PERMISSION_DENIED to the invalid requirement. That was
+    read from `require_requirement`, never run. What is proven: the pre-fix
+    gateway parsed it (unit test above) and it would reach the manifest check.
+    Comment corrected; the wire result of the fixed gateway (INVALID_ARGUMENT)
+    stands.
+  - **F5 counting gaps:** everything the cache holds is now counted.
+    `redis-keys` (new guarded subcommand of `kn_resource_sizing.py`, same
+    refusal/cleanup; evidence `sizing-f5/redis-keys.json` `e2c33926...`,
+    6 keys written, 0 left, 0 containers left) measured one string key per
+    size: BAR identity header 189 B -> 424 B; latest TRADE 840, QUOTE 968,
+    MARK 968, book 57,544 B at the largest observed canonical (56,495 B) +
+    48 B trailer. Demand from the manifests/catalog (repo only): 141 BAR
+    headers, 67 latest products (TRADE 11, QUOTE 10, MARK 10, BOOK_SNAPSHOT 18,
+    BOOK_DELTA 18); metric feeds are pass-through, no cache. Totals: BAR rows
+    1,085.5 MB + latest 2.10 MB + headers 0.06 MB + empty-Redis baseline
+    0.98 MB = **1,088.6 MB steady at cap** (602 MB today); peak with one
+    product in staging **1,096.3 MB**; headroom 192 MB below the unchanged
+    1,288 MB maxmemory. Budget `cfb6f1e0...` records the components and the
+    rebuild-concurrency rule; `test_kn_v220_budget` asserts the sum.
+  - **Per-product generation swap vs snapshot/read consistency (input for
+    Astra; not applied, no contract edited).** Contract section 5 already
+    scopes reads per product: one product's payload/quality/watermark/
+    generation come from one versioned view; a multi-page warmup pins the
+    generation or detects a change and retries within a bound; `require_all`
+    batches keep per-item watermarks and are *not* an atomic global snapshot;
+    readiness is per product. None of these needs a global generation.
+    `cache_read_state(ready, entry)` is product-agnostic and works with a
+    per-product ready pointer unchanged. The one conflict is bullet 1
+    ("publishes the ready generation atomically", one global generation).
+    Proposed amendment for Astra's decision: "a rebuild captures the committed
+    boundaries per product, restores and tails each product into staging and
+    publishes that product's ready generation atomically; products are swapped
+    one at a time; the superseded product generation is deleted at the swap,
+    so a reader pinned to it retries within its bound". What this gives up:
+    during a full rebuild different products can be at different generations
+    - acceptable only because no public read promises a cross-product
+    snapshot. What it costs: a pinned multi-page warmup whose product is
+    swapped retries (bounded by the warmup deadline, <= 120 s). Alternative if
+    rejected: a full staging generation (about 2.18 GB) needs an
+    owner-approved RAM increase.
+  - **Suite classification re-proven (not renamed green):** the five errors
+    of the 2,028-test run. Four are environment: `test_crypto_history_contract`,
+    `test_phase0_contract_golden...frozen_contract`, `test_phase3_control_plane`
+    and `test_runtime_source_lifespan` raise `OSError: [Errno 30] Read-only
+    file system: '/app/logs/app.log'` in the read-only test container and
+    **pass** with a writable tmpfs `/app/logs` (6, 1, 5, 1 tests OK). One is a
+    real regression: `test_fund_phase5_load...without_owning_ingestion` gets
+    `429 Too Many Requests`; it passes at `a3fea33` and fails at `13b3594`
+    ("isolate hot read capacity lanes") and at `b17d23f`, with or without the
+    log tmpfs. No KN-1 commit touches `qdl/query`, `qdl/api_v2`, `qdl_sdk` or
+    that test (`git diff d5f3cf4..HEAD` empty). Owner: KN-4 (Query), already
+    recorded; it is not a KN-1 exit item unless Astra says otherwise.
+  - Tests: Python KN 41 OK (contracts 18, slice probe 7, sizing 9, budget 4,
+    bundle 3). Rust workspace fmt/clippy clean, 215 passed / 0 failed / 2
+    ignored. No validator/auth/delivery code changed in this slice (tests,
+    sizing helper, budget, one comment), so the capture slice was not rerun,
+    per Astra's rule. Nothing measured here is live latency or KN-2 readiness.
+  - Runtime: one disposable Redis (`--rm`, removed, 0 left); read-only test
+    containers; scratch trees deleted. No production mutation, no ACL.
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

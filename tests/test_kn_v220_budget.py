@@ -47,7 +47,13 @@ class CandidateBudgetTests(unittest.TestCase):
         per_row = measured["identity_stripped_state_listpack_bucket64"]
         self.assertGreater(per_row, measured["superseded_compact_listpack_bucket120_not_contract_complete"])
         self.assertEqual(sizing["rows_at_cap"], 140 * 12_064 + (500 + 2_064))
-        self.assertAlmostEqual(sizing["rows_at_cap"] * per_row, sizing["steady_bytes_at_cap"], delta=1e6)
+        self.assertAlmostEqual(sizing["rows_at_cap"] * per_row, sizing["bar_rows_bytes_at_cap"], delta=1e6)
+        # Every cache structure is counted, not only BAR rows.
+        other = sizing["other_structures_bytes"]
+        counted = sum(v for v in other.values() if isinstance(v, int))
+        self.assertAlmostEqual(sizing["bar_rows_bytes_at_cap"] + counted, sizing["steady_bytes_at_cap"], delta=1e6)
+        self.assertGreater(other["latest_state_keys"], 0)
+        self.assertGreater(other["bar_identity_headers"], 0)
         self.assertAlmostEqual(12_064 * per_row, sizing["largest_product_bytes"], delta=1e3)
         # Per-product staging: steady plus the largest product, below maxmemory.
         self.assertAlmostEqual(sizing["steady_bytes_at_cap"] + sizing["largest_product_bytes"],

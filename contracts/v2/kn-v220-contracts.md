@@ -69,8 +69,10 @@ revision; `event_recency_policy` UNSPECIFIED means absent), warmup horizon and
 interval-source policy, `WarmupTimeRange`, `WarmupSpecification` bounds, then
 `DataRequirement.__post_init__` (blank = Python `str.strip`, which includes
 U+001C..U+001F). Each refusal has a stable rule code;
-`contracts/golden/kn_v220/requirement_validation.json` holds one case per rule
-plus accepted edges, produced by the Python server path. Refusal is
+`contracts/golden/kn_v220/requirement_validation.json` holds every rule,
+numeric edges on both sides and multi-violation `order_*` cases that pin which
+rule is reported first, produced by the Python server path; both languages
+assert the rule and the message prefix (`rule_messages`). Refusal is
 `INVALID_ARGUMENT` with the Python message.
 
 ## 2. Coordinates

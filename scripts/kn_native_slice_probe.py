@@ -412,7 +412,8 @@ class Slice:
             results.append({"case": name, "expected": expected, "observed": code, "pass": code == expected})
         # KN-1 review F1 over the wire: a requirement the Python server refuses
         # (execution grade without full coverage) is INVALID_ARGUMENT before any
-        # manifest check; the pre-fix gateway answered PERMISSION_DENIED.
+        # manifest check; the pre-fix gateway parsed it (unit test on 14c19a7)
+        # and left it to the manifest match.
         def partial_execution(requirement) -> None:
             from qdl.query.v2 import query_pb2
 
