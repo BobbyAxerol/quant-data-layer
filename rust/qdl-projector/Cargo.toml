@@ -1,0 +1,16 @@
+[package]
+name = "qdl-projector"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Kafka-native V2 projector (KN-3): stage A canonical -> state topics in Kafka transactions, stage B state topics -> fenced market cache."
+
+[dependencies]
+prost.workspace = true
+qdl-contracts.workspace = true
+rdkafka.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -3,6 +3,7 @@ members = [
     "rust/qdl-contracts",
     "rust/qdl-core",
     "rust/qdl-kafka",
+    "rust/qdl-projector",
     "rust/qdl-provider-envelope",
     "rust/qdl-realtime-core",
     "rust/qdl-stream-gateway",

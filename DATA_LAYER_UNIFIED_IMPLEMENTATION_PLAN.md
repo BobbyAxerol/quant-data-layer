@@ -55338,6 +55338,87 @@ revision ordering, compaction/expiry and restore proof.
 #### KN-3 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append tested-slice receipts and Astra findings/resolutions here.
+- 2026-09-24: **Owner start and parallel assignment.** Bobby started KN-3 after
+  the KN-2 R2 PASS and asked for more agents in parallel. Per guide 18.10 and
+  the program rule (no concurrent edits to shared files), work is split by
+  **disjoint new files**; helper agents never commit, Claude integrates,
+  re-tests and commits each slice. No extra git worktree; each helper builds
+  with its own cargo target directory in the session scratchpad (removed at
+  slice end). Assignment: (a) state codecs (`rust/qdl-contracts/src/
+  state_codec.rs`, `qdl/projection/kn_state_codec.py`, golden
+  `contracts/golden/kn_v220/state_codec.json` + generator, tests); (b) K3.1
+  provision packet (`scripts/kn_state_topics_packet.py` + tests); (c) Claude:
+  projector crate `rust/qdl-projector` (Stage A, Stage B, Lua, retention,
+  rebuild) and all shared-file edits (plan, contracts doc, workspace
+  manifests, compose/CI); (d) later: migration exporter and BAR-edge readback
+  adapter after the code survey. Wait-dependent work is listed in the report.
+- 2026-09-24: **KN-3 design decisions D1-D5 (recorded before code).**
+  - D1 One new crate `rust/qdl-projector` (lib + one binary) holds Stage A and
+    Stage B as bounded task pools in one role (guide 18.3); partition
+    ownership by consumer group, no global lock. It uses rdkafka directly like
+    the stream gateway; `qdl-kafka`'s bridge is not widened (its output set is
+    locked to canonical/quarantine for the running core).
+  - D2 State-topic record = a versioned binary frame, not a new proto message
+    (proto generation uses `buf` remote plugins = sending contract source to
+    an external service; not approved): `QKS1` magic, kind byte (LATEST,
+    BAR_REVISION, RETENTION_FLOOR, LEGACY_BAR), big-endian u32 header length,
+    canonical strict JSON header (sorted keys, no whitespace, exact field set
+    per kind, JSON integers only, u64 never a float), then the canonical
+    EventEnvelope bytes **unchanged** (no timestamp or field rewrite). The
+    header carries LPK, source coordinate `{topic_id, partition, offset}`,
+    materializer epoch, content SHA-256 and event id; BAR adds open time (ms),
+    revision and finality; LEGACY_BAR carries `provenance=legacy_import` and the
+    legacy lineage instead of a source coordinate (never an invented offset).
+  - D3 Keys and routing. `md.latest.v2` key = LPK. `md.bars.v2` key =
+    `<lpk>|<open_time_ms>|p` for the one in-progress row of an open, and
+    `<lpk>|<open_time_ms>|f<revision>|<sha256 prefix 16>` for each final or
+    revised fact (budget "binding|open_time_ms|revision" with the binding
+    expressed as the LPK and the content hash added): an in-progress update can
+    never compact away a final, and two equal-revision finals with different
+    content both survive compaction so CONFLICT stays provable after a rebuild.
+    `<lpk>|floor` carries the durable retention floor. Both topics are
+    partitioned by **the LPK only** with the Java-compatible murmur2 hash
+    (explicit partition on produce), so every record of one product is in one
+    partition in order.
+  - D4 Cache values reuse the frozen KN-1 encodings: a BAR current-index row is
+    the contract section 4 LPK row (48-byte trailer + canonical envelope
+    without uid/venue/market/interval); a latest value is the same trailer +
+    the canonical bytes. Coordinates and generation live in separate hash
+    fields as decimal strings (no double). Rust and Python codecs share one
+    golden built from real canonical records.
+  - D5 K3.1 packet follows `scripts/phase103_apply_shared_primary_broker_scope.py`:
+    offline review by default, `--apply --confirm <sealed token>`, exact topic
+    names (never positional indices; the phaseb bootstrap list has an index
+    drift), exact describe verification of `cleanup.policy`,
+    `delete.retention.ms`, `min.compaction.lag.ms`, RF and min ISR. The
+    projector principal is a parameter: a least-privilege principal needs a new
+    certificate and the stable CA key is deleted by design, so production
+    principal choice (new CA/mesh rotation before 2026-11-20 vs reusing
+    `phase8-consumer`) is an **owner decision at the production packet**; the
+    isolated broker runs do not depend on it.
+- 2026-09-24: **KN-3 slice 1 - K3.2 stage A transactional engine: implemented,
+  tested locally + isolated real Kafka.** New crate `rust/qdl-projector`
+  (`stage_a.rs`, `kafka_pipe.rs`): one step polls a bounded batch of committed
+  canonical records, transforms the whole batch **before** opening the
+  transaction (an integrity stop leaves nothing half-published), publishes
+  the state records and `send_offsets_to_transaction` (consumer group
+  metadata, so a stale member is fenced) and commits; an abortable error
+  aborts and rewinds to the committed offsets; a transform integrity error
+  stops the engine with partition/offset (never skipped); a fatal error
+  (fenced transactional id) stops it. Consumer `read_committed`, no
+  auto-commit, earliest on the group's first start, cooperative-sticky;
+  producer idempotent, `acks=all`, zstd, fixed transactional id per replica.
+  Product classification (the `Transform`) comes after the code survey.
+
+  | Work item | Command / cases | Result | Failure -> fix | Runtime | Cleanup |
+  |---|---|---|---|---|---|
+  | K3.2 engine, K3-T01 | `cargo test -p qdl-projector` (in-memory `read_committed` pipe): commit, abort+retry once, failed commit, crash before commit, integrity stop, fatal stop, bounded batches | 6/6 | - | none | - |
+  | K3-T01 real Kafka | `cargo test -p qdl-projector --test stage_a_kafka -- --ignored` on a disposable broker: exact outputs + committed offsets (40 inputs, 7-record batches), crash inside a transaction then restart (orphan invisible, exact once), zombie with the same transactional id fenced (fatal) while the replacement publishes exactly once, two members rebalancing (60 inputs, exact once) | 4/4, three consecutive runs | first run: the tests polled once while the consumer was still joining its group (empty batch; an empty transaction commits locally, so the zombie was not fenced) -> poll until records arrive | isolated `kn3-it-net`, removed | 0 containers |
+  | Workspace | fmt, clippy `-D warnings`, `cargo test --workspace --no-fail-fast` on the exact staged content (index exported, helper files excluded) | 272 passed / 0 failed / 7 ignored (the Kafka tests) | - | none | - |
+
+  CI: the existing `kn-native-integration` job also runs `stage_a_kafka`
+  (Astra decision 6: reuse the job, no duplicate). Helper slices (codecs,
+  K3.1 packet) are in progress on their own files and not in this commit.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
