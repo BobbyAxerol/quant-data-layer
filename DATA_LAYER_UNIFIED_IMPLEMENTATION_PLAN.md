@@ -55718,6 +55718,60 @@ revision ordering, compaction/expiry and restore proof.
   - Not covered yet: non-1m/calendar intervals and the `ThreadedProducer`
     sink run (assigned with the cleaner slice); wiring into the projector role
     loop (binary not built yet).
+- 2026-09-24: **KN-3 design decision D17 (corrects D10, recorded before
+  code).** D10's dual write ("rules are order-independent") is wrong: the
+  BAR rule keeps the **first** of two equal-revision facts (CONFLICT), so a
+  staging generation that receives new live records before the replayed old
+  ones would keep the later fact while the ready generation keeps the earlier
+  one - the two generations diverge. Corrected protocol: live stage B writes
+  only the **ready** generation of a product (staging only for a product not
+  yet ready); the per-product rebuild runs **inside the partition owner**,
+  interleaved with its batches on the same thread: allocate `G`, stage it
+  (a stale staging generation is reclaimed), and a second reader (assign
+  mode, outside the group, `read_committed`) replays the partition from its
+  earliest offset in log order, applying only that product's records into `G`
+  with the owner fence (the partition checkpoint is left where the live path
+  put it). When the reader's position reaches the live checkpoint, `G` holds
+  exactly the records `ready` applied, in the same order; BAR row counts are
+  verified against the bucket contents, then `ready = G, fence + 1` is
+  CAS-published and the old generation reclaimed in the same step - no live
+  record can interleave. One rebuild at a time (queue); losing the partition
+  abandons it and reclaims `G`; a product that is not READY is refused (a
+  cold build covers it).
+- 2026-09-24: **KN-3 slice 7 - per-product rebuild (D17), latest tombstone
+  ordering fix, bars-topic cleaner (K3.5/K3.7): implemented, tested locally +
+  isolated Kafka and Redis.** Claude: `stage_b.rs` (rebuild queue, replay,
+  verify, publish/abandon; `PartitionReader`), `cache.rs` (`targets()` = ready
+  or first staging; `bar_row_count`), `kafka_state.rs` (one
+  `KafkaPartitionReader` for rebuild and cleaner). Helper-built,
+  Claude-reviewed and re-run: `cleaner.rs` (`sweep_partition`,
+  `parse_bars_key`, `CleanerKafkaSettings`), `tests/cleaner_kafka.rs`, and
+  expiry coverage (1d/1w grid, `1M` refused, `ThreadedProducer` sink).
+  - **Defect found and fixed (live path, not only rebuild):** a latest
+    tombstone was queued after the batch's writes, so `set, delete, set` of
+    one product inside one batch ended deleted. The tombstone now collapses
+    in log order within the entry's group (write, then delete, then write
+    keeps the last write; a trailing delete deletes). Regression test added.
+  - Cleaner decisions (helper, reviewed): two read passes over one captured
+    `[earliest, end)` (memory = floors + below-floor keys; pass 2 skipped
+    without floors); a pass that does not reach the end within its deadline
+    (an open transaction holds the stable offset) is `Incomplete` and
+    publishes nothing; a floor tombstone means "no floor" (that product is not
+    touched); tombstones go out in key order, so a capped sweep continues
+    without repeats; a failed chunk is aborted and stops the sweep (earlier
+    chunks are idempotent). Reader ids: the cleaner uses its transactional
+    id as client/group id; a reader only `assign()`s at explicit offsets and
+    never commits, so it never joins or fetches a group - whether the
+    production ACL needs any group grant for that is **unverified** until the
+    production packet.
+  | Check | Command | Result |
+  |---|---|---|
+  | key parsing (valid + 9 invalid shapes), cleaner id under `kn-projector-v3-`, expiry task bounds, stage A, products, cache | `cargo test -p qdl-projector --lib` | 19/19 |
+  | D17: damaged ready row repaired; live new open and a live conflicting fact arriving during the replay -> the first fact kept, both later facts recorded as conflicts; `ready = G, fence + 1`, old generation reclaimed, other products untouched, tailing continues; latest rebuild across a delete; refused requests (no holder, no reader); revocation abandons and reclaims `G`, ready untouched; tombstone order in one batch | `stage_b_redis` | 11/11 |
+  | real Kafka: rebuild through the second reader with live commits during the replay and an aborted conflicting fact -> 121 rows, first fact kept, aborted never applied | `stage_b_kafka` | 2/2 |
+  | real Kafka: orphans from the plan->floor race and from a late fact below the floor tombstoned exactly (2 of 22 below-floor keys), second sweep 0, other partition/above-floor keys untouched; bad floor/key -> Integrity, 0 published; cap 2 -> (2,2,3),(2,2,1),(1,1,0),(0,0,0); aborted sweep invisible | `cleaner_kafka` | 4/4 |
+  | 1d (16:00 UTC grid) and 1w (Monday) bars expire on the venue grid, bucket bound kept, `1M` refused; `ThreadedProducer` publish read back | `expiry_redis`, `expiry_kafka` | 6/6, 2/2 |
+  | whole ignored projector set + fmt + clippy `-D warnings` | staged content, disposable `kn3-lead-*` Kafka + 2 Redis | green 3 rounds in a row |
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

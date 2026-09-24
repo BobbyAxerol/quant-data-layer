@@ -91,11 +91,12 @@ impl Pointer {
         ]
     }
 
-    /// Generations a record of this product is written to (live + staging).
+    /// The generation a live record of this product is written to: the
+    /// ready one, or the staging one of a product not yet ready. A staging
+    /// generation next to a ready one belongs to a per-product rebuild, which
+    /// replays the log into it itself (D17: no dual write).
     pub fn targets(&self) -> Vec<u64> {
-        let mut targets: Vec<u64> = self.ready.into_iter().chain(self.staging).collect();
-        targets.dedup();
-        targets
+        self.ready.or(self.staging).into_iter().collect()
     }
 }
 
@@ -531,6 +532,44 @@ impl Cache {
 
     /// Remove every key of a superseded generation of `lpk` (bounded by the
     /// product's BAR meta range). Returns the number of keys removed.
+    /// `(rows in the meta, rows counted in the buckets first..=last)` of a
+    /// BAR product in `generation` (rebuild verification, D17).
+    pub fn bar_row_count(
+        &mut self,
+        generation: u64,
+        lpk: &str,
+        interval_ms: u64,
+    ) -> Result<(u64, u64), CacheError> {
+        let values: Vec<Option<String>> = redis::cmd("HMGET")
+            .arg(self.layout.bar_meta(generation, lpk))
+            .arg("rows")
+            .arg("first")
+            .arg("last")
+            .query(&mut self.connection)
+            .map_err(CacheError::from)?;
+        let mut values = values.into_iter();
+        let rows = parse_u64(values.next().flatten()).unwrap_or(0);
+        let (Some(first), Some(last)) = (
+            parse_u64(values.next().flatten()),
+            parse_u64(values.next().flatten()),
+        ) else {
+            return Ok((rows, 0));
+        };
+        let buckets: Vec<u64> =
+            (bucket_of(first, interval_ms)..=bucket_of(last, interval_ms)).collect();
+        let mut counted = 0u64;
+        for chunk in buckets.chunks(64) {
+            let mut pipe = redis::pipe();
+            for bucket in chunk {
+                pipe.cmd("HLEN")
+                    .arg(self.layout.bar_bucket(generation, lpk, *bucket));
+            }
+            let lengths: Vec<u64> = pipe.query(&mut self.connection).map_err(CacheError::from)?;
+            counted += lengths.iter().sum::<u64>();
+        }
+        Ok((rows, counted))
+    }
+
     pub fn reclaim(
         &mut self,
         generation: u64,

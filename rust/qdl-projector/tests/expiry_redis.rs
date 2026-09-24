@@ -704,3 +704,125 @@ fn an_undecodable_row_stops_the_plan() {
         other => panic!("expected an integrity stop, got {other:?}"),
     }
 }
+
+const DAY: u64 = 86_400_000;
+
+/// A final bar of any fixed interval at `open_ms` (venue-grid opens).
+fn push_final_at(log: &Log, lpk: &LogicalProductKey, interval_ms: u64, open_ms: u64) -> String {
+    let envelope = EventEnvelope {
+        event_id: EVENT.fetch_add(1, Ordering::Relaxed).to_be_bytes().to_vec(),
+        instrument_uid: lpk.instrument_uid.clone(),
+        venue: "OKX".into(),
+        market: "SWAP".into(),
+        payload: Some(Payload::Bar(Bar {
+            interval: lpk.qualifier.clone(),
+            open_time_ns: (open_ms * 1_000_000) as i64,
+            close_time_ns: ((open_ms + interval_ms) * 1_000_000 - 1) as i64,
+            is_final: true,
+            lifecycle: BarLifecycle::Final as i32,
+            trade_count: 1,
+            ..Default::default()
+        })),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let frame = StateFrame::bar_revision(
+        &envelope,
+        lpk,
+        SourceCoordinate {
+            topic_id: TOPIC_ID.into(),
+            partition: 2,
+            offset: OFFSET.fetch_add(1, Ordering::Relaxed),
+        },
+        1,
+    )
+    .unwrap();
+    let key = frame.key().unwrap();
+    log.append(BARS, 0, &key, Some(frame.encode().unwrap()));
+    key
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn day_and_week_bars_expire_on_the_venue_grid_and_months_are_refused() {
+    // (interval, duration, first open on the venue grid, count): OKX daily
+    // bars open at 16:00 UTC (UTC+8 midnight), weekly bars on Monday 00:00
+    // UTC (the epoch is a Thursday); neither grid is a multiple of the
+    // bucket span, so buckets start mid-grid.
+    let cases = [
+        ("1d", DAY, 19_000 * DAY + 16 * 3_600_000, 300u64),
+        ("1w", 7 * DAY, 2_700 * 7 * DAY + 4 * DAY, 250u64),
+    ];
+    for (interval, interval_ms, first_open, count) in cases {
+        let log = Log::default();
+        let lpk =
+            LogicalProductKey::new("paper", "OKX", "SWAP", UID, "BAR", Some(interval)).unwrap();
+        let opens: Vec<u64> = (0..count).map(|k| first_open + k * interval_ms).collect();
+        let keys: Vec<String> = opens
+            .iter()
+            .map(|open| push_final_at(&log, &lpk, interval_ms, *open))
+            .collect();
+        let mut stage = stage(&log, &environment(&format!("grid{interval}")));
+        drain(&mut stage);
+        let generation = ready(&mut stage, &lpk);
+        let expired = (count - 100) as usize;
+        let step = plan_expiry(&mut stage.cache, generation, &lpk, 100, 10_000)
+            .unwrap()
+            .expect("a plan");
+        assert_eq!(
+            step.floor_ms, opens[expired],
+            "{interval}: 100th newest open"
+        );
+        assert_eq!(
+            step.floor_ms % interval_ms,
+            first_open % interval_ms,
+            "{interval}: on the venue grid"
+        );
+        assert_eq!(step.expired_opens, expired as u64);
+        let mut expected: BTreeSet<String> = keys[..expired].iter().cloned().collect();
+        for open in &opens[..expired] {
+            expected.insert(bar_key(&lpk, *open, false, 0, "").unwrap());
+        }
+        assert_eq!(
+            step.tombstone_keys.iter().cloned().collect::<BTreeSet<_>>(),
+            expected,
+            "{interval}"
+        );
+        publish(&log, &step);
+        drain(&mut stage);
+        assert_eq!(meta(&mut stage, &lpk, "rows").as_deref(), Some("100"));
+        // Every retained open is in its bucket, every bucket <= 116 opens,
+        // nothing below the floor is left.
+        let lpk_text = lpk.encode();
+        let mut retained = Vec::new();
+        for bucket in
+            bucket_of(opens[0], interval_ms)..=bucket_of(opens[count as usize - 1], interval_ms)
+        {
+            let fields: Vec<String> = redis::cmd("HKEYS")
+                .arg(stage.cache.layout.bar_bucket(generation, &lpk_text, bucket))
+                .query(stage.cache.connection())
+                .unwrap();
+            assert!(fields.len() as u64 <= 116, "{interval}: bucket {bucket}");
+            for field in fields {
+                let open: u64 = field.parse().unwrap();
+                assert_eq!(bucket_of(open, interval_ms), bucket);
+                retained.push(open);
+            }
+        }
+        retained.sort_unstable();
+        assert_eq!(retained, opens[expired..].to_vec(), "{interval}");
+    }
+    // Calendar months have no fixed duration: refused, nothing planned.
+    let month = LogicalProductKey::new("paper", "OKX", "SWAP", UID, "BAR", Some("1M")).unwrap();
+    let url = std::env::var("QDL_KN_TEST_REDIS").expect("QDL_KN_TEST_REDIS");
+    let mut cache = Cache::connect(&url, Layout::new(&environment("month"))).unwrap();
+    assert!(matches!(
+        plan_expiry(&mut cache, 1, &month, 100, 10_000),
+        Err(ExpiryError::Product(_))
+    ));
+    let caps: BTreeMap<String, u64> = [(month.encode(), 100)].into_iter().collect();
+    assert!(matches!(
+        ExpiryTask::new(caps, 1, 1),
+        Err(ExpiryError::Product(_))
+    ));
+}

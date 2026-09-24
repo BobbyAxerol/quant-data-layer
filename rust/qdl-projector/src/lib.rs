@@ -9,6 +9,7 @@
 //! external sink).
 
 pub mod cache;
+pub mod cleaner;
 pub mod expiry;
 pub mod kafka_pipe;
 pub mod kafka_state;

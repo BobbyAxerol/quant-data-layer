@@ -13,7 +13,7 @@ use qdl_contracts::qdl::marketdata::v2::{
 use qdl_contracts::state_codec::{decode_bar_row, decode_latest_value, StateFrame};
 use qdl_contracts::state_contract::{LogicalProductKey, SourceCoordinate};
 use qdl_projector::cache::{bucket_of, Cache, Layout};
-use qdl_projector::stage_b::{StageB, StageBLimits, StateInput, StateSource};
+use qdl_projector::stage_b::{PartitionReader, StageB, StageBLimits, StateInput, StateSource};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -104,6 +104,58 @@ impl StateSource for Source {
         Ok(self.assigned.clone())
     }
     fn commit(&mut self, _topic: &str, _partition: i32, _next: i64) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The rebuild replay reader over the same log (assign mode).
+struct Reader {
+    log: Log,
+    at: Option<(String, i32, i64)>,
+}
+
+impl PartitionReader for Reader {
+    fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
+        let inner = self.log.0.lock().unwrap();
+        let end = inner
+            .records
+            .get(&(topic.into(), partition))
+            .and_then(|r| r.last())
+            .map(|r| r.offset + 1)
+            .unwrap_or(0);
+        Ok((0, end))
+    }
+    fn start(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), String> {
+        self.at = Some((topic.into(), partition, offset));
+        Ok(())
+    }
+    fn poll(&mut self, max: usize, _timeout: Duration) -> Result<Vec<StateInput>, String> {
+        let Some((topic, partition, from)) = self.at.clone() else {
+            return Ok(Vec::new());
+        };
+        let inner = self.log.0.lock().unwrap();
+        let records: Vec<StateInput> = inner
+            .records
+            .get(&(topic.clone(), partition))
+            .map(|records| {
+                records
+                    .iter()
+                    .filter(|r| r.offset >= from)
+                    .take(max)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(last) = records.last() {
+            self.at = Some((topic, partition, last.offset + 1));
+        }
+        Ok(records)
+    }
+    fn position(&mut self, _topic: &str, _partition: i32) -> Result<Option<i64>, String> {
+        Ok(self.at.as_ref().map(|at| at.2))
+    }
+    fn stop(&mut self) -> Result<(), String> {
+        self.at = None;
         Ok(())
     }
 }
@@ -550,4 +602,241 @@ fn a_retention_floor_removes_old_rows_and_refuses_late_ones() {
     assert!(read_bar(&mut stage, &bars, 5).is_none());
     assert!(read_bar(&mut stage, &bars, 280).is_some());
     assert!(stage.metrics.below_floor >= 1);
+}
+
+fn rebuild_stage(log: &Log, environment: &str) -> StageB<Source> {
+    stage(log, environment).with_rebuild_reader(Box::new(Reader {
+        log: log.clone(),
+        at: None,
+    }))
+}
+
+fn until_rebuilt(stage: &mut StageB<Source>) {
+    for _ in 0..200 {
+        stage.step().expect("step");
+        if stage.rebuilding().is_none() {
+            return;
+        }
+    }
+    panic!("the rebuild did not finish");
+}
+
+fn meta_exists(stage: &mut StageB<Source>, generation: u64, lpk: &str) -> bool {
+    let key = stage.cache.layout.bar_meta(generation, lpk);
+    redis::cmd("EXISTS")
+        .arg(key)
+        .query::<u64>(stage.cache.connection())
+        .unwrap()
+        == 1
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn a_product_rebuild_replays_in_log_order_and_publishes_at_the_live_checkpoint() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    let quotes = lpk("QUOTE", None);
+    let first_fact = bar(5, BarLifecycle::Final, 0, 1);
+    for minute in 0..31u64 {
+        let envelope = if minute == 5 {
+            first_fact.clone()
+        } else {
+            bar(minute, BarLifecycle::Final, 0, 1)
+        };
+        push(&log, BARS, bar_frame(&bars, envelope, minute));
+    }
+    // Equal revision, other content: CONFLICT, the first fact stays.
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(5, BarLifecycle::Final, 0, 2), 100),
+    );
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 10));
+    let environment = environment("rebuild");
+    let mut stage = rebuild_stage(&log, &environment);
+    drain(&mut stage);
+    let key = bars.encode();
+    let before = stage.cache.pointer(&key).unwrap();
+    let old = before.ready.unwrap();
+    let quote_generation = stage.cache.pointer(&quotes.encode()).unwrap().ready;
+    // Damage the ready generation: a row disappears.
+    let damaged = 20 * MIN;
+    let _: u64 = redis::cmd("HDEL")
+        .arg(
+            stage
+                .cache
+                .layout
+                .bar_bucket(old, &key, bucket_of(damaged, MIN)),
+        )
+        .arg(damaged.to_string())
+        .query(stage.cache.connection())
+        .unwrap();
+    assert!(read_bar(&mut stage, &bars, 20).is_none());
+
+    stage.request_rebuild(&key);
+    stage.step().unwrap();
+    let (_, staged) = stage.rebuilding().expect("rebuild started");
+    // Live records during the replay: a new open, and another conflicting
+    // fact for open 5 that the staging generation sees before the old ones
+    // under a dual write (the D10 defect) - here it must still lose.
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(40, BarLifecycle::Final, 0, 1), 200),
+    );
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(5, BarLifecycle::Final, 0, 3), 201),
+    );
+    until_rebuilt(&mut stage);
+
+    let after = stage.cache.pointer(&key).unwrap();
+    assert_eq!(
+        (after.ready, after.staging, after.fence),
+        (Some(staged), None, before.fence + 1)
+    );
+    assert_ne!(staged, old);
+    assert!(read_bar(&mut stage, &bars, 20).is_some(), "damage repaired");
+    assert_eq!(
+        read_bar(&mut stage, &bars, 5),
+        Some(first_fact),
+        "first fact kept"
+    );
+    assert!(
+        read_bar(&mut stage, &bars, 40).is_some(),
+        "live record replayed"
+    );
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("32"));
+    let conflicts: u64 = redis::cmd("LLEN")
+        .arg(stage.cache.layout.conflicts(staged, &key))
+        .query(stage.cache.connection())
+        .unwrap();
+    assert_eq!(conflicts, 2, "both later facts refused and recorded");
+    assert!(!meta_exists(&mut stage, old, &key));
+    assert_eq!(
+        stage.cache.pointer(&quotes.encode()).unwrap().ready,
+        quote_generation,
+        "other products untouched"
+    );
+    assert_eq!(
+        (
+            stage.metrics.rebuilds_started,
+            stage.metrics.rebuilds_completed
+        ),
+        (1, 1)
+    );
+    // Live tailing continues into the published generation.
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(41, BarLifecycle::Final, 0, 1), 300),
+    );
+    drain(&mut stage);
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("33"));
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn a_latest_rebuild_follows_deletes_and_bad_requests_are_refused() {
+    let log = Log::default();
+    let quotes = lpk("QUOTE", None);
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 10));
+    push(&log, LATEST, latest_frame(&quotes, quote(2), 11));
+    log.append(LATEST, 0, &quotes.encode(), None);
+    let newest = quote(3);
+    push(&log, LATEST, latest_frame(&quotes, newest.clone(), 12));
+    let environment = environment("rebuildl");
+    let mut stage = rebuild_stage(&log, &environment);
+    drain(&mut stage);
+    stage.request_rebuild(&quotes.encode());
+    until_rebuilt(&mut stage);
+    assert_eq!(
+        stage.metrics.rebuilds_completed, 1,
+        "{:?} {:?}",
+        stage.metrics, stage.last_rebuild_error
+    );
+    assert_eq!(read_latest(&mut stage, &quotes), Some((newest, 12)));
+    // A product nobody holds, and a stage without a reader.
+    stage.request_rebuild(&lpk("TRADE", None).encode());
+    stage.step().unwrap();
+    assert_eq!(stage.metrics.rebuilds_refused, 1);
+    assert!(stage
+        .last_rebuild_error
+        .as_deref()
+        .unwrap()
+        .contains("no owned partition"));
+    let mut plain = stage_without_reader(&log, &environment);
+    drain(&mut plain);
+    plain.request_rebuild(&quotes.encode());
+    plain.step().unwrap();
+    assert_eq!(plain.metrics.rebuilds_refused, 1);
+}
+
+fn stage_without_reader(log: &Log, environment: &str) -> StageB<Source> {
+    stage(log, environment)
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn losing_the_partition_abandons_the_rebuild_and_reclaims_the_staged_generation() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    for minute in 0..60u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("rebuilda");
+    let mut stage = rebuild_stage(&log, &environment);
+    drain(&mut stage);
+    let key = bars.encode();
+    let ready = stage.cache.pointer(&key).unwrap().ready;
+    stage.request_rebuild(&key);
+    stage.step().unwrap();
+    stage.step().unwrap();
+    let (_, staged) = stage.rebuilding().expect("rebuild in progress");
+    assert!(meta_exists(&mut stage, staged, &key));
+    // Revocation: the partition leaves the assignment.
+    stage.source.assigned.clear();
+    stage.step().unwrap();
+    assert!(stage.rebuilding().is_none());
+    assert_eq!(stage.metrics.rebuilds_abandoned, 1);
+    assert!(!meta_exists(&mut stage, staged, &key));
+    assert_eq!(
+        stage.cache.pointer(&key).unwrap().ready,
+        ready,
+        "ready untouched"
+    );
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn a_latest_tombstone_takes_effect_in_log_order_within_one_batch() {
+    let log = Log::default();
+    let revived = lpk("QUOTE", None);
+    let deleted = lpk("TRADE", None);
+    // One batch (7 records): set, delete, set -> the last set wins;
+    // set, delete -> the state is gone.
+    push(&log, LATEST, latest_frame(&revived, quote(1), 10));
+    log.append(LATEST, 0, &revived.encode(), None);
+    let newest = quote(2);
+    push(&log, LATEST, latest_frame(&revived, newest.clone(), 11));
+    push(
+        &log,
+        LATEST,
+        latest_frame(
+            &deleted,
+            envelope(Payload::Trade(Default::default())).encode_to_vec(),
+            12,
+        ),
+    );
+    log.append(LATEST, 0, &deleted.encode(), None);
+    let environment = environment("tomb");
+    let mut stage = stage(&log, &environment);
+    drain(&mut stage);
+    assert_eq!(read_latest(&mut stage, &revived), Some((newest, 11)));
+    assert_eq!(read_latest(&mut stage, &deleted), None);
 }

@@ -16,6 +16,12 @@
 //! rules into one operation that expects the entry as it was before the
 //! batch (the script checks every expectation before writing anything).
 //! Pointer changes (stage, publish) run as their own atomic steps.
+//!
+//! A per-product rebuild (D17) runs inside the partition owner between its
+//! batches: a second reader replays the partition from its start in log
+//! order into a staged generation (live records keep going to the ready one
+//! only), and the product is published when the replay reaches the live
+//! checkpoint, in the same step, so no live record can interleave.
 
 use crate::cache::{bucket_of, Applied, Cache, CacheError, Op, Pointer};
 use prost::Message;
@@ -26,7 +32,7 @@ use qdl_contracts::state_contract::{
     bar_revision_decision, latest_apply_decision, ApplyDecision, BarState, LogicalProductKey,
     SourceCoordinate, MAX_OFFSET,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
 
 /// The trailer offset of a legacy-imported row: no canonical coordinate
@@ -55,6 +61,19 @@ pub trait StateSource {
     fn assigned(&mut self) -> Result<Vec<(String, i32)>, String>;
     /// Informational group offset (restart uses the cache checkpoint).
     fn commit(&mut self, topic: &str, partition: i32, next: i64) -> Result<(), String>;
+}
+
+/// A reader of one state-topic partition outside the consumer group
+/// (`read_committed`, assign mode): the per-product rebuild replay (D17).
+/// Also the bars-topic cleaner's reader.
+pub trait PartitionReader {
+    /// `(earliest, end)` offsets of a partition.
+    fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String>;
+    fn start(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), String>;
+    fn poll(&mut self, max: usize, timeout: Duration) -> Result<Vec<StateInput>, String>;
+    /// Next offset the reader will read (past control records), if known.
+    fn position(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, String>;
+    fn stop(&mut self) -> Result<(), String>;
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +114,11 @@ pub struct StageBMetrics {
     pub published: u64,
     pub unpublished: u64,
     pub reclaimed_keys: u64,
+    pub rebuilds_started: u64,
+    pub rebuilds_completed: u64,
+    pub rebuilds_abandoned: u64,
+    pub rebuilds_refused: u64,
+    pub rebuild_records: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,13 +153,27 @@ struct PartitionState {
     next: i64,
 }
 
+/// The per-product rebuild in progress.
+#[derive(Clone, Debug)]
+struct ActiveRebuild {
+    lpk: String,
+    topic: String,
+    partition: i32,
+    generation: u64,
+}
+
 pub struct StageB<S: StateSource> {
     pub source: S,
     pub cache: Cache,
     pub limits: StageBLimits,
     pub metrics: StageBMetrics,
+    /// Why the last requested rebuild was refused or abandoned.
+    pub last_rebuild_error: Option<String>,
     partitions: HashMap<(String, i32), PartitionState>,
     now_ms: fn() -> u64,
+    rebuild_reader: Option<Box<dyn PartitionReader + Send>>,
+    rebuild_queue: VecDeque<String>,
+    rebuild: Option<ActiveRebuild>,
 }
 
 fn system_now_ms() -> u64 {
@@ -177,6 +215,8 @@ struct PendingLatest {
     expected: Option<u64>,
     current: Option<SourceCoordinate>,
     write: Option<(Vec<u8>, SourceCoordinate)>,
+    /// A tombstone was the last change in log order so far.
+    delete: bool,
 }
 
 struct PendingBar {
@@ -200,9 +240,39 @@ impl<S: StateSource> StageB<S> {
             cache,
             limits,
             metrics: StageBMetrics::default(),
+            last_rebuild_error: None,
             partitions: HashMap::new(),
             now_ms: system_now_ms,
+            rebuild_reader: None,
+            rebuild_queue: VecDeque::new(),
+            rebuild: None,
         }
+    }
+
+    /// The reader per-product rebuilds replay with (without one, a request
+    /// is refused).
+    pub fn with_rebuild_reader(mut self, reader: Box<dyn PartitionReader + Send>) -> Self {
+        self.rebuild_reader = Some(reader);
+        self
+    }
+
+    /// Queue a per-product rebuild (D17); one runs at a time, in order.
+    pub fn request_rebuild(&mut self, lpk: &str) {
+        let queued = self.rebuild_queue.iter().any(|item| item == lpk)
+            || self
+                .rebuild
+                .as_ref()
+                .is_some_and(|active| active.lpk == lpk);
+        if !queued {
+            self.rebuild_queue.push_back(lpk.to_owned());
+        }
+    }
+
+    /// The product being rebuilt and its staged generation, if any.
+    pub fn rebuilding(&self) -> Option<(&str, u64)> {
+        self.rebuild
+            .as_ref()
+            .map(|active| (active.lpk.as_str(), active.generation))
     }
 
     /// Replace the clock (tests of the rebuild horizon).
@@ -260,6 +330,7 @@ impl<S: StateSource> StageB<S> {
         for (topic, partition) in assigned {
             self.finish_build_if_done(&topic, partition)?;
         }
+        self.advance_rebuild()?;
         Ok(applied)
     }
 
@@ -508,13 +579,15 @@ impl<S: StateSource> StageB<S> {
             let pointer = pointers[&lpk].clone();
             let targets = Self::targets(state, &pointer);
             let Some(frame) = frame else {
-                // Latest tombstone: the product's state is gone.
+                // Latest tombstone: the product's state is gone - in log
+                // order with the other changes of the entry in this batch.
                 for generation in targets {
-                    tail_ops.push(Op::DeleteLatest {
-                        lpk: lpk.clone(),
-                        generation,
-                        pointer: pointer.clone(),
-                    });
+                    let entry = self.latest_group(generation, &lpk, &mut order, &mut groups)?;
+                    if let Some(Group::Latest(pending)) = groups.get_mut(&entry) {
+                        pending.write = None;
+                        pending.current = None;
+                        pending.delete = true;
+                    }
                 }
                 continue;
             };
@@ -563,6 +636,13 @@ impl<S: StateSource> StageB<S> {
             let pointer = pointers[&entry.1].clone();
             match groups.remove(&entry) {
                 Some(Group::Latest(pending)) => {
+                    if pending.delete && pending.write.is_none() {
+                        ops.push(Op::DeleteLatest {
+                            lpk: entry.1.clone(),
+                            generation: entry.0,
+                            pointer: pointer.clone(),
+                        });
+                    }
                     if let Some((value, source)) = pending.write {
                         self.metrics.latest_applied += 1;
                         ops.push(Op::Latest {
@@ -602,14 +682,15 @@ impl<S: StateSource> StageB<S> {
         Ok((ops, fresh))
     }
 
-    fn collect_latest(
+    /// The batch group of a latest entry, created from the cache state
+    /// before the batch.
+    fn latest_group(
         &mut self,
         generation: u64,
         lpk: &str,
-        frame: &StateFrame,
         order: &mut Vec<(u64, String, Option<u64>)>,
         groups: &mut HashMap<(u64, String, Option<u64>), Group>,
-    ) -> Result<(), StageBError> {
+    ) -> Result<(u64, String, Option<u64>), StageBError> {
         let entry = (generation, lpk.to_owned(), None);
         if !groups.contains_key(&entry) {
             let current = self.cache.latest_coordinate(generation, lpk)?;
@@ -623,10 +704,23 @@ impl<S: StateSource> StageB<S> {
                         offset,
                     }),
                     write: None,
+                    delete: false,
                 }),
             );
             order.push(entry.clone());
         }
+        Ok(entry)
+    }
+
+    fn collect_latest(
+        &mut self,
+        generation: u64,
+        lpk: &str,
+        frame: &StateFrame,
+        order: &mut Vec<(u64, String, Option<u64>)>,
+        groups: &mut HashMap<(u64, String, Option<u64>), Group>,
+    ) -> Result<(), StageBError> {
+        let entry = self.latest_group(generation, lpk, order, groups)?;
         let Some(Group::Latest(pending)) = groups.get_mut(&entry) else {
             return Ok(());
         };
@@ -643,6 +737,7 @@ impl<S: StateSource> StageB<S> {
                 .map_err(|error| StageBError::Source(error.to_string()))?;
                 pending.current = Some(source.clone());
                 pending.write = Some((value, source));
+                pending.delete = false;
             }
             ApplyDecision::Duplicate | ApplyDecision::Stale => self.metrics.stale += 1,
             ApplyDecision::NotComparable => self.metrics.not_comparable += 1,
@@ -906,6 +1001,260 @@ impl<S: StateSource> StageB<S> {
             Applied::Miss(_) => {
                 self.metrics.cas_retries += 1;
                 Ok(())
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ rebuild (D17)
+
+    fn refuse_rebuild(&mut self, lpk: &str, reason: &str) {
+        self.metrics.rebuilds_refused += 1;
+        self.last_rebuild_error = Some(format!("{lpk}: {reason}"));
+    }
+
+    /// Start the next queued rebuild on a partition this instance tails.
+    fn start_rebuild(&mut self) -> Result<(), StageBError> {
+        while let Some(lpk) = self.rebuild_queue.pop_front() {
+            if self.rebuild_reader.is_none() {
+                self.refuse_rebuild(&lpk, "no rebuild reader configured");
+                continue;
+            }
+            let mut owner = None;
+            let mut owned: Vec<(String, i32)> = self.partitions.keys().cloned().collect();
+            owned.sort();
+            for (topic, partition) in owned {
+                if self.cache.registry(&topic, partition)?.contains(&lpk) {
+                    owner = Some((topic, partition));
+                    break;
+                }
+            }
+            let Some((topic, partition)) = owner else {
+                self.refuse_rebuild(&lpk, "no owned partition holds the product");
+                continue;
+            };
+            let state = self.partitions[&(topic.clone(), partition)].clone();
+            if state.mode != Mode::Normal {
+                self.refuse_rebuild(&lpk, "its partition is building");
+                continue;
+            }
+            let pointer = self.cache.pointer(&lpk)?;
+            if pointer.ready.is_none() {
+                self.refuse_rebuild(&lpk, "not READY (a cold build covers it)");
+                continue;
+            }
+            let generation = self.cache.allocate_generation()?;
+            let stale = pointer.staging;
+            match self.cache.apply(
+                &topic,
+                partition,
+                state.fence,
+                state.next,
+                (self.now_ms)(),
+                &[Op::Stage {
+                    lpk: lpk.clone(),
+                    pointer,
+                    generation,
+                }],
+            )? {
+                Applied::Ok(_) => {}
+                Applied::Zombie { .. } => {
+                    self.metrics.zombies += 1;
+                    self.partitions.remove(&(topic, partition));
+                    self.refuse_rebuild(&lpk, "partition lost");
+                    continue;
+                }
+                Applied::Miss(_) => {
+                    // The pointer moved under us: try again next step.
+                    self.metrics.cas_retries += 1;
+                    self.rebuild_queue.push_front(lpk);
+                    return Ok(());
+                }
+            }
+            if let Some(stale) = stale {
+                self.metrics.reclaimed_keys +=
+                    self.cache.reclaim(stale, &lpk, Self::bar_interval(&lpk))?;
+            }
+            let (earliest, _) = self
+                .source
+                .watermarks(&topic, partition)
+                .map_err(StageBError::Source)?;
+            if let Some(reader) = self.rebuild_reader.as_mut() {
+                reader
+                    .start(&topic, partition, earliest)
+                    .map_err(StageBError::Source)?;
+            }
+            self.metrics.rebuilds_started += 1;
+            self.rebuild = Some(ActiveRebuild {
+                lpk,
+                topic,
+                partition,
+                generation,
+            });
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    fn bar_interval(lpk: &str) -> Option<u64> {
+        LogicalProductKey::parse(lpk)
+            .ok()
+            .filter(|parsed| parsed.feed == "BAR")
+            .and_then(|parsed| canonical_interval_ms(&parsed.qualifier).ok())
+    }
+
+    /// Drop the rebuild: stop the reader and reclaim what was staged.
+    fn abandon_rebuild(&mut self, reason: &str) -> Result<(), StageBError> {
+        let Some(active) = self.rebuild.take() else {
+            return Ok(());
+        };
+        self.metrics.rebuilds_abandoned += 1;
+        self.last_rebuild_error = Some(format!("{}: {reason}", active.lpk));
+        if let Some(reader) = self.rebuild_reader.as_mut() {
+            reader.stop().map_err(StageBError::Source)?;
+        }
+        self.metrics.reclaimed_keys += self.cache.reclaim(
+            active.generation,
+            &active.lpk,
+            Self::bar_interval(&active.lpk),
+        )?;
+        Ok(())
+    }
+
+    /// One bounded replay step of the active rebuild; publish at the live
+    /// checkpoint.
+    fn advance_rebuild(&mut self) -> Result<(), StageBError> {
+        if self.rebuild.is_none() {
+            self.start_rebuild()?;
+        }
+        let Some(active) = self.rebuild.clone() else {
+            return Ok(());
+        };
+        let key = (active.topic.clone(), active.partition);
+        let Some(state) = self.partitions.get(&key).cloned() else {
+            return self.abandon_rebuild("partition lost");
+        };
+        if state.mode != Mode::Normal {
+            return self.abandon_rebuild("partition building");
+        }
+        let pointer = self.cache.pointer(&active.lpk)?;
+        if pointer.staging != Some(active.generation) || pointer.ready.is_none() {
+            return self.abandon_rebuild("pointer changed");
+        }
+        let Some(reader) = self.rebuild_reader.as_mut() else {
+            return self.abandon_rebuild("no rebuild reader");
+        };
+        let inputs = reader
+            .poll(self.limits.max_batch_records, self.limits.poll_timeout)
+            .map_err(StageBError::Source)?;
+        let position = reader
+            .position(&active.topic, active.partition)
+            .map_err(StageBError::Source)?;
+        let mut frames = Vec::new();
+        for input in inputs
+            .iter()
+            .filter(|input| input.topic == active.topic && input.partition == active.partition)
+        {
+            let frame = self.decode(&active.topic, active.partition, input)?;
+            if Self::product(&frame.0, &frame.1).as_deref() == Some(active.lpk.as_str()) {
+                frames.push(frame);
+            }
+        }
+        if !frames.is_empty() && !self.rebuild_apply(&active, &state, &frames)? {
+            return Ok(());
+        }
+        let replayed = position
+            .or_else(|| inputs.last().map(|input| input.offset + 1))
+            .unwrap_or(0);
+        if replayed < state.next {
+            return Ok(());
+        }
+        // The staged generation now holds every record ready applied.
+        if let Some(interval_ms) = Self::bar_interval(&active.lpk) {
+            let (rows, counted) =
+                self.cache
+                    .bar_row_count(active.generation, &active.lpk, interval_ms)?;
+            if rows != counted {
+                let reason =
+                    format!("verification failed: meta rows {rows}, bucket rows {counted}");
+                self.abandon_rebuild(&reason)?;
+                return Err(StageBError::Source(format!("{}: {reason}", active.lpk)));
+            }
+        }
+        let pointer = self.cache.pointer(&active.lpk)?;
+        self.apply_pointer_ops(
+            &active.topic,
+            active.partition,
+            &state,
+            vec![Op::Publish {
+                lpk: active.lpk.clone(),
+                pointer,
+            }],
+        )?;
+        if self.cache.pointer(&active.lpk)?.ready == Some(active.generation) {
+            self.metrics.rebuilds_completed += 1;
+            self.rebuild = None;
+            if let Some(reader) = self.rebuild_reader.as_mut() {
+                reader.stop().map_err(StageBError::Source)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply replayed records of the product into the staged generation
+    /// only, under the owner fence; the partition checkpoint stays where the
+    /// live path put it. `false` if the partition was lost.
+    fn rebuild_apply(
+        &mut self,
+        active: &ActiveRebuild,
+        state: &PartitionState,
+        frames: &[(Vec<u8>, Option<StateFrame>)],
+    ) -> Result<bool, StageBError> {
+        let replay = PartitionState {
+            fence: state.fence,
+            mode: Mode::Build {
+                generation: active.generation,
+                boundary: i64::MAX,
+            },
+            next: state.next,
+        };
+        let before = self.metrics.clone();
+        let mut attempt = 0;
+        loop {
+            let (ops, _) = self.build_ops(&replay, frames)?;
+            // Replay decisions are not live metrics.
+            self.metrics = StageBMetrics {
+                cas_retries: before.cas_retries + attempt as u64,
+                ..before.clone()
+            };
+            match self.cache.apply(
+                &active.topic,
+                active.partition,
+                state.fence,
+                state.next,
+                (self.now_ms)(),
+                &ops,
+            )? {
+                Applied::Ok(_) => {
+                    self.metrics.rebuild_records += frames.len() as u64;
+                    return Ok(true);
+                }
+                Applied::Zombie { .. } => {
+                    self.metrics.zombies += 1;
+                    self.partitions
+                        .remove(&(active.topic.clone(), active.partition));
+                    self.abandon_rebuild("partition lost")?;
+                    return Ok(false);
+                }
+                Applied::Miss(_) => {
+                    attempt += 1;
+                    self.metrics.cas_retries = before.cas_retries + attempt as u64;
+                    if attempt > self.limits.max_cas_retries {
+                        return Err(StageBError::Source(format!(
+                            "{}: rebuild expectations kept changing ({attempt} retries)",
+                            active.lpk
+                        )));
+                    }
+                }
             }
         }
     }

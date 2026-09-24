@@ -22,7 +22,9 @@ use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer};
-use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
+use rdkafka::producer::{
+    BaseProducer, BaseRecord, DefaultProducerContext, Producer, ThreadedProducer,
+};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::Message;
 use std::cell::Cell;
@@ -313,7 +315,15 @@ async fn a_plan_is_one_transaction_on_the_product_partition_and_stage_b_applies_
         "final + in-progress key per open"
     );
     let before = ends(&bootstrap, &topic);
-    let expiry = producer(&bootstrap, &format!("kn3-expiry-task-{}", stamp()));
+    // The threaded producer sink (a background thread serves its delivery
+    // reports); the base producer sink is exercised by the failure test.
+    let expiry: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
+        .set("bootstrap.servers", &bootstrap)
+        .set("transactional.id", format!("kn3-expiry-task-{}", stamp()))
+        .set("enable.idempotence", "true")
+        .create()
+        .unwrap();
+    expiry.init_transactions(Duration::from_secs(20)).unwrap();
     publish_expiry(&expiry, &topic, PARTITIONS, &plan, 1, TIMEOUT).unwrap();
     assert_exactly(&read_committed(&bootstrap, &topic, &before), &plan);
     assert!(

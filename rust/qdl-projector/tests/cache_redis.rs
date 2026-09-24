@@ -352,7 +352,11 @@ fn staging_publish_and_reclaim_swap_one_product() {
         )
         .unwrap();
     let staging = cache.pointer(LPK).unwrap();
-    assert_eq!(staging.targets(), vec![old, new], "live writes reach both");
+    assert_eq!(
+        staging.targets(),
+        vec![old],
+        "live writes reach the ready generation only (D17)"
+    );
     // Writing a generation that is neither ready nor staging is refused.
     assert_eq!(
         cache

@@ -6,7 +6,7 @@
 //! are committed asynchronously for lag monitoring only. A seek on a newly
 //! assigned partition purges records fetched from the old position.
 
-use crate::stage_b::{StateInput, StateSource};
+use crate::stage_b::{PartitionReader, StateInput, StateSource};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
@@ -132,5 +132,111 @@ impl StateSource for KafkaStateSource {
         self.consumer
             .commit(&offsets, CommitMode::Async)
             .map_err(|error| error.to_string())
+    }
+}
+
+/// [`PartitionReader`] over Kafka: assign mode, `read_committed`, explicit
+/// start offsets, never commits. librdkafka needs a `group.id` for
+/// `position()`; the group is never joined. Used by the per-product rebuild
+/// (D17) and the bars-topic cleaner.
+pub struct KafkaPartitionReader {
+    consumer: BaseConsumer,
+    assigned: Option<(String, i32)>,
+}
+
+impl KafkaPartitionReader {
+    /// `id` is the client id and the (never joined) group id.
+    pub fn open(
+        bootstrap: &str,
+        id: &str,
+        tls: Option<&(String, String, String)>,
+    ) -> Result<Self, String> {
+        let mut config = ClientConfig::new();
+        config
+            .set("bootstrap.servers", bootstrap)
+            .set("client.id", id)
+            .set("group.id", id)
+            .set("isolation.level", "read_committed")
+            .set("enable.auto.commit", "false")
+            .set("enable.auto.offset.store", "false")
+            .set("enable.partition.eof", "false")
+            .set("queued.max.messages.kbytes", "16384")
+            .set("socket.timeout.ms", "10000");
+        if let Some((ca, certificate, key)) = tls {
+            config
+                .set("security.protocol", "ssl")
+                .set("ssl.ca.location", ca)
+                .set("ssl.certificate.location", certificate)
+                .set("ssl.key.location", key)
+                .set("ssl.endpoint.identification.algorithm", "https");
+        }
+        let consumer: BaseConsumer = config
+            .create()
+            .map_err(|error| format!("partition reader: {error}"))?;
+        Ok(Self {
+            consumer,
+            assigned: None,
+        })
+    }
+}
+
+impl PartitionReader for KafkaPartitionReader {
+    fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
+        self.consumer
+            .fetch_watermarks(topic, partition, Duration::from_secs(10))
+            .map_err(|error| error.to_string())
+    }
+
+    fn start(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), String> {
+        let mut assignment = TopicPartitionList::new();
+        assignment
+            .add_partition_offset(topic, partition, Offset::Offset(offset))
+            .map_err(|error| error.to_string())?;
+        self.consumer
+            .assign(&assignment)
+            .map_err(|error| error.to_string())?;
+        self.assigned = Some((topic.to_owned(), partition));
+        Ok(())
+    }
+
+    fn poll(&mut self, max: usize, timeout: Duration) -> Result<Vec<StateInput>, String> {
+        let mut batch = Vec::new();
+        if self.assigned.is_none() {
+            return Ok(batch);
+        }
+        let mut wait = timeout;
+        while batch.len() < max {
+            match self.consumer.poll(wait) {
+                None => break,
+                Some(Err(error)) => return Err(error.to_string()),
+                Some(Ok(message)) => batch.push(StateInput {
+                    topic: message.topic().to_owned(),
+                    partition: message.partition(),
+                    offset: message.offset(),
+                    key: message.key().unwrap_or_default().to_vec(),
+                    value: message.payload().map(<[u8]>::to_vec),
+                }),
+            }
+            wait = Duration::ZERO;
+        }
+        Ok(batch)
+    }
+
+    fn position(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, String> {
+        let positions = self
+            .consumer
+            .position()
+            .map_err(|error| error.to_string())?;
+        Ok(positions
+            .find_partition(topic, partition)
+            .and_then(|element| match element.offset() {
+                Offset::Offset(offset) => Some(offset),
+                _ => None,
+            }))
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        self.assigned = None;
+        self.consumer.unassign().map_err(|error| error.to_string())
     }
 }
