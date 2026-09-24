@@ -55419,6 +55419,42 @@ revision ordering, compaction/expiry and restore proof.
   CI: the existing `kn-native-integration` job also runs `stage_a_kafka`
   (Astra decision 6: reuse the job, no duplicate). Helper slices (codecs,
   K3.1 packet) are in progress on their own files and not in this commit.
+- 2026-09-24: **KN-3 slice 2 - K3.1 state topic and ACL packet: implemented,
+  tested locally + isolated broker (production NOT applied).** Helper-built,
+  Claude-reviewed and re-run: `scripts/kn_state_topics_packet.py` +
+  `tests/test_kn_state_topics_packet.py` (decision D5).
+  - Topic specs are read from the budget JSON (its SHA-256 is in the plan);
+    only `md.latest.v2` / `md.bars.v2` may be provisioned; `md.canonical.v2`
+    only READ/DESCRIBE. Exact ACL set for the projector principal (13
+    entries): canonical READ+DESCRIBE, both stage groups READ (literal), both
+    state topics WRITE+DESCRIBE+READ, transactional id PREFIXED
+    `kn-projector-v3-` WRITE+DESCRIBE, cluster IDEMPOTENT_WRITE; no ALL /
+    ALTER / DELETE / CREATE / DENY / wildcard; prefixed only for the
+    transactional id.
+  - Modes: `review` (offline, exit 10, prints plan, commands and the sealed
+    token `APPLY_QDL_KN3_STATE_TOPICS_<16 hex>` over plan + exact commands),
+    `apply --confirm TOKEN` (only missing `--create --if-not-exists` and
+    `--add`, never alter/remove; a topic with another config or an extra ACL
+    of the principal on a planned resource is HARD_STOP before any change),
+    `verify` (read-only: partitions, RF, replicas, every config and no extra
+    override, missing/extra ACLs incl. `User:*` and covering prefixes).
+    Production runner = a `--rm` container of the compose `stable_admin` image
+    digest on `stable_internal` with the cert dir read-only (never executed;
+    whether the Kafka CLI needs a writable log dir in a read-only container is
+    **unverified** until the production packet). Isolated runner refuses any
+    container of the production compose project; the replication override
+    (`RF,MIN_ISR`) exists only in isolated mode and is recorded in the plan.
+  - Tests: 25 unit (fake broker replaying real Kafka 4.2 output) + 1
+    integration on a disposable broker: wrong token refused with 0 commands,
+    first apply PASS 9 mutations, re-apply PASS 0 mutations, verify 13/13
+    ACLs, extra ALTER ACL -> verify FAIL and apply HARD_STOP 0 mutations,
+    3-partition plan on an existing topic -> HARD_STOP. Re-run by Claude on a
+    fresh broker: 25/25 OK (164 s); 0 `kn3-pkt` containers/networks left.
+  - Production review (offline) token for principal `User:kn-projector`:
+    `APPLY_QDL_KN3_STATE_TOPICS_b087c3fd45325fe9` (changes with the principal).
+    **Owner gate:** the principal (new CA/mesh rotation before 2026-11-20 vs
+    reuse `phase8-consumer`); the packet then runs as a separate approved
+    production step.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
