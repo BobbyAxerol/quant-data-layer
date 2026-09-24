@@ -54527,7 +54527,8 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility
 
-**Status:** REVIEW_CHANGES_REQUIRED (Astra on `d8929d1`, 2026-09-24).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (R1 fixes, 2026-09-24; R1 was
+REVIEW_CHANGES_REQUIRED on `d8929d1`).
 **Review receipt:** [five reproduced findings, evidence limits and closure tests](#kn2-astra-review-r1).
 **Entry receipt:** [KN-1 R3 PASS and owner resource direction](#kn1-astra-review-r3).
 **Goal:** committed Kafka -> native Stream without singleton spool/reader lease,
@@ -54541,9 +54542,9 @@ with correct replay, auth, flow control and the existing public RPC contract.
 **To do:**
 - [x] K2.1 native service/auth/quota and all-RPC read-view interfaces; no UNIMPLEMENTED regression.
 - [x] K2.2 independent committed readers, indexed fan-out and byte-bounded queues.
-- [ ] K2.3 implementation exists; close R1 F1-F4 replay/auth/error/byte-budget regressions.
-- [ ] K2.4 implementation exists; close R1 F5 alternating lifecycle transitions and oracle.
-- [ ] K2.5 isolated evidence exists; revalidate affected paths and state actual delivery coverage per R1.
+- [x] K2.3 R1 F1-F4 fixed with regressions ([R1 fix receipt](#kn2-r1-fix-receipt)); Astra re-review pending.
+- [x] K2.4 R1 F5 fixed in gateway and oracle; Astra re-review pending.
+- [x] K2.5 affected paths revalidated, coverage denominators stated; open points in [R1 discussion](#kn2-r1-discussion).
 **Completed:** K2.1-K2.5 (slice 1 `997907c`, slice 2 in the journal below),
 implemented and tested locally plus isolated shadow evidence; not live, not
 production. Astra reviewed the implementation and isolated evidence; R1
@@ -54561,9 +54562,10 @@ KN-4 cache integration is the explicit dependency, not a hidden certification cl
 old Stream, producer authority, groups and Kafka partition topology untouched.
 **Cleanup:** exact test groups/topics/network allowed by packet; no abandoned
 readers/streams; retain only named necessary candidate and rollback artifacts.
-**Astra review:** REVIEW_CHANGES_REQUIRED ([R1](#kn2-astra-review-r1)).
-**Next permitted step:** fix and test R1 F1-F5 inside KN-2, narrow evidence
-closure, then focused Astra re-review; KN-3 after PASS or explicit owner sequencing.
+**Astra review:** R1 REVIEW_CHANGES_REQUIRED ([R1](#kn2-astra-review-r1)); fixes
+delivered, re-review REQUESTED ([receipt](#kn2-r1-fix-receipt), [decisions](#kn2-r1-discussion)).
+**Next permitted step:** Astra re-review of the R1 fix diff; KN-3 after PASS or
+explicit owner sequencing.
 
 #### KN-2 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
@@ -55009,6 +55011,156 @@ Astra requested review points and next allowed step:
   Runtime configuration, published release and rollback set unchanged.
   Two unrelated pre-existing plan hunks preserved outside this commit.
   No push, merge, release, TS/alpha/order action or production data mutation.
+
+<a id="kn2-r1-fix-packet"></a>
+- 2026-09-24: **KN-2 R1 fix - isolated rerun packet (recorded before the
+  runs).** Scope: only the evidence Astra R1 marks affected (replay, failover,
+  load, delivery coverage). Blast radius: isolated shadow; the running
+  Stream/Query, groups, producers, topics, Redis and ACLs untouched.
+  - Candidate: gateway binary built from the R1 fix source (sha256
+    `4f5bf1b0...`, replaces `63a56243...` in place), same runtime image
+    `qdl-v2-rust:2.0.26-62241bc`, same network/aliases/groups/identities as
+    the K2.5 packet above.
+  - Production reads, read-only: (1) capture = the newest contiguous window
+    per demanded physical key by primary key, extended until every demanded
+    product of the key has 20 records, capped at 4,000 rows per key; (2) a
+    near-live tail for 60 s: one indexed range query per 250 ms on the stable
+    spool (`committed_at_ns > ?`, `EXPLAIN QUERY PLAN` = index
+    `idx_qdl_spool_events_retention`; 1,088 rows / 2 s read in 4 ms),
+    republished into the isolated broker with authentic bytes and times.
+  - Runs, each <= 8 min: (a) matrix, graceful stop of A at 45 s, tail load;
+    (b) matrix, SIGKILL of A, capture load; (c) capacity 3,000 events/s,
+    `REPEAT=8`, one client process per consumer, no kill.
+  - Resources: gateways 2 x 0.5 CPU / 256 MiB; broker 1 CPU / 1 GiB; six
+    clients 1 CPU / 1.5 GiB (as run in K2.5); loader 1 CPU / 1 GiB; quota Redis
+    0.1 CPU / 64 MiB.
+  - Stop conditions, now automated: host idle < 5 % for 60 s tears the run
+    down (`/proc/stat`, 5 s samples, recorded); every run ends with a
+    production restart check (StartedAt after run start = fail).
+  - Recorded incident (this session, before this packet): a read-only
+    diagnostic `count(*)` on the production spool filtered on the
+    unindexed `accepted_at_ns` scanned the table for 128 s. Production
+    stayed healthy (stable roles up, restart 0, checked after). From here
+    on, spool reads use the query plans above only.
+  - Superseded and reclaimed: binary `63a56243` (replaced); no container,
+    network or volume from earlier runs exists. Cleanup: as the K2.5 packet;
+    keep bounded results and hashes only.
+  - Amendment before the second pass of runs (same scope, stop conditions
+    and resources): the first pass on `4f5bf1b0` found that replay prefetch
+    charged to the shared live budget overflowed live lossless queues in the
+    opening storm (details in the R1 fix entry below); candidate replaced in
+    place by `50c18092...` (separate live/replay budgets); the three runs are
+    repeated on it; the first pass is kept as diagnostic evidence only.
+
+<a id="kn2-r1-fix-receipt"></a>
+- 2026-09-24: **KN-2 R1 fixes F1-F5 - implemented, tested locally, isolated
+  shadow evidence (not live, not production).** Source on
+  `feat/consumer-endpoint-benchmark` after `e3b8325` (this commit). Rows per
+  guide 18.7:
+
+  | Work item | Fix (source) | Regression (counterexample kept) | Mutation check | Evidence |
+  |---|---|---|---|---|
+  | F1 revocation | `authority.rs`: generation stored with the authority, `snapshot()` read together; `service.rs` `Authorized`: bound at admission, checked before every send, raced against every wait (reader replay, catch-up, blocked handoff, LIVE); Replay RPC too (feed-scope entitlement) | `f1_*` x4: before the first record, during ring and reader replay (Astra probe), blocked send (<= 2 handed-off records then UNAUTHENTICATED), Replay page; additive rotation mid-replay keeps the stream exact | watcher-after-admission mutant: 3 of 4 fail | tests |
+  | F2 corruption | `replay.rs`: an undecodable record of a requested key ends every request whose range holds it `ReplayEnd::Corrupt` -> `DATA_LOSS DATA_INTEGRITY:<p>:<o>`; ring and live paths same prefix | `f2_*` x2: first/middle/last on the reader path, ring parity, retry fails again, other key in the same pass exact | skip-mutant: 2 of 2 fail | tests |
+  | F3 stranded joiners | `take_batch` takes pending **and** joiners; one pass per reader permit (driver loop, permit returned each pass); pass admits joiners only for `max_duration`; `ReplayRequest` answers on drop | `f3_*` x2: open failure with a joiner (Astra probe), joiner at the last records, markers-only range; permits/requests/bytes back to baseline | joiner-drop mutant: 1 of 2 fail | tests |
+  | F4 bounds | per-request scanned records/bytes in the pass (`REPLAY_SCAN_LIMIT`/`REPLAY_BYTE_LIMIT` before emit); every held record charged **once** (`raw + 8 x payload`, measured decoded max 7.28x over 54,970 real records) from queue/channel/ring until tonic takes it; live and replay **separate** budgets; ring replay charged or falls back to the reader; Replay RPC admission per replica (32) and per consumer (`max_streams`); handoff 2; memory plan gains replay + transport terms, fail closed | `f4_*` x5: byte and record limits (Astra probe), large BOOK replays under a 3-record budget (peak <= bound, exact or typed), ring fallback, Replay admission + release, starved replay storm never overflows live | byte-limit mutant fails; shared-budget mutant fails the storm test | runs below |
+  | F5 coalescing | `subscription.rs`: drop only when the **next** queued record supersedes (contiguous run); oracle (`judge_subscription`) independently: legal drop only when the next deliverable record has the same key and signature | unit `f5_*` x5 (A-B-A-B, A-B-A, same-state runs, BAR in-progress/final/revised, BOOK and other product); Python `ContiguousOracleTests` x4 (dropped `A1,B2` is 2 defects) | any-later mutant: 3 of 5 fail | tests |
+  | Evidence limits | capture = newest contiguous window per key until each product has 20 records (snapshot + deltas + resets); near-live spool tail (indexed, read-only); per-wave cursors; coverage denominators | `CoverageTests`, `CaptureWindowTests`, `TailBatchTests` | - | runs below |
+
+  - Tests: Rust workspace fmt + clippy `-D warnings` clean, 264 passed /
+    0 failed / 3 ignored (`--no-fail-fast`); real Kafka `committed_reads`
+    2/2 on a disposable broker, ported from the removed `scan_range` to the
+    coordinator (one replay implementation). `native_stream` 32 (19 + 13),
+    stable over 33 consecutive runs (30 parallel, 3 single-threaded); gateway
+    unit 24 (+5); Python KN 65 OK (+8). Mutation checks: each fix reverted in
+    a scratch copy fails its regressions (counts in the table); the F1-F5
+    mutants ran on the intermediate source (before the live/replay budget
+    split), the shared-budget mutant on the final source.
+  - Test-harness fixes found on the way (not product defects): tests read
+    counters one by one while a coordinator driver re-takes its permit for a
+    final empty check; `baseline()` now compares one snapshot. Cargo reused
+    stale artifacts for mutants (tar keeps mtimes); mutants are touched.
+  - Isolated runs (packet above), binary `50c18092...` (rebuilds to the
+    same hash), `/home/bobby/.local/state/qdl-v2/kn2-20260924/evidence-r1fix`
+    (99 files, SHA256SUMS `7499374901cb...`, summary `1f269e70b144...`):
+    - Graceful stop + near-live tail: 6/6 clients PASS, 292/292 LIVE, 56,341
+      delivered, every defect counter 0, failover 185/185 (RTO p50 774, max
+      973 ms), negatives 24/24, RPC checks 17/17, reconciliation A 41,129 =
+      41,129, B 15,212 = 15,212, overflow 0.
+    - SIGKILL + capture load: 6/6 PASS, failover 185/185 (RTO p50 855, max
+      901 ms), B 2,442 = 2,442.
+    - Capacity 3,000 events/s x 59 s: 6/6 PASS, 42,001 = 42,001, overflow 0;
+      live path per client p50 7-10 ms, p95 24-32 ms, p99 43-55 ms; replica A
+      RSS 127 MiB (limit 256), ring 47 MiB (bound 48), live queues <= 530 KiB,
+      0.12 core mean busy (0.22 max 5 s); reader-only B 0.04 core, 81 MiB.
+    - Coverage (Astra limit): 286 of 292 subscriptions event-positive in at
+      least one run (was: 41 with none). Remaining 6: DNSE VN30 BAR 1m/TRADE
+      x4 `no_sample` (0 records in the V2 stable spool - source not flowing
+      into V2 stable) and reference-l2 BOOK_SNAPSHOT of two dated futures x2
+      `expected_filtered` (captured snapshots older than the consumer bound,
+      none in the 60 s tail). Per run: stop 156/132/4, hardkill 210/78/4,
+      capacity 238/50/4 (event-positive / expected-filtered / no-sample).
+    - Diagnostic passes kept in the summary: first pass on `4f5bf1b0` (one
+      shared budget) - 12 live lossless overflows in the opening storm ->
+      separate budgets + regression; tail run with run-start cursors - wave-2
+      ETH TRADE backlog 14,513 > 10,000 ended `CURSOR_EXPIRED` (correct typed
+      outcome; harness now picks cursors per wave); one capacity run during
+      concurrent builds on the host (latency not representative, rerun clean).
+    - Guards: host idle never < 5 % (min 6-8 %, median 37 %), 0 aborts;
+      production restart check 0 (one false positive was my own `--rm`
+      builder; the check now looks at compose-managed containers only; no
+      compose container started today).
+  - Cleanup: shadow cursor key, JWT config, test keys and profile deleted;
+    capture/commit logs and run dirs deleted (965 MiB scratch freed);
+    no kn2 container/network/volume. Kept to KN-2 PASS / KN-5: binary
+    `50c18092`, bundle, `evidence` (K2.5, unchanged) and `evidence-r1fix`.
+    `target/` 6.8 GB (to KN-5). Disk free 157 GB.
+
+<a id="kn2-r1-discussion"></a>
+**KN-2 R1 - points for Astra and the owner (decisions, not hidden gaps):**
+
+1. **Offset 0 (Astra evidence limit).** Cursor v3 says `source_offset` = last
+   offset applied, replay strictly after, an unsigned integer: there is no
+   token for "nothing applied yet", so a product record at Kafka offset 0 can
+   be delivered to **no** cursor, and the SDK's `logical_offset > 0` check is
+   consistent with the frozen contract rather than wrong. Proposal: every
+   partition of a canonical partition-plan epoch starts with a non-product
+   genesis record at offset 0, written by the provisioning packet (KN-3 K3.1 /
+   KN-5); the gateway may then treat a product record at offset 0 as
+   `DATA_INTEGRITY`. The running canonical topic: retained ~8.09 GB at
+   374 KB/s (KN-1 `sizing/kafka.json`) = about 6 h, topic in use since
+   August, so offset 0 records are aged out - an **inference**, the log-start
+   offsets were not read (needs the `kn-` DESCRIBE ACL). Alternatives: a
+   cursor v4 with an explicit "before first" (contract change) or SDK `>= 0`
+   alone (insufficient). Not claimed: full native public compatibility at a
+   partition's first record.
+2. **Memory defaults vs capacity.** To keep a provable bound in 256 MiB:
+   `max_subscriptions` 1,024 -> 384 and 32 Replay RPCs (transport term
+   416 x 96 KiB), ring 64 -> 48 MiB, live 32 + replay 32 MiB; plan 247 MiB.
+   Demand today is 292 streams per replica after a failover (31 % headroom).
+   Keeping 1,024 streams needs ~320 MiB per replica (+64 MiB x 2): owner
+   approval if wanted; not requested.
+3. **Replay RPC admission is stricter than Python** (Python has none): per
+   consumer `max_streams`, 32 per replica, typed `RATE_LIMITED`. Confirm.
+4. **Decoded weight factor 8** (measured max 7.28): queues and replays are
+   charged ~9x the payload, so a slow consumer reaches typed backpressure
+   earlier than a raw-byte count would; measured queue peaks stay far below
+   the budgets (530 KiB of 32 MiB at 3,000 events/s).
+5. **DNSE VN30 in V2 stable**: 0 records in the spool for its demanded
+   products; out of KN-2 scope, owner to confirm whether it is expected.
+6. **Harness size** (Astra/guide 18.6): `kn_native_slice_probe.py` is 1,458
+   lines and the run orchestration lives in the evidence folder, not in
+   `scripts/` or CI. Proposal before KN-3: move the orchestration into
+   `scripts/`, reuse the guide's latency scripts for the four quantities,
+   add an isolated CI job. Needs an owner/Astra yes.
+7. **Recorded incident**: a 128 s unindexed read-only scan on the production
+   spool this session (packet above); production stayed healthy.
+
+**Astra re-review requested** on the narrow diff after `e3b8325`: the table
+above, the two budgets and the charge-once path, the coordinator driver
+(one pass per permit, joiners, starved backoff), the oracle rule, and the
+coverage classes. KN-3 only after ASTRA_REVIEW_PASS or explicit owner
+sequencing.
 
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery

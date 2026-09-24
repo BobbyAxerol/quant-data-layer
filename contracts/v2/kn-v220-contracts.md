@@ -173,10 +173,37 @@ coherent per product and no read promises a cross-product snapshot.
 BOOK_DELTA are LOSSLESS; BAR is LOSSLESS when FINAL, REVISED or CANCELLED and
 LIFECYCLE_COALESCE when IN_PROGRESS (a BAR without a lifecycle is refused by the
 domain and treated as LOSSLESS); every other public feed is LATEST_STATE.
-Invariant 27 adds: a record may be dropped only when a later record with the
-same lifecycle key (BAR open time; the product for latest-state feeds) and the
-same lifecycle signature (sorted quality flags, authority revision, source
-id/role, provider, source session, connection generation, lease epoch)
-supersedes it, and only under buffer pressure. A quality-state or
+Invariant 27 adds: a record may be dropped only when **the record right
+after it** in the product's delivery sequence has the same lifecycle key (BAR
+open time; the product for latest-state feeds) and the same lifecycle
+signature (sorted quality flags, authority revision, source id/role,
+provider, source session, connection generation, lease epoch), and only under
+buffer pressure. Coalescing therefore stays inside one contiguous run and
+keeps its last record: `A B A B` is four transitions and never reduces to
+`A B` (KN-2 R1 F5; "any later matching record" was wrong). A quality-state or
 source-authority transition changes the signature and is never coalesced
 away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
+
+## 7. Stream failure outcomes (binding on KN-2)
+
+- **Replay bounds are per request** and checked before a record is emitted:
+  records scanned in the request's own range (`CURSOR_EXPIRED:REPLAY_SCAN_LIMIT`),
+  payload bytes scanned (`CURSOR_EXPIRED:REPLAY_BYTE_LIMIT`), matched records
+  (`CURSOR_EXPIRED` backlog) - all `OUT_OF_RANGE`, resnapshot; wall time is
+  `RESOURCE_EXHAUSTED RATE_LIMITED:REPLAY_TIME_LIMIT` (retryable, the token
+  has advanced through everything delivered).
+- **A committed record that does not decode is never skipped.** Every stream
+  or Replay whose range holds it on that physical key ends
+  `DATA_LOSS DATA_INTEGRITY:committed record <partition>:<offset> ...`; other
+  keys in the same shared pass continue. Ring, reader and live paths agree.
+- **Revocation is effective at every point** of a stream (admission, replay,
+  catch-up, a blocked send, LIVE) and of a Replay page: the stream binds the
+  authority generation it was admitted under and ends `UNAUTHENTICATED` (or
+  `PERMISSION_DENIED`) once a reload withdraws its key, manifest revision,
+  permission or entitlement. At most the two responses already handed to the
+  transport can precede the status. Additive rotation keeps streams.
+- **Every held record is inside one replica byte budget**, charged once
+  (`raw + 8 x payload`, the measured decoded upper bound) from the moment it
+  enters a queue, replay channel or ring replay until the transport takes it.
+  Concurrent Replay RPCs are admitted per replica and per consumer (manifest
+  `max_streams`); refusal is `RESOURCE_EXHAUSTED RATE_LIMITED`.

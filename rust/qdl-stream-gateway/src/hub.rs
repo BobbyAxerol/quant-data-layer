@@ -50,7 +50,23 @@ pub struct LiveRecord {
     pub envelope: EventEnvelope,
 }
 
+/// Heap bytes of a decoded record per payload byte, upper bound: measured
+/// 2.25 (BAR) to 4.8 (BOOK_SNAPSHOT) on average and 7.28 at most over 54,970
+/// real canonical records (K2-T08 capture, counting allocator). Anything
+/// that holds a decoded record is charged `raw + DECODED_FACTOR x payload`.
+pub const DECODED_FACTOR: usize = 8;
+
+/// [`LiveRecord::weight`] of a raw record, before it is decoded.
+pub fn live_weight(raw: &RawRecord) -> usize {
+    raw.weight() + DECODED_FACTOR * raw.payload.len()
+}
+
 impl LiveRecord {
+    /// Bytes charged for holding this record (raw + decoded).
+    pub fn weight(&self) -> usize {
+        live_weight(&self.raw)
+    }
+
     pub fn decode(raw: SharedRecord) -> Result<Arc<Self>, String> {
         let envelope = EventEnvelope::decode(raw.payload.as_slice())
             .map_err(|error| format!("canonical record failed to decode: {error}"))?;

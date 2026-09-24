@@ -179,7 +179,8 @@ fn limits() -> Result<StreamLimits, String> {
         catchup_deadline: Duration::from_millis(parsed("QDL_KN_CATCHUP_DEADLINE_MS", "10000")?),
         slow_consumer_after: Duration::from_millis(parsed("QDL_KN_SLOW_CONSUMER_MS", "10000")?),
         queue_bytes_per_subscription: parsed("QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION", "33554432")?,
-        max_subscriptions: parsed("QDL_KN_MAX_SUBSCRIPTIONS", "1024")?,
+        max_subscriptions: parsed("QDL_KN_MAX_SUBSCRIPTIONS", "384")?,
+        max_replay_rpcs: parsed("QDL_KN_MAX_REPLAY_RPCS", "32")?,
         replay_page_default: 1_000,
     })
 }
@@ -191,11 +192,14 @@ async fn serve() -> Result<(), String> {
         &env("QDL_KN_QUOTA_PREFIX")?,
     )?;
     let readers: usize = parsed("QDL_KN_REPLAY_READERS", "4")?;
+    let limits = limits()?;
     // Defaults fit a 256 MiB replica (K2-T08 sizing); checked, fail closed.
     let memory = MemoryPlan {
-        ring_total: parsed("QDL_KN_RING_BYTES_TOTAL", "67108864")?,
-        queue_total: parsed("QDL_KN_QUEUE_BYTES_TOTAL", "67108864")?,
+        ring_total: parsed("QDL_KN_RING_BYTES_TOTAL", "50331648")?,
+        queue_total: parsed("QDL_KN_QUEUE_BYTES_TOTAL", "33554432")?,
+        replay_total: parsed("QDL_KN_REPLAY_BYTES_TOTAL", "33554432")?,
         replay_readers: readers as u64,
+        streams: (limits.max_subscriptions + limits.max_replay_rpcs) as u64,
         reserve: parsed("QDL_KN_MEMORY_RESERVE_BYTES", "67108864")?,
         limit: container_memory_limit(),
     };
@@ -211,11 +215,12 @@ async fn serve() -> Result<(), String> {
         },
     ));
     let reader = hub.run(Box::new(source));
-    let limits = limits()?;
+    let budget = ByteBudget::new(memory.queue_total as usize);
     let replay = ReplayCoordinator::new(
         Arc::new(KafkaRangeSource::new(settings, readers)),
         readers,
         limits.replay.clone(),
+        ByteBudget::new(memory.replay_total as usize),
     );
     let state = Arc::new(GatewayState::new(
         authority.clone(),
@@ -224,7 +229,7 @@ async fn serve() -> Result<(), String> {
         hub.clone(),
         replay,
         Arc::new(NotReadyReadView),
-        ByteBudget::new(memory.queue_total as usize),
+        budget,
         limits,
     ));
     let tls_config = tls::server_config(

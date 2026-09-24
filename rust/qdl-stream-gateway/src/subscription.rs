@@ -4,10 +4,13 @@
 //! queue is bounded by items and bytes, and bytes are also charged to a
 //! replica-wide budget, so total queued memory is bounded whatever the
 //! number of slow clients. When the queue is full, a record is dropped only if
-//! a later record of the same lifecycle key and signature supersedes it
-//! (`qdl_contracts::delivery`); otherwise the subscription is marked
-//! overflowed and the stream ends with the public BACKPRESSURE contract. A
-//! lossless record is never dropped to stay healthy.
+//! the record **right after it** has the same lifecycle key and signature
+//! (`qdl_contracts::delivery`): a coalesced run keeps its latest record and
+//! every transition between runs survives (A B A B stays four records).
+//! Otherwise the subscription is marked overflowed and the stream ends with
+//! the public BACKPRESSURE contract. A lossless record is never dropped to
+//! stay healthy. The same budget also bounds replay channels, ring-replay
+//! references and outbound handoffs ([`Charge`]).
 
 use crate::hub::LiveRecord;
 use crate::requirement::{delivery_decision, Delivery, StreamRequirement};
@@ -49,8 +52,45 @@ impl ByteBudget {
         self.used.fetch_sub(bytes, Ordering::AcqRel);
     }
 
+    /// Reserve `bytes` until the returned [`Charge`] is dropped; `None` when
+    /// the budget is exhausted.
+    pub fn charge(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
+        self.try_charge(bytes).then(|| Charge {
+            budget: self.clone(),
+            bytes,
+        })
+    }
+
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Acquire)
+    }
+}
+
+/// Bytes held against a [`ByteBudget`], released on drop. A record is
+/// charged **once**, when it enters a queue, a replay channel or a ring
+/// replay, and the charge travels with it to the transport: nothing waits
+/// for a second charge while holding the first (no budget self-deadlock).
+#[derive(Debug)]
+pub struct Charge {
+    budget: Arc<ByteBudget>,
+    bytes: usize,
+}
+
+impl Charge {
+    /// Move up to `bytes` of this charge into a new one (no budget change).
+    pub fn split(&mut self, bytes: usize) -> Charge {
+        let moved = bytes.min(self.bytes);
+        self.bytes -= moved;
+        Charge {
+            budget: self.budget.clone(),
+            bytes: moved,
+        }
+    }
+}
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        self.budget.release(self.bytes);
     }
 }
 
@@ -60,12 +100,14 @@ pub struct Queued {
     lifecycle: RecordLifecycle,
     weight: usize,
     enqueued: Instant,
+    charge: Charge,
 }
 
 #[derive(Debug)]
 pub enum Next {
-    /// A record and when it was queued (the send-path queue wait).
-    Record(Arc<LiveRecord>, Instant),
+    /// A record, when it was queued (the send-path queue wait) and its
+    /// budget charge, which the caller hands on to the transport.
+    Record(Arc<LiveRecord>, Instant, Charge),
     Overflow,
     Failed(String),
     Closed,
@@ -172,28 +214,31 @@ impl Subscription {
         }
         self.counters.offered.fetch_add(1, Ordering::Relaxed);
         let lifecycle = RecordLifecycle::of(&self.requirement.delivery.feed, &record.envelope);
-        let weight = record.raw.weight();
-        loop {
+        let weight = record.weight();
+        let charge = loop {
             let fits = state.queue.len() < self.depth && state.bytes + weight <= self.max_bytes;
-            if fits && self.budget.try_charge(weight) {
-                break;
+            if fits {
+                if let Some(charge) = self.budget.charge(weight) {
+                    break charge;
+                }
             }
-            // Drop the oldest record some later record supersedes; a
-            // lossless record, or a transition, is never dropped.
-            let droppable = (0..state.queue.len()).find(|&index| {
-                let candidate = &state.queue[index].lifecycle;
-                candidate.superseded_by(&lifecycle)
-                    || state
-                        .queue
-                        .iter()
-                        .skip(index + 1)
-                        .any(|later| candidate.superseded_by(&later.lifecycle))
+            // Drop the oldest record that the record right after it
+            // supersedes (Astra KN-2 R1 F5): coalescing stays inside one
+            // contiguous run, so A B A B never loses a transition; a
+            // lossless record is never dropped.
+            let queued = state.queue.len();
+            let droppable = (0..queued).find(|&index| {
+                let next = if index + 1 < queued {
+                    &state.queue[index + 1].lifecycle
+                } else {
+                    &lifecycle
+                };
+                state.queue[index].lifecycle.superseded_by(next)
             });
             match droppable {
                 Some(index) => {
                     if let Some(dropped) = state.queue.remove(index) {
                         state.bytes -= dropped.weight;
-                        self.budget.release(dropped.weight);
                         self.counters.coalesced.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -204,7 +249,7 @@ impl Subscription {
                     return;
                 }
             }
-        }
+        };
         state.bytes += weight;
         state.floor = record.raw.offset;
         state.queue.push_back(Queued {
@@ -212,6 +257,7 @@ impl Subscription {
             lifecycle,
             weight,
             enqueued: Instant::now(),
+            charge,
         });
         drop(state);
         self.notify.notify_one();
@@ -241,8 +287,7 @@ impl Subscription {
                 }
                 if let Some(item) = state.queue.pop_front() {
                     state.bytes -= item.weight;
-                    self.budget.release(item.weight);
-                    return Next::Record(item.record, item.enqueued);
+                    return Next::Record(item.record, item.enqueued, item.charge);
                 }
                 if state.closed {
                     return Next::Closed;
@@ -263,9 +308,7 @@ impl Subscription {
     pub fn close(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.closed = true;
-            for item in state.queue.drain(..) {
-                self.budget.release(item.weight);
-            }
+            state.queue.clear();
             state.bytes = 0;
         }
         self.notify.notify_one();
@@ -275,7 +318,9 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::marketdata_v2::{event_envelope, EventEnvelope, Quote, Trade};
+    use crate::generated::marketdata_v2::{
+        event_envelope, Bar, BarLifecycle, EventEnvelope, OrderBookDelta, Quote, Trade,
+    };
     use crate::generated::query_v2 as query;
     use crate::hub::RawRecord;
     use prost::Message as _;
@@ -283,6 +328,11 @@ mod tests {
     fn requirement(feed: query::FeedType) -> StreamRequirement {
         StreamRequirement::from_proto(&query::DataRequirement {
             instrument_uid: "u".into(),
+            interval: if feed == query::FeedType::Bar {
+                "1m".into()
+            } else {
+                String::new()
+            },
             source_policy_id: "p".into(),
             require_full_coverage: true,
             require_final_bars: true,
@@ -327,7 +377,7 @@ mod tests {
         let mut offsets = Vec::new();
         while subscription.queued().0 > 0 {
             match subscription.next().await {
-                Next::Record(record, _) => offsets.push(record.raw.offset),
+                Next::Record(record, _, _) => offsets.push(record.raw.offset),
                 other => panic!("{other:?}"),
             }
         }
@@ -416,5 +466,136 @@ mod tests {
             );
         }
         assert_eq!(drain(&subscription).await, vec![6, 7]);
+    }
+
+    fn queue(feed: query::FeedType, depth: usize) -> Subscription {
+        Subscription::new(
+            9,
+            "c".into(),
+            requirement(feed),
+            depth,
+            1 << 20,
+            ByteBudget::new(1 << 20),
+            0,
+        )
+    }
+
+    fn bar(offset: i64, open_minute: i64, lifecycle: BarLifecycle) -> Arc<LiveRecord> {
+        record(
+            offset,
+            event_envelope::Payload::Bar(Bar {
+                interval: "1m".into(),
+                open_time_ns: open_minute * 60_000_000_000,
+                lifecycle: lifecycle as i32,
+                ..Default::default()
+            }),
+            vec![],
+        )
+    }
+
+    /// Everything queued, or `Err(delivered so far)` on a typed overflow.
+    async fn outcome(subscription: &Subscription) -> Result<Vec<i64>, Vec<i64>> {
+        let mut offsets = Vec::new();
+        loop {
+            if subscription.queued().0 == 0 && !subscription.state.lock().unwrap().overflowed {
+                return Ok(offsets);
+            }
+            match subscription.next().await {
+                Next::Record(record, _, _) => offsets.push(record.raw.offset),
+                Next::Overflow => return Err(offsets),
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    // Astra KN-2 R1 F5: coalescing stays inside a contiguous run.
+    #[tokio::test]
+    async fn f5_a_b_a_b_never_loses_a_transition() {
+        let subscription = queue(query::FeedType::Quote, 2);
+        for (offset, flags) in [(1, vec![]), (2, vec![9]), (3, vec![]), (4, vec![9])] {
+            subscription.offer(&quote(offset, flags), 0);
+        }
+        // Nothing may be coalesced: every record is a transition; the queue
+        // overflows (typed backpressure) and nothing was dropped silently.
+        assert_eq!(outcome(&subscription).await, Err(vec![]));
+        assert_eq!(subscription.counters.coalesced.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn f5_a_b_a_keeps_both_transitions_or_overflows() {
+        let subscription = queue(query::FeedType::Quote, 2);
+        for (offset, flags) in [(1, vec![]), (2, vec![9]), (3, vec![])] {
+            subscription.offer(&quote(offset, flags), 0);
+        }
+        assert_eq!(outcome(&subscription).await, Err(vec![]));
+        // With room for all three, all three arrive.
+        let roomy = queue(query::FeedType::Quote, 3);
+        for (offset, flags) in [(1, vec![]), (2, vec![9]), (3, vec![])] {
+            roomy.offer(&quote(offset, flags), 0);
+        }
+        assert_eq!(outcome(&roomy).await, Ok(vec![1, 2, 3]));
+    }
+
+    #[tokio::test]
+    async fn f5_same_state_bursts_coalesce_to_the_last_of_each_run() {
+        // Runs A(1..=5) B(6..=9) A(10..=12): the last of every run survives.
+        let subscription = queue(query::FeedType::Quote, 3);
+        for offset in 1..=12 {
+            let flags = if (6..=9).contains(&offset) {
+                vec![9]
+            } else {
+                vec![]
+            };
+            subscription.offer(&quote(offset, flags), 0);
+        }
+        assert_eq!(outcome(&subscription).await, Ok(vec![5, 9, 12]));
+    }
+
+    #[tokio::test]
+    async fn f5_bar_in_progress_coalesces_only_within_one_open_time() {
+        let subscription = queue(query::FeedType::Bar, 3);
+        // minute 1: three updates then final; minute 2: two updates.
+        subscription.offer(&bar(1, 1, BarLifecycle::InProgress), 0);
+        subscription.offer(&bar(2, 1, BarLifecycle::InProgress), 0);
+        subscription.offer(&bar(3, 1, BarLifecycle::InProgress), 0);
+        subscription.offer(&bar(4, 1, BarLifecycle::Final), 0);
+        subscription.offer(&bar(5, 2, BarLifecycle::InProgress), 0);
+        // Updates of minute 1 coalesce into its final; the final is kept.
+        assert_eq!(outcome(&subscription).await, Ok(vec![3, 4, 5]));
+        // A revision after the final is lossless: final -> revised overflows
+        // a full queue rather than replacing the final.
+        let revised = queue(query::FeedType::Bar, 1);
+        revised.offer(&bar(1, 1, BarLifecycle::Final), 0);
+        revised.offer(&bar(2, 1, BarLifecycle::Revised), 0);
+        assert_eq!(outcome(&revised).await, Err(vec![]));
+    }
+
+    #[tokio::test]
+    async fn f5_book_records_and_other_products_never_coalesce() {
+        let book = queue(query::FeedType::BookDelta, 2);
+        for offset in 1..=3 {
+            book.offer(
+                &record(
+                    offset,
+                    event_envelope::Payload::BookDelta(OrderBookDelta {
+                        reset: offset == 2,
+                        ..Default::default()
+                    }),
+                    vec![],
+                ),
+                0,
+            );
+        }
+        assert_eq!(outcome(&book).await, Err(vec![]));
+        // A trade offered to a quote subscription is another product: never
+        // queued, never a supersessor.
+        let quotes = queue(query::FeedType::Quote, 2);
+        quotes.offer(&quote(1, vec![]), 0);
+        quotes.offer(
+            &record(2, event_envelope::Payload::Trade(Trade::default()), vec![]),
+            0,
+        );
+        quotes.offer(&quote(3, vec![9]), 0);
+        assert_eq!(outcome(&quotes).await, Ok(vec![1, 3]));
     }
 }

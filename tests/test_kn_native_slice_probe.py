@@ -346,3 +346,96 @@ class MatrixSubsetTests(unittest.TestCase):
         self.assertEqual(PROBE.matrix_verdict(result, expected_ids=ids), [])
         result["checks"] = 1
         self.assertTrue(PROBE.matrix_verdict(result, expected_ids=ids))
+
+
+class ContiguousOracleTests(unittest.TestCase):
+    """Astra KN-2 R1 F5: the oracle must not copy the reducer's old rule."""
+
+    def _states(self, *signatures):
+        return [_item(index + 1, "LATEST_STATE", signature=(value,)) for index, value in enumerate(signatures)]
+
+    def test_a_b_a_b_reduced_to_the_last_two_is_a_defect(self):
+        expected = self._states("a", "b", "a", "b")
+        counts = PROBE.judge_subscription(expected, [3, 4])
+        self.assertEqual(counts["unsuperseded_drops"], 2)
+        self.assertEqual(PROBE.judge_subscription(expected, [1, 2, 3, 4])["unsuperseded_drops"], 0)
+
+    def test_a_b_a_keeps_every_transition(self):
+        expected = self._states("a", "b", "a")
+        self.assertEqual(PROBE.judge_subscription(expected, [2, 3])["unsuperseded_drops"], 1)
+        self.assertEqual(PROBE.judge_subscription(expected, [1, 2, 3])["unsuperseded_drops"], 0)
+
+    def test_same_state_runs_collapse_to_their_last_record(self):
+        expected = self._states("a", "a", "a", "b", "b", "a")
+        self.assertEqual(PROBE.judge_subscription(expected, [3, 5, 6])["unsuperseded_drops"], 0)
+        # Dropping a run's last record loses the transition out of it.
+        self.assertEqual(PROBE.judge_subscription(expected, [2, 5, 6])["unsuperseded_drops"], 1)
+
+    def test_a_record_rejected_at_push_does_not_separate_runs(self):
+        expected = [_item(1, "LATEST_STATE", signature=("a",)),
+                    _item(2, "LATEST_STATE", signature=("b",), filtered="either"),
+                    _item(3, "LATEST_STATE", signature=("a",))]
+        self.assertEqual(PROBE.judge_subscription(expected, [3])["unsuperseded_drops"], 0)
+        # Delivered after all, it is a real transition between the runs.
+        self.assertEqual(PROBE.judge_subscription(expected, [2, 3])["unsuperseded_drops"], 1)
+
+
+class CoverageTests(unittest.TestCase):
+    def test_live_is_not_event_delivery(self):
+        self.assertEqual(PROBE.coverage_class([_item(1)], [1]), "event_positive")
+        self.assertEqual(PROBE.coverage_class([_item(1)], []), "expected_but_missing")
+        self.assertEqual(PROBE.coverage_class([_item(1, filtered="must")], []), "expected_filtered")
+        self.assertEqual(PROBE.coverage_class([], []), "no_sample")
+        summary = PROBE.coverage_summary([
+            {"feed": "QUOTE", "coverage": "event_positive", "reached_live": True},
+            {"feed": "QUOTE", "coverage": "no_sample", "reached_live": True},
+            {"feed": "BAR", "coverage": "expected_filtered", "reached_live": True},
+        ])
+        self.assertEqual(summary["totals"], {"admitted": 3, "live": 3, "event_positive": 1,
+                                             "no_sample": 1, "expected_filtered": 1})
+        self.assertEqual(summary["by_feed"]["QUOTE"], {"event_positive": 1, "no_sample": 1})
+
+
+class CaptureWindowTests(unittest.TestCase):
+    @staticmethod
+    def _source(pattern):
+        # newest first: (event_id, payload=product label, accepted)
+        return [(bytes([index]), label.encode(), 1_000 - index) for index, label in enumerate(pattern)]
+
+    @staticmethod
+    def _product(payload):
+        feed = payload.decode()
+        return (feed, None)
+
+    def test_the_window_extends_until_rare_products_have_samples(self):
+        pattern = ["BOOK_DELTA"] * 9 + ["BOOK_SNAPSHOT"]
+        source = self._source(pattern * 5)
+        window, counts = PROBE.capture_window(
+            iter(source), demand=5, products={("BOOK_DELTA", None), ("BOOK_SNAPSHOT", None)},
+            min_per_product=2, product_of=self._product)
+        self.assertEqual(counts, {"BOOK_DELTA|-": 18, "BOOK_SNAPSHOT|-": 2})
+        self.assertEqual(len(window), 20)
+        # Contiguous and oldest first: exactly the newest 20, reversed.
+        self.assertEqual(window, list(reversed(source[:20])))
+
+    def test_the_window_stops_at_the_demand_or_the_source_end(self):
+        source = self._source(["TRADE"] * 50)
+        window, _ = PROBE.capture_window(iter(source), demand=7, products={("TRADE", None)},
+                                         min_per_product=1, product_of=self._product)
+        self.assertEqual(len(window), 7)
+        window, counts = PROBE.capture_window(iter(source[:3]), demand=7, products={("MARK", None)},
+                                              min_per_product=1, product_of=self._product)
+        self.assertEqual((len(window), counts), (3, {"MARK|-": 0}))
+
+
+class TailBatchTests(unittest.TestCase):
+    def test_each_record_once_only_captured_keys_and_bounded_memory(self):
+        seen = {}
+        rows = [("md.canonical.v2", "k1", b"e1", b"p1", 10), ("md.canonical.v2", "other", b"e2", b"p2", 11),
+                ("md.projector.public.v2", "k1", b"e3", b"p3", 12), ("md.canonical.v2", "k1", b"e4", b"p4", 13)]
+        self.assertEqual(PROBE.tail_batch(rows, keys={"k1"}, seen=seen, horizon_ns=0),
+                         [("k1", b"p1"), ("k1", b"p4")])
+        # The overlapping next poll returns nothing twice.
+        self.assertEqual(PROBE.tail_batch(rows, keys={"k1"}, seen=seen, horizon_ns=0), [])
+        PROBE.tail_batch([], keys={"k1"}, seen=seen, horizon_ns=12)
+        self.assertEqual(set(seen), {b"e4"})

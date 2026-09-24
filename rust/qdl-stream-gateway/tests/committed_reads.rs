@@ -158,16 +158,53 @@ async fn only_committed_records_reach_the_reader_and_nothing_is_committed() {
         .all(|element| !matches!(element.offset(), rdkafka::Offset::Offset(_))));
 }
 
-/// K2-T02 over real Kafka: the shared live reader (hub) and a separate replay
-/// reader split the committed log exactly at the registration barrier, with
-/// aborted batches and transaction markers in the range; the live reader is
-/// never sought.
-#[tokio::test]
+/// A TRADE envelope labelled by its native trade id (the coordinator decodes
+/// every record of a requested key; a label-only payload would be corrupt).
+fn trade(label: &str) -> Vec<u8> {
+    use prost::Message as _;
+    use qdl_stream_gateway::generated::marketdata_v2::{event_envelope, EventEnvelope, Trade};
+    EventEnvelope {
+        payload: Some(event_envelope::Payload::Trade(Trade {
+            native_trade_id: label.into(),
+            ..Default::default()
+        })),
+        ..Default::default()
+    }
+    .encode_to_vec()
+}
+
+fn send_trades(producer: &BaseProducer, topic: &str, records: &[(&str, &str)], commit: bool) {
+    producer.begin_transaction().expect("begin");
+    for (key, label) in records {
+        let payload = trade(label);
+        producer
+            .send(BaseRecord::to(topic).key(*key).payload(&payload))
+            .expect("send");
+    }
+    producer.flush(Duration::from_secs(10)).expect("flush");
+    if commit {
+        producer
+            .commit_transaction(Duration::from_secs(10))
+            .expect("commit");
+    } else {
+        producer
+            .abort_transaction(Duration::from_secs(10))
+            .expect("abort");
+    }
+}
+
+/// K2-T02 over real Kafka: the shared live reader (hub) and the replay
+/// coordinator split the committed log exactly at the registration barrier,
+/// with aborted batches and transaction markers in the range; the live
+/// reader is never sought, and pooled range consumers are reused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker); run by the kn-native-integration job"]
 async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
+    use qdl_stream_gateway::generated::marketdata_v2::event_envelope;
     use qdl_stream_gateway::hub::{Hub, HubConfig};
     use qdl_stream_gateway::reader::{KafkaLogSource, KafkaRangeSource};
-    use qdl_stream_gateway::replay::{scan_range, Emit, ReplayEnd, ReplayLimits, ReplayMetrics};
+    use qdl_stream_gateway::replay::{ReplayCoordinator, ReplayEnd, ReplayLimits, ReplayRequest};
+    use qdl_stream_gateway::subscription::ByteBudget;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
@@ -180,14 +217,14 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
     create_topic(&bootstrap, &topic).await;
     let producer = transactional_producer(&bootstrap, &format!("kn2-test-tx-{stamp}"));
     // Before the hub starts: committed, aborted and other-key records.
-    send_batch(
+    send_trades(
         &producer,
         &topic,
         &[("K", "p1"), ("O", "x1"), ("K", "p2")],
         true,
     );
-    send_batch(&producer, &topic, &[("K", "aborted")], false);
-    send_batch(&producer, &topic, &[("K", "p3")], true);
+    send_trades(&producer, &topic, &[("K", "aborted")], false);
+    send_trades(&producer, &topic, &[("K", "p3")], true);
     let settings = KafkaSettings {
         bootstrap: bootstrap.clone(),
         topic: topic.clone(),
@@ -201,13 +238,13 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
     let (source, starts) = KafkaLogSource::open_at_end(&settings).expect("live source");
     let hub = Arc::new(Hub::new(&starts, HubConfig::default()));
     let reader = hub.run(Box::new(source));
-    send_batch(
+    send_trades(
         &producer,
         &topic,
         &[("K", "l1"), ("K", "aborted-live")],
         false,
     );
-    send_batch(&producer, &topic, &[("O", "x2"), ("K", "l2")], true);
+    send_trades(&producer, &topic, &[("O", "x2"), ("K", "l2")], true);
     // Wait until the live reader has passed everything committed so far,
     // transaction markers included (it advances on idle polls).
     let high = settings
@@ -222,61 +259,60 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
     }
     let barrier = hub.next_offset(0).expect("partition 0");
     assert_eq!(barrier, high, "the live reader reached the committed end");
-    let range = KafkaRangeSource::new(settings, 2);
-    let mut replayed = Vec::new();
-    let end = tokio::task::spawn_blocking(move || {
-        let mut emit = |record: qdl_stream_gateway::hub::RawRecord| {
-            replayed.push(String::from_utf8_lossy(&record.payload).into_owned());
-            Emit::Sent
-        };
-        let end = scan_range(
-            &range,
+    let range = Arc::new(KafkaRangeSource::new(settings, 2));
+    let budget = ByteBudget::new(1 << 20);
+    let coordinator =
+        ReplayCoordinator::new(range.clone(), 1, ReplayLimits::default(), budget.clone());
+    let replay = |key: &str| {
+        let (sink, records) = tokio::sync::mpsc::channel(64);
+        let (done, end) = tokio::sync::oneshot::channel();
+        coordinator.submit(
             0,
-            -1,
-            barrier,
-            b"K",
-            &ReplayLimits::default(),
-            None,
-            &AtomicBool::new(false),
-            &ReplayMetrics::default(),
-            &mut emit,
+            ReplayRequest::new(
+                -1,
+                barrier,
+                key.as_bytes().to_vec(),
+                ("TRADE".into(), None),
+                None,
+                sink,
+                done,
+                Arc::new(AtomicBool::new(false)),
+                Instant::now() + Duration::from_secs(20),
+            ),
         );
-        (end, replayed, range)
-    })
-    .await
-    .expect("replay task");
-    let (end, replayed, range) = end;
-    assert_eq!(end, ReplayEnd::Complete);
+        (records, end)
+    };
+    let collect = |mut records: tokio::sync::mpsc::Receiver<
+        qdl_stream_gateway::replay::Replayed,
+    >| async move {
+        let mut labels = Vec::new();
+        while let Some(replayed) = records.recv().await {
+            match &replayed.record.envelope.payload {
+                Some(event_envelope::Payload::Trade(trade)) => {
+                    labels.push(trade.native_trade_id.clone())
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        labels
+    };
+    let (records, end) = replay("K");
     assert_eq!(
-        replayed,
+        collect(records).await,
         ["p1", "p2", "p3", "l2"],
         "committed K records below the barrier only: aborted ones never, O never"
     );
+    assert_eq!(end.await.expect("end"), ReplayEnd::Complete);
     // The reader went back to the pool and a second replay reuses it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while range.idle() != 1 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(range.idle(), 1);
-    let again = tokio::task::spawn_blocking(move || {
-        let mut seen = Vec::new();
-        let mut emit = |record: qdl_stream_gateway::hub::RawRecord| {
-            seen.push(record.offset);
-            Emit::Sent
-        };
-        let end = scan_range(
-            &range,
-            0,
-            -1,
-            barrier,
-            b"O",
-            &ReplayLimits::default(),
-            None,
-            &AtomicBool::new(false),
-            &ReplayMetrics::default(),
-            &mut emit,
-        );
-        (end, seen.len(), range.idle())
-    })
-    .await
-    .expect("second replay");
-    assert_eq!(again, (ReplayEnd::Complete, 2, 1));
+    let (records, end) = replay("O");
+    assert_eq!(collect(records).await.len(), 2);
+    assert_eq!(end.await.expect("end"), ReplayEnd::Complete);
+    assert_eq!(budget.used(), 0);
     hub.stop();
     reader.join().expect("reader thread");
 }

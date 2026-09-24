@@ -537,23 +537,131 @@ def capture(args: argparse.Namespace) -> dict[str, Any]:
     live.execute("PRAGMA query_only=ON")
     rows = []
     keys = list(args.keys or [])
+    wanted: dict[str, set] = {}
     if args.demand:
-        keys += [f"{key}={args.demand}" for key in sorted({row["physical_key"] for row in demanded_streams()})]
+        for row in demanded_streams():
+            wanted.setdefault(row["physical_key"], set()).add((row["feed"], row["interval"]))
+        keys += [f"{key}={args.demand}" for key in sorted(wanted)]
     args.keys = keys
+    census: dict[str, dict[str, int]] = {}
     for spec in keys:
         key, _, limit = spec.partition("=")
-        for event_id, payload, accepted in live.execute(
-                "SELECT event_id, payload, accepted_at_ns FROM events WHERE stream='md.canonical.v2' "
-                "AND partition_key=? ORDER BY logical_offset DESC LIMIT ?", (key, int(limit or 2000))):
-            rows.append({"key": key, "event_id": bytes(event_id).hex(), "accepted_at_ns": int(accepted),
-                         "payload": base64.b64encode(bytes(payload)).decode()})
+        # The newest contiguous window of the key (primary-key order, never a
+        # cherry-pick): at least `limit` records, extended until every
+        # demanded product of the key has `--min-per-product` records (a book
+        # key's snapshots with the deltas and resets around them), bounded.
+        cursor = live.execute(
+            "SELECT event_id, payload, accepted_at_ns FROM events WHERE stream='md.canonical.v2' "
+            "AND partition_key=? ORDER BY logical_offset DESC LIMIT ?", (key, int(args.window_cap)))
+        window, counts = capture_window(
+            ((bytes(event_id), bytes(payload), int(accepted)) for event_id, payload, accepted in cursor),
+            demand=int(limit or 2000), products=wanted.get(key, set()),
+            min_per_product=int(args.min_per_product))
+        census[key] = counts
+        for event_id, payload, accepted in window:
+            rows.append({"key": key, "event_id": event_id.hex(), "accepted_at_ns": accepted,
+                         "payload": base64.b64encode(payload).decode()})
     live.close()
     rows.sort(key=lambda row: (row["accepted_at_ns"], row["event_id"]))
     with open(args.out, "w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
     digest = hashlib.sha256(Path(args.out).read_bytes()).hexdigest()
-    return {"records": len(rows), "keys": args.keys, "sha256": digest}
+    short = {key: counts for key, counts in census.items() if any(value < int(args.min_per_product)
+                                                                  for value in counts.values())}
+    return {"records": len(rows), "keys": len(args.keys), "sha256": digest,
+            "products_below_min": short}
+
+
+def tail_batch(rows, *, keys: set, seen: dict, horizon_ns: int) -> list:
+    """New canonical records of the captured keys from one spool poll
+    (`(stream, key, event_id, payload, committed_ns)`), each once: `seen`
+    remembers event ids and forgets those committed before `horizon_ns`."""
+    fresh = []
+    for stream, key, event_id, payload, committed in rows:
+        if stream != "md.canonical.v2" or key not in keys or event_id in seen:
+            continue
+        seen[event_id] = committed
+        fresh.append((key, payload))
+    for event_id in [event_id for event_id, committed in seen.items() if committed < horizon_ns]:
+        del seen[event_id]
+    return fresh
+
+
+def tail(args: argparse.Namespace, producer, keys: set) -> dict[str, Any]:
+    """Near-live phase: republish what the stable spool commits during the
+    window (authentic, fresh records; freshness-strict products get positive
+    delivery). Read-only, one indexed range query per poll."""
+    import sqlite3
+
+    spool = sqlite3.connect(f"file:{args.spool}?mode=ro", uri=True, timeout=5)
+    spool.execute("PRAGMA query_only=ON")
+    commits, coordinates = [], []
+
+    def delivered(error: Any, message: Any) -> None:
+        if error is None:
+            coordinates.append((message.partition(), message.offset()))
+
+    seen: dict[bytes, int] = {}
+    last = time.time_ns() - 1_000_000_000
+    began = time.monotonic()
+    published = 0
+    while time.monotonic() - began < float(args.live_seconds):
+        rows = spool.execute(
+            "SELECT stream, partition_key, event_id, payload, committed_at_ns FROM events "
+            "WHERE committed_at_ns > ? ORDER BY committed_at_ns LIMIT 5000", (last - 2_000_000_000,)).fetchall()
+        if rows:
+            last = max(last, max(int(row[4]) for row in rows))
+        fresh = tail_batch([(row[0], row[1], bytes(row[2]), bytes(row[3]), int(row[4])) for row in rows],
+                           keys=keys, seen=seen, horizon_ns=last - 5_000_000_000)
+        if fresh:
+            coordinates.clear()
+            producer.begin_transaction()
+            for key, payload in fresh:
+                producer.produce(args.topic, key=key.encode(), value=payload, on_delivery=delivered)
+            producer.commit_transaction(30)
+            committed_ns = time.time_ns()
+            commits.extend({"partition": partition, "offset": offset, "commit_ns": committed_ns}
+                           for partition, offset in coordinates)
+            published += len(fresh)
+        time.sleep(0.25)
+    spool.close()
+    with open(args.commit_log, "w", encoding="utf-8") as handle:
+        for row in commits:
+            handle.write(json.dumps(row) + "\n")
+    return {"aborted": 0, "phase": "tail", "published": published, "history_fraction": float(args.history_fraction)}
+
+
+def _product(payload: bytes) -> tuple[str, str | None] | None:
+    from qdl.marketdata.v2 import market_data_pb2
+    from qdl.runtime.stable_catalog import canonical_payload_interval
+
+    try:
+        envelope = market_data_pb2.EventEnvelope.FromString(payload)
+    except Exception:  # noqa: BLE001 - counted as no product
+        return None
+    name = envelope.WhichOneof("payload")
+    return (name.upper(), canonical_payload_interval(envelope)) if name else None
+
+
+def capture_window(newest_first, *, demand: int, products: set, min_per_product: int,
+                   product_of=_product) -> tuple[list, dict[str, int]]:
+    """Take records newest first until `demand` are taken and every wanted
+    product has `min_per_product` of them (or the source ends). Returns the
+    window oldest first and the per-product counts."""
+    window = []
+    counts = {f"{feed}|{interval or '-'}": 0 for feed, interval in products}
+    for record in newest_first:
+        window.append(record)
+        product = product_of(record[1])
+        if product is not None:
+            label = f"{product[0]}|{product[1] or '-'}"
+            if label in counts:
+                counts[label] += 1
+        if len(window) >= demand and all(value >= min_per_product for value in counts.values()):
+            break
+    window.reverse()
+    return window, counts
 
 
 def load(args: argparse.Namespace) -> dict[str, Any]:
@@ -586,6 +694,8 @@ def load(args: argparse.Namespace) -> dict[str, Any]:
                          "enable.idempotence": True, "linger.ms": 5})
     producer.init_transactions(20)
     selected = rows[:split] if args.phase == "history" else rows[split:]
+    if args.phase == "tail":
+        return tail(args, producer, {row["key"] for row in rows})
     commits = []
     aborted = 0
     if args.phase == "history":
@@ -821,16 +931,53 @@ def judge_subscription(expected: list[dict[str, Any]], delivered: list[int]) -> 
             counts["unexpected"] += 1
         elif item["filtered"] == "must":
             counts["delivered_filtered"] += 1
-    delivered_items = [index[offset] for offset in delivered if offset in index]
-    for item in expected:
+    # A coalescible record may be missing only when the record right after it
+    # in the deliverable sequence has the same lifecycle key and signature
+    # (Astra KN-2 R1 F5): a run keeps its last record, every transition
+    # between runs must arrive. "Deliverable": not filtered, or aged during
+    # the run and delivered anyway (one the gateway rejected at push never
+    # entered its queue, so it does not separate two runs).
+    sequence = [item for item in expected
+                if item["filtered"] == "no" or (item["filtered"] == "either" and item["offset"] in seen)]
+    for position, item in enumerate(sequence):
         if item["filtered"] != "no" or item["offset"] in seen:
             continue
         if item["policy"] == "LOSSLESS":
             counts["missing_lossless"] += 1
-        elif not any(other["offset"] > item["offset"] and other["key"] == item["key"]
-                     and other["signature"] == item["signature"] for other in delivered_items):
+            continue
+        following = sequence[position + 1] if position + 1 < len(sequence) else None
+        if following is None or following["key"] != item["key"] or following["signature"] != item["signature"]:
             counts["unsuperseded_drops"] += 1
     return counts
+
+
+def coverage_summary(subscriptions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Separate denominators: admitted/LIVE is not event delivery."""
+    by_feed: dict[str, dict[str, int]] = {}
+    for item in subscriptions:
+        classes = by_feed.setdefault(item["feed"], {})
+        label = item.get("coverage", "unjudged")
+        classes[label] = classes.get(label, 0) + 1
+    totals: dict[str, int] = {"admitted": len(subscriptions),
+                              "live": sum(1 for item in subscriptions if item.get("reached_live"))}
+    for classes in by_feed.values():
+        for label, count in classes.items():
+            totals[label] = totals.get(label, 0) + count
+    return {"totals": totals, "by_feed": by_feed}
+
+
+def coverage_class(expected: list[dict[str, Any]], delivered: list[int]) -> str:
+    """What a LIVE subscription proves about positive delivery (Astra KN-2
+    R1 evidence limit): `event_positive` (records delivered), `expected_filtered`
+    (the product had records, all rightly refused by its freshness policy),
+    `no_sample` (the capture held no record of the product after the cursor)."""
+    if delivered:
+        return "event_positive"
+    if any(item["filtered"] == "no" for item in expected):
+        return "expected_but_missing"
+    if expected:
+        return "expected_filtered"
+    return "no_sample"
 
 
 def matrix_verdict(result: dict[str, Any], *, expected_ids: Sequence[str]) -> list[str]:
@@ -1130,9 +1277,16 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     results = []
     for wave, members in enumerate(waves):
         seconds = float(args.window_seconds) if wave == 0 else float(args.tail_seconds)
+        wave_started_ns = started_ns
+        if wave:
+            # A later wave chooses its cursors from the log as it is now: with
+            # near-live load, cursors from the run start would lie behind the
+            # bounded replay window (typed CURSOR_EXPIRED, rightly).
+            oracle = kafka_oracle(args.bootstrap, args.topic)
+            wave_started_ns = time.time_ns()
         until = time.time_ns() + int(seconds * 1e9)
         results += await asyncio.gather(*(
-            _matrix_stream(runner, row, oracle.get(row["physical_key"], []), until, started_ns,
+            _matrix_stream(runner, row, oracle.get(row["physical_key"], []), until, wave_started_ns,
                            int(args.replay_back)) for row in members))
     # After the waves: the committed log grew during the live phase; judge
     # every subscription against the final oracle.
@@ -1155,6 +1309,7 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
                                      ended_ns)
         item["expected_deliverable"] = sum(1 for entry in expected if entry["filtered"] == "no")
         item.update(judge_subscription(expected, delivered))
+        item["coverage"] = coverage_class(expected, delivered)
     for transport in runner.__dict__.get("_transports", {}).values():
         with contextlib.suppress(Exception):
             await transport.close()
@@ -1170,6 +1325,7 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
             "commit_to_client_after_live_ms": {"not_live": "capture replay; isolated broker commit times",
                                                **latency},
             "catchup_commit_to_client_ms": catchup,
+            "coverage": coverage_summary(results),
             "waves": [len(members) for members in waves], "subscriptions": results,
             "consumers": sorted({row["consumer_id"] for row in rows}), "checks": int(args.checks),
             "negatives": negatives, "rpcs": rpcs, "failover_expected": int(args.failover_expected),
@@ -1216,11 +1372,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     cap.add_argument("--keys", nargs="*", help="physical_key=limit")
     cap.add_argument("--demand", type=int, help="also every demanded stream key, this many records each")
     cap.add_argument("--out", required=True)
+    cap.add_argument("--min-per-product", default="20", help="extend a key's window to this many per product")
+    cap.add_argument("--window-cap", default="4000", help="never read more than this many records per key")
     lod = sub.add_parser("load")
     lod.add_argument("--capture", required=True)
     lod.add_argument("--bootstrap", required=True)
     lod.add_argument("--topic", default="md.canonical.v2")
-    lod.add_argument("--phase", choices=("history", "live"), required=True)
+    lod.add_argument("--phase", choices=("history", "live", "tail"), required=True)
+    lod.add_argument("--spool", default="/state/shared/canonical-cache.sqlite3",
+                     help="tail: the stable spool, read-only (indexed committed_at_ns range)")
     lod.add_argument("--history-fraction", default="0.6")
     lod.add_argument("--live-seconds", default="70")
     lod.add_argument("--commit-log", default="/dev/null")

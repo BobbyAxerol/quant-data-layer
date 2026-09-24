@@ -1,12 +1,14 @@
 //! Bounded replay (KN-2 K2.3, D3/D4).
 //!
 //! A replay reads the committed range `(after, barrier)` of one partition with
-//! its **own** reader, never the live one. Readers come from a pool bounded
-//! globally and per consumer; each replay is bounded by records scanned,
-//! bytes scanned, wall time and matched records, and stops within one poll
-//! when it is cancelled (client gone). Every limit ends in a typed outcome.
+//! its **own** reader, never the live one. [`ReplayCoordinator`] serves every
+//! pending request of a partition with one coalesced pass per reader permit;
+//! each request is bounded by records scanned, bytes scanned, wall time and
+//! matched records, stops within one poll when cancelled (client gone), and
+//! always ends with exactly one typed [`ReplayEnd`] (Astra KN-2 R1 F2-F4).
 
-use crate::hub::RawRecord;
+use crate::hub::{LiveRecord, RawRecord};
+use crate::subscription::{ByteBudget, Charge};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -62,18 +64,13 @@ pub enum ReplayEnd {
     Backlog,
     Retention,
     Cancelled,
+    /// A committed record of the requested key in the range failed to
+    /// decode: the product cannot be replayed past it (never skipped).
+    Corrupt {
+        partition: i32,
+        offset: i64,
+    },
     Error(String),
-}
-
-/// What the consumer of a scanned key match did with it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Emit {
-    /// Another product on the same physical key (BOOK snapshot/delta share
-    /// one): not counted against the page or the backlog.
-    Skip,
-    Sent,
-    /// The client is gone.
-    Stop,
 }
 
 #[derive(Default)]
@@ -86,85 +83,33 @@ pub struct ReplayMetrics {
     pub refused_capacity: AtomicU64,
     pub scan_limited: AtomicU64,
     pub detached: AtomicU64,
-}
-
-/// Scan `(after, barrier)` of `partition` for `key`. `page`: stop after this
-/// many sent records (Replay RPC).
-#[allow(clippy::too_many_arguments)]
-pub fn scan_range(
-    source: &dyn RangeSource,
-    partition: i32,
-    after: i64,
-    barrier: i64,
-    key: &[u8],
-    limits: &ReplayLimits,
-    page: Option<u64>,
-    cancel: &AtomicBool,
-    metrics: &ReplayMetrics,
-    emit: &mut dyn FnMut(RawRecord) -> Emit,
-) -> ReplayEnd {
-    if after + 1 >= barrier {
-        return ReplayEnd::Complete;
-    }
-    let mut cursor = match source.open(partition, after + 1) {
-        Ok(cursor) => cursor,
-        Err(RangeError::Retention) => return ReplayEnd::Retention,
-        Err(RangeError::Other(error)) => return ReplayEnd::Error(error),
-    };
-    let started = Instant::now();
-    let (mut scanned, mut bytes, mut matched) = (0u64, 0u64, 0u64);
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return ReplayEnd::Cancelled;
-        }
-        if started.elapsed() > limits.max_duration {
-            return ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT");
-        }
-        if cursor.position().is_some_and(|next| next >= barrier) {
-            return ReplayEnd::Complete;
-        }
-        let record = match cursor.next(Duration::from_millis(100)) {
-            Ok(Some(record)) => record,
-            Ok(None) => continue,
-            Err(RangeError::Retention) => return ReplayEnd::Retention,
-            Err(RangeError::Other(error)) => return ReplayEnd::Error(error),
-        };
-        if record.offset >= barrier {
-            return ReplayEnd::Complete;
-        }
-        scanned += 1;
-        bytes += record.payload.len() as u64;
-        metrics.scanned.fetch_add(1, Ordering::Relaxed);
-        if scanned > limits.max_scanned_records {
-            return ReplayEnd::ScanLimit("REPLAY_SCAN_LIMIT");
-        }
-        if bytes > limits.max_scanned_bytes {
-            return ReplayEnd::ScanLimit("REPLAY_BYTE_LIMIT");
-        }
-        if record.key != key {
-            continue;
-        }
-        if matched >= limits.max_matched {
-            return ReplayEnd::Backlog;
-        }
-        match emit(record) {
-            Emit::Skip => continue,
-            Emit::Stop => return ReplayEnd::Cancelled,
-            Emit::Sent => {}
-        }
-        matched += 1;
-        metrics.matched.fetch_add(1, Ordering::Relaxed);
-        if page.is_some_and(|page| matched >= page) {
-            return ReplayEnd::PageFull;
-        }
-    }
+    /// Detached because the replay budget was exhausted.
+    pub budget_detached: AtomicU64,
 }
 
 /// Records handed to one replay request at a time; a request that cannot
-/// take the next record within [`DETACH_AFTER`] is detached from the shared
-/// pass and continues from its own offset in the next pass.
-pub const REPLAY_CHANNEL: usize = 256;
+/// take the next record within [`DETACH_AFTER`] (its channel is full) is
+/// detached from the shared pass and continues from its own offset in a later
+/// pass. Replay has its **own** byte budget, separate from the live queues, so
+/// a reconnect storm can never starve live delivery (K2.5 R1 rerun: one shared
+/// budget let 185 replay prefetches overflow live lossless queues); when it is
+/// exhausted a request detaches at once instead of stalling the shared pass.
+pub const REPLAY_CHANNEL: usize = 32;
 pub const DETACH_AFTER: Duration = Duration::from_millis(200);
+
+/// A replayed record and the budget bytes it holds until the receiver drops
+/// it (F4: replay channels are inside the replica byte budget).
+pub struct Replayed {
+    pub record: Arc<LiveRecord>,
+    charge: Charge,
+}
+
+impl Replayed {
+    /// The record and its charge, which the caller hands on to the transport.
+    pub fn into_parts(self) -> (Arc<LiveRecord>, Charge) {
+        (self.record, self.charge)
+    }
+}
 
 /// One replay: the committed range `(after, barrier)` of one partition for
 /// one key and product, delivered to `sink` in offset order.
@@ -175,11 +120,13 @@ pub struct ReplayRequest {
     pub feed: String,
     pub interval: Option<String>,
     pub page: Option<u64>,
-    pub sink: tokio::sync::mpsc::Sender<std::sync::Arc<crate::hub::LiveRecord>>,
+    pub sink: tokio::sync::mpsc::Sender<Replayed>,
     pub done: Option<tokio::sync::oneshot::Sender<ReplayEnd>>,
     pub cancel: Arc<AtomicBool>,
     pub deadline: Instant,
     matched: u64,
+    scanned: u64,
+    scanned_bytes: u64,
 }
 
 impl ReplayRequest {
@@ -190,7 +137,7 @@ impl ReplayRequest {
         key: Vec<u8>,
         product: (String, Option<String>),
         page: Option<u64>,
-        sink: tokio::sync::mpsc::Sender<std::sync::Arc<crate::hub::LiveRecord>>,
+        sink: tokio::sync::mpsc::Sender<Replayed>,
         done: tokio::sync::oneshot::Sender<ReplayEnd>,
         cancel: Arc<AtomicBool>,
         deadline: Instant,
@@ -207,6 +154,8 @@ impl ReplayRequest {
             cancel,
             deadline,
             matched: 0,
+            scanned: 0,
+            scanned_bytes: 0,
         }
     }
 
@@ -214,6 +163,26 @@ impl ReplayRequest {
         if let Some(done) = self.done.take() {
             let _ = done.send(end);
         }
+    }
+
+    /// Why this request must end now, before the next record is read.
+    fn ended(&self, position: i64, now: Instant) -> Option<ReplayEnd> {
+        if self.cancel.load(Ordering::Relaxed) || self.sink.is_closed() {
+            Some(ReplayEnd::Cancelled)
+        } else if position >= self.barrier {
+            Some(ReplayEnd::Complete)
+        } else if now > self.deadline {
+            Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT"))
+        } else {
+            None
+        }
+    }
+}
+
+/// A request dropped without an answer still answers (every exit path, F3).
+impl Drop for ReplayRequest {
+    fn drop(&mut self) {
+        self.finish(ReplayEnd::Error("replay request dropped".into()));
     }
 }
 
@@ -226,27 +195,35 @@ struct PartitionReplays {
     position: i64,
 }
 
-/// Coalesced replay (KN-2 D4 amendment after the K2.5/K2-T08 runs): all
+/// Coalesced replay (KN-2 D4 amendment after the K2.5/K2-T08 runs): the
 /// pending requests of a partition are served by **one** pass of one reader,
 /// instead of one full-range scan per request (measured: 1.09 M records
 /// scanned to replay 5,946 in a cold reconnect storm). At most `readers`
-/// passes run at once across partitions.
+/// passes run at once; each pass takes a reader permit and gives it back
+/// when it ends, so a busy partition cannot hold a reader forever.
 pub struct ReplayCoordinator {
     source: Arc<dyn RangeSource>,
     readers: Arc<Semaphore>,
     reader_count: usize,
     limits: ReplayLimits,
+    budget: Arc<ByteBudget>,
     partitions: Mutex<HashMap<i32, PartitionReplays>>,
     pub metrics: ReplayMetrics,
 }
 
 impl ReplayCoordinator {
-    pub fn new(source: Arc<dyn RangeSource>, readers: usize, limits: ReplayLimits) -> Arc<Self> {
+    pub fn new(
+        source: Arc<dyn RangeSource>,
+        readers: usize,
+        limits: ReplayLimits,
+        budget: Arc<ByteBudget>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             source,
             readers: Arc::new(Semaphore::new(readers.max(1))),
             reader_count: readers.max(1),
             limits,
+            budget,
             partitions: Mutex::new(HashMap::new()),
             metrics: ReplayMetrics::default(),
         })
@@ -254,6 +231,11 @@ impl ReplayCoordinator {
 
     pub fn available(&self) -> usize {
         self.readers.available_permits()
+    }
+
+    /// The replay byte budget (channels and ring replays).
+    pub fn budget(&self) -> &Arc<ByteBudget> {
+        &self.budget
     }
 
     pub fn readers(&self) -> usize {
@@ -302,24 +284,42 @@ impl ReplayCoordinator {
         if start {
             let coordinator = self.clone();
             tokio::spawn(async move {
-                let Ok(permit) = coordinator.readers.clone().acquire_owned().await else {
-                    return;
-                };
-                let _ = tokio::task::spawn_blocking(move || {
-                    let _permit = permit;
-                    coordinator.run_partition(partition);
-                })
-                .await;
+                // One pass per permit; the partition's driver ends when a
+                // pass finds nothing left (and has cleared `scanning`).
+                loop {
+                    let Ok(permit) = coordinator.readers.clone().acquire_owned().await else {
+                        coordinator.abandon(partition);
+                        return;
+                    };
+                    let worker = coordinator.clone();
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        worker.run_pass(partition)
+                    })
+                    .await
+                    .unwrap_or(Pass::Done);
+                    match outcome {
+                        Pass::Done => return,
+                        Pass::Progress => {}
+                        // Nothing delivered, budget exhausted: back off
+                        // instead of re-reading the range in a tight loop.
+                        Pass::Starved => tokio::time::sleep(STARVED_BACKOFF).await,
+                    }
+                }
             });
         }
     }
 
+    /// Everything waiting on `partition` (pending and joiners). Clears
+    /// `scanning` when nothing is left, atomically with the check, so a new
+    /// submit starts a new driver.
     fn take_batch(&self, partition: i32) -> Vec<ReplayRequest> {
         let Ok(mut map) = self.partitions.lock() else {
             return Vec::new();
         };
         let entry = map.entry(partition).or_default();
-        let batch = std::mem::take(&mut entry.pending);
+        let mut batch = std::mem::take(&mut entry.pending);
+        batch.append(&mut entry.joiners);
         if batch.is_empty() {
             entry.scanning = false;
         }
@@ -341,22 +341,62 @@ impl ReplayCoordinator {
         }
     }
 
-    /// Serve every pending request of `partition`, pass after pass, until
-    /// none is left. Runs on a blocking thread holding one reader permit.
-    fn run_partition(&self, partition: i32) {
-        loop {
-            let mut batch = self.take_batch(partition);
-            if batch.is_empty() {
-                return;
-            }
-            self.metrics.active.fetch_add(1, Ordering::Relaxed);
-            self.metrics.reader_replays.fetch_add(1, Ordering::Relaxed);
-            self.pass(partition, &mut batch);
-            self.metrics.active.fetch_sub(1, Ordering::Relaxed);
+    /// The driver could not get a reader (shutdown): answer everyone.
+    fn abandon(&self, partition: i32) {
+        for mut request in self.take_batch(partition) {
+            request.finish(ReplayEnd::Error("replay readers closed".into()));
         }
     }
 
-    fn pass(&self, partition: i32, batch: &mut Vec<ReplayRequest>) {
+    /// One pass over everything waiting.
+    fn run_pass(&self, partition: i32) -> Pass {
+        let mut batch = self.take_batch(partition);
+        if batch.is_empty() {
+            return Pass::Done;
+        }
+        self.metrics.active.fetch_add(1, Ordering::Relaxed);
+        self.metrics.reader_replays.fetch_add(1, Ordering::Relaxed);
+        let starved = self.pass(partition, &mut batch);
+        // Every request of the batch was answered, requeued or is still in
+        // `batch` only if the pass returned early: answer those too.
+        for mut request in batch.drain(..) {
+            request.finish(ReplayEnd::Error("replay pass ended early".into()));
+        }
+        self.metrics.active.fetch_sub(1, Ordering::Relaxed);
+        if starved {
+            Pass::Starved
+        } else {
+            Pass::Progress
+        }
+    }
+
+    /// Serve `batch` in one pass; `true` when it delivered nothing and some
+    /// request detached for lack of replay budget.
+    fn pass(&self, partition: i32, batch: &mut Vec<ReplayRequest>) -> bool {
+        let mut delivered = false;
+        let mut starved = false;
+        self.pass_inner(partition, batch, &mut delivered, &mut starved);
+        starved && !delivered
+    }
+
+    fn pass_inner(
+        &self,
+        partition: i32,
+        batch: &mut Vec<ReplayRequest>,
+        delivered: &mut bool,
+        starved: &mut bool,
+    ) {
+        let started = Instant::now();
+        // Requests already over their deadline or abandoned while waiting
+        // for a reader are answered before any read.
+        let now = Instant::now();
+        batch.retain_mut(|request| match request.ended(i64::MIN, now) {
+            Some(end) => {
+                request.finish(end);
+                false
+            }
+            None => true,
+        });
         // Open at the earliest start; a request below the retention floor is
         // answered and the pass reopens at the next start.
         batch.sort_by_key(|request| request.after);
@@ -364,17 +404,20 @@ impl ReplayCoordinator {
             let Some(first) = batch.first() else {
                 return;
             };
-            match self.source.open(partition, first.after + 1) {
+            let from = first.after + 1;
+            self.set_position_only(partition, from);
+            match self.source.open(partition, from) {
                 Ok(cursor) => break cursor,
                 Err(RangeError::Retention) => {
                     let mut expired = batch.remove(0);
                     expired.finish(ReplayEnd::Retention);
                 }
                 Err(RangeError::Other(error)) => {
-                    for request in batch.iter_mut() {
+                    for mut request in batch.drain(..) {
                         request.finish(ReplayEnd::Error(error.clone()));
                     }
-                    batch.clear();
+                    // Joiners that arrived while the reader was opening are
+                    // served by the next pass (the driver loops), never lost.
                     return;
                 }
             }
@@ -382,28 +425,20 @@ impl ReplayCoordinator {
         let mut position = batch[0].after + 1;
         let mut active: Vec<ReplayRequest> = std::mem::take(batch);
         loop {
+            // A pass takes joiners for at most `max_duration`, so one busy
+            // partition cannot keep its reader forever.
+            let joining = started.elapsed() < self.limits.max_duration;
             for joiner in self.set_position(partition, position) {
-                if joiner.after + 1 >= position {
+                if joining && joiner.after + 1 >= position {
                     active.push(joiner);
                 } else {
                     self.requeue(partition, joiner);
                 }
             }
-            // Finish what is done, expired or abandoned.
             let now = Instant::now();
             let mut index = 0;
             while index < active.len() {
-                let request = &mut active[index];
-                let end = if request.cancel.load(Ordering::Relaxed) || request.sink.is_closed() {
-                    Some(ReplayEnd::Cancelled)
-                } else if position >= request.barrier {
-                    Some(ReplayEnd::Complete)
-                } else if now > request.deadline {
-                    Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT"))
-                } else {
-                    None
-                };
-                match end {
+                match active[index].ended(position, now) {
                     Some(end) => {
                         let mut done = active.swap_remove(index);
                         done.finish(end);
@@ -437,16 +472,64 @@ impl ReplayCoordinator {
             };
             position = record.offset + 1;
             self.metrics.scanned.fetch_add(1, Ordering::Relaxed);
+            // Scan limits are per request, over the records of its own range
+            // (F4): checked before anything of this record is emitted.
+            let size = record.payload.len() as u64;
+            let offset = record.offset;
+            let mut index = 0;
+            while index < active.len() {
+                let request = &mut active[index];
+                if offset <= request.after || offset >= request.barrier {
+                    index += 1;
+                    continue;
+                }
+                request.scanned += 1;
+                request.scanned_bytes += size;
+                let limit = if request.scanned > self.limits.max_scanned_records {
+                    Some("REPLAY_SCAN_LIMIT")
+                } else if request.scanned_bytes > self.limits.max_scanned_bytes {
+                    Some("REPLAY_BYTE_LIMIT")
+                } else {
+                    None
+                };
+                match limit {
+                    Some(reason) => {
+                        self.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
+                        let mut done = active.swap_remove(index);
+                        done.finish(ReplayEnd::ScanLimit(reason));
+                    }
+                    None => index += 1,
+                }
+            }
             if !active.iter().any(|request| request.key == record.key) {
                 continue;
             }
-            let shared = Arc::new(record);
-            let Ok(live) = crate::hub::LiveRecord::decode(shared) else {
-                continue;
+            let record_key = record.key.clone();
+            let live = match LiveRecord::decode(Arc::new(record)) {
+                Ok(live) => live,
+                Err(_) => {
+                    // F2: a record of a requested key that cannot be decoded
+                    // may be any of that key's products; every request whose
+                    // range holds it ends typed, the others continue.
+                    let mut index = 0;
+                    while index < active.len() {
+                        let request = &active[index];
+                        let holds = request.key == record_key
+                            && offset > request.after
+                            && offset < request.barrier;
+                        if holds {
+                            let mut done = active.swap_remove(index);
+                            done.finish(ReplayEnd::Corrupt { partition, offset });
+                        } else {
+                            index += 1;
+                        }
+                    }
+                    continue;
+                }
             };
+            let weight = live.weight();
             let mut index = 0;
             while index < active.len() {
-                let offset = live.raw.offset;
                 let request = &mut active[index];
                 let wanted = request.key == live.raw.key
                     && offset > request.after
@@ -465,8 +548,9 @@ impl ReplayCoordinator {
                     done.finish(ReplayEnd::Backlog);
                     continue;
                 }
-                match send_or_detach(&request.sink, live.clone()) {
+                match self.send_or_detach(&request.sink, &live, weight) {
                     Sent::Delivered => {
+                        *delivered = true;
                         request.after = offset;
                         request.matched += 1;
                         self.metrics.matched.fetch_add(1, Ordering::Relaxed);
@@ -483,8 +567,14 @@ impl ReplayCoordinator {
                     }
                     Sent::Detach => {
                         // Too slow for the shared pass: continue from its own
-                        // offset (the record was not sent) in the next pass.
+                        // offset later.
                         self.metrics.detached.fetch_add(1, Ordering::Relaxed);
+                        let detached = active.swap_remove(index);
+                        self.requeue(partition, detached);
+                    }
+                    Sent::Starved => {
+                        *starved = true;
+                        self.metrics.budget_detached.fetch_add(1, Ordering::Relaxed);
                         let detached = active.swap_remove(index);
                         self.requeue(partition, detached);
                     }
@@ -492,31 +582,57 @@ impl ReplayCoordinator {
             }
         }
     }
+
+    fn set_position_only(&self, partition: i32, position: i64) {
+        if let Ok(mut map) = self.partitions.lock() {
+            map.entry(partition).or_default().position = position;
+        }
+    }
+
+    fn send_or_detach(
+        &self,
+        sink: &tokio::sync::mpsc::Sender<Replayed>,
+        record: &Arc<LiveRecord>,
+        weight: usize,
+    ) -> Sent {
+        let deadline = Instant::now() + DETACH_AFTER;
+        loop {
+            if sink.is_closed() {
+                return Sent::Closed;
+            }
+            if sink.capacity() > 0 {
+                let Some(charge) = self.budget.charge(weight) else {
+                    return Sent::Starved;
+                };
+                match sink.try_send(Replayed {
+                    record: record.clone(),
+                    charge,
+                }) {
+                    Ok(()) => return Sent::Delivered,
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Sent::Closed,
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+                }
+            }
+            if Instant::now() >= deadline {
+                return Sent::Detach;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 }
+
+/// How a pass ended, for the partition's driver.
+enum Pass {
+    Done,
+    Progress,
+    Starved,
+}
+
+const STARVED_BACKOFF: Duration = Duration::from_millis(50);
 
 enum Sent {
     Delivered,
     Closed,
     Detach,
-}
-
-fn send_or_detach(
-    sink: &tokio::sync::mpsc::Sender<std::sync::Arc<crate::hub::LiveRecord>>,
-    record: std::sync::Arc<crate::hub::LiveRecord>,
-) -> Sent {
-    let deadline = Instant::now() + DETACH_AFTER;
-    let mut record = record;
-    loop {
-        match sink.try_send(record) {
-            Ok(()) => return Sent::Delivered,
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Sent::Closed,
-            Err(tokio::sync::mpsc::error::TrySendError::Full(back)) => {
-                if Instant::now() >= deadline {
-                    return Sent::Detach;
-                }
-                record = back;
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-    }
+    Starved,
 }
