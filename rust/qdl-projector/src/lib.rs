@@ -11,5 +11,6 @@
 pub mod cache;
 pub mod kafka_pipe;
 pub mod kafka_state;
+pub mod products;
 pub mod stage_a;
 pub mod stage_b;

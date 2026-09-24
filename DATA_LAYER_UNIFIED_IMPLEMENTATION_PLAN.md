@@ -55603,6 +55603,85 @@ revision ordering, compaction/expiry and restore proof.
   - Not yet: stage A product classification (awaits the projector/Query
     survey), expiry task (D11), per-product rebuild (D10), migration and BAR
     readback (K3.6), isolated full-flow run with real data (K3-T08).
+- 2026-09-24: **KN-3 design decisions D14-D16 (recorded before code), from
+  the read-only projector/Query and BAR-edge surveys.** Survey facts (file:line
+  checked): the running projector has no product classification - one latest
+  key per `(oneof, venue, market, uid)` with no interval or source, so BAR
+  intervals of one instrument overwrite each other
+  (`qdl/projection/stable.py:316-323`); every canonical record must match a
+  catalog binding or the projector generation stops
+  (`qdl/runtime/stable_projector.py:340-347`, `stable_catalog.py:454-461`),
+  so FEED_STATE/QUALITY_EVENT are not on the topic today; the physical key is
+  `uid/feed/source_id` with snapshot+delta sharing `book`
+  (`stable_catalog.py:172-188`); 216 bindings -> 198 physical keys (BAR 144,
+  BOOK_DELTA 18, BOOK_SNAPSHOT 18, QUOTE 12, TRADE 14, MARK_INDEX_PRICE 10);
+  Query reads only the SQLite spool (`qdl/runtime/stable_source.py:958-967`)
+  and needs the full envelope; spool BAR retention is a **count** cap of
+  12,064 rows per partition key (10,000 public + 2,064,
+  `qdl/runtime/stable_capacity.py:8-27`, age trim disabled `stable.py:555`);
+  the BAR edge reads back through one method
+  `_durable_final_bar_opens(binding, opens) -> opens`
+  (`qdl/runtime/stable_bar_edge.py:969-1050`) keyed by the cache generation
+  `cache_id` (`:922-967`); no stable producer emits REVISED/CANCELLED or
+  `supersedes_event_id` (`rust/qdl-core/src/canonical.rs:420-422,493-495,
+  655-657`).
+  - D14 **Stage A product classification.** The one product-identity owner is
+    the gateway bundle compiled by `scripts/kn_gateway_bundle.py` from the
+    Python catalog (`LogicalProductKey.for_product`), so Stream and projector
+    cannot disagree on an LPK. Its Rust loader moves from the gateway to
+    `qdl_contracts::gateway_bundle` (the gateway re-exports it, as with the
+    interval owner). A record maps by `(physical key = Kafka key, payload
+    feed)` to exactly one binding; snapshot and delta of one book are two
+    products, MARK_INDEX_PRICE is one product and its envelope (both component
+    clocks) is carried unchanged (K3-T03). BAR -> `BAR_REVISION` on
+    `md.bars.v2`, everything else -> `LATEST` on `md.latest.v2`; source
+    coordinate = (canonical topic id from config, partition, offset);
+    materializer epoch from config. A record with no binding, a different
+    identity than its binding, or a payload that does not decode stops stage A
+    with its offset (parity with today's fail-closed projector; no silent
+    skip). No demand filter: every catalog binding is materialized (parity;
+    this amends D11's "products without BAR demand are not materialized").
+    The bundle is refused at load when a sampled feed (OPEN_INTEREST,
+    LONG_SHORT_RATIO, TAKER_FLOW, BASIS) carries an interval: the frozen KN-1
+    product check qualifies only BAR by interval, so such a product cannot be
+    verified (none is in the catalog today; **KN-1 contract gap for Astra**).
+  - D15 **Retained cap** per BAR product = max(10,000 public window, largest
+    `max_warmup_rows` of a manifest requiring it) + 2,064 headroom = 12,064
+    for the current manifests (largest 10,000): the same count the spool keeps
+    today, so migration and expiry never lose coverage.
+  - D16 **K3.6 migration and readback (Python, existing `qdl-v2-python`
+    image: confluent_kafka 2.15, redis 5.3.1).** (a) Export is read-only from
+    the canonical cache SQLite (`?mode=ro`, `query_only`), per BAR physical key
+    through the primary key `(stream, partition_key, logical_offset)` only
+    (EXPLAIN QUERY PLAN checked, never `accepted_at_ns`). Each row becomes a
+    `LEGACY_BAR` frame with lineage (spool stream, partition key, logical
+    offset) and the fact key of its content; frames are published to
+    `md.bars.v2` in bounded transactions. `logical_offset` is lineage only,
+    never a canonical offset (append order, not market time). Rerun is
+    idempotent: keys are content-addressed, stage B treats an equal fact as a
+    duplicate and a lower revision as stale, so an import never overwrites a
+    newer correction; the receipt records per binding count/first/last open
+    and a SHA-256 over (open, revision, content hash), plus the replay cutoff
+    actually captured (canonical earliest offsets per partition at export).
+    (b) BAR-edge readback adapter implements the same contract as
+    `_durable_final_bar_opens` against the market cache (READY generation of
+    the LPK, bucket `HMGET` of the asked opens, trailer + envelope decode,
+    FINAL/REVISED only, fail closed on identity mismatch), and its generation
+    identity (LPK + ready generation) replaces `cache_id` for the edge's
+    rebase logic. Selected by configuration; the SQLite path stays the default
+    until cutover (KN-5).
+- 2026-09-24: **KN-3 slice 5 - K3.2 stage A product classification (D14/D15):
+  implemented, tested locally on real records.** `rust/qdl-projector/src/
+  products.rs` (`ProductMap::from_bundle`, `ProductTransform` implementing the
+  stage A `Transform`, `retained_caps`); the bundle loader moved to
+  `rust/qdl-contracts/src/gateway_bundle.rs` (the gateway's `bundle.rs`
+  re-exports it, no behavior change); `tests/test_kn_products.py`.
+  | Check | Command | Result |
+  |---|---|---|
+  | book snapshot+delta on one physical key = two latest products; BAR -> bars topic with fact key, envelope unchanged; MARK_INDEX one latest product; unbound feed / foreign key / other instrument / non-envelope / empty payload -> integrity stop; sampled feed with interval, product-key drift, duplicate (key, feed) -> bundle refused; caps 12,064 / 27,064 / no demand 12,064; the 24 real golden records -> golden keys, partitions (6) and the golden LATEST/BAR_REVISION frames byte for byte | `cargo test -p qdl-projector --lib` | 15/15 (6 stage A, 2 cache, 7 products) |
+  | real catalog -> bundle: (physical key, feed) unique, load checks pass for all 216 bindings, every real golden record finds its binding with the same LPK | `python -B -m unittest tests.test_kn_products tests.test_kn_gateway_bundle` (image `qdl-v2-python:2.1.1-83fa1bc`) | 6/6 |
+  | real bundle (216 bindings, sha256 `e8aa9c95...36fb`) + the 114-record read-only canonical sample (BAR 84, book delta 6, snapshot 6, mark/index 6, quote 6, trade 6): every record classified, frame decodes, canonical bytes unchanged, 144 BAR caps all 12,064 | one-off scratch run (inputs are not in Git) | 114/114 |
+  | gateway after the move; contracts | `cargo test -p qdl-stream-gateway -p qdl-contracts`, clippy `-D warnings` | green |
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
