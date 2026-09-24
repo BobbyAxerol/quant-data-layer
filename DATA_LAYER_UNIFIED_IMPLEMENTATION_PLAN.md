@@ -55496,6 +55496,113 @@ revision ordering, compaction/expiry and restore proof.
     300 chars) produced with the Kafka 4.2 console producer to a 6-partition
     topic on a disposable broker; Kafka's chosen partition = ours for
     **46/46**, all six partitions used. Broker removed, 0 left.
+- 2026-09-24: **KN-3 design decisions D6-D12 - stage B, market cache,
+  expiry and rebuild (recorded before code).**
+  - D6 **Market cache process**: one new Redis role, same image digest as
+    `stable_redis`, config from the budget (`maxmemory` 1,288,490,188 B,
+    `noeviction`, `hash-max-listpack-entries 128`, `hash-max-listpack-value
+    2048`, `save ""`, `appendonly no`), container cap 1,536 MiB. Rebuildable
+    from the state topics; the control/quota Redis is never used for data.
+    All keys under one prefix `kn3:<environment>:`; no cluster, no hash tags.
+  - D7 **Key layout** (generation `g`, product `lpk`, decimal strings for
+    every u64; no Lua arithmetic on offsets):
+    `ptr:<lpk>` hash `{ready, fence, staging}` (contract section 5);
+    `gen` counter (INCR allocates generations);
+    `l:<g>:<lpk>` hash `{v, t, p, o}` = latest value + source coordinate;
+    `bm:<g>:<lpk>` hash `{floor, first, last, last_final, rows, conflicts}`;
+    `b:<g>:<lpk>:<bucket>` hash `{<open_ms>: row}` with `bucket = open_ms div
+    (116 x shortest duration of the interval)` so a bucket never holds more
+    than 116 opens (listpack), also for calendar intervals;
+    `rk:<g>:<lpk>` hash `{<open_ms>: "f<rev>|<sha16>,..."}` = only the fact
+    keys that are **not** the current row (superseded revisions, refused
+    conflicts), so expiry can tombstone every fact of an open (the current
+    row's key is derived from the row itself; the in-progress key always
+    `<lpk>|<ms>|p`); `cx:<g>:<lpk>` list of the last 100 conflict records;
+    `own:<topic>:<partition>` owner fence; `ckpt:<topic>:<partition>` hash
+    `{next, fence, at_ms}`.
+  - D8 **Apply protocol** (K3.3, K3-T02). Stage B consumes both state topics
+    `read_committed` in group `kn-projector-v3-b` (partition ownership). On
+    assignment it INCRs `own:<t>:<p>` (its owner fence) and seeks to
+    `ckpt.next` (Kafka group offsets are informational only). Per batch Rust
+    decodes each frame strictly, pre-reads the product pointer and the current
+    entry, decides with `state_contract` (latest apply; BAR revision rules,
+    CONFLICT never last-write-wins) and sends one Lua call that, atomically:
+    refuses the whole batch if `own` != its fence (zombie, typed, counted);
+    refuses an op whose pointer `(ready, staging, fence)` or current entry
+    (latest: offset/partition/topic id; BAR: the 48-byte trailer) changed
+    since the pre-read (CAS miss -> Rust re-reads and re-decides); writes the
+    payload, `bm`, `rk` and conflict record; and sets `ckpt.next` - payload,
+    index, meta and checkpoint are never visible half-applied. A crash after
+    the Lua call and before anything else is harmless (the checkpoint moved
+    with the data); a crash before it re-applies the batch (DUPLICATE/STALE).
+  - D9 **Cold build and readiness** (K3.7, K3-T05/T06). A partition whose
+    products have no pointer, or whose checkpoint is missing, older than the
+    rebuild horizon (tombstone lifetime 7 d minus 1 d margin) or below the
+    partition's earliest offset, is built into a fresh generation from the
+    partition start: products get `staging = G`; at the boundary (the end
+    offset read at assignment, position past control records) every staged
+    product is published `ready = G, fence + 1` by CAS and the superseded
+    generation's keys are reclaimed. Only products with a ready pointer read
+    READY; a missing product is NOT_READY_NO_GENERATION, never a default. A
+    cache overlay after a longer outage is never allowed (missed deletes).
+  - D10 **Per-product rebuild** (contract section 5): allocate `G`, set
+    `ptr.staging = G` (live stage B then dual-writes the ready and staging
+    generation - the rules are order-independent, so the two converge); a
+    bounded reader replays the product's records from its partition start into
+    `G` up to the live checkpoint captured when staging began; verify
+    (rows/first/last/last_final and conflicts equal to the facts replayed)
+    then CAS-publish `ready = G, fence + 1`, clear `staging`, reclaim the old
+    generation; one product in staging at a time (budget peak rule).
+  - D11 **Expiry** (K3.5) is a bounded task inside the projector role, not a
+    service: per BAR product, when `rows` exceeds the retained cap (demanded
+    rows + 2,064 headroom; products without BAR demand are not materialized)
+    by more than one bucket, it computes the new floor (the open time of the
+    cap-th newest row), and publishes in one transaction a RETENTION_FLOOR
+    frame and tombstones for every fact key of each open below the floor
+    (current row, `rk` extras, in-progress key). Stage B applies the floor by
+    deleting rows below it (whole buckets `DEL`, the boundary bucket `HDEL`),
+    and refuses later facts below the floor (typed `STALE_BELOW_FLOOR`,
+    counted; the expiry task tombstones them again). Floors only rise.
+  - D12 **Failure boundaries**: a frame that does not decode stops stage B for
+    that partition with its offset (never skipped); Redis unavailable or
+    `OOM` (noeviction) stops applying with typed memory pressure and the
+    checkpoint stays behind (nothing silently dropped, promotion blocked); the
+    control/quota Redis is never touched.
+- 2026-09-24: **KN-3 slice 4 - K3.3/K3.4 stage B and market cache: implemented,
+  tested locally + isolated Kafka and Redis.** `rust/qdl-projector/src/`
+  `apply.lua`, `cache.rs`, `stage_b.rs`, `kafka_state.rs`; the canonical
+  interval owner moved to `qdl-contracts::interval` (the gateway re-exports it)
+  so the projector does not duplicate it.
+  - Implemented as D6-D12, with these findings made during the slice:
+    (1) the script checks every expectation against the state **before** the
+    batch, so a pointer change cannot share a batch with the data ops that
+    depend on it -> three atomic steps (stage, data, publish/unpublish); (2) a
+    partition is prepared **at assignment** and sought to its checkpoint (or
+    start), and records fetched before the seek are dropped - preparing on the
+    first record could keep records from the old group offset (a gap in build
+    mode) and never prepared an empty partition; (3) a finished build always
+    writes its checkpoint, also with no ops, so a restart tails instead of
+    building again; (4) counters of a CAS-missed attempt are discarded.
+  - D13 **Legacy rows** (K3.6 imports) carry the trailer offset `2^63-1`
+    (`MAX_OFFSET`, no real offset reaches it) = "no canonical coordinate";
+    only the final/revision/hash rules decide for them.
+  - Tests (Claude-run; `QDL_KN_TEST_*` point at disposable containers):
+
+  | Case | Suite | Result |
+  |---|---|---|
+  | bucket bound (<= 116 opens, any grid offset), op serialization | `qdl-projector` unit | 8/8 (with stage A) |
+  | zombie applies nothing; one stale expectation -> whole batch refused, checkpoint unchanged; pointer change -> miss; u64 above 2^53 exact (offset, CAS); floor removes 250 of 300 rows, refuses a later fact, never lowers; stage/publish/reclaim swap (old generation 0 keys left, writer with the old pointer refused) | `cache_redis` | 5/5 |
+  | `maxmemory` + noeviction: typed `MemoryPressure`, nothing applied, checkpoint behind (dedicated Redis: the limit is server-wide) | `cache_redis_memory` | 1/1 |
+  | cold build publishes, absent product NOT_READY; restart tails (no rebuild) and the old owner is a zombie; beyond the horizon a fresh generation, a product whose state is gone unpublished, old keys reclaimed; replay after a crash changes nothing; BAR rules (in-progress->final, late in-progress stale, revision applied, lower stale, equal-different CONFLICT kept first, duplicate), superseded fact keys kept for expiry; BOOK snapshot not erased by delta/reset; floor + late fact below it | `stage_b_redis` | 7/7 |
+  | real Kafka + Redis: committed frames READY, an aborted newer frame never applied, a second group member takes over and applies the newest frame, each partition built once, the new member never rebuilds | `stage_b_kafka` | 1/1 |
+  | the whole ignored set (stage A Kafka 4 + the above) | `cargo test -p qdl-projector -- --ignored` | green 3 rounds in a row |
+
+  - CI: the existing `kn-native-integration` job now also starts two Redis
+    containers of the stable Redis digest in the broker's network namespace
+    and runs every ignored `qdl-projector` test.
+  - Not yet: stage A product classification (awaits the projector/Query
+    survey), expiry task (D11), per-product rebuild (D10), migration and BAR
+    readback (K3.6), isolated full-flow run with real data (K3-T08).
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

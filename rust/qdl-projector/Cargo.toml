@@ -10,6 +10,8 @@ description = "Kafka-native V2 projector (KN-3): stage A canonical -> state topi
 prost.workspace = true
 qdl-contracts.workspace = true
 rdkafka.workspace = true
+redis.workspace = true
+ring.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

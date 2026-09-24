@@ -104,47 +104,7 @@ pub fn require_requirement(
     Ok(())
 }
 
-/// `qdl.adapters.intervals.canonical_interval_ms` for the canonical
-/// lowercase `<count><unit>` spelling (calendar months are refused).
-pub fn canonical_interval_ms(interval: &str) -> Result<u64, String> {
-    let value = interval.trim();
-    if value.is_empty() {
-        return Err("canonical interval is required".into());
-    }
-    if value.ends_with('M') {
-        return Err(format!(
-            "calendar-month bars have no fixed duration and are not canonical intervals; \
-             'M' is never folded into minutes: {interval:?}"
-        ));
-    }
-    if value != value.to_lowercase() {
-        return Err(format!(
-            "canonical interval must be lowercase, venue spelling is derived: {interval:?}"
-        ));
-    }
-    let (count, unit) = value.split_at(value.len() - 1);
-    let unit_ms: u64 = match unit {
-        "s" => 1_000,
-        "m" => 60_000,
-        "h" => 3_600_000,
-        "d" => 86_400_000,
-        "w" => 604_800_000,
-        _ => {
-            return Err(format!(
-                "canonical interval must use a fixed s/m/h/d/w duration: {interval:?}"
-            ))
-        }
-    };
-    let count: u64 = count
-        .parse()
-        .map_err(|_| format!("canonical interval count must be an integer: {interval:?}"))?;
-    if count == 0 {
-        return Err(format!("canonical interval must be positive: {interval:?}"));
-    }
-    count
-        .checked_mul(unit_ms)
-        .ok_or_else(|| format!("canonical interval is too large: {interval:?}"))
-}
+pub use qdl_contracts::interval::canonical_interval_ms;
 
 /// Interval carried by the canonical payload (`canonical_payload_interval`).
 fn payload_interval(envelope: &EventEnvelope) -> Option<String> {

@@ -1,5 +1,6 @@
 pub mod cursor_v3;
 pub mod delivery;
+pub mod interval;
 pub mod requirement;
 pub mod state_codec;
 pub mod state_contract;

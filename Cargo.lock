@@ -952,6 +952,8 @@ dependencies = [
  "prost",
  "qdl-contracts",
  "rdkafka",
+ "redis",
+ "ring",
  "serde_json",
  "tokio",
 ]

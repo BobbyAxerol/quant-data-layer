@@ -8,5 +8,8 @@
 //! cache with generation/owner fences (Kafka EOS alone does not protect an
 //! external sink).
 
+pub mod cache;
 pub mod kafka_pipe;
+pub mod kafka_state;
 pub mod stage_a;
+pub mod stage_b;
