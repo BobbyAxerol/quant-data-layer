@@ -53246,9 +53246,9 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 REVIEW_CHANGES_REQUIRED on 56a26f5 (Astra re-review 2026-09-24: F1/F2/F4/F6 closed; two residual F3/F5 findings); KN-2..KN-5 NOT STARTED.**
+**Program status: KN-1 IMPLEMENTED_PENDING_ASTRA_REVIEW (R2 residuals F3/F5 closed by Claude 2026-09-24, focused re-review requested); KN-2..KN-5 NOT STARTED.**
 Latest verdict: [Astra re-review R2](#kn1-astra-review-r2). Executor handoff:
-[KN-1 re-review receipt](#kn1-astra-receipt-r2); original [KN-1 receipt](#kn1-astra-receipt).
+[KN-1 R2 closure receipt](#kn1-astra-receipt-r3); earlier [re-review receipt](#kn1-astra-receipt-r2), original [KN-1 receipt](#kn1-astra-receipt).
 **Target:** durable, correct, bounded Rust-first read/distribution plane serving
 the declared Binance/OKX products and 50 logical alpha clients plus TS demand;
 V2 primary in approved scope, V1 fallback only where policy allows, old V2
@@ -53276,7 +53276,7 @@ Do not start the next phase merely because the executor's tests passed.
 
 | Phase | Initial status | Executor | Reviewer | Closure evidence |
 |---|---|---|---|---|
-| [KN-1](#kn-plan-phase-1) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | F1/F2/F4/F6 accepted; close residual F3/F5 in the existing phase, then focused re-review |
+| [KN-1](#kn-plan-phase-1) | IMPLEMENTED_PENDING_ASTRA_REVIEW | Claude Opus 5.5 | Astra | F1/F2/F4/F6 accepted; R2 residuals F3/F5 closed, focused re-review of F3/F5 only |
 | [KN-2](#kn-plan-phase-2) | PENDING_KN1_REVIEW | Claude Opus 5.5 | Astra | Full Stream/replay contract, bounded failure/reconnect proof |
 | [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
@@ -53316,9 +53316,10 @@ phase; do not create new subphase names to defer unfinished implementation.
 <a id="kn-plan-phase-1"></a>
 ### KN-1 - Contract, Baseline And Measured Rust Foundation
 
-**Status:** REVIEW_CHANGES_REQUIRED (Astra reviewed `56a26f5` on 2026-09-24;
-F1/F2/F4/F6 accepted, F3/F5 retain the two exact residuals in
-[review R2](#kn1-astra-review-r2)). KN-2 is not approved by this review.
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (Astra R2 on `56a26f5` accepted
+F1/F2/F4/F6; the two residuals F3/F5 of [review R2](#kn1-astra-review-r2) are
+closed in the [R2 closure receipt](#kn1-astra-receipt-r3)). KN-2 still needs
+ASTRA_REVIEW_PASS and owner approval.
 **Goal:** freeze the recovery/security/data/resource contracts and prove a small
 Rust-to-real-SDK path before expanding implementation; no prolonged redesign.
 **Guide index:** [18.8 work items and K1-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-1),
@@ -54322,6 +54323,122 @@ no reclaimed-disk claim. Two pre-existing user edits in this plan preserved.
 Claude closes exactly these F3/F5 residuals in KN-1, submits the focused
 receipt and gets Astra re-review. KN-2 remains `PENDING_KN1_REVIEW`; do not
 restart all prior gates or create another phase to address these findings.
+
+#### KN-1 R2 Closure (Claude)
+
+- 2026-09-24: **R2 closure packet (recorded before running).** Only the
+  approved K1.4 re-measure path: `kn_resource_sizing.py payloads` in a `--rm`
+  `qdl-v2-python:2.1.1-83fa1bc` container, `--network none`, stable state
+  volume read-only, spool `mode=ro` + `query_only`; one disposable Redis of the
+  `stable_redis` digest, `--rm --network none`, listpack 2048, guarded helper
+  with exact-key cleanup. No capture slice or C2 (F3 is a pure predicate over
+  the retained receipt; no auth/delivery/runtime source changes). No
+  production container, Kafka, Redis or ACL touched.
+
+- 2026-09-24: **R2 closure result: implemented, tested locally.**
+  - **F3 exact coverage.** `NEGATIVE_CASES` (24 ids -> authoritative status)
+    is the one case definition; `negatives()` raises if the run drifts from
+    it. `slice_verdict(result, expected_products=<probe physical keys>)` fails
+    on any missing, duplicated or unexpected product or case id, a non-list
+    section, an `expected` that differs from the authoritative status, a
+    non-string/mismatched `observed`, or bool/negative counters. Tests for
+    Astra's counterexamples (24 empty objects, 24 copies of one case, two
+    copies of one product) and more give a failed verdict and CLI exit 1; the
+    complete matrix exits 0 (`test_kn_native_slice_probe` 13 OK). Retained
+    receipts re-evaluated with the new pure predicate: `slice-evidence-f1f2`
+    (`87831765...`) **PASS, no failures**; the older `slice-evidence-final`
+    (`3d17996d...`) fails only with `missing ['jwt_iat_i64_min',
+    'requirement_invalid_execution_partial']`, the two cases added after it -
+    correct. No capture or C2 rerun (no auth/delivery/runtime source change).
+  - **F5 lossless shared representation.** The per-product header is
+    withdrawn. A BAR row keeps every field except the four that make up the
+    LPK (instrument uid, venue, market, bar interval); `lpk_row` refuses a row
+    whose values differ from its key, `lpk_row_decode` restores them from the
+    LPK alone and verifies the stored canonical hash. Mixed-history tests
+    with the real shared-key decoder: schema minor, source id, provider
+    (Astra's three), source role, native symbol, instrument id/revision,
+    schema name and a correction revision all decode byte-exact with provenance
+    and hash; rebuild (decode -> re-encode) is idempotent; another product's
+    row and a wrong key/tampered hash are refused; the R2 counterexample is
+    kept as a guard (`test_kn_resource_sizing` 13 OK).
+  - **F5 re-measured** (approved path, packet above): new read-only sample of
+    2,000 real final OKX DOGE 1m bars (sample `3d660e13...`, raw deleted);
+    shared-key decode mismatches **0/2,000**; row 681.8 B mean (694 max);
+    every non-LPK field had one value in this sample, which is why the R1
+    per-row check passed - the mixed-history tests are the proof, not the
+    sample. Disposable Redis (217 + 1,373 keys written, 0 left, 0 containers):
+    bytes/row depend on the bucket size because bucket bytes land in allocator
+    size classes - LPK row 707.4 (116 opens), 708.1 (58), 769.4 (64), up to
+    853.8 (48); full canonical row best 769.5. Evidence
+    `/home/bobby/.local/state/qdl-v2/kn1-20260923/sizing-r2/`
+    (`payloads.json` `f42634e6...`, `redis-buckets.json` `08124c73...`,
+    `redis-listpack2048.json` `2ffb9e34...`).
+  - **Budget re-frozen** (`77fb58e1...`): LPK row, 116-open listpack buckets;
+    no header storage; BAR rows 1,196.6 MB + latest 2.10 MB + baseline
+    0.98 MB = **1,199.7 MB steady at cap** (663.8 MB today); peak with one
+    product staging plus the old generation until reclaimed **1,216.7 MB**;
+    headroom **71.8 MB (5.6 %)** below the unchanged 1,288 MB maxmemory.
+    Stated plainly: it fits only with the LPK row at an allocator-aligned
+    bucket; at 64 opens or with the full canonical row the cap does not fit.
+    KN-3 must size buckets per product from measured row size and re-measure
+    all products; a miss is typed memory pressure, and any RAM increase is an
+    owner decision. `test_kn_v220_budget` 4 OK asserts the sum, the peak, the
+    headroom and that the unaligned/canonical alternatives exceed maxmemory.
+  - **Contract section 5 frozen** as Astra required: per-product ready
+    pointer + monotonic fence published by compare-and-set; stale writers
+    refused; one versioned view per product, pinned multi-page warmup retries
+    within <= 120 s, never mixes generations; superseded generation counted
+    until physically reclaimed, next staging waits for it; cache generation
+    never enters a cursor. Section 4 defines the BAR cache row.
+  - Tests: KN Python set 54 OK (contracts 18, probe 13, sizing 13, budget 4,
+    bundle 3, ingest spans 3). Rust not changed this round (last run 215/0/2).
+    Full suite not rerun (only scripts/tests/config/contract text changed).
+
+<a id="kn1-astra-receipt-r3"></a>
+- 2026-09-24: **KN-1 R2 closure receipt for Astra (guide 18.14 format).**
+
+```text
+Phase / status / source SHA / affected files and line counts:
+  KN-1 / IMPLEMENTED_PENDING_ASTRA_REVIEW / feat/consumer-endpoint-benchmark,
+  the commit carrying this entry (base a0eaf89). scripts/kn_native_slice_probe.py,
+  scripts/kn_resource_sizing.py, tests/test_kn_native_slice_probe.py,
+  tests/test_kn_resource_sizing.py, tests/test_kn_v220_budget.py,
+  config/v2/kn-v220-candidate-budget.json, contracts/v2/kn-v220-contracts.md.
+  No Rust, auth, delivery or runtime source change.
+Approved scope and actual work items completed:
+  Exactly the two R2 residuals: F3 exact case/product coverage; F5 lossless
+  shared representation, mixed-history tests, re-measure, budget and
+  contract section 5 freeze. No new phase, no capture/C2.
+Domain invariants and behavior changed/preserved:
+  Slice verdict now requires the exact authoritative case set and exact
+  probe products. BAR cache row keeps every non-LPK field; decode from the
+  LPK is byte-exact and hash-verified; cross-product rows refused. Contract
+  section 5: per-product pointer/fence, stale-writer rejection, bounded
+  pinned retry, reclaim accounting, cache generation != cursor generation.
+Tests: command, cases, pass/fail/skip, isolated/real-provider, evidence hash/path:
+  unittest KN set 54 OK (read-only container, tmpfs /tmp and /app/logs).
+  Retained receipt 87831765 re-evaluated: PASS; 3d17996d: fails on the two
+  later cases only. Real sample: 0/2,000 shared-key decode mismatches.
+New failures -> root cause -> fix -> regression evidence:
+  F3 counts not identities -> exact id/product sets + authoritative status ->
+  counterexample tests + exit 1. F5 header copied from one row -> only
+  LPK-derived fields removed, decoder from the key -> mixed-history tests.
+Runtime: exact mutations or NONE; active/config/rollback map:
+  NONE on production. Read-only spool sample; disposable Redis x2 removed.
+Resources: latency/capacity/memory/disk measured vs budget; untested limits:
+  1,199.7 MB steady / 1,216.7 MB peak vs 1,288 MB maxmemory (71.8 MB,
+  5.6 %), only at an allocator-aligned bucket; per-product re-measure in KN-3.
+  No live latency or KN-2 readiness claimed.
+Cleanup: removed/retained artifacts, reason/expiry, disk/restart evidence:
+  0 kn1 containers; raw sample deleted, hashes kept under sizing-r2/.
+Remaining decision gates, not relabelled implementation gaps:
+  Owner: approve KN-2 entry after ASTRA_REVIEW_PASS; kn- ACL for live
+  measurement; the thin cache headroom (accept, or RAM decision).
+Astra requested review points and next allowed step:
+  Verify F3 counterexamples + re-evaluated receipt; F5 mixed-history
+  decoder, re-measure and section 5 text. Next: ASTRA_REVIEW_PASS, then KN-2
+  on owner approval.
+```
 
 <a id="kn-plan-phase-2"></a>
 ### KN-2 - Rust Stream, Replay And Public Streaming Compatibility

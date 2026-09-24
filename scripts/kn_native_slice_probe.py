@@ -47,50 +47,120 @@ ISSUER = "https://identity.qdl.stable.internal"
 AUDIENCE = "qdl-v2-stable"
 ROLES = ("historical_reader", "market_data_reader", "stream_consumer")
 SUBSCRIBE = "/qdl.query.v2.MarketDataStreamService/Subscribe"
-# The negative matrix below defines this many cases; fewer results means a
-# case was dropped, which is a failure, not a smaller pass.
-EXPECTED_NEGATIVES = 24
+# The one authoritative negative matrix: case id -> status the gateway must
+# return. `negatives()` runs exactly these cases; the verdict requires exactly
+# these ids, once each, with these expected statuses (KN-1 review R2 F3).
+NEGATIVE_CASES = {
+    "no_bearer": "UNAUTHENTICATED",
+    "jwt_hs256_alg": "UNAUTHENTICATED",
+    "jwt_unknown_kid": "UNAUTHENTICATED",
+    "jwt_wrong_audience": "UNAUTHENTICATED",
+    "jwt_wrong_issuer": "UNAUTHENTICATED",
+    "jwt_expired": "UNAUTHENTICATED",
+    "jwt_lifetime_over_policy": "UNAUTHENTICATED",
+    "jwt_wrong_environment": "UNAUTHENTICATED",
+    "jwt_manifest_revision_mismatch": "UNAUTHENTICATED",
+    "jwt_missing_jti": "UNAUTHENTICATED",
+    "jwt_key_subject_mismatch": "UNAUTHENTICATED",
+    "consumer_header_mismatch": "PERMISSION_DENIED",
+    "purpose_not_allowed": "PERMISSION_DENIED",
+    "requirement_outside_manifest": "PERMISSION_DENIED",
+    "cursor_of_other_consumer": "INVALID_ARGUMENT",
+    "cursor_tampered": "INVALID_ARGUMENT",
+    "cursor_legacy_v2": "OUT_OF_RANGE",
+    "cursor_expired": "OUT_OF_RANGE",
+    "cursor_route_generation": "OUT_OF_RANGE",
+    "cursor_catalog_revision": "OUT_OF_RANGE",
+    "jwt_iat_i64_min": "UNAUTHENTICATED",
+    "requirement_invalid_execution_partial": "INVALID_ARGUMENT",
+    "no_client_certificate": "UNAVAILABLE",
+    "quota_exhausted_shared_redis": "RESOURCE_EXHAUSTED",
+}
+EXPECTED_NEGATIVES = len(NEGATIVE_CASES)
 
 
-def slice_verdict(result: dict[str, Any], *, expected_products: int) -> list[str]:
+def _duplicates(values: Sequence[Any]) -> list[Any]:
+    seen: set[Any] = set()
+    return sorted({value for value in values if value in seen or seen.add(value)}, key=str)
+
+
+def slice_verdict(result: dict[str, Any], *, expected_products: Sequence[str]) -> list[str]:
     """Every reason the slice did not pass; empty means PASS.
 
-    Per product: records delivered, no decode or resume-token error, strictly
-    increasing offsets, resume from a mid-stream token yields exactly the next
-    record, the SDK proto path digests like the Python domain requirement, and
-    the controls went REPLAYING then LIVE. Then every negative case observed
-    its expected status and none is missing.
+    Coverage is exact: the product identities are exactly ``expected_products``
+    (the probes' physical keys), each once, and the negative ids are exactly
+    ``NEGATIVE_CASES``, each once, with the authoritative expected status. A
+    missing, duplicated, unexpected or malformed entry fails; counts alone
+    never pass. Per product: records delivered, no decode or resume-token
+    error, strictly increasing offsets, exact next-record resume, Python vs
+    proto digest parity, REPLAYING then LIVE. Every negative observed its
+    expected status.
     """
 
     failures: list[str] = []
-    products = result.get("products") or []
-    if len(products) != expected_products or not products:
-        failures.append(f"products: {len(products)} of {expected_products}")
+    wanted = list(expected_products)
+    if not wanted:
+        failures.append("products: no expected product identities")
+    if _duplicates(wanted):
+        failures.append(f"products: duplicate expected identities {_duplicates(wanted)}")
+    products = result.get("products")
+    if not isinstance(products, list):
+        failures.append("products: missing or not a list")
+        products = []
+    names = [product.get("product") if isinstance(product, dict) else None for product in products]
+    if _duplicates(names):
+        failures.append(f"products: duplicated {_duplicates(names)}")
+    missing = sorted(set(wanted) - set(names))
+    unexpected = sorted((set(names) - set(wanted)), key=str)
+    if missing:
+        failures.append(f"products: missing {missing}")
+    if unexpected:
+        failures.append(f"products: unexpected {unexpected}")
     for product in products:
+        if not isinstance(product, dict):
+            failures.append("products: an entry is not an object")
+            continue
         name = product.get("product", "?")
-        if not product.get("records"):
+        records = product.get("records")
+        if not isinstance(records, int) or isinstance(records, bool) or records < 1:
             failures.append(f"{name}: no records delivered")
-        if product.get("decode_errors") != 0:
-            failures.append(f"{name}: decode_errors={product.get('decode_errors')}")
-        if product.get("token_errors") != 0:
-            failures.append(f"{name}: token_errors={product.get('token_errors')}")
+        for field in ("decode_errors", "token_errors"):
+            value = product.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value != 0:
+                failures.append(f"{name}: {field}={value}")
         if product.get("offsets_strictly_increasing") is not True:
             failures.append(f"{name}: offsets not strictly increasing")
         if product.get("resume_exactly_next_record") is not True:
             failures.append(f"{name}: resume did not deliver exactly the next record")
         if product.get("digest_python_equals_proto_path") is not True:
             failures.append(f"{name}: requirement digest differs between Python and proto path")
-        controls = list(product.get("controls") or [])
+        controls = product.get("controls")
+        controls = list(controls) if isinstance(controls, list) else []
         if ("REPLAYING" not in controls or "LIVE" not in controls
                 or controls.index("REPLAYING") > controls.index("LIVE")):
             failures.append(f"{name}: controls {controls} are not REPLAYING then LIVE")
-    negatives = result.get("negatives") or []
-    if len(negatives) != EXPECTED_NEGATIVES:
-        failures.append(f"negatives: {len(negatives)} of {EXPECTED_NEGATIVES} cases ran")
+    negatives = result.get("negatives")
+    if not isinstance(negatives, list):
+        failures.append("negatives: missing or not a list")
+        negatives = []
+    ids = [case.get("case") if isinstance(case, dict) else None for case in negatives]
+    if _duplicates(ids):
+        failures.append(f"negatives: duplicated {_duplicates(ids)}")
+    missing = sorted(set(NEGATIVE_CASES) - set(ids))
+    unexpected = sorted(set(ids) - set(NEGATIVE_CASES), key=str)
+    if missing:
+        failures.append(f"negatives: missing {missing}")
+    if unexpected:
+        failures.append(f"negatives: unexpected {unexpected}")
     for case in negatives:
-        if case.get("observed") != case.get("expected"):
-            failures.append(f"negative {case.get('case')}: expected {case.get('expected')}, "
-                            f"observed {case.get('observed')}")
+        if not isinstance(case, dict) or case.get("case") not in NEGATIVE_CASES:
+            continue
+        name = case["case"]
+        expected, observed = case.get("expected"), case.get("observed")
+        if expected != NEGATIVE_CASES[name]:
+            failures.append(f"negative {name}: expected {expected!r}, authoritative {NEGATIVE_CASES[name]}")
+        elif not isinstance(observed, str) or observed != expected:
+            failures.append(f"negative {name}: expected {expected}, observed {observed}")
     return failures
 
 
@@ -437,6 +507,9 @@ class Slice:
         client.delete(key)
         results.append({"case": "quota_exhausted_shared_redis", "expected": "RESOURCE_EXHAUSTED", "observed": code,
                         "pass": code == "RESOURCE_EXHAUSTED"})
+        ran = {result["case"]: result["expected"] for result in results}
+        if ran != NEGATIVE_CASES:
+            raise RuntimeError("negative matrix drifted from NEGATIVE_CASES; update both together")
         return results
 
 
@@ -587,7 +660,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     result = asyncio.run(main_async(args))
     probes = json.loads(Path(args.probes).read_text(encoding="utf-8"))
-    failures = slice_verdict(result, expected_products=len(probes))
+    failures = slice_verdict(result, expected_products=[probe["physical_key"] for probe in probes])
     result["verdict"] = {"pass": not failures, "failures": failures}
     result["sha256"] = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
     Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True) + "\n", encoding="utf-8")

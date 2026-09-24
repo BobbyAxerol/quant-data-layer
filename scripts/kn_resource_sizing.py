@@ -72,14 +72,16 @@ def _compact_bar(envelope) -> bytes:
     return json.dumps(row, separators=(",", ":")).encode()
 
 
-# Product identity: fixed by the logical product key / binding, so it is held
-# once per product (cache header), never per row. Every other envelope and
-# Bar field is carried by the contract-complete row (KN-1 review F5).
-PRODUCT_IDENTITY_FIELDS = frozenset({
-    "schema_name", "schema_major", "schema_minor", "instrument_uid", "instrument_id", "venue", "market",
-    "product_type", "native_symbol", "provider", "source_id", "source_role",
-})
-BAR_IDENTITY_FIELDS = frozenset({"interval"})
+# Only the fields that make up the logical product key (LPK) are left out of a
+# BAR cache row: instrument uid, venue, market and the bar interval. They are
+# restored from the product's LPK, which is the cache key itself, so no header
+# is stored. Every other field - schema version, provider, source id/role,
+# native symbol, instrument id/revision and all provenance - can change within
+# one product's history (schema/source transitions, repairs) and stays in the
+# row (KN-1 review R2 F5: a per-product header copied from one row is not
+# lossless for the others).
+LPK_DERIVED_ENVELOPE_FIELDS = ("instrument_uid", "venue", "market")
+LPK_DERIVED_BAR_FIELDS = ("interval",)
 # State-contract integers are sized at their widest encodable value (2^63-1),
 # so the measured bytes are an upper bound, not a sample of small numbers.
 WIDEST_U63 = 2**63 - 1
@@ -91,8 +93,8 @@ def _complete_bar(envelope, payload: bytes) -> bytes:
     Values (exact decimal text), revision/final/origin/lifecycle and the
     replaced event, every provenance and quality field of the envelope, and
     the state contract (canonical content hash, source offset, materializer
-    epoch). Only product identity is left to the per-product header; a proto
-    field that is neither mapped here nor identity fails the measurement.
+    epoch). Only the LPK-derived fields are left out; a proto field that is
+    neither mapped here nor LPK-derived fails the measurement.
     """
 
     from qdl.runtime.stable_source import _decimal_text
@@ -110,6 +112,10 @@ def _complete_bar(envelope, payload: bytes) -> bytes:
         "supersedes_event_id": bar.supersedes_event_id.hex() if bar.HasField("supersedes_event_id") else None,
     }
     envelope_row = {
+        "schema_name": envelope.schema_name, "schema_major": int(envelope.schema_major),
+        "schema_minor": int(envelope.schema_minor), "instrument_id": envelope.instrument_id,
+        "product_type": envelope.product_type, "native_symbol": envelope.native_symbol,
+        "provider": envelope.provider, "source_id": envelope.source_id, "source_role": int(envelope.source_role),
         "event_id": envelope.event_id.hex(), "instrument_revision": int(envelope.instrument_revision),
         "lease_epoch": int(envelope.lease_epoch), "source_event_time_ns": int(envelope.source_event_time_ns),
         "received_at_ns": int(envelope.received_at_ns), "normalized_at_ns": int(envelope.normalized_at_ns),
@@ -125,11 +131,11 @@ def _complete_bar(envelope, payload: bytes) -> bytes:
         "canonical_payload_hash": envelope.canonical_payload_hash.hex(),
         "raw_capture_id": envelope.raw_capture_id.hex(),
     }
-    covered = set(envelope_row) | PRODUCT_IDENTITY_FIELDS | {"bar"}
+    covered = set(envelope_row) | set(LPK_DERIVED_ENVELOPE_FIELDS) | {"bar"}
     missing = [f.name for f in envelope.DESCRIPTOR.fields
                if f.name not in covered and f.containing_oneof is None]
     missing += [f"bar.{f.name}" for f in bar.DESCRIPTOR.fields
-                if f.name not in set(bar_row) | BAR_IDENTITY_FIELDS]
+                if f.name not in set(bar_row) | set(LPK_DERIVED_BAR_FIELDS)]
     if missing:
         raise ValueError(f"contract-complete BAR row does not map {missing}")
     state = {"content_sha256": hashlib.sha256(payload).hexdigest(), "source_offset": WIDEST_U63,
@@ -146,32 +152,46 @@ def _canonical_state(payload: bytes) -> bytes:
             + hashlib.sha256(payload).digest() + payload)
 
 
-def _identity_stripped_state(envelope, payload: bytes) -> tuple[bytes, bool]:
-    """Lossless given the per-product header: the canonical envelope with the
-    product-identity fields cleared, behind the same 48-byte state trailer.
+def _state_trailer(payload: bytes) -> bytes:
+    return WIDEST_U63.to_bytes(8, "big") + WIDEST_U63.to_bytes(8, "big") + hashlib.sha256(payload).digest()
 
-    Returns the row and whether merging the identity back reproduces the
-    canonical bytes exactly (the measurement counts every mismatch).
+
+def lpk_row(envelope, payload: bytes, lpk) -> bytes:
+    """Encode one BAR row of product ``lpk``: the canonical envelope without
+    the LPK-derived fields, behind the 48-byte state trailer.
+
+    A row whose uid/venue/market/interval differ from the key belongs to
+    another product and is refused (never silently re-keyed).
     """
 
+    expected = {"instrument_uid": lpk.instrument_uid, "venue": lpk.venue, "market": lpk.market}
+    for name, value in expected.items():
+        if getattr(envelope, name) != value:
+            raise ValueError(f"row {name}={getattr(envelope, name)!r} is not product {lpk.encode()}")
+    if envelope.WhichOneof("payload") != "bar" or envelope.bar.interval != lpk.qualifier:
+        raise ValueError(f"row is not a BAR of interval {lpk.qualifier}")
     stripped = type(envelope)()
     stripped.CopyFrom(envelope)
-    header = type(envelope)()
-    for name in PRODUCT_IDENTITY_FIELDS:
+    for name in LPK_DERIVED_ENVELOPE_FIELDS:
         stripped.ClearField(name)
-    for name in BAR_IDENTITY_FIELDS:
+    for name in LPK_DERIVED_BAR_FIELDS:
         stripped.bar.ClearField(name)
-    for field in envelope.DESCRIPTOR.fields:
-        if field.name in PRODUCT_IDENTITY_FIELDS:
-            setattr(header, field.name, getattr(envelope, field.name))
-    for name in BAR_IDENTITY_FIELDS:
-        setattr(header.bar, name, getattr(envelope.bar, name))
-    body = stripped.SerializeToString()
-    rebuilt = type(envelope)()
-    rebuilt.CopyFrom(type(envelope).FromString(body))
-    rebuilt.MergeFrom(header)
-    trailer = WIDEST_U63.to_bytes(8, "big") + WIDEST_U63.to_bytes(8, "big") + hashlib.sha256(payload).digest()
-    return trailer + body, rebuilt.SerializeToString() == payload
+    return _state_trailer(payload) + stripped.SerializeToString()
+
+
+def lpk_row_decode(row: bytes, lpk, envelope_type) -> bytes:
+    """The shared-key decoder: restore the canonical bytes of any row of the
+    product from the LPK alone, and prove them against the stored hash."""
+
+    envelope = envelope_type.FromString(row[48:])
+    envelope.instrument_uid = lpk.instrument_uid
+    envelope.venue = lpk.venue
+    envelope.market = lpk.market
+    envelope.bar.interval = lpk.qualifier
+    payload = envelope.SerializeToString()
+    if hashlib.sha256(payload).digest() != row[16:48]:
+        raise ValueError("decoded row does not match its canonical content hash")
+    return payload
 
 
 def payloads(sample_path: Path, rows_per_key: int, render_rows: int) -> dict[str, Any]:
@@ -278,7 +298,13 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
                                      "public_row_bytes": _dist([len(x) for x in public]),
                                      "canonical_row_bytes": _dist([len(x) for x in protobufs])}
             if feed == "BAR":
-                compact, complete, canonical_state, stripped, open_ms = [], [], [], [], []
+                from qdl.projection.state_contract import LogicalProductKey
+
+                identity = binding.instrument.identity
+                lpk = LogicalProductKey.for_product(
+                    environment="paper", venue=identity.venue, market=identity.market,
+                    instrument_uid=identity.instrument_uid, feed="BAR", interval=binding.interval)
+                compact, complete, canonical_state, lpk_rows, open_ms = [], [], [], [], []
                 mismatches = 0
                 for payload in protobufs:
                     envelope = market_data_pb2.EventEnvelope.FromString(payload)
@@ -286,15 +312,24 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
                         compact.append(_compact_bar(envelope))
                         complete.append(_complete_bar(envelope, payload))
                         canonical_state.append(_canonical_state(payload))
-                        row, exact = _identity_stripped_state(envelope, payload)
-                        stripped.append(row)
+                        row = lpk_row(envelope, payload, lpk)
+                        lpk_rows.append(row)
+                        # Decoded with the one product key shared by every row.
+                        try:
+                            exact = lpk_row_decode(row, lpk, market_data_pb2.EventEnvelope) == payload
+                        except ValueError:
+                            exact = False
                         mismatches += 0 if exact else 1
                         open_ms.append(int(envelope.bar.open_time_ns // 1_000_000))
                 entry["compact_row_bytes"] = _dist([len(x) for x in compact])
                 entry["complete_row_bytes"] = _dist([len(x) for x in complete])
                 entry["canonical_state_row_bytes"] = _dist([len(x) for x in canonical_state])
-                entry["identity_stripped_state_row_bytes"] = _dist([len(x) for x in stripped])
-                entry["identity_stripped_roundtrip_mismatches"] = mismatches
+                entry["lpk_state_row_bytes"] = _dist([len(x) for x in lpk_rows])
+                entry["lpk_state_shared_key_decode_mismatches"] = mismatches
+                entry["lpk_state_distinct_values"] = {
+                    name: len({getattr(market_data_pb2.EventEnvelope.FromString(p), name) for p in protobufs})
+                    for name in ("schema_minor", "provider", "source_id", "source_role", "native_symbol",
+                                 "instrument_revision", "adapter_version", "normalizer_version")}
                 sample["bar"] = {
                     "binding": binding.binding_id,
                     "open_ms": [int(market_data_pb2.EventEnvelope.FromString(p).bar.open_time_ns // 1_000_000)
@@ -306,7 +341,7 @@ def _render_samples(catalog, render_rows: int) -> tuple[dict[str, Any], dict[str
                     "final_open_ms": open_ms,
                     "complete": [x.decode() for x in complete],
                     "canonical_state": [x.hex() for x in canonical_state],
-                    "identity_stripped_state": [x.hex() for x in stripped],
+                    "lpk_state": [x.hex() for x in lpk_rows],
                 }
             else:
                 sample["latest"][feed] = {"canonical": protobufs[-1].hex(), "public": public[-1].decode()}
@@ -338,17 +373,18 @@ class _Namespace:
 
 def _bar_rows(bar: dict[str, Any], encoding: str) -> tuple[list[int], list[bytes]]:
     values = bar[encoding]
-    if encoding in ("compact", "complete", "canonical_state", "identity_stripped_state"):
+    if encoding in ("compact", "complete", "canonical_state", "lpk_state"):
         opens = bar["final_open_ms"] if "final_open_ms" in bar else bar["open_ms"]
     else:
         opens = bar["open_ms"]
-    binary = encoding in ("canonical", "canonical_state", "identity_stripped_state")
+    binary = encoding in ("canonical", "canonical_state", "lpk_state")
     rows = [bytes.fromhex(value) if binary else value.encode() for value in values]
     count = min(len(opens), len(rows))
     return opens[:count], rows[:count]
 
 
-def redis_memory_with(client, sample: dict[str, Any], run_id: str) -> dict[str, Any]:
+def redis_memory_with(client, sample: dict[str, Any], run_id: str,
+                      buckets: Sequence[int] = (64, 120)) -> dict[str, Any]:
     """Measure BAR/latest layouts on ``client``; refuses a non-empty target.
 
     Deletes exactly the keys it wrote, also on error; ``FLUSHALL``/``FLUSHDB``
@@ -366,7 +402,7 @@ def redis_memory_with(client, sample: dict[str, Any], run_id: str) -> dict[str, 
     try:
         # Index (ZSET, score = open ms) + payload HASH, per encoding.
         for encoding in ("canonical", "public", "compact", "complete", "canonical_state",
-                         "identity_stripped_state"):
+                         "lpk_state"):
             if encoding not in bar:
                 continue
             opens, rows = _bar_rows(bar, encoding)
@@ -399,11 +435,13 @@ def redis_memory_with(client, sample: dict[str, Any], run_id: str) -> dict[str, 
         # Per-product hash buckets that stay listpack-encoded when every row
         # fits hash-max-listpack-value; the encoding of every bucket is read
         # back, so a row that silently converts a bucket is visible.
-        for encoding in ("compact", "complete", "canonical_state", "identity_stripped_state"):
+        for encoding in ("compact", "complete", "canonical_state", "lpk_state"):
             if encoding not in bar:
                 continue
             opens, rows = _bar_rows(bar, encoding)
-            for bucket in (64, 120):
+            # Bucket bytes land in allocator size classes, so bytes/row depends
+            # on the bucket size; several sizes are measured, none assumed.
+            for bucket in buckets:
                 before = used()
                 pipe = client.pipeline(transaction=False)
                 names = []
@@ -475,12 +513,12 @@ def string_key_usage_with(client, value_bytes: dict[str, int], run_id: str) -> d
     return result
 
 
-def redis_memory(sample_path: Path, host: str, port: int) -> dict[str, Any]:
+def redis_memory(sample_path: Path, host: str, port: int, buckets: Sequence[int] = (64, 120)) -> dict[str, Any]:
     import redis
 
     sample = json.loads(sample_path.read_text(encoding="utf-8"))
     client = redis.Redis(host=host, port=port)
-    return redis_memory_with(client, sample, run_id=f"{time.time_ns():x}")
+    return redis_memory_with(client, sample, run_id=f"{time.time_ns():x}", buckets=buckets)
 
 
 # ------------------------------------------------------------------- runtime
@@ -560,6 +598,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--host", default="127.0.0.1")
     r.add_argument("--port", type=int, default=6379)
+    r.add_argument("--buckets", default="64,120", help="comma-separated opens per hash bucket")
     k = sub.add_parser("redis-keys")
     k.add_argument("--value-bytes", required=True, help="JSON object name -> value length in bytes")
     k.add_argument("--out", type=Path, required=True)
@@ -573,7 +612,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.part == "payloads":
         payload = payloads(args.sample, args.rows_per_key, args.render_rows)
     elif args.part == "redis":
-        payload = redis_memory(args.sample, args.host, args.port)
+        payload = redis_memory(args.sample, args.host, args.port,
+                               buckets=tuple(int(item) for item in args.buckets.split(",")))
     elif args.part == "redis-keys":
         import redis
 

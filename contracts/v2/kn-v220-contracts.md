@@ -111,6 +111,16 @@ in-progress -> latest-apply by source coordinate; two final: higher revision
 DUPLICATE, equal and different -> CONFLICT (never last-write-wins). Revision
 facts are append-only; the current index holds one row per open time.
 
+**BAR cache row** (current index, one row per open time): the canonical
+EventEnvelope bytes without the LPK-derived fields (instrument uid, venue,
+market, bar interval), behind a 48-byte trailer (source offset u64,
+materializer epoch u64, SHA-256 of the canonical bytes). Decoding restores
+those four fields from the product's LPK and must reproduce the canonical
+bytes whose hash is stored; any other field (schema version, provider, source
+id/role, symbol, instrument id/revision, provenance) may differ between rows of
+one product and is always kept in the row. A row whose uid/venue/market/
+interval differ from its key is refused.
+
 **Cache read state:** no published ready generation ->
 NOT_READY_NO_GENERATION; entry missing -> NOT_READY_MISSING; entry from
 another generation -> NOT_READY_OTHER_GENERATION; else READY. Missing data is
@@ -118,14 +128,34 @@ typed, never a default value.
 
 ## 5. Rebuild epoch and read consistency (binding on KN-3/KN-4)
 
-- A cache rebuild allocates a new generation, captures the readable committed
-  canonical boundaries, restores latest state and BAR retention floors from
-  the state topics, tails to the boundary, verifies coverage and publishes the
-  ready generation atomically. The cache generation is not the public cursor
-  generation: a cache rebuild does not reset consumers whose cursor contract
-  is still valid.
-- Payload, quality, watermark and generation of one product are read from one
-  versioned view. A multi-page warmup pins the generation or detects a change
-  and retries within a bound. `require_all` batches keep per-item watermarks;
-  they are not an atomic global snapshot.
+Frozen after Astra review R2 (2026-09-24): the ready generation is **per
+product**, not global. Guide 18.4.4 allows it because every public read is
+coherent per product and no read promises a cross-product snapshot.
+
+- **Per-product ready pointer and fence.** Each logical product key has one
+  ready pointer `(generation, fence)`. A rebuild of a product allocates a new
+  generation, captures that product's committed canonical boundary, restores
+  latest state / BAR retention floor from the state topics, tails to the
+  boundary, verifies coverage, then publishes the pointer atomically (one
+  compare-and-set on the pointer; the fence increases monotonically). A whole
+  cache rebuild is a sequence of product swaps, one product in staging at a
+  time.
+- **Stale writers are rejected.** Every cache write carries the product's
+  generation and fence; a write whose fence is lower than the pointer's, or
+  whose generation is not the pointer's staging/ready generation, is refused
+  (typed, counted). A writer never re-publishes a pointer it did not hold.
+- **No mixed view.** Payload, quality, watermark and generation of one product
+  are read from one versioned view. A multi-page warmup pins the product's
+  generation; if the pointer changes, it detects the change and retries
+  within a bound (at most the warmup deadline, <= 120 s), else fails typed. It
+  never merges rows of two generations. `require_all` batches keep per-item
+  watermarks; they are not an atomic global snapshot, and during a full
+  rebuild different products may be at different generations.
+- **Memory is counted until reclaimed.** A superseded product generation is
+  deleted after its swap and counted against the cache budget until its
+  memory is physically reclaimed; the next product's staging starts only
+  after that. Peak = steady + two largest products (budget `market_cache`).
+- **Cache generation is not the cursor generation.** A cache generation or
+  fence never enters a public cursor; a rebuild does not reset consumers whose
+  cursor contract is still valid, and cursor v3 validity never depends on it.
 - Readiness is per product: a global flag never hides a missing key.

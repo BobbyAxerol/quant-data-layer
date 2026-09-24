@@ -2,9 +2,9 @@
 
 F6: ``redis_memory_with`` refuses a non-empty target, writes only under its
 per-run namespace, deletes exactly what it wrote (also on error) and never
-sends FLUSHALL/FLUSHDB. F5: the BAR row measured for the budget maps every
-envelope and Bar field (identity excepted), and the canonical alternative is
-lossless.
+sends FLUSHALL/FLUSHDB. F5 (R2): the BAR row keeps every field except the
+LPK-derived ones, and one product key restores every row of a mixed history
+byte-for-byte - schema/source/provider transitions, correction, rebuild.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import unittest
 from unittest import mock
 
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.projection.state_contract import LogicalProductKey
 
 ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location("kn_resource_sizing", ROOT / "scripts/kn_resource_sizing.py")
@@ -96,7 +97,7 @@ def _sample() -> dict:
                     "canonical": ["0a01", "0a02", "0a03"], "public": ['{"a":1}', '{"a":2}', '{"a":3}'],
                     "compact": ['{"c":1}', '{"c":2}'], "complete": ['{"x":1}', '{"x":2}'],
                     "canonical_state": ["00" * 49, "01" * 49],
-                    "identity_stripped_state": ["00" * 49, "02" * 49]},
+                    "lpk_state": ["00" * 49, "02" * 49]},
             "latest": {"TRADE": {"canonical": "0a0b", "public": '{"t":1}'}}}
 
 
@@ -173,6 +174,42 @@ def _envelope() -> tuple[market_data_pb2.EventEnvelope, bytes]:
     return envelope, envelope.SerializeToString()
 
 
+LPK = LogicalProductKey.for_product(
+    environment="paper", venue="OKX", market="SWAP", instrument_uid="fb26214c-7b9b-5961-95b2-55154755af0f",
+    feed="BAR", interval="1m")
+
+
+def _history() -> list[tuple[str, bytes]]:
+    """One product's history across the transitions Astra reproduced (R2):
+    schema minor, source id, provider - plus source role, native symbol,
+    instrument id/revision, schema name and a repair revision."""
+
+    base, _ = _envelope()
+    base.schema_minor, base.provider, base.source_id = 1, "okx", "okx-business-001"
+    variants = [("base", {}), ("schema_minor", {"schema_minor": 2}),
+                ("source_id", {"source_id": "okx-business-002"}), ("provider", {"provider": "okx-backup"}),
+                ("source_role", {"source_role": 2}), ("native_symbol", {"native_symbol": "DOGE-USDT-SWAP-v2"}),
+                ("instrument", {"instrument_id": "okx:DOGE-USDT-SWAP:2", "instrument_revision": 2}),
+                ("schema_name", {"schema_name": "qdl.marketdata.v2.next"})]
+    history = []
+    for index, (name, changes) in enumerate(variants):
+        envelope = market_data_pb2.EventEnvelope()
+        envelope.CopyFrom(base)
+        envelope.event_id = bytes([index]) * 16
+        envelope.bar.open_time_ns += index * 60_000_000_000
+        for field, value in changes.items():
+            setattr(envelope, field, value)
+        history.append((name, envelope.SerializeToString()))
+    repair = market_data_pb2.EventEnvelope()
+    repair.CopyFrom(base)
+    repair.event_id = b"\x77" * 16
+    repair.bar.revision = 2
+    repair.bar.supersedes_event_id = bytes(16)
+    repair.bar.close.source_text, repair.bar.close.mantissa, repair.bar.close.scale = "1.80", 180, 2
+    history.append(("correction", repair.SerializeToString()))
+    return history
+
+
 class ContractCompleteRowTests(unittest.TestCase):
     def test_every_non_identity_field_is_carried(self):
         import json
@@ -190,20 +227,73 @@ class ContractCompleteRowTests(unittest.TestCase):
 
     def test_an_unmapped_proto_field_fails_the_measurement(self):
         envelope, payload = _envelope()
-        with mock.patch.object(SIZING, "PRODUCT_IDENTITY_FIELDS", frozenset({"schema_name"})):
+        with mock.patch.object(SIZING, "LPK_DERIVED_ENVELOPE_FIELDS", ("instrument_uid",)):
             with self.assertRaises(ValueError) as raised:
                 SIZING._complete_bar(envelope, payload)
-        self.assertIn("instrument_uid", str(raised.exception))
+        self.assertIn("venue", str(raised.exception))
 
-    def test_identity_stripped_row_round_trips_exactly(self):
-        envelope, payload = _envelope()
-        row, exact = SIZING._identity_stripped_state(envelope, payload)
-        self.assertTrue(exact)
-        self.assertLess(len(row), len(SIZING._canonical_state(payload)))
-        stripped = market_data_pb2.EventEnvelope.FromString(row[48:])
-        self.assertEqual(stripped.instrument_uid, "")
-        self.assertEqual(stripped.bar.interval, "")
-        self.assertEqual(stripped.bar.revision, 1)
+    def test_mixed_history_decodes_exactly_with_the_one_product_key(self):
+        # Every row of one product, across schema/source/provider transitions
+        # and a correction, is restored byte-for-byte from the LPK alone.
+        for name, payload in _history():
+            with self.subTest(name):
+                envelope = market_data_pb2.EventEnvelope.FromString(payload)
+                row = SIZING.lpk_row(envelope, payload, LPK)
+                decoded_bytes = SIZING.lpk_row_decode(row, LPK, market_data_pb2.EventEnvelope)
+                self.assertEqual(decoded_bytes, payload)
+                self.assertEqual(row[16:48], hashlib.sha256(payload).digest())
+                decoded = market_data_pb2.EventEnvelope.FromString(decoded_bytes)
+                for field in ("schema_name", "schema_minor", "provider", "source_id", "source_role",
+                              "native_symbol", "instrument_id", "instrument_revision"):
+                    self.assertEqual(getattr(decoded, field), getattr(envelope, field), field)
+
+    def test_rebuild_from_decoded_rows_is_idempotent(self):
+        rows = [SIZING.lpk_row(market_data_pb2.EventEnvelope.FromString(p), p, LPK) for _, p in _history()]
+        decoded = [SIZING.lpk_row_decode(r, LPK, market_data_pb2.EventEnvelope) for r in rows]
+        rebuilt = [SIZING.lpk_row(market_data_pb2.EventEnvelope.FromString(p), p, LPK) for p in decoded]
+        self.assertEqual(rebuilt, rows)
+        self.assertEqual(decoded, [p for _, p in _history()])
+
+    def test_a_header_copied_from_one_row_would_not_be_lossless(self):
+        # The R2 counterexample, kept as a guard: provider is not part of the
+        # LPK, so the row must carry it; restoring the first row's provider
+        # into the second row changes its bytes.
+        history = dict(_history())
+        first = market_data_pb2.EventEnvelope.FromString(history["base"])
+        second = market_data_pb2.EventEnvelope.FromString(history["provider"])
+        second.provider = first.provider
+        self.assertNotEqual(second.SerializeToString(), history["provider"])
+        row = SIZING.lpk_row(market_data_pb2.EventEnvelope.FromString(history["provider"]),
+                             history["provider"], LPK)
+        self.assertEqual(market_data_pb2.EventEnvelope.FromString(row[48:]).provider, "okx-backup")
+
+    def test_a_row_of_another_product_is_refused(self):
+        _, payload = _history()[0]
+        envelope = market_data_pb2.EventEnvelope.FromString(payload)
+        for field, value in (("venue", "BINANCE"), ("market", "USDM"), ("instrument_uid", "x")):
+            other = market_data_pb2.EventEnvelope()
+            other.CopyFrom(envelope)
+            setattr(other, field, value)
+            with self.subTest(field), self.assertRaises(ValueError):
+                SIZING.lpk_row(other, other.SerializeToString(), LPK)
+        other = market_data_pb2.EventEnvelope()
+        other.CopyFrom(envelope)
+        other.bar.interval = "5m"
+        with self.assertRaises(ValueError):
+            SIZING.lpk_row(other, other.SerializeToString(), LPK)
+
+    def test_a_tampered_row_or_wrong_key_fails_the_hash(self):
+        _, payload = _history()[0]
+        row = SIZING.lpk_row(market_data_pb2.EventEnvelope.FromString(payload), payload, LPK)
+        other_key = LogicalProductKey.for_product(
+            environment="paper", venue="BINANCE", market="USDM", instrument_uid=LPK.instrument_uid,
+            feed="BAR", interval="1m")
+        with self.assertRaises(ValueError):
+            SIZING.lpk_row_decode(row, other_key, market_data_pb2.EventEnvelope)
+        tampered = bytearray(row)
+        tampered[20] ^= 1  # inside the stored content hash
+        with self.assertRaises(ValueError):
+            SIZING.lpk_row_decode(bytes(tampered), LPK, market_data_pb2.EventEnvelope)
 
     def test_canonical_state_row_is_lossless(self):
         _, payload = _envelope()
