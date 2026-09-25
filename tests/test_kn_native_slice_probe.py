@@ -464,3 +464,46 @@ class ReadViewVerdictTests(unittest.TestCase):
         for code, details in (("UNAVAILABLE", "DEPENDENCY_UNAVAILABLE:down"), ("INTERNAL", "boom"),
                               ("FAILED_PRECONDITION", "no code here"), ("INVALID_ARGUMENT", "INVALID_ARGUMENT:x")):
             self.assertFalse(verdict("GetSnapshot", True, code=code, details=details)[0], code)
+
+
+@unittest.skipUnless(__import__("os").environ.get("QDL_KN_TEST_KAFKA"), "SKIPPED LOUDLY: QDL_KN_TEST_KAFKA is not set")
+class WindowOracleKafkaTests(unittest.TestCase):
+    """KN-4 D41: the handoff oracle reads a fixed window, committed only."""
+
+    def test_the_window_oracle_holds_exactly_the_committed_records_inside_the_boundary(self):
+        import os
+        import time
+        import uuid
+
+        from confluent_kafka import Producer
+        from confluent_kafka.admin import AdminClient, NewTopic
+
+        bootstrap = os.environ["QDL_KN_TEST_KAFKA"]
+        topic = f"kn4-oracle-{uuid.uuid4().hex[:8]}"
+        admin = AdminClient({"bootstrap.servers": bootstrap})
+        for future in admin.create_topics([NewTopic(topic, 2, 1)]).values():
+            future.result(20)
+        try:
+            producer = Producer({"bootstrap.servers": bootstrap, "transactional.id": f"kn4-o-{uuid.uuid4().hex}"})
+            producer.init_transactions(20)
+            now = int(time.time() * 1000)
+
+            def batch(rows, *, abort=False):
+                producer.begin_transaction()
+                for partition, key, stamp in rows:
+                    producer.produce(topic, key=key, value=b"v-" + key, partition=partition, timestamp=stamp)
+                producer.flush(20)
+                (producer.abort_transaction if abort else producer.commit_transaction)(20)
+
+            batch([(0, b"early", now - 60_000)])                   # before the window
+            batch([(0, b"inside-a", now), (1, b"inside-b", now)])
+            batch([(1, b"aborted", now)], abort=True)
+            ends = PROBE.canonical_end_offsets(bootstrap, topic)
+            batch([(0, b"after-boundary", now)])                   # after the boundary
+            records = PROBE.kafka_oracle_window(bootstrap, topic, since_ms=now - 1_000, ends=ends)
+            self.assertEqual(sorted(records), ["inside-a", "inside-b"])
+            self.assertEqual(records["inside-a"], [(0, 2, b"v-inside-a")])
+            self.assertEqual(records["inside-b"], [(1, 0, b"v-inside-b")])
+        finally:
+            for future in admin.delete_topics([topic]).values():
+                future.result(20)

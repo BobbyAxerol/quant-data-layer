@@ -57252,6 +57252,38 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   137 before printing; rerun per module OK); full suite 2,189 OK / 10 skipped |
   `tested locally`; runtime NONE | next: D40 (alpha inventory, sealed
   binding, candidate image), then the D38/D41 watched packet.
+- 2026-09-25: **K4 slice 12 (D41 handoff by a fixed boundary, whole window)**
+  | this commit | `scripts/phase3_consumer_load_acceptance.py` kn4-matrix: the
+  sequential "at least one event within 60/75 s" handoff is replaced by
+  `_kn4_fixed_window_handoffs` - every (replica x venue x feed) handoff opens
+  at once through the real SDK (`warmup_then_stream`), streams for one fixed
+  90 s window, the boundary is every canonical partition's end offset at the
+  close (`canonical_end_offsets`), the oracle is the isolated canonical log
+  from 120 s before the window to that boundary
+  (`kafka_oracle_window`, read_committed, assign mode), sessions drain up to
+  30 s to reach the last expected offset, and `kn4_handoff_verdict` judges
+  every record after the snapshot watermark and inside the boundary with the
+  KN-2 rules (`expected_delivery` / `judge_subscription`: no missing
+  lossless record, coalesced records only when superseded, no duplicate,
+  reorder or unexpected offset, first event after the watermark). A product
+  without a record in the window is `quiet_live`, reported separately, never
+  an event PASS; no oracle broker -> every handoff FAIL (never skipped).
+  Profile field `oracle_bootstrap` (shadow scope only, never `kafka1..3`)
+  reaches the inner config for kn4-matrix only. `scripts/kn_native_slice_probe.py`
+  gains `canonical_end_offsets` and `kafka_oracle_window`. Tests:
+  `WindowOracleKafkaTests` on the disposable broker (records before the
+  window, an aborted batch and records after the boundary excluded; committed
+  offsets exact), `Kn4FixedWindowHandoffVerdictTests` (4, real golden TRADE
+  record: whole window in order once, a missing tail inside the boundary
+  fails, after-boundary events counted not judged, watermark start, quiet
+  product), profile/inner-config cases; `test_phase3_consumer_load_driver` +
+  `test_phase3_consumer_load` + `test_phase3_target_driver` 63 OK,
+  `test_kn_native_slice_probe` 35 OK | `tested locally`; runtime NONE |
+  open in D41: the KN-2 probe matrix still reads the whole canonical topic
+  (`kafka_oracle`) and labels latency as capture replay - with the mirror it
+  needs the window oracle and the production-record-timestamp -> client
+  quantity (the mirror commit log carries `source_timestamp_ms`; it is the
+  production record's CreateTime, reported as such, never as a commit time).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

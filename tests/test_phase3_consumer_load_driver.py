@@ -108,9 +108,26 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
     def test_the_kn4_matrix_inner_config_carries_the_target_budget(self):
         config = {"mode": "kn4-matrix", "logical_sessions": 50, "duration_seconds": 0, "catalog": "c",
                   "acquisition": "a", "queries": [], "stream_targets": [], "identities": [],
-                  "budget": {}, "final": False}
+                  "budget": {}, "final": False, "oracle_bootstrap": "kn4-kafka:9092"}
         with mock.patch.dict(_MODULE.os.environ, {"QDL_PHASE3_LOAD_CONFIG": json.dumps(config)}):
             self.assertEqual(_MODULE._inside_config()["mode"], "kn4-matrix")
+        # A target mode never carries an oracle.
+        target = {**config, "mode": "target"}
+        with mock.patch.dict(_MODULE.os.environ, {"QDL_PHASE3_LOAD_CONFIG": json.dumps(target)}):
+            with self.assertRaises(ValueError):
+                _MODULE._inside_config()
+
+    def test_the_handoff_oracle_is_a_shadow_only_isolated_broker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = self._profile(Path(temporary))
+            self.assertIsNone(_MODULE.validate_profile(raw)["oracle_bootstrap"])
+            shadow = {**raw, "scope": "shadow", "oracle_bootstrap": "kn4-kafka:9092"}
+            self.assertEqual(_MODULE.validate_profile(shadow)["oracle_bootstrap"], "kn4-kafka:9092")
+            for bad in ({**raw, "oracle_bootstrap": "kn4-kafka:9092"},        # production scope
+                        {**shadow, "oracle_bootstrap": "kafka1:9092"},        # a production broker
+                        {**shadow, "oracle_bootstrap": "kn4-kafka"}):         # no port
+                with self.assertRaises(ValueError, msg=str(bad)):
+                    _MODULE.validate_profile(bad)
 
     def test_profile_rejects_identity_path_outside_managed_state(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -554,6 +571,57 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
             script.index("chown -R 10001:10001 /tmp/identity"),
             script.index("exec setpriv"),
         )
+
+
+
+
+class Kn4FixedWindowHandoffVerdictTests(unittest.TestCase):
+    """KN-4 D41: the handoff is judged over one fixed window against the
+    canonical log, with the KN-2 rules, from real golden TRADE records."""
+
+    @classmethod
+    def setUpClass(cls):
+        import base64
+
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.query import ConsumerGrade, DataRequirement, FeedType
+
+        golden = json.loads((_SCRIPT.parents[1] / "contracts/golden/kn_v220/state_codec.json").read_text())
+        trade = next(base64.b64decode(item["canonical_b64"]) for item in golden["records"] if item["tag"] == "trade")
+        envelope = market_data_pb2.EventEnvelope.FromString(trade)
+        cls.payload = trade
+        cls.product = SimpleNamespace(
+            feed=FeedType.TRADE, interval=None,
+            requirement=DataRequirement(instrument_uid=envelope.instrument_uid, feed=FeedType.TRADE,
+                                        consumer_grade=ConsumerGrade.ALPHA, source_policy_id="p"))
+        cls.probe = _MODULE._kn4_probe_module()
+        cls.now = int(envelope.source_event_time_ns) + 1_000_000_000
+
+    def verdict(self, delivered, offsets=(11, 12, 13), watermark=10, ends=None):
+        records = [(3, offset, self.payload) for offset in offsets]
+        return _MODULE.kn4_handoff_verdict(
+            self.probe, product=self.product, watermark=watermark, delivered=delivered, records=records,
+            ends=ends or {3: 14}, opened_ns=self.now, closed_ns=self.now)
+
+    def test_the_whole_window_must_arrive_in_order_once(self):
+        self.assertEqual(self.verdict([11, 12, 13])["status"], "PASS")
+        self.assertEqual(self.verdict([11, 13])["missing_lossless"], 1)
+        self.assertEqual(self.verdict([11, 12, 13])["expected"], 3)
+        for bad in ([11, 11, 12, 13], [12, 11, 13], [11, 12, 13, 9]):
+            self.assertEqual(self.verdict(bad)["status"], "FAIL", bad)
+        self.assertEqual(self.verdict([11, 12])["status"], "FAIL", "the tail inside the boundary is required")
+
+    def test_events_after_the_fixed_boundary_are_counted_not_judged(self):
+        result = self.verdict([11, 12, 13, 14, 15])
+        self.assertEqual((result["status"], result["delivered_after_boundary"]), ("PASS", 2))
+
+    def test_the_first_event_starts_after_the_snapshot_watermark(self):
+        self.assertEqual(self.verdict([10, 11, 12, 13], offsets=(10, 11, 12, 13))["status"], "FAIL")
+
+    def test_a_quiet_product_is_reported_separately(self):
+        result = self.verdict([], offsets=())
+        self.assertEqual((result["status"], result["coverage"]), ("PASS", "quiet_live"))
+        self.assertEqual(self.verdict([11], offsets=())["status"], "FAIL", "nothing may arrive from nowhere")
 
 
 if __name__ == "__main__":

@@ -883,6 +883,66 @@ def kafka_oracle(bootstrap: str, topic: str) -> dict[str, list[tuple[int, int, b
         consumer.close()
 
 
+def canonical_end_offsets(bootstrap: str, topic: str) -> dict[int, int]:
+    """The fixed window boundary: every partition's end offset now (KN-4 D41)."""
+    from confluent_kafka import Consumer, TopicPartition
+
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-oracle-{uuid.uuid4().hex[:8]}",
+                         "enable.auto.commit": False, "isolation.level": "read_committed"})
+    try:
+        partitions = sorted(consumer.list_topics(topic, timeout=10).topics[topic].partitions)
+        return {partition: consumer.get_watermark_offsets(TopicPartition(topic, partition), timeout=10)[1]
+                for partition in partitions}
+    finally:
+        consumer.close()
+
+
+def kafka_oracle_window(bootstrap: str, topic: str, *, since_ms: int,
+                        ends: dict[int, int]) -> dict[str, list[tuple[int, int, bytes]]]:
+    """Committed records per physical key in a fixed window (KN-4 D41): from
+    the first offset at or after ``since_ms`` up to, not including, the
+    boundary ``ends[partition]``. Bounded where ``kafka_oracle`` reads the
+    whole topic; read_committed, assign mode, never commits."""
+    from confluent_kafka import Consumer, TopicPartition
+
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-oracle-{uuid.uuid4().hex[:8]}",
+                         "enable.auto.commit": False, "isolation.level": "read_committed"})
+    try:
+        starts = consumer.offsets_for_times(
+            [TopicPartition(topic, partition, since_ms) for partition in sorted(ends)], timeout=10)
+        assigned = []
+        for item in starts:
+            if item.error is not None:
+                raise RuntimeError(f"oracle start lookup failed on partition {item.partition}")
+            start = item.offset if item.offset >= 0 else ends[item.partition]
+            if start < ends[item.partition]:
+                assigned.append(TopicPartition(topic, item.partition, start))
+        records: dict[str, list[tuple[int, int, bytes]]] = {}
+        if not assigned:
+            return records
+        consumer.assign(assigned)
+        pending = {tp.partition for tp in assigned}
+        deadline = time.monotonic() + 180
+        while pending and time.monotonic() < deadline:
+            message = consumer.poll(0.5)
+            if message is not None:
+                if message.error():
+                    raise RuntimeError(str(message.error()))
+                if message.offset() < ends[message.partition()]:
+                    key = (message.key() or b"").decode()
+                    records.setdefault(key, []).append(
+                        (message.partition(), message.offset(), message.value() or b""))
+            # Transaction markers advance the position without a message.
+            for tp in consumer.position([TopicPartition(topic, partition) for partition in pending]):
+                if tp.offset >= ends[tp.partition]:
+                    pending.discard(tp.partition)
+        if pending:
+            raise RuntimeError("oracle did not reach the window boundary of every partition")
+        return records
+    finally:
+        consumer.close()
+
+
 def _signature(envelope) -> tuple:
     return (tuple(sorted(envelope.quality_flags)), envelope.authority_revision, envelope.source_id,
             envelope.source_role, envelope.provider, envelope.source_session_id,

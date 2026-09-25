@@ -208,7 +208,9 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
     }
     # KN-4 K4.6: a shadow target names its own containers to watch; the scope
     # is recorded, never used to relax a gate.
-    optional = {"monitored_containers", "scope"}
+    # KN-4 D41: a shadow kn4-matrix names the isolated canonical broker its
+    # handoff oracle reads (never a production broker).
+    optional = {"monitored_containers", "scope", "oracle_bootstrap"}
     if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
     scope = raw.get("scope", "production")
@@ -220,6 +222,13 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         or any(not isinstance(item, str) or not _NETWORK_RE.fullmatch(item) for item in monitored)
     ):
         raise ValueError("Phase-3 profile monitored containers are invalid")
+    oracle = raw.get("oracle_bootstrap")
+    if oracle is not None and (
+        scope != "shadow" or not isinstance(oracle, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+:[0-9]+", oracle)
+        or oracle.split(":", 1)[0] in {"kafka1", "kafka2", "kafka3"}
+    ):
+        raise ValueError("Phase-3 oracle bootstrap is a shadow-only isolated broker")
     image = raw["image"]
     network = raw["network"]
     runtime_dir = raw["runtime_dir"]
@@ -280,6 +289,7 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "identities": normalized,
         "monitored_containers": list(monitored) if monitored is not None else None,
         "scope": scope,
+        "oracle_bootstrap": oracle,
     }
 
 
@@ -857,6 +867,8 @@ def _inside_config() -> dict[str, object]:
     }
     if str(value.get("mode", "")).startswith("target") or value.get("mode") == "kn4-matrix":
         expected |= {"budget", "final"}
+    if value.get("mode") == "kn4-matrix":
+        expected |= {"oracle_bootstrap"}
     if set(value) != expected:
         raise ValueError("Phase-3 inner configuration fields are invalid")
     return value
@@ -2614,6 +2626,150 @@ def _kn4_opens_contiguous(opens: list[int], interval_ns: int) -> bool:
     return bool(opens) and all(later - earlier == interval_ns for earlier, later in zip(opens, opens[1:]))
 
 
+_KN4_HANDOFF_WINDOW_S = 90.0
+_KN4_HANDOFF_DRAIN_S = 30.0
+
+
+def _kn4_probe_module():
+    """The KN-2 probe's certified oracle/judge (one owner of exactness)."""
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("kn_native_slice_probe", ROOT / "scripts/kn_native_slice_probe.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def kn4_handoff_verdict(probe, *, product, watermark: int, delivered: list[int],
+                        records: list[tuple[int, int, bytes]], ends: dict[int, int],
+                        opened_ns: int, closed_ns: int) -> dict[str, object]:
+    """One handoff over a fixed window (D41): every canonical record of the
+    product after the snapshot watermark and before the window boundary is
+    the expected sequence; the stream's delivered offsets inside the boundary
+    are judged by the KN-2 rules (lossless records may not be missing,
+    latest-state/lifecycle records only when superseded, no duplicate, no
+    reordering, nothing unexpected). A product without a record in the
+    window is `quiet_live`, reported separately, never an event PASS."""
+
+    partitions = {partition for partition, _offset, _value in records}
+    if len(partitions) > 1:
+        raise ValueError("one physical key spans several canonical partitions")
+    boundary = ends[next(iter(partitions))] if partitions else None
+    row = {"requirement": product.requirement, "feed": product.feed.value, "interval": product.interval}
+    expected = probe.expected_delivery(row, records, watermark, opened_ns, closed_ns)
+    inside = [offset for offset in delivered if boundary is None or offset < boundary]
+    counts = probe.judge_subscription(expected, inside)
+    coverage = probe.coverage_class(expected, inside)
+    if not expected and not inside:
+        coverage = "quiet_live"
+    failed = any(counts[name] for name in ("duplicates", "out_of_order", "unexpected", "missing_lossless",
+                                           "unsuperseded_drops", "delivered_filtered"))
+    failed = failed or coverage == "expected_but_missing" or (delivered and delivered[0] <= watermark)
+    return {"status": "FAIL" if failed else "PASS", "watermark": watermark, "boundary": boundary,
+            "expected": len(expected), "delivered_inside": len(inside),
+            "delivered_after_boundary": len(delivered) - len(inside), "coverage": coverage, **counts}
+
+
+async def _kn4_fixed_window_handoffs(*, config, identities, products_by_consumer, client_for):
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement
+
+    probe = _kn4_probe_module()
+    oracle = config.get("oracle_bootstrap")
+    cases = []
+    for url in config["queries"]:
+        replica = url.split("//", 1)[1].split(":", 1)[0]
+        for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
+            for feed, interval in _KN4_HANDOFF_FEEDS:
+                try:
+                    product = _probe_products(products_by_consumer, feed, interval)[venue][0]
+                except ValueError:
+                    continue
+                cases.append((url, replica, venue, consumer_id, product))
+    if not oracle:
+        return [{"replica": replica, "venue": venue, "feed": product.feed.value, "symbol": product.native_symbol,
+                 "status": "FAIL", "error": "no isolated oracle broker: the handoff window cannot be judged"}
+                for _url, replica, venue, _consumer_id, product in cases]
+    clients = {(url, consumer_id): client_for(url, consumer_id)
+               for url, _replica, _venue, consumer_id, _product in cases}
+    opened_ns = time.time_ns()
+    close_at = time.monotonic() + _KN4_HANDOFF_WINDOW_S
+    closed = asyncio.Event()
+    state: dict[int, dict[str, object]] = {}
+
+    async def run(index, url, consumer_id, product):
+        entry = state.setdefault(index, {"delivered": [], "watermark": None})
+        requirement = replace(sdk_requirement(product), warmup_limit=1 if product.feed.value == "BAR" else 0)
+        async with clients[(url, consumer_id)].warmup_then_stream(requirement) as session:
+            entry["watermark"] = session.warmup.watermark_offset
+            drain_until = None
+            while True:
+                if closed.is_set() and drain_until is None:
+                    drain_until = time.monotonic() + _KN4_HANDOFF_DRAIN_S
+                limit = (close_at if drain_until is None else drain_until) - time.monotonic()
+                if limit <= 0:
+                    if drain_until is None:
+                        await closed.wait()
+                        continue
+                    return
+                if drain_until is not None and entry.get("target") is not None and (
+                        entry["delivered"] and entry["delivered"][-1] >= entry["target"]):
+                    return
+                try:
+                    event = await asyncio.wait_for(session.__anext__(), timeout=min(limit, 1.0))
+                except asyncio.TimeoutError:
+                    continue
+                if hasattr(event, "logical_offset"):
+                    entry["delivered"].append(event.logical_offset)
+                    session.acknowledge(event)
+
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+
+    catalog = StableSourceCatalog.load(config["catalog"])
+    physical = {binding.binding_id: binding.partition_key for binding in catalog.bindings}
+    tasks = [asyncio.create_task(run(index, url, consumer_id, product))
+             for index, (url, _replica, _venue, consumer_id, product) in enumerate(cases)]
+    try:
+        await asyncio.sleep(max(0.0, close_at - time.monotonic()))
+        # The fixed boundary: every canonical partition's end at the close.
+        ends = await asyncio.to_thread(probe.canonical_end_offsets, oracle, "md.canonical.v2")
+        closed_ns = time.time_ns()
+        # Start well before the window so every record after any snapshot
+        # watermark is in the oracle (watermarks are canonical offsets).
+        records = await asyncio.to_thread(probe.kafka_oracle_window, oracle, "md.canonical.v2",
+                                          since_ms=opened_ns // 1_000_000 - 120_000, ends=ends)
+        for index, (_url, _replica, _venue, _consumer_id, product) in enumerate(cases):
+            entry = state.setdefault(index, {"delivered": [], "watermark": None})
+            entry["records"] = records.get(physical.get(product.binding_id, ""), [])
+            inside = [offset for _partition, offset, _value in entry["records"]]
+            entry["target"] = max(inside) if inside else None
+        closed.set()
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*(client.close() for client in clients.values()), return_exceptions=True)
+    results = []
+    for index, ((_url, replica, venue, _consumer_id, product), outcome) in enumerate(zip(cases, outcomes)):
+        entry = state.get(index, {})
+        base = {"replica": replica, "venue": venue, "feed": product.feed.value,
+                "interval": product.interval, "symbol": product.native_symbol,
+                "window_s": _KN4_HANDOFF_WINDOW_S}
+        if isinstance(outcome, BaseException) or entry.get("watermark") is None:
+            results.append({**base, "status": "FAIL",
+                            "error": _safe_error(outcome) if isinstance(outcome, BaseException)
+                            else "no snapshot watermark"})
+            continue
+        try:
+            results.append({**base, **kn4_handoff_verdict(
+                probe, product=product, watermark=int(entry["watermark"]), delivered=list(entry["delivered"]),
+                records=list(entry.get("records", [])), ends=ends, opened_ns=opened_ns, closed_ns=closed_ns)})
+        except Exception as error:  # noqa: BLE001 - a judge failure is a FAIL, never a skip
+            results.append({**base, "status": "FAIL", "error": _safe_error(error)})
+    return results
+
+
 async def run_kn4_matrix_inside() -> dict[str, object]:
     """KN-4 K4-T01..T05/T08 read-plane matrix on both shadow Query replicas.
 
@@ -2796,45 +2952,14 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
                         "reference_batch": len(reference.results)}
             await timed("http", {"replica": replica, "operation": "POST warmup:batch/readiness:check/reference:batch"},
                         sdk_posts)
-            # K4-T01/T03: snapshot -> stream handoff through the real SDK.
-            for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
-                for feed, interval in _KN4_HANDOFF_FEEDS:
-                    try:
-                        product = _probe_products(products_by_consumer, feed, interval)[venue][0]
-                    except ValueError:
-                        continue
-
-                    async def handoff(product=product, consumer_id=consumer_id):
-                        requirement = replace(sdk_requirement(product), warmup_limit=1 if product.feed.value == "BAR" else 0)
-                        offsets = []
-                        # Up to three events; one suffices (a 1m BAR carries
-                        # about one per minute, a thin OKX pair may trade
-                        # rarely). No event in the window fails.
-                        bar = product.feed.value == "BAR"
-                        wanted, window = (1, 75.0) if bar else (3, 60.0)
-                        async with clients[consumer_id].warmup_then_stream(requirement) as session:
-                            watermark = session.warmup.watermark_offset
-                            deadline = time.monotonic() + window
-                            while len(offsets) < wanted and time.monotonic() < deadline:
-                                try:
-                                    event = await asyncio.wait_for(session.__anext__(),
-                                                                   timeout=max(0.1, deadline - time.monotonic()))
-                                except asyncio.TimeoutError:
-                                    if offsets:
-                                        break
-                                    raise
-                                if hasattr(event, "logical_offset"):
-                                    offsets.append(event.logical_offset)
-                                    session.acknowledge(event)
-                        if not offsets:
-                            raise ValueError("no stream event after the handoff")
-                        if offsets[0] <= watermark or offsets != sorted(set(offsets)):
-                            raise ValueError("stream offsets do not start strictly after the snapshot watermark")
-                        return {"watermark": watermark, "events": len(offsets), "first_offset": offsets[0]}
-                    await timed("handoff", {"replica": replica, "venue": venue, "feed": feed,
-                                            "symbol": product.native_symbol}, handoff)
         finally:
             await asyncio.gather(*(client.close() for client in clients.values()), return_exceptions=True)
+    # K4-T01/T03 (D41): snapshot -> stream handoff through the real SDK on
+    # both replicas at once, judged over one fixed window against the
+    # isolated canonical log.
+    sections["handoff"].extend(await _kn4_fixed_window_handoffs(
+        config=config, identities=identities, products_by_consumer=products_by_consumer,
+        client_for=client_for))
     # Replica parity at the same watermark (guide 18.4.4: never byte-identical
     # at different times; equal content at an equal applied boundary).
     for (venue, interval, rows), by_replica in sorted(histories.items()):
@@ -2947,6 +3072,8 @@ def run_target_host(args: argparse.Namespace) -> int:
     command, inner = docker_command(profile, name=name, image_id=image_id, mode=args.mode,
                                     sessions=args.sessions, duration_seconds=duration)
     inner.update(budget=budget, final=final)
+    if args.mode == "kn4-matrix":
+        inner["oracle_bootstrap"] = profile.get("oracle_bootstrap")
     command[command.index("--cpus") + 1] = f"{float(workers + (0 if matrix else 1)):.1f}"
     command[command.index("--memory") + 1] = f"{512 * (workers + (0 if matrix else 1))}m"
     for index, value in enumerate(command):
