@@ -57592,6 +57592,39 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   the isolated broker's partial LEGACY_BAR rows are purged with its volume;
   the capability that fills KN BAR history from the venues is located first
   (E1: V1, V2 and KN grep with file:line) before anything new is built.
+- 2026-09-25: **D46 inventory (E1, read-only) and plan D47 - KN BAR history
+  from the venues.** Existing: the stable BAR edge
+  (`qdl/runtime/stable_bar_edge.py`) already bootstraps up to
+  `QDL_STABLE_BAR_WARMUP_ROWS` (compose 10,000; capped at 1,095 days) per
+  enabled binding over venue REST (Binance `/fapi|/api/v3 klines` pages of
+  1,000, `qdl/adapters/binance/bar_edge.py:188-275`; OKX
+  `history-candles` pages of 300, `qdl/adapters/okx/history.py:105-160`),
+  publishes raw envelopes to the raw topic, and the Rust core canonicalizes
+  them as authoritative BACKFILLED bars (`rust/qdl-core/src/canonical.rs:454-478`);
+  it fills only opens its readback reports missing, and has a kn3 readback
+  (`qdl/runtime/kn_bar_readback.py`). Pass-through
+  (`qdl/runtime/provider_history.py`) is non-authoritative and never fills a
+  cache; V1 recovery writes V1 only; Rust has no kline REST. Gaps to close,
+  in order (each a tested slice): (1) a fresh KN cache: the kn3 readback
+  raises `KnBarReadbackNotReady` for a product without a READY generation
+  (`kn_bar_readback.py:218-219`), so the edge cannot bootstrap an empty
+  product - a product that has never been built must read as "nothing
+  durable" while a fenced/unavailable cache still fails closed; (2) venue
+  budget: the Binance edge path has no weight accounting and no 418/429
+  `Retry-After` handling (the repo pattern exists in
+  `qdl/adapters/binance/reference.py:59-66`,
+  `app/providers/binance/derivatives.py:126-196`) and the OKX bucket is
+  created per call (`qdl/adapters/okx/bar_edge.py:92`) - the shadow shares
+  the production host IP, so a bounded share of the venue budget, honoured
+  429/418 and a stop on 418 are required before any fill; (3) ingest pacing:
+  a full re-bootstrap once left a 601,622-record projector backlog
+  (plan `:39330-39345`) - the fill is paced per binding; (4) shadow
+  topology: an isolated edge + isolated Rust core on the shadow's own raw
+  topic feed the isolated canonical log next to the mirror (the mirror
+  carries live production canonical; history comes from the venues), with
+  retention = the KN retained caps (largest manifest warmup + 2,064, 12,064
+  for 140 products, `rust/qdl-projector/src/products.rs:22-23,119-143`).
+  The same edge + kn3 readback is the production path at the KN-5 cutover.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
