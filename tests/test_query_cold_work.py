@@ -63,5 +63,105 @@ class QueuedLaneWaitTests(unittest.TestCase):
         self.assertLessEqual(_QUEUED_LOCAL_BATCH_MAX_WAIT_MS, 10_000)
 
 
+class CancelledWorkHoldsItsPermitTests(unittest.IsolatedAsyncioTestCase):
+    """KN-4 K4-T06: a cancelled/timed-out request never frees its admission
+    while its worker thread still runs, and cold work stops at its next slice."""
+
+    async def asyncSetUp(self) -> None:
+        import asyncio
+
+        from qdl.query.lanes import BoundedReadLane, ReadLanePolicy
+        from qdl.query.service import _QueryWorkPools
+
+        self.asyncio = asyncio
+        self.pools = _QueryWorkPools()
+        self.addCleanup(self.pools.close)
+        self.lane = BoundedReadLane(ReadLanePolicy(
+            max_active=1, max_pending=4, max_pending_bytes=1 << 20,
+            max_active_per_consumer=1, max_pending_per_consumer=4,
+        ))
+
+    async def test_a_cancelled_cold_request_holds_the_lane_until_its_worker_stopped(self):
+        started, events = threading.Event(), []
+
+        def materialize():
+            started.set()
+            try:
+                with patch.object(cold_work, "COLD_SLICE_SECONDS", 0.0):
+                    deadline = time.perf_counter() + 3.0
+                    while time.perf_counter() < deadline:  # a long cold read
+                        cold_work.cold_yield()
+            finally:
+                events.append(("first-stopped", time.perf_counter()))
+
+        def next_batch():
+            events.append(("second-started", time.perf_counter()))
+            return "second"
+
+        async def first():
+            return await self.lane.run(lambda: self.pools.cold(materialize), consumer_id="a", reserved_bytes=1)
+
+        task = self.asyncio.create_task(first())
+        await self.asyncio.to_thread(started.wait, 5)
+        second = self.asyncio.create_task(self.lane.run(
+            lambda: self.pools.cold(next_batch), consumer_id="b", reserved_bytes=1))
+        await self.asyncio.sleep(0.05)
+        self.assertEqual(self.lane.stats()["active"], 1)
+        cancelled_at = time.perf_counter()
+        task.cancel()
+        with self.assertRaises(self.asyncio.CancelledError):
+            await task
+        self.assertEqual(await second, "second")
+        order = [name for name, _at in events]
+        self.assertEqual(order, ["first-stopped", "second-started"],
+                         "the next batch starts only after the cancelled worker stopped")
+        self.assertLess(events[0][1] - cancelled_at, 0.5, "cold work stops at its next slice")
+        self.assertEqual(self.lane.stats()["active"], 0)
+
+    async def test_a_non_cooperative_worker_keeps_its_caller_until_it_returns(self):
+        release, finished = threading.Event(), []
+
+        def blocking():
+            release.wait(5)
+            finished.append(time.perf_counter())
+
+        task = self.asyncio.create_task(self.lane.run(
+            lambda: self.pools.hot(blocking), consumer_id="a", reserved_bytes=1))
+        await self.asyncio.sleep(0.05)
+        task.cancel()
+        await self.asyncio.sleep(0.05)
+        task.cancel()  # a second cancellation does not abandon the thread
+        await self.asyncio.sleep(0.05)
+        self.assertFalse(task.done(), "the caller waits for its thread")
+        self.assertEqual(self.lane.stats()["active"], 1)
+        release.set()
+        with self.assertRaises(self.asyncio.CancelledError):
+            await task
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(self.lane.stats()["active"], 0)
+
+    async def test_the_warmup_render_holds_its_lease_through_cancellation(self):
+        import importlib
+
+        router = importlib.import_module("qdl.api_v2.router")
+        started, release, done = threading.Event(), threading.Event(), []
+
+        def build():
+            started.set()
+            release.wait(5)
+            done.append(1)
+            raise RuntimeError("never rendered: the request is gone")
+
+        task = self.asyncio.create_task(router._warmup_json_off_loop(build))
+        await self.asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await self.asyncio.sleep(0.05)
+        self.assertFalse(task.done())
+        release.set()
+        with self.assertRaises(self.asyncio.CancelledError):
+            await task
+        self.assertEqual(done, [1])
+
+
 if __name__ == "__main__":
     unittest.main()

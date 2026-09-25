@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
-from qdl.query.cold_work import cold_yield, run_cold
+from qdl.query.cold_work import await_in_thread, cold_yield
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
@@ -467,7 +467,9 @@ def _render_warmup_chunked(model: WarmupResponse) -> bytes:
 async def _warmup_json_off_loop(build) -> Response:
     """A warmup response rendered off the loop and in chunks (see above)."""
 
-    body = await asyncio.to_thread(run_cold, lambda: _render_warmup_chunked(build()))
+    # The render thread holds the local lease until it returns, also when the
+    # request is cancelled (KN-4 K4-T06).
+    body = await await_in_thread(None, lambda: _render_warmup_chunked(build()), cold=True)
     return Response(content=body, media_type="application/json")
 
 

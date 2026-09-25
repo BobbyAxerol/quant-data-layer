@@ -7,7 +7,6 @@ import uuid
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from functools import partial
 from typing import Awaitable, Callable, TypeVar
 
 from qdl.adapters.intervals import canonical_interval_ms
@@ -33,7 +32,7 @@ from qdl.query.contracts import (
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
-from qdl.query.cold_work import run_cold
+from qdl.query.cold_work import await_in_thread
 from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
@@ -193,14 +192,25 @@ _LOCAL_HISTORY_BASE_BYTES = 16 * 1024
 
 
 def _hot_snapshot_lane_policy() -> ReadLanePolicy:
-    """Finite latest/status capacity sized for the current TS hot slice set."""
+    """Finite latest/status capacity sized for the current TS hot slice set.
+
+    One identity may queue a fleet-sized burst (KN-4 K4.2). An alpha identity
+    fronts every session of its runtime (up to its manifest's 60 streams), and
+    those sessions read snapshots together at a bar close. With four queued
+    requests per identity the fifth concurrent read of one identity on a
+    replica was refused ``RATE_LIMITED`` although the lane was idle a moment
+    later (``Phase5ApiReplicaLoadTests``, first bad ``13b3594``). Queued reads
+    still run one at a time per identity (``max_active_per_consumer``), wait
+    at most their request deadline, stay inside 1 MiB of reservations, and
+    the Trading System keeps its active and pending reserves.
+    """
 
     return ReadLanePolicy(
         max_active=2,
-        max_pending=16,
-        max_pending_bytes=512 * 1024,
+        max_pending=64,
+        max_pending_bytes=64 * _HOT_SNAPSHOT_RESERVED_BYTES,
         max_active_per_consumer=1,
-        max_pending_per_consumer=4,
+        max_pending_per_consumer=32,
         reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
         reserved_slots=1,
         reserved_max_active_per_consumer=2,
@@ -381,20 +391,19 @@ class _QueryWorkPools:
         )
         self._closed = False
 
+    # Every pool call holds its caller (and so the caller's admission permit)
+    # until the thread returns, also when the request is cancelled or times
+    # out; cold work is asked to stop at its next slice (KN-4 K4-T06).
+
     async def hot(self, work: Callable, /, *args, **kwargs):
-        return await self._run(self._hot, work, *args, **kwargs)
+        return await await_in_thread(self._hot, work, *args, **kwargs)
 
     async def cold(self, work: Callable, /, *args, **kwargs):
         # Cold threads run with a cooperative duty cycle (qdl.query.cold_work).
-        return await self._run(self._cold, run_cold, work, *args, **kwargs)
+        return await await_in_thread(self._cold, work, *args, cold=True, **kwargs)
 
     async def diagnostic(self, work: Callable, /, *args, **kwargs):
-        return await self._run(self._diagnostic, work, *args, **kwargs)
-
-    @staticmethod
-    async def _run(pool: ThreadPoolExecutor, work: Callable, /, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(pool, partial(work, *args, **kwargs))
+        return await await_in_thread(self._diagnostic, work, *args, **kwargs)
 
     def close(self) -> None:
         if self._closed:

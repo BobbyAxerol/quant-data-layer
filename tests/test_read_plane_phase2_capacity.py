@@ -321,17 +321,31 @@ class ReadLaneTests(unittest.IsolatedAsyncioTestCase):
         async def block():
             await release.wait()
 
+        # A fleet-sized burst of one identity queues (KN-4 K4.2) ...
         alpha_tasks = [asyncio.create_task(lane.run(
             block, consumer_id="alpha-a", reserved_bytes=16 * 1024,
-        )) for _ in range(4)]
-        for _ in range(20):
-            if lane.stats()["pending"] == 4:
+        )) for _ in range(32)]
+        for _ in range(80):
+            if lane.stats()["pending"] == 32:
                 break
             await asyncio.sleep(0)
+        self.assertEqual(lane.stats()["pending"], 32)
+        self.assertEqual(lane.stats()["rejected"], 0)
+        # ... runs one at a time for that identity ...
+        self.assertEqual(lane.stats()["active"], 1)
+        # ... and stays bounded; the Trading System is still admitted.
         with self.assertRaisesRegex(ReadLaneRejected, "finite pending bound"):
             await lane.run(block, consumer_id="alpha-a", reserved_bytes=16 * 1024)
+        ts = asyncio.create_task(lane.run(
+            block, consumer_id="trading-system.paper.stable", reserved_bytes=16 * 1024,
+        ))
+        for _ in range(80):
+            if lane.stats()["active_reserved"] == 1:
+                break
+            await asyncio.sleep(0)
+        self.assertEqual(lane.stats()["active_reserved"], 1)
         release.set()
-        await asyncio.gather(*alpha_tasks)
+        await asyncio.gather(*alpha_tasks, ts)
 
     async def test_reference_lane_uses_the_same_ts_and_alpha_reserves(self):
         lane = BoundedReadLane(_hot_reference_lane_policy())

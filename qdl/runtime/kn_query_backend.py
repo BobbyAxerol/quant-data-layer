@@ -36,7 +36,7 @@ spool stays the default until the KN-5 cutover.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 import hashlib
 import json
 from pathlib import Path
@@ -50,6 +50,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
+from qdl.query.row_cache import BoundedRowCache
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
 from qdl.runtime.kn_bar_readback import binding_product_key
 from qdl.runtime.kn_market_cache import (
@@ -88,6 +89,20 @@ TOPIC_ID_ENV = "QDL_KN_TOPIC_ID"
 PARTITION_PLAN_EPOCH_ENV = "QDL_KN_PARTITION_PLAN_EPOCH"
 ROUTE_GENERATION_ENV = "QDL_KN_ROUTE_GENERATION"
 CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
+DEFAULT_ROW_CACHE_ENTRIES = 20_000
+# Item fields rebuilt per request (time/request dependent); never cached.
+_DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key"})
+
+
+@dataclass
+class _RowEntry:
+    """Derivations of one immutable row (D30): its envelope, whether its
+    lineage was proven against the catalog binding, and its static item
+    fields. Quality, cursor and watermark are not here."""
+
+    envelope: market_data_pb2.EventEnvelope
+    validated: bool = False
+    static: dict | None = None
 
 
 def source_placeholder(view: ProductView) -> str:
@@ -133,6 +148,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         gap_scan_max_results: int = STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
         gap_scan_max_expected_bars: int = STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
         gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+        row_cache_entries: int = DEFAULT_ROW_CACHE_ENTRIES,
     ) -> None:
         super().__init__(
             None,  # no spool: every read below goes to the market cache
@@ -153,6 +169,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         self.reader = reader
         self.topic_id = topic_id
         self.environment = reader.environment
+        self.rows = BoundedRowCache(row_cache_entries)
 
     # ------------------------------------------------------------ cache view
 
@@ -203,13 +220,26 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             )
         return view
 
+    @staticmethod
+    def _row_key(binding: StableSourceBinding, payload_sha256: str) -> str:
+        return f"{binding.binding_id}|{payload_sha256}"
+
+    def _row(self, binding: StableSourceBinding, payload_sha256: str, canonical: bytes) -> _RowEntry:
+        key = self._row_key(binding, payload_sha256)
+        entry = self.rows.get(key)
+        if entry is None:
+            entry = _RowEntry(market_data_pb2.EventEnvelope.FromString(canonical))
+            self.rows.put(key, entry)
+        return entry
+
     def _parsed(
         self, binding: StableSourceBinding, view: ProductView
     ) -> tuple[_ParsedStoredEvent, ...]:
         cursor = Cursor(binding.canonical_stream, binding.partition_key, view.boundary.offset)
         parsed = []
         for row in view.rows:
-            envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
+            payload_sha256 = hashlib.sha256(row.canonical).hexdigest()
+            envelope = self._row(binding, payload_sha256, row.canonical).envelope
             stored = StoredEvent(
                 event=DurableEvent(
                     stream=binding.canonical_stream,
@@ -221,7 +251,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 # D27: every item carries the view boundary (the handoff start).
                 cursor=cursor,
                 committed_at_ns=max(1, int(envelope.received_at_ns)),
-                payload_sha256=hashlib.sha256(row.canonical).hexdigest(),
+                payload_sha256=payload_sha256,
             )
             parsed.append(_ParsedStoredEvent(stored=stored, envelope=envelope))
         return self._select_records(binding, tuple(parsed), limit=max(1, len(parsed)))
@@ -238,6 +268,40 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             return None
         records = self._parsed(binding, view)
         return records[-1].stored if records else None
+
+    # ------------------------------------------------------------ row derivations (D30)
+
+    def _validate_records(self, binding, records) -> None:
+        """Prove each row's lineage once per content; the verdict is immutable."""
+
+        for parsed in records:
+            entry = self._row(binding, parsed.stored.payload_sha256, parsed.stored.event.payload)
+            if not entry.validated:
+                super()._validate_records(binding, (parsed,))
+                entry.validated = True
+
+    def _item(self, requirement, binding, stored, envelope, gap_open):
+        """Static fields from the row cache; quality rebuilt for this request."""
+
+        key = self._row_key(binding, stored.payload_sha256)
+        entry = self._row(binding, stored.payload_sha256, stored.event.payload)
+        if entry.static is None:
+            item = super()._item(requirement, binding, stored, envelope, gap_open)
+            entry.static = {
+                item_field.name: getattr(item, item_field.name)
+                for item_field in fields(item)
+                if item_field.name not in _DYNAMIC_ITEM_FIELDS
+            }
+            return replace(item, render_key=key)
+        quality = self._quality(
+            requirement, binding, envelope, gap_open=gap_open, watermark_offset=stored.cursor.offset,
+        )
+        return MarketDataItem(
+            **entry.static, quality=quality, watermark_offset=stored.cursor.offset, render_key=key,
+        )
+
+    def warmup_stats(self) -> dict[str, int]:
+        return {f"row_cache_{name}": value for name, value in self.rows.stats().items()}
 
     # ------------------------------------------------------------ backend API
 

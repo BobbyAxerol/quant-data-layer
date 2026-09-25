@@ -60,7 +60,9 @@ from qdl.runtime.stable_source import (
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
 from qdl.reference.local_mark_index import build_cache_alpha_mark_index_reader
 from qdl.runtime.kn_market_cache import reader_from_environment as kn_reader_from_environment
+from qdl.query.row_cache import ROW_CACHE_ENTRIES_ENV
 from qdl.runtime.kn_query_backend import (
+    DEFAULT_ROW_CACHE_ENTRIES,
     QUERY_BACKEND_ENV,
     QUERY_BACKENDS,
     KnCursorSettings,
@@ -721,6 +723,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         kn_backend = KnMarketCacheQueryBackend(
             reader, catalog, schema_digest=config.schema_digest, topic_id=settings.topic_id,
             session_liveness_root=str(config.session_liveness_dir),
+            row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
         )
         kn_issuer = KnCursorV3Issuer(settings, catalog)
         kn_alpha_reader = lambda: build_cache_alpha_mark_index_reader(  # noqa: E731

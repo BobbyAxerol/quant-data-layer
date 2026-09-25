@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
@@ -139,6 +139,10 @@ class MarketDataItem:
     supersedes_event_id: str | None = None
     received_at_ns: int | None = None
     resample_lineage: "ResampleLineage | None" = None
+    # Internal only, never rendered: identifies immutable row content (binding
+    # + canonical hash) so a renderer may reuse the validated static views of
+    # the same row (KN-4 D30). Quality, cursor and watermark never enter it.
+    render_key: str | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():

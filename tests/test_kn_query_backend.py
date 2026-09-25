@@ -458,6 +458,54 @@ class KnQueryBackendRedisTests(unittest.TestCase):
             777,
         )
 
+    # ------------------------------------------------------------ D30 row cache
+
+    def test_row_cache_reuses_static_views_byte_identically_and_never_a_verdict(self):
+        import importlib
+
+        from qdl.query.service import WarmupResult
+
+        router = importlib.import_module("qdl.api_v2.router")
+        payloads = self.history_rows(40)
+        self.put_bars(self.bar_binding, payloads, offsets=list(range(40)), mark=90)
+        binding, latest_payload = self.latest_records[0]
+        self.put_latest(binding, latest_payload, mark=12)
+        clock = {"now": self.now_ns}
+        backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
+                                            topic_id=TOPIC_ID, clock_ns=lambda: clock["now"])
+        req = requirement(self.bar_binding, 40)
+        first = backend.history(req)
+        self.assertEqual(backend.rows.stats()["misses"], 40, "one derivation per row")
+        second = backend.history(req)
+        self.assertEqual(backend.rows.stats()["misses"], 40, "the second read reuses every row")
+        self.assertEqual(second, first)
+        self.assertTrue(all(item.render_key for item in second.items))
+        # A later read at a later time rebuilds quality: no cached verdict.
+        clock["now"] += 3_600_000_000_000
+        later = backend.history(req)
+        self.assertNotEqual([item.quality for item in later.items], [item.quality for item in first.items])
+        self.assertEqual([item.payload for item in later.items], [item.payload for item in first.items])
+
+        def render(history) -> bytes:
+            return router._render_warmup_chunked(router._warmup(WarmupResult("req-1", history)))
+
+        def stripped(history):
+            return replace(history, items=tuple(replace(item, render_key=None) for item in history.items))
+
+        # Cached row derivations render exactly like fresh ones.
+        self.assertEqual(render(later), render(stripped(later)))
+        fresh = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST, topic_id=TOPIC_ID,
+                                          clock_ns=lambda: clock["now"], row_cache_entries=0).history(req)
+        self.assertEqual(render(later), render(fresh))
+        for other_binding, payload in self.latest_records:
+            self.put_latest(other_binding, payload, mark=5)
+            item = backend.latest(requirement(other_binding))
+            item = backend.latest(requirement(other_binding))  # the cached derivation
+            self.assertEqual(
+                router._market_item(item).model_dump(mode="json", by_alias=True),
+                router._market_item(replace(item, render_key=None)).model_dump(mode="json", by_alias=True),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

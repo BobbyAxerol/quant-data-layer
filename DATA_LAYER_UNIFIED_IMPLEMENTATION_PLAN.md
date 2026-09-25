@@ -56700,6 +56700,52 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   the first wiring refused `handoff=None`, which `test_pass_through_wiring`
   (and so the old contract) allows -> only the spool is required | runtime
   NONE | next: K4.2 render/lanes, then the Stream ReadView (D29).
+- 2026-09-25: **K4 slice 3 (K4.2 lanes, bounded cold work, row derivations)**
+  | this commit | three findings, each with a before/after control on the
+  exported previous tree:
+  - **Query-lane 429 (the KN-1 gate owned by KN-4).** Root cause: the hot
+    snapshot lane admits at most 4 in-flight requests per identity per
+    replica (`13b3594`); the 5th concurrent read of one identity is
+    refused although the lane frees a moment later, and one alpha identity
+    fronts every session of its runtime (manifest `max_streams` 60) that
+    reads at the same bar close. Reproduced: concurrency 4/8/16 -> 100 x
+    200, 20 -> 1 x 429 `read lane consumer is at its finite pending bound`.
+    Fix (one variable): per-identity pending 4 -> 32, lane pending 16 -> 64,
+    bytes 512 KiB -> 1 MiB (64 x 16 KiB); active per identity stays 1, TS
+    reserves unchanged. `Phase5ApiReplicaLoadTests` before FAIL, after 3/3
+    OK; `test_normal_identity_stays_bounded_while_ts_burst_is_queued` now
+    proves a 32-burst queues, runs one at a time, the 33rd is refused and TS
+    is still admitted. Stages 20/35 (K4.6) measure the latency cost.
+  - **Cancelled requests freed their permit while the worker ran (K4-T06).**
+    `_QueryWorkPools._run` awaited `run_in_executor`: a cancelled/timed-out
+    request released its lane (and the render its local lease) at once
+    while the thread kept materializing, so the next large batch ran beside
+    it. New `cold_work.await_in_thread`: the caller is held until the thread
+    returns (also across a second cancel) and cold work stops at its next
+    `cold_yield` (`ColdWorkCancelled`, a BaseException so per-item handlers
+    cannot swallow it). Pools and `_warmup_json_off_loop` use it. Three new
+    tests: before 3 FAIL, after OK (worker stops < 0.5 s after the cancel;
+    the next batch starts only after it stopped).
+  - **D30 render (measured, `--cpus 1`, synthetic rows from one golden
+    bar).** Per 10k-row warmup: service 3.55 s + render 2.6-3.1 s CPU.
+    Backend row-derivation cache (content key binding + canonical SHA-256:
+    envelope, lineage verdict, static item fields; quality/cursor/watermark
+    rebuilt per request) -> warm service 1.69 s (10k), 0.45 s (2.5k);
+    2.8 KB/row by tracemalloc, default 20,000 rows (`QDL_KN_ROW_CACHE_ENTRIES`,
+    ~56 MB). Two render ideas were measured and **dropped**: caching
+    validated Pydantic views (11.4 KB/row, -1.35 s/10k: too much RAM for a
+    1 GiB replica) and skipping the DecimalValue validator (slower: 10-11 vs
+    8-8.5 us/decimal, the Rust validator wins). Render stays the chunked
+    off-loop path; no verdict is cached (a later clock changes quality,
+    payload identical; byte-identical render with and without the cache).
+  Tests: 307 of the Query suites (`test_query_cold_work`,
+  `test_kn_query_backend` 16, `test_read_plane_phase2_capacity`,
+  `test_phase10_universal_warmup`, `test_fund_phase5_load/_api/_e2e`,
+  `test_phase533_query_readiness`, `test_phaseb_stable_edge`,
+  `test_pass_through_wiring`, `test_routed_query_backend`,
+  `test_phase104_reference_batch`, `test_phase113_reference_v2`,
+  `test_dlv2_r131_warmup_is_a_lookback_cap`) OK, 1 pre-existing skip |
+  runtime NONE | next: Stream ReadView (D29), execution MARK/INDEX (D31).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
