@@ -57779,6 +57779,16 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `HistoryLiveJoinTests` (boundary, history-only wiring) -
   `test_kn_history_fill` 12 OK; edge/admission/probe suites 236 OK |
   `tested locally`; runtime NONE.
+- 2026-09-25: **K4 slice 23 (KN bar-edge admission lanes)** | this commit |
+  `config/v2/provider-admission-policy-kn-bar-edge-v1.json` (sha256
+  `5493201992b5...`): BINANCE USDM KLINES 60 tokens + 10/s (600 weight/min =
+  25 % of the 2,400/min IP limit), SPOT KLINES 150 + 25/s (25 % of
+  6,000/min), OKX SWAP/SPOT HISTORY_CANDLES and CANDLES 5 + 5/2 s (25 % of
+  20/2 s); each lane reserves realtime inflight (1 of 2-4), 30 s lease, 60 s
+  default cooldown. Test `BarEdgeLanePolicyTests` pins the shares and the
+  reserve (`test_kn_provider_admission_edge` 12 OK) | `tested locally`;
+  hosted by the shadow's isolated core (D47-4 topology); a production merge is
+  a KN-5 cutover item.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

@@ -258,6 +258,37 @@ class OkxAdmittedRestTests(unittest.IsolatedAsyncioTestCase):
             AdmittedOkxRestClient.lane_for("/api/v5/public/mark-price", {"instId": "BTC-USDT-SWAP"})
 
 
+class BarEdgeLanePolicyTests(unittest.TestCase):
+    """The KN bar-edge lanes (``config/v2/provider-admission-policy-kn-bar-edge-v1.json``)
+    stay inside a quarter of each venue's documented per-IP limit and keep a
+    realtime reserve - the rest of the IP budget is left to production."""
+
+    def test_every_lane_is_a_bounded_share_with_a_realtime_reserve(self):
+        import json
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        policy = json.loads((root / "config/v2/provider-admission-policy-kn-bar-edge-v1.json").read_text())
+        self.assertEqual(policy["schema"], "qdl.provider_admission.policy.v1")
+        per_minute_limit = {("BINANCE", "USDM"): 2400, ("BINANCE", "SPOT"): 6000}
+        lanes = {(item["lane"]["provider"], item["lane"]["market"], item["lane"]["endpoint_family"]): item["policy"]
+                 for item in policy["lanes"]}
+        self.assertIn(("BINANCE", "USDM", "KLINES"), lanes)
+        self.assertIn(("OKX", "SWAP", "HISTORY_CANDLES"), lanes)
+        for (provider, market, family), item in lanes.items():
+            with self.subTest(lane=(provider, market, family)):
+                rate_per_s = item["refill_tokens"] / (item["refill_interval_ns"] / 1e9)
+                if provider == "BINANCE":
+                    self.assertLessEqual(rate_per_s * 60 + item["token_capacity"],
+                                         0.25 * per_minute_limit[(provider, market)] + item["token_capacity"])
+                    self.assertLessEqual(rate_per_s * 60, 0.25 * per_minute_limit[(provider, market)])
+                else:
+                    self.assertLessEqual(rate_per_s * 2, 0.25 * 20)
+                self.assertGreaterEqual(item["reserved_realtime_inflight"], 1)
+                self.assertLess(item["reserved_realtime_inflight"], item["max_inflight"])
+                self.assertGreaterEqual(item["token_capacity"], 10 if provider == "BINANCE" else 1)
+
+
 class EdgeWiringTests(unittest.TestCase):
     def test_history_is_batch_live_bars_are_realtime_and_clients_are_shared(self):
         from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
