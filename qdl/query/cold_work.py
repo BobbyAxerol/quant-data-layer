@@ -85,14 +85,15 @@ def _run_cancellable(cancelled: threading.Event, cold: bool, work, /, *args, **k
         _state.cancelled = previous
 
 
-async def await_in_thread(executor, work, /, *args, cold: bool = False, **kwargs):
+async def await_in_thread(executor, work, /, *args, cold: bool = False, on_cancel=None, **kwargs):
     """Run ``work`` on ``executor`` and hold the caller until it has returned.
 
     On cancellation the worker is asked to stop (a cold worker raises at its
-    next ``cold_yield``); the caller waits for the thread to finish before
-    the cancellation propagates, so every permit or lease the caller holds
-    stays held while the thread runs. A second cancellation during that wait
-    does not abandon the thread either.
+    next ``cold_yield``; ``on_cancel`` signals a worker that polls its own
+    flag, such as the bounded gap scan); the caller waits for the thread to
+    finish before the cancellation propagates, so every permit or lease the
+    caller holds stays held while the thread runs. A second cancellation
+    during that wait does not abandon the thread either.
     """
 
     loop = asyncio.get_running_loop()
@@ -104,6 +105,8 @@ async def await_in_thread(executor, work, /, *args, cold: bool = False, **kwargs
         return await asyncio.shield(future)
     except asyncio.CancelledError:
         cancelled.set()
+        if on_cancel is not None:
+            on_cancel()
         while not future.done():
             try:
                 await asyncio.wait({future})

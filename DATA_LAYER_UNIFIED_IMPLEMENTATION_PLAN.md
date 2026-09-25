@@ -56881,6 +56881,35 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
     `qdl-v2-python:kn4-ccec85c` kept until the KN-4 review (KN-5 candidate)
     or removed by digest; evidence hashed into
     `/home/bobby/.local/state/qdl-v2/kn4-20260925/evidence`.
+- 2026-09-25: **K4 slice 7 (fixes found by the full suite and the first
+  shadow runs)** | this commit |
+  - **Regression from slice 3, fixed:** the full suite (exported tree,
+    verbose, faulthandler) hung at
+    `test_read_plane_phase1_diagnostics.test_worker_shutdown_cancels_the_bounded_scan_without_a_stuck_task`.
+    The bounded gap scan stops cooperatively on a flag the caller set in
+    `finally`, i.e. after the await returned; `await_in_thread` now holds the
+    caller until the thread ends, so flag and thread waited on each other
+    (a shutdown would hang the same way). `await_in_thread(on_cancel=...)`
+    signals such a worker at the cancellation; the gap scan passes its flag.
+    Slice 3's receipt listed the suites run - this one was not among them.
+  - `tests/test_phaseb_stable_release.py` still pinned SDK `2.0.3` (slice 5
+    missed it); the same test proves the OpenAPI snapshot is unchanged
+    (11 paths, 68 schemas).
+  - Harness (found by running `kn4-matrix` in the container, not by unit
+    tests): the inner config refused the `budget`/`final` fields for
+    `kn4-matrix`; the host kept only `qdl.phase3.target-` receipts; a
+    client failure before its receipt is now recorded (`client_failure`,
+    payload-free); the HTTP checks now send the exact manifest requirement
+    (`query_params()` - the entitlement match includes the recency/session
+    fields; the first run's 403s were the test's); the freshness check
+    follows the manifest contract (strict BAR -> `DATA_STALE`; quiet-policy
+    ON_CHANGE QUOTE -> served with `event_recency_state` STALE and
+    `LAST_EVENT_STALE`); handoff needs >= 1 event after the watermark (a
+    1m BAR has ~1/min, a thin OKX pair may not trade 3 times in 45 s).
+  Full suite on this tree: 2,180 tests, 1 failure (the SDK pin above, fixed
+  and rerun OK), 31 skipped, no hang; affected suites (diagnostics, cold
+  work, lanes, harness, probe, release) OK | runtime: the shadow of the
+  packet above | next: stages 20/35, receipt.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

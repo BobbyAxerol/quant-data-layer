@@ -402,8 +402,8 @@ class _QueryWorkPools:
         # Cold threads run with a cooperative duty cycle (qdl.query.cold_work).
         return await await_in_thread(self._cold, work, *args, cold=True, **kwargs)
 
-    async def diagnostic(self, work: Callable, /, *args, **kwargs):
-        return await await_in_thread(self._diagnostic, work, *args, **kwargs)
+    async def diagnostic(self, work: Callable, /, *args, on_cancel=None, **kwargs):
+        return await await_in_thread(self._diagnostic, work, *args, on_cancel=on_cancel, **kwargs)
 
     def close(self) -> None:
         if self._closed:
@@ -1857,7 +1857,7 @@ class V2QueryService:
             scanner = getattr(self.backend, "open_gaps_bounded", None)
             if callable(scanner):
                 return await self._query_work_pools_for().diagnostic(
-                    scanner, cancelled=cancelled.is_set
+                    scanner, cancelled=cancelled.is_set, on_cancel=cancelled.set
                 )
             return await self._query_work_pools_for().diagnostic(self.backend.open_gaps)
         finally:

@@ -855,7 +855,7 @@ def _inside_config() -> dict[str, object]:
         "mode", "logical_sessions", "duration_seconds", "catalog", "acquisition",
         "queries", "stream_targets", "identities",
     }
-    if str(value.get("mode", "")).startswith("target"):
+    if str(value.get("mode", "")).startswith("target") or value.get("mode") == "kn4-matrix":
         expected |= {"budget", "final"}
     if set(value) != expected:
         raise ValueError("Phase-3 inner configuration fields are invalid")
@@ -2715,32 +2715,42 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
                         return {"items": size, "statuses": dict(statuses),
                                 "distinct_item_watermarks": len(watermarks)}
                     await timed("batch", {"replica": replica, "venue": venue, "size": size}, batch)
-            # K4-T04: the verdict is evaluated per read, never cached.
-            for venue, products in sorted(_probe_products(products_by_consumer, "QUOTE").items()):
-                product = products[0]
+            # K4-T04: the verdict is evaluated per read, never cached. A strict
+            # (BLOCK) BAR is refused under a 1 ms bound; a quiet-policy
+            # (ON_CHANGE + OBSERVE) QUOTE stays served but its event recency
+            # turns STALE with LAST_EVENT_STALE - the manifest's own
+            # contract - while the manifest bound reads LIVE.
+            for feed, interval in (("QUOTE", None), ("BAR", "1m")):
+                for venue, products in sorted(_probe_products(products_by_consumer, feed, interval).items()):
+                    product = products[0]
 
-                async def freshness(product=product):
-                    client = clients[product.consumer_id]
-                    served = await client.snapshot(sdk_requirement(product))
-                    validate_product_view(product, served.data, require_current_quality=True)
-                    try:
-                        await client.snapshot(replace(sdk_requirement(product), max_freshness_ms=1))
-                    except DataLayerError as error:
-                        if error.code not in {"DATA_STALE", "DATA_NOT_READY"}:
-                            raise
-                        return {"strict_bound_code": error.code}
-                    raise ValueError("a 1 ms freshness bound was served")
-                await timed("freshness", {"replica": replica, "venue": venue, "symbol": product.native_symbol},
-                            freshness)
+                    async def freshness(product=product):
+                        client = clients[product.consumer_id]
+                        requirement = replace(sdk_requirement(product), warmup_limit=0)
+                        served = await client.snapshot(requirement)
+                        validate_product_view(product, served.data, require_current_quality=True)
+                        normal = served.data.quality.event_recency_state
+                        try:
+                            strict = await client.snapshot(replace(requirement, max_freshness_ms=1))
+                        except DataLayerError as error:
+                            if error.code != "DATA_STALE":
+                                raise
+                            return {"manifest_bound": normal, "one_ms_bound": error.code}
+                        quality = strict.data.quality
+                        if quality.event_recency_state != "STALE" or "LAST_EVENT_STALE" not in quality.flags:
+                            raise ValueError("a 1 ms bound neither refused nor marked the event stale")
+                        return {"manifest_bound": normal, "one_ms_bound": "SERVED_EVENT_STALE"}
+                    await timed("freshness", {"replica": replica, "venue": venue, "feed": feed,
+                                              "symbol": product.native_symbol}, freshness)
             # K4-T01: every public HTTP operation of the KN-1 inventory.
             consumer_id = _TARGET_VENUE_IDENTITY["BINANCE"]
             identity = identities[consumer_id]
             quote = _probe_products(products_by_consumer, "QUOTE")["BINANCE"][0]
             bar = _probe_products(products_by_consumer, "BAR", "1m")["BINANCE"][0]
-            common = {"feed": "BAR", "interval": "1m", "source_policy_id": sdk_requirement(bar).source_policy_id,
-                      "consumer_grade": "ALPHA", "limit": 50}
-            quote_params = {"feed": "QUOTE", "source_policy_id": sdk_requirement(quote).source_policy_id,
-                            "consumer_grade": "ALPHA"}
+            # The exact manifest requirement (its recency/session fields are
+            # part of the entitlement match), as the SDK sends it.
+            common = {**replace(sdk_requirement(bar), warmup_limit=50).query_params()}
+            quote_params = {**replace(sdk_requirement(quote), warmup_limit=0).query_params()}
             operations = (
                 ("GET /v2/instruments", "GET", "/v2/instruments", {"limit": 5, "consumer_grade": "ALPHA"}, None, {200}),
                 ("GET /v2/instruments/{identity}", "GET", f"/v2/instruments/{quote.instrument_uid}",
@@ -2752,7 +2762,7 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
                 ("GET /v2/market-data/{uid}/warmup", "GET", f"/v2/market-data/{bar.instrument_uid}/warmup",
                  common, None, {200}),
                 ("GET /v2/market-data/{uid}/history", "GET", f"/v2/market-data/{bar.instrument_uid}/history",
-                 {**common, "consumer_grade": "ALPHA"}, None, {200}),
+                 common, None, {200}),
                 ("GET /v2/system/readiness", "GET", "/v2/system/readiness", None, None, {200}),
                 ("GET /v2/data-quality/gaps", "GET", "/v2/data-quality/gaps", None, None, {200, 206, 409, 503}),
             )
@@ -2797,11 +2807,22 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
                     async def handoff(product=product, consumer_id=consumer_id):
                         requirement = replace(sdk_requirement(product), warmup_limit=1 if product.feed.value == "BAR" else 0)
                         offsets = []
+                        # Up to three events; one suffices (a 1m BAR carries
+                        # about one per minute, a thin OKX pair may trade
+                        # rarely). No event in the window fails.
+                        bar = product.feed.value == "BAR"
+                        wanted, window = (1, 75.0) if bar else (3, 60.0)
                         async with clients[consumer_id].warmup_then_stream(requirement) as session:
                             watermark = session.warmup.watermark_offset
-                            deadline = time.monotonic() + 45.0
-                            while len(offsets) < 3 and time.monotonic() < deadline:
-                                event = await asyncio.wait_for(session.__anext__(), timeout=max(0.1, deadline - time.monotonic()))
+                            deadline = time.monotonic() + window
+                            while len(offsets) < wanted and time.monotonic() < deadline:
+                                try:
+                                    event = await asyncio.wait_for(session.__anext__(),
+                                                                   timeout=max(0.1, deadline - time.monotonic()))
+                                except asyncio.TimeoutError:
+                                    if offsets:
+                                        break
+                                    raise
                                 if hasattr(event, "logical_offset"):
                                     offsets.append(event.logical_offset)
                                     session.acknowledge(event)
@@ -2970,9 +2991,21 @@ def run_target_host(args: argparse.Namespace) -> int:
             value = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(value, dict) and str(value.get("schema", "")).startswith("qdl.phase3.target-"):
+        if isinstance(value, dict) and str(value.get("schema", "")).startswith(("qdl.phase3.target-", "qdl.kn4.")):
             receipt = value
             break
+    # A client that failed before its receipt still prints one typed failure
+    # line (payload-free); keep it so the failure is attributable.
+    client_failure = None
+    if receipt is None:
+        for line in reversed(stdout.splitlines()):
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict) and "failure" in value:
+                client_failure = str(value["failure"])[:500]
+                break
     trading_system: dict[str, object] = {"samples": [item for item in ts_samples if item and "ready" in item],
                                          "unreadable_samples": [item for item in ts_samples if item and "error" in item]}
     evaluation = None
@@ -3017,6 +3050,7 @@ def run_target_host(args: argparse.Namespace) -> int:
                             else _projector_spans(prefix, started_iso, ended_iso)),
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "client_returncode": None if process is None else process.returncode,
+        "client_failure": client_failure,
         "client_stderr_tail_sha256": _sha256(stderr.encode()),
         "cleanup_error": cleanup_error,
         "inner_config_sha256": _sha256(json.dumps(inner, sort_keys=True, separators=(",", ":")).encode()),

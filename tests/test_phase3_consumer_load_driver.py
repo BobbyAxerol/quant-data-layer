@@ -9,6 +9,7 @@ import unittest
 from argparse import Namespace
 import json
 from types import SimpleNamespace
+from unittest import mock
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -103,6 +104,13 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
                         {"monitored_containers": ["bad name!"]}, {"monitored_containers": "kn4-query-1"}):
                 with self.assertRaises(ValueError, msg=str(bad)):
                     _MODULE.validate_profile({**raw, **bad})
+
+    def test_the_kn4_matrix_inner_config_carries_the_target_budget(self):
+        config = {"mode": "kn4-matrix", "logical_sessions": 50, "duration_seconds": 0, "catalog": "c",
+                  "acquisition": "a", "queries": [], "stream_targets": [], "identities": [],
+                  "budget": {}, "final": False}
+        with mock.patch.dict(_MODULE.os.environ, {"QDL_PHASE3_LOAD_CONFIG": json.dumps(config)}):
+            self.assertEqual(_MODULE._inside_config()["mode"], "kn4-matrix")
 
     def test_profile_rejects_identity_path_outside_managed_state(self):
         with tempfile.TemporaryDirectory() as temporary:
