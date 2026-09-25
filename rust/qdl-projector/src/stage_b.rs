@@ -763,9 +763,13 @@ impl<S: StateSource> StageB<S> {
                 Mode::Build { generation, .. } => {
                     (pointer.staging != Some(generation)).then_some(generation)
                 }
-                Mode::Normal => (pointer.ready.is_none() && pointer.staging.is_none())
-                    .then(|| self.cache.allocate_generation())
-                    .transpose()?,
+                // A product with a pending rebuild obligation is staged by
+                // its rebuild, not by the first-seen path (D24).
+                Mode::Normal => (pointer.ready.is_none()
+                    && pointer.staging.is_none()
+                    && !self.obligations.contains(&lpk))
+                .then(|| self.cache.allocate_generation())
+                .transpose()?,
             };
             if let Some(generation) = wanted {
                 ops.push(Op::Stage {
@@ -1350,12 +1354,12 @@ impl<S: StateSource> StageB<S> {
                 self.rebuild_queue.pop_front();
                 continue;
             }
+            // D24: a product still in the registry of a partition this
+            // instance owns is rebuilt even with an empty pointer (a staging
+            // unstaged before its first publish); the replay builds it from
+            // the log, and a product whose state is gone was unpublished
+            // (removed from the registry) and is refused above.
             let pointer = self.cache.pointer(&lpk)?;
-            if pointer.ready.is_none() && pointer.staging.is_none() {
-                self.rebuild_queue.pop_front();
-                self.refuse_rebuild(&lpk, "no generation (a cold build covers it)");
-                continue;
-            }
             let generation = self.cache.allocate_generation()?;
             // A replaced staging generation is retired by the script (D20).
             match self.cache.apply(

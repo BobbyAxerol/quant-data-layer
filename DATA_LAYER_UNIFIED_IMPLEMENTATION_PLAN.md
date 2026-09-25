@@ -55301,9 +55301,10 @@ change production authority or certify a new release from this receipt alone.
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
 **Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - REVIEW_CHANGES_REQUIRED kept
-through R1 (slice 11), R2 (slice 12) and R3 (slice 13, post-publish window);
-re-review requested 2026-09-25 (see [R3](#kn3-astra-review-r3); production
-packet gated on owner decisions).
+through R1 (slice 11), R2 (slice 12), R3 (slice 13, post-publish window) and
+R4 (slice 14, never-ready product after unstage); re-review requested
+2026-09-25 (see [R4](#kn3-astra-review-r4); production packet gated on owner
+decisions).
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55339,8 +55340,9 @@ stop candidate path and restore readback config, keep old history/source intact.
 of the sole old-history copy. Record before/after disk and retained rollback.
 **Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> slice 11; R2
 REVIEW_CHANGES_REQUIRED (two residuals) -> slice 12; R3 REVIEW_CHANGES_REQUIRED
-(post-publish cleanup) -> slice 13; re-review REQUESTED 2026-09-25 to record
-ASTRA_REVIEW_PASS and open KN-4 ([R3](#kn3-astra-review-r3)).
+(post-publish cleanup) -> slice 13; R4 REVIEW_CHANGES_REQUIRED (never-ready
+product after unstage) -> slice 14; re-review REQUESTED 2026-09-25 to record
+ASTRA_REVIEW_PASS and open KN-4 ([R4](#kn3-astra-review-r4)).
 **Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
 
 #### KN-3 Execution Journal
@@ -56439,6 +56441,60 @@ Astra requested review points and next allowed step:
   R3-F1 fixed as D23 with the three regressions above (before/after on
   `1ef875a`). **Request:** re-review of slice 13 for **ASTRA_REVIEW_PASS on
   KN-3** and, on PASS, KN-4 entry.
+
+<a id="kn3-astra-review-r4"></a>
+#### KN-3 Astra Review R4 - Never-Ready Product After Unstage
+
+- 2026-09-25: **REVIEW_CHANGES_REQUIRED** at `b6874e8` (source review;
+  offline 34 pass / 1 skip re-run by the reviewer). The post-publish window
+  (R3) is closed: published / unpublished / unknown outcomes are
+  distinguished, a lost CAS reply or an unreadable pointer no longer deletes
+  a READY generation.
+  - **R4-F1 [P1] a product that was never READY can stay stuck after an
+    unstage.** Partition with product A READY and B staging-only (an earlier
+    run stopped); the recovery rebuild of B fails before its publish; the
+    new unstage correctly clears B's staging and re-queues it; the retry in
+    `start_rebuild` finds neither ready nor staging and refuses ("no
+    generation (a cold build covers it)") - but the partition is in normal
+    mode and no cold build comes, so without new records B stays NOT_READY
+    although Kafka holds its data. The R3 regressions all started from a
+    READY product. Required: a product of an owned partition with a valid
+    registry entry / rebuild obligation may be staged with both pointers
+    empty; regression A READY + B staging-only -> error before publish ->
+    retry without new records or restart -> B READY with all its data,
+    request/retirement sets clean; keep the three R3 regressions.
+- 2026-09-25: **Design decision D24 (recorded before code).** `start_rebuild`
+  refuses only a product that no owned partition's registry holds. A
+  registry entry is removed only by an unpublish (the product's state is
+  gone), so any product still in the registry of a partition this instance
+  owns may be staged even with an empty pointer - the replay then builds it
+  from the log (zero records -> unpublish, as before). The live path keeps
+  skipping such a product while its obligation is pending (no dual write).
+- 2026-09-25: **KN-3 slice 14 - R4-F1 fixed (D24): implemented, tested
+  locally + isolated Redis/Kafka.**
+  - Source: `stage_b.rs` - `start_rebuild` no longer refuses an empty
+    pointer (only a product absent from every owned registry is refused);
+    the first-seen path of `stage_missing` does not stage a product whose
+    rebuild obligation is pending, so no second staging races the rebuild.
+  - Regression `r4_a_never_ready_product_is_rebuilt_after_its_staging_was_unstaged`
+    (`tests/stage_b_redis.rs`): A READY (50 rows), B staging-only from a
+    stopped run (40 rows in the log), recovery rebuild of B fails before the
+    publish (injected), unstage, retry with no new record and no restart ->
+    B READY with 40/40 rows and every open readable, meta = bucket rows,
+    B's keys only in its ready generation, A untouched, checkpoint 90,
+    retirement and request sets empty; 1 abandoned / 2 started / 1 completed
+    / 0 refused. On `b6874e8` (same hooks, separate target directory): B
+    never READY (the retry refused). The three R3 regressions pass on both.
+  - Staged content (exact commit tree): fmt; clippy `-D warnings` for all
+    targets and for lib + bin without the test feature; workspace 294 / 0 /
+    57 ignored; ignored `qdl-projector` 54/54 x 3 rounds on disposable Kafka
+    + 2 Redis; KN Python suites with Kafka/Redis OK (1 skip: packet
+    authorizer-broker integration, unchanged). Disposable services stopped:
+    0 `kn3-*` containers/networks. No C2, no long rebuild rerun.
+- 2026-09-25: **R4 resolution and re-review request (Claude -> Astra).**
+  R4-F1 fixed as D24 with the before/after regression above; R3 regressions
+  kept. **Request:** re-review of slice 14 for **ASTRA_REVIEW_PASS on KN-3**
+  and, on PASS, KN-4 entry.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

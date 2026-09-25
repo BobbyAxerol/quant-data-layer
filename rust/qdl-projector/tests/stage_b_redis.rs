@@ -1347,3 +1347,124 @@ fn r3_a_lost_publish_reply_is_resolved_by_reading_the_pointer_back() {
         assert_rebuild_consistent(&mut stage, &bars, old);
     }
 }
+
+// ------------------------------------------------------------ Astra R4
+
+fn bars_of_uid(uid: &str) -> LogicalProductKey {
+    LogicalProductKey::new("paper", "OKX", "SWAP", uid, "BAR", Some("1m")).unwrap()
+}
+
+fn bar_of_uid(uid: &str, minute: u64) -> Vec<u8> {
+    let mut envelope =
+        EventEnvelope::decode(bar(minute, BarLifecycle::Final, 0, 1).as_slice()).unwrap();
+    envelope.instrument_uid = uid.to_owned();
+    envelope.encode_to_vec()
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r4_a_never_ready_product_is_rebuilt_after_its_staging_was_unstaged() {
+    let uid_b = "fb26214c-7b9b-5961-95b2-55154755afbb";
+    let (a, b) = (bars_of_uid(UID), bars_of_uid(uid_b));
+    let log = Log::default();
+    for minute in 0..50u64 {
+        push(&log, BARS, bar_frame(&a, bar_of_uid(UID, minute), minute));
+    }
+    let environment = environment("r4");
+    let mut first = stage(&log, &environment);
+    drain(&mut first);
+    let a_ready = first.cache.pointer(&a.encode()).unwrap().ready.unwrap();
+    // B's records arrive and an earlier run staged B, then stopped before
+    // publishing it (B was never READY).
+    for minute in 0..40u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&b, bar_of_uid(uid_b, minute), 100 + minute),
+        );
+    }
+    let fence = first.cache.take_ownership(BARS, 0).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let pointer = first.cache.pointer(&b.encode()).unwrap();
+    let generation = first.cache.allocate_generation().unwrap();
+    assert!(matches!(
+        first
+            .cache
+            .apply(
+                BARS,
+                0,
+                fence,
+                50,
+                now,
+                &[Op::Stage {
+                    lpk: b.encode(),
+                    pointer,
+                    generation,
+                }],
+            )
+            .unwrap(),
+        Applied::Ok(_)
+    ));
+    drop(first);
+
+    // Recovery: B is an obligation; its rebuild fails before the publish.
+    let mut stage = rebuild_stage(&log, &environment);
+    stage.cache.faults.lock().unwrap().fail_before_publish = 1;
+    let mut errors = 0;
+    for _ in 0..300 {
+        if stage.step().is_err() {
+            errors += 1;
+        }
+    }
+    // No new record and no restart: B is READY with all its data.
+    let b_pointer = stage.cache.pointer(&b.encode()).unwrap();
+    let b_ready = b_pointer.ready.expect("B READY");
+    assert_eq!(errors, 1);
+    assert_eq!(stage.metrics.rebuilds_abandoned, 1, "B's staging unstaged");
+    assert_eq!(
+        stage.metrics.rebuilds_refused, 0,
+        "the retry is not refused"
+    );
+    assert_eq!(
+        (
+            stage.metrics.rebuilds_started,
+            stage.metrics.rebuilds_completed
+        ),
+        (2, 1)
+    );
+    assert_eq!(b_pointer.staging, None);
+    assert_eq!(bar_rows(&mut stage, &b), 40);
+    for minute in 0..40u64 {
+        assert!(
+            read_bar(&mut stage, &b, minute).is_some(),
+            "B open {minute}"
+        );
+    }
+    let (rows, counted) = stage
+        .cache
+        .bar_row_count(b_ready, &b.encode(), MIN)
+        .unwrap();
+    assert_eq!(rows, counted);
+    let live: BTreeSet<u64> = [b_ready].into_iter().collect();
+    assert_eq!(key_generations(&mut stage, &b), live);
+    // A untouched; checkpoint at the log end; bookkeeping clean.
+    assert_eq!(
+        stage.cache.pointer(&a.encode()).unwrap().ready,
+        Some(a_ready)
+    );
+    assert_eq!(bar_rows(&mut stage, &a), 50);
+    assert_eq!(stage.cache.checkpoint(BARS, 0).unwrap().unwrap().next, 90);
+    for set in [
+        stage.cache.layout.retire(),
+        stage.cache.layout.rebuild_requests(),
+    ] {
+        let count: u64 = redis::cmd("SCARD")
+            .arg(&set)
+            .query(stage.cache.connection())
+            .unwrap();
+        assert_eq!(count, 0, "{set}");
+    }
+}
