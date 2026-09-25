@@ -57889,6 +57889,27 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   probe is now mounted beside the driver and looked up there first
   (`test_phase3_*` 63 OK, `test_kn_native_slice_probe` 38 OK) | `tested
   locally`.
+- 2026-09-25: **kn4-matrix on the D47 shadow: PASS after three harness fixes,
+  K4 slice 27** | this commit | Runs 193949/194703/195xxx failed in the
+  harness, not the read plane: (1) the fixed-window handoff read each session
+  with `wait_for(session.__anext__(), 1 s)` - cancelling a pending gRPC read
+  ends the call, so quiet streams (OKX TRADE, BAR) died at their first 1 s
+  timeout (`StopAsyncIteration`, 0-3 delivered) and busy ones at their first
+  quiet gap; now a pump task owns the read and the controller waits on a
+  queue (`stream_ended` / `stream_error` recorded, an error fails the case);
+  (2) 16 concurrent sessions on the 1-CPU client -> waves of 4, each with its
+  own fixed window, one client per session; (3) the window oracle held every
+  product's records (client OOM, exit 137 at 512 MiB) -> `kafka_oracle_window
+  (keys=...)` keeps only the judged products (disposable-broker test).
+  Receipt `evidence/kn4-matrix-200716/receipt.json` (`0ff24dec1c2d...`): target
+  matrix + history 48/48 (2,500/5,000/10,000 rows, contiguous, replica parity
+  24/24 at equal watermarks), strict batches 20/20, freshness 8/8, HTTP 18/18,
+  **handoff 16/16** - every committed record after the snapshot watermark
+  and inside the fixed boundary delivered once and in order (e.g. Binance
+  TRADE 420/420, BOOK_DELTA 797/797, OKX QUOTE 568/568 coalescing-legal),
+  on both replicas; TS refusals 0. Harness suites 63 OK | shadow evidence
+  (`tested locally` for the source; the receipt is runtime evidence on the
+  isolated shadow).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

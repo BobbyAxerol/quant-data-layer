@@ -2629,6 +2629,7 @@ def _kn4_opens_contiguous(opens: list[int], interval_ns: int) -> bool:
 
 
 _KN4_HANDOFF_WINDOW_S = 90.0
+_KN4_HANDOFF_CONCURRENCY = 4
 _KN4_HANDOFF_DRAIN_S = 30.0
 
 
@@ -2695,8 +2696,23 @@ async def _kn4_fixed_window_handoffs(*, config, identities, products_by_consumer
         return [{"replica": replica, "venue": venue, "feed": product.feed.value, "symbol": product.native_symbol,
                  "status": "FAIL", "error": "no isolated oracle broker: the handoff window cannot be judged"}
                 for _url, replica, venue, _consumer_id, product in cases]
-    clients = {(url, consumer_id): client_for(url, consumer_id)
-               for url, _replica, _venue, consumer_id, _product in cases}
+    # A handoff proves the snapshot -> stream boundary, not client capacity:
+    # waves of a few concurrent sessions, each judged in its own fixed window
+    # (16 busy live streams on the 1-CPU client overflowed their buffers).
+    results: list[dict[str, object]] = []
+    for start in range(0, len(cases), _KN4_HANDOFF_CONCURRENCY):
+        results.extend(await _kn4_handoff_wave(cases[start:start + _KN4_HANDOFF_CONCURRENCY], probe=probe,
+                                               oracle=oracle, config=config, client_for=client_for))
+    return results
+
+
+async def _kn4_handoff_wave(cases, *, probe, oracle, config, client_for):
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement
+
+    # One client per session: a handoff session must not share its client's
+    # stream with another session.
+    clients = {index: client_for(url, consumer_id)
+               for index, (url, _replica, _venue, consumer_id, _product) in enumerate(cases)}
     opened_ns = time.time_ns()
     close_at = time.monotonic() + _KN4_HANDOFF_WINDOW_S
     closed = asyncio.Event()
@@ -2705,28 +2721,54 @@ async def _kn4_fixed_window_handoffs(*, config, identities, products_by_consumer
     async def run(index, url, consumer_id, product):
         entry = state.setdefault(index, {"delivered": [], "watermark": None})
         requirement = replace(sdk_requirement(product), warmup_limit=1 if product.feed.value == "BAR" else 0)
-        async with clients[(url, consumer_id)].warmup_then_stream(requirement) as session:
+        async with clients[index].warmup_then_stream(requirement) as session:
             entry["watermark"] = session.warmup.watermark_offset
-            drain_until = None
-            while True:
-                if closed.is_set() and drain_until is None:
-                    drain_until = time.monotonic() + _KN4_HANDOFF_DRAIN_S
-                limit = (close_at if drain_until is None else drain_until) - time.monotonic()
-                if limit <= 0:
-                    if drain_until is None:
-                        await closed.wait()
-                        continue
-                    return
-                if drain_until is not None and entry.get("target") is not None and (
-                        entry["delivered"] and entry["delivered"][-1] >= entry["target"]):
-                    return
+            # A pump owns the stream read; the controller only waits on the
+            # queue. Cancelling a pending gRPC read (wait_for on __anext__)
+            # ends the call, so a quiet stream died at its first 1 s timeout.
+            queue: asyncio.Queue = asyncio.Queue()
+            ended = object()
+
+            async def pump():
                 try:
-                    event = await asyncio.wait_for(session.__anext__(), timeout=min(limit, 1.0))
-                except asyncio.TimeoutError:
-                    continue
-                if hasattr(event, "logical_offset"):
-                    entry["delivered"].append(event.logical_offset)
-                    session.acknowledge(event)
+                    while True:
+                        await queue.put(await session.__anext__())
+                except StopAsyncIteration:
+                    entry["stream_ended"] = True
+                except Exception as error:  # noqa: BLE001 - typed stream failure, judged below
+                    entry["stream_error"] = _safe_error(error)
+                finally:
+                    await queue.put(ended)
+
+            reader = asyncio.create_task(pump())
+            try:
+                drain_until = None
+                while True:
+                    if closed.is_set() and drain_until is None:
+                        drain_until = time.monotonic() + _KN4_HANDOFF_DRAIN_S
+                    limit = (close_at if drain_until is None else drain_until) - time.monotonic()
+                    if limit <= 0:
+                        if drain_until is None:
+                            await closed.wait()
+                            continue
+                        return
+                    if drain_until is not None and entry.get("target") is not None and (
+                            entry["delivered"] and entry["delivered"][-1] >= entry["target"]):
+                        return
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=min(limit, 1.0))
+                    except asyncio.TimeoutError:
+                        continue
+                    if event is ended:
+                        if drain_until is None:
+                            await closed.wait()
+                        return
+                    if hasattr(event, "logical_offset"):
+                        entry["delivered"].append(event.logical_offset)
+                        session.acknowledge(event)
+            finally:
+                reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
 
     from qdl.runtime.stable_catalog import StableSourceCatalog
 
@@ -2741,8 +2783,9 @@ async def _kn4_fixed_window_handoffs(*, config, identities, products_by_consumer
         closed_ns = time.time_ns()
         # Start well before the window so every record after any snapshot
         # watermark is in the oracle (watermarks are canonical offsets).
+        wanted = {physical.get(product.binding_id, "") for _u, _r, _v, _c, product in cases}
         records = await asyncio.to_thread(probe.kafka_oracle_window, oracle, "md.canonical.v2",
-                                          since_ms=opened_ns // 1_000_000 - 120_000, ends=ends)
+                                          since_ms=opened_ns // 1_000_000 - 120_000, ends=ends, keys=wanted)
         for index, (_url, _replica, _venue, _consumer_id, product) in enumerate(cases):
             entry = state.setdefault(index, {"delivered": [], "watermark": None})
             entry["records"] = records.get(physical.get(product.binding_id, ""), [])
@@ -2766,9 +2809,15 @@ async def _kn4_fixed_window_handoffs(*, config, identities, products_by_consumer
                             else "no snapshot watermark"})
             continue
         try:
-            results.append({**base, **kn4_handoff_verdict(
+            verdict = kn4_handoff_verdict(
                 probe, product=product, watermark=int(entry["watermark"]), delivered=list(entry["delivered"]),
-                records=list(entry.get("records", [])), ends=ends, opened_ns=opened_ns, closed_ns=closed_ns)})
+                records=list(entry.get("records", [])), ends=ends, opened_ns=opened_ns, closed_ns=closed_ns)
+            if entry.get("stream_ended"):
+                verdict["stream_ended"] = True
+            if entry.get("stream_error"):
+                verdict["stream_error"] = entry["stream_error"]
+                verdict["status"] = "FAIL"
+            results.append({**base, **verdict})
         except Exception as error:  # noqa: BLE001 - a judge failure is a FAIL, never a skip
             results.append({**base, "status": "FAIL", "error": _safe_error(error)})
     return results

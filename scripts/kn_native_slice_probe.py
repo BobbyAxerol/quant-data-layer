@@ -897,12 +897,14 @@ def canonical_end_offsets(bootstrap: str, topic: str) -> dict[int, int]:
         consumer.close()
 
 
-def kafka_oracle_window(bootstrap: str, topic: str, *, since_ms: int,
-                        ends: dict[int, int]) -> dict[str, list[tuple[int, int, bytes]]]:
+def kafka_oracle_window(bootstrap: str, topic: str, *, since_ms: int, ends: dict[int, int],
+                        keys: set[str] | None = None) -> dict[str, list[tuple[int, int, bytes]]]:
     """Committed records per physical key in a fixed window (KN-4 D41): from
     the first offset at or after ``since_ms`` up to, not including, the
     boundary ``ends[partition]``. Bounded where ``kafka_oracle`` reads the
-    whole topic; read_committed, assign mode, never commits."""
+    whole topic; read_committed, assign mode, never commits. ``keys`` keeps
+    only those physical keys (the live log holds every product: a client that
+    judges a few must not hold them all)."""
     from confluent_kafka import Consumer, TopicPartition
 
     consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-oracle-{uuid.uuid4().hex[:8]}",
@@ -928,8 +930,8 @@ def kafka_oracle_window(bootstrap: str, topic: str, *, since_ms: int,
             if message is not None:
                 if message.error():
                     raise RuntimeError(str(message.error()))
-                if message.offset() < ends[message.partition()]:
-                    key = (message.key() or b"").decode()
+                key = (message.key() or b"").decode()
+                if message.offset() < ends[message.partition()] and (keys is None or key in keys):
                     records.setdefault(key, []).append(
                         (message.partition(), message.offset(), message.value() or b""))
             # Transaction markers advance the position without a message.

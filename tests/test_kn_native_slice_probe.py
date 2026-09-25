@@ -541,6 +541,8 @@ class WindowOracleKafkaTests(unittest.TestCase):
             self.assertEqual(sorted(records), ["inside-a", "inside-b"])
             self.assertEqual(records["inside-a"], [(0, 2, b"v-inside-a")])
             self.assertEqual(records["inside-b"], [(1, 0, b"v-inside-b")])
+            only = PROBE.kafka_oracle_window(bootstrap, topic, since_ms=now - 1_000, ends=ends, keys={"inside-b"})
+            self.assertEqual(sorted(only), ["inside-b"])
         finally:
             for future in admin.delete_topics([topic]).values():
                 future.result(20)
