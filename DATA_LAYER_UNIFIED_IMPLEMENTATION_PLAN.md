@@ -57789,6 +57789,33 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   reserve (`test_kn_provider_admission_edge` 12 OK) | `tested locally`;
   hosted by the shadow's isolated core (D47-4 topology); a production merge is
   a KN-5 cutover item.
+- 2026-09-25: **KN-4 D47 shadow packet (recorded before start).** Order (review):
+  guard + watch -> networks/Redis -> isolated broker with PLAINTEXT 9092 (KN
+  roles) and SSL 9094 (throwaway 7-day test CA, `kn4_tls_setup.py`; the core
+  and the edge require TLS) on the named volume `kn4-kafka-data` -> topics
+  (canonical, raw, latest, bars, `kn.mirror.checkpoint.v1`) -> shadow
+  material + isolated core material (`kn4_core_setup.py`: `core_config`
+  for the 140 enabled Binance/OKX BAR bindings of the running runtime catalog,
+  the KN bar-edge lanes, a fresh admission secret) -> projectors until all 12
+  state partitions are checkpointed -> Query x2 + Stream x2 -> mirror live
+  (production canonical, read-only, `qdl-c40-handoff-` group, transactional
+  checkpoint) until lag < 5 s -> isolated core `kn4-core` (release binary
+  `qdl-realtime-core` `5ea8ef7c...` built at `84fabec`/`0ea3850` source, in
+  `qdl-v2-rust:2.0.26-62241bc`; 0.75 CPU / 256 MiB; alias `rust_core`
+  hosting the provider admission on the shadow network) -> history edge
+  `kn4-edge` (image `qdl-v2-python:kn4-0ea3850` `sha256:72db8784...`;
+  0.5 CPU / 512 MiB; kn3 readback, admission, demand from the bundle,
+  backpressure core 20k / stage A 50k / stage B 50k records, history-only,
+  history end = mirror start) first with 20 rows per binding (small bootstrap,
+  both venues), readback/cursor check, then 10,000 (the gap check fills the
+  rest by demand) -> matrix -> T07 -> stages 20/35. Venue calls: public
+  Binance/OKX REST from the host IP, bounded by the lanes (25 % of each IP
+  limit) and the whole-IP Binance weight share; 418 stops the lane.
+  Stop conditions as before (guard: host idle, production restarts, TS
+  MARK/INDEX >= 10 in 60 s). Every resource carries `kn4.run=<run id>`;
+  teardown by label (`kn4_shadow_down.sh`, `purge` at KN-4 close).
+  Production mutations: none (the mirror's production read as before).
+  Orchestration sha256 (12): bb2adc6103bc kn4_shadow_up.sh;d560462e219d kn4_shadow_down.sh;35fe36922658 kn4_steps.sh;a1e33fd7316f kn4_shadow_setup.py;f23bce08bca9 kn4_tls_setup.py;8b1440d7d357 kn4_core_setup.py;5d2ac337fd57 kn4_guard.sh;927f97948ee7 kn4_watch.sh;
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
