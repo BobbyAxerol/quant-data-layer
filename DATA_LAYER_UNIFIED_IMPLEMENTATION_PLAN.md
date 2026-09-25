@@ -57910,6 +57910,74 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   on both replicas; TS refusals 0. Harness suites 63 OK | shadow evidence
   (`tested locally` for the source; the receipt is runtime evidence on the
   isolated shadow).
+- 2026-09-25: **T07 on the D47 shadow: TS PASS, alpha PASS except QUOTE;
+  stage 20 PASS, stage 35 no OOM/backlog with two open gates** | no source
+  change (orchestration outside Git) | **T07** (receipt
+  `evidence/consumer-scenarios.json` `e86b97d63252...`, TS image
+  `v1.2.5-1193b13`, alpha runtime mounted read-only, sealed grid binding
+  `7af78ab8fa4e...`): TS V2 primary 3/3 OK -> V2 unreachable BLOCKED 3/3 (no
+  same-venue fallback, as its policy says) -> restored 3/3 OK. Alpha: TRADE,
+  MARK/INDEX (execution-context `MarkIndexRead`, 9.6 ms), L2 book, BAR 1h
+  latest and warmup 1h x500 OK on V2; V2 unreachable -> TRADE falls back to
+  V1 (its route says `V1`), every other read BLOCKED; restored -> OK again.
+  Two earlier alpha failures were the harness, not the read plane: (1) BAR 1h
+  `DATA_STALE (EVENT_AGE)` - the T07 container shared the TS env, whose
+  `DATA_LAYER_V2_BAR_MAX_FRESHNESS_MS=180000` (TS reads 1m bars) the alpha
+  gateway applies as a cap, `min(180000, 3780000)`
+  (`execution_alpha/.../data_layer_client.py:559-568`), so a 1h bar went
+  stale 3 min after its close; the alpha deployment leaves it empty
+  (`runtime/docker-compose.alpha.example.yml:30`) and the scenario now sets
+  the alpha deployment's own defaults; BAR freshness is anchored on the bar
+  close (`qdl/runtime/stable_source.py:1030-1039`), which is correct.
+  (2) Warmup 1h "BLOCKED" was the debug read's audit sink failing on a
+  read-only `/app/state`; with the sink stubbed it is `V2_PASS_THROUGH`
+  (alpha materialises only 1m). **Open, pre-existing, not KN:** alpha QUOTE
+  is `PERMISSION_DENIED` - manifest revision 12 (`137633b`, 2026-09-21)
+  declares QUOTE `event_recency_policy: OBSERVE` for `ON_CHANGE` quotes
+  (`scripts/phase533_materialize_alpha_runtime_entitlements.py:227-231`),
+  the manifest match requires an equal policy (`qdl/consumer/manifest.py:122`),
+  and the alpha gateway sends a recency policy only for TRADE
+  (`execution_alpha/runtime/app/alpha_runtime/orchestration/data_layer_v2.py:580-584`;
+  TS has `quote_event_recency_policy`,
+  `trading_system/adapters/market_data/data_layer_v2.py:224`). Production
+  Query applies the same match, so any alpha QUOTE read on V2 is denied
+  today; no alpha container runs now. Fix belongs to `execution_alpha`
+  (owner decision). **Stage 20** (`stage-20-202819`, gates `06b464d6df6a...`):
+  PASS, 2,547 offered, 0 failed, 36 streams 0 errors, TS ready every sample.
+  **Stage 35** (`stage-35-203119`, gates `1465602c99cb...`): no OOM, no
+  restart, no leaked task, worker RSS <= 319 MiB, scheduler lag p99 3.1 ms,
+  63 streams 0 errors, every live stream delivered, final bar on all 21 BAR
+  streams; projector lag after the run 22 / 40 records (groups a / b);
+  mirror live (last commit 41 ms after its source). Two gates failed:
+  `requests:no_failures` - 2 of 6,527 requests `DATA_STALE (EVENT_AGE)` on
+  Binance BNBUSDT QUOTE (alpha manifest); for an `ON_CHANGE` + `OBSERVE`
+  quote the event age cannot make the state STALE
+  (`qdl/data_quality/binding_decision.py:262-266`), so this label comes
+  from state STALE (`:327-328`), i.e. session/generation; a race on the
+  production session-liveness file was ruled out at idle (1,777 reads in
+  180 s, all LIVE, max 1,073 ms) - cause not pinned, and the harness records
+  only the detail hash. `ts:ready_60_every_sample` - 2 of 20 production TS
+  samples DEGRADED: QUOTE Binance BTCUSDT and OKX SOL-USDT-SWAP STALE at
+  2.059 s against TS's 2 s quote bound; TS reads production, not the
+  shadow, and its log shows the same QUOTE `DATA_STALE (EVENT_AGE)`
+  disconnects before any load (20:13-20:19, 6 lines); host idle during
+  stage 35 was 31-37 % (38-45 % before). Neither is attributed to the KN
+  shadow; neither is proven unrelated. **Latency (four quantities, stage
+  35):** (1) request, Query snapshot p50/p95/p99 ms: QUOTE Binance
+  10.1/19.9/34.3 (n 1,258), OKX 9.7/20.3/50.4 (n 1,260); MARK/INDEX
+  Binance 10.9/21.5/42.3 (n 1,980), OKX 10.7/20.1/37.6 (n 1,800); L2
+  Binance 34.9/122/303 (n 36); BAR latest 14.9/22.0/306.6 (n 36);
+  denominators 6,527 offered, 2 failed. (2) event age at response: the
+  freshness gate of kn4-matrix (8/8); not sampled per request here. (3)
+  delivery lag source -> canonical is production's (the shadow consumes its
+  canonical); the shadow adds the mirror hop: production append -> shadow
+  commit p50/p95/p99 119/296/359 ms, max 538 (n 94,466). (4) source/close
+  -> usable at the consumer (streams): QUOTE p50 372-512 ms, worst p99
+  1,096 (n 5,632); TRADE p50 359-624, worst p99 1,312 (n 2,329);
+  BOOK_DELTA p50 350-493, worst p99 1,029 (n 1,792); BAR (close) p50
+  618-1,526 (n 63). These include the mirror hop, which KN-5 removes.
+  Resources: KN stack ~0.45 vCPU / ~2.1 GiB idle; Query 307/384 MiB of 1 GiB
+  after stage 35 (D45 holds) | shadow evidence.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
