@@ -1016,3 +1016,188 @@ fn r1_f3_interrupted_builds_and_swaps_leave_no_generation_behind() {
     assert_eq!(retiring, 0);
     assert!(next.metrics.retired >= 2);
 }
+
+// ------------------------------------------------------------ Astra R2
+
+fn bar_rows(stage: &mut StageB<Source>, bars: &LogicalProductKey) -> u64 {
+    meta(stage, bars, "rows").map_or(0, |rows| rows.parse().unwrap())
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r2_f1_an_assignment_error_after_the_poll_loses_no_record() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    for minute in 0..20u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("r2assign");
+    let mut stage = stage(&log, &environment);
+    drain(&mut stage);
+    assert_eq!(bar_rows(&mut stage, &bars), 20);
+    for minute in 20..60u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    // The poll returns 7 records, then the assignment query fails.
+    stage.source.faults.set(|plan| plan.assigned = 1);
+    assert!(stage.step().is_err());
+    assert_eq!(
+        bar_rows(&mut stage, &bars),
+        20,
+        "nothing applied by the failed step"
+    );
+    drain(&mut stage);
+    assert_eq!(
+        bar_rows(&mut stage, &bars),
+        60,
+        "every polled record applied on retry"
+    );
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r2_f1_a_prepare_error_for_a_new_partition_keeps_the_running_batch() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    let quotes = lpk("QUOTE", None);
+    for minute in 0..20u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 10));
+    let environment = environment("r2prepare");
+    let mut stage = stage(&log, &environment);
+    stage.source.assigned = vec![(BARS.into(), 0)];
+    drain(&mut stage);
+    for minute in 20..60u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    // A rebalance adds the latest partition; preparing it fails once while
+    // the running bars partition has just been polled.
+    stage.source.assigned.push((LATEST.into(), 0));
+    stage.source.faults.set(|plan| plan.watermarks = 1);
+    assert!(stage.step().is_err());
+    drain(&mut stage);
+    assert_eq!(bar_rows(&mut stage, &bars), 60);
+    assert_eq!(
+        read_latest(&mut stage, &quotes).map(|(_, offset)| offset),
+        Some(10)
+    );
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r2_f1_a_replay_error_after_the_reader_moved_never_publishes_a_gap() {
+    for (label, inject) in [("position", 0usize), ("poll", 1usize)] {
+        let log = Log::default();
+        let bars = lpk("BAR", Some("1m"));
+        for minute in 0..60u64 {
+            push(
+                &log,
+                BARS,
+                bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+            );
+        }
+        let environment = environment(&format!("r2replay{label}"));
+        let mut stage = rebuild_stage(&log, &environment);
+        drain(&mut stage);
+        let old = stage.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+        stage.request_rebuild(&bars.encode());
+        stage.step().unwrap(); // starts the rebuild and replays the first records
+        stage.source.faults.set(|plan| {
+            if inject == 0 {
+                plan.reader_position = 1;
+            } else {
+                plan.reader_poll_after_move = 1;
+            }
+        });
+        let mut failed = 0;
+        for _ in 0..200 {
+            if stage.step().is_err() {
+                failed += 1;
+            }
+        }
+        assert_eq!(failed, 1, "{label}: the injected error surfaced once");
+        let pointer = stage.cache.pointer(&bars.encode()).unwrap();
+        assert!(pointer.ready.unwrap() > old, "{label}: rebuilt");
+        assert_eq!(bar_rows(&mut stage, &bars), 60, "{label}: no gap published");
+        for minute in 0..60u64 {
+            assert!(
+                read_bar(&mut stage, &bars, minute).is_some(),
+                "{label}: open {minute}"
+            );
+        }
+        assert!(
+            stage.metrics.rebuilds_abandoned >= 1,
+            "{label}: the torn replay was dropped"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r2_f2_a_late_repair_below_the_old_floor_does_not_hide_a_valid_older_row() {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    for minute in 224..400u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let environment = environment("r2f2");
+    let mut stage = wide(&log, &environment);
+    drain(&mut stage);
+    push(&log, BARS, floor_frame(&bars, 50 * MIN));
+    drain(&mut stage);
+    assert_eq!(
+        meta(&mut stage, &bars, "first"),
+        Some((224 * MIN).to_string())
+    );
+    // One batch: BAR 0 (below floor 50, refused), BAR 60 (valid, a new bucket
+    // before `first`), then floor 300.
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(0, BarLifecycle::Final, 0, 1), 1_000),
+    );
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(60, BarLifecycle::Final, 0, 1), 1_001),
+    );
+    push(&log, BARS, floor_frame(&bars, 300 * MIN));
+    drain(&mut stage);
+    assert!(read_bar(&mut stage, &bars, 0).is_none());
+    assert!(
+        read_bar(&mut stage, &bars, 60).is_none(),
+        "BAR 60 went with the floor"
+    );
+    assert_eq!(bar_rows(&mut stage, &bars), 100, "opens 300..399");
+    assert_floor_state(&mut stage, &bars, 300);
+    let generation = stage.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+    stage
+        .cache
+        .reclaim(generation, &bars.encode(), Some(MIN))
+        .unwrap();
+    assert!(
+        key_generations(&mut stage, &bars).is_empty(),
+        "reclaim leaves no key"
+    );
+}

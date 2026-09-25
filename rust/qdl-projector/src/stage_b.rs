@@ -420,6 +420,30 @@ impl<S: StateSource> StageB<S> {
             .source
             .poll(self.limits.max_batch_records, self.limits.poll_timeout)
             .map_err(StageBError::Source)?;
+        let polled: Vec<(String, i32)> = batch
+            .iter()
+            .map(|input| (input.topic.clone(), input.partition))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let applied = match self.apply_polled(batch) {
+            Ok(applied) => applied,
+            Err(error) => {
+                // D18/D22: whatever failed between the poll and the end of
+                // apply, the polled records are read again.
+                self.rewind(&polled);
+                return Err(error);
+            }
+        };
+        self.probe_ownership()?;
+        self.process_retirements(16)?;
+        self.advance_rebuild()?;
+        Ok(applied)
+    }
+
+    /// Assignment, preparation of new partitions and apply of one polled
+    /// batch; any error leaves the caller to rewind the polled partitions.
+    fn apply_polled(&mut self, batch: Vec<StateInput>) -> Result<usize, StageBError> {
         let assigned = self.source.assigned().map_err(StageBError::Source)?;
         self.partitions
             .retain(|key, _| assigned.iter().any(|(t, p)| t == &key.0 && *p == key.1));
@@ -451,24 +475,13 @@ impl<S: StateSource> StageB<S> {
             groups.entry(key).or_default().push(input);
         }
         let mut applied = 0;
-        let batch_partitions: Vec<(String, i32)> = groups.keys().cloned().collect();
         for ((topic, partition), inputs) in groups {
-            match self.partition_batch(&topic, partition, inputs) {
-                Ok(count) => applied += count,
-                Err(error) => {
-                    // D18: nothing of this batch may be skipped - read it again.
-                    self.rewind(&batch_partitions);
-                    return Err(error);
-                }
-            }
+            applied += self.partition_batch(&topic, partition, inputs)?;
         }
         // Idle builders may have reached their boundary (trailing markers).
         for (topic, partition) in assigned {
             self.finish_build_if_done(&topic, partition)?;
         }
-        self.probe_ownership()?;
-        self.process_retirements(16)?;
-        self.advance_rebuild()?;
         Ok(applied)
     }
 
@@ -861,8 +874,8 @@ impl<S: StateSource> StageB<S> {
             }
         }
         let mut ops = Vec::new();
-        // Lowest open each (generation, product) row of this batch writes.
-        let mut written: HashMap<(u64, String), u64> = HashMap::new();
+        // The opens each (generation, product) row of this batch writes.
+        let mut written: HashMap<(u64, String), std::collections::BTreeSet<u64>> = HashMap::new();
         for entry in order {
             let pointer = pointers[&entry.1].clone();
             match groups.remove(&entry) {
@@ -891,9 +904,10 @@ impl<S: StateSource> StageB<S> {
                 Some(Group::Bar(pending)) => {
                     if let Some((row, is_final)) = pending.write {
                         self.metrics.bars_applied += 1;
-                        let open_ms = entry.2.unwrap_or_default();
-                        let lowest = written.entry((entry.0, entry.1.clone())).or_insert(open_ms);
-                        *lowest = (*lowest).min(open_ms);
+                        written
+                            .entry((entry.0, entry.1.clone()))
+                            .or_default()
+                            .insert(entry.2.unwrap_or_default());
                         ops.push(Op::Bar {
                             lpk: entry.1.clone(),
                             generation: entry.0,
@@ -917,19 +931,21 @@ impl<S: StateSource> StageB<S> {
         Ok((ops, fresh))
     }
 
-    /// D19: a floor deletes every bucket from the lowest retained open -
+    /// D19/D22: a floor deletes every bucket from the lowest retained open -
     /// the cached `first` or a lower open written by this very batch (rows are
-    /// applied before floors in the script) - up to its boundary bucket. A
-    /// batch row below the cached floor is refused by the script, so it does
-    /// not widen the range.
-    fn floor_ops(floors: Vec<PendingFloor>, written: &HashMap<(u64, String), u64>) -> Vec<Op> {
+    /// applied before floors in the script) - up to its boundary bucket. Rows
+    /// of the batch below the cached floor are refused by the script, so the
+    /// lowest write is taken among the opens at or above that floor.
+    fn floor_ops(
+        floors: Vec<PendingFloor>,
+        written: &HashMap<(u64, String), std::collections::BTreeSet<u64>>,
+    ) -> Vec<Op> {
         floors
             .into_iter()
             .map(|pending| {
                 let batch_low = written
                     .get(&(pending.generation, pending.lpk.clone()))
-                    .copied()
-                    .filter(|open| pending.floor.is_none_or(|floor| *open >= floor));
+                    .and_then(|opens| opens.range(pending.floor.unwrap_or(0)..).next().copied());
                 let low = match (pending.first, batch_low) {
                     (Some(first), Some(batch)) => Some(first.min(batch)),
                     (first, batch) => first.or(batch),
@@ -1395,7 +1411,9 @@ impl<S: StateSource> StageB<S> {
     }
 
     /// One bounded replay step of the active rebuild; publish at the live
-    /// checkpoint.
+    /// checkpoint. D22: any error once the reader was polled abandons the
+    /// replay (its staging is reclaimed) and re-queues the product, so a
+    /// generation never misses a record the reader moved past.
     fn advance_rebuild(&mut self) -> Result<(), StageBError> {
         if self.rebuild.is_none() {
             self.start_rebuild()?;
@@ -1414,6 +1432,27 @@ impl<S: StateSource> StageB<S> {
         if pointer.staging != Some(active.generation) {
             return self.abandon_rebuild("pointer changed");
         }
+        match self.replay_step(&active, &state) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if self
+                    .rebuild
+                    .as_ref()
+                    .is_some_and(|current| current.generation == active.generation)
+                {
+                    let _ = self.abandon_rebuild("replay failed");
+                    self.rebuild_queue.push_front(active.lpk.clone());
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn replay_step(
+        &mut self,
+        active: &ActiveRebuild,
+        state: &PartitionState,
+    ) -> Result<(), StageBError> {
         let Some(reader) = self.rebuild_reader.as_mut() else {
             return self.abandon_rebuild("no rebuild reader");
         };
@@ -1435,22 +1474,11 @@ impl<S: StateSource> StageB<S> {
             }
         }
         if !frames.is_empty() {
-            match self.rebuild_apply(&active, &state, &frames) {
-                Ok(true) => {
-                    if let Some(current) = self.rebuild.as_mut() {
-                        current.records += frames.len() as u64;
-                    }
-                }
-                Ok(false) => return Ok(()),
-                Err(error) => {
-                    // D18: the replay read past records it could not apply.
-                    // Drop this attempt; the request stays queued (and in the
-                    // cache set) for a fresh replay.
-                    let lpk = active.lpk.clone();
-                    let _ = self.abandon_rebuild("apply failed");
-                    self.rebuild_queue.push_front(lpk);
-                    return Err(error);
-                }
+            if !self.rebuild_apply(active, state, &frames)? {
+                return Ok(());
+            }
+            if let Some(current) = self.rebuild.as_mut() {
+                current.records += frames.len() as u64;
             }
         }
         let replayed = position
@@ -1467,7 +1495,7 @@ impl<S: StateSource> StageB<S> {
             self.apply_pointer_ops(
                 &active.topic,
                 active.partition,
-                &state,
+                state,
                 vec![Op::Unpublish {
                     lpk: active.lpk.clone(),
                     pointer,
@@ -1494,7 +1522,7 @@ impl<S: StateSource> StageB<S> {
         self.apply_pointer_ops(
             &active.topic,
             active.partition,
-            &state,
+            state,
             vec![Op::Publish {
                 lpk: active.lpk.clone(),
                 pointer,

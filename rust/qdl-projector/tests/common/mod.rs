@@ -68,6 +68,40 @@ pub struct Source {
     pub log: Log,
     pub assigned: Vec<(String, i32)>,
     pub position: BTreeMap<(String, i32), i64>,
+    pub faults: Faults,
+}
+
+/// Injected failures (counts of upcoming calls that fail), shared with the
+/// test after the source/reader moved into the stage.
+#[derive(Default)]
+pub struct FaultPlan {
+    pub assigned: usize,
+    pub watermarks: usize,
+    /// Reader: fail `position` after a poll that moved the reader.
+    pub reader_position: usize,
+    /// Reader: move past the records of a poll, then fail it (a reader that
+    /// dropped what it had collected).
+    pub reader_poll_after_move: usize,
+}
+
+#[derive(Clone, Default)]
+pub struct Faults(pub Arc<Mutex<FaultPlan>>);
+
+impl Faults {
+    pub fn set(&self, change: impl FnOnce(&mut FaultPlan)) {
+        change(&mut self.0.lock().unwrap());
+    }
+
+    fn hit(&self, pick: impl FnOnce(&mut FaultPlan) -> &mut usize) -> bool {
+        let mut plan = self.0.lock().unwrap();
+        let count = pick(&mut plan);
+        if *count > 0 {
+            *count -= 1;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl StateSource for Source {
@@ -106,6 +140,9 @@ impl StateSource for Source {
         Ok(())
     }
     fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
+        if self.faults.hit(|plan| &mut plan.watermarks) {
+            return Err("injected: watermarks".into());
+        }
         let inner = self.log.0.lock().unwrap();
         Ok((0, inner.end(&(topic.to_owned(), partition))))
     }
@@ -113,6 +150,9 @@ impl StateSource for Source {
         Ok(self.position.get(&(topic.into(), partition)).copied())
     }
     fn assigned(&mut self) -> Result<Vec<(String, i32)>, String> {
+        if self.faults.hit(|plan| &mut plan.assigned) {
+            return Err("injected: assignment".into());
+        }
         Ok(self.assigned.clone())
     }
     fn commit(&mut self, _topic: &str, _partition: i32, _next: i64) -> Result<(), String> {
@@ -124,6 +164,7 @@ impl StateSource for Source {
 pub struct Reader {
     pub log: Log,
     pub at: Option<(String, i32, i64)>,
+    pub faults: Faults,
 }
 
 impl PartitionReader for Reader {
@@ -159,9 +200,15 @@ impl PartitionReader for Reader {
                 self.at = Some((topic, partition, end));
             }
         }
+        if !records.is_empty() && self.faults.hit(|plan| &mut plan.reader_poll_after_move) {
+            return Err("injected: reader poll after moving".into());
+        }
         Ok(records)
     }
     fn position(&mut self, _topic: &str, _partition: i32) -> Result<Option<i64>, String> {
+        if self.faults.hit(|plan| &mut plan.reader_position) {
+            return Err("injected: reader position".into());
+        }
         Ok(self.at.as_ref().map(|at| at.2))
     }
     fn stop(&mut self) -> Result<(), String> {
@@ -262,6 +309,7 @@ pub fn stage_on(url: &str, log: &Log, environment: &str) -> StageB<Source> {
             log: log.clone(),
             assigned: vec![(LATEST.into(), 0), (BARS.into(), 0)],
             position: BTreeMap::new(),
+            faults: Faults::default(),
         },
         cache,
         StageBLimits {
@@ -318,10 +366,14 @@ pub fn skip_redis() {
     // Present only so the ignore reason is uniform.
 }
 
+/// A stage with a rebuild reader; the reader shares the source's faults.
 pub fn rebuild_stage(log: &Log, environment: &str) -> StageB<Source> {
-    stage(log, environment).with_rebuild_reader(Box::new(Reader {
+    let stage = stage(log, environment);
+    let faults = stage.source.faults.clone();
+    stage.with_rebuild_reader(Box::new(Reader {
         log: log.clone(),
         at: None,
+        faults,
     }))
 }
 

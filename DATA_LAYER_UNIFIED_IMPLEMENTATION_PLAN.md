@@ -55300,9 +55300,9 @@ change production authority or certify a new release from this receipt alone.
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - R1 findings F1-F4 fixed, re-review
-requested (2026-09-24, see [R1](#kn3-astra-review-r1) and the slice 11 receipt;
-production packet gated on owner decisions).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - R1 F1-F4 (slice 11) and R2
+residuals (slice 12) fixed, re-review requested (2026-09-25, see
+[R2](#kn3-astra-review-r2); production packet gated on owner decisions).
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55336,9 +55336,9 @@ offsets or flush/delete shared state is implied by the plan.
 stop candidate path and restore readback config, keep old history/source intact.
 **Cleanup:** test prefix/topic/volume exact scope; no FLUSHDB shared; no removal
 of the sole old-history copy. Record before/after disk and retained rollback.
-**Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> fixed in slice 11;
-re-review REQUESTED 2026-09-24 to record ASTRA_REVIEW_PASS and open KN-4
-([R1](#kn3-astra-review-r1)).
+**Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> slice 11; R2
+REVIEW_CHANGES_REQUIRED (two residuals) -> slice 12; re-review REQUESTED
+2026-09-25 to record ASTRA_REVIEW_PASS and open KN-4 ([R2](#kn3-astra-review-r2)).
 **Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
 
 #### KN-3 Execution Journal
@@ -56224,8 +56224,9 @@ Astra requested review points and next allowed step:
       14,094 data keys, all in the ready generation of their product.
     - Segments: rolled 128 MB segments were cleaned in 0.4-2.4 s per pass
       (0 % reduction there: all keys distinct); `md.bars.v2` 1.50 GB.
-    - Sizing adopted into the budget (`market_cache.sizing_measured_kn3_r1`):
-      steady at cap 1,284,607,296 B, peak 1,305,599,240 B, `maxmemory`
+    - Sizing adopted into the budget (`market_cache.sizing_measured_kn3_r1`),
+      **extrapolated** to the full cap from the 90.5 % measurement (R2
+      wording): steady at cap 1,284,607,296 B, peak 1,305,599,240 B, `maxmemory`
       1,500,000,000 B (headroom 194 MB), container 1,879,048,192 B (1.75
       GiB). The KN-1 cap (1,288,490,188 B) would hold steady by < 4 MB and not
       a rebuild. Budget SHA-256 `b192a98b...940a`; production review token
@@ -56243,7 +56244,7 @@ Astra requested review points and next allowed step:
   | F2 floor + rows in one batch | D19: floor bucket range includes the batch's own lowest write | `stage_b_redis` F2 test (fresh + existing generation) |
   | F3 generation leak | D20: retirement written by the same Lua script as the swap; resumed by any replica; staging replacement retired | `stage_b_redis` F3 test; flow: 14,094 keys all in ready generations, retire set 0 |
   | F4 full-rebuild memory | D21: rolling per-product swaps (one staging per replica, next after reclaim); whole-partition build only with no served product | `stage_b_memory` F4 (peak steady + 1.16 products); flow at cap: peak steady + 21 MB, READY 206 throughout |
-  | RAM decision | bucket 112 in writer/readback/checker/budget/tests; `maxmemory` 1.5e9 / 1.75 GiB measured at cap | `sizing_measured_kn3_r1` |
+  | RAM decision | bucket 112 in writer/readback/checker/budget/tests; `maxmemory` 1.5e9 / 1.75 GiB, measured at 1,537,810 rows (90.5 % of the cap), full-cap figures extrapolated (R2 wording) | `sizing_measured_kn3_r1` |
   | Segment decision | 1 h / 128 MiB on both state topics in budget, packet allowlist, verifier, tests | packet tests incl. real broker drift case |
   | CPU | 0.3 no longer claimed; 0.4 total measured / 0.5 per replica, sum 4.7 <= 5.0 | budget `projector_measured`, flow 0.347 |
   Not claimed: production apply of anything; live freshness or consumer
@@ -56251,6 +56252,109 @@ Astra requested review points and next allowed step:
   **Request:** Astra re-review of slice 11 for **ASTRA_REVIEW_PASS on KN-3**
   and, on PASS, KN-4 entry per the tracker ("KN-4 only after KN-2 and KN-3
   reviewed exits"; KN-2 already PASS).
+
+<a id="kn3-astra-review-r2"></a>
+#### KN-3 Astra Review R2 - Two Residual Branches
+
+- 2026-09-25: **REVIEW_CHANGES_REQUIRED** at `8c50cfa` (source review; not
+  fault-injected by the reviewer). Most of R1 accepted; KN-4 not yet.
+  - **R2-F1 [P1] errors before apply can still lose a batch.** Both Kafka
+    readers returned `Err` in the middle of a poll loop and dropped the
+    records already collected (their position had moved past them), and
+    `StageB::step` could leave at `assigned()` / `prepare()` / the seek of a
+    new partition before the D18 rewind, so the next cycle read on and a
+    checkpoint could pass records never applied. Regressions: an error after
+    some records were polled, an assignment/prepare error while partitions
+    are running, the same on the rebuild reader; retry without restart
+    recovers every record.
+  - **R2-F2 [P2] a late-repair combination still leaves a bucket.** The
+    minimum over the whole batch was taken first and only then dropped when
+    below the old floor, losing a valid open before the cached `first`.
+    Counterexample (bar indexes): cached first 224, floor 50; batch BAR 0,
+    BAR 60, floor 300 - BAR 0 refused, BAR 60 written into bucket 0 and never
+    deleted. Fix: filter the opens valid for the floor, then take the minimum.
+  - Evidence wording: the sizing run measured 1,537,810 rows (90.5 % of the
+    cap); peak 1,183,558,488 B is measured, the full-cap steady/peak are
+    extrapolated - "confirmed by the full-cap measurement" is corrected. The
+    2,747 s warm rebuild kept READY; consumer latency during it is KN-4.
+  - Scope: fix the two residuals, before/after regressions and a small
+    integration recovery; no C2, no rerun of the 45-minute rebuild.
+- 2026-09-25: **Design decision D22 (recorded before code).** (a) The
+  readers' poll loop (`collect`) returns the records already collected when
+  an error arrives after them - librdkafka errors are events and do not move
+  the position - and only an error before any record is returned as `Err`
+  (the next poll surfaces a persistent one again). (b) `StageB::step` rewinds
+  every partition present in a polled batch on **any** error between the
+  poll and the end of apply (assignment, prepare, seek, decode, apply). (c)
+  Every error after the rebuild reader was polled (decode, position, apply)
+  abandons the replay, reclaims its staging and re-queues the product, so a
+  replay never publishes a generation with records it skipped. (d) D19 keeps
+  the set of opens each batch writes per (generation, product) and takes the
+  lowest open at or above the pre-batch floor.
+- 2026-09-25: **R2 small integration recovery packet (recorded before
+  running).** Isolated only (`kn3-flow-*`, `--rm`, internal network, same
+  images; production read only through the read-only spool capture): a
+  300-per-key real capture loaded as history; two projector replicas (R2
+  binary); a live phase at 300/s during which the broker is paused twice
+  for 15 s (real librdkafka transport errors in the middle of polls and
+  transactions) and one replica is SIGKILLed; restart of any replica that
+  exits. Checks: `ready`, `latest` (Kafka oracle), and a scratch BAR oracle
+  (every committed BAR fact of `md.bars.v2` present in the cache: rows and
+  opens per product). Cleanup with `docker stop` (anonymous volumes go),
+  capture deleted after hashing.
+- 2026-09-25: **KN-3 slice 12 - R2-F1/R2-F2 fixed (D22): implemented, tested
+  locally + isolated Kafka/Redis + small isolated integration recovery.**
+  - Source: `rust/qdl-projector/src/kafka_state.rs` (`collect`: both
+    readers keep the records polled before an error), `stage_b.rs`
+    (`step` = poll + `apply_polled`, rewind of every polled partition on any
+    error from assignment to apply; `advance_rebuild` wraps `replay_step`:
+    any error after the reader poll abandons, reclaims and re-queues; D19 set
+    of written opens, lowest at or above the pre-batch floor). Tests:
+    `tests/common/mod.rs` (shared `Faults`: injected assignment/watermarks
+    errors on the source, position and poll-after-move errors on the rebuild
+    reader), four `r2_*` cases in `tests/stage_b_redis.rs`, `collect` unit
+    test in `kafka_state.rs`.
+  - Regressions, before (`8c50cfa`, separate target directory) / after:
+    | Case | `8c50cfa` | now |
+    |---|---|---|
+    | `r2_f1_an_assignment_error_after_the_poll_loses_no_record` | 53/60 rows (7 polled records lost) | 60/60 |
+    | `r2_f1_a_prepare_error_for_a_new_partition_keeps_the_running_batch` | 53/60 | 60/60, the new partition prepared on retry |
+    | `r2_f1_a_replay_error_after_the_reader_moved_never_publishes_a_gap` (position error; poll error after moving) | generation published with 53/60 rows | 60/60, torn replay abandoned and redone |
+    | `r2_f2_a_late_repair_below_the_old_floor_does_not_hide_a_valid_older_row` (cached first 224, floor 50; batch BAR 0, BAR 60, floor 300) | BAR 60 left in bucket 0 | 100 rows (300..399), no bucket below the boundary, reclaim leaves no key |
+    | `kafka_state::tests::an_error_after_records_keeps_them_and_an_error_first_is_returned` | (the old loop had no seam: `Err` dropped the collected records) | pass |
+  - Small integration recovery (packet above), evidence
+    `/home/bobby/.local/state/qdl-v2/kn3-20260925-r2/evidence` `SHA256SUMS`
+    `dba9871f...2077`, binary `27d4060c...b820`: real capture 70,627 records
+    / 190 keys, history 42,387; two replicas. Round 1: broker paused 15 s
+    twice and replica b SIGKILLed during a 300/s phase; the harness loader
+    died at the first pause (its own fatal transaction error) and replica a
+    exited once and was restarted (reason not captured - logs of `--rm`
+    containers); after catch-up `latest` 66/66, BAR oracle 37,293 opens / 140
+    products 0 missing, `ready` 206 (10 ABSENT without source). Round 2 with
+    projector logs kept and the loader restarted after each fault (63,042
+    committed + 15,249 aborted): pauses and a SIGKILL of replica a, no replica
+    exit, no error line in the projector logs (librdkafka reconnected within
+    its timeouts, so the mid-poll error branch is proven by the fault-injected
+    tests above, not by the pause); `latest` 66/66 over 118,372 canonical
+    records, BAR oracle 40,500 opens 0 missing, stage A lag 6. Cleanup: 0
+    `kn3-*` containers/networks/anonymous volumes; production containers
+    identical; capture deleted after hashing.
+  - Staged content (exact commit tree): fmt + clippy `-D warnings` clean;
+    workspace 294 passed / 0 failed / 53 ignored; ignored `qdl-projector`
+    50/50 x 3 rounds on disposable Kafka + 2 Redis; KN Python suites with
+    Kafka/Redis OK (1 skip: the packet's authorizer-broker integration, whose
+    code is unchanged in this slice).
+  - Evidence wording corrected (R2): budget `sizing_measured_kn3_r1` states
+    measured (1,537,810 rows, peak 1,183,558,488 B) vs extrapolated (full-cap
+    steady/peak); the R1 receipt rows are marked the same way. Budget
+    SHA-256 `6521a39d...c423`; offline production review token
+    `APPLY_QDL_KN3_STATE_TOPICS_302b5149ac922607`. Warm-rebuild consumer
+    latency is a KN-4 measurement, not claimed.
+- 2026-09-25: **R2 resolution and re-review request (Claude -> Astra).**
+  R2-F1 and R2-F2 fixed as D22 with before/after regressions and the small
+  integration recovery above; no C2, no rerun of the 45-minute rebuild.
+  **Request:** re-review of slice 12 for **ASTRA_REVIEW_PASS on KN-3** and,
+  on PASS, KN-4 entry.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

@@ -64,6 +64,40 @@ fn one(topic: &str, partition: i32, offset: Option<i64>) -> Result<TopicPartitio
     Ok(list)
 }
 
+fn input<M: Message>(message: &M) -> StateInput {
+    StateInput {
+        topic: message.topic().to_owned(),
+        partition: message.partition(),
+        offset: message.offset(),
+        key: message.key().unwrap_or_default().to_vec(),
+        value: message.payload().map(<[u8]>::to_vec),
+    }
+}
+
+/// Up to `max` records from `next` (the first wait is `timeout`, then 0).
+/// D22: an error after some records returns those records - a librdkafka
+/// error is an event, the position is never past an undelivered record, so
+/// dropping them would lose data; an error before any record is returned
+/// (a persistent one surfaces again on the next poll).
+pub fn collect(
+    max: usize,
+    timeout: Duration,
+    mut next: impl FnMut(Duration) -> Option<Result<StateInput, String>>,
+) -> Result<Vec<StateInput>, String> {
+    let mut batch = Vec::new();
+    let mut wait = timeout;
+    while batch.len() < max {
+        match next(wait) {
+            None => break,
+            Some(Err(error)) if batch.is_empty() => return Err(error),
+            Some(Err(_)) => break,
+            Some(Ok(record)) => batch.push(record),
+        }
+        wait = Duration::ZERO;
+    }
+    Ok(batch)
+}
+
 pub struct KafkaStateSource {
     group: BaseConsumer,
     data: BaseConsumer,
@@ -142,27 +176,17 @@ impl KafkaStateSource {
 impl StateSource for KafkaStateSource {
     fn poll(&mut self, max: usize, timeout: Duration) -> Result<Vec<StateInput>, String> {
         self.membership()?;
-        let mut batch = Vec::new();
         if self.reading.is_empty() {
             std::thread::sleep(timeout.min(Duration::from_millis(50)));
-            return Ok(batch);
+            return Ok(Vec::new());
         }
-        let mut wait = timeout;
-        while batch.len() < max {
-            match self.data.poll(wait) {
-                None => break,
-                Some(Err(error)) => return Err(error.to_string()),
-                Some(Ok(message)) => batch.push(StateInput {
-                    topic: message.topic().to_owned(),
-                    partition: message.partition(),
-                    offset: message.offset(),
-                    key: message.key().unwrap_or_default().to_vec(),
-                    value: message.payload().map(<[u8]>::to_vec),
-                }),
-            }
-            wait = Duration::ZERO;
-        }
-        Ok(batch)
+        collect(max, timeout, |wait| {
+            self.data.poll(wait).map(|message| {
+                message
+                    .map(|message| input(&message))
+                    .map_err(|e| e.to_string())
+            })
+        })
     }
 
     /// (Re)start reading a partition at exactly `offset`.
@@ -275,26 +299,16 @@ impl PartitionReader for KafkaPartitionReader {
     }
 
     fn poll(&mut self, max: usize, timeout: Duration) -> Result<Vec<StateInput>, String> {
-        let mut batch = Vec::new();
         if self.assigned.is_none() {
-            return Ok(batch);
+            return Ok(Vec::new());
         }
-        let mut wait = timeout;
-        while batch.len() < max {
-            match self.consumer.poll(wait) {
-                None => break,
-                Some(Err(error)) => return Err(error.to_string()),
-                Some(Ok(message)) => batch.push(StateInput {
-                    topic: message.topic().to_owned(),
-                    partition: message.partition(),
-                    offset: message.offset(),
-                    key: message.key().unwrap_or_default().to_vec(),
-                    value: message.payload().map(<[u8]>::to_vec),
-                }),
-            }
-            wait = Duration::ZERO;
-        }
-        Ok(batch)
+        collect(max, timeout, |wait| {
+            self.consumer.poll(wait).map(|message| {
+                message
+                    .map(|message| input(&message))
+                    .map_err(|e| e.to_string())
+            })
+        })
     }
 
     fn position(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, String> {
@@ -313,5 +327,47 @@ impl PartitionReader for KafkaPartitionReader {
     fn stop(&mut self) -> Result<(), String> {
         self.assigned = None;
         self.consumer.unassign().map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(offset: i64) -> StateInput {
+        StateInput {
+            topic: "t".into(),
+            partition: 0,
+            offset,
+            key: Vec::new(),
+            value: None,
+        }
+    }
+
+    #[test]
+    fn an_error_after_records_keeps_them_and_an_error_first_is_returned() {
+        let mut events = vec![
+            Some(Ok(record(0))),
+            Some(Ok(record(1))),
+            Some(Err("broker down".into())),
+        ]
+        .into_iter();
+        let batch = collect(10, Duration::ZERO, |_| events.next().flatten()).unwrap();
+        assert_eq!(
+            batch.iter().map(|r| r.offset).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let mut failing = vec![Some(Err::<StateInput, String>("broker down".into()))].into_iter();
+        assert_eq!(
+            collect(10, Duration::ZERO, |_| failing.next().flatten()).unwrap_err(),
+            "broker down"
+        );
+        let mut many = (0..5).map(|offset| Some(Ok(record(offset))));
+        assert_eq!(
+            collect(3, Duration::ZERO, |_| many.next().flatten())
+                .unwrap()
+                .len(),
+            3
+        );
     }
 }

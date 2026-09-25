@@ -229,6 +229,7 @@ fn r1_f4_a_rolling_rebuild_of_a_near_full_cache_stays_within_two_products() {
         .with_rebuild_reader(Box::new(Reader {
             log: log.clone(),
             at: None,
+            faults: Faults::default(),
         }))
         .with_clock(|| u64::MAX / 2);
     late.limits.max_batch_records = 500;
