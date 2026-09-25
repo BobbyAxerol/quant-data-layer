@@ -57284,6 +57284,21 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   needs the window oracle and the production-record-timestamp -> client
   quantity (the mirror commit log carries `source_timestamp_ms`; it is the
   production record's CreateTime, reported as such, never as a commit time).
+- 2026-09-25: **K4 slice 13 (D38/D41 probe matrix over the mirrored live
+  log)** | this commit | `scripts/kn_native_slice_probe.py matrix
+  --source-mode mirror`: the oracle is one fixed window
+  (`--oracle-back-seconds`, default 600, to every partition's end at the
+  read) instead of the whole topic; a product without a record in the window
+  is listed in `unsampled_in_window` and not streamed (no cursor from offset
+  0 of a live log); exactness is judged as before. Latency: the commit log of
+  `kn_canonical_mirror.py` gives the isolated transaction commit (existing
+  `commit_to_client_after_live_ms`, now labelled with its basis) and
+  `production_record_timestamp_to_client_ms` from the production record's
+  CreateTime only (LogAppendTime and capture rows give none; labelled "not a
+  commit time"). Capture mode is unchanged. Tests `MirrorSourceModeTests` (2);
+  `test_kn_native_slice_probe` + `test_kn_canonical_mirror` 41 OK |
+  `tested locally`; runtime NONE | next: candidate image rebuild, D38/D41
+  runtime packet.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

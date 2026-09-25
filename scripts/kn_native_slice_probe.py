@@ -1356,9 +1356,45 @@ def selected_streams(consumers: Sequence[str] | None) -> list[dict[str, Any]]:
     return rows
 
 
+def _matrix_oracle(args: argparse.Namespace, since_ns: int) -> dict[str, list[tuple[int, int, bytes]]]:
+    """Capture: the whole isolated topic. Mirror (KN-4 D38/D41): the live
+    production log keeps growing, so one fixed window - records from
+    ``--oracle-back-seconds`` before ``since_ns`` to every partition's end now."""
+    if getattr(args, "source_mode", "capture") != "mirror":
+        return kafka_oracle(args.bootstrap, args.topic)
+    ends = canonical_end_offsets(args.bootstrap, args.topic)
+    since_ms = since_ns // 1_000_000 - int(args.oracle_back_seconds) * 1000
+    return kafka_oracle_window(args.bootstrap, args.topic, since_ms=since_ms, ends=ends)
+
+
+def mirror_source_clocks(lines) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], int]]:
+    """Commit log -> ``(isolated commit ns, production record timestamp ms)``
+    by isolated coordinate. The production value is the canonical record's
+    Kafka timestamp (CreateTime: the producer's clock at produce), never a
+    commit time; rows without it (capture loads) give none."""
+    commits: dict[tuple[int, int], int] = {}
+    sources: dict[tuple[int, int], int] = {}
+    for line in lines:
+        entry = json.loads(line)
+        if "offset" not in entry:
+            continue
+        coordinate = (int(entry["partition"]), int(entry["offset"]))
+        commits[coordinate] = int(entry["commit_ns"])
+        if entry.get("source_timestamp_type") == 1 and int(entry.get("source_timestamp_ms", 0)) > 0:
+            sources[coordinate] = int(entry["source_timestamp_ms"])
+    return commits, sources
+
+
 async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     rows = selected_streams(args.consumers)
-    oracle = kafka_oracle(args.bootstrap, args.topic)
+    mirror = getattr(args, "source_mode", "capture") == "mirror"
+    oracle = _matrix_oracle(args, time.time_ns())
+    unsampled: list[str] = []
+    if mirror:
+        # A product without a record in the window has no cursor inside it;
+        # it is counted, never streamed from offset 0 of a live log.
+        unsampled = sorted(_stream_id(row) for row in rows if not oracle.get(row["physical_key"]))
+        rows = [row for row in rows if oracle.get(row["physical_key"])]
     # Negative matrix products: the alpha TRADE streams with records.
     everything = demanded_streams()
     probes = []
@@ -1395,7 +1431,7 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
             # A later wave chooses its cursors from the log as it is now: with
             # near-live load, cursors from the run start would lie behind the
             # bounded replay window (typed CURSOR_EXPIRED, rightly).
-            oracle = kafka_oracle(args.bootstrap, args.topic)
+            oracle = _matrix_oracle(args, time.time_ns())
             wave_started_ns = time.time_ns()
         until = time.time_ns() + int(seconds * 1e9)
         results += await asyncio.gather(*(
@@ -1404,17 +1440,21 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     # After the waves: the committed log grew during the live phase; judge
     # every subscription against the final oracle.
     ended_ns = time.time_ns()
-    final = kafka_oracle(args.bootstrap, args.topic)
+    final = _matrix_oracle(args, started_ns)
     commits: dict[tuple[int, int], int] = {}
+    sources: dict[tuple[int, int], int] = {}
     if args.commit_log and Path(args.commit_log).exists():
-        for line in Path(args.commit_log).read_text(encoding="utf-8").splitlines():
-            entry = json.loads(line)
-            if "offset" in entry:
-                commits[(int(entry["partition"]), int(entry["offset"]))] = int(entry["commit_ns"])
+        commits, sources = mirror_source_clocks(Path(args.commit_log).read_text(encoding="utf-8").splitlines())
     latency_by_feed: dict[str, list[float]] = {}
     catchup_by_feed: dict[str, list[float]] = {}
+    source_by_feed: dict[str, list[float]] = {}
     for row, item in zip([row for members in waves for row in members], results, strict=True):
-        live, catchup = commit_to_client_ms(item.pop("_received"), commits)
+        received = item.pop("_received")
+        live, catchup = commit_to_client_ms(received, commits)
+        source_by_feed.setdefault(row["feed"], []).extend(
+            (received_ns - sources[(partition, offset)] * 1_000_000) / 1e6
+            for partition, offset, received_ns, live_since_ns in received
+            if (partition, offset) in sources and live_since_ns is not None and received_ns >= live_since_ns)
         latency_by_feed.setdefault(row["feed"], []).extend(live)
         catchup_by_feed.setdefault(row["feed"], []).extend(catchup)
         delivered = item.pop("_delivered")
@@ -1436,10 +1476,18 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     latency["all"] = _dist([value for values in latency_by_feed.values() for value in values])
     catchup = {feed: _dist(values) for feed, values in sorted(catchup_by_feed.items())}
     catchup["all"] = _dist([value for values in catchup_by_feed.values() for value in values])
-    return {"schema": "qdl.kn.v220.native-matrix.v1", "targets": args.targets, "source_mode": "capture",
-            "commit_to_client_after_live_ms": {"not_live": "capture replay; isolated broker commit times",
-                                               **latency},
+    source = {feed: _dist(values) for feed, values in sorted(source_by_feed.items())}
+    source["all"] = _dist([value for values in source_by_feed.values() for value in values])
+    basis = ({"basis": "isolated broker transaction commit of the mirrored record -> client receive"}
+             if mirror else {"not_live": "capture replay; isolated broker commit times"})
+    return {"schema": "qdl.kn.v220.native-matrix.v1", "targets": args.targets,
+            "source_mode": "mirror" if mirror else "capture",
+            "commit_to_client_after_live_ms": {**basis, **latency},
             "catchup_commit_to_client_ms": catchup,
+            "production_record_timestamp_to_client_ms": (
+                {"basis": "production canonical record CreateTime (producer clock) -> client receive; "
+                          "not a commit time", **source} if mirror else {"not_applicable": "capture replay"}),
+            "unsampled_in_window": unsampled,
             "coverage": coverage_summary(results),
             "waves": [len(members) for members in waves], "subscriptions": results,
             "consumers": sorted({row["consumer_id"] for row in rows}), "checks": int(args.checks),
@@ -1538,6 +1586,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     mat.add_argument("--replay-back", type=int, default=25)
     mat.add_argument("--failover-expected", type=int, default=1)
     mat.add_argument("--commit-log", help="loader commit log for commit->client latency")
+    mat.add_argument("--source-mode", choices=("capture", "mirror"), default="capture",
+                     help="mirror: live production canonical via kn_canonical_mirror (window oracle)")
+    mat.add_argument("--oracle-back-seconds", type=int, default=600)
     mat.add_argument("--consumers", nargs="*", help="only these consumers' streams (one process each)")
     mat.add_argument("--checks", type=int, default=1, help="run the negative matrix and RPC checks")
     mat.add_argument("--read-view", type=int, default=0,

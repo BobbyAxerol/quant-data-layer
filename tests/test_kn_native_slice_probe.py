@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -465,6 +466,36 @@ class ReadViewVerdictTests(unittest.TestCase):
                               ("FAILED_PRECONDITION", "no code here"), ("INVALID_ARGUMENT", "INVALID_ARGUMENT:x")):
             self.assertFalse(verdict("GetSnapshot", True, code=code, details=details)[0], code)
 
+
+
+class MirrorSourceModeTests(unittest.TestCase):
+    """KN-4 D38/D41: the matrix over the live mirrored log."""
+
+    def test_the_commit_log_gives_commit_times_and_only_create_time_source_clocks(self):
+        lines = [json.dumps(row) for row in (
+            {"partition": 1, "offset": 7, "commit_ns": 5_000, "source_offset": 70,
+             "source_timestamp_ms": 3, "source_timestamp_type": 1},
+            {"partition": 1, "offset": 8, "commit_ns": 6_000, "source_offset": 71,
+             "source_timestamp_ms": 4, "source_timestamp_type": 2},       # LogAppendTime: not a source clock
+            {"partition": 2, "offset": 1, "commit_ns": 7_000},              # capture load row
+            {"event_id": "x", "commit_ns": 1})]                             # slice-mode row
+        commits, sources = PROBE.mirror_source_clocks(lines)
+        self.assertEqual(commits, {(1, 7): 5_000, (1, 8): 6_000, (2, 1): 7_000})
+        self.assertEqual(sources, {(1, 7): 3})
+
+    def test_the_mirror_mode_reads_a_fixed_window_and_capture_the_whole_topic(self):
+        args = types.SimpleNamespace(source_mode="mirror", bootstrap="kn4-kafka:9092", topic="t",
+                                     oracle_back_seconds=600)
+        with mock.patch.object(PROBE, "canonical_end_offsets", return_value={0: 9}) as ends, \
+                mock.patch.object(PROBE, "kafka_oracle_window", return_value={"k": []}) as window, \
+                mock.patch.object(PROBE, "kafka_oracle") as whole:
+            self.assertEqual(PROBE._matrix_oracle(args, 1_000_000_000_000), {"k": []})
+        ends.assert_called_once_with("kn4-kafka:9092", "t")
+        window.assert_called_once_with("kn4-kafka:9092", "t", since_ms=1_000_000 - 600_000, ends={0: 9})
+        whole.assert_not_called()
+        with mock.patch.object(PROBE, "kafka_oracle", return_value={}) as whole:
+            PROBE._matrix_oracle(types.SimpleNamespace(source_mode="capture", bootstrap="b", topic="t"), 1)
+        whole.assert_called_once_with("b", "t")
 
 @unittest.skipUnless(__import__("os").environ.get("QDL_KN_TEST_KAFKA"), "SKIPPED LOUDLY: QDL_KN_TEST_KAFKA is not set")
 class WindowOracleKafkaTests(unittest.TestCase):
