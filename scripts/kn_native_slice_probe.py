@@ -1490,6 +1490,16 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
         expected = expected_delivery(row, records, item["after"], started_ns, ended_ns)
         item["expected_deliverable"] = sum(1 for entry in expected if entry["filtered"] == "no")
         item.update(judge_subscription(expected, delivered))
+        if item.get("unexpected") and ends is not None:
+            # Diagnosis: where each unexpected delivered offset lives in the log.
+            known = {entry["offset"] for entry in expected}
+            located = {offset: (key, partition) for key, values in final.items()
+                       for partition, offset, _value in values}
+            item["unexpected_sample"] = [
+                {"offset": offset, "after": item["after"],
+                 "log_key": (located.get(offset) or (None, None))[0],
+                 "log_partition": (located.get(offset) or (None, None))[1]}
+                for offset in [offset for offset in delivered if offset not in known][:5]]
         item["coverage"] = coverage_class(expected, delivered)
     for transport in runner.__dict__.get("_transports", {}).values():
         with contextlib.suppress(Exception):

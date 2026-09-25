@@ -57869,6 +57869,26 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   now taken `MIRROR_DRAIN_S` = 15 s before the streams stop (the harness
   handoff's close-then-drain rule); `test_kn_native_slice_probe` 38 OK |
   `tested locally`; rerun follows.
+- 2026-09-25: **Probe diagnostic run and harness fix, K4 slice 26** | this
+  commit | Probe rerun with the slice-25 boundary (receipt
+  `run/probe-matrix.run3.json` `5b2a36c8...`): the edge residuals were gone;
+  10 failures left, all Binance BAR 5m/15m `unexpected=1` (e.g. BTC 5m: 3
+  delivered, 2 expected). A diagnostic run with the probe from the working
+  tree (`559748...`, not acceptance evidence) did not reproduce them but hit
+  another mode: at ~15 s many streams got the typed
+  `RATE_LIMITED: bounded outbound buffer exhausted` (DOGE/BTC TRADE, BOOK,
+  QUOTE, MARK) and ended - 194 streams on a 1-CPU probe client; client CPU was
+  not sampled, so a slow client is the leading reading, not proven. Same run:
+  RPC 17/17, negatives 23/24; isolated commit -> client p50/p95/p99
+  6.5/25/77 ms (n 24,291); production record CreateTime -> client
+  127/667/2,251 ms (n 25,345). The live-log exactness check therefore stays
+  OPEN. This commit: the probe records `unexpected_sample` (offset, cursor,
+  the log key/partition holding it) so the next unexpected delivery is
+  diagnosable; the kn4-matrix client failed with `FileNotFoundError` because
+  the driver runs from `/driver` and loaded the probe from `/scripts` - the
+  probe is now mounted beside the driver and looked up there first
+  (`test_phase3_*` 63 OK, `test_kn_native_slice_probe` 38 OK) | `tested
+  locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

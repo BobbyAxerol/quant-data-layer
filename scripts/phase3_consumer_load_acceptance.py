@@ -486,6 +486,8 @@ def docker_command(
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",
+        # The KN-2 oracle/judge the kn4-matrix handoff reuses, from the same source as this driver.
+        "--mount", f"type=bind,src={ROOT / 'scripts/kn_native_slice_probe.py'},dst=/driver/kn_native_slice_probe.py,readonly",
         *mounts,
         image_id,
         "/bin/sh", "/driver/phase3_consumer_load_bootstrap.sh",
@@ -2635,7 +2637,9 @@ def _kn4_probe_module():
 
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("kn_native_slice_probe", ROOT / "scripts/kn_native_slice_probe.py")
+    beside = Path(__file__).resolve().with_name("kn_native_slice_probe.py")  # /driver inside the client
+    path = beside if beside.is_file() else ROOT / "scripts/kn_native_slice_probe.py"
+    spec = importlib.util.spec_from_file_location("kn_native_slice_probe", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(spec.name, module)
     spec.loader.exec_module(module)
