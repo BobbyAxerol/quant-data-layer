@@ -57536,6 +57536,35 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   200`, and `kn4_spool_watchdog.sh` stops `kn4-import` within ~10 s when any
   production projector's durable append mean exceeds 600 ms (the writer's own
   latency, ahead of the TS symptom).
+- 2026-09-25: **Third attempt receipt (paced import): stopped by the spool
+  watchdog, TS kept below the stop condition.** 14:59 broker reused (same
+  topic id `94nFTVLF...` from the named volume), import with 500-row page
+  transactions + 200 ms pauses, 0.5 CPU, 20 MB/s. Watchdog metric (worst
+  durable-append mean of the six production projectors, 10 s cadence): with
+  the import p50 227 / p90 403 / max 1,302 ms (stop at 15:03:15,
+  `projector_v2_4`); no-import control 15:04-15:09 p50 217 / p90 270 / max
+  324 ms. TS max 6 refusals in 60 s (no guard stop). Disk (nvme0n1, watch
+  set): the import added ~300-450 read IOPS (baseline 100-200) next to
+  3.5-5k write IOPS; write latency 1.1 ms rose to 1.5-2.9 ms (util 81 %) at
+  the stop. The paced read still raises the writer's tail; the mechanism
+  (IO queueing vs. SQLite checkpoint) is not separated.
+- 2026-09-25: **K4 slice 18 (checkpointed history import, D43)** | this
+  commit | `kn_bar_legacy_import.py import --progress FILE`: after each
+  binding's frames are committed a JSONL line (plan SHA-256 + binding
+  summary) is appended (line-buffered); a rerun of the same plan reuses those
+  summaries without reading the spool (`export(completed=...)`), publishes
+  only the rest and passes when the new frames equal the rows of the new
+  bindings (`resumed_bindings` in the receipt); lines of another plan or cut
+  by a kill are ignored. Tests: `CheckpointedImportTests` (2: reuse without
+  a spool read, equal totals/export hash; progress parsing) and the Kafka case
+  `test_a_checkpointed_import_resumes_without_republishing_committed_bindings`
+  (second run: 0 frames, 0 mutations, PASS, nothing published twice);
+  `test_kn_bar_legacy_import` 17 OK on the disposable kn3-lead broker (torn
+  down after) | `tested locally` | orchestration: read IOPS cap 150 added;
+  a watchdog stop now cools down (worst writer mean < 300 ms for 60 s) and
+  resumes from the checkpoint, up to 12 attempts; the watch set's lifetime
+  is tied to the shadow (pid file; two stale watchers from earlier runs were
+  found and stopped).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

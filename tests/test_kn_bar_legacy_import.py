@@ -26,6 +26,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import uuid
 from contextlib import redirect_stdout
 
@@ -387,6 +388,44 @@ class PagedLiveSpoolExportTests(_SpoolCase):
                             for item in paged if item["rows"]))
 
 
+class CheckpointedImportTests(_SpoolCase):
+    """KN-4 D43: a stopped import resumes from its committed bindings."""
+
+    def test_completed_bindings_are_reused_without_reading_the_spool(self):
+        build_spool(self.sqlite, standard_rows())
+        full, _frames = self.collect(self.sqlite)
+        done = {item["binding_id"]: item for item in full["bindings"] if item["rows"]}
+        keep = sorted(done)[0]
+        completed = {key: value for key, value in done.items() if key != keep}
+        calls = []
+        original = IMPORT.export_binding
+
+        def counting(connection, index, stream, item, **kwargs):
+            calls.append(item.binding.binding_id)
+            return original(connection, index, stream, item, **kwargs)
+
+        connection = IMPORT.open_spool_readonly(self.sqlite)
+        try:
+            with mock.patch.object(IMPORT, "export_binding", counting):
+                resumed = IMPORT.export(connection, self.bar_bindings(), STREAM, materializer_epoch=EPOCH,
+                                        partitions=PARTITIONS, page_rows=2, completed=completed)
+        finally:
+            connection.close()
+        self.assertNotIn(sorted(completed)[0], calls)
+        self.assertIn(keep, calls)
+        self.assertEqual(resumed["totals"], full["totals"])
+        self.assertEqual(resumed["export_sha256"], full["export_sha256"])
+
+    def test_the_progress_file_keeps_only_this_plans_whole_lines(self):
+        path = self.dir / "progress.jsonl"
+        lines = [json.dumps({"plan_sha256": "a" * 64, "summary": {"binding_id": "b1", "rows": 3}}),
+                 json.dumps({"plan_sha256": "b" * 64, "summary": {"binding_id": "b2", "rows": 4}}),
+                 '{"plan_sha256": "' + "a" * 64 + '", "summary": {"binding_id": "b3"']  # cut by a kill
+        path.write_text("\n".join(lines), encoding="utf-8")
+        self.assertEqual(IMPORT.read_progress(path, "a" * 64), {"b1": {"binding_id": "b1", "rows": 3}})
+        self.assertEqual(IMPORT.read_progress(None, "a" * 64), {})
+
+
 class LegacyImportGuardTests(_SpoolCase):
     def setUp(self) -> None:
         super().setUp()
@@ -493,6 +532,24 @@ class LegacyImportKafkaTests(_SpoolCase):
         args[0] = "import"
         return [*args, "--bootstrap", self.bootstrap, "--isolated", "--bars-topic", self.bars_topic,
                 "--canonical-topic", self.canonical_topic, "--batch-frames", "2"]
+
+    def test_a_checkpointed_import_resumes_without_republishing_committed_bindings(self):
+        """KN-4 D43: with ``--progress`` a rerun of the same plan skips every
+        committed binding (no spool read, no frame) and still passes; the
+        paged live-spool read gives the same export."""
+        rows = standard_rows()
+        build_spool(self.sqlite, rows)
+        progress = self.dir / "progress.jsonl"
+        paced = ["--progress", str(progress), "--page-transactions", "--page-pause-ms", "1"]
+        code, first = run_main(self.import_args("first.json") + paced)
+        self.assertEqual((code, first["status"], first["resumed_bindings"]), (0, "PASS", 0), first.get("error"))
+        self.assertEqual(first["kafka"]["frames"], len(rows))
+        code, again = run_main(self.import_args("again.json") + paced)
+        self.assertEqual((code, again["status"]), (0, "PASS"), again.get("error"))
+        self.assertEqual((again["kafka"]["frames"], again["mutations"], again["published_bindings"]), (0, 0, []))
+        self.assertEqual(again["resumed_bindings"], len(first["bindings"]))
+        self.assertEqual(again["export_sha256"], first["export_sha256"])
+        self.assertEqual(len(self.consume_all(len(rows))), len(rows), "nothing was published twice")
 
     def test_import_is_read_back_committed_and_a_rerun_keeps_the_key_set(self):
         rows = standard_rows()

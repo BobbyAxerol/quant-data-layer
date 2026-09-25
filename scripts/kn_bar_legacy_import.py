@@ -344,12 +344,20 @@ def export_binding(connection: sqlite3.Connection, index: str, stream: str, item
 def export(connection: sqlite3.Connection, bindings: Sequence[BarBinding], stream: str, *,
            materializer_epoch: int, partitions: int, page_rows: int,
            on_binding: Callable[[dict[str, Any], list[ExportedFrame]], None] | None = None,
-           page_transactions: bool = False, page_pause_s: float = 0.0) -> dict[str, Any]:
-    """Export every binding; ``on_binding`` receives each binding's frames (import)."""
+           page_transactions: bool = False, page_pause_s: float = 0.0,
+           completed: Mapping[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Export every binding; ``on_binding`` receives each binding's frames (import).
+
+    ``completed`` (checkpointed import, KN-4 D43): binding id -> the summary of
+    a binding an earlier run of the same plan already committed; it is reused
+    without reading the spool again."""
 
     index = primary_key_index(connection)
     summaries = []
     for item in bindings:
+        if completed and item.binding.binding_id in completed:
+            summaries.append(dict(completed[item.binding.binding_id]))
+            continue
         summary, frames = export_binding(connection, index, stream, item, materializer_epoch=materializer_epoch,
                                          partitions=partitions, page_rows=page_rows,
                                          keep_frames=on_binding is not None,
@@ -575,13 +583,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                          partitions=args.partitions, transactional_id=plan["transactional_id"],
                                          security=security, batch_frames=args.batch_frames)
         published: list[str] = []
+        completed = read_progress(args.progress, digest)
+        progress = open(args.progress, "a", encoding="utf-8", buffering=1) if args.progress else None
 
         def publish(summary: dict[str, Any], frames: list[ExportedFrame]) -> None:
-            importer.publish(frames)
+            importer.publish(frames)  # committed when it returns
             published.append(summary["binding_id"])
+            if progress is not None:
+                progress.write(json.dumps({"plan_sha256": digest, "summary": summary}, sort_keys=True) + "\n")
 
         try:
-            result = export(connection, bindings, stream, on_binding=publish, **common)
+            result = export(connection, bindings, stream, on_binding=publish, completed=completed, **common)
         except (Refused, RuntimeError, StateCodecError) as error:
             receipt.update(status="REFUSED" if isinstance(error, Refused) else "ERROR", error=str(error),
                            published_bindings=published, mutations=importer.frames,
@@ -589,13 +601,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             return receipt
         finally:
             importer.close()
+            if progress is not None:
+                progress.close()
         _add_export(receipt, result, stream, {"captured": True, **canonical_cutoff})
+        expected = sum(item["rows"] for item in result["bindings"] if item["binding_id"] not in completed)
         receipt.update(kafka={"transactions": importer.transactions, "frames": importer.frames},
                        published_bindings=published, mutations=importer.frames,
-                       status="PASS" if importer.frames == receipt["totals"]["rows"] else "FAIL")
+                       resumed_bindings=len(completed),
+                       status="PASS" if importer.frames == expected else "FAIL")
         return receipt
     finally:
         connection.close()
+
+
+def read_progress(path: Path | None, plan_sha256: str) -> dict[str, dict[str, Any]]:
+    """Committed bindings of this plan from a progress file (other plans ignored)."""
+
+    if path is None or not path.exists():
+        return {}
+    done: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a line cut by a kill: that binding is simply redone
+        if entry.get("plan_sha256") == plan_sha256 and isinstance(entry.get("summary"), dict):
+            done[entry["summary"]["binding_id"]] = entry["summary"]
+    return done
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -620,6 +652,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--page-transactions", action="store_true",
                         help="one short read transaction per page (a live production spool, KN-4 D43)")
     parser.add_argument("--page-pause-ms", type=int, default=0, help="pause between pages (page transactions)")
+    parser.add_argument("--progress", type=Path,
+                        help="import checkpoint: committed bindings of this plan are skipped on a rerun")
     parser.add_argument("--batch-frames", type=int, default=500)
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.mode == "export" and (args.bootstrap or args.isolated or args.confirm or args.dry_run):
