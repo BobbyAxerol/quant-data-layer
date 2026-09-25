@@ -57565,6 +57565,23 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   resumes from the checkpoint, up to 12 attempts; the watch set's lifetime
   is tied to the shadow (pid file; two stale watchers from earlier runs were
   found and stopped).
+- 2026-09-25: **Fourth attempt receipt (checkpointed, IOPS-capped import):
+  stopped; decision needed on the migration window.** 15:14:26 broker reused;
+  import with 500-row page transactions, 200 ms pauses, 0.5 CPU, 20 MB/s and
+  150 read IOPS. 15:15:52 the spool watchdog stopped it after 4 committed
+  bindings (checkpoint kept, `state/import-progress.jsonl`): worst writer
+  mean 693 ms. The largest disturbance came AFTER the stop: 15:16 durable
+  append mean up to 2.6 s and canonical age up to 13 s on all projectors
+  (15:15 0.3-0.6 s), recovered 15:17; core_2 normal (raw_age <= 2.3 s); TS 7
+  + 6 refusals (15:15/15:16), guard ABORT at 12 in 60 s. Same shape as
+  14:53-14:55. Spool file facts (metadata only, read-only mount):
+  `canonical-cache.sqlite3` 3.31 GB, `-wal` 64 MiB, `-shm` 6.4 MB. Reading:
+  any read session on the live 3.3 GB spool disturbs its writer, and the
+  larger stall follows the reader's release; that fits WAL checkpoint
+  starvation (the writer copies the backlog once the reader leaves) and an
+  IOPS cap makes each read transaction longer (inference; not separated).
+  Retrying in small attempts would cost one TS disturbance per ~4 bindings
+  (144 bindings). Teardown clean (0 containers/networks, no watcher left).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
