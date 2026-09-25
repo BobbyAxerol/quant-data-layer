@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 READY_TO_START / NOT STARTED; KN-4..KN-5 NOT STARTED.**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 IN_PROGRESS; KN-5 NOT STARTED.**
 KN-2 current verdict and owner decisions: [Astra review R2](#kn2-astra-review-r2).
 Historical findings: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
@@ -53281,8 +53281,8 @@ Do not start the next phase merely because the executor's tests passed.
 |---|---|---|---|---|
 | [KN-1](#kn-plan-phase-1) | ASTRA_REVIEW_PASS / CLOSED | Claude Opus 5.5 | Astra | R3 on `078f994`: F3/F5 accepted; F1/F2/F4/F6 accepted in R2; not live capacity certification |
 | [KN-2](#kn-plan-phase-2) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Five reproduced correctness/boundedness defects on `d8929d1`; focused closure inside KN-2, no new phase |
-| [KN-3](#kn-plan-phase-3) | PENDING_PREREQUISITES | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
-| [KN-4](#kn-plan-phase-4) | PENDING_KN2_KN3_REVIEW | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
+| [KN-3](#kn-plan-phase-3) | ASTRA_REVIEW_PASS / CLOSED (isolated-flow scope, `f0380a4`) | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
+| [KN-4](#kn-plan-phase-4) | IN_PROGRESS | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
 | [KN-5](#kn-plan-phase-5) | PENDING_KN1_KN4_REVIEW | Claude Opus 5.5 | Astra | 50+TS acceptance, paired cutover, provenance, cleanup and release |
 
 **Common invariants and approved scope:**
@@ -55300,11 +55300,11 @@ change production authority or certify a new release from this receipt alone.
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - REVIEW_CHANGES_REQUIRED kept
-through R1 (slice 11), R2 (slice 12), R3 (slice 13, post-publish window) and
-R4 (slice 14, never-ready product after unstage); re-review requested
-2026-09-25 (see [R4](#kn3-astra-review-r4); production packet gated on owner
-decisions).
+**Status:** ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25,
+source `f0380a4`, recorded from the owner's hand-off of the Astra conclusion)
+after R1 (slice 11), R2 (slice 12), R3 (slice 13, post-publish window) and R4
+(slice 14, never-ready product after unstage). The production state-topic /
+projector packet stays gated on owner decisions; readback cutover is KN-5.
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55341,9 +55341,10 @@ of the sole old-history copy. Record before/after disk and retained rollback.
 **Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> slice 11; R2
 REVIEW_CHANGES_REQUIRED (two residuals) -> slice 12; R3 REVIEW_CHANGES_REQUIRED
 (post-publish cleanup) -> slice 13; R4 REVIEW_CHANGES_REQUIRED (never-ready
-product after unstage) -> slice 14; re-review REQUESTED 2026-09-25 to record
-ASTRA_REVIEW_PASS and open KN-4 ([R4](#kn3-astra-review-r4)).
-**Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
+product after unstage) -> slice 14; **ASTRA_REVIEW_PASS at `f0380a4`
+(2026-09-25)** ([R4](#kn3-astra-review-r4)).
+**Next permitted step:** KN-4 (in progress); KN-3 production packet only with
+explicit owner approval.
 
 #### KN-3 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
@@ -56495,14 +56496,18 @@ Astra requested review points and next allowed step:
   R4-F1 fixed as D24 with the before/after regression above; R3 regressions
   kept. **Request:** re-review of slice 14 for **ASTRA_REVIEW_PASS on KN-3**
   and, on PASS, KN-4 entry.
+- 2026-09-25: **ASTRA_REVIEW_PASS recorded at `f0380a4`** (owner hand-off of the
+  Astra conclusion: "KN-3 da ASTRA_REVIEW_PASS tai f0380a4"). KN-3 CLOSED at
+  isolated-flow scope; R4 is no longer a KN-4 blocker. KN-4 slice 1 (`2c85adf`,
+  additive projector ops W/K) is reviewed with KN-4, not as a KN-3 change.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
 
-**Status:** IN_PROGRESS (2026-09-25, started by explicit owner sequencing while
-the KN-3 R4 re-review is pending - see the KN-4 journal). Slices 1-7 are
-implemented and tested; the shadow run was stopped on the TS stop condition
-and waits for an owner decision (journal, shadow run receipt).
+**Status:** IN_PROGRESS (2026-09-25). KN-3 PASS recorded (`f0380a4`). Slices
+1-7 implemented and tested; the first shadow run stopped on the TS stop
+condition; the owner chose a narrow investigation first, then watched load
+(decisions D35-D41 in the journal).
 **Goal:** actual SDK/consumer reads use the new backend correctly across the
 declared endpoint surface; hot latency survives heavy warmup and recovery.
 **Guide index:** [18.11 work items and K4-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-4),
@@ -57002,6 +57007,67 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
     production execution MARK/INDEX sensitivity is investigated first or
     load resumes with a TS stop watcher; (b) Query memory: optimise and
     re-measure before any limit change (standing owner rule).
+- 2026-09-25: **Owner decision after the stopped shadow run (recorded before
+  code; D35-D41).** Keep the KN architecture (Rust canonical/stream/
+  projector, market cache behind Query, Python API/SDK compatibility); no
+  new phase; finish in KN-4, then KN-5 closes the program (no KN-6).
+  - **D35 MARK/INDEX correctness, not timeouts.** Published cadences differ
+    (Binance USD-M `@markPrice@1s` carries MARK and INDEX in one message;
+    OKX mark-price 200 ms on change / 10 s unchanged; OKX index-tickers
+    100 ms on change / 1 min unchanged). The configured internal bounds
+    (Binance both 5 s, OKX MARK 15 s, INDEX 70 s) stay; verify their
+    application: per-instrument/component pairing, separate MARK/INDEX
+    timestamps and provenance (a new component never refreshes an old
+    one), event age vs component confirmation vs session liveness vs
+    pipeline lag vs execution eligibility kept distinct; disconnect,
+    generation change, missing component or wrong lineage fail closed; the
+    read time never replaces a source timestamp; DOGE and the strict
+    execution policy are not relaxed; quiet policy only per manifest.
+  - **D36 Read boundary fails closed.** `latest_stored_event()` turned every
+    `QueryBackendError` into `None` and `CacheRefreshingMarkIndexView` could
+    then serve a remembered price: a cache error, a lost generation and
+    absent data become indistinguishable. Distinguish them; a fencing or
+    integrity failure (or the product losing its state) invalidates the
+    remembered record; a transient failure reuses nothing unless the
+    contract proves validity. Regression: good read -> cache error /
+    generation change / broken lineage -> read again.
+  - **D37 Narrow TS investigation first**, same timestamps: typed errors,
+    session/component, Kafka lag, cache apply, Query queue, cgroup CPU
+    throttling, memory pressure and disk latency (host idle does not rule
+    out one throttled container or a saturated core/I/O). The watcher stays
+    a guard, not a diagnosis.
+  - **D38 No spool in the live shadow input.** Captured/replayed data only
+    for correctness/load; the live measurement reads production canonical
+    Kafka `read_committed` with the existing reader, a separate scope, no
+    group commit, no production offset change; the history import joins the
+    live tail by a continuous watermark (overlap, idempotent), never by the
+    wall clock.
+  - **D39 OOM before RAM.** Measure heap/RSS per request and across
+    repeated rounds; separate leak from allocator retention; bound bytes in
+    flight, queue depth and cache bytes; remove the protobuf -> object ->
+    JSON duplicate copies; keep permits until the worker ends. 10k history
+    and the consumer count are not reduced. Native (Rust) work only where
+    the profiler proves Python/GIL is the bottleneck. If a bounded working
+    set still needs more than 1 GiB, raise the cap to the measured peak plus
+    headroom with before/after evidence.
+  - **D40 Real consumers and provenance.** Resolve the alpha inventory and
+    compile the sealed alpha binding; test execution-context/L2, allowed
+    fallback and BLOCKED. The candidate image must contain `abd036c` and
+    later fixes; `ccec85c` certifies nothing new.
+  - **D41 Tests and gates.** Handoff by a fixed boundary/watermark with the
+    whole window's records compared (quiet-live separately; captured
+    provider replay where events must be deterministic), not "N events";
+    the matrix covers the agreed endpoints/bindings (11 HTTP, 4 RPC,
+    BAR/intervals/history, trade/quote, L2, reference, diagnostics; batches
+    1/8/16/32/50; history 2.5k/5k/10k; two replicas; cursor/reconnect/
+    fallback); report consumer-call -> usable, durable event age, delivery
+    lag and event -> consumer-cache applied, MARK/INDEX per component, with
+    errors/timeouts/unserved load in the denominator and no received_at
+    posing as Kafka commit time; frozen budget, same-workload baseline;
+    stage 35 clean of OOM, worker leak, data loss and eligibility errors;
+    no C2 as a bug detector; unchanged evidence inherited.
+  Order: D36 (source, small) and D37 in parallel, then D38, D39, D40, D41,
+  then shadow reruns with the watcher.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
