@@ -73,7 +73,11 @@ async def fetch_closed_bar_history_raw_envelopes(
     now_ms: int | None = None,
     history_client: OkxHistoricalClient | None = None,
     test_provenance: bool = False,
+    allow_short: bool = False,
 ) -> tuple[raw_provider_pb2.RawProviderEnvelope, ...]:
+    """``allow_short`` (KN-4 D47-3): when OKX itself has no older candles
+    (``PROVIDER_EXHAUSTED``), the shorter contiguous window is returned for the
+    caller to report; any other short coverage stays an error."""
     if limit < 1 or limit > 10_000:
         raise ValueError("OKX history limit must be between 1 and 10000")
     observed_ms = int(now_ms if now_ms is not None else time.time() * 1000)
@@ -99,12 +103,13 @@ async def fetch_closed_bar_history_raw_envelopes(
         max_records=limit + 3,
         max_pages=max(2, (limit + 299) // 300 + 1),
     )
-    if history.coverage.status != "FULL":
+    exhausted = allow_short and history.coverage.terminal_reason == "PROVIDER_EXHAUSTED"
+    if history.coverage.status != "FULL" and not exhausted:
         raise RuntimeError(
             f"OKX closed-bar history coverage is {history.coverage.status}, not FULL"
         )
     confirmed = tuple(item for item in history.records if item.confirmed)
-    if len(confirmed) < limit:
+    if len(confirmed) < limit and not exhausted:
         raise RuntimeError(
             "OKX closed-bar history is short: requested="
             f"{limit} confirmed={len(confirmed)}"

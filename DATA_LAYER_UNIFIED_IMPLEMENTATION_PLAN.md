@@ -57716,6 +57716,32 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `qdl-realtime-core` provider_admission 9 OK | `tested locally`; runtime
   NONE. Open for the shadow: the lane policies (shadow share) and the
   isolated core hosting the endpoint (D47-4).
+- 2026-09-25: **K4 slice 21 (D47-3 fill by demand, backpressure, truthful
+  short history)** | this commit | New `qdl/runtime/bar_history_demand.py`:
+  demanded rows per BAR binding from the gateway bundle with the projector's
+  own rule (`products.rs` `retained_caps`: largest `max_warmup_rows` of a
+  manifest requiring the product; the 2,064 headroom is retention, never
+  fetched). New `qdl/runtime/history_backpressure.py`: per pipeline stage
+  (core on the raw topic, projector stage A `kn-projector-v3-a` on canonical,
+  stage B `kn-projector-v3-b` on bars) the unconsumed records (end - committed
+  group offset, read-only admin/watermarks); the gate closes above a stage
+  limit or when the backlog cannot be read. `stable_bar_edge.py` (KN mode
+  only): depth = min(global bound, 1,095-day capacity, demand; 1 bar for a
+  product nobody demands - the live watermark); the gate is checked before
+  each binding's history - closed pauses the fill without failing, live bars
+  keep flowing, the next turn resumes from the checkpoint; venue history
+  shorter than asked is published as it is and reported (`short` in the
+  heartbeat), an empty one is skipped and not retried. Adapters:
+  `allow_short` in Binance (a short page is the venue's first bars only when
+  one more older row does not exist) and OKX (only `PROVIDER_EXHAUSTED`);
+  default behaviour unchanged. Env (off by default):
+  `QDL_STABLE_BAR_DEMAND_BUNDLE`, `QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP` +
+  `_STAGES` (`name:group:topic:limit,...`). Tests
+  `tests/test_kn_history_fill.py` 8 (demand rule; backlog/gate incl.
+  unreadable; Binance/OKX short acceptance and refusal; edge depth, short and
+  empty history not retried; gate pause and resume) + a real-broker group
+  backlog case (disposable kn3-lead broker); edge/admission suites 209 OK,
+  adapter-dependent suites 109 OK | `tested locally`; runtime NONE.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

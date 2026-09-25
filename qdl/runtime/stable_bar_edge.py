@@ -235,6 +235,8 @@ class StableBinanceBarEdge:
         clock=time.time,
         generation_clock_ns=time.time_ns,
         provider_admission=None,
+        history_demand=None,
+        history_gate=None,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -336,6 +338,13 @@ class StableBinanceBarEdge:
         # the direct clients). BATCH for history/recovery, REALTIME for live bars.
         self.provider_admission = provider_admission
         self._admitted_clients: dict[tuple[str, str], object] = {}
+        # KN-4 D47-3: history depth by demand (binding id -> rows; None keeps
+        # the global bound), a downstream backpressure gate checked before each
+        # binding's history, and truthful short venue history.
+        self.history_demand = dict(history_demand) if history_demand is not None else None
+        self.history_gate = history_gate
+        self._history_short: dict[str, tuple[int, int]] = {}
+        self._history_gate_closed_at: float | None = None
         self._serving_pending: dict[str, tuple[frozenset[int], float]] = {}
         self._served: set[str] = set()
         self._serve_overdue: set[str] = set()
@@ -892,7 +901,9 @@ class StableBinanceBarEdge:
         *,
         rows: int,
         observed_ms: int,
+        allow_short: bool = False,
     ) -> tuple[object, ...]:
+        short = {"allow_short": True} if allow_short else {}
         if acquisition.runtime == "BINANCE":
             return tuple(fetch_binance_history(
                 self._binance_binding(source),
@@ -901,6 +912,7 @@ class StableBinanceBarEdge:
                 attempts=4,
                 test_provenance=False,
                 **self._binance_kwargs("BATCH"),
+                **short,
             ))
         if acquisition.runtime == "OKX":
             return tuple(asyncio.run(fetch_okx_history(
@@ -909,6 +921,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 test_provenance=False,
                 **self._okx_kwargs("BATCH"),
+                **short,
             )))
         raise ValueError("stable crypto BAR runtime is unsupported")
 
@@ -1148,10 +1161,39 @@ class StableBinanceBarEdge:
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.
         """
-        return min(
+        rows = min(
             self.warmup_rows,
             durable_bar_history_capacity_rows(source.interval or ""),
         )
+        demand = getattr(self, "history_demand", None)
+        if demand is not None:
+            # The largest max_warmup_rows of a manifest requiring the product
+            # (the D15 rule); a product nobody demands keeps one bar, enough
+            # for the live watermark. 12,064 is a retention ceiling, not a fill.
+            rows = min(rows, max(1, int(demand.get(source.binding_id, 0))))
+        return rows
+
+    def _history_short_empty(self) -> set[str]:
+        return {binding for binding, (_requested, available) in
+                getattr(self, "_history_short", {}).items() if available == 0}
+
+    def _history_gate_open(self) -> bool:
+        """Downstream backpressure (KN-4 D47-3): history waits, live does not."""
+
+        gate = getattr(self, "history_gate", None)
+        if gate is None:
+            return True
+        admitted, detail = gate()
+        if not admitted:
+            if self._history_gate_closed_at is None:
+                self._history_gate_closed_at = self.clock()
+                logger.warning("stable BAR history paused by downstream backlog %s", detail)
+            return False
+        if self._history_gate_closed_at is not None:
+            logger.info("stable BAR history resumed after %.1fs",
+                        self.clock() - self._history_gate_closed_at)
+            self._history_gate_closed_at = None
+        return True
 
     def _settled_observed_ms(self) -> int:
         """Return the real observation clock for provider finality checks.
@@ -1316,7 +1358,8 @@ class StableBinanceBarEdge:
     def serving_status(self) -> dict[str, int]:
         return {"bindings": len(self._binding_ids), "published": len(self._last_open_ms),
                 "served": len(self._served), "pending": len(self._serving_pending),
-                "overdue": len(self._serve_overdue)}
+                "overdue": len(self._serve_overdue), "short": len(getattr(self, "_history_short", {})),
+                "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
 
     def bootstrap_history(self) -> int:
         if self.repair_only:
@@ -1329,38 +1372,36 @@ class StableBinanceBarEdge:
             return 0
         observed_ms = self._settled_observed_ms()
         published = 0
-        for source, acquisition in self.history_bindings:
-            if source.binding_id in self._last_open_ms:
+        kn_mode = getattr(self, "bar_readback", None) is not None
+        for source, acquisition in self.history_bindings + self.history_okx_bindings:
+            if source.binding_id in self._last_open_ms or source.binding_id in self._history_short_empty():
                 continue
+            if kn_mode and not self._history_gate_open():
+                return published  # resumed on a later turn; live bars keep flowing
             bootstrap_rows = self._bootstrap_rows_for(source)
-            published += self._publish_history(
+            values = self._fetch_history(
                 source,
                 acquisition,
-                self._fetch_history(
-                    source,
-                    acquisition,
-                    rows=bootstrap_rows,
-                    observed_ms=observed_ms,
-                ),
-                expected_rows=bootstrap_rows,
+                rows=bootstrap_rows,
+                observed_ms=observed_ms,
+                allow_short=kn_mode,
             )
-        for source, acquisition in self.history_okx_bindings:
-            if source.binding_id in self._last_open_ms:
-                continue
-            bootstrap_rows = self._bootstrap_rows_for(source)
+            if len(values) < bootstrap_rows:
+                # The venue has no older bars (new listing / long interval):
+                # reported, never invented, never retried as an error.
+                self._history_short[source.binding_id] = (bootstrap_rows, len(values))
+                logger.warning("stable BAR provider history is short binding=%s requested=%s available=%s",
+                               source.binding_id, bootstrap_rows, len(values))
+                if not values:
+                    continue
             published += self._publish_history(
                 source,
                 acquisition,
-                self._fetch_history(
-                    source,
-                    acquisition,
-                    rows=bootstrap_rows,
-                    observed_ms=observed_ms,
-                ),
-                expected_rows=bootstrap_rows,
+                values,
+                expected_rows=len(values),
             )
         self._history_bootstrapped = (
-            set(self._last_open_ms) == set(self._binding_ids)
+            set(self._last_open_ms) | self._history_short_empty() == set(self._binding_ids)
         )
         if not self._history_bootstrapped:
             raise RuntimeError("stable BAR bootstrap did not checkpoint every binding")
@@ -1960,6 +2001,23 @@ def build_from_environment(
             lambda: RustHttpProviderAdmission(base_url=admission_url, secret=secret),
             max_wait_s=float(os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_MAX_WAIT_S", "30")),
         )
+    # KN-4 D47-3: history depth by demand and downstream backpressure (KN mode).
+    history_demand = None
+    demand_bundle = os.environ.get("QDL_STABLE_BAR_DEMAND_BUNDLE", "").strip()
+    if demand_bundle:
+        from qdl.runtime.bar_history_demand import load_demanded_history_rows
+
+        history_demand = load_demanded_history_rows(demand_bundle)
+    history_gate = None
+    backpressure_bootstrap = os.environ.get("QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP", "").strip()
+    if backpressure_bootstrap:
+        from qdl.runtime.history_backpressure import Stage, kafka_backlog_from_config
+
+        stages = []
+        for spec in os.environ["QDL_STABLE_BAR_BACKPRESSURE_STAGES"].split(","):
+            name, group, topic, limit = spec.split(":")
+            stages.append(Stage(name, group, topic, int(limit)))
+        history_gate = kafka_backlog_from_config(backpressure_bootstrap, stages)
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(
@@ -2032,6 +2090,8 @@ def build_from_environment(
         canonical_cache_path=canonical_cache_path if bar_readback is None else None,
         bar_readback=bar_readback,
         provider_admission=provider_admission,
+        history_demand=history_demand,
+        history_gate=history_gate,
         repair_only=repair_only,
     )
 
