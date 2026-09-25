@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from dataclasses import replace
 
 from qdl.query.lanes import ReadLaneRejected
 from pathlib import Path
@@ -174,35 +175,31 @@ def _envelope(
     envelope.canonical_payload_hash = hashlib.sha256(
         envelope.mark_index_price.SerializeToString(deterministic=True)
     ).digest()
+    # Every retained MARK/INDEX event carries Rust pair lineage (D35): both
+    # components confirmed at `received_at_ns`, source values 1 ms earlier.
+    source_ms = (received_at_ns - 1_000_000) // 1_000_000
+    _apply_pair_lineage(
+        envelope,
+        tag=f"{binding.instrument.instrument_uid}:{sequence}:{generation}",
+        source_times=(source_ms, source_ms),
+        mark_received_at_ns=received_at_ns,
+        index_received_at_ns=received_at_ns,
+    )
     return envelope
 
 
-def _paired_envelope(
-    binding: StableSourceBinding,
+def _apply_pair_lineage(
+    envelope: market_data_pb2.EventEnvelope,
     *,
-    sequence: int,
-    generation: int = 1,
+    tag: str,
+    source_times: tuple[int, int],
     mark_received_at_ns: int,
     index_received_at_ns: int,
-) -> market_data_pb2.EventEnvelope:
-    """Build deterministic Rust-shaped pair lineage for quiet-contract tests."""
+) -> None:
+    """Rust-shaped pair lineage (``qdl-realtime-core`` pair emission)."""
 
-    envelope = _envelope(
-        binding,
-        sequence=sequence,
-        generation=generation,
-        received_at_ns=min(mark_received_at_ns, index_received_at_ns),
-    )
-    mark_capture = hashlib.sha256(
-        f"mark:{binding.instrument.instrument_uid}:{sequence}".encode()
-    ).digest()[:16]
-    index_capture = hashlib.sha256(
-        f"index:{binding.instrument.instrument_uid}:{sequence}".encode()
-    ).digest()[:16]
-    source_times = (
-        mark_received_at_ns // 1_000_000,
-        index_received_at_ns // 1_000_000,
-    )
+    mark_capture = hashlib.sha256(f"mark:{tag}".encode()).digest()[:16]
+    index_capture = hashlib.sha256(f"index:{tag}".encode()).digest()[:16]
     envelope.source_event_time_ns = min(source_times) * 1_000_000
     envelope.received_at_ns = min(mark_received_at_ns, index_received_at_ns)
     envelope.normalized_at_ns = envelope.received_at_ns + 1
@@ -225,6 +222,34 @@ def _paired_envelope(
     envelope.raw_payload_hash = hashlib.sha256(
         b"paired-mark-index-test" + mark_capture + index_capture
     ).digest()
+
+
+def _paired_envelope(
+    binding: StableSourceBinding,
+    *,
+    sequence: int,
+    generation: int = 1,
+    mark_received_at_ns: int,
+    index_received_at_ns: int,
+) -> market_data_pb2.EventEnvelope:
+    """Build deterministic Rust-shaped pair lineage for quiet-contract tests."""
+
+    envelope = _envelope(
+        binding,
+        sequence=sequence,
+        generation=generation,
+        received_at_ns=min(mark_received_at_ns, index_received_at_ns),
+    )
+    _apply_pair_lineage(
+        envelope,
+        tag=f"{binding.instrument.instrument_uid}:{sequence}",
+        source_times=(
+            mark_received_at_ns // 1_000_000,
+            index_received_at_ns // 1_000_000,
+        ),
+        mark_received_at_ns=mark_received_at_ns,
+        index_received_at_ns=index_received_at_ns,
+    )
     return envelope
 
 
@@ -661,6 +686,83 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.record.delivery_stage, "SPOOL_CONFIRMED")
         self.assertEqual(result.record.spool_watermark_offset, 44)
+
+    async def test_a_corrupt_durable_row_is_a_typed_hydration_failure(self):
+        """D35 (1): an undecodable spool payload is refused as ValueError, not
+        a NameError from an unimported exception class."""
+        stored = _hydration_stored(self.binding, _envelope(self.binding, sequence=21), offset=46)
+        stored = replace(stored, event=replace(stored.event, payload=b"\xff\xff\xff"))
+
+        class _Spool:
+            def read_tail(self, *, stream, partition_key, limit):
+                return [stored]
+
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+        with self.assertRaisesRegex(ValueError, "hydration canonical payload is invalid"):
+            await view.hydrate_from_spool(spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9)
+
+    async def test_the_strict_read_never_retains_a_pair_without_its_lineage(self):
+        """D35 (2, 3): the strict (BLOCK) path retained MARK/INDEX without
+        checking the Rust pair lineage; it now refuses a broken sequence, a
+        wrong capture digest, a zero component time and envelope clocks that
+        are not the components' oldest."""
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+
+        def broken_sequence(envelope):
+            envelope.source_sequence = f"test:4:{envelope.partition_sequence}"
+
+        def wrong_capture(envelope):
+            envelope.raw_capture_id = b"\x00" * 16
+
+        def zero_component_time(envelope):
+            fields = envelope.source_sequence.split(":")
+            fields[1] = "0"
+            envelope.source_sequence = ":".join(fields)
+
+        def newest_confirmation(envelope):
+            fields = envelope.source_sequence.split(":")
+            fields[3] = str(int(fields[2]) + 5_000_000)
+            envelope.source_sequence = ":".join(fields)
+            envelope.received_at_ns = int(fields[3])
+
+        def newest_source_value(envelope):
+            envelope.source_event_time_ns += 1_000_000
+
+        for sequence, damage in enumerate(
+            (broken_sequence, wrong_capture, zero_component_time, newest_confirmation, newest_source_value),
+            start=31,
+        ):
+            with self.subTest(damage=damage.__name__):
+                envelope = _envelope(self.binding, sequence=sequence, generation=4)
+                damage(envelope)
+                with self.assertRaisesRegex(ValueError, "MARK_INDEX"):
+                    await view.remember(binding=self.binding, envelope=envelope, stored=None, gateway_epoch=9)
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual((result.record, result.reason), (None, "NOT_READY"))
+        good = _envelope(self.binding, sequence=40, generation=4)
+        await view.remember(binding=self.binding, envelope=good, stored=None, gateway_epoch=9)
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(result.record.event_id, bytes(good.event_id))
 
     async def test_durable_hydration_preserves_gap_and_identity_fences(self):
         gap = _envelope(

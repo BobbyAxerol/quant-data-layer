@@ -57162,6 +57162,46 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   (test bug, fixed by flushing) | `tested locally`; runtime NONE (the
   production read is a separate journaled packet) | next: D35 fixes, then
   the D38 packet.
+- 2026-09-25: **K4 slice 10 (D35 fixes 1-3)** | this commit | (1)
+  `qdl/runtime/execution_mark_index.py` imports `DecodeError`: a corrupt
+  hydration row is the typed `ValueError`, not a `NameError`. (2)
+  `ExecutionMarkIndexLiveView.remember` requires the Rust pair lineage
+  (`paired_mark_index_lineage`) for every retained record, so the strict
+  (BLOCK) read and the KN cache view (`CacheRefreshingMarkIndexView`, which
+  turns the refusal into `LINEAGE_INVALID`) no longer serve a MARK/INDEX
+  record without proof; the ingest path already validated it
+  (`stable_ingest.py:203`), so no new failure mode there. (3)
+  `mark_index_lineage.paired_mark_index_lineage` refuses component source
+  time 0 and envelope clocks that are not the components' oldest
+  (`source_event_time_ns == min(source ms) * 1e6`,
+  `received_at_ns == min(receipts)`, exactly the Rust emission
+  `lib.rs:904-906, 943`); checked on the two real golden MARK/INDEX records
+  (Binance and OKX, provenance "real records read from the stable spool"),
+  both satisfy it. A read-only check on the production spool was refused
+  by the session's permission classifier and not attempted another way.
+  Not changed, with reason: (4) an absent component bound is fail-closed
+  already (OBSERVE refuses `QUIET_POLICY_UNAVAILABLE`, the strict read keeps
+  the 2 s event bound) - no defect; (7) the future-anchor clamp is the same
+  on the quiet path (`:517`) and receipts are same-host clocks; a tolerance
+  would be a new invented bound, so none is added; (5) goes to the owner.
+  Tests: new `test_a_corrupt_durable_row_is_a_typed_hydration_failure`,
+  `test_the_strict_read_never_retains_a_pair_without_its_lineage` (5
+  damages) and KN case 7 in
+  `test_the_mark_index_view_never_answers_a_cache_failure_with_a_remembered_price`;
+  before (HEAD source): NameError + 4 damages retained; after OK. Fixtures
+  that built MARK/INDEX without lineage (the gap itself: 8 live-view tests,
+  2 KN tests) now carry Rust-shaped lineage. `test_execution_mark_index_live_view`
+  + `test_kn_query_backend` 53 OK; full suite 2,187 OK / 10 skipped
+  (image `qdl-v2-python:2.1.1-83fa1bc`, disposable kn3-lead Redis/Kafka) |
+  `tested locally`; runtime NONE | next: D39 measurement (isolated), D38
+  runtime packet with the D37 watch set.
+- 2026-09-25: **D38 method note.** The KN projector cannot read production
+  canonical directly: stage A uses one bootstrap for the canonical source and
+  the state topics and commits offsets in the producer transaction
+  (`rust/qdl-projector/src/kafka_pipe.rs:159-177`), which would write state
+  topics and a consumer group on the production cluster. The shadow therefore
+  keeps the existing KN reader on the isolated broker and feeds it with the
+  slice-9 mirror (assign mode, no production write of any kind).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

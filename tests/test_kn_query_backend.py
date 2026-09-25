@@ -68,6 +68,24 @@ def binding_of(catalog, partition_key: str, canonical: bytes):
     )
 
 
+def retimed_mark_index(payload: bytes, *, now_ns: int, age_ms: int, **changes) -> bytes:
+    """A real MARK/INDEX pair moved in time with its Rust lineage kept whole:
+    both components confirmed at ``now - age + 1 ms``, source values at
+    ``now - age`` (captures unchanged, so the capture digest still holds)."""
+
+    envelope = market_data_pb2.EventEnvelope.FromString(payload)
+    fields = envelope.source_sequence.split(":")
+    source_ms = (now_ns - age_ms * 1_000_000) // 1_000_000
+    received_ns = now_ns - age_ms * 1_000_000 + 1_000_000
+    fields[0:4] = [str(source_ms), str(source_ms), str(received_ns), str(received_ns)]
+    envelope.source_sequence = ":".join(fields)
+    envelope.source_event_time_ns = source_ms * 1_000_000
+    envelope.received_at_ns = received_ns
+    for name, value in changes.items():
+        setattr(envelope, name, value)
+    return envelope.SerializeToString(deterministic=True)
+
+
 @unittest.skipUnless(os.environ.get("QDL_KN_TEST_REDIS"),
                      "needs QDL_KN_TEST_REDIS = URL of a disposable Redis (kn-native integration job)")
 class KnQueryBackendRedisTests(unittest.TestCase):
@@ -528,11 +546,8 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
 
         def put(age_ms: int) -> None:
-            envelope = market_data_pb2.EventEnvelope.FromString(payload)
-            now = _time.time_ns()
-            envelope.source_event_time_ns = now - age_ms * 1_000_000
-            envelope.received_at_ns = now - age_ms * 1_000_000 + 1_000_000
-            self.put_latest(binding, envelope.SerializeToString(deterministic=True), offset=age_ms, mark=age_ms)
+            self.put_latest(binding, retimed_mark_index(payload, now_ns=_time.time_ns(), age_ms=age_ms),
+                            offset=age_ms, mark=age_ms)
 
         def read(view):
             return asyncio.run(view.read(
@@ -587,13 +602,7 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         ).attach_cache(backend=backend, relax_to_alpha=False)
 
         def fresh(age_ms=100, **changes):
-            envelope = market_data_pb2.EventEnvelope.FromString(payload)
-            now = _time.time_ns()
-            envelope.source_event_time_ns = now - age_ms * 1_000_000
-            envelope.received_at_ns = now - age_ms * 1_000_000 + 1_000_000
-            for name, value in changes.items():
-                setattr(envelope, name, value)
-            return envelope.SerializeToString(deterministic=True)
+            return retimed_mark_index(payload, now_ns=_time.time_ns(), age_ms=age_ms, **changes)
 
         def read():
             return asyncio.run(view.read(
@@ -634,6 +643,14 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         # 6. Broken lineage (another source id) never serves the old price.
         self.put_latest(binding, fresh(age_ms=10, source_id="not-the-binding-source"), generation=6,
                         offset=14, mark=14)
+        self.assertEqual(read().reason, "LINEAGE_INVALID")
+        # 7. D35: the right identity but pair lineage that does not hold (the
+        # envelope confirmation is not the oldest component's) is refused too.
+        self.put_latest(binding, fresh(age_ms=5), generation=6, offset=15, mark=15)
+        self.assertIsNotNone(read().record)
+        envelope = market_data_pb2.EventEnvelope.FromString(fresh(age_ms=4))
+        envelope.received_at_ns += 1
+        self.put_latest(binding, envelope.SerializeToString(deterministic=True), generation=6, offset=16, mark=16)
         self.assertEqual(read().reason, "LINEAGE_INVALID")
 
     # ------------------------------------------------------------ D29 read view

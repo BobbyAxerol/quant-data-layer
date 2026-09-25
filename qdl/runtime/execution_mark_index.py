@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
+from google.protobuf.message import DecodeError
 
 from qdl.common.v1 import common_pb2
 from qdl.data_quality.binding_decision import (
@@ -291,6 +292,9 @@ class ExecutionMarkIndexLiveView:
             or gateway_epoch < 1
         ):
             raise ValueError("execution MARK/INDEX event identity/provenance is invalid")
+        # Every retained pair proves its Rust pairing lineage, whatever path
+        # later reads it (strict, quiet, or the KN cache view).
+        paired_mark_index_lineage(envelope)
         canonical = envelope.SerializeToString(deterministic=True)
         if stored is not None and (
             stored.event.event_id != bytes(envelope.event_id)

@@ -51,13 +51,19 @@ def paired_mark_index_lineage(
     except ValueError as error:
         raise ValueError("derived MARK_INDEX source sequence is invalid") from error
     if (
-        any(value < 0 for value in source_times)
-        or source_times[2] <= 0
-        or source_times[3] <= 0
+        any(value <= 0 for value in source_times)
         or len(mark_capture_id) != 16
         or len(index_capture_id) != 16
     ):
         raise ValueError("derived MARK_INDEX source sequence is invalid")
+    # The envelope clocks are derived from the components (the pair is as old
+    # as its oldest source value and its oldest confirmation), never set apart
+    # from them: ``qdl-realtime-core`` pair emission.
+    if (
+        int(envelope.source_event_time_ns) != min(source_times[0], source_times[1]) * 1_000_000
+        or int(envelope.received_at_ns) != min(source_times[2], source_times[3])
+    ):
+        raise ValueError("derived MARK_INDEX envelope times differ from its components")
     digest = hashlib.sha256()
     digest.update(_CAPTURE_DOMAIN)
     digest.update(mark_capture_id)
