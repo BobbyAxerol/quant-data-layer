@@ -58,6 +58,7 @@ class MirrorGuardTests(unittest.TestCase):
         self.assertFalse(config["enable.auto.commit"])
         self.assertFalse(config["enable.auto.offset.store"])
         self.assertEqual(config["security.protocol"], "ssl")
+        self.assertLessEqual(config["queued.max.messages.kbytes"] * 6, 64 * 1024, "bounded prefetch")
         self.assertTrue(config["group.id"].startswith("kn-shadow-mirror-"))
 
     def test_the_group_is_unique_under_a_granted_read_only_namespace_only(self):

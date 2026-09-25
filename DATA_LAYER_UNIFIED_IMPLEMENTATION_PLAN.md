@@ -57365,6 +57365,15 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `tested locally` | next: the mirror only is re-created from an image at
   this commit; every other shadow container keeps `kn4-c328974` (the source
   difference is this script alone).
+- 2026-09-25: **K4 slice 15 (mirror memory bound)** | this commit | the
+  re-created `kn4-mirror` (image `kn4-173e7b2`, `qdl-c40-handoff-` group)
+  fetched and mirrored 1,380 records, then was OOM-killed (exit 137) at its
+  256 MiB limit within ~20 s: librdkafka prefetches up to 64 MiB per
+  partition by default (`queued.max.messages.kbytes`, six partitions) and
+  the producer queue defaults to 1 GiB. Bounded to 4 MiB per partition and a
+  32 MiB producer queue (a transaction holds one consume batch). Test asserts
+  the bound; `test_kn_canonical_mirror` 5 OK (Kafka case on `kn4-kafka`) |
+  `tested locally`; the running measurement follows in the run receipt.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

@@ -126,6 +126,9 @@ def source_config(args: argparse.Namespace) -> dict[str, Any]:
         "enable.partition.eof": False,
         "fetch.max.bytes": 8 * 1024 * 1024,
         "max.partition.fetch.bytes": 2 * 1024 * 1024,
+        # Bounded prefetch: librdkafka's default queues up to 64 MiB per
+        # partition (six partitions OOM-killed a 256 MiB mirror, measured).
+        "queued.max.messages.kbytes": 4096,
     }
     if args.ca:
         config.update({"security.protocol": "ssl", "ssl.ca.location": args.ca,
@@ -264,7 +267,9 @@ def main(argv: list[str] | None = None) -> int:
         if plan.get("topic") != args.topic or sorted(start) != partitions:
             raise MirrorRefused("the start file does not cover every source partition of the topic")
         producer = Producer({"bootstrap.servers": args.dest_bootstrap, "enable.idempotence": True,
-                             "transactional.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}", "linger.ms": 5})
+                             "transactional.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}", "linger.ms": 5,
+                             # A transaction holds at most one consume batch; 1 GiB default queue.
+                             "queue.buffering.max.kbytes": 32768})
         dest = producer.list_topics(args.topic, timeout=20).topics.get(args.topic)
         if dest is None or dest.error is not None or sorted(dest.partitions) != partitions:
             raise MirrorRefused("the isolated topic must have the source's partitions (same partition mirror)")
