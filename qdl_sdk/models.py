@@ -879,8 +879,10 @@ class StreamEvent:
     event: Any
 
     def __post_init__(self) -> None:
-        if self.logical_offset <= 0 or not self.resume_token:
-            raise ValueError("stream event requires positive offset and signed resume token")
+        # Kafka offset 0 is a valid canonical record (cursor v3 contract,
+        # KN-4 D33); continuity is the session's strictly-increasing check.
+        if self.logical_offset < 0 or not self.resume_token:
+            raise ValueError("stream event requires a non-negative offset and signed resume token")
 
 
 @dataclass(frozen=True)

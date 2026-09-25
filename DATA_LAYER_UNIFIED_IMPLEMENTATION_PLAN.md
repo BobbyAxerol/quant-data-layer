@@ -56783,6 +56783,21 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `qdl-rust-builder:r134-test`; `reqwest` is already a locked workspace
   dependency). The Rust client against a live Query is K4-T01 in the
   shadow run | runtime NONE | next: SDK offset 0 (D33), shadow packet.
+- 2026-09-25: **K4 slice 5 (D33 SDK offset 0)** | this commit |
+  `StreamEvent` accepts Kafka offset 0 (negative/empty token still refused);
+  the session's strictly-increasing continuity after the handoff watermark
+  is unchanged, so a record at the watermark is still `OPEN_SEQUENCE_GAP`.
+  SDK version 2.0.3 -> 2.0.4 (`qdl_sdk/__init__.py`,
+  `scripts/build_qdl_sdk_release.py`, README), built reproducibly by the
+  release test, **not published**; the TS (2.0.3) and alpha (2.0.1) pins
+  are not edited - shadow clients use the source. New
+  `tests/test_qdl_sdk_offset_zero.py` 3 cases (constructor, continuity
+  after a zero watermark, the real gRPC transport decode yields offset 0):
+  before 3 ERROR on the previous tree, after OK; 67 SDK/consumer tests OK
+  (`test_qdl_sdk_release`, `test_sdk_client`, `test_qdl_sdk_read_reconnect`,
+  `test_qdl_sdk_replica_read_transport`, `test_qdl_sdk_stream_projection`,
+  `test_qdl_sdk_feed_status`, `test_fund_phase5_stream_sdk`,
+  `test_fund_phase5_consumer`) | runtime NONE | next: shadow packet.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.0.3"
+__version__ = "2.0.4"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
