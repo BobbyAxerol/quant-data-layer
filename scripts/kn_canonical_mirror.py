@@ -54,6 +54,14 @@ from typing import Any, Callable, Iterable
 TOPIC = "md.canonical.v2"
 PRODUCTION_HOSTS = frozenset({"kafka1", "kafka2", "kafka3"})
 PRODUCTION_PROJECT = "qdl_v2_stable_candidate"
+# Group namespaces the mirror may name. librdkafka always looks up the group
+# coordinator (FindCoordinator) even in assign mode, so the principal needs READ
+# on the group; the stable broker grants the projector principal exactly the
+# prefixed read-only audit namespaces of bounded control-plane readers
+# (`phaseb_bootstrap_stable_broker.py` READ_ONLY_AUDIT_GROUP_PREFIXES; C40's
+# live handoff collector uses `qdl-c40-handoff-`). A unique id under one of
+# them is never joined and never committed. The default is for isolated tests.
+GROUP_PREFIXES = ("kn-shadow-mirror-", "qdl-c40-handoff-")
 MIRROR_HEADERS = ("qdl-mirror-source-partition", "qdl-mirror-source-offset", "qdl-mirror-source-timestamp")
 PARTITION_EOF = -191  # librdkafka _PARTITION_EOF: informational
 
@@ -108,7 +116,8 @@ def source_config(args: argparse.Namespace) -> dict[str, Any]:
         "bootstrap.servers": args.source_bootstrap,
         # A group id is required by librdkafka; with assign() and no commit it
         # never joins a group and never writes __consumer_offsets.
-        "group.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}",
+        "group.id": f"{args.group_prefix}{'' if args.group_prefix == GROUP_PREFIXES[0] else 'kn4-mirror-'}"
+                    f"{uuid.uuid4().hex[:12]}",
         "client.id": "kn-shadow-mirror",
         "enable.auto.commit": False,
         "enable.auto.offset.store": False,
@@ -219,6 +228,7 @@ def _parser() -> argparse.ArgumentParser:
         item.add_argument("--ca")
         item.add_argument("--cert")
         item.add_argument("--key")
+        item.add_argument("--group-prefix", choices=GROUP_PREFIXES, default=GROUP_PREFIXES[0])
     sub.choices["start"].add_argument("--since-seconds", type=int, required=True)
     sub.choices["start"].add_argument("--out", required=True)
     run = sub.choices["run"]

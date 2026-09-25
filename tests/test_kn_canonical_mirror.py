@@ -13,6 +13,8 @@ resolved by time is honoured, and the mirror never commits a group offset.
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -57,6 +59,17 @@ class MirrorGuardTests(unittest.TestCase):
         self.assertFalse(config["enable.auto.offset.store"])
         self.assertEqual(config["security.protocol"], "ssl")
         self.assertTrue(config["group.id"].startswith("kn-shadow-mirror-"))
+
+    def test_the_group_is_unique_under_a_granted_read_only_namespace_only(self):
+        base = ["start", "--source-bootstrap", "kafka1:9092", "--since-seconds", "1", "--out", "x"]
+        audit = mirror.source_config(mirror._parser().parse_args(base + ["--group-prefix", "qdl-c40-handoff-"]))
+        self.assertRegex(audit["group.id"], r"^qdl-c40-handoff-kn4-mirror-[0-9a-f]{12}$")
+        again = mirror.source_config(mirror._parser().parse_args(base + ["--group-prefix", "qdl-c40-handoff-"]))
+        self.assertNotEqual(audit["group.id"], again["group.id"])
+        for production in ("stable-projector-v1", "stable-query-1", "qdl-v2-realtime-core-v2"):
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    mirror._parser().parse_args(base + ["--group-prefix", production])
 
     def test_only_bound_products_are_forwarded_and_the_rest_are_named(self):
         records = golden()

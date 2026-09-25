@@ -57341,6 +57341,30 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   - Orchestration sha256 (first 12): up `d29a1e25afe7`, steps `40d707b238c8`,
     setup `2c2eadd55c32`, guard `40d5ec500ee4`, watch `927f97948ee7`, down
     `5fd58af14e95`, consumers `8075573aab22`; bundle file `b4b34222687d`.
+- 2026-09-25: **Watched packet, first attempt: mirror refused by the broker
+  (fail closed).** 13:24:59 `kn4-mirror-start` resolved the six start
+  offsets (topic Describe/ListOffsets allowed); `kn4-mirror` then stopped at
+  its first fetch with `GROUP_AUTHORIZATION_FAILED` (FindCoordinator):
+  librdkafka looks up the coordinator of `group.id` even in assign mode, and
+  `confluent-kafka` refuses a consumer without `group.id` (checked on
+  `kn4-kafka`: "group.id must be set"). Nothing was written to production;
+  the shadow bring-up (legacy import) continued. Not done: no ACL change
+  (needs the owner), no production group id (would break "separate scope").
+- 2026-09-25: **K4 slice 14 (mirror group namespace)** | this commit |
+  `kn_canonical_mirror.py --group-prefix {kn-shadow-mirror-,qdl-c40-handoff-}`:
+  the unique group id (`qdl-c40-handoff-kn4-mirror-<12 hex>`) lives in the
+  prefixed read-only audit namespace the stable broker already grants the
+  projector principal for bounded control-plane readers
+  (`scripts/phaseb_bootstrap_stable_broker.py:43-46`; the C40 live handoff
+  collector `scripts/phasec40_collect_live_handoff.py:59-60` reads live
+  canonical the same way). Never joined, never committed; any other value is
+  refused by the parser. Owner note: this borrows the C40 audit namespace;
+  a dedicated `qdl-kn4-shadow-` prefix would be an ACL change (owner
+  decision). Tests `test_kn_canonical_mirror` 5 OK (Kafka case on the
+  isolated `kn4-kafka`, topics `kn4-mirror-*` created and deleted) |
+  `tested locally` | next: the mirror only is re-created from an image at
+  this commit; every other shadow container keeps `kn4-c328974` (the source
+  difference is this script alone).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
