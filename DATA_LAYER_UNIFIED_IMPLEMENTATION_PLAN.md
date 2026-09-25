@@ -57582,6 +57582,16 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   IOPS cap makes each read transaction longer (inference; not separated).
   Retrying in small attempts would cost one TS disturbance per ~4 bindings
   (144 bindings). Teardown clean (0 containers/networks, no watcher left).
+- 2026-09-25: **Owner decision D46 (supersedes D43's spool migration).** No
+  history migration from the spool. The new architecture replaces the old one
+  and starts fresh: stored data may be reset; history comes from the venues
+  (the data layer's job is to talk to the exchanges), bounded by retention
+  policy (old data is dropped, not archived). Consequences recorded before
+  work: the legacy spool import is removed from the KN bootstrap (the
+  checkpointed import of slices 17/18 stays as a tested tool, not a step);
+  the isolated broker's partial LEGACY_BAR rows are purged with its volume;
+  the capability that fills KN BAR history from the venues is located first
+  (E1: V1, V2 and KN grep with file:line) before anything new is built.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
