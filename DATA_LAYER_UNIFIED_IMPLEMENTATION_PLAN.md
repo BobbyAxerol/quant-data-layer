@@ -57383,6 +57383,52 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   Test: the Kafka case resumes at source offset 3 on partitions 1 and 2
   (committed record at 2); `test_kn_canonical_mirror` 5 OK on `kn4-kafka` |
   `tested locally`.
+- 2026-09-25: **Watched shadow run receipt: STOPPED by the TS stop condition
+  before any load step; shadow bring-up is temporally associated with the TS
+  degradation.** Timeline (UTC): 13:24:59 mirror start offsets; 13:25:57
+  isolated broker up; 13:26-13:33 legacy BAR import from the production spool
+  (read-only, 942,766 rows, receipt `fae818aa...` PASS); mirror attempts
+  (group refusal, OOM, resume - slices 14-16), the resumed mirror caught up
+  from 189 s to 12.6 s lag at <= 104 MiB and mirrored 494,004 records exactly
+  (resume from the destination; no production write); 13:33:32 projectors,
+  13:33:34 Stream/Query; 13:35:06 guard + watch started; 13:35:23 guard
+  ABORT (`MARK_INDEX ... SOURCE_UNAVAILABLE` 11 lines in 60 s), teardown to 0
+  `kn4-*` containers / 0 networks. No probe, matrix, consumer or stage load
+  ran. Production TS execution MARK/INDEX refusals per minute
+  (`docker logs market_data_service`): 13:18 2, then **13:26 33, 13:27 34,
+  13:28 17, 13:29 12, 13:30 32, 13:31 17, 13:32 21, 13:33 27, 13:34 12,
+  13:35 14**, after teardown 13:36 17, 13:37 9, 13:38 4 (decaying). Core_2
+  batches (`qdl_realtime_core_progress`): n 5-15k before 13:26, 22.6-25.6k
+  (full) from 13:30 to 13:37 with raw_age up to 5.9 s. Watch set (from 13:35,
+  `watch-133506.jsonl` `4d003df8...`): core_2 at its 0.5 CPU quota, 55-70 %
+  of periods throttled, host cpu PSI some avg10 20-31 %, io 10-14 %; the
+  no-shadow control 13:36:35-13:38:05 (`watch-control-133635.jsonl`
+  `2d824f42...`): core_2 still 65 % throttled (catching up), host cpu PSI
+  15-22 %. **Reading:** onset matches the bring-up to the minute (import +
+  mirror catch-up + cold build) and the errors decay within ~3 min of the
+  teardown - the second such association (first: run 3, 09:28); D37's lean
+  "not primary" is therefore not upheld for the bring-up phase. The
+  mechanism is not proven (no IO/PSI data for 13:26-13:35 because the guard
+  and watch started after the bring-up - a process error of this run, fixed
+  in the orchestration: both now start before the first shadow action,
+  guard `5d2ac337...`, up `9f70375d...`). The production binding limit seen
+  in both D37 and this run is core_2's 0.5 CPU quota under input bursts; it is
+  a production resource decision, not a KN change. Evidence kept outside Git
+  (`run/`: watch files, guard/TS counters, import receipt, 80 MB mirror
+  commit log - deleted at KN-4 close); shadow secrets, env files and Query
+  state dirs deleted; candidate image `qdl-v2-python:kn4-67cfd8a`
+  `sha256:11d2b38e...` kept (superset of every slice); `kn4-c328974` removed
+  by digest. Production mutations: NONE.
+  - **Owner decision gate (no further shadow load until decided):** (a)
+    whether the shadow may run on this host at all while core_2 stays at
+    0.5 CPU (a production quota change is the owner's); (b) the history
+    import: the spool read is the heaviest bring-up step - keep it off-peak
+    with an IO bound (`--device-read-bps`) or seed history from Kafka; (c) the
+    mirror's group namespace: keep borrowing `qdl-c40-handoff-` or grant a
+    dedicated `qdl-kn4-shadow-` read-only prefix (ACL change).
+  - KN-4 status stays IMPLEMENTING: slices 1-16 `tested locally`; K4-T01..T08
+    live evidence for the new candidate is NOT collected; no latency or
+    capacity claim.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
