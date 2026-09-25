@@ -56798,6 +56798,29 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `test_qdl_sdk_replica_read_transport`, `test_qdl_sdk_stream_projection`,
   `test_qdl_sdk_feed_status`, `test_fund_phase5_stream_sdk`,
   `test_fund_phase5_consumer`) | runtime NONE | next: shadow packet.
+- 2026-09-25: **K4 slice 6 (K4.6 harness modes for the shadow, no new
+  engine)** | this commit | `scripts/phase3_consumer_load_acceptance.py`:
+  optional profile fields `scope` (`production`|`shadow`, recorded in
+  `host.json`, never relaxes a gate) and `monitored_containers` (a shadow run
+  watches its own containers for restarts; the production TS heartbeat is
+  still sampled - it is the packet's stop condition, not a shadow consumer;
+  Python projector spans are skipped in shadow); new mode `kn4-matrix`
+  (schema `qdl.kn4.read-plane-matrix.v1`) = the existing `target-matrix` plus
+  the 2,500/5,000/10,000-row history ladder (contiguous ordered opens, never
+  more rows than asked, a short window only with FULL coverage), strict
+  batches 1/8/16/32/50 with per-item watermarks, the freshness verdict per
+  read (a 1 ms bound must be refused on the product a normal bound serves),
+  every public HTTP operation of the KN-1 inventory (no `kn3-source`
+  placeholder in any body), snapshot -> stream handoff through the real SDK
+  (first offset strictly after the watermark, acknowledged) and replica
+  parity at an equal watermark. `scripts/kn_native_slice_probe.py matrix
+  --read-view 1`: GetSnapshot/GetFeedStatus must answer (a snapshot whose v3
+  cursor verifies as the Stream verifies it, or a status) or refuse typed
+  (FAILED_PRECONDITION `{CODE}:`, RATE_LIMITED); UNAVAILABLE/INTERNAL fail.
+  Tests: `test_kn_native_slice_probe` (+2 `ReadViewVerdictTests`),
+  `test_phase3_consumer_load_driver` (+1 shadow profile), with
+  `test_phase3_consumer_load`, `test_phase3_target_driver`: 91 OK | runtime
+  NONE | next: shadow packet and run.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

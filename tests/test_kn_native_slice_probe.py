@@ -439,3 +439,28 @@ class TailBatchTests(unittest.TestCase):
         self.assertEqual(PROBE.tail_batch(rows, keys={"k1"}, seen=seen, horizon_ns=0), [])
         PROBE.tail_batch([], keys={"k1"}, seen=seen, horizon_ns=12)
         self.assertEqual(set(seen), {b"e4"})
+
+
+class ReadViewVerdictTests(unittest.TestCase):
+    """KN-4 D29: GetSnapshot/GetFeedStatus answer once the Query read view is attached."""
+
+    def test_without_the_read_view_only_typed_not_ready_passes(self):
+        verdict = PROBE.read_view_verdict
+        self.assertTrue(verdict("GetSnapshot", False, code="FAILED_PRECONDITION", details="DATA_NOT_READY:x")[0])
+        self.assertFalse(verdict("GetSnapshot", False, answer=mock.Mock(snapshot_id="s"), cursor_ok=True)[0])
+        self.assertFalse(verdict("GetFeedStatus", False, code="UNAVAILABLE", details="DEPENDENCY_UNAVAILABLE:x")[0])
+
+    def test_with_the_read_view_data_or_typed_refusals_pass(self):
+        verdict = PROBE.read_view_verdict
+        self.assertTrue(verdict("GetSnapshot", True, answer=mock.Mock(snapshot_id="qdl-v2-a", events=[1]),
+                                cursor_ok=True)[0])
+        self.assertFalse(verdict("GetSnapshot", True, answer=mock.Mock(snapshot_id="qdl-v2-a", events=[]),
+                                 cursor_ok=False)[0], "a cursor the stream refuses fails")
+        self.assertTrue(verdict("GetFeedStatus", True, answer=mock.Mock(state="LIVE", policy_id="p"))[0])
+        self.assertFalse(verdict("GetFeedStatus", True, answer=mock.Mock(state="", policy_id="p"))[0])
+        self.assertTrue(verdict("GetSnapshot", True, code="FAILED_PRECONDITION", details="DATA_STALE:old")[0])
+        self.assertTrue(verdict("GetFeedStatus", True, code="RESOURCE_EXHAUSTED", details="RATE_LIMITED:lane")[0])
+        self.assertTrue(verdict("GetFeedStatus", True, code="PERMISSION_DENIED", details="scope")[0])
+        for code, details in (("UNAVAILABLE", "DEPENDENCY_UNAVAILABLE:down"), ("INTERNAL", "boom"),
+                              ("FAILED_PRECONDITION", "no code here"), ("INVALID_ARGUMENT", "INVALID_ARGUMENT:x")):
+            self.assertFalse(verdict("GetSnapshot", True, code=code, details=details)[0], code)

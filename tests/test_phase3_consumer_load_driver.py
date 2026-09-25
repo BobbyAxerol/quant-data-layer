@@ -90,6 +90,20 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "incomplete or unknown"):
                 _MODULE.validate_profile(profile)
 
+    def test_a_shadow_profile_names_its_containers_and_records_its_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = self._profile(Path(temporary))
+            self.assertEqual(_MODULE.validate_profile(raw)["scope"], "production")
+            self.assertIsNone(_MODULE.validate_profile(raw)["monitored_containers"])
+            raw.update(scope="shadow", monitored_containers=["kn4-query-1", "kn4-stream-a", "market_data_service"])
+            profile = _MODULE.validate_profile(raw)
+            self.assertEqual(profile["scope"], "shadow")
+            self.assertEqual(profile["monitored_containers"], ["kn4-query-1", "kn4-stream-a", "market_data_service"])
+            for bad in ({"scope": "production-ish"}, {"monitored_containers": []},
+                        {"monitored_containers": ["bad name!"]}, {"monitored_containers": "kn4-query-1"}):
+                with self.assertRaises(ValueError, msg=str(bad)):
+                    _MODULE.validate_profile({**raw, **bad})
+
     def test_profile_rejects_identity_path_outside_managed_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             profile = self._profile(Path(temporary))

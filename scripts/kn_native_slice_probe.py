@@ -209,6 +209,24 @@ class Slice:
         manifest = self.manifests[consumer_id]
         return next(r for r in manifest.requirements if r.instrument_uid == uid and r.feed.value == feed)
 
+    def cursor_valid(self, token: str, consumer_id: str, domain_requirement) -> bool:
+        """A cursor issued by the Query read view verifies exactly as the Stream
+        verifies it (same keys, expectation and requirement digest)."""
+        from qdl.replay.cursor_v3 import CursorV3Expectation, requirement_digest
+
+        expectation = CursorV3Expectation(
+            environment=self.bundle["environment"], stream=self.bundle["catalog"]["canonical_stream"],
+            source_topic_id=self.args.topic_id, partition_plan_epoch=1,
+            source_policy_revision=self.bundle["catalog"]["source_policy_revision"],
+            catalog_revision=self.bundle["catalog"]["catalog_revision"], route_generation=self.args.route_generation)
+        try:
+            self.codec.verify(token, consumer_id=consumer_id, environment=self.bundle["environment"],
+                              requirement_digest_value=requirement_digest(domain_requirement),
+                              expected=expectation, now_ns=time.time_ns())
+        except Exception:  # noqa: BLE001 - any refusal is a failed check
+            return False
+        return True
+
     def claims(self, consumer_id: str, domain_requirement, offset: int, *, partition: int, **overrides):
         from qdl.replay.cursor_v3 import CursorV3Claims, requirement_digest
 
@@ -1176,8 +1194,38 @@ async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, unti
             "_received": received}
 
 
-async def _rpc_checks(runner: Slice, rows: list[dict[str, Any]], oracle: dict, target: str) -> list[dict]:
-    """Replay pages the cursor's product; snapshot/status are typed not-ready."""
+def read_view_verdict(rpc: str, attached: bool, *, answer: Any = None, code: str | None = None,
+                      details: str = "", cursor_ok: bool | None = None) -> tuple[bool, str]:
+    """Judge one GetSnapshot/GetFeedStatus outcome.
+
+    Without the read view (KN-2) the only pass is typed ``DATA_NOT_READY``.
+    With it attached (KN-4 D29) the RPC answers from the market cache: data
+    (a snapshot whose cursor the stream accepts, or a status state), or a
+    typed refusal of the Python oracle (FAILED_PRECONDITION with a canonical
+    code, RESOURCE_EXHAUSTED ``RATE_LIMITED``); UNAVAILABLE/INTERNAL/INVALID
+    are failures. PERMISSION_DENIED passes in both (manifest scope).
+    """
+
+    if code == "PERMISSION_DENIED":
+        return True, f"{code}:{details[:60]}"
+    if not attached:
+        if answer is not None:
+            return False, "answered data before the KN-4 read view exists"
+        return code == "FAILED_PRECONDITION" and details.startswith("DATA_NOT_READY:"), f"{code}:{details[:60]}"
+    if answer is not None:
+        if rpc == "GetSnapshot":
+            return bool(cursor_ok) and bool(answer.snapshot_id), f"events={len(answer.events)} cursor_ok={cursor_ok}"
+        return bool(answer.state) and bool(answer.policy_id), f"state={answer.state}"
+    typed = (
+        (code == "FAILED_PRECONDITION" and details.split(":", 1)[0].isupper() and ":" in details)
+        or (code == "RESOURCE_EXHAUSTED" and details.startswith("RATE_LIMITED:"))
+    )
+    return typed, f"{code}:{details[:60]}"
+
+
+async def _rpc_checks(runner: Slice, rows: list[dict[str, Any]], oracle: dict, target: str,
+                      read_view_attached: bool = False) -> list[dict]:
+    """Replay pages the cursor's product; snapshot/status per ``read_view_verdict``."""
     import grpc
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement
     from qdl.query.v2 import query_pb2
@@ -1219,15 +1267,17 @@ async def _rpc_checks(runner: Slice, rows: list[dict[str, Any]], oracle: dict, t
                                            request_serializer=request_type.SerializeToString,
                                            response_deserializer=response_type.FromString)
                 try:
-                    await call(body, metadata=metadata, timeout=15)
-                    checks.append({"rpc": rpc, "consumer_id": consumer_id, "pass": False,
-                                   "detail": "answered data before the KN-4 read view exists"})
+                    answer = await call(body, metadata=metadata, timeout=30)
+                    cursor_ok = None
+                    if rpc == "GetSnapshot":
+                        cursor_ok = runner.cursor_valid(answer.stream_cursor, consumer_id,
+                                                        consumer_rows[0]["requirement"])
+                    passed, detail = read_view_verdict(rpc, read_view_attached, answer=answer,
+                                                       cursor_ok=cursor_ok)
                 except grpc.aio.AioRpcError as error:
-                    typed = (error.code() is grpc.StatusCode.FAILED_PRECONDITION
-                             and (error.details() or "").startswith("DATA_NOT_READY:"))
-                    permission = error.code() is grpc.StatusCode.PERMISSION_DENIED
-                    checks.append({"rpc": rpc, "consumer_id": consumer_id, "pass": typed or permission,
-                                   "detail": f"{error.code().name}:{(error.details() or '')[:60]}"})
+                    passed, detail = read_view_verdict(rpc, read_view_attached, code=error.code().name,
+                                                       details=error.details() or "")
+                checks.append({"rpc": rpc, "consumer_id": consumer_id, "pass": passed, "detail": detail})
         finally:
             await channel.close()
     return checks
@@ -1319,7 +1369,9 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     runner.args.target = args.targets[-1]
     negatives = await runner.negatives() if args.checks else []
     # Every consumer's RPCs, also from a one-consumer client process.
-    rpcs = await _rpc_checks(runner, everything, final, args.targets[-1]) if args.checks else []
+    rpcs = (await _rpc_checks(runner, everything, final, args.targets[-1],
+                              read_view_attached=bool(getattr(args, "read_view", 0)))
+            if args.checks else [])
     latency = {feed: _dist(values) for feed, values in sorted(latency_by_feed.items())}
     latency["all"] = _dist([value for values in latency_by_feed.values() for value in values])
     catchup = {feed: _dist(values) for feed, values in sorted(catchup_by_feed.items())}
@@ -1428,6 +1480,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     mat.add_argument("--commit-log", help="loader commit log for commit->client latency")
     mat.add_argument("--consumers", nargs="*", help="only these consumers' streams (one process each)")
     mat.add_argument("--checks", type=int, default=1, help="run the negative matrix and RPC checks")
+    mat.add_argument("--read-view", type=int, default=0,
+                     help="1: the gateways have the KN-4 Query read view attached (GetSnapshot/GetFeedStatus answer)")
     mat.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     if args.command == "matrix":

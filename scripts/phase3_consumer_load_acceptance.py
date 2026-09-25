@@ -206,8 +206,20 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "image", "network", "runtime_dir", "queries", "stream_targets",
         "query_containers", "identities",
     }
-    if set(raw) != expected:
+    # KN-4 K4.6: a shadow target names its own containers to watch; the scope
+    # is recorded, never used to relax a gate.
+    optional = {"monitored_containers", "scope"}
+    if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
+    scope = raw.get("scope", "production")
+    if scope not in {"production", "shadow"}:
+        raise ValueError("Phase-3 profile scope must be production or shadow")
+    monitored = raw.get("monitored_containers")
+    if monitored is not None and (
+        not isinstance(monitored, list) or not 1 <= len(monitored) <= 32
+        or any(not isinstance(item, str) or not _NETWORK_RE.fullmatch(item) for item in monitored)
+    ):
+        raise ValueError("Phase-3 profile monitored containers are invalid")
     image = raw["image"]
     network = raw["network"]
     runtime_dir = raw["runtime_dir"]
@@ -266,6 +278,8 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "stream_targets": list(streams),
         "query_containers": list(containers),
         "identities": normalized,
+        "monitored_containers": list(monitored) if monitored is not None else None,
+        "scope": scope,
     }
 
 
@@ -2570,6 +2584,262 @@ async def run_target_matrix_inside() -> dict[str, object]:
     }
 
 
+_KN4_HISTORY_ROWS = (2_500, 5_000, 10_000)
+_KN4_BATCH_SIZES = (1, 8, 16, 32, 50)
+_KN4_HISTORY_INTERVALS = ("1m", "1h", "4h", "1d")
+_KN4_HANDOFF_FEEDS = (("TRADE", None), ("QUOTE", None), ("BOOK_DELTA", None), ("BAR", "1m"))
+
+
+async def _kn4_raw(identity, url: str, method: str, path: str, *, requirement=None, consumer_id: str,
+                   params=None, body=None) -> tuple[int, dict]:
+    """One public HTTP operation the SDK does not wrap, with the same mTLS
+    identity and JWT the SDK sends (history, gaps, readiness)."""
+
+    import httpx
+
+    token = await identity.credential.get_token()
+    purpose = "INTERNAL_ALPHA"
+    headers = {"Authorization": f"Bearer {token}", "X-QDL-Consumer-ID": consumer_id,
+               "X-QDL-Purpose": purpose}
+    async with httpx.AsyncClient(base_url=url, verify=identity.tls.ssl_context(), timeout=60.0) as client:
+        response = await client.request(method, path, params=params, json=body, headers=headers)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    return response.status_code, payload if isinstance(payload, dict) else {"items": payload}
+
+
+def _kn4_opens_contiguous(opens: list[int], interval_ns: int) -> bool:
+    return bool(opens) and all(later - earlier == interval_ns for earlier, later in zip(opens, opens[1:]))
+
+
+async def run_kn4_matrix_inside() -> dict[str, object]:
+    """KN-4 K4-T01..T05/T08 read-plane matrix on both shadow Query replicas.
+
+    The v2.1.1 target matrix (every stage-50 read product once per replica,
+    500-row longer-interval warmups) plus: the 2,500/5,000/10,000-row history
+    ladder with contiguity and replica parity at the same watermark; strict
+    warmup batches of 1/8/16/32/50; snapshot -> stream handoff through the
+    real SDK on the paired shadow Stream (offsets strictly after the
+    watermark, acknowledged); the freshness verdict evaluated per read (a
+    1 ms bound refuses the same product a normal bound serves); and every
+    public HTTP operation of the KN-1 inventory. Payload-free evidence.
+    """
+
+    from qdl.adapters.intervals import canonical_interval_ms
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl_sdk.client import AsyncDataLayerClient
+    from qdl_sdk.errors import DataLayerError
+    from qdl_sdk.transport import GrpcStreamTransport, RestQueryTransport
+
+    target = await run_target_matrix_inside()
+    config = _inside_config()
+    _, _, manifests, products_by_consumer, _plan = _target_scope(config)
+    identities = _identity_map(config, manifests)
+    sections: dict[str, list[dict[str, object]]] = {
+        "history": [], "parity": [], "batch": [], "handoff": [], "freshness": [], "http": []}
+
+    def client_for(url: str, consumer_id: str):
+        identity = identities[consumer_id]
+        return AsyncDataLayerClient(
+            query_transport=RestQueryTransport(url, timeout_seconds=60.0, tls=identity.tls,
+                                               credential_provider=identity.credential),
+            stream_transport=GrpcStreamTransport(config["stream_targets"], tls=identity.tls,
+                                                 credential_provider=identity.credential),
+            consumer_id=consumer_id, max_buffer_events=_stream_buffer_bound(identity),
+            max_reconnect_attempts=2,
+        )
+
+    async def timed(section: str, entry: dict[str, object], work) -> dict[str, object]:
+        started = time.monotonic()
+        try:
+            entry.update(await work())
+            entry.setdefault("status", "PASS")
+        except Exception as error:
+            entry.update(status="FAIL", error=_safe_error(error))
+        entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+        sections[section].append(entry)
+        return entry
+
+    histories: dict[tuple[str, str, int], dict[str, tuple[int, str]]] = {}
+    for url in config["queries"]:
+        replica = url.split("//", 1)[1].split(":", 1)[0]
+        clients = {consumer_id: client_for(url, consumer_id) for consumer_id in identities}
+        try:
+            # K4-T03: the history ladder.
+            for interval in _KN4_HISTORY_INTERVALS:
+                try:
+                    by_venue = _probe_products(products_by_consumer, "BAR", interval)
+                except ValueError:
+                    continue
+                for venue, products in sorted(by_venue.items()):
+                    product = products[0]
+                    interval_ns = canonical_interval_ms(interval) * 1_000_000
+                    for rows in _KN4_HISTORY_ROWS:
+                        async def ladder(product=product, rows=rows, interval_ns=interval_ns):
+                            response = await clients[product.consumer_id].warmup(
+                                replace(sdk_requirement(product), warmup_limit=rows))
+                            opens = [item.payload.open_time_ns for item in response.data]
+                            for item in response.data:
+                                validate_product_view(product, item, require_current_quality=False)
+                            if not _kn4_opens_contiguous(opens, interval_ns):
+                                raise ValueError("history window is not contiguous ordered distinct opens")
+                            if len(opens) > rows or (len(opens) < rows and response.coverage != "FULL"):
+                                raise ValueError("history returned more rows than asked or a short partial window")
+                            digest = hashlib.sha256(json.dumps(
+                                [item.payload.model_dump(mode="json") for item in response.data],
+                                sort_keys=True).encode()).hexdigest()
+                            histories.setdefault((venue, interval, rows), {})[replica] = (
+                                response.watermark_offset, digest)
+                            return {"returned": len(opens), "coverage": response.coverage,
+                                    "watermark": response.watermark_offset,
+                                    "short_by_history_start": len(opens) < rows}
+                        await timed("history", {"replica": replica, "venue": venue, "interval": interval,
+                                                "rows": rows, "symbol": product.native_symbol}, ladder)
+            # K4-T02: strict batches (one identity per venue, BAR products).
+            for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
+                bars = sorted((item for item in products_by_consumer[consumer_id] if item.feed.value == "BAR"),
+                              key=lambda item: (item.native_symbol, item.interval or ""))
+                for size in _KN4_BATCH_SIZES:
+                    async def batch(bars=bars, size=size, consumer_id=consumer_id):
+                        if len(bars) < size:
+                            raise ValueError(f"only {len(bars)} BAR products for a batch of {size}")
+                        response = await clients[consumer_id].warmup_batch(
+                            [replace(sdk_requirement(item), warmup_limit=100) for item in bars[:size]],
+                            require_all=True)
+                        statuses = Counter(item.status for item in response.results)
+                        if response.partial or len(response.results) != size or response.error_count:
+                            raise ValueError(f"strict batch was partial: {dict(statuses)}")
+                        watermarks = {item.data.watermark_offset for item in response.results if item.data}
+                        return {"items": size, "statuses": dict(statuses),
+                                "distinct_item_watermarks": len(watermarks)}
+                    await timed("batch", {"replica": replica, "venue": venue, "size": size}, batch)
+            # K4-T04: the verdict is evaluated per read, never cached.
+            for venue, products in sorted(_probe_products(products_by_consumer, "QUOTE").items()):
+                product = products[0]
+
+                async def freshness(product=product):
+                    client = clients[product.consumer_id]
+                    served = await client.snapshot(sdk_requirement(product))
+                    validate_product_view(product, served.data, require_current_quality=True)
+                    try:
+                        await client.snapshot(replace(sdk_requirement(product), max_freshness_ms=1))
+                    except DataLayerError as error:
+                        if error.code not in {"DATA_STALE", "DATA_NOT_READY"}:
+                            raise
+                        return {"strict_bound_code": error.code}
+                    raise ValueError("a 1 ms freshness bound was served")
+                await timed("freshness", {"replica": replica, "venue": venue, "symbol": product.native_symbol},
+                            freshness)
+            # K4-T01: every public HTTP operation of the KN-1 inventory.
+            consumer_id = _TARGET_VENUE_IDENTITY["BINANCE"]
+            identity = identities[consumer_id]
+            quote = _probe_products(products_by_consumer, "QUOTE")["BINANCE"][0]
+            bar = _probe_products(products_by_consumer, "BAR", "1m")["BINANCE"][0]
+            common = {"feed": "BAR", "interval": "1m", "source_policy_id": sdk_requirement(bar).source_policy_id,
+                      "consumer_grade": "ALPHA", "limit": 50}
+            quote_params = {"feed": "QUOTE", "source_policy_id": sdk_requirement(quote).source_policy_id,
+                            "consumer_grade": "ALPHA"}
+            operations = (
+                ("GET /v2/instruments", "GET", "/v2/instruments", {"limit": 5, "consumer_grade": "ALPHA"}, None, {200}),
+                ("GET /v2/instruments/{identity}", "GET", f"/v2/instruments/{quote.instrument_uid}",
+                 {"consumer_grade": "ALPHA"}, None, {200}),
+                ("GET /v2/market-data/{uid}/snapshot", "GET", f"/v2/market-data/{quote.instrument_uid}/snapshot",
+                 quote_params, None, {200}),
+                ("GET /v2/feeds/{uid}/status", "GET", f"/v2/feeds/{quote.instrument_uid}/status",
+                 quote_params, None, {200}),
+                ("GET /v2/market-data/{uid}/warmup", "GET", f"/v2/market-data/{bar.instrument_uid}/warmup",
+                 common, None, {200}),
+                ("GET /v2/market-data/{uid}/history", "GET", f"/v2/market-data/{bar.instrument_uid}/history",
+                 {**common, "consumer_grade": "ALPHA"}, None, {200}),
+                ("GET /v2/system/readiness", "GET", "/v2/system/readiness", None, None, {200}),
+                ("GET /v2/data-quality/gaps", "GET", "/v2/data-quality/gaps", None, None, {200, 206, 409, 503}),
+            )
+            for name, method, path, params, body, accepted in operations:
+                async def http(method=method, path=path, params=params, body=body, accepted=accepted):
+                    status, payload = await _kn4_raw(identity, url, method, path, consumer_id=consumer_id,
+                                                     params=params, body=body)
+                    if status not in accepted:
+                        raise ValueError(f"HTTP {status} {str(payload.get('code', ''))[:40]}")
+                    text = json.dumps(payload)
+                    if "kn3-source" in text:
+                        raise ValueError("an unsigned cursor placeholder left the process")
+                    return {"http": status, "code": payload.get("code")}
+                await timed("http", {"replica": replica, "operation": name}, http)
+            # The three POST operations through the SDK (typed bodies).
+            async def sdk_posts():
+                client = clients[consumer_id]
+                batch = await client.warmup_batch([replace(sdk_requirement(bar), warmup_limit=10)], require_all=True)
+                check = await _kn4_raw(identity, url, "POST", "/v2/system/readiness:check", consumer_id=consumer_id,
+                                       body={"consumer_id": consumer_id, "require_all": True,
+                                             "requirements": [sdk_requirement(quote).to_mapping()]})
+                if check[0] != 200:
+                    raise ValueError(f"readiness:check HTTP {check[0]} {str(check[1].get('code', ''))[:40]}")
+                references = [_reference_product(item, now_ns=time.time_ns())
+                              for item in _probe_products(products_by_consumer, "MARK_INDEX_PRICE")["BINANCE"][:2]]
+                reference = await client.reference_batch([item.sdk_requirement for item in references],
+                                                         require_all=True)
+                if batch.partial or reference.partial:
+                    raise ValueError("a strict POST batch was partial")
+                return {"warmup_batch": len(batch.results), "readiness_check_http": check[0],
+                        "reference_batch": len(reference.results)}
+            await timed("http", {"replica": replica, "operation": "POST warmup:batch/readiness:check/reference:batch"},
+                        sdk_posts)
+            # K4-T01/T03: snapshot -> stream handoff through the real SDK.
+            for venue, consumer_id in sorted(_TARGET_VENUE_IDENTITY.items()):
+                for feed, interval in _KN4_HANDOFF_FEEDS:
+                    try:
+                        product = _probe_products(products_by_consumer, feed, interval)[venue][0]
+                    except ValueError:
+                        continue
+
+                    async def handoff(product=product, consumer_id=consumer_id):
+                        requirement = replace(sdk_requirement(product), warmup_limit=1 if product.feed.value == "BAR" else 0)
+                        offsets = []
+                        async with clients[consumer_id].warmup_then_stream(requirement) as session:
+                            watermark = session.warmup.watermark_offset
+                            deadline = time.monotonic() + 45.0
+                            while len(offsets) < 3 and time.monotonic() < deadline:
+                                event = await asyncio.wait_for(session.__anext__(), timeout=max(0.1, deadline - time.monotonic()))
+                                if hasattr(event, "logical_offset"):
+                                    offsets.append(event.logical_offset)
+                                    session.acknowledge(event)
+                        if not offsets:
+                            raise ValueError("no stream event after the handoff")
+                        if offsets[0] <= watermark or offsets != sorted(set(offsets)):
+                            raise ValueError("stream offsets do not start strictly after the snapshot watermark")
+                        return {"watermark": watermark, "events": len(offsets), "first_offset": offsets[0]}
+                    await timed("handoff", {"replica": replica, "venue": venue, "feed": feed,
+                                            "symbol": product.native_symbol}, handoff)
+        finally:
+            await asyncio.gather(*(client.close() for client in clients.values()), return_exceptions=True)
+    # Replica parity at the same watermark (guide 18.4.4: never byte-identical
+    # at different times; equal content at an equal applied boundary).
+    for (venue, interval, rows), by_replica in sorted(histories.items()):
+        values = list(by_replica.values())
+        entry: dict[str, object] = {"venue": venue, "interval": interval, "rows": rows,
+                                    "replicas": len(values)}
+        if len(values) == 2 and values[0][0] == values[1][0]:
+            entry.update(status="PASS" if values[0][1] == values[1][1] else "FAIL", same_watermark=True)
+        else:
+            entry.update(status="PASS", same_watermark=False,
+                         watermark_delta=abs(values[0][0] - values[1][0]) if len(values) == 2 else None)
+        sections["parity"].append(entry)
+    failed = {name: [item for item in items if item["status"] != "PASS"] for name, items in sections.items()}
+    ok = target["status"] == "PASS" and not any(failed.values())
+    return {
+        "schema": "qdl.kn4.read-plane-matrix.v1",
+        "status": "PASS" if ok else "FAIL",
+        "target_matrix": {"status": target["status"], "reads": target["reads"], "failed": target["failed"]},
+        "counts": {name: len(items) for name, items in sections.items()},
+        "failed": {name: items for name, items in failed.items() if items},
+        "sections": sections,
+        "order_actions": 0,
+        "secret_values_recorded": False,
+    }
+
+
 def _ts_heartbeat() -> dict[str, object] | None:
     try:
         result = subprocess.run(["docker", "exec", "-i", "market_data_service", "python", "-"],
@@ -2641,7 +2911,7 @@ def run_target_host(args: argparse.Namespace) -> int:
         raise ValueError("target mode runs exactly the two alpha platform identities")
     budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
     budget = load_target_budget(json.loads(budget_bytes))
-    matrix = args.mode == "target-matrix"
+    matrix = args.mode in {"target-matrix", "kn4-matrix"}
     if args.sessions not in TARGET_STAGE_SECONDS:
         raise ValueError("target sessions must be exactly one of 5,20,35,50")
     duration = 0 if matrix else TARGET_STAGE_SECONDS[args.sessions]
@@ -2663,8 +2933,14 @@ def run_target_host(args: argparse.Namespace) -> int:
             command[index] = "QDL_PHASE3_LOAD_CONFIG=" + json.dumps(inner, sort_keys=True, separators=(",", ":"))
     query_names = list(profile["query_containers"])
     prefix = query_names[0].split("-query_v2_", 1)[0]
-    monitored = [*query_names, f"{prefix}-stream_v2_active-1", f"{prefix}-stream_v2_passive-1",
-                 "market_data_service"]
+    monitored = profile.get("monitored_containers") or [
+        *query_names, f"{prefix}-stream_v2_active-1", f"{prefix}-stream_v2_passive-1",
+        "market_data_service",
+    ]
+    shadow = profile.get("scope") == "shadow"
+    # A shadow run still samples the production Trading System: it is the
+    # packet's stop condition (TS ready routes must not drop), not a consumer
+    # of the shadow targets.
     ts_samples = [] if matrix else [_ts_heartbeat()]
     started_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     baseline_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
@@ -2733,7 +3009,12 @@ def run_target_host(args: argparse.Namespace) -> int:
         "runtime_fault": runtime_fault,
         "runtime_observation": telemetry,
         "trading_system": trading_system,
-        "projector_spans": None if matrix else _projector_spans(prefix, started_iso, ended_iso),
+        "scope": profile.get("scope", "production"),
+        "trading_system_scope": ("production TS observed as the shadow stop condition; not a shadow consumer"
+                                 if shadow else "consumer of the targets"),
+        "monitored_containers": monitored,
+        "projector_spans": (None if matrix or shadow
+                            else _projector_spans(prefix, started_iso, ended_iso)),
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "client_returncode": None if process is None else process.returncode,
         "client_stderr_tail_sha256": _sha256(stderr.encode()),
@@ -2764,7 +3045,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     value.add_argument("--profile", type=Path)
     value.add_argument("--output", type=Path)
-    value.add_argument("--mode", choices=("matrix", "load", "final", "target-matrix", "target"))
+    value.add_argument("--mode", choices=("matrix", "load", "final", "target-matrix", "target", "kn4-matrix"))
     value.add_argument("--inside-worker", nargs=2, type=int, metavar=("INDEX", "COUNT"), help=argparse.SUPPRESS)
     value.add_argument("--sessions", type=int)
     value.add_argument("--duration-seconds", type=int)
@@ -2779,7 +3060,8 @@ def main() -> int:
         if any(value is not None for value in (args.profile, args.output, args.mode, args.sessions, args.duration_seconds)):
             raise SystemExit("inner Phase-3 client accepts configuration only from its mounted environment")
         mode = str(json.loads(os.environ.get("QDL_PHASE3_LOAD_CONFIG", "{}")).get("mode", ""))
-        runner = {"target": run_target_inside, "target-matrix": run_target_matrix_inside}.get(mode, run_inside)
+        runner = {"target": run_target_inside, "target-matrix": run_target_matrix_inside,
+                  "kn4-matrix": run_kn4_matrix_inside}.get(mode, run_inside)
         try:
             result = asyncio.run(runner())
         except Exception as error:
@@ -2793,7 +3075,7 @@ def main() -> int:
         return 0 if result["status"] in {"PASS", "COMPLETE"} else 1
     if None in (args.profile, args.output, args.mode, args.sessions, args.duration_seconds):
         raise SystemExit("host Phase-3 run requires --profile --output --mode --sessions --duration-seconds")
-    if args.mode in {"target", "target-matrix"}:
+    if args.mode in {"target", "target-matrix", "kn4-matrix"}:
         return run_target_host(args)
     return run_host(args)
 
