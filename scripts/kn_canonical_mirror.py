@@ -152,38 +152,53 @@ def resolve_start(consumer, topic: str, since_ms: int, partitions: Iterable[int]
     return start
 
 
-def destination_resume_offsets(bootstrap: str, topic: str, partitions: Iterable[int],
-                               *, look_back: int = 64) -> dict[int, int]:
-    """Next source offset per partition from what the isolated topic already
-    holds: the largest ``qdl-mirror-source-offset`` among its last committed
-    records, plus one. A restarted mirror neither skips nor repeats a record
-    (its commit log may lose buffered lines when it is killed)."""
+CHECKPOINT_TOPIC = "kn.mirror.checkpoint.v1"
+CHECKPOINT_KEY = b"next-source-offsets"
+
+
+def checkpoint_value(source_topic: str, next_offsets: dict[int, int]) -> bytes:
+    return json.dumps({"source_topic": source_topic,
+                       "next": {str(p): o for p, o in sorted(next_offsets.items())}},
+                      sort_keys=True).encode()
+
+
+def checkpoint_resume_offsets(bootstrap: str, checkpoint_topic: str, source_topic: str,
+                              *, look_back: int = 64) -> dict[int, int]:
+    """The next source offset per partition from the mirror's durable checkpoint.
+
+    Written in the same producer transaction as the mirrored records (KN-4
+    D47-4), so it is exactly as far as the committed copy - whatever else
+    (e.g. the shadow core's history) the destination log holds. Only the
+    mirror writes this compacted one-partition topic: every transaction adds
+    one record and one marker, so its last ``look_back`` offsets hold the
+    latest value. Empty when the mirror never committed."""
     from confluent_kafka import Consumer, TopicPartition
 
     consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}",
                          "enable.auto.commit": False, "isolation.level": "read_committed",
                          "enable.partition.eof": True})
     try:
-        found: dict[int, int] = {}
-        for partition in partitions:
-            low, high = consumer.get_watermark_offsets(TopicPartition(topic, partition), timeout=10)
-            start = max(low, high - look_back)
-            if high <= low:
+        low, high = consumer.get_watermark_offsets(TopicPartition(checkpoint_topic, 0), timeout=10)
+        if high <= low:
+            return {}
+        consumer.assign([TopicPartition(checkpoint_topic, 0, max(low, high - look_back))])
+        latest = None
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            message = consumer.poll(0.5)
+            if message is None:
                 continue
-            consumer.assign([TopicPartition(topic, partition, start)])
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline:
-                message = consumer.poll(0.5)
-                if message is None:
-                    continue
-                if message.error():
-                    if message.error().code() == PARTITION_EOF:
-                        break
-                    raise RuntimeError(str(message.error()))
-                source = dict(message.headers() or []).get("qdl-mirror-source-offset")
-                if source is not None:
-                    found[partition] = max(found.get(partition, -1), int(source) + 1)
-        return found
+            if message.error():
+                if message.error().code() == PARTITION_EOF:
+                    break
+                raise RuntimeError(str(message.error()))
+            if message.key() == CHECKPOINT_KEY:
+                latest = json.loads(message.value())
+        if latest is None:
+            raise MirrorRefused("the mirror checkpoint topic holds no readable checkpoint")
+        if latest["source_topic"] != source_topic:
+            raise MirrorRefused("the mirror checkpoint belongs to another source topic")
+        return {int(p): int(o) for p, o in latest["next"].items()}
     finally:
         consumer.close()
 
@@ -202,7 +217,8 @@ def run_mirror(consumer, producer, *, topic: str, start: dict[int, int], product
                deadline_s: float, max_bytes_per_second: float, log: Callable[[dict[str, Any]], None],
                feed_of: Callable[[bytes], str | None] = payload_feed, stop: Callable[[], bool] = lambda: False,
                clock=time.monotonic, sleep=time.sleep, batch_records: int = 2000,
-               batch_seconds: float = 0.05, dest_topic: str | None = None) -> dict[str, Any]:
+               batch_seconds: float = 0.05, dest_topic: str | None = None,
+               checkpoint_topic: str | None = None) -> dict[str, Any]:
     """Copy committed bundle records partition-for-partition until the deadline
     (``dest_topic`` defaults to the source name on the isolated broker)."""
 
@@ -244,6 +260,10 @@ def run_mirror(consumer, producer, *, topic: str, start: dict[int, int], product
             producer.produce(dest_topic or topic, key=message.key(), value=message.value(), partition=message.partition(),
                              headers=mirrored_headers(message), timestamp=stamp, on_delivery=on_delivery)
             mirrored_bytes += len(message.value())
+        if checkpoint_topic is not None:
+            # Committed with the copies: a restart resumes exactly here.
+            producer.produce(checkpoint_topic, key=CHECKPOINT_KEY, value=checkpoint_value(topic, next_offset),
+                             partition=0)
         producer.commit_transaction(30)
         committed_ns = time.time_ns()
         transactions += 1
@@ -278,7 +298,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--max-bytes-per-second", type=float, default=8 * 1024 * 1024)
     run.add_argument("--commit-log", required=True)
     run.add_argument("--resume-from-destination", action="store_true",
-                     help="start after the last source offset the isolated topic already holds")
+                     help="start after the mirror's durable checkpoint (written with every copy)")
+    run.add_argument("--checkpoint-topic", default=CHECKPOINT_TOPIC,
+                     help="compacted one-partition topic on the isolated broker holding the checkpoint")
     return parser
 
 
@@ -304,17 +326,24 @@ def main(argv: list[str] | None = None) -> int:
         start = {int(p): int(o) for p, o in plan.get("offsets", {}).items()}
         if plan.get("topic") != args.topic or sorted(start) != partitions:
             raise MirrorRefused("the start file does not cover every source partition of the topic")
+        # A fixed transactional id: a restarted mirror fences its killed
+        # predecessor and aborts its open transaction at once (a random id left
+        # it open until the transaction timeout, stalling read_committed readers).
         producer = Producer({"bootstrap.servers": args.dest_bootstrap, "enable.idempotence": True,
-                             "transactional.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}", "linger.ms": 5,
+                             "transactional.id": f"kn-shadow-mirror-{args.topic}", "linger.ms": 5,
                              # A transaction holds at most one consume batch; 1 GiB default queue.
                              "queue.buffering.max.kbytes": 32768})
         dest = producer.list_topics(args.topic, timeout=20).topics.get(args.topic)
         if dest is None or dest.error is not None or sorted(dest.partitions) != partitions:
             raise MirrorRefused("the isolated topic must have the source's partitions (same partition mirror)")
+        checkpoint = producer.list_topics(args.checkpoint_topic, timeout=20).topics.get(args.checkpoint_topic)
+        if checkpoint is None or checkpoint.error is not None or sorted(checkpoint.partitions) != [0]:
+            raise MirrorRefused("the checkpoint topic must exist on the isolated broker with one partition")
+        producer.init_transactions(30)  # fences a predecessor before its checkpoint is read
         if args.resume_from_destination:
-            for partition, offset in destination_resume_offsets(args.dest_bootstrap, args.topic, partitions).items():
+            for partition, offset in checkpoint_resume_offsets(args.dest_bootstrap, args.checkpoint_topic,
+                                                               args.topic).items():
                 start[partition] = max(start[partition], offset)
-        producer.init_transactions(30)
         products = bundle_products(json.loads(Path(args.bundle).read_text(encoding="utf-8")))
         stopping: list[bool] = []
         signal.signal(signal.SIGTERM, lambda *_: stopping.append(True))
@@ -323,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             result = run_mirror(consumer, producer, topic=args.topic, start=start, products=products,
                                 deadline_s=args.deadline_seconds, max_bytes_per_second=args.max_bytes_per_second,
                                 log=lambda row: handle.write(json.dumps(row, sort_keys=True) + "\n"),
-                                stop=lambda: bool(stopping))
+                                stop=lambda: bool(stopping), checkpoint_topic=args.checkpoint_topic)
         print(json.dumps({"mode": "run", **result}, sort_keys=True))
         return 0
     finally:

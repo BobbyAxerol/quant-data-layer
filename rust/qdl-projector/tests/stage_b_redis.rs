@@ -283,6 +283,36 @@ fn bar_revisions_follow_the_contract_rules() {
 
 #[test]
 #[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn late_venue_history_never_moves_the_latest_bar_back_and_live_is_kept() {
+    // KN-4 D47-4: the live log (mirror) delivers opens 20 and 21 first; the
+    // venue history fill arrives later with opens 10..=20, where its open 20
+    // is the same bar with other content (BACKFILLED provenance).
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    let live_20 = bar(20, BarLifecycle::Final, 0, 200);
+    let live_21 = bar(21, BarLifecycle::Final, 0, 210);
+    push(&log, BARS, bar_frame(&bars, live_20.clone(), 1));
+    push(&log, BARS, bar_frame(&bars, live_21.clone(), 2));
+    let mut offset = 3;
+    for open in 10..20u64 {
+        push(&log, BARS, bar_frame(&bars, bar(open, BarLifecycle::Final, 0, 100 + open as u32), offset));
+        offset += 1;
+    }
+    push(&log, BARS, bar_frame(&bars, bar(20, BarLifecycle::Final, 0, 999), offset));
+    let environment = environment("late-history");
+    let mut stage = stage(&log, &environment);
+    drain(&mut stage);
+    assert_eq!(meta(&mut stage, &bars, "last").as_deref(), Some((21 * MIN).to_string().as_str()));
+    assert_eq!(meta(&mut stage, &bars, "last_final").as_deref(), Some((21 * MIN).to_string().as_str()));
+    assert_eq!(meta(&mut stage, &bars, "first").as_deref(), Some((10 * MIN).to_string().as_str()));
+    assert_eq!(read_bar(&mut stage, &bars, 21), Some(live_21));
+    assert_eq!(read_bar(&mut stage, &bars, 20), Some(live_20), "the live bar is kept, never last-write-wins");
+    assert_eq!(meta(&mut stage, &bars, "conflicts").as_deref(), Some("1"));
+    assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("12"));
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
 fn book_snapshot_and_delta_are_separate_products_on_one_partition() {
     let log = Log::default();
     let snapshots = lpk("BOOK_SNAPSHOT", None);

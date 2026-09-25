@@ -92,11 +92,14 @@ class MirrorKafkaTests(unittest.TestCase):
         self.admin = AdminClient({"bootstrap.servers": self.bootstrap})
         tag = uuid.uuid4().hex[:8]
         self.source, self.dest = f"kn4-mirror-src-{tag}", f"kn4-mirror-dst-{tag}"
-        for future in self.admin.create_topics([NewTopic(self.source, 3, 1), NewTopic(self.dest, 3, 1)]).values():
+        self.checkpoint = f"kn4-mirror-ckpt-{tag}"
+        for future in self.admin.create_topics([
+                NewTopic(self.source, 3, 1), NewTopic(self.dest, 3, 1),
+                NewTopic(self.checkpoint, 1, 1, config={"cleanup.policy": "compact"})]).values():
             future.result(20)
 
     def tearDown(self):
-        for future in self.admin.delete_topics([self.source, self.dest]).values():
+        for future in self.admin.delete_topics([self.source, self.dest, self.checkpoint]).values():
             future.result(20)
 
     def _produce(self, rows, *, abort: bool, stamp_ms: int) -> None:
@@ -112,6 +115,91 @@ class MirrorKafkaTests(unittest.TestCase):
         # must really be on the broker for the read_committed claim to mean anything.
         producer.flush(20)
         (producer.abort_transaction if abort else producer.commit_transaction)(20)
+
+    def _copies(self):
+        from confluent_kafka import Consumer
+
+        check = Consumer({"bootstrap.servers": self.bootstrap, "group.id": f"kn4-check-{uuid.uuid4().hex}",
+                          "isolation.level": "read_committed", "auto.offset.reset": "earliest",
+                          "enable.auto.commit": False, "enable.partition.eof": True})
+        check.subscribe([self.dest])
+        copies, others, eof = [], 0, set()
+        deadline = time.monotonic() + 20
+        while len(eof) < 3 and time.monotonic() < deadline:
+            message = check.poll(0.5)
+            if message is None:
+                continue
+            if message.error():
+                eof.add(message.partition())
+                continue
+            headers = dict(message.headers() or [])
+            if "qdl-mirror-source-offset" in headers:
+                copies.append((message.partition(), int(headers["qdl-mirror-source-offset"])))
+            else:
+                others += 1
+        check.close()
+        return copies, others
+
+    def test_the_durable_checkpoint_survives_other_producers_and_a_killed_mirror(self):
+        """D47-4: the resume point is the transactional checkpoint - neither
+        more than 64 other records in the destination (the shadow core's
+        history) nor a mirror killed inside a transaction loses or doubles a
+        copy."""
+        from confluent_kafka import Producer
+
+        records = golden()
+        key, payload = records[0]
+        products = mirror.bundle_products(bundle_for(records[:1]))
+        stamp = int(time.time() * 1000)
+        self._produce([(1, key, payload) for _ in range(5)], abort=False, stamp_ms=stamp)
+        reader = lambda: Consumer(mirror.source_config(mirror._parser().parse_args(  # noqa: E731
+            ["start", "--source-bootstrap", self.bootstrap, "--since-seconds", "1", "--out", "x"])))
+        from confluent_kafka import Consumer
+
+        def producer():
+            made = Producer({"bootstrap.servers": self.bootstrap, "enable.idempotence": True,
+                             "transactional.id": f"kn-shadow-mirror-{self.source}"})
+            made.init_transactions(20)
+            return made
+
+        start = {0: 0, 1: 0, 2: 0}
+        first = reader()
+        mirror.run_mirror(first, producer(), topic=self.source, dest_topic=self.dest, start=start, products=products,
+                          deadline_s=6, max_bytes_per_second=0, log=lambda _row: None, batch_seconds=0.2,
+                          checkpoint_topic=self.checkpoint)
+        first.close()
+        self.assertEqual(mirror.checkpoint_resume_offsets(self.bootstrap, self.checkpoint, self.source)[1], 5)
+        # Another producer (the shadow core's history) writes 100 records.
+        other = Producer({"bootstrap.servers": self.bootstrap})
+        for index in range(100):
+            other.produce(self.dest, key=b"history", value=b"h", partition=1)
+        other.flush(20)
+        # Five more source records; a mirror copies them but is killed before its commit.
+        self._produce([(1, key, payload) for _ in range(5)], abort=False, stamp_ms=stamp)
+        killed = producer()
+        killed.begin_transaction()
+        for offset in range(5, 10):
+            killed.produce(self.dest, key=key.encode(), value=payload, partition=1,
+                           headers=[("qdl-mirror-source-offset", str(offset).encode())])
+        killed.produce(self.checkpoint, key=mirror.CHECKPOINT_KEY,
+                       value=mirror.checkpoint_value(self.source, {0: 0, 1: 10, 2: 0}), partition=0)
+        killed.flush(20)
+        # The restart fences it (same transactional id) and resumes from the checkpoint.
+        restarted = producer()
+        resume = mirror.checkpoint_resume_offsets(self.bootstrap, self.checkpoint, self.source)
+        self.assertEqual(resume[1], 5, "the killed transaction's checkpoint (10) is not visible")
+        second = reader()
+        mirror.run_mirror(second, restarted, topic=self.source, dest_topic=self.dest,
+                          start={p: max(start[p], resume.get(p, 0)) for p in start}, products=products,
+                          deadline_s=6, max_bytes_per_second=0, log=lambda _row: None, batch_seconds=0.2,
+                          checkpoint_topic=self.checkpoint)
+        second.close()
+        copies, others = self._copies()
+        self.assertEqual(others, 100)
+        # Source offsets: 0-4 (first transaction, marker at 5), 6-10 (second, marker at 11).
+        self.assertEqual(sorted(offset for partition, offset in copies if partition == 1),
+                         [0, 1, 2, 3, 4, 6, 7, 8, 9, 10], "every committed source record exactly once")
+        self.assertEqual(mirror.checkpoint_resume_offsets(self.bootstrap, self.checkpoint, self.source)[1], 11)
 
     def test_committed_records_are_mirrored_to_their_partition_with_provenance_and_nothing_else(self):
         from confluent_kafka import Consumer, Producer
@@ -164,8 +252,6 @@ class MirrorKafkaTests(unittest.TestCase):
         self.assertEqual(start[1], 0, "the start by time points at the aborted record, which read_committed skips")
         self.assertEqual(sorted((row["partition"], row["source_timestamp_ms"]) for row in logged),
                          [(1, late), (2, late)])
-        # A restarted mirror resumes after what the destination already holds.
-        self.assertEqual(mirror.destination_resume_offsets(self.bootstrap, self.dest, range(3)), {1: 3, 2: 3})
         groups = self.admin.list_consumer_groups().result(20)
         self.assertFalse([g for g in groups.valid if g.group_id.startswith("kn-shadow-mirror-")],
                          "the mirror never registers or commits a consumer group")

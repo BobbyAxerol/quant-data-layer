@@ -237,6 +237,8 @@ class StableBinanceBarEdge:
         provider_admission=None,
         history_demand=None,
         history_gate=None,
+        history_end_ms: int | None = None,
+        history_only: bool = False,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -345,6 +347,14 @@ class StableBinanceBarEdge:
         self.history_gate = history_gate
         self._history_short: dict[str, tuple[int, int]] = {}
         self._history_gate_closed_at: float | None = None
+        # KN-4 D47-4: the history/live join. History holds bars closed before
+        # ``history_end_ms`` (the live log's start, e.g. the mirror start);
+        # ``history_only`` leaves every live bar to that log (no REST poll, no
+        # native recovery) so two live sources never overlap.
+        if history_end_ms is not None and history_end_ms <= 0:
+            raise ValueError("stable BAR history end must be a positive epoch millisecond")
+        self.history_end_ms = history_end_ms
+        self.history_only = bool(history_only)
         self._serving_pending: dict[str, tuple[frozenset[int], float]] = {}
         self._served: set[str] = set()
         self._serve_overdue: set[str] = set()
@@ -426,7 +436,9 @@ class StableBinanceBarEdge:
             self.canonical_cache_id = self._observed_canonical_cache_id()
         validate_shared_authority_record(authority)
         self._history_bootstrap_active = bool(expected_history)
-        self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
+        self._rest_fallback_active = bool(self.bindings or self.okx_bindings) and not self.history_only
+        if self.history_only:
+            self._native_recovery_active = False
         if self._history_bootstrap_active:
             self._restore_state()
             if self.repair_only:
@@ -1371,6 +1383,9 @@ class StableBinanceBarEdge:
         if self._history_bootstrapped:
             return 0
         observed_ms = self._settled_observed_ms()
+        history_end_ms = getattr(self, "history_end_ms", None)
+        if history_end_ms is not None:
+            observed_ms = min(observed_ms, history_end_ms)
         published = 0
         kn_mode = getattr(self, "bar_readback", None) is not None
         for source, acquisition in self.history_bindings + self.history_okx_bindings:
@@ -2008,6 +2023,9 @@ def build_from_environment(
         from qdl.runtime.bar_history_demand import load_demanded_history_rows
 
         history_demand = load_demanded_history_rows(demand_bundle)
+    history_end_ms = int(os.environ["QDL_STABLE_BAR_HISTORY_END_MS"]) if os.environ.get(
+        "QDL_STABLE_BAR_HISTORY_END_MS", "").strip() else None
+    history_only = os.environ.get("QDL_STABLE_BAR_HISTORY_ONLY", "0").strip() == "1"
     history_gate = None
     backpressure_bootstrap = os.environ.get("QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP", "").strip()
     if backpressure_bootstrap:
@@ -2092,6 +2110,8 @@ def build_from_environment(
         provider_admission=provider_admission,
         history_demand=history_demand,
         history_gate=history_gate,
+        history_end_ms=history_end_ms,
+        history_only=history_only,
         repair_only=repair_only,
     )
 

@@ -57742,6 +57742,43 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   empty history not retried; gate pause and resume) + a real-broker group
   backlog case (disposable kn3-lead broker); edge/admission suites 209 OK,
   adapter-dependent suites 109 OK | `tested locally`; runtime NONE.
+- 2026-09-25: **K4 slice 22 (D47-4 history/live join and durable mirror
+  checkpoint)** | this commit | `scripts/kn_canonical_mirror.py`: the resume
+  point is a checkpoint record (`kn.mirror.checkpoint.v1`, compacted, one
+  partition; key `next-source-offsets`, value = next source offset per
+  partition) produced in the same transaction as the copies, so it is exactly
+  as far as the committed copy whatever else the destination holds
+  (`checkpoint_resume_offsets` replaces the 64-offset scan); the mirror
+  refuses to run without that topic; the transactional id is fixed per source
+  topic, so a restart fences a killed mirror and aborts its open transaction
+  at once (a random id left it open until the transaction timeout, holding
+  back every read_committed reader of the isolated canonical log).
+  `stable_bar_edge.py`: `history_end_ms` (env
+  `QDL_STABLE_BAR_HISTORY_END_MS`) bounds the fill to bars closed before the
+  live log's start - with the mirror started first, a bar closed just before
+  it and emitted after it exists in both and the earlier live copy is kept;
+  `history_only` (`QDL_STABLE_BAR_HISTORY_ONLY=1`) turns off the REST live
+  poll and native recovery so two live sources never overlap (the shadow's
+  live bars come from the mirror). Evidence reused, not rebuilt: stage B keeps
+  the first fact on an equal-revision conflict ("never last-write-wins"),
+  applies higher revisions, drops lower ones and duplicates
+  (`tests/stage_b_redis.rs` `bar_revisions_follow_the_contract_rules`); the
+  BAR fact identity is the SHA-256 of the canonical envelope
+  (`state_codec.rs:618`), so BACKFILLED vs VENUE_NATIVE at one open is a
+  noted conflict; readers do not use the conflict counter; mirror headers are
+  provenance only (no `qdl-mirror` reader in `rust/` or `qdl/`), cursors
+  carry the isolated coordinates. Tests: new Rust
+  `late_venue_history_never_moves_the_latest_bar_back_and_live_is_kept`
+  (live opens 20/21 first, history 10..20 later with a different open 20:
+  `last`/`last_final` stay 21, the live 20 is kept, one conflict, 12 rows) -
+  `stage_b_redis` 27 OK on the disposable Redis; mirror
+  `test_the_durable_checkpoint_survives_other_producers_and_a_killed_mirror`
+  (100 foreign records, a killed transaction with its checkpoint, restart:
+  every committed source record exactly once, checkpoint 11) -
+  `test_kn_canonical_mirror` 6 OK on the disposable broker;
+  `HistoryLiveJoinTests` (boundary, history-only wiring) -
+  `test_kn_history_fill` 12 OK; edge/admission/probe suites 236 OK |
+  `tested locally`; runtime NONE.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

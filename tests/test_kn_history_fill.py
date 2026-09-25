@@ -154,13 +154,17 @@ class EdgeFillTests(unittest.TestCase):
         edge.warmup_rows = 10_000
         edge.bar_readback = object()
         edge.clock = lambda: 1.0
-        edge._settled_observed_ms = lambda: 0
+        edge._settled_observed_ms = lambda: 5_000_000
+        edge.history_end_ms = None
         edge._rebase_if_canonical_cache_generation_changed = lambda: False
         edge._rebase_changed_products = lambda: ()
         available = {"a": 10_000, "b": 7, "c": 0}
         self.fetched, self.published = [], []
 
+        self.observed = []
+
         def fetch(source, _acquisition, *, rows, observed_ms, allow_short=False):
+            self.observed.append(observed_ms)
             self.fetched.append((source.binding_id, rows, allow_short))
             return tuple(range(min(rows, available[source.binding_id])))
 
@@ -209,6 +213,54 @@ class EdgeFillTests(unittest.TestCase):
         edge.bootstrap_history()
         self.assertEqual([item[0] for item in self.published], ["a", "b"])
         self.assertTrue(edge._history_bootstrapped)
+
+
+class HistoryLiveJoinTests(EdgeFillTests):
+    """KN-4 D47-4: history ends where the live log starts; a history-only
+    edge leaves every live bar to that log."""
+
+    def test_history_holds_only_bars_closed_before_the_live_start(self):
+        edge = self._edge(demand=None, gate=None)
+        edge.history_end_ms = 4_000_000
+        edge.bootstrap_history()
+        self.assertEqual(set(self.observed), {4_000_000})
+        edge = self._edge(demand=None, gate=None)
+        edge.history_end_ms = 9_000_000  # a later bound never moves the fill past "now"
+        edge.bootstrap_history()
+        self.assertEqual(set(self.observed), {5_000_000})
+
+    def test_a_history_only_edge_runs_no_live_poll_or_native_recovery(self):
+        import time
+        from pathlib import Path
+
+        from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
+        from qdl.runtime.stable_catalog import StableSourceCatalog
+        from qdl.runtime.stable_deployment import StableAcquisitionPlan, stable_authority_record
+
+        root = Path(__file__).resolve().parents[1]
+        catalog = StableSourceCatalog.load(root / "config/v2/stable-source-bindings.yaml")
+        acquisition = StableAcquisitionPlan.load(root / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog)
+        authority = stable_authority_record(
+            rust_image_digest="a" * 64, capability_manifest=root / "config/v2/stable-capabilities.yaml",
+            contract=root / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=(root / "config/v2/stable-acquisition-bindings.yaml").read_bytes(),
+            effective_at_ns=time.time_ns())
+
+        class Publisher:
+            def publish_many(self, values):
+                return tuple(range(len(tuple(values))))
+
+        def edge(**kwargs):
+            return StableBinanceBarEdge(catalog=catalog, acquisition=acquisition, authority=authority,
+                                        publisher=Publisher(), warmup_rows=2, clock=lambda: 180.0, **kwargs)
+
+        full = edge()
+        self.assertTrue(full._rest_fallback_active and full._native_recovery_active)
+        only = edge(history_only=True, history_end_ms=1_790_000_000_000)
+        self.assertEqual((only._rest_fallback_active, only._native_recovery_active), (False, False))
+        self.assertTrue(only._history_bootstrap_active)
+        with self.assertRaises(ValueError):
+            edge(history_end_ms=0)
 
 
 @unittest.skipUnless(os.environ.get("QDL_KN_TEST_KAFKA"), "SKIPPED LOUDLY: QDL_KN_TEST_KAFKA is not set")
