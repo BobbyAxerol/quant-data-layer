@@ -57816,6 +57816,32 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   teardown by label (`kn4_shadow_down.sh`, `purge` at KN-4 close).
   Production mutations: none (the mirror's production read as before).
   Orchestration sha256 (12): bb2adc6103bc kn4_shadow_up.sh;d560462e219d kn4_shadow_down.sh;35fe36922658 kn4_steps.sh;a1e33fd7316f kn4_shadow_setup.py;f23bce08bca9 kn4_tls_setup.py;8b1440d7d357 kn4_core_setup.py;5d2ac337fd57 kn4_guard.sh;927f97948ee7 kn4_watch.sh;
+- 2026-09-25: **D47 shadow receipt, part 1: pipeline, live, history from the
+  venues.** First bring-up stopped at the core (the provider-admission Redis
+  prefix must start with `qdl:stable:v2:`, `provider_admission_server.rs:222`;
+  fixed to `qdl:stable:v2:kn4shadow:provider-admission:v1`; the core is now
+  created, then started, so its log survives). Second run (run id in
+  `run/run-id`): 18:51:09 broker (PLAINTEXT + SSL), 18:51:23 12/12 state
+  partitions checkpointed, 18:51:25 Query/Stream, 18:51:28 mirror, caught up
+  18:51:58, 18:52:14 core (140 bindings, 6 admission lanes). Small bootstrap
+  (20 rows): 140 bindings, 2,800 rows in < 1 min; check through Query
+  (`kn4_history_check.py`, alpha identities): Binance and OKX BTC 1m/1h 20/20,
+  contiguous, FULL, cursor verified against the isolated topic id and refused
+  for another topic id (an earlier isolated broker's, not production's).
+  Full fill (10,000 by demand; the checkpoint is bound to `warmup_rows`, so the
+  depth change started from a fresh edge state - fail-closed as designed):
+  18:58-19:12, 140 bindings, 863,920 rows published (e.g. 9,980 of 10,000 -
+  the 20 already durable were read back and skipped), backpressure gate never
+  closed, 0 short histories, 0 rate-limit replies, 0 admission deadlines; TS
+  execution MARK/INDEX refusals 0-1 per minute (guard never stopped). After:
+  202/216 products READY (all 140 BAR with a source), BTC 1m/1h on both venues
+  10,000/10,000 contiguous FULL with verified isolated cursors; market cache
+  645 MB. KN stack steady state: ~0.45 vCPU (isolated broker 0.19), ~2.1 GB;
+  production data layer + TS ~5.05 vCPU at the same time. Finding
+  (pre-existing, not changed here): the core canonicalizes every OKX REST
+  history bar as `VENUE_NATIVE` (`rust/qdl-core/src/canonical.rs:656,745`);
+  only the Binance REST path carries `BACKFILLED` (`:453-478`) - OKX history
+  provenance is not distinguishable today.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
