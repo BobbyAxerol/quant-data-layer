@@ -57675,6 +57675,12 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   rebuilding, finds the unmaterialized window, clears once materialized);
   real-Redis case; 26 OK with `test_kn3_flow_check`; edge suites (10
   modules) 195 OK | `tested locally`; runtime NONE.
+- 2026-09-25: **D42 carried into the deployment config** | this commit |
+  `docker-compose.v2-stable.yml` `rust_core_2.cpus` 0.50 -> 1.00 (the running
+  container was raised live on 2026-09-25 14:38:50 with `docker update`; a
+  recreate from compose would otherwise return it to 0.50). Nothing is
+  recreated by this commit. Compose-reading suites (18 modules) 180 OK |
+  runtime NONE (config source only).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

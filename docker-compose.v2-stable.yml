@@ -795,7 +795,12 @@ services:
     # 2026-09-18 while rust_core was pinned at its own. This cut pays for that
     # raise, same size, same step, and it held the drain criterion for a full
     # window at 0.50 drawing 9%.
-    cpus: 0.50
+    # KN-4 D42 (owner-approved, 2026-09-25): 1.0. Under the afternoon input
+    # burst it was throttled on 55-70% of its periods at 0.50 with raw_age up
+    # to 31 s; raised live with `docker update` (no recreate) and carried here so
+    # a recreate cannot return it to 0.50. Ceiling sum of the running roles
+    # 22.0 -> 22.5 vCPU (owner-approved addition, not resource-neutral).
+    cpus: 1.00
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-002.json]
     environment:
