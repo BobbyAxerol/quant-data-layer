@@ -56499,7 +56499,8 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
 
-**Status:** PENDING_KN2_KN3_REVIEW / NOT STARTED.
+**Status:** IN_PROGRESS (2026-09-25, started by explicit owner sequencing while
+the KN-3 R4 re-review is pending - see the KN-4 journal).
 **Goal:** actual SDK/consumer reads use the new backend correctly across the
 declared endpoint surface; hot latency survives heavy warmup and recovery.
 **Guide index:** [18.11 work items and K4-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-4),
@@ -56535,6 +56536,141 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
 #### KN-4 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append tested-slice receipts and Astra findings/resolutions here.
+- 2026-09-25: **Owner start (explicit sequencing).** Bobby asked Claude to
+  execute KN-4 in full per this tracker and guide 18.11 (with 18.3-18.7,
+  18.13, 18.14). Entry state: KN-2 ASTRA_REVIEW_PASS; KN-3
+  IMPLEMENTED_PENDING_ASTRA_REVIEW at `f0380a4` (R4 re-review requested, no
+  PASS yet). Guide 18.7(8) lets the owner change sequencing explicitly; KN-4
+  builds on `f0380a4`, and any further KN-3 finding is fixed and tested in
+  KN-3 scope first. KN-4
+  itself cannot be closed before the KN-3 PASS. Work starts with a read-only
+  survey (Query backend interface and the 11 public HTTP operations + 4 gRPC
+  RPCs of the KN-1 inventory `baseline.json` `891e8733...`, the Stream read
+  view, SDK/TS/alpha read adapters and the existing load/latency harness).
+- 2026-09-25: **Survey result and design decisions D25-D34 (recorded before
+  code).** Facts (file:line at `f0380a4`):
+  - Query backend protocol `MarketDataQueryBackend` (`qdl/query/results.py:202`)
+    + optional `warmup_is_local`/`history_many`/`open_gaps_bounded`/
+    `warmup_stats` (`qdl/query/service.py:827,840,1807,1100`); the only
+    implementation is `StableSpoolQueryBackend` (`qdl/runtime/stable_source.py:201`),
+    built unconditionally by `build_stable_query_stack` (:1646). No Query code
+    reads Redis; no env selects a backend; cursors are v2 spool tokens
+    (`StableConsumerCursorIssuer._issue` :1577); `qdl/replay/cursor_v3.py` is
+    wired only to tests, the probe and the Rust gateway.
+  - Cache facts: latest `l:` holds the canonical `t/p/o` (`apply.lua:196`);
+    BAR rows carry only the trailer offset, legacy rows `MAX_OFFSET`, and no
+    product-level canonical partition exists; `ckpt:` is keyed by the state
+    topic. The canonical producer partitions by librdkafka's default
+    partitioner over `partition_key` (`rust/qdl-kafka/src/lib.rs:581`), so a
+    product's canonical partition is not derivable from the LPK murmur2 rule.
+  - The Rust gateway trusts `claims.source_partition` and only checks the hub
+    knows it (`qdl-stream-gateway/src/service.rs:406`); replay is bounded by
+    2,000,000 scanned records / 1 GiB / 30 s (`main.rs:174-177`), so a cursor
+    far behind the partition head ends `CURSOR_EXPIRED:REPLAY_SCAN_LIMIT` and
+    the SDK re-snapshots (`qdl_sdk/client.py:317`): a stale boundary would loop.
+  - The SDK starts each session at `warmup.watermark_offset` and rejects any
+    event `<=` it (`qdl_sdk/client.py:355`); `StreamEvent` rejects offset 0
+    (`qdl_sdk/models.py:882`, KN-2 carry-over).
+  - Python GetSnapshot = `service.warmup` (quality-enforced) + `bind_history` +
+    stored events (`stable_source.py:1617`); GetFeedStatus = `service.status`
+    (`qdl/stream/grpc_service.py:461-521`). Alpha MARK/INDEX reads the spool
+    in-process (`qdl/reference/local_mark_index.py:66`); execution MARK/INDEX
+    calls the Python stream's private endpoint
+    (`qdl/runtime/execution_mark_index.py:578`), which the Rust gateway does
+    not serve.
+  Decisions:
+  - **D25 Backend.** `KnMarketCacheQueryBackend` subclasses
+    `StableSpoolQueryBackend`: selection, quality (`_quality` ->
+    `evaluate_binding_quality`), gap, lineage, item projection and
+    `history_many` batching stay the one Python owner; only the record source
+    changes (cache rows instead of spool tails). Selected by
+    `QDL_STABLE_QUERY_BACKEND=spool|kn3` (default `spool`: production
+    unchanged). No Kafka reader in Python. The cache holds one row per open
+    (KN-3 revision rule), so a revised BAR no longer appears twice (the spool
+    returned both, `tests/test_phaseb_stable_edge.py:900`); parity tests
+    compare at the same applied boundary, not byte-identical responses.
+  - **D26 Read consistency.** Per product: one short read-only Lua call reads
+    pointer (ready, fence), the product's source coordinate and the source
+    watermark (D27), and either the latest entry or the BAR meta; BAR rows
+    follow in pipelined `HGETALL`s of only the buckets the window needs (at
+    most 64 per round trip, never SCAN/KEYS), then the pointer and watermark
+    are re-read. A pointer change retries (bounded: 3 attempts inside the
+    request deadline, contract section 5 bound <= 120 s), then fails typed
+    retryable; two generations are never merged.
+  - **D27 Cursor boundary.** `source_offset` = the highest canonical offset
+    `X` such that every fact of the product at `<= X` is in the view read.
+    Stage B raises, in the same atomic apply script as each live batch, a
+    checkpoint field per `(canonical topic id, canonical partition)` to the
+    batch's highest source offset (state partition `q` receives a product's
+    frames in canonical order, so `W_q(p)` bounds every product of `q` on
+    `p`). Latest: `max(W_q(p) read first, l:o)`; BAR: `W_q(p)` read before
+    the rows, `p` from a new product-level source key written by BAR
+    revision frames. If `W` moved during a BAR read the rows may hold facts
+    after `X` (the stream re-delivers them: duplicates, never a gap); the
+    read retries first. Every item and the history carry `X` as
+    `watermark_offset` (the SDK handoff start); `snapshot_id` hashes
+    `(lpk, topic, partition, X)`; the cache generation never enters it. A BAR
+    product with no canonical fact yet (legacy rows only) has no provable
+    boundary: typed `DATA_NOT_READY:SOURCE_BOUNDARY_UNKNOWN`, counted in the
+    shadow. **Measurement gate:** `W_q(p)` age is measured on real traffic;
+    if a quiet `(q, p)` pair would push a cursor toward the replay scan
+    limit, a Stage-A-committed-offset watermark is added before K4.6. This
+    is an additive projector change (new op/fields, KN-3 semantics unchanged)
+    committed as its own KN-4 slice on top of `f0380a4` and named to Astra;
+    it does not alter the KN-3 tree under review.
+  - **D28 Cursor v3 issuer.** Query issues v3 with the Stream's exact key set
+    and expectation (`QDL_KN_CURSOR_KEYS_FILE`, active key, topic id, plan
+    epoch, route generation, environment - the gateway's own env names); the
+    backend hands the coordinate to the issuer through an internal
+    placeholder that never leaves the process (refused if unsigned). A
+    coordinate whose topic id differs from the configured one is typed
+    `DATA_NOT_READY`, never signed. Pass-through keeps
+    `PASS_THROUGH_NO_REPLAY`.
+  - **D29 Stream ReadView.** GetSnapshot/GetFeedStatus keep one semantic
+    owner: after the gateway's own auth/access checks the Rust `ReadView`
+    calls the paired Query's private HMAC endpoint (mTLS, stream identity,
+    `include_in_schema=False`, the `/internal/v2/...` precedent) which runs
+    the unchanged Python oracle path over the cache backend and returns the
+    proto response; the v3 cursor is signed by Query. A Query failure is typed
+    retryable on those two RPCs only; Subscribe/Replay do not depend on it.
+  - **D30 Render (K4.2).** Decoded, projected rows are immutable per
+    `(lpk, open/offset, trailer hash)`: a bounded LRU keeps the projected
+    payload; quality, freshness, eligibility, cursor and envelope are rebuilt
+    per request (no cached verdict). Before/after CPU on 2.5k/5k/10k warmups;
+    the KN-1 Query-lane 429 (`13b3594`) is root-caused in this item.
+  - **D31 MARK/INDEX.** Alpha reads offer the cache's `l:` MARK_INDEX record
+    to the unchanged verified view (the spool-refreshing reader's cache twin);
+    the execution path's source (quiet-session component evidence) is decided
+    with evidence in K4.4, not assumed.
+  - **D32 Diagnostics.** Gaps: per BAR product within the existing work/result
+    budgets, reading only that product's buckets (typed `PARTIAL_RESULT` on
+    budget). Readiness `query_cache`: cache reachability + per-product READY
+    coverage of the bundle, never a global flag.
+  - **D33 SDK.** `StreamEvent` accepts offset 0; continuity stays strictly
+    increasing after the handoff watermark. SDK version bumped, not
+    published; TS/alpha pins are not edited (shadow clients use the source).
+  - **D34 Shadow (K4.5/K4.6).** Isolated network, disposable broker/projector/
+    market cache/Stream pair/Query pair/quota Redis, `--rm` clients, KN-2
+    orchestration pattern. Stages 20/35 judge freshness, so the shadow needs
+    live canonical input; the input path (read-only mirror of production
+    canonical vs capture) is a runtime packet journaled and put to the owner
+    before it runs.
+- 2026-09-25: **K4 slice 1 (D27 projector part)** | this commit |
+  `cargo fmt --check`, `clippy -D warnings`, `cargo test -p qdl-projector`
+  (20 unit incl. op widths W=4/K=4) and `--features fault-injection --
+  --ignored --test-threads=1`: 55 passed / 0 failed (cache_redis 5,
+  cache_redis_memory 1, cleaner_kafka 4, expiry_kafka 2, expiry_redis 6,
+  recovery_kafka 1, stage_a_kafka 4, stage_b_kafka 3, stage_b_memory 3,
+  stage_b_redis 26 incl. new `k4_the_live_batch_raises_source_watermarks_and_records_bar_product_sources`)
+  on disposable `kn3-lead-*` Kafka/Redis | new `apply.lua` ops `W`
+  (raise-only `ckpt` field `s|<topic id>|<canonical partition>`) and `K`
+  (`src:<lpk>` {t, p}), both without pointer expectation; `stage_b.rs`
+  `source_ops` adds them to the **live** batch only (rebuild replay stays
+  below the live checkpoint and never moves them; a zombie batch applies
+  nothing); a floor or legacy frame carries no coordinate | memory: at most
+  one tiny hash per BAR product + one field per (state, canonical)
+  partition pair | runtime NONE | services stopped after the run | next:
+  K4.1 Python backend and v3 issuer.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

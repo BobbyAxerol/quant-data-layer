@@ -1468,3 +1468,138 @@ fn r4_a_never_ready_product_is_rebuilt_after_its_staging_was_unstaged() {
         assert_eq!(count, 0, "{set}");
     }
 }
+
+// ------------------------------------------------------------ KN-4 D27
+
+fn watermark(stage: &mut StageB<Source>, topic: &str, canonical_partition: u32) -> Option<u64> {
+    stage
+        .cache
+        .source_watermark(topic, 0, TOPIC_ID, canonical_partition)
+        .unwrap()
+}
+
+fn bar_frame_on(
+    lpk: &LogicalProductKey,
+    envelope: Vec<u8>,
+    canonical_partition: u32,
+    offset: u64,
+) -> (String, Vec<u8>) {
+    let source = SourceCoordinate {
+        topic_id: TOPIC_ID.into(),
+        partition: canonical_partition,
+        offset,
+    };
+    let frame = StateFrame::bar_revision(&envelope, lpk, source, 1).unwrap();
+    (frame.key().unwrap(), frame.encode().unwrap())
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn k4_the_live_batch_raises_source_watermarks_and_records_bar_product_sources() {
+    let uid_b = "fb26214c-7b9b-5961-95b2-55154755afbb";
+    let (a, b) = (bars_of_uid(UID), bars_of_uid(uid_b));
+    let quotes = lpk("QUOTE", None);
+    let log = Log::default();
+    // A from canonical partition 2, B from canonical partition 4, both in
+    // state partition 0; a floor frame carries no source coordinate.
+    for minute in 0..10u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&a, bar_of_uid(UID, minute), 100 + minute),
+        );
+    }
+    for minute in 0..5u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame_on(&b, bar_of_uid(uid_b, minute), 4, 70 + minute),
+        );
+    }
+    push(&log, BARS, floor_frame(&a, 2 * MIN));
+    push(&log, LATEST, latest_frame(&quotes, quote(1), 30));
+    push(&log, LATEST, latest_frame(&quotes, quote(2), 31));
+    let environment = environment("k4src");
+    let mut stage = rebuild_stage(&log, &environment);
+    drain(&mut stage);
+    assert_eq!(watermark(&mut stage, BARS, 2), Some(109));
+    assert_eq!(watermark(&mut stage, BARS, 4), Some(74));
+    assert_eq!(watermark(&mut stage, LATEST, 2), Some(31));
+    assert_eq!(
+        watermark(&mut stage, LATEST, 4),
+        None,
+        "no fact of p4 in the latest partition"
+    );
+    assert_eq!(
+        stage.cache.product_source(&a.encode()).unwrap(),
+        Some((TOPIC_ID.to_owned(), 2))
+    );
+    assert_eq!(
+        stage.cache.product_source(&b.encode()).unwrap(),
+        Some((TOPIC_ID.to_owned(), 4))
+    );
+    assert_eq!(
+        stage.cache.product_source(&quotes.encode()).unwrap(),
+        None,
+        "latest has l:t/p"
+    );
+    // The watermark bounds every applied fact: A's rows carry offsets <= it.
+    let a_ready = stage.cache.pointer(&a.encode()).unwrap().ready.unwrap();
+    for minute in 2..10u64 {
+        let key = stage
+            .cache
+            .layout
+            .bar_bucket(a_ready, &a.encode(), bucket_of(minute * MIN, MIN));
+        let row: Vec<u8> = redis::cmd("HGET")
+            .arg(key)
+            .arg((minute * MIN).to_string())
+            .query(stage.cache.connection())
+            .unwrap();
+        let offset = u64::from_be_bytes(row[..8].try_into().unwrap());
+        assert!(offset <= 109);
+    }
+
+    // A product rebuild replays below the live checkpoint: no watermark move.
+    stage.request_rebuild(&a.encode());
+    until_rebuilt(&mut stage);
+    assert_eq!(stage.metrics.rebuilds_completed, 1);
+    assert_eq!(watermark(&mut stage, BARS, 2), Some(109));
+
+    // A zombie's batch moves nothing; the owner's next batch raises it.
+    let mut old = stage;
+    let mut new = rebuild_stage(&log, &environment);
+    drain(&mut new);
+    push(&log, BARS, bar_frame(&a, bar_of_uid(UID, 10), 150));
+    drain(&mut old);
+    assert!(old.metrics.zombies >= 1, "the old owner is fenced");
+    let zombie_mark = watermark(&mut old, BARS, 2);
+    assert_eq!(zombie_mark, Some(109), "a fenced batch applies nothing");
+    drain(&mut new);
+    assert_eq!(watermark(&mut new, BARS, 2), Some(150));
+    // Raise only: a lower watermark in a later script never lowers it.
+    let fence = new.cache.checkpoint(BARS, 0).unwrap().unwrap().fence;
+    let next = new.cache.checkpoint(BARS, 0).unwrap().unwrap().next;
+    assert!(matches!(
+        new.cache
+            .apply(
+                BARS,
+                0,
+                fence,
+                next,
+                0,
+                &[Op::SourceWatermark {
+                    topic_id: TOPIC_ID.into(),
+                    partition: 2,
+                    offset: 5,
+                }],
+            )
+            .unwrap(),
+        Applied::Ok(_)
+    ));
+    assert_eq!(watermark(&mut new, BARS, 2), Some(150));
+    assert_eq!(
+        watermark(&mut new, BARS, 4),
+        Some(74),
+        "other canonical partition kept"
+    );
+}

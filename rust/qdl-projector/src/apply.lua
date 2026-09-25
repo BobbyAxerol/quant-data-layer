@@ -53,6 +53,14 @@ local WIDTH = {
   N = 9,
   -- F: floor        lpk gen exp_ready exp_staging exp_fence floor_ms buckets_csv boundary_bucket
   F = 9,
+  -- W: source watermark  topic_id canonical_partition offset (KN-4 D27; no
+  --    pointer expectation; raises `s|<topic_id>|<partition>` of this
+  --    partition's checkpoint - every fact of a product of this state
+  --    partition on that canonical partition at or below it is applied)
+  W = 4,
+  -- K: product source    lpk topic_id canonical_partition (KN-4 D27; a BAR
+  --    product's canonical coordinate, generation independent)
+  K = 4,
 }
 
 local ops = {}
@@ -83,6 +91,9 @@ local function pointer(lpk)
 end
 
 local function pointer_matches(op)
+  if op[1] == 'W' or op[1] == 'K' then
+    return true
+  end
   local ready, staging, fence = pointer(op[2])
   local base = (op[1] == 'S' or op[1] == 'P' or op[1] == 'U' or op[1] == 'X') and 3 or 4
   return ready == op[base] and staging == op[base + 1] and fence == op[base + 2]
@@ -90,7 +101,7 @@ end
 
 -- The generation an op writes must be the product's ready or staging one.
 local function writable(op)
-  if op[1] == 'S' or op[1] == 'P' or op[1] == 'U' or op[1] == 'X' then
+  if op[1] == 'S' or op[1] == 'P' or op[1] == 'U' or op[1] == 'X' or op[1] == 'W' or op[1] == 'K' then
     return true
   end
   local gen = op[3]
@@ -270,6 +281,12 @@ for index, op in ipairs(ops) do
       end
       results[index] = 'FLOOR ' .. tostring(removed)
     end
+  elseif code == 'W' then
+    raise_meta(key('ckpt', topic, partition), 's|' .. op[2] .. '|' .. op[3], op[4])
+    results[index] = 'WATERMARK'
+  elseif code == 'K' then
+    redis.call('HSET', key('src', lpk), 't', op[3], 'p', op[4])
+    results[index] = 'SOURCE'
   end
 end
 

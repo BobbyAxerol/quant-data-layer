@@ -653,7 +653,8 @@ impl<S: StateSource> StageB<S> {
             if !self.stage_missing(topic, partition, &state, &frames)? {
                 return Ok(0);
             }
-            let (ops, fresh) = self.build_ops(&state, &frames)?;
+            let (mut ops, fresh) = self.build_ops(&state, &frames)?;
+            ops.extend(Self::source_ops(&frames));
             match self
                 .cache
                 .apply(topic, partition, state.fence, next, (self.now_ms)(), &ops)?
@@ -697,6 +698,54 @@ impl<S: StateSource> StageB<S> {
                 }
             }
         }
+    }
+
+    /// The live batch's source watermarks and BAR product sources (KN-4
+    /// D27), applied in the batch's own script with its checkpoint. A state
+    /// partition receives a product's frames in canonical order, so after
+    /// this batch every fact at or below the highest source offset of a
+    /// canonical partition is applied for each product of this partition on
+    /// it. Only the live path adds them: a rebuild replay stays below the
+    /// live checkpoint.
+    fn source_ops(frames: &[(Vec<u8>, Option<StateFrame>)]) -> Vec<Op> {
+        let mut marks: BTreeMap<(String, u32), u64> = BTreeMap::new();
+        let mut products: BTreeMap<String, (String, u32)> = BTreeMap::new();
+        for (_, frame) in frames {
+            let Some(frame) = frame else {
+                continue;
+            };
+            let Some(source) = &frame.source else {
+                continue;
+            };
+            let mark = marks
+                .entry((source.topic_id.clone(), source.partition))
+                .or_insert(source.offset);
+            *mark = (*mark).max(source.offset);
+            if matches!(frame.kind, FrameKind::BarRevision) {
+                products.insert(
+                    frame.lpk.encode(),
+                    (source.topic_id.clone(), source.partition),
+                );
+            }
+        }
+        let mut ops: Vec<Op> = products
+            .into_iter()
+            .map(|(lpk, (topic_id, partition))| Op::ProductSource {
+                lpk,
+                topic_id,
+                partition,
+            })
+            .collect();
+        ops.extend(
+            marks
+                .into_iter()
+                .map(|((topic_id, partition), offset)| Op::SourceWatermark {
+                    topic_id,
+                    partition,
+                    offset,
+                }),
+        );
+        ops
     }
 
     /// `None` for a tombstone, else the strictly decoded frame.

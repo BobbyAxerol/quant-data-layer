@@ -5,8 +5,10 @@
 //! `l:<g>:<lpk>` latest value + source coordinate, `bm:<g>:<lpk>` BAR meta,
 //! `b:<g>:<lpk>:<bucket>` BAR rows by open time, `rk:<g>:<lpk>` fact keys that
 //! are not the current row, `cx:<g>:<lpk>` recent conflicts, `own:<t>:<p>`
-//! partition owner fence and `ckpt:<t>:<p>` checkpoint. All writes of a batch
-//! go through `apply.lua` in one atomic call (see its header).
+//! partition owner fence and `ckpt:<t>:<p>` checkpoint, which also holds the
+//! source watermarks `s|<topic id>|<canonical partition>` (KN-4 D27), and
+//! `src:<lpk>` the canonical topic id/partition of a BAR product. All writes
+//! of a batch go through `apply.lua` in one atomic call (see its header).
 
 use redis::{Connection, Script};
 
@@ -68,6 +70,18 @@ impl Layout {
     }
     pub fn checkpoint(&self, topic: &str, partition: i32) -> String {
         self.key(&["ckpt", topic, &partition.to_string()])
+    }
+    /// The checkpoint field of a source watermark (KN-4 D27): the highest
+    /// canonical offset of `topic_id`/`partition` applied from this state
+    /// partition. Every fact of a product of this state partition on that
+    /// canonical partition at or below it is applied.
+    pub fn source_watermark_field(topic_id: &str, partition: u32) -> String {
+        format!("s|{topic_id}|{partition}")
+    }
+    /// A BAR product's canonical topic id and partition (KN-4 D27), written
+    /// by its revision frames; generation independent.
+    pub fn product_source(&self, lpk: &str) -> String {
+        self.key(&["src", lpk])
     }
     /// Superseded generations waiting for reclaim: `<generation>|<lpk>`
     /// members added by `apply.lua` in the same script as the swap (D20).
@@ -182,6 +196,19 @@ pub enum Op {
         buckets: Vec<u64>,
         /// The bucket holding the floor (partially below it), if any.
         boundary: Option<u64>,
+    },
+    /// Raise the batch partition's source watermark (KN-4 D27): no pointer
+    /// expectation, written with the checkpoint of the live batch only.
+    SourceWatermark {
+        topic_id: String,
+        partition: u32,
+        offset: u64,
+    },
+    /// Record a BAR product's canonical topic id and partition (KN-4 D27).
+    ProductSource {
+        lpk: String,
+        topic_id: String,
+        partition: u32,
     },
 }
 
@@ -319,6 +346,26 @@ impl Op {
                         .unwrap_or_default()
                         .into_bytes(),
                 );
+            }
+            Op::SourceWatermark {
+                topic_id,
+                partition,
+                offset,
+            } => {
+                args.push(text("W"));
+                args.push(text(topic_id));
+                args.push(partition.to_string().into_bytes());
+                args.push(offset.to_string().into_bytes());
+            }
+            Op::ProductSource {
+                lpk,
+                topic_id,
+                partition,
+            } => {
+                args.push(text("K"));
+                args.push(text(lpk));
+                args.push(text(topic_id));
+                args.push(partition.to_string().into_bytes());
             }
         }
     }
@@ -545,6 +592,49 @@ impl Cache {
                 parse_u64(at_ms.flatten()),
             ) {
                 (Some(next), Some(fence), Some(at_ms)) => Some(Checkpoint { next, fence, at_ms }),
+                _ => None,
+            },
+        )
+    }
+
+    /// The source watermark of state partition `topic`/`partition` for one
+    /// canonical partition (KN-4 D27); `None` before its first live batch.
+    pub fn source_watermark(
+        &mut self,
+        topic: &str,
+        partition: i32,
+        topic_id: &str,
+        canonical_partition: u32,
+    ) -> Result<Option<u64>, CacheError> {
+        let value: Option<String> = redis::cmd("HGET")
+            .arg(self.layout.checkpoint(topic, partition))
+            .arg(Layout::source_watermark_field(
+                topic_id,
+                canonical_partition,
+            ))
+            .query(&mut self.connection)
+            .map_err(CacheError::from)?;
+        Ok(parse_u64(value))
+    }
+
+    /// A BAR product's canonical topic id and partition (KN-4 D27).
+    pub fn product_source(&mut self, lpk: &str) -> Result<Option<(String, u32)>, CacheError> {
+        let values: Vec<Option<String>> = redis::cmd("HMGET")
+            .arg(self.layout.product_source(lpk))
+            .arg("t")
+            .arg("p")
+            .query(&mut self.connection)
+            .map_err(CacheError::from)?;
+        let mut values = values.into_iter();
+        Ok(
+            match (
+                values.next().flatten(),
+                values
+                    .next()
+                    .flatten()
+                    .and_then(|text| text.parse::<u32>().ok()),
+            ) {
+                (Some(topic_id), Some(partition)) => Some((topic_id, partition)),
                 _ => None,
             },
         )
@@ -932,6 +1022,22 @@ mod tests {
                     boundary: Some(2),
                 },
                 9,
+            ),
+            (
+                Op::SourceWatermark {
+                    topic_id: "t".into(),
+                    partition: 5,
+                    offset: (1 << 62) + 1,
+                },
+                4,
+            ),
+            (
+                Op::ProductSource {
+                    lpk: "p".into(),
+                    topic_id: "t".into(),
+                    partition: 5,
+                },
+                4,
             ),
         ];
         for (op, width) in cases {
