@@ -132,6 +132,9 @@ pub enum Op {
     Publish { lpk: String, pointer: Pointer },
     /// The product has no state any more: drop its pointer (NOT_READY).
     Unpublish { lpk: String, pointer: Pointer },
+    /// Discard the product's unpublished staging generation (retired in the
+    /// same script); refused by CAS if it was published meanwhile (D23).
+    Unstage { lpk: String, pointer: Pointer },
     Latest {
         lpk: String,
         generation: u64,
@@ -208,6 +211,11 @@ impl Op {
             }
             Op::Unpublish { lpk, pointer } => {
                 args.push(text("U"));
+                args.push(text(lpk));
+                pointer_args(pointer, args);
+            }
+            Op::Unstage { lpk, pointer } => {
+                args.push(text("X"));
                 args.push(text(lpk));
                 pointer_args(pointer, args);
             }
@@ -349,6 +357,9 @@ pub struct Cache {
     client: redis::Client,
     connection: Connection,
     apply: Script,
+    /// Injected faults (tests only, D23).
+    #[cfg(feature = "fault-injection")]
+    pub faults: std::sync::Arc<std::sync::Mutex<crate::fault::CacheFaults>>,
 }
 
 /// Bound on one Redis round trip: a hung market cache surfaces as an error
@@ -379,7 +390,39 @@ impl Cache {
             client,
             connection,
             apply: Script::new(APPLY_LUA),
+            #[cfg(feature = "fault-injection")]
+            faults: Default::default(),
         })
+    }
+
+    /// Consume one injected fault picked by `pick` (always `false` without
+    /// the `fault-injection` feature).
+    #[cfg(feature = "fault-injection")]
+    fn injected(&self, pick: impl FnOnce(&mut crate::fault::CacheFaults) -> &mut usize) -> bool {
+        let mut faults = self.faults.lock().unwrap();
+        let count = pick(&mut faults);
+        if *count > 0 {
+            *count -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(feature = "fault-injection")]
+    fn after_lost_reply(&self) {
+        let mut faults = self.faults.lock().unwrap();
+        faults.fail_pointer_reads += std::mem::take(&mut faults.unreadable_after_lost_reply);
+    }
+
+    #[cfg(not(feature = "fault-injection"))]
+    #[inline(always)]
+    fn after_lost_reply(&self) {}
+
+    #[cfg(not(feature = "fault-injection"))]
+    #[inline(always)]
+    fn injected(&self, _pick: impl FnOnce(&mut crate::fault::CacheFaults) -> &mut usize) -> bool {
+        false
     }
 
     /// Up to `max` pending retirement members `<generation>|<lpk>` (D20).
@@ -508,6 +551,9 @@ impl Cache {
     }
 
     pub fn pointer(&mut self, lpk: &str) -> Result<Pointer, CacheError> {
+        if self.injected(|faults| &mut faults.fail_pointer_reads) {
+            return Err(CacheError::Redis("injected: pointer read".into()));
+        }
         let values: Vec<Option<String>> = redis::cmd("HMGET")
             .arg(self.layout.pointer(lpk))
             .arg("ready")
@@ -634,6 +680,10 @@ impl Cache {
         for op in ops {
             op.push_args(&mut args);
         }
+        let publishes = ops.iter().any(|op| matches!(op, Op::Publish { .. }));
+        if publishes && self.injected(|faults| &mut faults.fail_before_publish) {
+            return Err(CacheError::Redis("injected: before publish".into()));
+        }
         let mut invocation = self.apply.prepare_invoke();
         for arg in &args {
             invocation.arg(arg.as_slice());
@@ -641,6 +691,10 @@ impl Cache {
         let reply: redis::Value = invocation
             .invoke(&mut self.connection)
             .map_err(CacheError::from)?;
+        if publishes && self.injected(|faults| &mut faults.lose_publish_reply) {
+            self.after_lost_reply();
+            return Err(CacheError::Redis("injected: publish reply lost".into()));
+        }
         parse_reply(reply)
     }
 
@@ -690,6 +744,9 @@ impl Cache {
         lpk: &str,
         interval_ms: Option<u64>,
     ) -> Result<u64, CacheError> {
+        if self.injected(|faults| &mut faults.fail_reclaim) {
+            return Err(CacheError::Redis("injected: reclaim".into()));
+        }
         let mut keys = vec![
             self.layout.latest(generation, lpk),
             self.layout.fact_keys(generation, lpk),
@@ -807,6 +864,13 @@ mod tests {
             ),
             (
                 Op::Publish {
+                    lpk: "p".into(),
+                    pointer: pointer.clone(),
+                },
+                5,
+            ),
+            (
+                Op::Unstage {
                     lpk: "p".into(),
                     pointer: pointer.clone(),
                 },

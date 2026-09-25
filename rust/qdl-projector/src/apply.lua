@@ -41,6 +41,8 @@ local WIDTH = {
   P = 5,
   -- U: unpublish    lpk exp_ready exp_staging exp_fence (state gone: NOT_READY)
   U = 5,
+  -- X: unstage      lpk exp_ready exp_staging exp_fence (discard an unpublished staging)
+  X = 5,
   -- L: latest       lpk gen exp_ready exp_staging exp_fence exp_offset value topic_id partition offset
   L = 11,
   -- D: latest del   lpk gen exp_ready exp_staging exp_fence
@@ -82,13 +84,13 @@ end
 
 local function pointer_matches(op)
   local ready, staging, fence = pointer(op[2])
-  local base = (op[1] == 'S' or op[1] == 'P' or op[1] == 'U') and 3 or 4
+  local base = (op[1] == 'S' or op[1] == 'P' or op[1] == 'U' or op[1] == 'X') and 3 or 4
   return ready == op[base] and staging == op[base + 1] and fence == op[base + 2]
 end
 
 -- The generation an op writes must be the product's ready or staging one.
 local function writable(op)
-  if op[1] == 'S' or op[1] == 'P' or op[1] == 'U' then
+  if op[1] == 'S' or op[1] == 'P' or op[1] == 'U' or op[1] == 'X' then
     return true
   end
   local gen = op[3]
@@ -181,6 +183,15 @@ for index, op in ipairs(ops) do
       end
     end
     results[index] = op[3] .. ',' .. op[4]
+  elseif code == 'X' then
+    -- Only a staging generation that was never published (the CAS above
+    -- proved staging = op[4]) is discarded; it is retired in this script
+    -- (D23), never the ready one.
+    redis.call('HDEL', key('ptr', lpk), 'staging')
+    if op[4] ~= '' then
+      redis.call('SADD', key('retire'), op[4] .. '|' .. lpk)
+    end
+    results[index] = 'UNSTAGED'
   elseif code == 'L' then
     redis.call('HSET', key('l', op[3], lpk), 'v', op[8], 't', op[9], 'p', op[10], 'o', op[11])
     results[index] = 'APPLIED'

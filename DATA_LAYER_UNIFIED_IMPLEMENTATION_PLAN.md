@@ -55300,9 +55300,10 @@ change production authority or certify a new release from this receipt alone.
 <a id="kn-plan-phase-3"></a>
 ### KN-3 - Rust Materialization, BAR Migration And Bounded Recovery
 
-**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - R1 F1-F4 (slice 11) and R2
-residuals (slice 12) fixed, re-review requested (2026-09-25, see
-[R2](#kn3-astra-review-r2); production packet gated on owner decisions).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW - REVIEW_CHANGES_REQUIRED kept
+through R1 (slice 11), R2 (slice 12) and R3 (slice 13, post-publish window);
+re-review requested 2026-09-25 (see [R3](#kn3-astra-review-r3); production
+packet gated on owner decisions).
 **Entry receipt:** [Astra R2 decisions and bootstrap/resource rules](#kn2-astra-review-r2).
 **Goal:** a native, durable-state-backed cache actually serving readers, with
 correct history, idempotent recovery and bounded memory/disk growth.
@@ -55337,8 +55338,9 @@ stop candidate path and restore readback config, keep old history/source intact.
 **Cleanup:** test prefix/topic/volume exact scope; no FLUSHDB shared; no removal
 of the sole old-history copy. Record before/after disk and retained rollback.
 **Astra review:** R1 REVIEW_CHANGES_REQUIRED (F1-F4) -> slice 11; R2
-REVIEW_CHANGES_REQUIRED (two residuals) -> slice 12; re-review REQUESTED
-2026-09-25 to record ASTRA_REVIEW_PASS and open KN-4 ([R2](#kn3-astra-review-r2)).
+REVIEW_CHANGES_REQUIRED (two residuals) -> slice 12; R3 REVIEW_CHANGES_REQUIRED
+(post-publish cleanup) -> slice 13; re-review REQUESTED 2026-09-25 to record
+ASTRA_REVIEW_PASS and open KN-4 ([R3](#kn3-astra-review-r3)).
 **Next permitted step:** KN-4 only after KN-2 and KN-3 reviewed exits.
 
 #### KN-3 Execution Journal
@@ -56355,6 +56357,88 @@ Astra requested review points and next allowed step:
   integration recovery above; no C2, no rerun of the 45-minute rebuild.
   **Request:** re-review of slice 12 for **ASTRA_REVIEW_PASS on KN-3** and,
   on PASS, KN-4 entry.
+
+<a id="kn3-astra-review-r3"></a>
+#### KN-3 Astra Review R3 - Post-Publish Cleanup Window
+
+- 2026-09-25: **REVIEW_CHANGES_REQUIRED** at `1ef875a` (source review, 22/22
+  new artifacts hash-verified, offline suite re-run 34 pass / 1 skip; not
+  fault-injected by the reviewer). R2-F1/R2-F2 confirmed fixed; sizing
+  wording accepted.
+  - **R3-F1 [P1] cleanup can delete a generation that was just published.**
+    After the publish CAS succeeds, an error in the reclaim of the old
+    generation or in the pointer re-read made the D22 wrapper treat the whole
+    replay step as failed and call `abandon_rebuild`, which reclaimed
+    `active.generation` without checking whether it had become READY -
+    leaving a READY pointer to deleted data. Required: distinguish not
+    published / published / CAS outcome unknown; discard staging only after
+    confirming it is unpublished, under a fence check; after a publish,
+    cleanup failures recover through the existing retirement, never by
+    deleting the READY generation; when the CAS outcome is unknown, re-read
+    before deciding. Regressions: error before the CAS, error after the CAS
+    before cleanup, CAS reply lost although the server committed - pointer,
+    payload, checkpoint and retry consistent. No new phase, C2 or 45-minute
+    rebuild.
+- 2026-09-25: **Design decision D23 (recorded before code).** Ending a
+  rebuild re-reads the product pointer and decides from it: `ready = G` ->
+  the swap happened (the old generation is already in the retirement set,
+  written by the publish script) -> the rebuild completes, `G` is never
+  reclaimed; `staging = G` -> not published -> a new Lua op `X` (unstage:
+  CAS on ready/staging/fence under the owner fence) clears the staging
+  pointer and retires `G` in the same script, then the retirement is
+  reclaimed; the replay is re-queued; neither -> the generation is not ours
+  any more, nothing is reclaimed; pointer unreadable -> nothing is decided,
+  the rebuild state is kept and the next step re-reads (a cache reconnect
+  drops the in-memory rebuild without reclaiming). Every path that ended a
+  rebuild (errors, "pointer changed", partition lost/building, verification
+  failure) goes through this decision. Cache faults for the regressions come
+  from a `fault-injection` cargo feature enabled only for the crate's own
+  tests (self dev-dependency).
+- 2026-09-25: **KN-3 slice 13 - R3-F1 fixed (D23): implemented, tested
+  locally + isolated Redis/Kafka.**
+  - Source: `apply.lua` op `X` (unstage: CAS on the pointer under the owner
+    fence, clears `staging`, retires it in the same script, never touches
+    `ready`); `cache.rs` `Op::Unstage`, fault hooks behind the
+    `fault-injection` feature (`src/fault.rs`: fail before a publish, lose a
+    publish reply after the server committed, fail a reclaim, fail pointer
+    reads - also armed exactly at a lost reply); `stage_b.rs`
+    `end_rebuild` replaces `abandon_rebuild` on every path (error, pointer
+    changed, partition lost/building, no reader, verification failure,
+    zombie): fresh pointer read -> `ready = G` completes (no reclaim of `G`,
+    the old generation goes through the retirement set), `staging = G` ->
+    unstage (owned) or direct reclaim (not owned: only this stopped rebuild
+    could ever publish `G`), otherwise nothing; an unreadable pointer or a
+    failed unstage keeps the rebuild in an `ending` state that the next step
+    retries - the replay never continues after it; `start_rebuild` keeps a
+    request queued until decided and puts a new staging under the rebuild
+    state before its setup, so a setup error also ends through D23.
+    `Cargo.toml`: the feature + a self dev-dependency enabling it for tests;
+    `Cargo.lock` gains only that edge. Release build: the normal dependency
+    graph has no `fault-injection` and the binary contains no injection text.
+  - Regressions (`tests/stage_b_redis.rs`, every step checks that the READY
+    generation still holds its 60 rows; the end state checks pointer,
+    payload of every open, meta vs bucket rows, checkpoint 60, keys only in
+    the ready generation, retirement and request sets empty):
+    | Case | `1ef875a` + the same hooks | now |
+    |---|---|---|
+    | `r3_an_error_before_the_publish_cas_discards_the_staging_and_retries` | pass (guard: this branch was not broken) | pass: 1 discarded, replay redone, 1 completed |
+    | `r3_an_error_after_the_publish_cas_never_deletes_the_ready_generation` (reclaim of the old generation fails after the swap) | READY generation 3 lost its data (0/60 rows) | pass: 1 started / 1 completed / 0 discarded |
+    | `r3_a_lost_publish_reply_is_resolved_by_reading_the_pointer_back` (server committed, reply lost; and the same with the pointer unreadable right after) | READY generation 3 lost its data (0/60 rows) | pass for both variants |
+    (control: the hooks alone ported onto `1ef875a` by a scratch script,
+    separate target directory.)
+  - The existing suite adapted: `losing_the_partition_...` passes unchanged
+    (the unowned branch reclaims the confirmed-unpublished staging).
+  - Staged content (exact commit tree): fmt, clippy `-D warnings` for all
+    targets and for lib + bin without the feature; workspace 294 passed / 0
+    failed / 56 ignored; ignored `qdl-projector` 53/53 x 3 rounds on
+    disposable Kafka + 2 Redis; KN Python suites with Kafka/Redis OK (1 skip:
+    packet authorizer-broker integration, unchanged). Disposable services
+    stopped: 0 `kn3-*` containers/networks. No C2, no flow rerun (none
+    required for this window).
+- 2026-09-25: **R3 resolution and re-review request (Claude -> Astra).**
+  R3-F1 fixed as D23 with the three regressions above (before/after on
+  `1ef875a`). **Request:** re-review of slice 13 for **ASTRA_REVIEW_PASS on
+  KN-3** and, on PASS, KN-4 entry.
 
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility

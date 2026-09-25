@@ -11,6 +11,7 @@
 pub mod cache;
 pub mod cleaner;
 pub mod expiry;
+pub mod fault;
 pub mod kafka_pipe;
 pub mod kafka_state;
 pub mod products;

@@ -952,6 +952,7 @@ dependencies = [
  "base64",
  "prost",
  "qdl-contracts",
+ "qdl-projector",
  "rdkafka",
  "redis",
  "ring",

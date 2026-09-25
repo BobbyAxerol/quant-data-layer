@@ -180,6 +180,21 @@ struct ActiveRebuild {
     generation: u64,
     /// Records of the product replayed so far (0 at the end = state gone).
     records: u64,
+    /// D23: the rebuild is being ended (an error or a changed context); the
+    /// replay never continues, only the end decision is retried.
+    ending: bool,
+}
+
+/// D23: how a rebuild ended, decided from a fresh pointer read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ending {
+    /// `ready` is the rebuilt generation: the swap happened; nothing of it is
+    /// reclaimed, the old generation goes through the retirement set.
+    Published,
+    /// `staging` was the rebuilt generation, now unstaged and retired.
+    Discarded,
+    /// Neither: the generation is not this rebuild's any more.
+    NotOurs,
 }
 
 /// A retention floor met in a batch; its bucket range is fixed after every
@@ -1309,8 +1324,11 @@ impl<S: StateSource> StageB<S> {
         if !self.cache.retirements(1)?.is_empty() || self.cache.lazyfree_pending()? > 0 {
             return Ok(());
         }
-        while let Some(lpk) = self.rebuild_queue.pop_front() {
+        // A request leaves the queue only once decided; an error before its
+        // staging exists keeps it for the next step.
+        while let Some(lpk) = self.rebuild_queue.front().cloned() {
             if self.rebuild_reader.is_none() {
+                self.rebuild_queue.pop_front();
                 self.refuse_rebuild(&lpk, "no rebuild reader configured");
                 continue;
             }
@@ -1322,16 +1340,19 @@ impl<S: StateSource> StageB<S> {
                 }
             }
             let Some((topic, partition)) = owner else {
+                self.rebuild_queue.pop_front();
                 self.refuse_rebuild(&lpk, "no owned partition holds the product");
                 continue;
             };
             let state = self.partitions[&(topic.clone(), partition)].clone();
             if state.mode != Mode::Normal {
                 // Taken again from the request set once the build finished.
+                self.rebuild_queue.pop_front();
                 continue;
             }
             let pointer = self.cache.pointer(&lpk)?;
             if pointer.ready.is_none() && pointer.staging.is_none() {
+                self.rebuild_queue.pop_front();
                 self.refuse_rebuild(&lpk, "no generation (a cold build covers it)");
                 continue;
             }
@@ -1351,6 +1372,7 @@ impl<S: StateSource> StageB<S> {
             )? {
                 Applied::Ok(_) => {}
                 Applied::Zombie { .. } => {
+                    self.rebuild_queue.pop_front();
                     self.fence_out(&topic, partition);
                     self.refuse_rebuild(&lpk, "partition lost");
                     continue;
@@ -1358,10 +1380,21 @@ impl<S: StateSource> StageB<S> {
                 Applied::Miss(_) => {
                     // The pointer moved under us: try again next step.
                     self.metrics.cas_retries += 1;
-                    self.rebuild_queue.push_front(lpk);
                     return Ok(());
                 }
             }
+            // The staging exists from here on: the rebuild state owns it, and
+            // a failed setup ends it through the D23 decision (unstage).
+            self.rebuild_queue.pop_front();
+            self.metrics.rebuilds_started += 1;
+            self.rebuild = Some(ActiveRebuild {
+                lpk,
+                topic: topic.clone(),
+                partition,
+                generation,
+                records: 0,
+                ending: true,
+            });
             self.process_retirements(64)?;
             let (earliest, _) = self
                 .source
@@ -1372,14 +1405,9 @@ impl<S: StateSource> StageB<S> {
                     .start(&topic, partition, earliest)
                     .map_err(StageBError::Source)?;
             }
-            self.metrics.rebuilds_started += 1;
-            self.rebuild = Some(ActiveRebuild {
-                lpk,
-                topic,
-                partition,
-                generation,
-                records: 0,
-            });
+            if let Some(active) = self.rebuild.as_mut() {
+                active.ending = false;
+            }
             return Ok(());
         }
         Ok(())
@@ -1392,22 +1420,72 @@ impl<S: StateSource> StageB<S> {
             .and_then(|parsed| canonical_interval_ms(&parsed.qualifier).ok())
     }
 
-    /// Drop the rebuild: stop the reader and reclaim what was staged.
-    fn abandon_rebuild(&mut self, reason: &str) -> Result<(), StageBError> {
-        let Some(active) = self.rebuild.take() else {
-            return Ok(());
+    /// D23: end the active rebuild after an error or a changed context,
+    /// deciding from a fresh pointer read. A generation that became READY is
+    /// never reclaimed; an unpublished staging generation is unstaged by CAS
+    /// under the owner fence (retired in the same script) and then
+    /// reclaimed. `Err` = the outcome could not be established (pointer read
+    /// or unstage failed): nothing is reclaimed, the rebuild stays in its
+    /// ending state and the next step decides again.
+    fn end_rebuild(&mut self, reason: &str) -> Result<Ending, StageBError> {
+        let Some(active) = self.rebuild.as_mut() else {
+            return Ok(Ending::NotOurs);
         };
-        self.metrics.rebuilds_abandoned += 1;
+        active.ending = true;
+        let active = active.clone();
         self.last_rebuild_error = Some(format!("{}: {reason}", active.lpk));
+        let pointer = self.cache.pointer(&active.lpk)?;
+        if pointer.ready == Some(active.generation) {
+            self.complete_rebuild(&active.lpk)?;
+            self.process_retirements(64)?;
+            return Ok(Ending::Published);
+        }
+        let ending = if pointer.staging == Some(active.generation) {
+            let key = (active.topic.clone(), active.partition);
+            if let Some(state) = self.partitions.get(&key).cloned() {
+                match self.cache.apply(
+                    &active.topic,
+                    active.partition,
+                    state.fence,
+                    state.next,
+                    (self.now_ms)(),
+                    &[Op::Unstage {
+                        lpk: active.lpk.clone(),
+                        pointer,
+                    }],
+                )? {
+                    Applied::Ok(_) => {}
+                    Applied::Zombie { .. } => self.fence_out(&active.topic, active.partition),
+                    Applied::Miss(_) => {
+                        self.metrics.cas_retries += 1;
+                        return Err(StageBError::Source(format!(
+                            "{}: pointer moved while unstaging",
+                            active.lpk
+                        )));
+                    }
+                }
+            } else {
+                // Not owned any more (no fence to unstage with): only this
+                // rebuild could ever publish `G`, and it has stopped, so the
+                // confirmed-unpublished staging is reclaimed directly; the
+                // next owner's stage op retires the pointer entry (D21).
+                self.metrics.reclaimed_keys += self.cache.reclaim(
+                    active.generation,
+                    &active.lpk,
+                    Self::bar_interval(&active.lpk),
+                )?;
+            }
+            Ending::Discarded
+        } else {
+            Ending::NotOurs
+        };
+        self.rebuild = None;
+        self.metrics.rebuilds_abandoned += 1;
         if let Some(reader) = self.rebuild_reader.as_mut() {
             reader.stop().map_err(StageBError::Source)?;
         }
-        self.metrics.reclaimed_keys += self.cache.reclaim(
-            active.generation,
-            &active.lpk,
-            Self::bar_interval(&active.lpk),
-        )?;
-        Ok(())
+        self.process_retirements(64)?;
+        Ok(ending)
     }
 
     /// One bounded replay step of the active rebuild; publish at the live
@@ -1421,16 +1499,27 @@ impl<S: StateSource> StageB<S> {
         let Some(active) = self.rebuild.clone() else {
             return Ok(());
         };
+        if active.ending {
+            if self.end_rebuild("retrying the end of a rebuild")? == Ending::Discarded {
+                self.rebuild_queue.push_front(active.lpk.clone());
+            }
+            return Ok(());
+        }
         let key = (active.topic.clone(), active.partition);
         let Some(state) = self.partitions.get(&key).cloned() else {
-            return self.abandon_rebuild("partition lost");
+            self.end_rebuild("partition lost")?;
+            return Ok(());
         };
         if state.mode != Mode::Normal {
-            return self.abandon_rebuild("partition building");
+            self.end_rebuild("partition building")?;
+            return Ok(());
         }
         let pointer = self.cache.pointer(&active.lpk)?;
         if pointer.staging != Some(active.generation) {
-            return self.abandon_rebuild("pointer changed");
+            // Published already (an earlier step lost its reply) or taken
+            // over: decided by the pointer, never by deleting.
+            self.end_rebuild("pointer changed")?;
+            return Ok(());
         }
         match self.replay_step(&active, &state) {
             Ok(()) => Ok(()),
@@ -1439,8 +1528,8 @@ impl<S: StateSource> StageB<S> {
                     .rebuild
                     .as_ref()
                     .is_some_and(|current| current.generation == active.generation)
+                    && self.end_rebuild("replay failed")? == Ending::Discarded
                 {
-                    let _ = self.abandon_rebuild("replay failed");
                     self.rebuild_queue.push_front(active.lpk.clone());
                 }
                 Err(error)
@@ -1454,7 +1543,8 @@ impl<S: StateSource> StageB<S> {
         state: &PartitionState,
     ) -> Result<(), StageBError> {
         let Some(reader) = self.rebuild_reader.as_mut() else {
-            return self.abandon_rebuild("no rebuild reader");
+            self.end_rebuild("no rebuild reader")?;
+            return Ok(());
         };
         let inputs = reader
             .poll(self.limits.max_batch_records, self.limits.poll_timeout)
@@ -1514,7 +1604,7 @@ impl<S: StateSource> StageB<S> {
             if rows != counted {
                 let reason =
                     format!("verification failed: meta rows {rows}, bucket rows {counted}");
-                self.abandon_rebuild(&reason)?;
+                self.end_rebuild(&reason)?;
                 return Err(StageBError::Source(format!("{}: {reason}", active.lpk)));
             }
         }
@@ -1585,7 +1675,7 @@ impl<S: StateSource> StageB<S> {
                 }
                 Applied::Zombie { .. } => {
                     self.fence_out(&active.topic, active.partition);
-                    self.abandon_rebuild("partition lost")?;
+                    self.end_rebuild("partition lost")?;
                     return Ok(false);
                 }
                 Applied::Miss(_) => {

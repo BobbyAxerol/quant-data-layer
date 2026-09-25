@@ -1201,3 +1201,149 @@ fn r2_f2_a_late_repair_below_the_old_floor_does_not_hide_a_valid_older_row() {
         "reclaim leaves no key"
     );
 }
+
+// ------------------------------------------------------------ Astra R3
+
+/// A 1m BAR product of 60 rows, built, with a rebuild requested; `arm`
+/// injects cache faults before the first step of the rebuild.
+fn r3_rebuild(
+    label: &str,
+    arm: impl FnOnce(&mut qdl_projector::fault::CacheFaults),
+) -> (Log, StageB<Source>, LogicalProductKey, u64, usize) {
+    let log = Log::default();
+    let bars = lpk("BAR", Some("1m"));
+    for minute in 0..60u64 {
+        push(
+            &log,
+            BARS,
+            bar_frame(&bars, bar(minute, BarLifecycle::Final, 0, 1), minute),
+        );
+    }
+    let mut stage = rebuild_stage(&log, &environment(label));
+    drain(&mut stage);
+    let old = stage.cache.pointer(&bars.encode()).unwrap().ready.unwrap();
+    arm(&mut stage.cache.faults.lock().unwrap());
+    stage.request_rebuild(&bars.encode());
+    let mut errors = 0;
+    for _ in 0..300 {
+        if stage.step().is_err() {
+            errors += 1;
+        }
+        // Invariant at every step: the READY generation holds its data.
+        let ready = stage.cache.pointer(&bars.encode()).unwrap().ready;
+        if let Some(generation) = ready {
+            let (rows, counted) = stage
+                .cache
+                .bar_row_count(generation, &bars.encode(), MIN)
+                .unwrap();
+            assert_eq!(
+                (rows, counted),
+                (60, 60),
+                "{label}: READY generation {generation} lost its data"
+            );
+        }
+    }
+    (log, stage, bars, old, errors)
+}
+
+/// Pointer, payload, checkpoint, generations and bookkeeping agree.
+fn assert_rebuild_consistent(stage: &mut StageB<Source>, bars: &LogicalProductKey, old: u64) {
+    let pointer = stage.cache.pointer(&bars.encode()).unwrap();
+    let ready = pointer.ready.expect("READY");
+    assert_ne!(ready, old, "a new generation is ready");
+    assert_eq!(pointer.staging, None);
+    assert_eq!(bar_rows(stage, bars), 60);
+    for minute in 0..60u64 {
+        assert!(
+            read_bar(stage, bars, minute).is_some(),
+            "payload of open {minute}"
+        );
+    }
+    let (rows, counted) = stage
+        .cache
+        .bar_row_count(ready, &bars.encode(), MIN)
+        .unwrap();
+    assert_eq!(rows, counted);
+    assert_eq!(stage.cache.checkpoint(BARS, 0).unwrap().unwrap().next, 60);
+    let live: BTreeSet<u64> = [ready].into_iter().collect();
+    assert_eq!(
+        key_generations(stage, bars),
+        live,
+        "only the ready generation owns keys"
+    );
+    for set in [
+        stage.cache.layout.retire(),
+        stage.cache.layout.rebuild_requests(),
+    ] {
+        let count: u64 = redis::cmd("SCARD")
+            .arg(&set)
+            .query(stage.cache.connection())
+            .unwrap();
+        assert_eq!(count, 0, "{set}");
+    }
+    assert!(stage.rebuilding().is_none());
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r3_an_error_before_the_publish_cas_discards_the_staging_and_retries() {
+    let (_log, mut stage, bars, old, errors) =
+        r3_rebuild("r3before", |faults| faults.fail_before_publish = 1);
+    assert_eq!(errors, 1);
+    assert_eq!(
+        stage.metrics.rebuilds_abandoned, 1,
+        "unpublished staging discarded"
+    );
+    assert_eq!(stage.metrics.rebuilds_started, 2, "and the replay redone");
+    assert_eq!(stage.metrics.rebuilds_completed, 1);
+    assert_rebuild_consistent(&mut stage, &bars, old);
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r3_an_error_after_the_publish_cas_never_deletes_the_ready_generation() {
+    // The swap commits; reclaiming the old generation fails.
+    let (_log, mut stage, bars, old, errors) =
+        r3_rebuild("r3after", |faults| faults.fail_reclaim = 1);
+    assert_eq!(errors, 1);
+    assert_eq!(
+        stage.metrics.rebuilds_abandoned, 0,
+        "the published generation is kept"
+    );
+    assert_eq!(
+        (
+            stage.metrics.rebuilds_started,
+            stage.metrics.rebuilds_completed
+        ),
+        (1, 1),
+        "no second replay"
+    );
+    assert_rebuild_consistent(&mut stage, &bars, old);
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis); run by the kn-native-integration job"]
+fn r3_a_lost_publish_reply_is_resolved_by_reading_the_pointer_back() {
+    for (label, unreadable) in [("r3lost", 0usize), ("r3lostunread", 1usize)] {
+        // The server commits the swap but the reply is lost; in the second
+        // case the pointer cannot be read back at first either.
+        let (_log, mut stage, bars, old, errors) = r3_rebuild(label, |faults| {
+            faults.lose_publish_reply = 1;
+            faults.unreadable_after_lost_reply = unreadable;
+        });
+        assert!(errors >= 1, "{label}");
+        assert_eq!(
+            stage.metrics.rebuilds_abandoned, 0,
+            "{label}: published, not discarded"
+        );
+        assert_eq!(
+            (
+                stage.metrics.rebuilds_started,
+                stage.metrics.rebuilds_completed
+            ),
+            (1, 1),
+            "{label}"
+        );
+        assert_rebuild_consistent(&mut stage, &bars, old);
+    }
+}

@@ -18,6 +18,11 @@ redis.workspace = true
 ring.workspace = true
 serde_json.workspace = true
 
+[features]
+# Test-only cache fault hooks (KN-3 Astra R3); enabled for the crate's own tests.
+fault-injection = []
+
 [dev-dependencies]
+qdl-projector = { path = ".", features = ["fault-injection"] }
 base64.workspace = true
 tokio.workspace = true
