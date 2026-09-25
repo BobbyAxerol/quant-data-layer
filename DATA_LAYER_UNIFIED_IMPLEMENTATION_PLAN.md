@@ -57083,6 +57083,85 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `dd94e2f` (the remembered record was served on the cache error), after OK;
   `test_kn_query_backend` 19, `test_phase113_reference_v2` +
   `test_phase104_reference_batch` OK | runtime NONE | next: D35 audit, D37.
+- 2026-09-25: **D37 result (read-only diagnosis, no mutation).** The TS text
+  `SOURCE_UNAVAILABLE ... did not return a current active record` exists only
+  at `qdl/reference/execution_live.py:211`; `_bounded_reason` (`:233-249`)
+  collapses COMPONENT_STALE/SESSION_*/QUIET_POLICY/LINEAGE into NOT_READY and
+  the per-URL errors are dropped, so the exact reason is not recoverable from
+  logs (a diagnosability gap, recorded for D41). Excluded by evidence: lease
+  change (all 6 production projectors: `stream_v2_active` 409 / passive 200
+  for the whole 07-10h window), STALE/GAP/IDENTITY (would surface as other
+  codes), ingestor session change (0 log lines 08:50-09:45). Same timestamps:
+  production raw input rose 2-3x (kafka1 segment rolls: raw p4 130-190/s ->
+  316/s from 09:24:44, 443/s 09:28:08-09:30:52; started BEFORE run 3);
+  `rust_core_2` (0.5 CPU, 28% of periods throttled cumulatively) reached
+  raw_age 18.6 s and expired +560 MARK/INDEX components (core_1/3: +0); the
+  lease-holding stream ingest saturated (appends ~200 -> 40-65/min per
+  projector, mean 0.9-1.4 s, max 5.2 s; canonical age up to 48.7 s) and sits
+  at its 1 GiB memory limit (457,599 max events, page-cache refaults, 1,982 s
+  cumulative I/O pressure) on one EBS volume running ~3,000 write IOPS.
+  Onset/recovery of both TS episodes (09:28:10-09:30:19, 09:31:00-09:32:34)
+  match to seconds; Binance fails ~5 s and OKX ~18 s after onset (the 5 s /
+  15 s component bounds) -> most likely COMPONENT_STALE (inference). The
+  2026-09-24 08-16h peaks show the same signature. Verdict: a production
+  capacity limit hit by an input burst; shadow contribution INCONCLUSIVE,
+  not primary (run 1 took host idle to 15% with no effect; shadow cgroups
+  unthrottled); host idle 9% at onset keeps contention possible. For every
+  further watched run: production cgroup cpu/io/memory samples every 5 s,
+  `/proc/diskstats` + PSI, raw ingress per partition, core raw_age, and load
+  started only at baseline ingress. Raw extracts in the session scratchpad
+  (not evidence of record).
+- 2026-09-25: **D35 audit result (read-only, `7a6dbd7`).** Verified: bounds
+  are configured per component (`config/v2/stable-acquisition-bindings.yaml`
+  10 entries: Binance BOTH 5000; OKX MARK 15000 / INDEX 70000) and applied in
+  the Rust core at pair emission (`rust/qdl-realtime-core/src/lib.rs:892-903`,
+  `MARK_INDEX_COMPONENT_EXPIRED`) and again at the Query edge
+  (`qdl/data_quality/execution_mark_index.py:74-85`); separate MARK/INDEX
+  slots with own price/ts/receipt/capture (`lib.rs:385-401, 853-860`), older
+  ts ignored, same-ts different price quarantined; generation/session
+  changes quarantine or reset both slots; nothing emitted until both
+  components exist; processing time never enters the envelope; the OBSERVE
+  path checks lineage, exact session, component ages; quiet policy only via
+  manifest (`api_v2/router.py:980-982`, `manifest.py:112-128`); no DOGE or
+  symbol special case. Defects: **(1)** `execution_mark_index.py:246` catches
+  an unimported `DecodeError` (NameError on a corrupt hydration row);
+  **(2)** the strict (non-OBSERVE) read and the KN cache view serve a
+  MARK/INDEX record without checking its pair lineage; **(3)**
+  `mark_index_lineage.py` does not bind the envelope times to the components
+  (min source ts / min receipt) and accepts component ts 0; **(4)** the
+  component bound is optional in the plan validator (all 10 bindings set it);
+  **(7)** the strict path clamps a future anchor to age 0. Decision: fix
+  1/2/3/4(Python validator)/7 in one tested slice. Not fixed here, recorded:
+  (5) the Rust pair state has no lane rule and OKX generation files are
+  positional - renumbering lanes without a core restart would quarantine
+  pairs as StaleGeneration (fail closed, availability) -> owner item;
+  (6) OKX chunking could split a pair only with an odd cap (cap 100, safe);
+  (8) the view gates on `state` not `execution_eligible` (equivalent today);
+  pipeline lag is not a separate input (a core stall reads as a stale
+  component) -> D41 diagnostics.
+- 2026-09-25: **K4 slice 9 (D38 canonical mirror)** | this commit |
+  `scripts/kn_canonical_mirror.py`: `start` resolves per-partition source
+  offsets by time (`offsets_for_times`) and writes them before the history
+  import; `run` reads `md.canonical.v2` `read_committed` in assign mode (no
+  group join, no commit, no offset store) and re-publishes bundle products
+  (Kafka key = bundle physical key and bound payload feed; others counted by
+  reason, never sent - stage A stops on them) to the same partition of an
+  isolated broker in transactions, keeping key/value/headers/timestamp plus
+  `qdl-mirror-source-{partition,offset,timestamp}`; the commit log adds the
+  source Kafka timestamp to the probe's `{partition, offset, commit_ns}`
+  shape. Refuses `kafka1..3`/`qdl_v2_stable_candidate*` destinations, a
+  start file not covering every source partition, and a destination topic
+  with a different partition count (production canonical has 6,
+  `docker-compose.v2-stable.yml:460`). Tests `tests/test_kn_canonical_mirror.py`
+  4 OK on the disposable broker (`kn3-lead-kafka`): aborted source records
+  (flushed, then aborted) are never mirrored, the start by time lands on
+  the aborted offset and read_committed skips it, the committed record
+  carries source offset 2, out-of-bundle records are counted and dropped,
+  no `kn-shadow-mirror-*` group exists afterwards. First run of the test
+  failed because the aborted batch was purged before reaching the broker
+  (test bug, fixed by flushing) | `tested locally`; runtime NONE (the
+  production read is a separate journaled packet) | next: D35 fixes, then
+  the D38 packet.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
