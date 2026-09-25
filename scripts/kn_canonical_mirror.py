@@ -152,6 +152,42 @@ def resolve_start(consumer, topic: str, since_ms: int, partitions: Iterable[int]
     return start
 
 
+def destination_resume_offsets(bootstrap: str, topic: str, partitions: Iterable[int],
+                               *, look_back: int = 64) -> dict[int, int]:
+    """Next source offset per partition from what the isolated topic already
+    holds: the largest ``qdl-mirror-source-offset`` among its last committed
+    records, plus one. A restarted mirror neither skips nor repeats a record
+    (its commit log may lose buffered lines when it is killed)."""
+    from confluent_kafka import Consumer, TopicPartition
+
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": f"kn-shadow-mirror-{uuid.uuid4().hex[:12]}",
+                         "enable.auto.commit": False, "isolation.level": "read_committed",
+                         "enable.partition.eof": True})
+    try:
+        found: dict[int, int] = {}
+        for partition in partitions:
+            low, high = consumer.get_watermark_offsets(TopicPartition(topic, partition), timeout=10)
+            start = max(low, high - look_back)
+            if high <= low:
+                continue
+            consumer.assign([TopicPartition(topic, partition, start)])
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                message = consumer.poll(0.5)
+                if message is None:
+                    continue
+                if message.error():
+                    if message.error().code() == PARTITION_EOF:
+                        break
+                    raise RuntimeError(str(message.error()))
+                source = dict(message.headers() or []).get("qdl-mirror-source-offset")
+                if source is not None:
+                    found[partition] = max(found.get(partition, -1), int(source) + 1)
+        return found
+    finally:
+        consumer.close()
+
+
 def mirrored_headers(message) -> list[tuple[str, bytes]]:
     headers = [(key, value) for key, value in (message.headers() or []) if key not in MIRROR_HEADERS]
     kind, stamp = message.timestamp()
@@ -241,6 +277,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--deadline-seconds", type=float, required=True)
     run.add_argument("--max-bytes-per-second", type=float, default=8 * 1024 * 1024)
     run.add_argument("--commit-log", required=True)
+    run.add_argument("--resume-from-destination", action="store_true",
+                     help="start after the last source offset the isolated topic already holds")
     return parser
 
 
@@ -273,11 +311,15 @@ def main(argv: list[str] | None = None) -> int:
         dest = producer.list_topics(args.topic, timeout=20).topics.get(args.topic)
         if dest is None or dest.error is not None or sorted(dest.partitions) != partitions:
             raise MirrorRefused("the isolated topic must have the source's partitions (same partition mirror)")
+        if args.resume_from_destination:
+            for partition, offset in destination_resume_offsets(args.dest_bootstrap, args.topic, partitions).items():
+                start[partition] = max(start[partition], offset)
         producer.init_transactions(30)
         products = bundle_products(json.loads(Path(args.bundle).read_text(encoding="utf-8")))
         stopping: list[bool] = []
         signal.signal(signal.SIGTERM, lambda *_: stopping.append(True))
-        with open(args.commit_log, "a", encoding="utf-8") as handle:
+        # Line-buffered: a killed mirror keeps every line it logged.
+        with open(args.commit_log, "a", encoding="utf-8", buffering=1) as handle:
             result = run_mirror(consumer, producer, topic=args.topic, start=start, products=products,
                                 deadline_s=args.deadline_seconds, max_bytes_per_second=args.max_bytes_per_second,
                                 log=lambda row: handle.write(json.dumps(row, sort_keys=True) + "\n"),

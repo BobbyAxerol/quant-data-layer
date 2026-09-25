@@ -164,6 +164,8 @@ class MirrorKafkaTests(unittest.TestCase):
         self.assertEqual(start[1], 0, "the start by time points at the aborted record, which read_committed skips")
         self.assertEqual(sorted((row["partition"], row["source_timestamp_ms"]) for row in logged),
                          [(1, late), (2, late)])
+        # A restarted mirror resumes after what the destination already holds.
+        self.assertEqual(mirror.destination_resume_offsets(self.bootstrap, self.dest, range(3)), {1: 3, 2: 3})
         groups = self.admin.list_consumer_groups().result(20)
         self.assertFalse([g for g in groups.valid if g.group_id.startswith("kn-shadow-mirror-")],
                          "the mirror never registers or commits a consumer group")

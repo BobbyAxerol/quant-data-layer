@@ -57374,6 +57374,15 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   32 MiB producer queue (a transaction holds one consume batch). Test asserts
   the bound; `test_kn_canonical_mirror` 5 OK (Kafka case on `kn4-kafka`) |
   `tested locally`; the running measurement follows in the run receipt.
+- 2026-09-25: **K4 slice 16 (mirror restart exactness)** | this commit | the
+  killed mirror's commit log ended in a partial line (block-buffered writes
+  lost at the kill), so a resume point cannot come from it. `run
+  --resume-from-destination` starts each partition after the largest
+  `qdl-mirror-source-offset` among the isolated topic's last committed
+  records (never skips, never repeats); the commit log is line-buffered.
+  Test: the Kafka case resumes at source offset 3 on partitions 1 and 2
+  (committed record at 2); `test_kn_canonical_mirror` 5 OK on `kn4-kafka` |
+  `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
