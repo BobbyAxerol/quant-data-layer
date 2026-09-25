@@ -56821,6 +56821,66 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `test_phase3_consumer_load_driver` (+1 shadow profile), with
   `test_phase3_consumer_load`, `test_phase3_target_driver`: 91 OK | runtime
   NONE | next: shadow packet and run.
+- 2026-09-25: **KN-4 K4.5/K4.6 isolated shadow runtime packet (recorded
+  before start).** Scope: disposable `kn4-*` services; production is read,
+  never written; no production Kafka, Redis, ACL or group is touched.
+  - Candidates (all from `ccec85c`; Rust tree identical to `29df556`):
+    release `qdl-projector` sha256 `2a6ffd8e...a99bf`, `qdl-stream-gateway`
+    `d4c8ed40...a75a2d` (built in `qdl-rust-builder:r134-test`, private
+    target dir), mounted read-only into `qdl-v2-rust:2.0.26-62241bc`; Python
+    image `qdl-v2-python:kn4-ccec85c` `sha256:2cd464f7...030b9` = the running
+    `qdl-v2-python:2.1.1-83fa1bc@sha256:dd065fdf...` plus the exported tree
+    (the same final-layer recipe; no dependency change); gateway bundle
+    `e8aa9c95...` (equal to KN-2's), catalog `2072202c...` (equal to the
+    running Query's).
+  - Reads of production (read-only): the `stable_state` volume (`mode=ro`,
+    `query_only`, primary-key / `committed_at_ns` indexes only) for the
+    capture of the demanded keys, the legacy BAR import (`--isolated`) and
+    the near-live tail (`kn_native_slice_probe.py load --phase tail`, one
+    indexed range query per 250 ms, bounded by `--live-seconds`); the
+    runtime dir `r135-b2-335792a.../runtime` and the stable TLS volume
+    read-only; `session-liveness` of the stable state read-only (Query
+    session quality); the running Query's env via `docker inspect` (only
+    public JWT keys and non-secret settings are kept - fresh shadow secrets
+    replace every secret); the production TS heartbeat through the harness's
+    existing `docker exec market_data_service` read (stop condition).
+  - Services (prefix `kn4-`, `--rm`, network `kn4-net` `--internal`; the two
+    Query replicas also join `kn4-egress` (plain bridge) for the bounded
+    venue REST of reference/pass-through reads - at most a few requests per
+    minute, as production Query does): `kn4-kafka` (stack Kafka digest,
+    1 CPU / 1.5 GiB, `md.canonical.v2` 6 partitions delete, `md.latest.v2` /
+    `md.bars.v2` 6 partitions compact as KN-3); `kn4-cache` (stable Redis
+    digest, D6 config, `maxmemory` 1500000000, 0.5 CPU / 1792 MiB);
+    `kn4-quota` (quota/identity Redis, 0.1 CPU / 64 MiB);
+    `kn4-proj-a/-b` (0.5 CPU / 256 MiB); `kn4-stream-a/-b` (aliases
+    `qdl-v2-stream-a/-b` in the stream SAN, 0.5 CPU / 256 MiB, read view ->
+    the shadow Query pair, stream TLS identity read-only); `kn4-query-1/-2`
+    (aliases `query_v2_1`/`query_v2_2`/`qdl-v2-query` in the Query SAN,
+    1.5 CPU / 1 GiB as production, `QDL_STABLE_QUERY_BACKEND=kn3`, state dir
+    = a scratch dir); loaders/tail/harness clients in the kn4 image
+    (`--rm`, bounded CPU/memory). Peak ~9 GiB RAM / ~6 vCPU during stage 35
+    (host 15 GiB available at start); nothing persists after cleanup.
+  - Steps: (1) capture demanded keys + history load; (2) legacy BAR import
+    into the isolated `md.bars.v2`; (3) projectors A/B (cold build, READY
+    count); (4) Stream A/B + Query 1/2, near-live tail for the window;
+    (5) `kn_native_slice_probe.py matrix --read-view 1` (all four RPCs,
+    negative matrix, GetSnapshot/GetFeedStatus through the read view);
+    (6) `phase3_consumer_load_acceptance.py --mode kn4-matrix` (K4-T01..T05
+    on both replicas); (7) stages 20 and 35 (`--mode target`, frozen
+    workload, K4-T06/T08, four latency quantities); (8) TS/alpha read
+    adapters no-order scenarios (K4-T07), incl. V1 fallback/return reads of
+    the running V1 service (read-only) and BLOCKED; (9) recovery probes
+    (Query replica stop/start, Stream failover, projector kill) as needed.
+  - Stop at once (automated guard) if host idle < 5 % for 60 s, the
+    production TS ready routes drop, or any production container restarts;
+    each step bounded (<= 30 min), whole window <= 4 h.
+  - Rollback: stop the `kn4-*` containers; production unchanged by
+    construction (no route, target, env or image of a running service
+    changes). Cleanup: containers, networks, anonymous volumes = 0; shadow
+    keys, env files, capture and scratch state deleted; image
+    `qdl-v2-python:kn4-ccec85c` kept until the KN-4 review (KN-5 candidate)
+    or removed by digest; evidence hashed into
+    `/home/bobby/.local/state/qdl-v2/kn4-20260925/evidence`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
