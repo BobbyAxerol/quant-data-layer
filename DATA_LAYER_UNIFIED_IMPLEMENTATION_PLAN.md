@@ -57477,6 +57477,36 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
     minimum, then compare the same metrics. Rollback
     `docker update --cpus 0.5 qdl_v2_stable_candidate-rust_core_2-1` only if
     the target metric worsens and no backlog is draining (drain first).
+- 2026-09-25: **D42 applied and measured (owner-approved exact command).**
+  14:38:50Z `docker update --cpus 1.0 qdl_v2_stable_candidate-rust_core_2-1`:
+  cgroup `cpu.max` 100000/100000, NanoCpus 500000000 -> 1000000000; same
+  container (StartedAt 2026-09-19T17:23:49Z, restart 0), same image
+  `sha256:389753b3...`, memory 256 MiB, env/mounts unchanged; ceiling sum
+  22.0 -> 22.5. Windows (read-only, watch set + logs): before 14:28:22-14:38:25,
+  after 14:38:50-14:50:44. core_2 throttled periods 36.9 % -> 1.0 % at the
+  same work (0.322 -> 0.325 CPU); raw_age mean 242 -> 213 ms, max 1.2 -> 2.5 s,
+  0 full batches in both (input calm: n median 11.5k -> 9.2k, no burst in
+  either window, so the burst effect - 31 s raw_age at 13:40-14:25 - is not
+  yet demonstrated). Target metric: TS MARK/INDEX refusals 5 -> 15; all 15
+  (Binance DOGEUSDT 14:44-14:47, one SOLUSDT) coincide second-for-second with
+  `projector_v2_4` canonical age spikes 8-14 s and durable append max
+  1.3-1.7 s (projector -> stream spool ingest; core_2 raw_age <= 2.5 s):
+  they are on the old path downstream of the core, the path KN replaces,
+  not caused by D42. Kept (no revert: the change is not implicated). Compose
+  drift recorded (compose 0.5, running 1.0).
+- 2026-09-25: **D43/D45 orchestration (outside Git), recorded before the
+  next run.** `kn4_shadow_up.sh` (`df43261a73ed`) is now sequential: guard + watch
+  first; isolated broker on the named volume `kn4-kafka-data` (fixed
+  `CLUSTER_ID` in the state dir, 7-day retention) so the verified history
+  import and the mirrored log survive retries; mirror start resolved once
+  (60 s back) before the import; the spool import runs alone at 0.5 CPU and
+  `--device-read-bps /dev/nvme0n1:20mb`, once (skipped when a PASS receipt
+  exists for the broker's topic id); then the mirror alone (resume from the
+  destination) until lag < 5 s three times; then the projector cold build
+  alone until >= 200 products READY; only then Query/Stream. Image for every
+  shadow role `qdl-v2-python:kn4-67cfd8a` `sha256:11d2b38e...` (steps
+  `90976f060146`, setup `9cc143fa4162`). `kn4_shadow_down.sh purge` (`39eec4b55bdc`) removes the volume
+  and state dir at KN-4 close only; a plain teardown keeps them.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
