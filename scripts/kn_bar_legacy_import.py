@@ -68,6 +68,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import time
 from typing import Any, Callable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -261,15 +262,25 @@ def frame_for_row(item: BarBinding, stream: str, logical_offset: int, event_id: 
 
 def export_binding(connection: sqlite3.Connection, index: str, stream: str, item: BarBinding, *,
                    materializer_epoch: int, partitions: int, page_rows: int,
-                   keep_frames: bool) -> tuple[dict[str, Any], list[ExportedFrame]]:
-    """Read one binding inside one read transaction; return its summary (+ frames)."""
+                   keep_frames: bool, page_transactions: bool = False,
+                   page_pause_s: float = 0.0, sleep=time.sleep) -> tuple[dict[str, Any], list[ExportedFrame]]:
+    """Read one binding; return its summary (+ frames).
+
+    Default: one read transaction per binding. ``page_transactions`` (KN-4
+    D43): a live spool is read in one short transaction per page with a pause
+    between pages - a long read snapshot of the production spool held its
+    writer back (2026-09-25 14:53: every projector's durable append 0.1 ->
+    1-4 s). The range stays bounded by the cutoff captured first; rows are
+    append-only, so pages equal one snapshot except rows the spool's
+    retention removed meanwhile - the summary records the first offset
+    actually read."""
 
     partition = state_partition(item.lpk, partitions)
     frames: list[ExportedFrame] = []
     facts: list[tuple[int, int, str]] = []
     keys: set[str] = set()
     finals = in_progress = 0
-    first_offset = cutoff = None
+    first_offset = cutoff = first_read = None
     connection.execute("BEGIN")
     try:
         params = (stream, item.physical_key)
@@ -279,9 +290,16 @@ def export_binding(connection: sqlite3.Connection, index: str, stream: str, item
         if cutoff is not None:
             assert_primary_key_plan(connection, page_sql(index), (*params, after, cutoff, page_rows), index)
         while cutoff is not None:
+            if page_transactions:
+                connection.execute("COMMIT")
+                if page_pause_s > 0:
+                    sleep(page_pause_s)
+                connection.execute("BEGIN")
             rows = connection.execute(page_sql(index), (*params, after, cutoff, page_rows)).fetchall()
             if not rows:
                 break
+            if first_read is None:
+                first_read = rows[0][0]
             for logical_offset, event_id, payload, payload_sha256 in rows:
                 frame = frame_for_row(item, stream, logical_offset, event_id, payload, payload_sha256,
                                       materializer_epoch)
@@ -313,6 +331,7 @@ def export_binding(connection: sqlite3.Connection, index: str, stream: str, item
         "first_open_ms": facts[0][0] if facts else None,
         "last_open_ms": facts[-1][0] if facts else None,
         "spool_first_logical_offset": first_offset,
+        "spool_first_logical_offset_read": first_read,
         "spool_cutoff_logical_offset": cutoff,
         "facts_sha256": hashlib.sha256(
             "".join(f"{open_ms}|{revision}|{sha}\n" for open_ms, revision, sha in facts).encode()).hexdigest(),
@@ -324,7 +343,8 @@ def export_binding(connection: sqlite3.Connection, index: str, stream: str, item
 
 def export(connection: sqlite3.Connection, bindings: Sequence[BarBinding], stream: str, *,
            materializer_epoch: int, partitions: int, page_rows: int,
-           on_binding: Callable[[dict[str, Any], list[ExportedFrame]], None] | None = None) -> dict[str, Any]:
+           on_binding: Callable[[dict[str, Any], list[ExportedFrame]], None] | None = None,
+           page_transactions: bool = False, page_pause_s: float = 0.0) -> dict[str, Any]:
     """Export every binding; ``on_binding`` receives each binding's frames (import)."""
 
     index = primary_key_index(connection)
@@ -332,7 +352,8 @@ def export(connection: sqlite3.Connection, bindings: Sequence[BarBinding], strea
     for item in bindings:
         summary, frames = export_binding(connection, index, stream, item, materializer_epoch=materializer_epoch,
                                          partitions=partitions, page_rows=page_rows,
-                                         keep_frames=on_binding is not None)
+                                         keep_frames=on_binding is not None,
+                                         page_transactions=page_transactions, page_pause_s=page_pause_s)
         if on_binding is not None:
             on_binding(summary, frames)
         summaries.append(summary)
@@ -536,7 +557,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         receipt: dict[str, Any] = {"schema": SCHEMA + ".receipt", "mode": args.mode, "plan": plan,
                                    "plan_sha256": digest, "confirmation_token": token, "mutations": 0}
         common = dict(materializer_epoch=args.materializer_epoch, partitions=args.partitions,
-                      page_rows=args.page_rows)
+                      page_rows=args.page_rows, page_transactions=args.page_transactions,
+                      page_pause_s=args.page_pause_ms / 1000.0)
         if args.mode == "export" or args.dry_run:
             result = export(connection, bindings, stream, **common)
             label = f"{args.mode}{' --dry-run' if args.dry_run else ''}"
@@ -595,6 +617,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--cert", type=Path)
     parser.add_argument("--key", type=Path)
     parser.add_argument("--page-rows", type=int, default=1000)
+    parser.add_argument("--page-transactions", action="store_true",
+                        help="one short read transaction per page (a live production spool, KN-4 D43)")
+    parser.add_argument("--page-pause-ms", type=int, default=0, help="pause between pages (page transactions)")
     parser.add_argument("--batch-frames", type=int, default=500)
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.mode == "export" and (args.bootstrap or args.isolated or args.confirm or args.dry_run):

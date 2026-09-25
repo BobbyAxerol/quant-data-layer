@@ -349,6 +349,44 @@ class LegacyExportTests(_SpoolCase):
         self.assertEqual(sum(len(items) for items in frames.values()), len(bars))
 
 
+class PagedLiveSpoolExportTests(_SpoolCase):
+    """KN-4 D43: a live production spool is read in one short transaction per
+    page, so its writer can checkpoint between pages; the facts are equal."""
+
+    def test_page_transactions_equal_one_snapshot_and_release_the_writer_between_pages(self):
+        rows = standard_rows()
+        build_spool(self.sqlite, rows)
+        writer = sqlite3.connect(self.sqlite)
+        writer.execute("PRAGMA journal_mode=WAL")
+        pauses = []
+
+        def pause(seconds):
+            # Between pages no read snapshot is held: a TRUNCATE checkpoint
+            # completes (busy == 0), as the production spool writer needs.
+            busy, _log, _checkpointed = writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            pauses.append((seconds, busy))
+
+        bindings = self.bar_bindings()
+        connection = IMPORT.open_spool_readonly(self.sqlite)
+        try:
+            index = IMPORT.primary_key_index(connection)
+            paged = [IMPORT.export_binding(connection, index, STREAM, item, materializer_epoch=EPOCH,
+                                           partitions=PARTITIONS, page_rows=1, keep_frames=False,
+                                           page_transactions=True, page_pause_s=0.05, sleep=pause)[0]
+                     for item in bindings]
+            single = [IMPORT.export_binding(connection, index, STREAM, item, materializer_epoch=EPOCH,
+                                            partitions=PARTITIONS, page_rows=1, keep_frames=False)[0]
+                      for item in bindings]
+        finally:
+            connection.close()
+            writer.close()
+        self.assertEqual([{k: v for k, v in item.items()} for item in paged], single)
+        self.assertGreaterEqual(len(pauses), len(rows))
+        self.assertTrue(all(seconds == 0.05 and busy == 0 for seconds, busy in pauses), pauses[:3])
+        self.assertTrue(all(item["spool_first_logical_offset_read"] == item["spool_first_logical_offset"]
+                            for item in paged if item["rows"]))
+
+
 class LegacyImportGuardTests(_SpoolCase):
     def setUp(self) -> None:
         super().setUp()

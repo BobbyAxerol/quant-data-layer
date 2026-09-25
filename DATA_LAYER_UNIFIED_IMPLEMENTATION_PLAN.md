@@ -57507,6 +57507,35 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   shadow role `qdl-v2-python:kn4-67cfd8a` `sha256:11d2b38e...` (steps
   `90976f060146`, setup `9cc143fa4162`). `kn4_shadow_down.sh purge` (`39eec4b55bdc`) removes the volume
   and state dir at KN-4 close only; a plain teardown keeps them.
+- 2026-09-25: **Second watched attempt receipt: STOPPED by the guard during
+  the bounded history import; cause located.** 14:51 guard + watch, 14:52:44
+  isolated broker (named volume) and mirror start offsets, then the spool
+  import alone (0.5 CPU, 20 MB/s device reads, one read transaction per
+  binding). 14:53-14:54 every production projector's durable append (projector
+  -> stream -> spool) rose from mean 80-270 ms / max 0.3-1.1 s to mean
+  1.1-4.5 s / max 1.9-9.2 s, canonical age 0.7-2.4 s -> 7-21 s; the three
+  cores stayed normal (raw_age <= 1.2 s at 14:53, input calm); TS refused
+  MARK/INDEX on every Binance symbol and OKX ETH/SOL (17 lines in 60 s at
+  14:54, guard ABORT). Recovery at 14:55 right after the import stopped
+  (projector_6 append 78/194 ms). The bandwidth bound did not prevent it: a
+  read of the live spool is itself the load on the old path's writer
+  (inference on the mechanism: long read snapshots holding back the WAL
+  checkpoint). The run-1325 onset (13:26) was the same import. Safety defect:
+  the import container was not named `kn4-*`, so the teardown missed it; it
+  kept reading until stopped by hand at ~14:56 (named `kn4-import` now).
+- 2026-09-25: **K4 slice 17 (paced live-spool export, D43)** | this commit |
+  `scripts/kn_bar_legacy_import.py --page-transactions --page-pause-ms N`:
+  one short read transaction per page with a pause between pages; the cutoff
+  still bounds the range; summaries add `spool_first_logical_offset_read`
+  (retention may prune the oldest rows during a paced read). Default
+  behaviour unchanged. Test `PagedLiveSpoolExportTests`: on a spool written by
+  the real spool code, paged summaries equal the single-snapshot ones and at
+  every pause a writer's `wal_checkpoint(TRUNCATE)` completes with busy 0;
+  `test_kn_bar_legacy_import` 14 OK (2 skipped: broker, real sample) |
+  `tested locally` | orchestration: import `--page-rows 500 --page-pause-ms
+  200`, and `kn4_spool_watchdog.sh` stops `kn4-import` within ~10 s when any
+  production projector's durable append mean exceeds 600 ms (the writer's own
+  latency, ahead of the TS symptom).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
