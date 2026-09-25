@@ -56500,7 +56500,9 @@ Astra requested review points and next allowed step:
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
 
 **Status:** IN_PROGRESS (2026-09-25, started by explicit owner sequencing while
-the KN-3 R4 re-review is pending - see the KN-4 journal).
+the KN-3 R4 re-review is pending - see the KN-4 journal). Slices 1-7 are
+implemented and tested; the shadow run was stopped on the TS stop condition
+and waits for an owner decision (journal, shadow run receipt).
 **Goal:** actual SDK/consumer reads use the new backend correctly across the
 declared endpoint surface; hot latency survives heavy warmup and recovery.
 **Guide index:** [18.11 work items and K4-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-4),
@@ -56910,6 +56912,96 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   and rerun OK), 31 skipped, no hang; affected suites (diagnostics, cold
   work, lanes, harness, probe, release) OK | runtime: the shadow of the
   packet above | next: stages 20/35, receipt.
+- 2026-09-25: **KN-4 shadow run receipt (executed per the packet; stopped
+  on the TS stop condition).** Evidence
+  `/home/bobby/.local/state/qdl-v2/kn4-20260925/evidence` (SHA256SUMS
+  `30086d0d...`). Candidates as packeted (`ccec85c`; slice 7 changed only
+  the gap-scan shutdown and the harness, which is mounted from the repo).
+  - Setup: capture 66,961 committed records of 190 demanded keys
+    (`b1285d07...`), legacy BAR import PASS 941,698 rows / 140 of 144
+    bindings (`cfe9b637...`); cold build 206 of 216 products READY in ~3 min
+    (the 10 are products without source data: DNSE and 4 BAR bindings
+    without rows); **all 140 BAR products with data had a canonical
+    source coordinate - `SOURCE_BOUNDARY_UNKNOWN` = 0** (D27 gate).
+  - Input gap caused by the orchestration, not the read plane: the tail
+    started at its own start time (~4 min after the import) and was paused
+    for the probe rerun, so 1m BARs had missing opens and every read
+    returned typed `OPEN_SEQUENCE_GAP` (the correct outcome). Fixed by
+    rerunning the idempotent import (941,798 rows, `e8c21785...`).
+  - K4-T01 all-RPC Stream matrix (`kn_native_slice_probe.py matrix
+    --read-view 1`, both Stream replicas, 292 subscriptions, 6 consumers):
+    with a bounded 60 s input as in KN-2 **PASS** (`1a8729bb...`); negatives
+    24/24; Replay exact; GetSnapshot through the Query read view with a v3
+    cursor the Stream accepts, GetFeedStatus LIVE, VN typed
+    `DATA_NOT_READY`. The first run with a continuous input "missed" the
+    records committed after each subscription closed (oracle read at the
+    end, input still flowing) - method, kept as evidence; 0 duplicates, 0
+    out-of-order, 0 token errors in both.
+  - K4-T01..T05 `kn4-matrix` on both Query replicas (`kn4-matrix-084443`):
+    target matrix 132/132; history ladder 48/48 (2,500/5,000/10,000 rows of
+    1m/1h/4h/1d, contiguous, FULL, 10k 1m ~8.5 s wall under the cold duty
+    cycle); strict batches 1/8/16/32/50 20/20; per-read freshness 8/8
+    (strict BAR refused `DATA_STALE` under 1 ms, quiet-policy QUOTE served
+    with `event_recency_state` STALE); every public HTTP operation 18/18,
+    no placeholder in any body; replica parity 24/24 (9 pairs at an equal
+    watermark byte-equal); handoff 15/16 at that run (a thin OKX BNB swap
+    traded < 3 times in 45 s; criterion changed to >= 1 event, not rerun).
+    Earlier runs failed on harness defects fixed in slice 7.
+  - K4-T07 consumers (`consumer-scenarios.json` `39a381ab...`): TS read
+    adapter (its image, SDK 2.0.3, test identity): V2 primary trade/kline/
+    stream view OK; Query unreachable -> every route BLOCKED
+    (`policy blocks fallback`, binding r10 has `fallback: BLOCKED`
+    everywhere; `parity.blocked` 3, V1 never called); restored -> V2.
+    Alpha gateway (unsealed, as the compose example): V2 primary OK;
+    unreachable -> trade fell back to V1 (read-only, via a forwarder so no
+    production Query name resolved), kline/warmup ended BLOCKED because the
+    V1 leg also failed (alpha/V1 side, outside KN-4; varied between two
+    runs); execution-context book read refused without a sealed binding in
+    every phase; restored -> V2. The current alpha sealed binding could
+    not be compiled (the inventory is the source declaration, the compiler
+    needs the resolved one) - not done.
+  - K4-T06/T08 stages (frozen v2.1.1 workload, alpha identities): **stage 20
+    PASS, all gates** (`stage-20-091755`). **Stage 35 run 1**: every shadow
+    gate PASS - latency p95/p99 QUOTE 19.5/30.6 ms (BINANCE, n 1,260),
+    MARK/INDEX 20.4/33.3 ms (n 1,980), L2 46.1 ms p95, BAR latest 43.8 ms
+    p95, TRADE 26.2 ms p95, 0 failed/missed, streams clean, cold
+    2,500/5,000 overlap PASS - but `ts:ready_60_every_sample` FAIL: the
+    production TS showed 59/60 in 5 of 20 samples (3 = the owner-approved
+    OKX DOGE QUOTE quiet exemption, 2 = OKX SOL BOOK_DELTA DISCONNECTED).
+    **Run 2**: shadow `kn4-query-2` OOM-killed (docker event `oom`, exit
+    137) - Query peak memory was 632-710 MiB at stage 20 and 930-992 MiB at
+    stage 35 of its 1 GiB limit, and `kn4-query-1` held 932 MiB idle after
+    the load. **Run 3** (both Query restarted, peak 441-461 MiB): failed
+    requests (5 `DATA_STALE`) and 30 stream errors, and the production TS
+    lost MARK/INDEX (execution path, `SOURCE_UNAVAILABLE`, 99 disconnects
+    in 4.5 min, 24.5/min vs 0.6 baseline) and QUOTE slices. **Stop
+    condition -> the whole shadow was torn down at 09:32:26**; TS
+    disconnects then 1 in 75 s. Context: the same MARK/INDEX disconnect
+    occurred 2,083 times in the previous 24 h (592/346/280 per hour on
+    09-24 14-16 h, during the KN-3 flow runs on this host); host idle 17-34 %
+    during run 3; no production container restarted
+    (`production-restart-diff.txt` empty). **Causality between shadow load
+    and the production execution MARK/INDEX path is not proven either way.**
+  - Not done: the four latency quantities report
+    (`report_feed_latency_quantities.py` still reads the spool, not
+    adapted); the Query memory root cause (row cache ~2.8 KB/row x 20,000 is
+    small next to 930 MiB; per-request bodies and allocator retention are
+    the suspects - measured, not concluded); stage 35 clean; T07 on a sealed
+    alpha binding.
+  - Cleanup: `kn4-*` containers 0, networks 0, anonymous volumes 0 (7
+    dangling volumes all predate today, untouched); shadow keys, env files,
+    capture, cursor/state dirs deleted; scratch exports/build trees
+    deleted; kept: release binaries (`bin/`, SHA256SUMS), orchestration,
+    bundle, harness profile (no secret), image `qdl-v2-python:kn4-ccec85c`
+    `2cd464f7...` (the KN-4 candidate for a resumed shadow; remove by
+    digest at KN-4 close or when superseded). Runtime mutations of
+    production: NONE (reads only, plus one read-only `docker exec
+    sha256sum` in `query_v2_1` for the catalog hash and the harness's TS
+    heartbeat reads).
+  - **Owner decision gate before any further shadow load:** (a) whether the
+    production execution MARK/INDEX sensitivity is investigated first or
+    load resumes with a TS stop watcher; (b) Query memory: optimise and
+    re-measure before any limit change (standing owner rule).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
