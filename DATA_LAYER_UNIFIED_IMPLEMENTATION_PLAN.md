@@ -57625,6 +57625,56 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   retention = the KN retained caps (largest manifest warmup + 2,064, 12,064
   for 140 products, `rust/qdl-projector/src/products.rs:22-23,119-143`).
   The same edge + kn3 readback is the production path at the KN-5 cutover.
+- 2026-09-25: **Review of D47 accepted after reading the code (D47
+  amended).** Confirmed in source: (P1-1) `KnBarReadback.cache_identity`
+  hashed every product's READY generation (`kn_bar_readback.py:192-203`) and
+  the edge cleared every watermark when it changed
+  (`stable_bar_edge.py:969-983`), so each first READY during a fresh fill would
+  have re-bootstrapped all 140 bindings; (P1-2) the watermark advanced on
+  `durable | published == expected` (`stable_bar_edge.py:771-781`): a Kafka
+  ACK, not served rows; (P1-3) the mirror resume looked at the last 64
+  offsets only (`kn_canonical_mirror.py` `destination_resume_offsets`),
+  unsafe once another producer writes the isolated canonical log. Amended
+  slices: D47-1 cold start/readback states + per-product rebase + serving
+  progress; D47-2 venue admission through the existing Rust provider
+  admission (`rust/qdl-core/src/provider_admission.rs`, `qdl/admission/`),
+  Binance weight by page size, OKX budget across calls, realtime reserve,
+  typed 429/Retry-After, 418, OKX 50011, fault-injection tests; D47-3
+  downstream backpressure (backlog/bytes, live first), depth by demand,
+  truthful insufficient provider history; D47-4 history/live join through the
+  existing duplicate/revision rules, latest BAR never regresses, isolated
+  canonical cursor, durable mirror checkpoint in the destination
+  transaction, real-Kafka restart tests. Run order: guard -> consuming KN
+  pipeline -> mirror live -> small bootstrap on both venues -> readback/cursor
+  check -> history with backpressure -> matrix -> T07 -> stages 20/35;
+  teardown by labels/run id. Deployment config to carry `rust_core_2` 1.0.
+- 2026-09-25: **K4 slice 19 (D47-1 cold start, readback states, serving
+  progress)** | this commit | `qdl/runtime/kn_bar_readback.py`: the cache
+  identity is now the *epoch* (environment, bars topic, state partitions),
+  valid only while stage B's checkpoint of each partition exists (a finished
+  build always records it, `stage_b.rs:1310-1313`; an empty partition's build
+  finishes on the next poll, `:496-499`); a lost/unbuilt partition raises
+  `KnBarReadbackEpochNotReady`. Readback states: no pointer (or fence only,
+  `apply.lua` op X) in a built partition -> empty (never served; unpublish
+  happens only when the log holds nothing, `apply.lua:186-195`); staging only
+  -> NotReady `REBUILDING`; no checkpoint -> NotReady
+  `PARTITION_NOT_BUILT`; Redis error -> error; `generation_identities` in one
+  round trip. `qdl/runtime/stable_bar_edge.py`: `_rebase_changed_products`
+  rebases only a binding whose READY generation changed (first READY is
+  normal); `_record_serving`/`verify_serving` keep publish progress (the
+  watermark moves on the ACK for live polling) apart from serving progress
+  (read back from the cache, <= 8 bindings per turn, overdue after 900 s,
+  never re-fetched from the venue while the cache catches up); heartbeat
+  detail carries `published/served/pending/overdue`. The SQLite path is
+  unchanged. Tests `tests/test_kn_bar_readback.py`: not-ready states and the
+  never-materialized product (incl. cache lost), epoch stable across first
+  READY / rebuild / second product READY and failing closed on a lost
+  checkpoint, generation change during a read (kept), SQLite/cache parity
+  with only the rebuilt product rebased, served only after readback incl. a
+  rebuilding product, overdue, and the restart gap check (fails closed while
+  rebuilding, finds the unmaterialized window, clears once materialized);
+  real-Redis case; 26 OK with `test_kn3_flow_check`; edge suites (10
+  modules) 195 OK | `tested locally`; runtime NONE.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

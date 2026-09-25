@@ -12,10 +12,14 @@ Rust projector stage B writes (``rust/qdl-projector/src/cache.rs`` +
   rule of the gateway bundle (``scripts/kn_gateway_bundle.py``), so edge,
   Stream and projector name one product identically;
 * only the published READY generation is read (``ptr:<lpk>`` field ``ready``);
-  a product without one is typed ``NOT_READY_NO_GENERATION`` and raises
-  ``KnBarReadbackNotReady`` - the same "durable cache unavailable" failure the
-  SQLite path raises when its cache cannot be read, never an empty "nothing is
-  durable" answer that would make the edge re-publish history;
+  a product without one is ``KnBarReadbackNotReady`` (fail closed) - except a
+  product that was never materialized in a built cache (KN-4 D47-1): no
+  pointer at all while stage B's checkpoint of the product's state partition
+  exists (a finished build always records it, ``stage_b.rs``
+  ``apply_pointer_ops``). That product holds nothing durable, so the answer is
+  empty and the edge fills it from the venue. A staging-only pointer
+  (rebuilding), a missing checkpoint (cache lost or still building) or a
+  Redis error never reads as empty;
 * only the asked opens are read: one ``HMGET`` per bucket
   ``b:<g>:<lpk>:<open_ms div (BUCKET_OPENS x interval_ms)>`` with
   ``BUCKET_OPENS`` = 112 (no SCAN/KEYS);
@@ -27,9 +31,14 @@ Rust projector stage B writes (``rust/qdl-projector/src/cache.rs`` +
 * the pointer is read before and after; a READY generation (or fence) change
   during the read raises, like ``_assert_canonical_cache_identity``.
 
-``generation_identity`` (``kn3:<env>:<lpk>@<ready generation or ->``) and
-``cache_identity`` (32 hex over the sorted identities of a binding set)
-replace the SQLite ``cache_id`` in the edge's rebase logic.
+``cache_identity`` is the cache *epoch* (KN-4 D47-1): 32 hex over the
+environment, the bars topic and the state partitions of a binding set, valid
+only while stage B's checkpoint of each of those partitions exists. It does
+not change when one product becomes READY or is rebuilt - durable history
+lives in the compacted bars topic and a rebuild restores it - so the edge never
+rebases every binding because one product changed. ``generation_identities``
+gives each binding's READY generation in one round trip for the edge's
+per-product check.
 
 Boundary: read-only (``HMGET`` only, never a write), no key enumeration,
 bounded by the asked opens. The Redis client is injected; this module never
@@ -47,7 +56,7 @@ from typing import Any, Iterable, Mapping
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
-from qdl.projection.kn_state_codec import StateCodecError, decode_bar_row
+from qdl.projection.kn_state_codec import StateCodecError, decode_bar_row, state_partition
 from qdl.projection.state_contract import CacheReadState, LogicalProductKey
 
 # The listpack bucket size of the Rust cache (`cache.rs` BUCKET_OPENS): 112
@@ -81,10 +90,17 @@ class KnBarReadbackError(RuntimeError):
 class KnBarReadbackNotReady(KnBarReadbackError):
     """The product has no published READY generation (typed NOT_READY)."""
 
-    def __init__(self, lpk: LogicalProductKey) -> None:
+    def __init__(self, lpk: LogicalProductKey, reason: str = "NO_GENERATION") -> None:
         self.state = CacheReadState.NOT_READY_NO_GENERATION
         self.lpk = lpk
-        super().__init__(f"stable BAR market cache product is {self.state.value}: {lpk.encode()}")
+        self.reason = reason
+        super().__init__(
+            f"stable BAR market cache product is {self.state.value} ({reason}): {lpk.encode()}")
+
+
+class KnBarReadbackEpochNotReady(KnBarReadbackError):
+    """A state partition of the binding set has no stage-B checkpoint: the cache
+    is lost or still building its first generation (fail closed)."""
 
 
 def binding_product_key(source: Any, environment: str) -> LogicalProductKey:
@@ -128,6 +144,7 @@ def bucket_of(open_ms: int, interval_ms: int) -> int:
 class _Pointer:
     ready: int | None
     fence: int
+    staging: int | None = None
 
 
 def _decimal(value: Any) -> int | None:
@@ -142,12 +159,17 @@ def _decimal(value: Any) -> int | None:
 class KnBarReadback:
     """Read-only durable final-BAR coverage from the KN-3 market cache."""
 
-    def __init__(self, redis_client: Any, environment: str) -> None:
+    def __init__(self, redis_client: Any, environment: str, *, bars_topic: str = "md.bars.v2",
+                 bars_partitions: int = 6) -> None:
         # Validates the environment exactly like an LPK field.
         LogicalProductKey(environment, "V", "M", "u", "BAR", "1m")
+        if not bars_topic or bars_partitions < 1:
+            raise ValueError("stable BAR readback needs the bars topic and its partition count")
         self.client = redis_client
         self.environment = environment
         self.prefix = f"kn3:{environment}:"
+        self.bars_topic = bars_topic
+        self.bars_partitions = bars_partitions
 
     # -------------------------------------------------------------- layout (cache.rs)
 
@@ -170,13 +192,35 @@ class KnBarReadback:
         try:
             pipe = self.client.pipeline(transaction=False)
             for lpk in lpks:
-                pipe.hmget(self.pointer_key(lpk), ["ready", "fence"])
+                pipe.hmget(self.pointer_key(lpk), ["ready", "fence", "staging"])
             replies = pipe.execute()
         except _RedisError as error:
             raise KnBarReadbackError("stable BAR durable coverage is unavailable") from error
         if len(replies) != len(lpks):
             raise KnBarReadbackError("stable BAR market cache returned a short pointer reply")
-        return [_Pointer(_decimal(ready), _decimal(fence) or 0) for ready, fence in replies]
+        return [_Pointer(_decimal(ready), _decimal(fence) or 0, _decimal(staging))
+                for ready, fence, staging in replies]
+
+    def state_partition_of(self, lpk: LogicalProductKey) -> int:
+        return state_partition(lpk, self.bars_partitions)
+
+    def checkpoint_key(self, partition: int) -> str:
+        return self._key("ckpt", self.bars_topic, str(partition))
+
+    def _built_partitions(self, partitions: Iterable[int]) -> dict[int, bool]:
+        """Whether stage B has checkpointed each bars state partition."""
+
+        partitions = sorted(set(partitions))
+        try:
+            pipe = self.client.pipeline(transaction=False)
+            for partition in partitions:
+                pipe.hget(self.checkpoint_key(partition), "next")
+            replies = pipe.execute()
+        except _RedisError as error:
+            raise KnBarReadbackError("stable BAR market cache checkpoint is unavailable") from error
+        if len(replies) != len(partitions):
+            raise KnBarReadbackError("stable BAR market cache returned a short checkpoint reply")
+        return {partition: reply is not None for partition, reply in zip(partitions, replies, strict=True)}
 
     def generation_identity(self, source: Any) -> str:
         """``kn3:<env>:<lpk>@<ready generation>``; ``@-`` when not READY."""
@@ -190,18 +234,34 @@ class KnBarReadback:
         return f"{self.prefix}{lpk.encode()}@{ready}"
 
     def cache_identity(self, sources: Iterable[Any]) -> str:
-        """32 hex over the sorted generation identities of ``sources`` (one round trip).
+        """The cache epoch of ``sources``: 32 hex over environment, bars topic and
+        their state partitions, valid only while each partition is built.
 
-        Stands in for the SQLite ``cache_id``: it changes when any product of
-        the set is (re)published or loses its READY generation, which is when
-        the edge's watermarks stop proving durable history.
+        Stands in for the SQLite ``cache_id``. A product becoming READY or being
+        rebuilt does not change it (history lives in the compacted bars topic;
+        a rebuild restores it); a lost or unbuilt partition raises
+        ``KnBarReadbackEpochNotReady`` instead of producing a new identity.
         """
 
-        lpks = sorted({self.product_key(source) for source in sources}, key=lambda item: item.encode())
+        lpks = {self.product_key(source) for source in sources}
         if not lpks:
             raise KnBarReadbackError("stable BAR market cache identity needs at least one binding")
-        lines = [self._identity(lpk, pointer) for lpk, pointer in zip(lpks, self._pointers(lpks), strict=True)]
-        return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()[:32]
+        partitions = sorted({self.state_partition_of(lpk) for lpk in lpks})
+        built = self._built_partitions(partitions)
+        missing = [partition for partition, present in built.items() if not present]
+        if missing:
+            raise KnBarReadbackEpochNotReady(
+                f"stable BAR market cache partitions are not built: {self.bars_topic} {missing}")
+        line = f"{self.prefix}|{self.bars_topic}|{self.bars_partitions}|{','.join(map(str, partitions))}"
+        return hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
+
+    def generation_identities(self, sources: Iterable[Any]) -> dict[str, int | None]:
+        """Binding id -> READY generation (``None`` when not READY), one round trip."""
+
+        sources = list(sources)
+        lpks = [self.product_key(source) for source in sources]
+        pointers = self._pointers(lpks)
+        return {source.binding_id: pointer.ready for source, pointer in zip(sources, pointers, strict=True)}
 
     # -------------------------------------------------------------- coverage
 
@@ -216,7 +276,17 @@ class KnBarReadback:
         interval_ms = canonical_interval_ms(source.interval)
         before = self._pointers([lpk])[0]
         if before.ready is None:
-            raise KnBarReadbackNotReady(lpk)
+            # Staging only: a build/rebuild is materializing it - not provable yet.
+            if before.staging is not None:
+                raise KnBarReadbackNotReady(lpk, "REBUILDING")
+            # No pointer, or only its fence (a staging discarded unpublished,
+            # `apply.lua` op X): never served in this cache.
+            if not self._built_partitions([self.state_partition_of(lpk)])[self.state_partition_of(lpk)]:
+                raise KnBarReadbackNotReady(lpk, "PARTITION_NOT_BUILT")
+            if self._pointers([lpk])[0] != before:
+                raise KnBarReadbackError(f"stable BAR market cache product changed during readback {lpk.encode()}")
+            # Never materialized in a built cache: nothing of it is durable.
+            return frozenset()
         buckets: dict[int, list[int]] = defaultdict(list)
         for open_ms in sorted(expected_opens):
             if isinstance(open_ms, bool) or not isinstance(open_ms, int) or open_ms < 0:
@@ -242,7 +312,7 @@ class KnBarReadback:
                     if row is not None and self._final_row(source, lpk, open_ms, row):
                         covered.add(open_ms)
         after = self._pointers([lpk])[0]
-        if after != before:
+        if (after.ready, after.fence) != (before.ready, before.fence):
             raise KnBarReadbackError(
                 "stable BAR market cache generation changed during readback "
                 f"{self._identity(lpk, before)} -> {self._identity(lpk, after)}"
@@ -280,4 +350,6 @@ def readback_from_environment(environ: Mapping[str, str]) -> KnBarReadback:
         )
     import redis
 
-    return KnBarReadback(redis.Redis.from_url(url, decode_responses=False), environment)
+    return KnBarReadback(redis.Redis.from_url(url, decode_responses=False), environment,
+                         bars_topic=environ.get("QDL_KN_BARS_TOPIC", "md.bars.v2").strip() or "md.bars.v2",
+                         bars_partitions=int(environ.get("QDL_KN_BARS_PARTITIONS", "6")))

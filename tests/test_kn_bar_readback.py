@@ -61,6 +61,13 @@ class FakeRedis:
     def hset(self, key: str, field: str, value) -> None:
         self.hashes.setdefault(key, {})[str(field)] = value if isinstance(value, bytes) else str(value).encode()
 
+    def hget(self, key: str, field: str):
+        self.commands.append(("HGET", key, (field,)))
+        return self.hashes.get(key, {}).get(field)
+
+    def delete(self, key: str) -> None:
+        self.hashes.pop(key, None)
+
     def hmget(self, key: str, fields) -> list:
         fields = tuple(fields)
         self.commands.append(("HMGET", key, fields))
@@ -80,10 +87,21 @@ class _FakePipeline:
         self.calls: list[tuple[str, list[str]]] = []
 
     def hmget(self, key: str, fields) -> None:
-        self.calls.append((key, list(fields)))
+        self.calls.append(("hmget", key, list(fields)))
+
+    def hget(self, key: str, field: str) -> None:
+        self.calls.append(("hget", key, field))
 
     def execute(self) -> list:
-        return [self.client.hmget(key, fields) for key, fields in self.calls]
+        return [self.client.hmget(key, arg) if kind == "hmget" else self.client.hget(key, arg)
+                for kind, key, arg in self.calls]
+
+
+def build_partitions(client, environment: str, partitions=range(6), topic: str = "md.bars.v2") -> None:
+    """Stage B's checkpoint of each bars state partition (a finished build)."""
+
+    for partition in partitions:
+        client.hset(f"kn3:{environment}:ckpt:{topic}:{partition}", "next", "1")
 
 
 def load_catalog():
@@ -155,16 +173,35 @@ class ReadbackUnitTests(unittest.TestCase):
         asked = frozenset({self.base, self.base - self.interval_ms})
         self.assertEqual(self.readback.durable_final_bar_opens(self.source, asked), asked)
 
-    def test_a_product_without_a_ready_generation_is_typed_not_ready(self):
+    def test_not_ready_states_and_the_never_materialized_product(self):
+        """KN-4 D47-1: only a product never materialized in a built cache reads empty."""
+        asked = frozenset({self.base})
+        # Cache lost or first build unfinished: no checkpoint -> never empty.
         with self.assertRaises(KnBarReadbackNotReady) as caught:
-            self.readback.durable_final_bar_opens(self.source, frozenset({self.base}))
+            self.readback.durable_final_bar_opens(self.source, asked)
         self.assertIs(caught.exception.state, CacheReadState.NOT_READY_NO_GENERATION)
-        # A staging-only rebuild is not READY either.
-        put_rows(self.redis, ENVIRONMENT, self.source, 9, [self.real], ready=False)
+        self.assertEqual(caught.exception.reason, "PARTITION_NOT_BUILT")
+        # Built partition, no pointer: nothing of it is durable.
+        build_partitions(self.redis, ENVIRONMENT)
+        self.assertEqual(self.readback.durable_final_bar_opens(self.source, asked), frozenset())
+        # Staging only (building/rebuilding): not provable, fail closed.
         lpk = binding_product_key(self.source, ENVIRONMENT).encode()
+        put_rows(self.redis, ENVIRONMENT, self.source, 9, [self.real], ready=False, fence=0)
         self.redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "staging", "9")
+        with self.assertRaises(KnBarReadbackNotReady) as caught:
+            self.readback.durable_final_bar_opens(self.source, asked)
+        self.assertEqual(caught.exception.reason, "REBUILDING")
+        # The staging discarded unpublished (apply.lua op X) leaves only the fence.
+        self.redis.hashes[f"kn3:{ENVIRONMENT}:ptr:{lpk}"].pop("staging")
+        self.assertEqual(self.readback.durable_final_bar_opens(self.source, asked), frozenset())
+        # Published: served from the READY generation.
+        self.redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "9")
+        self.assertEqual(self.readback.durable_final_bar_opens(self.source, asked), asked)
+        # The partition's checkpoint lost with the pointer (Redis state gone) -> not empty.
+        self.redis.delete(f"kn3:{ENVIRONMENT}:ptr:{lpk}")
+        self.redis.delete(f"kn3:{ENVIRONMENT}:ckpt:md.bars.v2:{self.readback.state_partition_of(binding_product_key(self.source, ENVIRONMENT))}")
         with self.assertRaises(KnBarReadbackNotReady):
-            self.readback.durable_final_bar_opens(self.source, frozenset({self.base}))
+            self.readback.durable_final_bar_opens(self.source, asked)
         self.assertEqual(self.readback.durable_final_bar_opens(self.source, frozenset()), frozenset())
 
     def test_a_row_of_another_identity_fails_closed(self):
@@ -206,19 +243,34 @@ class ReadbackUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(KnBarReadbackError, "generation changed during readback"):
             self.readback.durable_final_bar_opens(self.source, frozenset({self.base}))
 
-    def test_generation_identity_and_cache_identity(self):
+    def test_the_cache_epoch_does_not_change_when_products_become_ready_or_rebuild(self):
+        """KN-4 D47-1: identity = the epoch, not the product generations."""
+        from qdl.runtime.kn_bar_readback import KnBarReadbackEpochNotReady
+
         lpk = binding_product_key(self.source, ENVIRONMENT).encode()
         self.assertEqual(self.readback.generation_identity(self.source), f"kn3:{ENVIRONMENT}:{lpk}@-")
-        put_rows(self.redis, ENVIRONMENT, self.source, 12, [self.real])
-        self.assertEqual(self.readback.generation_identity(self.source), f"kn3:{ENVIRONMENT}:{lpk}@12")
         bars = [item for item in self.catalog.bindings if item.feed.value == "BAR"]
+        with self.assertRaises(KnBarReadbackEpochNotReady):
+            self.readback.cache_identity(bars)  # nothing built yet
+        build_partitions(self.redis, ENVIRONMENT)
         first = self.readback.cache_identity(bars)
         self.assertRegex(first, r"^[0-9a-f]{32}$")
         self.assertEqual(self.readback.cache_identity(reversed(bars)), first)
-        pointer_reads = [command for command in self.redis.commands if ":ptr:" in command[1]]
-        self.assertEqual(len(pointer_reads), 2 + 2 * len(bars))
+        self.assertEqual(self.readback.generation_identities(bars)[self.source.binding_id], None)
+        # First READY, then a rebuild, then a second product READY: same epoch.
+        put_rows(self.redis, ENVIRONMENT, self.source, 12, [self.real])
+        self.assertEqual(self.readback.generation_identity(self.source), f"kn3:{ENVIRONMENT}:{lpk}@12")
+        self.assertEqual(self.readback.cache_identity(bars), first)
         self.redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "13")
-        self.assertNotEqual(self.readback.cache_identity(bars), first)
+        other = next(item for item in bars if item.binding_id != self.source.binding_id)
+        self.redis.hset(f"kn3:{ENVIRONMENT}:ptr:{binding_product_key(other, ENVIRONMENT).encode()}", "ready", "1")
+        self.assertEqual(self.readback.cache_identity(bars), first)
+        self.assertEqual({key: value for key, value in self.readback.generation_identities(bars).items()
+                          if value is not None}, {self.source.binding_id: 13, other.binding_id: 1})
+        # A lost partition checkpoint (cache gone) is not a new epoch: it fails closed.
+        self.redis.delete(f"kn3:{ENVIRONMENT}:ckpt:md.bars.v2:0")
+        with self.assertRaises(KnBarReadbackEpochNotReady):
+            self.readback.cache_identity(bars)
 
     def test_bucket_size_matches_the_rust_writer_and_the_budget(self):
         # Owner decision, Astra KN-3 review R1: 112 opens, changed together in
@@ -263,7 +315,7 @@ class EdgeBackendParityTests(unittest.TestCase):
         return StableBinanceBarEdge(catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
                                     publisher=self._NoopPublisher(), warmup_rows=2, clock=lambda: 180.0, **backend)
 
-    def test_sqlite_and_market_cache_answer_the_same_and_rebase_follows_the_generation(self):
+    def test_sqlite_and_market_cache_answer_the_same_and_only_a_rebuilt_product_rebases(self):
         pk, real = real_bar("binance-usdm-dogeusdt-bar-15m-primary-v2")
         source = binding_for(self.catalog, pk)
         interval_ms = canonical_interval_ms(source.interval)
@@ -287,28 +339,73 @@ class EdgeBackendParityTests(unittest.TestCase):
             finally:
                 spool.close()
         redis = FakeRedis()
-        # Every edge BAR product READY (generation 1, empty); this one holds the rows.
-        for item in self.catalog.bindings:
-            if item.feed.value == "BAR" and item.binding_id != source.binding_id:
-                lpk = binding_product_key(item, ENVIRONMENT).encode()
-                redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "1")
-                redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "fence", "1")
+        build_partitions(redis, ENVIRONMENT)
         put_rows(redis, ENVIRONMENT, source, 2, payloads)
         kn_edge = self._edge(bar_readback=KnBarReadback(redis, ENVIRONMENT))
         self.assertRegex(kn_edge.canonical_cache_id, r"^[0-9a-f]{32}$")
         kn_answer = kn_edge._durable_final_bar_opens(source, asked)
         self.assertEqual(kn_answer, sqlite_answer)
         self.assertEqual(kn_answer, frozenset({base, base - interval_ms, base - 3 * interval_ms}))
+        # The first observation records generations; nothing rebases.
+        self.assertEqual(kn_edge._rebase_changed_products(), ())
+        others = [item for item, _a in kn_edge.history_bindings + kn_edge.history_okx_bindings
+                  if item.binding_id != source.binding_id][:2]
+        for binding_id in [source.binding_id] + [item.binding_id for item in others]:
+            kn_edge._last_open_ms[binding_id] = base
+        # Two other products become READY one after the other: normal, no rebase.
+        for generation, item in enumerate(others, start=1):
+            redis.hset(f"kn3:{ENVIRONMENT}:ptr:{binding_product_key(item, ENVIRONMENT).encode()}", "ready",
+                       str(generation))
+            self.assertEqual(kn_edge._rebase_changed_products(), ())
         self.assertFalse(kn_edge._rebase_if_canonical_cache_generation_changed())
-        before = kn_edge.canonical_cache_id
+        # This product is rebuilt into generation 3: only its checkpoint goes.
         lpk = binding_product_key(source, ENVIRONMENT).encode()
-        redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "3")  # product rebuilt into generation 3
-        with self.assertRaisesRegex(RuntimeError, "generation changed during bootstrap"):
-            kn_edge._durable_final_bar_opens(source, asked)
-        self.assertTrue(kn_edge._rebase_if_canonical_cache_generation_changed())
-        self.assertNotEqual(kn_edge.canonical_cache_id, before)
+        redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "ready", "3")
+        self.assertEqual(kn_edge._rebase_changed_products(), (source.binding_id,))
+        self.assertNotIn(source.binding_id, kn_edge._last_open_ms)
+        self.assertTrue(all(item.binding_id in kn_edge._last_open_ms for item in others))
+        self.assertFalse(kn_edge._rebase_if_canonical_cache_generation_changed())
         with self.assertRaises(ValueError):
             self._edge(bar_readback=KnBarReadback(redis, ENVIRONMENT), canonical_cache_id="0" * 32)
+
+    def test_published_history_is_served_only_after_the_cache_reads_it_back(self):
+        """KN-4 D47-1: an ACK is publish progress; serving is proven by readback,
+        also across a restart between publish and materialization."""
+        pk, real = real_bar("binance-usdm-dogeusdt-bar-15m-primary-v2")
+        source = binding_for(self.catalog, pk)
+        interval_ms = canonical_interval_ms(source.interval)
+        base = open_ms_of(real)
+        payloads = [real, derived_bar(real, -1)]
+        opens = frozenset({base, base - interval_ms})
+        redis = FakeRedis()
+        build_partitions(redis, ENVIRONMENT)
+        now = [180.0]
+        edge = StableBinanceBarEdge(catalog=self.catalog, acquisition=self.acquisition, authority=self.authority,
+                                    publisher=self._NoopPublisher(), warmup_rows=2, clock=lambda: now[0],
+                                    bar_readback=KnBarReadback(redis, ENVIRONMENT))
+        edge._last_open_ms[source.binding_id] = base
+        edge._record_serving(source.binding_id, opens, published=True)
+        self.assertEqual(edge.verify_serving()["pending"], 1)  # ACKed, never materialized
+        # A rebuilding product cannot prove anything yet: still pending.
+        lpk = binding_product_key(source, ENVIRONMENT).encode()
+        redis.hset(f"kn3:{ENVIRONMENT}:ptr:{lpk}", "staging", "4")
+        self.assertEqual(edge.verify_serving()["pending"], 1)
+        now[0] += 901
+        self.assertEqual(edge.verify_serving()["overdue"], 1)
+        # A restart here keeps no in-memory progress: the checkpoint gap check
+        # finds the unmaterialized window, so the binding is filled again.
+        with self.assertRaises(KnBarReadbackNotReady):  # while rebuilding: fail closed, never "complete"
+            edge._checkpoint_history_gaps({source.binding_id: base})
+        redis.hashes[f"kn3:{ENVIRONMENT}:ptr:{lpk}"].pop("staging")
+        self.assertEqual(edge._checkpoint_history_gaps({source.binding_id: base}), {source.binding_id: 2})
+        # The projector materializes the rows: served, no longer overdue.
+        put_rows(redis, ENVIRONMENT, source, 4, payloads)
+        status = edge.verify_serving()
+        self.assertEqual((status["served"], status["pending"], status["overdue"]), (1, 0, 0))
+        self.assertEqual(edge._checkpoint_history_gaps({source.binding_id: base}), {})
+        # Everything already durable: served without waiting.
+        edge._record_serving(source.binding_id, opens, published=False)
+        self.assertEqual(edge.serving_status()["served"], 1)
 
 
 @unittest.skipUnless(os.environ.get("QDL_KN_TEST_REDIS"),
@@ -335,6 +432,10 @@ class ReadbackRedisTests(unittest.TestCase):
         payloads = [real, derived_bar(real, 1, final=False),
                     *(derived_bar(real, -shift) for shift in range(1, 130))]
         put_rows(self.client, self.environment, source, 21, payloads, written=self.written)
+        for partition in range(6):  # stage B's checkpoints of a built cache
+            key = f"kn3:{self.environment}:ckpt:md.bars.v2:{partition}"
+            self.client.hset(key, "next", "1")
+            self.written.append(key)
         keys_before = {key: self.client.hgetall(key) for key in set(self.written)}
         readback = KnBarReadback(self.client, self.environment)
         asked = frozenset(base + shift * interval_ms for shift in range(-140, 2))
@@ -343,8 +444,11 @@ class ReadbackRedisTests(unittest.TestCase):
         self.assertEqual({key: self.client.hgetall(key) for key in set(self.written)}, keys_before)  # read-only
         lpk = binding_product_key(source, self.environment).encode()
         self.assertEqual(readback.generation_identity(source), f"kn3:{self.environment}:{lpk}@21")
+        other = binding_for(self.catalog, real_bar("okx-swap-doge-usdt-swap-bar-4h-primary-v2")[0])
+        other_lpk = binding_product_key(other, self.environment).encode()
+        self.client.hset(f"kn3:{self.environment}:ptr:{other_lpk}", "staging", "5")
+        self.written.append(f"kn3:{self.environment}:ptr:{other_lpk}")
         with self.assertRaises(KnBarReadbackNotReady):
-            other = binding_for(self.catalog, real_bar("okx-swap-doge-usdt-swap-bar-4h-primary-v2")[0])
             readback.durable_final_bar_opens(other, frozenset({base}))
 
 

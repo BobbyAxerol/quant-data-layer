@@ -31,6 +31,7 @@ from qdl.adapters.okx.bar_edge import (
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.heartbeat import write_heartbeat
+from qdl.runtime.kn_bar_readback import KnBarReadbackError
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_capacity import (
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
@@ -67,6 +68,12 @@ _NATIVE_RECOVERY_LOOKBACK_ROWS = 3
 _NATIVE_RECOVERY_GRACE_SECONDS = 3.0
 _NATIVE_RECOVERY_VISIBILITY_SECONDS = 10.0
 _NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS = 4
+# KN-4 D47-1: published history is "served" only when the market cache reads it
+# back; a binding still unserved after this long is reported overdue (never
+# re-fetched from the venue while the cache is catching up).
+_SERVE_OVERDUE_SECONDS = 900.0
+# Bindings whose serving is verified per loop turn (bounded cache reads).
+_SERVE_VERIFY_PER_TURN = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +328,12 @@ class StableBinanceBarEdge:
         self._native_recovery_verified_open: dict[str, int] = {}
         self._native_recovery_visible_after: dict[str, float] = {}
         self._history_bootstrapped = False
+        # KN-4 D47-1: per-product READY generations seen by the edge, and the
+        # serving progress of published history (kn3 readback only).
+        self._product_generations: dict[str, int | None] = {}
+        self._serving_pending: dict[str, tuple[frozenset[int], float]] = {}
+        self._served: set[str] = set()
+        self._serve_overdue: set[str] = set()
         self._stopped = threading.Event()
 
         source_by_id = {item.binding_id: item for item in catalog.bindings}
@@ -782,8 +795,11 @@ class StableBinanceBarEdge:
             )
         self._assert_canonical_cache_identity()
         if advance_watermark:
+            # Publish progress: the live watermark may move on the Kafka ACK.
             self._last_open_ms[plan.source.binding_id] = max(plan.expected_opens)
             self._persist_state()
+            self._record_serving(plan.source.binding_id, plan.expected_opens,
+                                 published=bool(current.missing_envelopes))
         logger.info(
             "stable provider final BAR history ACK binding=%s venue=%s expected_rows=%s "
             "published_rows=%s existing_durable_rows=%s advance_watermark=%s",
@@ -1171,10 +1187,100 @@ class StableBinanceBarEdge:
     def _retry_is_due(self, binding_id: str, *, now: float) -> bool:
         return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
+    # ------------------------------------------------------------------
+    # KN-4 D47-1: per-product rebase and serving progress (kn3 readback)
+
+    def _rebase_changed_products(self) -> tuple[str, ...]:
+        """A product whose READY generation changed loses only its own checkpoint.
+
+        The first READY (``None`` -> g) is the normal transition of a product
+        the edge is filling. A later change (rebuilt, or unpublished because
+        its log held nothing) re-verifies that one binding through the normal
+        bootstrap, which publishes only the opens the cache does not hold; no
+        other binding is touched.
+        """
+
+        readback = getattr(self, "bar_readback", None)
+        if readback is None:
+            return ()
+        sources = [source for source, _acquisition in self.history_bindings + self.history_okx_bindings]
+        current = readback.generation_identities(sources)
+        known = self._product_generations
+        rebased = []
+        for binding_id, generation in current.items():
+            previous = known.get(binding_id)
+            if previous is not None and generation != previous:
+                rebased.append(binding_id)
+                self._last_open_ms.pop(binding_id, None)
+                for store in (self._native_recovery_pending, self._native_recovery_verified_open,
+                              self._native_gap_first_seen_at, self._native_recovery_visible_after,
+                              self._retry_attempts, self._next_retry_at, self._serving_pending):
+                    store.pop(binding_id, None)
+                if binding_id in self._native_recovery_next_at:
+                    self._native_recovery_next_at[binding_id] = 0.0
+                self._served.discard(binding_id)
+                self._serve_overdue.discard(binding_id)
+            known[binding_id] = generation
+        if rebased:
+            self._history_bootstrapped = False
+            self._persist_state()
+            logger.warning("stable BAR market cache product generation changed; rebased only bindings=%s",
+                           ",".join(sorted(rebased)))
+        return tuple(rebased)
+
+    def _record_serving(self, binding_id: str, opens: frozenset[int], *, published: bool) -> None:
+        if getattr(self, "bar_readback", None) is None:
+            return
+        if published:
+            self._serving_pending[binding_id] = (opens, self.clock())
+            self._served.discard(binding_id)
+        else:  # every open was already read back durable
+            self._serving_pending.pop(binding_id, None)
+            self._served.add(binding_id)
+            self._serve_overdue.discard(binding_id)
+
+    def verify_serving(self) -> dict[str, int]:
+        """Promote published history to served once the cache reads it back.
+
+        A Kafka ACK proves publication only; the rows are served when the
+        projector has materialized them. At most ``_SERVE_VERIFY_PER_TURN``
+        bindings are read per call; a binding the cache cannot answer yet stays
+        pending, one past ``_SERVE_OVERDUE_SECONDS`` is reported overdue and is
+        not fetched again from the venue.
+        """
+
+        if getattr(self, "bar_readback", None) is None:
+            return {}
+        sources = {source.binding_id: source
+                   for source, _acquisition in self.history_bindings + self.history_okx_bindings}
+        now = self.clock()
+        for binding_id, (opens, published_at) in list(self._serving_pending.items())[:_SERVE_VERIFY_PER_TURN]:
+            try:
+                covered = self._durable_final_bar_opens(sources[binding_id], opens)
+            except KnBarReadbackError:
+                covered = frozenset()
+            if covered == opens:
+                self._serving_pending.pop(binding_id, None)
+                self._served.add(binding_id)
+                self._serve_overdue.discard(binding_id)
+            else:
+                # Rotate so every pending binding is checked in turn.
+                self._serving_pending.pop(binding_id)
+                self._serving_pending[binding_id] = (opens, published_at)
+                if now - published_at > _SERVE_OVERDUE_SECONDS:
+                    self._serve_overdue.add(binding_id)
+        return self.serving_status()
+
+    def serving_status(self) -> dict[str, int]:
+        return {"bindings": len(self._binding_ids), "published": len(self._last_open_ms),
+                "served": len(self._served), "pending": len(self._serving_pending),
+                "overdue": len(self._serve_overdue)}
+
     def bootstrap_history(self) -> int:
         if self.repair_only:
             raise RuntimeError("stable BAR repair cannot bootstrap as writer")
         self._rebase_if_canonical_cache_generation_changed()
+        self._rebase_changed_products()
         if not self._history_bootstrap_active:
             return 0
         if self._history_bootstrapped:
@@ -1714,8 +1820,10 @@ class StableBinanceBarEdge:
             # accommodation `_source_provider` already makes for them.
             heartbeat_path = getattr(self, "_heartbeat_path", None)
             if heartbeat_path is not None:
+                serving = self.serving_status() if getattr(self, "bar_readback", None) is not None else {}
                 write_heartbeat(heartbeat_path, role="stable_bar_edge",
-                                detail=f"bindings={len(self.history_bindings)}")
+                                detail=f"bindings={len(self.history_bindings)}"
+                                + "".join(f" {name}={value}" for name, value in serving.items()))
             try:
                 # Bootstrap is a bounded latest-closed history read.  It must
                 # run immediately after process start; `_next_ready_at()` is
@@ -1723,6 +1831,8 @@ class StableBinanceBarEdge:
                 # boundary to the next interval.  Using it here would defer an
                 # empty checkpoint forever at every boundary.
                 self.bootstrap_history()
+                if getattr(self, "bar_readback", None) is not None:
+                    self.verify_serving()
                 if self._rest_fallback_active:
                     self.run_cycle()
                 if getattr(self, "_native_recovery_active", False):
