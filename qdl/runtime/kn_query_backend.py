@@ -256,18 +256,33 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             parsed.append(_ParsedStoredEvent(stored=stored, envelope=envelope))
         return self._select_records(binding, tuple(parsed), limit=max(1, len(parsed)))
 
-    def latest_stored_event(self, binding: StableSourceBinding) -> StoredEvent | None:
-        """The product's latest record as a stored event, ``None`` when it is
-        not ready (the alpha MARK/INDEX view, D31)."""
+    def latest_stored_event(self, binding: StableSourceBinding) -> tuple[StoredEvent | None, str]:
+        """The product's latest record for the MARK/INDEX views (D31/D36).
+
+        Returns ``(stored, "OK")`` or ``(None, state)`` with a state the view
+        must not paper over with a remembered price: ``NOT_READY`` (no READY
+        generation or no entry - the product has no state), ``UNAVAILABLE``
+        (the cache cannot answer now or its generation kept changing),
+        ``INTEGRITY`` (a value failed its trailer/identity check) or
+        ``FENCED`` (the entry was applied from another canonical topic
+        generation or has no provable source boundary).
+        """
 
         try:
             view = self._view(binding, last=1)
-        except QueryBackendError:
-            return None
+        except QueryBackendError as error:
+            code = error.problem.code
+            if code is CanonicalErrorCode.DATA_NOT_READY:
+                return None, "FENCED"
+            if code is CanonicalErrorCode.INTERNAL_ERROR:
+                return None, "INTEGRITY"
+            return None, "UNAVAILABLE"
         if view is None:
-            return None
+            return None, "NOT_READY"
         records = self._parsed(binding, view)
-        return records[-1].stored if records else None
+        if not records:
+            return None, "NOT_READY"
+        return records[-1].stored, "OK"
 
     # ------------------------------------------------------------ row derivations (D30)
 

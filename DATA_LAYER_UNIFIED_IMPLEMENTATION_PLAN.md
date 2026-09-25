@@ -57068,6 +57068,21 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
     no C2 as a bug detector; unchanged evidence inherited.
   Order: D36 (source, small) and D37 in parallel, then D38, D39, D40, D41,
   then shadow reruns with the watcher.
+- 2026-09-25: **K4 slice 8 (D36 MARK/INDEX read boundary fails closed)** |
+  this commit | `KnMarketCacheQueryBackend.latest_stored_event` returns
+  `(stored, OK)` or `(None, NOT_READY|UNAVAILABLE|INTEGRITY|FENCED)`;
+  `CacheRefreshingMarkIndexView.read` drops the remembered record and answers
+  `MARKET_CACHE_<state>` (or `LINEAGE_INVALID` when the envelope is not a
+  MARK/INDEX of the binding or `remember` refuses its provenance) - the
+  endpoint turns it into its typed 409, the reader into
+  `SOURCE_UNAVAILABLE`. No transient reuse (validity cannot be proven from
+  the cache failure). New regression
+  `test_the_mark_index_view_never_answers_a_cache_failure_with_a_remembered_price`
+  (good -> cache error -> recover -> integrity -> lost state -> other topic
+  generation -> new generation served -> broken lineage): before FAIL on
+  `dd94e2f` (the remembered record was served on the cache error), after OK;
+  `test_kn_query_backend` 19, `test_phase113_reference_v2` +
+  `test_phase104_reference_batch` OK | runtime NONE | next: D35 audit, D37.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

@@ -28,6 +28,7 @@ from google.protobuf.message import DecodeError
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
 from qdl.runtime.execution_mark_index import (
+    ExecutionMarkIndexRead,
     ExecutionMarkIndexLiveView,
     install_execution_mark_index_read,
 )
@@ -115,17 +116,29 @@ class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
     async def read(self, *, instrument_uid: str, **kwargs):
         binding = self._bindings.get(instrument_uid)
         if binding is not None:
-            stored = await asyncio.to_thread(self._backend.latest_stored_event, binding)
+            stored, state = await asyncio.to_thread(self._backend.latest_stored_event, binding)
+            reason = None if state == "OK" else f"MARKET_CACHE_{state}"
             if stored is not None:
                 try:
                     envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
                 except DecodeError:
                     envelope = None
-                if envelope is not None and envelope.WhichOneof("payload") == "mark_index_price":
-                    await self.remember(
-                        binding=binding, envelope=envelope, stored=stored,
-                        gateway_epoch=_LOCAL_EPOCH,
-                    )
+                if envelope is None or envelope.WhichOneof("payload") != "mark_index_price":
+                    reason = "LINEAGE_INVALID"
+                else:
+                    try:
+                        await self.remember(
+                            binding=binding, envelope=envelope, stored=stored,
+                            gateway_epoch=_LOCAL_EPOCH,
+                        )
+                    except ValueError:
+                        reason = "LINEAGE_INVALID"
+            if reason is not None:
+                # D36: a cache, fencing or integrity failure (or a product
+                # without state) never lets a remembered price answer.
+                async with self._lock:
+                    self._records.pop(instrument_uid, None)
+                return ExecutionMarkIndexRead(None, reason)
         return await ExecutionMarkIndexLiveView.read(self, instrument_uid=instrument_uid, **kwargs)
 
 

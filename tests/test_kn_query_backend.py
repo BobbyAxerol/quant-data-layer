@@ -559,6 +559,83 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         self.assertEqual(stale.reason, "STALE", "the execution horizon is the binding's own")
         self.assertIsNotNone(read(alpha).record, "alpha keeps its relaxed horizon")
 
+    def test_the_mark_index_view_never_answers_a_cache_failure_with_a_remembered_price(self):
+        """D36: good read -> cache error / integrity / lost state / generation
+        change / broken lineage -> read again."""
+        import asyncio
+        import time as _time
+
+        from qdl.reference.local_mark_index import CacheRefreshingMarkIndexView
+        from qdl.runtime.kn_market_cache import KnCacheError
+        from qdl.runtime.session_liveness import StableSessionLivenessReader
+        from qdl.runtime.stable_deployment import StableAcquisitionPlan
+
+        binding, payload = next(
+            (binding, payload) for binding, payload in self.latest_records
+            if binding.feed is FeedType.MARK_INDEX_PRICE and binding.authoritative
+            and binding.source_role == "PRIMARY"
+        )
+        lpk = self.lpk(binding)
+        acquisition = StableAcquisitionPlan.load(ROOT / "config/v2/stable-acquisition-bindings.yaml",
+                                                 catalog=self.catalog)
+        directory = tempfile.TemporaryDirectory(prefix="k4q-session-")
+        self.addCleanup(directory.cleanup)
+        backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST, topic_id=TOPIC_ID)
+        view = CacheRefreshingMarkIndexView.from_catalog(
+            self.catalog, acquisition=acquisition,
+            session_liveness_reader=StableSessionLivenessReader(directory.name),
+        ).attach_cache(backend=backend, relax_to_alpha=False)
+
+        def fresh(age_ms=100, **changes):
+            envelope = market_data_pb2.EventEnvelope.FromString(payload)
+            now = _time.time_ns()
+            envelope.source_event_time_ns = now - age_ms * 1_000_000
+            envelope.received_at_ns = now - age_ms * 1_000_000 + 1_000_000
+            for name, value in changes.items():
+                setattr(envelope, name, value)
+            return envelope.SerializeToString(deterministic=True)
+
+        def read():
+            return asyncio.run(view.read(
+                instrument_uid=binding.instrument.instrument_uid,
+                instrument_revision=binding.instrument.metadata_revision,
+                source_policy_id=binding.source_policy_id, max_freshness_ms=300_000, gateway_epoch=1,
+            ))
+
+        good = fresh()
+        self.put_latest(binding, good, generation=4, offset=10, mark=10)
+        self.assertIsNotNone(read().record)
+        # 1. The cache cannot answer: nothing remembered is served.
+        original = self.reader.latest
+        self.reader.latest = lambda lpk: (_ for _ in ()).throw(KnCacheError("down"))
+        outcome = read()
+        self.assertEqual((outcome.record, outcome.reason), (None, "MARKET_CACHE_UNAVAILABLE"))
+        self.reader.latest = original
+        self.assertIsNotNone(read().record, "recovers on the next good read")
+        # 2. Integrity: a value that fails its trailer check.
+        key = f"{self.prefix}l:4:{lpk.encode()}"
+        value = bytearray(self.client.hget(key, "v"))
+        value[-1] ^= 0xFF
+        self.client.hset(key, "v", bytes(value))
+        self.assertEqual(read().reason, "MARKET_CACHE_INTEGRITY")
+        # 3. The product lost its state (no pointer).
+        self.put_latest(binding, fresh(), generation=4, offset=11, mark=11)
+        self.assertIsNotNone(read().record)
+        self.client.delete(f"{self.prefix}ptr:{lpk.encode()}")
+        self.assertEqual(read().reason, "MARKET_CACHE_NOT_READY")
+        # 4. Another canonical topic generation is fenced, not served.
+        self.put_latest(binding, fresh(), generation=5, offset=12, mark=12, topic_id="otherTopicIdAAAAAAAAAA")
+        self.assertEqual(read().reason, "MARKET_CACHE_FENCED")
+        # 5. A new READY generation (rebuild) serves its own record.
+        newer = fresh(age_ms=50)
+        self.put_latest(binding, newer, generation=6, offset=13, mark=13)
+        served = read()
+        self.assertEqual(served.record.canonical, newer)
+        # 6. Broken lineage (another source id) never serves the old price.
+        self.put_latest(binding, fresh(age_ms=10, source_id="not-the-binding-source"), generation=6,
+                        offset=14, mark=14)
+        self.assertEqual(read().reason, "LINEAGE_INVALID")
+
     # ------------------------------------------------------------ D29 read view
 
     def test_the_stream_read_view_runs_the_python_oracle_on_one_view(self):
