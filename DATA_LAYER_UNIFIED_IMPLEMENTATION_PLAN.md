@@ -57858,6 +57858,17 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   "missing" and stay listed. Test `test_unsampled_products_are_reported_not_missing`;
   `test_kn_native_slice_probe` 38 OK | `tested locally`; the probe is rerun on
   the same shadow with an image at this commit (measurement client only).
+- 2026-09-25: **Probe rerun (slice 24 image `kn4-717f560`): 12 residuals, all
+  at the window edge; K4 slice 25** | this commit | Receipt
+  `run/probe-matrix.json` `59e2bf10...`: the unsampled and post-stop artefacts
+  are gone; left per subscription: BOOK_DELTA missing_lossless 2-3, QUOTE
+  unsuperseded_drops 1, TRADE missing 1-143 (Binance DOGE 143, others <= 13)
+  - records produced in the last moments before the boundary, which was taken
+  at the instant the streams stopped, so nothing below it could still be
+  delivered (and a coalesced QUOTE's successor fell outside). The boundary is
+  now taken `MIRROR_DRAIN_S` = 15 s before the streams stop (the harness
+  handoff's close-then-drain rule); `test_kn_native_slice_probe` 38 OK |
+  `tested locally`; rerun follows.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

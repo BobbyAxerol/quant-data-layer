@@ -1370,6 +1370,9 @@ def _matrix_oracle(args: argparse.Namespace, since_ns: int) -> dict[str, list[tu
     return kafka_oracle_window(args.bootstrap, args.topic, since_ms=since_ms, ends=ends)
 
 
+MIRROR_DRAIN_S = 15.0
+
+
 def mirror_source_clocks(lines) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], int]]:
     """Commit log -> ``(isolated commit ns, production record timestamp ms)``
     by isolated coordinate. The production value is the canonical record's
@@ -1440,9 +1443,12 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
         until = time.time_ns() + int(seconds * 1e9)
 
         async def boundary_at(until_ns: int) -> dict[int, int] | None:
-            # Mirror mode: the live log keeps growing after a wave's streams
-            # stop, so the judged window ends where they stopped (D41).
-            await asyncio.sleep(max(0.0, (until_ns - time.time_ns()) / 1e9))
+            # Mirror mode: the live log keeps growing, so each wave is judged
+            # inside a fixed boundary taken MIRROR_DRAIN_S before its streams
+            # stop - they keep running that long to deliver everything below
+            # it (the harness handoff does the same, D41).
+            boundary_ns = max(wave_started_ns, until_ns - int(MIRROR_DRAIN_S * 1e9))
+            await asyncio.sleep(max(0.0, (boundary_ns - time.time_ns()) / 1e9))
             return canonical_end_offsets(args.bootstrap, args.topic) if mirror else None
 
         *wave_results, ends = await asyncio.gather(*(
