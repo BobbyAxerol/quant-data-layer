@@ -57299,6 +57299,48 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `test_kn_native_slice_probe` + `test_kn_canonical_mirror` 41 OK |
   `tested locally`; runtime NONE | next: candidate image rebuild, D38/D41
   runtime packet.
+- 2026-09-25: **KN-4 D38/D40/D41 watched shadow packet (recorded before
+  start).** Same isolated `kn4-*` topology, limits and cleanup as the first
+  shadow packet above, with these differences:
+  - Candidate: `qdl-v2-python:kn4-c328974` `sha256:035f2372...` (FROM the
+    running `2.1.1-83fa1bc` + `git archive c328974`; contains `abd036c`,
+    `7a6dbd7` and slices 9-13); superseded candidates `kn4-ccec85c`
+    `2cd464f7...` and `kn4-f708ba3` `51a41ce8...` removed by digest (no
+    container referenced them). Rust binaries unchanged (`2a6ffd8e...`,
+    `d4c8ed40...`; the Rust tree has not changed since `29df556`).
+  - Live input (D38): no spool capture/tail. `kn4-mirror-start` then
+    `kn4-mirror` (`scripts/kn_canonical_mirror.py`, 0.2/0.5 CPU, 128/256 MiB,
+    `--rm`) join the production network
+    `qdl_v2_stable_candidate_stable_internal` and read `md.canonical.v2`
+    from `kafka1..3` with the projector client identity (stable TLS volume,
+    read-only): read_committed, assign mode, no group join, no commit, no
+    production write of any kind, <= 4 MiB/s, deadline 4 h; start offsets
+    resolved 60 s back BEFORE the legacy BAR import (the only remaining spool
+    read, `--isolated`, as before), so import and live log overlap
+    (idempotent). The mirror writes only `kn4-kafka` (a production
+    destination is refused in code).
+  - Query env adds `MALLOC_ARENA_MAX=2` (slice 11 measurement).
+  - Measurement: probe `matrix --read-view 1 --source-mode mirror`
+    (window oracle, labelled clocks); harness `kn4-matrix` with
+    `oracle_bootstrap kn4-kafka:9092` (fixed-window handoff); T07 consumers
+    with the sealed grid binding `alpha-grid.binding.json` `2cc5fdc8...`
+    (inventory `35a18db3...` 93 deployments -> 18 admitted / 75 BLOCKED,
+    compilation `faa550e9...`; TS binding unchanged); stages 20 then 35.
+  - Watch set (D37): `kn4_watch.sh` every 5 s - host PSI cpu/io/memory,
+    nvme0n1 diskstats, cgroup cpu.stat/pressure/memory.current/events for
+    19 production roles (stream, cores, projectors, ingestors, kafka1-3,
+    Query, `market_data_service`) and every `kn4-*` container; read-only.
+  - Stop conditions (automated in `kn4_guard.sh`): host idle < 5 % for 60 s;
+    any production compose container (re)started; production TS execution
+    MARK/INDEX `SOURCE_UNAVAILABLE` >= 10 lines in 60 s (baseline at packet
+    time: 2 lines in 20 min). Load steps start only when the core progress
+    log shows no saturated batch (D37 input control).
+  - Rollback: `kn4_shadow_down.sh` (stops/removes every `kn4-*` container and
+    the two kn4 networks); no production offset, group, topic, ACL, Redis or
+    state is written, so nothing in production needs reverting.
+  - Orchestration sha256 (first 12): up `d29a1e25afe7`, steps `40d707b238c8`,
+    setup `2c2eadd55c32`, guard `40d5ec500ee4`, watch `927f97948ee7`, down
+    `5fd58af14e95`, consumers `8075573aab22`; bundle file `b4b34222687d`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
