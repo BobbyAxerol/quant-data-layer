@@ -234,6 +234,7 @@ class StableBinanceBarEdge:
         repair_only: bool = False,
         clock=time.time,
         generation_clock_ns=time.time_ns,
+        provider_admission=None,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -331,6 +332,10 @@ class StableBinanceBarEdge:
         # KN-4 D47-1: per-product READY generations seen by the edge, and the
         # serving progress of published history (kn3 readback only).
         self._product_generations: dict[str, int | None] = {}
+        # KN-4 D47-2: venue calls behind the Rust provider admission (None keeps
+        # the direct clients). BATCH for history/recovery, REALTIME for live bars.
+        self.provider_admission = provider_admission
+        self._admitted_clients: dict[tuple[str, str], object] = {}
         self._serving_pending: dict[str, tuple[frozenset[int], float]] = {}
         self._served: set[str] = set()
         self._serve_overdue: set[str] = set()
@@ -845,6 +850,41 @@ class StableBinanceBarEdge:
             advance_watermark=True,
         )
 
+    def _admitted(self, venue: str, priority_name: str):
+        """The shared admitted venue client (one per venue and priority), or None."""
+
+        admission = getattr(self, "provider_admission", None)
+        if admission is None:
+            return None
+        key = (venue, priority_name)
+        client = self._admitted_clients.get(key)
+        if client is None:
+            from qdl.admission.contracts import AdmissionPriority
+
+            priority = AdmissionPriority(priority_name)
+            if venue == "BINANCE":
+                from qdl.adapters.binance.admitted_klines import AdmittedBinanceKlines
+
+                client = AdmittedBinanceKlines(admission, priority=priority)
+            else:
+                from qdl.adapters.okx.admitted_rest import AdmittedOkxRestClient
+
+                client = AdmittedOkxRestClient(admission, priority=priority)
+            self._admitted_clients[key] = client
+        return client
+
+    def _binance_kwargs(self, priority_name: str) -> dict:
+        fetcher = self._admitted("BINANCE", priority_name)
+        return {} if fetcher is None else {"fetcher": fetcher}
+
+    def _okx_kwargs(self, priority_name: str) -> dict:
+        client = self._admitted("OKX", priority_name)
+        if client is None:
+            return {}
+        from qdl.adapters.okx.history import OkxHistoricalClient
+
+        return {"history_client": OkxHistoricalClient(client)}
+
     def _fetch_history(
         self,
         source: StableSourceBinding,
@@ -860,6 +900,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=4,
                 test_provenance=False,
+                **self._binance_kwargs("BATCH"),
             ))
         if acquisition.runtime == "OKX":
             return tuple(asyncio.run(fetch_okx_history(
@@ -867,6 +908,7 @@ class StableBinanceBarEdge:
                 limit=rows,
                 now_ms=observed_ms,
                 test_provenance=False,
+                **self._okx_kwargs("BATCH"),
             )))
         raise ValueError("stable crypto BAR runtime is unsupported")
 
@@ -1384,6 +1426,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=4,
                 test_provenance=False,
+                **self._binance_kwargs("BATCH"),
             )
         else:
             values = asyncio.run(fetch_okx_history(
@@ -1391,6 +1434,7 @@ class StableBinanceBarEdge:
                 limit=pending_rows,
                 now_ms=observed_ms,
                 test_provenance=False,
+                **self._okx_kwargs("BATCH"),
             ))
 
         opens = tuple(self._open_time_ms(acquisition, item) for item in values)
@@ -1675,6 +1719,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=1,
                 test_provenance=False,
+                **self._binance_kwargs("REALTIME"),
                 confirmations=self.final_settlement_confirmations,
                 confirm_interval_seconds=self.final_settlement_interval_seconds,
                 max_reads=self.final_settlement_max_reads,
@@ -1688,6 +1733,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=1,
                 test_provenance=False,
+                **self._okx_kwargs("REALTIME"),
             ))
         raise ValueError("stable crypto BAR runtime is unsupported")
 
@@ -1898,6 +1944,22 @@ def build_from_environment(
         from qdl.runtime.kn_bar_readback import readback_from_environment
 
         bar_readback = readback_from_environment(os.environ)
+    # KN-4 D47-2: venue calls behind the Rust provider admission when its
+    # private endpoint and secret are configured (off by default).
+    provider_admission = None
+    admission_url = os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_URL", "").strip()
+    if admission_url:
+        from qdl.admission import RustHttpProviderAdmission
+        from qdl.admission.edge import BlockingProviderAdmission
+
+        secret_file = os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_SECRET_FILE", "").strip()
+        if not secret_file:
+            raise ValueError("stable BAR provider admission needs its secret file")
+        secret = Path(secret_file).read_bytes().strip()
+        provider_admission = BlockingProviderAdmission(
+            lambda: RustHttpProviderAdmission(base_url=admission_url, secret=secret),
+            max_wait_s=float(os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_MAX_WAIT_S", "30")),
+        )
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(
@@ -1969,6 +2031,7 @@ def build_from_environment(
         ),
         canonical_cache_path=canonical_cache_path if bar_readback is None else None,
         bar_readback=bar_readback,
+        provider_admission=provider_admission,
         repair_only=repair_only,
     )
 

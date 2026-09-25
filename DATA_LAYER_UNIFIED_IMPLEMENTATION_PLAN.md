@@ -57681,6 +57681,41 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   recreate from compose would otherwise return it to 0.50). Nothing is
   recreated by this commit. Compose-reading suites (18 modules) 180 OK |
   runtime NONE (config source only).
+- 2026-09-25: **K4 slice 20 (D47-2 venue admission for the BAR edge)** |
+  this commit | Reuses the Rust provider admission (token bucket per lane,
+  REALTIME/BATCH with reserved realtime inflight, shared cooldown); Python
+  only calls REST and maps replies to typed results. `rust/qdl-core/src/provider_admission.rs`:
+  the rate-limit signal also accepts OKX `50011`, and a provider code must be
+  the lane venue's own (`provider_rate_limit_code`; an OKX code never cools a
+  Binance lane); `qdl/admission/http.py` relays it. New
+  `qdl/admission/edge.py` (`BlockingProviderAdmission`): the thread-based edge
+  leases a Rust grant per venue call on a private loop thread - waits out
+  DEFERRED by the Rust `retry_after_ms`, typed `AdmissionDeadlineExceeded`
+  (no venue call), completion on every exit, `ProviderRateLimited` after
+  relaying the reply to Rust; no policy of its own. New
+  `qdl/adapters/binance/admitted_klines.py`: drop-in `fetcher` with the
+  documented page weight (USD-M 1/2/5/10 by limit, Spot 2), one pooled
+  session, 418/429/-1003 relayed with `Retry-After` and never retried
+  (the adapter's retry loop only retries transport/HTTP errors), and the
+  whole-IP `X-MBX-USED-WEIGHT-1M`: BATCH work above 50 % of the IP limit
+  waits for the next minute window, REALTIME does not. New
+  `qdl/adapters/okx/admitted_rest.py`: one shared client and session (the edge
+  built a new `OkxRestClient`, so a new bucket, per call), a grant per request
+  (candle endpoints only, lane SWAP/SPOT by instId), 429/`50011` relayed and
+  never retried, other errors keep bounded retries. `stable_bar_edge.py`:
+  optional `provider_admission` (env `QDL_STABLE_BAR_PROVIDER_ADMISSION_URL` +
+  `_SECRET_FILE`; off by default, so production is unchanged); history,
+  catch-up and native recovery are BATCH, the live final-bar reads REALTIME;
+  clients are shared per venue and priority. Tests
+  `tests/test_kn_provider_admission_edge.py` 11 (fault injection: scripted
+  Rust runtime and HTTP session - deferral, deadline, failure/cancel
+  completion, 8 concurrent threads, weights, 429/418/-1003, transient retry
+  under a fresh grant, IP share, OKX 50011/429 and transient retries, edge
+  wiring); admission/edge suites 250 OK; Rust `qdl-core` provider_admission 10
+  OK (new `okx_code_50011_cools_an_okx_lane_and_never_a_binance_one`),
+  `qdl-realtime-core` provider_admission 9 OK | `tested locally`; runtime
+  NONE. Open for the shadow: the lane policies (shadow share) and the
+  isolated core hosting the endpoint (D47-4).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

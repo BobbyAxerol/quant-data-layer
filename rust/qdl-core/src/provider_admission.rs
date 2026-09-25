@@ -253,13 +253,23 @@ pub struct RateLimitSignal {
     pub retry_after_ns: Option<i64>,
 }
 
+/// The documented provider rate-limit codes: Binance `-1003` (too many
+/// requests / IP ban) and OKX `50011` (rate limit reached, KN-4 D47-2).
+pub fn provider_rate_limit_code(provider: &str) -> Option<i64> {
+    match provider {
+        "BINANCE" => Some(-1003),
+        "OKX" => Some(50011),
+        _ => None,
+    }
+}
+
 impl RateLimitSignal {
     pub fn validate(&self) -> Result<(), ProviderAdmissionError> {
         let recognized = matches!(self.http_status, Some(418 | 429))
-            || matches!(self.provider_code, Some(-1003));
+            || matches!(self.provider_code, Some(-1003 | 50011));
         if !recognized {
             return Err(ProviderAdmissionError::InvalidRateLimitSignal(
-                "only HTTP 418/429 or provider code -1003 can open cooldown".into(),
+                "only HTTP 418/429 or provider code -1003/50011 can open cooldown".into(),
             ));
         }
         if self.retry_after_ns.is_some_and(|value| value <= 0) {
@@ -467,6 +477,16 @@ impl ProviderAdmissionState {
         self.validate()?;
         let now_ns = self.observe_clock(now_ns)?;
         signal.validate()?;
+        // A provider code belongs to its venue: an OKX code never cools a
+        // Binance lane (or the reverse).
+        if let Some(code) = signal.provider_code {
+            if provider_rate_limit_code(&self.lane.provider) != Some(code) {
+                return Err(ProviderAdmissionError::InvalidRateLimitSignal(format!(
+                    "provider code {code} is not a rate-limit code of {}",
+                    self.lane.provider
+                )));
+            }
+        }
         self.reap_expired(now_ns);
         let request_id = request_id.unwrap_or("provider-cooldown");
         if !is_request_id(request_id) {
@@ -883,6 +903,49 @@ mod tests {
                 .defer_reason,
             Some(AdmissionDeferReason::Cooldown)
         );
+    }
+
+    #[test]
+    fn okx_code_50011_cools_an_okx_lane_and_never_a_binance_one() {
+        let okx = ProviderLaneKey::new("OKX", "SWAP", "HISTORY_CANDLES").unwrap();
+        let mut state = ProviderAdmissionState::new(okx, policy(), 100).unwrap();
+        let signal = RateLimitSignal {
+            http_status: None,
+            provider_code: Some(50011),
+            retry_after_ns: Some(2_000_000_000),
+        };
+        let outcome = state.record_rate_limit(None, signal.clone(), 100).unwrap();
+        assert_eq!(outcome.defer_reason, Some(AdmissionDeferReason::Cooldown));
+        assert_eq!(
+            state
+                .admit(request("history:BTC-USDT-SWAP", AdmissionPriority::Batch), 101)
+                .unwrap()
+                .defer_reason,
+            Some(AdmissionDeferReason::Cooldown)
+        );
+        let mut binance = ProviderAdmissionState::new(lane(), policy(), 100).unwrap();
+        assert!(matches!(
+            binance.record_rate_limit(None, signal, 100),
+            Err(ProviderAdmissionError::InvalidRateLimitSignal(_))
+        ));
+        let mut okx_lane = ProviderAdmissionState::new(
+            ProviderLaneKey::new("OKX", "SWAP", "HISTORY_CANDLES").unwrap(),
+            policy(),
+            100,
+        )
+        .unwrap();
+        assert!(matches!(
+            okx_lane.record_rate_limit(
+                None,
+                RateLimitSignal {
+                    http_status: None,
+                    provider_code: Some(-1003),
+                    retry_after_ns: None
+                },
+                100
+            ),
+            Err(ProviderAdmissionError::InvalidRateLimitSignal(_))
+        ));
     }
 
     #[test]
