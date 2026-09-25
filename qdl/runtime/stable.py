@@ -58,9 +58,13 @@ from qdl.runtime.stable_source import (
     build_stable_query_stack,
 )
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
-from qdl.reference.local_mark_index import build_cache_alpha_mark_index_reader
+from qdl.reference.local_mark_index import (
+    build_cache_alpha_mark_index_reader,
+    build_cache_execution_mark_index_reader,
+)
 from qdl.runtime.kn_market_cache import reader_from_environment as kn_reader_from_environment
 from qdl.query.row_cache import ROW_CACHE_ENTRIES_ENV
+from qdl.runtime.kn_read_view import READ_VIEW_SECRET_FILE_ENV, install_kn_read_view
 from qdl.runtime.kn_query_backend import (
     DEFAULT_ROW_CACHE_ENTRIES,
     QUERY_BACKEND_ENV,
@@ -729,18 +733,34 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         kn_alpha_reader = lambda: build_cache_alpha_mark_index_reader(  # noqa: E731
             catalog=catalog, backend=kn_backend,
         )
+        if config.execution_mark_index_urls:
+            # D31: never reach a stream's private endpoint from this backend
+            # (a shadow Query must not call the production stream).
+            raise ValueError(
+                "QDL_STABLE_QUERY_BACKEND=kn3 serves execution MARK/INDEX from the market "
+                "cache; unset QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON"
+            )
+        execution_mark_index_reader = (
+            build_cache_execution_mark_index_reader(
+                catalog=catalog, backend=kn_backend,
+                acquisition=StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog),
+                session_liveness_reader=StableSessionLivenessReader(config.session_liveness_dir),
+            )
+            if config.reference_data_enabled
+            else None
+        )
     else:
         spool = build_stable_spool(config, catalog)
         handoff = build_stable_handoff(config, spool)
-    execution_mark_index_reader = (
-        HttpExecutionMarkIndexReader(
-            config.execution_mark_index_urls,
-            config.internal_ingest_secret,
-            ssl_context=stable_client_ssl_context(config),
+        execution_mark_index_reader = (
+            HttpExecutionMarkIndexReader(
+                config.execution_mark_index_urls,
+                config.internal_ingest_secret,
+                ssl_context=stable_client_ssl_context(config),
+            )
+            if config.execution_mark_index_urls
+            else None
         )
-        if config.execution_mark_index_urls
-        else None
-    )
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
@@ -768,6 +788,13 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     )
     app.state.runtime_manifest = config.public_manifest()
     app.state.stable_query_backend = query_backend
+    read_view_secret_file = os.environ.get(READ_VIEW_SECRET_FILE_ENV, "").strip()
+    if kn_backend is not None and read_view_secret_file:
+        # D29: the native Stream's GetSnapshot/GetFeedStatus read view.
+        install_kn_read_view(
+            app, service=service, backend=kn_backend, issuer=kn_issuer,
+            secret=bytes.fromhex(Path(read_view_secret_file).read_text(encoding="utf-8").strip()),
+        )
     app.state.stable_spool = spool
     app.state.stable_audit = AuditChain(config.audit_path)
     app.state.execution_mark_index_reader = execution_mark_index_reader

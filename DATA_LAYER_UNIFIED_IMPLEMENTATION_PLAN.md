@@ -56746,6 +56746,43 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `test_phase104_reference_batch`, `test_phase113_reference_v2`,
   `test_dlv2_r131_warmup_is_a_lookback_cap`) OK, 1 pre-existing skip |
   runtime NONE | next: Stream ReadView (D29), execution MARK/INDEX (D31).
+- 2026-09-25: **K4 slice 4 (D29 Stream read view, D31 execution MARK/INDEX)**
+  | this commit |
+  - D29: new `qdl/runtime/kn_read_view.py` - `POST /internal/v2/kn/read-view`
+    (not in the public schema), HMAC `X-QDL-Stable-Signature` like the
+    existing private edges, installed only with the kn3 backend and
+    `QDL_KN_READ_VIEW_SECRET_FILE`. SNAPSHOT runs `requirement_from_proto`,
+    the service's own `_warmup_from_history` enforcement and the v3 issuer on
+    ONE product view (`history_with_envelopes`; the spool oracle read the
+    window twice); STATUS runs `status_async` on the hot lane; one in-flight
+    history snapshot per replica. Rust: `query_view.rs` `QueryReadView`
+    (workspace `reqwest` with a preconfigured rustls client identity, no new
+    crate in the lock; `Cargo.lock` +1 line), rotating failover over
+    `QDL_KN_READ_VIEW_URLS`; the `ReadView` trait now also receives the exact
+    proto requirement and `ReadViewError` carries its gRPC status (409 ->
+    FAILED_PRECONDITION `{code}:{detail}`, RATE_LIMITED -> RESOURCE_EXHAUSTED,
+    400 -> INVALID_ARGUMENT, unreachable -> UNAVAILABLE
+    `DEPENDENCY_UNAVAILABLE:`). Unset URLs keep `NotReadyReadView`.
+  - D31: with the kn3 backend, execution MARK/INDEX is the cache-refreshing
+    view with the binding's own `stale_after_ms`, the acquisition quiet
+    policies and the session files (the Python stream's view held the same
+    read-committed canonical record); kn3 refuses to start with
+    `QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON` set, so a shadow Query can
+    never reach a production stream's private endpoint.
+  Tests: Python `test_kn_query_backend` 19 (read view: events byte-equal to
+  the spool `StableGrpcSnapshotLoader` on the same records, v3 cursor at
+  the boundary, status equal to `service.status`, 401/400/409 typed;
+  execution view: fresh record served, 5 s old refused `STALE` on the 2 s
+  binding horizon while the alpha view still serves it) + 64 related
+  (`test_query_cold_work`, `test_phase113_reference_v2`,
+  `test_phase104_reference_batch`, `test_fund_phase5_e2e`,
+  `test_phase104_v2_query_stream_integration`) OK; Rust `qdl-stream-gateway`
+  fmt/clippy `-D warnings` clean, 28 unit (4 new: HMAC signature equals the
+  Python golden, reply mapping, proto body, `query_v2_1` is a valid TLS
+  name) + `native_stream` 33 OK. Not run: `cargo deny` (not installed in
+  `qdl-rust-builder:r134-test`; `reqwest` is already a locked workspace
+  dependency). The Rust client against a live Query is K4-T01 in the
+  shadow run | runtime NONE | next: SDK offset 0 (D33), shadow packet.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

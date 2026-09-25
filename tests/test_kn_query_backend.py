@@ -506,6 +506,147 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                 router._market_item(replace(item, render_key=None)).model_dump(mode="json", by_alias=True),
             )
 
+    # ------------------------------------------------------------ D31 MARK/INDEX
+
+    def test_execution_mark_index_comes_from_the_cache_with_execution_bounds(self):
+        import asyncio
+        import time as _time
+
+        from qdl.reference.local_mark_index import CacheRefreshingMarkIndexView
+        from qdl.runtime.session_liveness import StableSessionLivenessReader
+        from qdl.runtime.stable_deployment import StableAcquisitionPlan
+
+        binding, payload = next(
+            (binding, payload) for binding, payload in self.latest_records
+            if binding.feed is FeedType.MARK_INDEX_PRICE and binding.authoritative
+            and binding.source_role == "PRIMARY"
+        )
+        acquisition = StableAcquisitionPlan.load(ROOT / "config/v2/stable-acquisition-bindings.yaml",
+                                                 catalog=self.catalog)
+        backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST, topic_id=TOPIC_ID)
+        directory = tempfile.TemporaryDirectory(prefix="k4q-session-")
+        self.addCleanup(directory.cleanup)
+
+        def put(age_ms: int) -> None:
+            envelope = market_data_pb2.EventEnvelope.FromString(payload)
+            now = _time.time_ns()
+            envelope.source_event_time_ns = now - age_ms * 1_000_000
+            envelope.received_at_ns = now - age_ms * 1_000_000 + 1_000_000
+            self.put_latest(binding, envelope.SerializeToString(deterministic=True), offset=age_ms, mark=age_ms)
+
+        def read(view):
+            return asyncio.run(view.read(
+                instrument_uid=binding.instrument.instrument_uid,
+                instrument_revision=binding.instrument.metadata_revision,
+                source_policy_id=binding.source_policy_id, max_freshness_ms=300_000, gateway_epoch=1,
+            ))
+
+        execution = CacheRefreshingMarkIndexView.from_catalog(
+            self.catalog, acquisition=acquisition,
+            session_liveness_reader=StableSessionLivenessReader(directory.name),
+        ).attach_cache(backend=backend, relax_to_alpha=False)
+        alpha = CacheRefreshingMarkIndexView.from_catalog(self.catalog).attach_cache(backend=backend)
+        put(200)
+        fresh = read(execution)
+        self.assertIsNotNone(fresh.record, fresh.reason)
+        self.assertEqual(fresh.record.canonical, self.reader.latest(self.lpk(binding)).rows[0].canonical)
+        put(5_000)
+        stale = read(CacheRefreshingMarkIndexView.from_catalog(
+            self.catalog, acquisition=acquisition,
+            session_liveness_reader=StableSessionLivenessReader(directory.name),
+        ).attach_cache(backend=backend, relax_to_alpha=False))
+        self.assertIsNone(stale.record)
+        self.assertEqual(stale.reason, "STALE", "the execution horizon is the binding's own")
+        self.assertIsNotNone(read(alpha).record, "alpha keeps its relaxed horizon")
+
+    # ------------------------------------------------------------ D29 read view
+
+    def test_the_stream_read_view_runs_the_python_oracle_on_one_view(self):
+        import base64
+        import json as _json
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from qdl.query.v2 import query_pb2
+        from qdl.runtime.internal_auth import stable_hmac_signature
+        from qdl.runtime.kn_read_view import READ_VIEW_PATH, READ_VIEW_SCHEMA, install_kn_read_view
+        from qdl.runtime.stable_source import StableConsumerCursorIssuer, StableGrpcSnapshotLoader, build_stable_query_stack
+        from qdl_sdk.models import DataRequirement as SdkRequirement, Feed, Grade
+
+        payloads = self.history_rows(30)
+        self.put_bars(self.bar_binding, payloads, offsets=list(range(30)), mark=31)
+        settings = KnCursorSettings(KEYS, "k4-test", "paper", TOPIC_ID, 1, "kn4-route-a", 600)
+        backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST, topic_id=TOPIC_ID,
+                                            clock_ns=lambda: self.now_ns)
+        issuer = KnCursorV3Issuer(settings, self.catalog)
+        service, _backend, _issuer = build_stable_query_stack(
+            spool=None, catalog=self.catalog, schema_digest=DIGEST, handoff=None, cursor_ttl_seconds=600,
+            backend=backend, issuer=issuer,
+        )
+        secret = bytes(range(32, 64))
+        app = FastAPI()
+        install_kn_read_view(app, service=service, backend=backend, issuer=issuer, secret=secret)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        def call(kind: str, requirement, *, sign=True, consumer="alpha.binance.paper.stable"):
+            body = _json.dumps({"schema": READ_VIEW_SCHEMA, "kind": kind, "consumer_id": consumer,
+                                "requirement": base64.b64encode(requirement.to_proto().SerializeToString()).decode()})
+            headers = {"X-QDL-Stable-Signature": stable_hmac_signature(secret if sign else b"x" * 32, body.encode())}
+            return client.post(READ_VIEW_PATH, content=body, headers=headers)
+
+        sdk = SdkRequirement(
+            instrument_uid=self.bar_binding.instrument.instrument_uid, feed=Feed.BAR,
+            consumer_grade=Grade.ALPHA, source_policy_id=self.bar_binding.source_policy_id,
+            interval=self.bar_binding.interval, warmup_limit=30,
+            stale_policy=__import__("qdl_sdk.models", fromlist=["StalePolicy"]).StalePolicy.OBSERVE,
+        )
+        reply = call("SNAPSHOT", sdk)
+        self.assertEqual(reply.status_code, 200, reply.text)
+        snapshot = query_pb2.GetSnapshotResponse.FromString(reply.content)
+        self.assertEqual(snapshot.watermark_offset, 31)
+        self.assertEqual([event.SerializeToString(deterministic=True) for event in snapshot.events],
+                         sorted(payloads, key=open_ms_of))
+        # Oracle parity: the spool loader's events for the same records.
+        spool_backend = self.spool_backend(payloads)
+        spool_service, _b, _i = build_stable_query_stack(
+            spool=spool_backend.spool, catalog=self.catalog, schema_digest=DIGEST, handoff=None,
+            cursor_ttl_seconds=600, backend=spool_backend,
+            issuer=type("NoCursor", (), {"bind_history": staticmethod(lambda r, h, consumer_id: h)})(),
+        )
+        from qdl.stream.grpc_service import requirement_from_proto
+        oracle = StableGrpcSnapshotLoader(service=spool_service, backend=spool_backend,
+                                          issuer=type("NoCursor", (), {"bind_history": staticmethod(
+                                              lambda r, h, consumer_id: h)})()).load(
+            requirement_from_proto(sdk.to_proto()), consumer_id="alpha.binance.paper.stable")
+        self.assertEqual(list(snapshot.events), list(oracle.events))
+        self.assertEqual(snapshot.data_as_of_ns, oracle.data_as_of_ns)
+        # The cursor is a v3 cursor at the view boundary.
+        self.assertEqual(SignedCursorV3Codec(KEYS, active_key_id="k4-test").verify(
+            snapshot.stream_cursor, consumer_id="alpha.binance.paper.stable", environment="paper",
+            requirement_digest_value=requirement_digest(requirement_from_proto(sdk.to_proto())),
+            expected=CursorV3Expectation(
+                environment="paper", stream=self.catalog.canonical_stream, source_topic_id=TOPIC_ID,
+                partition_plan_epoch=1, source_policy_revision=self.catalog.source_policy_revision,
+                catalog_revision=self.catalog.catalog_revision, route_generation="kn4-route-a"),
+            now_ns=__import__("time").time_ns()).source_offset, 31)
+        status = call("STATUS", sdk)
+        self.assertEqual(status.status_code, 200, status.text)
+        feed_status = query_pb2.GetFeedStatusResponse.FromString(status.content)
+        expected = service.status(requirement_from_proto(sdk.to_proto()))
+        self.assertEqual((feed_status.state, feed_status.policy_id, list(feed_status.flags)),
+                         (expected.state, expected.policy_id, list(expected.flags)))
+        # Typed refusals.
+        self.assertEqual(call("STATUS", sdk, sign=False).status_code, 401)
+        absent = next(b for b in self.catalog.bindings if b.feed is FeedType.TRADE)
+        not_ready = call("STATUS", SdkRequirement(
+            instrument_uid=absent.instrument.instrument_uid, feed=Feed.TRADE, consumer_grade=Grade.ALPHA,
+            source_policy_id=absent.source_policy_id))
+        self.assertEqual((not_ready.status_code, not_ready.json()["code"]), (409, "DATA_NOT_READY"))
+        bad = client.post(READ_VIEW_PATH, content=b"{}", headers={
+            "X-QDL-Stable-Signature": stable_hmac_signature(secret, b"{}")})
+        self.assertEqual(bad.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,8 +15,9 @@ use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
 use qdl_stream_gateway::hub::{Hub, HubConfig};
 use qdl_stream_gateway::memory::{container_memory_limit, MemoryPlan};
+use qdl_stream_gateway::query_view::QueryReadView;
 use qdl_stream_gateway::reader::{latest_for_key, KafkaLogSource, KafkaRangeSource, KafkaSettings};
-use qdl_stream_gateway::readview::NotReadyReadView;
+use qdl_stream_gateway::readview::{NotReadyReadView, ReadView};
 use qdl_stream_gateway::replay::{ReplayCoordinator, ReplayLimits};
 use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
 use qdl_stream_gateway::subscription::ByteBudget;
@@ -72,6 +73,35 @@ fn cursor_codec() -> Result<CursorV3Codec, String> {
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     CursorV3Codec::new(&keys, &env("QDL_KN_CURSOR_ACTIVE_KEY_ID")?)
+}
+
+/// KN-4 D29: the paired Query read view, or typed DATA_NOT_READY when unset.
+fn read_view() -> Result<Arc<dyn ReadView>, String> {
+    let Ok(urls) = std::env::var("QDL_KN_READ_VIEW_URLS") else {
+        return Ok(Arc::new(NotReadyReadView));
+    };
+    let secret_hex = read("QDL_KN_READ_VIEW_SECRET_FILE")?;
+    let secret_hex = secret_hex.trim();
+    let secret = (0..secret_hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(secret_hex.get(index..index + 2).unwrap_or("zz"), 16))
+        .collect::<Result<Vec<u8>, _>>()
+        .map_err(|_| "QDL_KN_READ_VIEW_SECRET_FILE is not hex".to_owned())?;
+    let targets: Vec<String> = urls
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let view = QueryReadView::new(
+        targets,
+        &secret,
+        &read("QDL_KN_TLS_CERT_FILE")?,
+        &read("QDL_KN_TLS_KEY_FILE")?,
+        &read("QDL_KN_READ_VIEW_CA_FILE")?,
+        Duration::from_millis(parsed("QDL_KN_READ_VIEW_TIMEOUT_MS", "30000")?),
+    )?;
+    Ok(Arc::new(view))
 }
 
 fn parsed<T: std::str::FromStr>(name: &str, default: &str) -> Result<T, String> {
@@ -228,7 +258,7 @@ async fn serve() -> Result<(), String> {
         cursor_codec()?,
         hub.clone(),
         replay,
-        Arc::new(NotReadyReadView),
+        read_view()?,
         budget,
         limits,
     ));

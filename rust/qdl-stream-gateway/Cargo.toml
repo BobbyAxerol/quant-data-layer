@@ -11,6 +11,10 @@ name = "qdl-stream-gateway"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
+# KN-4 D29 read-view client: the workspace pin (rustls, no default features);
+# TLS is a preconfigured rustls ClientConfig built in `query_view.rs`.
+reqwest.workspace = true
 # `use_pem` is off: it pulls `time`, whose fixed releases need a newer toolchain
 # than the pinned 1.82. Keys are parsed from SPKI in `auth.rs`.
 jsonwebtoken = { version = "=9.3.1", default-features = false }
@@ -27,6 +31,3 @@ tokio-stream = "=0.1.17"
 # No `tls` feature: it pulls the unmaintained `rustls-pemfile` (RUSTSEC-2025-0134);
 # mutual TLS is built in `tls.rs` with rustls + tokio-rustls.
 tonic = { version = "=0.12.3", default-features = false, features = ["transport", "codegen", "prost"] }
-
-[dev-dependencies]
-base64.workspace = true

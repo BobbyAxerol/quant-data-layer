@@ -326,17 +326,31 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         return replace(items[-1], cursor=source_placeholder(view), snapshot_id=view_snapshot_id(view))
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
+        return self.history_with_envelopes(requirement)[0]
+
+    def history_with_envelopes(
+        self, requirement: DataRequirement
+    ) -> tuple[HistoryResult | None, tuple[market_data_pb2.EventEnvelope, ...]]:
+        """The history and the canonical envelopes of its rows, from ONE view
+        (the Stream's GetSnapshot read view, D29)."""
+
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
         binding = self.catalog.binding_for(requirement)
         view, records = self._history_view(binding, requested, start_ns, end_ns)
         if view is None:
-            return None
+            return None, ()
         result = self._history_from_records(
             requirement, binding, records,
             requested=requested, start_ns=start_ns, end_ns=end_ns, expected_opens=expected_opens,
         )
         if result is None:
-            return None
+            return None, ()
+        selected = records
+        if start_ns is not None:
+            selected = tuple(
+                parsed for parsed in records if start_ns <= parsed.envelope.bar.open_time_ns < end_ns
+            )
+        envelopes = tuple(parsed.envelope for parsed in selected[-requested:])
         snapshot_id = view_snapshot_id(view)
         return replace(
             result,
@@ -344,7 +358,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             stream_cursor=source_placeholder(view),
             watermark_offset=view.boundary.offset,
             items=tuple(replace(item, snapshot_id=snapshot_id) for item in result.items),
-        )
+        ), envelopes
 
     def _history_view(self, binding, requested, start_ns, end_ns):
         if binding.feed is not FeedType.BAR:

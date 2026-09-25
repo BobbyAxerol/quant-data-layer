@@ -698,9 +698,10 @@ impl MarketDataStreamService for Gateway {
             .and_then(|()| access.require_permission(permission))
             .and_then(|()| require_requirement(&access.manifest, &requirement))
             .map_err(|error| state.refuse(access_status(error, "INVALID_ARGUMENT")))?;
+        let proto = body.requirement.as_ref().expect("validated above");
         state
             .read_view
-            .snapshot(&requirement, &body.consumer_id)
+            .snapshot(&requirement, proto, &body.consumer_id)
             .await
             .map(Response::new)
             .map_err(|error| error.to_status())
@@ -728,9 +729,10 @@ impl MarketDataStreamService for Gateway {
             .and_then(|()| access.require_permission(STATUS_READ))
             .and_then(|()| require_requirement(&access.manifest, &requirement))
             .map_err(|error| state.refuse(access_status(error, "INVALID_ARGUMENT")))?;
+        let proto = body.requirement.as_ref().expect("validated above");
         state
             .read_view
-            .status(&requirement)
+            .status(&requirement, proto, &body.consumer_id)
             .await
             .map(Response::new)
             .map_err(|error| error.to_status())

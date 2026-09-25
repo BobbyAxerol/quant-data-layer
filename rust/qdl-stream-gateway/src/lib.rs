@@ -14,6 +14,7 @@ pub mod bundle;
 pub mod generated;
 pub mod hub;
 pub mod memory;
+pub mod query_view;
 pub mod reader;
 pub mod readview;
 pub mod replay;

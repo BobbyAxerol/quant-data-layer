@@ -94,14 +94,22 @@ class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
     generation, read by ``KnMarketCacheQueryBackend``), then the unchanged
     endpoint and conversion apply every identity, freshness and gap gate.
     A product that is not ready offers nothing (the view answers unavailable).
+
+    Alpha reads relax the binding horizon exactly like the spool reader.
+    Execution reads keep the binding's own ``stale_after_ms`` and the quiet
+    evidence of the stream's view (the event's paired MARK/INDEX receipts,
+    the provider session files and the acquisition quiet policies): the Rust
+    Stream serves no private endpoint, and the cache holds the same
+    read-committed canonical record the Python stream view held.
     """
 
-    def attach_cache(self, *, backend) -> "CacheRefreshingMarkIndexView":
+    def attach_cache(self, *, backend, relax_to_alpha: bool = True) -> "CacheRefreshingMarkIndexView":
         self._backend = backend
-        self._bindings = {
-            uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
-            for uid, binding in self._bindings.items()
-        }
+        if relax_to_alpha:
+            self._bindings = {
+                uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
+                for uid, binding in self._bindings.items()
+            }
         return self
 
     async def read(self, *, instrument_uid: str, **kwargs):
@@ -123,6 +131,17 @@ class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
 
 def build_cache_alpha_mark_index_reader(*, catalog, backend) -> HttpExecutionMarkIndexReader:
     view = CacheRefreshingMarkIndexView.from_catalog(catalog).attach_cache(backend=backend)
+    return reader_for_view(view)
+
+
+def build_cache_execution_mark_index_reader(
+    *, catalog, backend, acquisition, session_liveness_reader,
+) -> HttpExecutionMarkIndexReader:
+    """Execution MARK/INDEX from the market cache with execution bounds (D31)."""
+
+    view = CacheRefreshingMarkIndexView.from_catalog(
+        catalog, acquisition=acquisition, session_liveness_reader=session_liveness_reader,
+    ).attach_cache(backend=backend, relax_to_alpha=False)
     return reader_for_view(view)
 
 

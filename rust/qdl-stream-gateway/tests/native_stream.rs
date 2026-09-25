@@ -832,19 +832,28 @@ impl ReadView for BootstrapView {
     async fn snapshot(
         &self,
         _requirement: &StreamRequirement,
+        _proto: &query::DataRequirement,
         _consumer_id: &str,
     ) -> Result<query::GetSnapshotResponse, ReadViewError> {
-        self.0.lock().unwrap().clone().ok_or(ReadViewError {
-            code: "DATA_NOT_READY".into(),
-            detail: "test fixture: no applied product state".into(),
-        })
+        self.0
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(ReadViewError::precondition(
+                "DATA_NOT_READY",
+                "test fixture: no applied product state",
+            ))
     }
 
     async fn status(
         &self,
         requirement: &StreamRequirement,
+        proto: &query::DataRequirement,
+        consumer_id: &str,
     ) -> Result<query::GetFeedStatusResponse, ReadViewError> {
-        NotReadyReadView.status(requirement).await
+        NotReadyReadView
+            .status(requirement, proto, consumer_id)
+            .await
     }
 }
 
@@ -1566,6 +1575,7 @@ impl ReadView for FixtureView {
     async fn snapshot(
         &self,
         requirement: &StreamRequirement,
+        _proto: &query::DataRequirement,
         consumer_id: &str,
     ) -> Result<query::GetSnapshotResponse, ReadViewError> {
         Ok(query::GetSnapshotResponse {
@@ -1578,6 +1588,8 @@ impl ReadView for FixtureView {
     async fn status(
         &self,
         requirement: &StreamRequirement,
+        _proto: &query::DataRequirement,
+        _consumer_id: &str,
     ) -> Result<query::GetFeedStatusResponse, ReadViewError> {
         Ok(query::GetFeedStatusResponse {
             state: format!("FIXTURE_{}", requirement.delivery.feed),
