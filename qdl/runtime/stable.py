@@ -58,6 +58,15 @@ from qdl.runtime.stable_source import (
     build_stable_query_stack,
 )
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
+from qdl.reference.local_mark_index import build_cache_alpha_mark_index_reader
+from qdl.runtime.kn_market_cache import reader_from_environment as kn_reader_from_environment
+from qdl.runtime.kn_query_backend import (
+    QUERY_BACKEND_ENV,
+    QUERY_BACKENDS,
+    KnCursorSettings,
+    KnCursorV3Issuer,
+    KnMarketCacheQueryBackend,
+)
 from qdl.security import (
     AuditChain,
     DataPlaneIdentityService,
@@ -574,12 +583,15 @@ def build_stable_handoff(
 def stable_readiness(
     config: StableRuntimeConfig,
     manifests: ConsumerManifestRegistry,
-    spool: SQLiteDurableSpool,
+    spool: SQLiteDurableSpool | None,
     *,
     quota: RedisMinuteQuota | None = None,
     extra_probes=(),
+    market_cache_backend=None,
 ) -> MeasuredRuntimeReadiness:
     async def cache():
+        if market_cache_backend is not None:
+            return await market_cache_readiness(market_cache_backend)
         summary = await asyncio.to_thread(spool.readiness_summary)
         return _ready(
             "query_cache",
@@ -616,6 +628,22 @@ def stable_readiness(
         config_revision=config.config_revision,
         probes=probes,
     )
+
+
+async def market_cache_readiness(backend) -> ComponentReadiness:
+    """KN-4 D32: the market cache is readable and every bound product's READY
+    coverage is reported (never a global flag). Query is ready when the cache
+    answers; a product without a READY generation answers DATA_NOT_READY on
+    its own reads."""
+
+    try:
+        ready, bound = await asyncio.to_thread(backend.readiness_summary)
+    except Exception as error:  # the cache is a dependency: typed NOT_READY
+        return ComponentReadiness(
+            "query_cache", ComponentState.NOT_READY,
+            detail=f"market cache unavailable: {type(error).__name__}", checked_at_ns=time.time_ns(),
+        )
+    return _ready("query_cache", detail=f"market cache readable ready_products={ready}/{bound}")
 
 
 def install_stable_health(app, readiness, manifest) -> None:
@@ -681,8 +709,26 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
-    spool = build_stable_spool(config, catalog)
-    handoff = build_stable_handoff(config, spool)
+    query_backend = os.environ.get(QUERY_BACKEND_ENV, "spool").strip() or "spool"
+    if query_backend not in QUERY_BACKENDS:
+        raise ValueError(f"{QUERY_BACKEND_ENV} must be one of {QUERY_BACKENDS}")
+    kn_backend = kn_issuer = kn_alpha_reader = None
+    if query_backend == "kn3":
+        # KN-4 D25: the Kafka-native market cache, no spool/handoff at all.
+        spool = handoff = None
+        reader = kn_reader_from_environment(os.environ)
+        settings = KnCursorSettings.from_environment(os.environ, environment=config.environment)
+        kn_backend = KnMarketCacheQueryBackend(
+            reader, catalog, schema_digest=config.schema_digest, topic_id=settings.topic_id,
+            session_liveness_root=str(config.session_liveness_dir),
+        )
+        kn_issuer = KnCursorV3Issuer(settings, catalog)
+        kn_alpha_reader = lambda: build_cache_alpha_mark_index_reader(  # noqa: E731
+            catalog=catalog, backend=kn_backend,
+        )
+    else:
+        spool = build_stable_spool(config, catalog)
+        handoff = build_stable_handoff(config, spool)
     execution_mark_index_reader = (
         HttpExecutionMarkIndexReader(
             config.execution_mark_index_urls,
@@ -701,9 +747,11 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         provider_admission_secret=config.internal_ingest_secret,
         session_liveness_root=str(config.session_liveness_dir),
         execution_mark_index_reader=execution_mark_index_reader,
+        backend=kn_backend, issuer=kn_issuer,
+        alpha_mark_index_reader_factory=kn_alpha_reader,
     )
     readiness = stable_readiness(
-        config, manifests, spool, quota=identity.quota,
+        config, manifests, spool, quota=identity.quota, market_cache_backend=kn_backend,
         extra_probes=(CallableReadinessProbe("instrument_catalog", lambda: _ready(
             "instrument_catalog", detail=f"bindings={len(catalog.bindings)}",
             revision=str(catalog.catalog_revision),
@@ -716,6 +764,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         contract_version="2.0.0", authority="INTERNAL_STABLE",
     )
     app.state.runtime_manifest = config.public_manifest()
+    app.state.stable_query_backend = query_backend
     app.state.stable_spool = spool
     app.state.stable_audit = AuditChain(config.audit_path)
     app.state.execution_mark_index_reader = execution_mark_index_reader
@@ -726,7 +775,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         if execution_mark_index_reader is not None:
             await execution_mark_index_reader.close()
         await service.close()
-        await asyncio.to_thread(spool.close)
+        if spool is not None:
+            await asyncio.to_thread(spool.close)
         await asyncio.to_thread(identity.quota.close)
 
     freeze_query_startup_heap()

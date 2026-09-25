@@ -86,6 +86,46 @@ class SpoolRefreshingMarkIndexView(ExecutionMarkIndexLiveView):
         return await super().read(instrument_uid=instrument_uid, **kwargs)
 
 
+class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
+    """The same view offered the market cache's latest record (KN-4 D31).
+
+    The Kafka-native Query backend has no spool: before each read it offers
+    the MARK_INDEX product's latest entry from the market cache (one READY
+    generation, read by ``KnMarketCacheQueryBackend``), then the unchanged
+    endpoint and conversion apply every identity, freshness and gap gate.
+    A product that is not ready offers nothing (the view answers unavailable).
+    """
+
+    def attach_cache(self, *, backend) -> "CacheRefreshingMarkIndexView":
+        self._backend = backend
+        self._bindings = {
+            uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
+            for uid, binding in self._bindings.items()
+        }
+        return self
+
+    async def read(self, *, instrument_uid: str, **kwargs):
+        binding = self._bindings.get(instrument_uid)
+        if binding is not None:
+            stored = await asyncio.to_thread(self._backend.latest_stored_event, binding)
+            if stored is not None:
+                try:
+                    envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+                except DecodeError:
+                    envelope = None
+                if envelope is not None and envelope.WhichOneof("payload") == "mark_index_price":
+                    await self.remember(
+                        binding=binding, envelope=envelope, stored=stored,
+                        gateway_epoch=_LOCAL_EPOCH,
+                    )
+        return await ExecutionMarkIndexLiveView.read(self, instrument_uid=instrument_uid, **kwargs)
+
+
+def build_cache_alpha_mark_index_reader(*, catalog, backend) -> HttpExecutionMarkIndexReader:
+    view = CacheRefreshingMarkIndexView.from_catalog(catalog).attach_cache(backend=backend)
+    return reader_for_view(view)
+
+
 def build_local_alpha_mark_index_reader(*, catalog, spool) -> HttpExecutionMarkIndexReader:
     view = SpoolRefreshingMarkIndexView.from_catalog(catalog).attach(
         spool=spool, canonical_stream=catalog.canonical_stream,

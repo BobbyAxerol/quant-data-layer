@@ -1645,10 +1645,10 @@ def build_local_alpha_mark_index_reader(*, catalog, spool):
 
 def build_stable_query_stack(
     *,
-    spool: SQLiteDurableSpool,
+    spool: SQLiteDurableSpool | None,
     catalog: StableSourceCatalog,
     schema_digest: str,
-    handoff: GapFreeHandoff,
+    handoff: GapFreeHandoff | None,
     cursor_ttl_seconds: int,
     pass_through_enabled: bool = False,
     reference_data_enabled: bool = False,
@@ -1656,6 +1656,9 @@ def build_stable_query_stack(
     provider_admission_secret: bytes | None = None,
     session_liveness_root: str | None = None,
     execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
+    backend: StableSpoolQueryBackend | None = None,
+    issuer=None,
+    alpha_mark_index_reader_factory=None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -1663,13 +1666,23 @@ def build_stable_query_stack(
     metadata for an instrument never opens a data product by itself. When it is
     off, the registry, the entitlements and the backend are exactly what they
     were before, which keeps the default deployment unchanged.
+
+    ``backend``/``issuer``/``alpha_mark_index_reader_factory`` replace the spool
+    backend, its v2 cursor issuer and the spool MARK/INDEX reader together
+    (the KN-4 market-cache backend, ``QDL_STABLE_QUERY_BACKEND=kn3``); omitted,
+    the spool stack is built exactly as before.
     """
-    backend = StableSpoolQueryBackend(
-        spool,
-        catalog,
-        schema_digest=schema_digest,
-        session_liveness_root=session_liveness_root,
-    )
+    if (backend is None) != (issuer is None):
+        raise ValueError("a replacement Query backend needs its own cursor issuer")
+    if backend is None:
+        if spool is None:
+            raise ValueError("the spool Query backend needs its spool")
+        backend = StableSpoolQueryBackend(
+            spool,
+            catalog,
+            schema_digest=schema_digest,
+            session_liveness_root=session_liveness_root,
+        )
     served: MarketDataQueryBackend = backend
     if pass_through_enabled:
         from qdl.runtime.provider_history import ProviderBarHistorySource
@@ -1716,14 +1729,20 @@ def build_stable_query_stack(
         small_local_warmup_lane=True,
         # A fleet cold start queues its large warmups instead of refusing them.
         queued_local_batch_lane=True,
-        # Alpha MARK/INDEX reads from this replica's own spool, in-process.
+        # Alpha MARK/INDEX reads from this replica's own spool (or, with the
+        # market-cache backend, its cache view), in-process.
         alpha_mark_index_reader=(
-            build_local_alpha_mark_index_reader(catalog=catalog, spool=spool)
+            (
+                alpha_mark_index_reader_factory()
+                if alpha_mark_index_reader_factory is not None
+                else build_local_alpha_mark_index_reader(catalog=catalog, spool=spool)
+            )
             if reference_batch is not None
             else None
         ),
     )
-    issuer = StableConsumerCursorIssuer(
-        handoff, catalog, ttl_seconds=cursor_ttl_seconds
-    )
+    if issuer is None:
+        issuer = StableConsumerCursorIssuer(
+            handoff, catalog, ttl_seconds=cursor_ttl_seconds
+        )
     return service, backend, issuer

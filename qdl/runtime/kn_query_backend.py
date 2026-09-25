@@ -1,0 +1,512 @@
+"""KN-4 K4.1 Query backend over the Kafka-native market cache (decisions D25-D28).
+
+Purpose: serve the existing Query API from the market cache the Rust
+projector writes, without a second semantic owner. ``KnMarketCacheQueryBackend``
+subclasses ``StableSpoolQueryBackend``: request windows, record selection,
+lineage validation, gap detection, quality (``evaluate_binding_quality``),
+item projection and the public history/coverage rules are the unchanged
+spool code. Only the record source differs: each product's view comes from
+``KnMarketCacheReader`` (one READY generation, a proven source boundary),
+never from SQLite or Kafka.
+
+Semantics that differ from the spool because the cache differs (D25/D27):
+
+* one row per BAR open (the KN-3 revision rule), so a revised BAR is never
+  returned twice;
+* a latest-state product (every non-BAR feed) keeps only its latest record;
+  its history is that one record (every declared non-BAR requirement has
+  ``warmup_limit`` 0 and the SDK consumers read ``data[-1]``);
+* every item and the history carry the view's source boundary as
+  ``watermark_offset`` - the SDK starts the stream handoff there - and the
+  cursor placeholder ``kn3-source:<topic id>:<partition>:<offset>`` that only
+  ``KnCursorV3Issuer`` turns into a signed cursor v3 (the placeholder never
+  leaves the process: the issuer refuses anything else);
+* ``snapshot_id`` hashes (product, topic id, partition, boundary); the cache
+  generation never enters it (contract section 5).
+
+``KnCursorV3Issuer`` signs with the Stream's own key set and expectation
+(same env names as ``qdl-stream-gateway``: ``QDL_KN_CURSOR_KEYS_FILE``,
+``QDL_KN_CURSOR_ACTIVE_KEY_ID``, ``QDL_KN_TOPIC_ID``,
+``QDL_KN_PARTITION_PLAN_EPOCH``, ``QDL_KN_ROUTE_GENERATION``,
+``QDL_KN_CURSOR_TTL_SECONDS``): Query issues, Stream verifies.
+
+Boundary: read-only; no Kafka reader, no SQLite, no write to any Redis.
+Selected by ``QDL_STABLE_QUERY_BACKEND=kn3`` (``qdl/runtime/stable.py``); the
+spool stays the default until the KN-5 cutover.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import hashlib
+import json
+from pathlib import Path
+import re
+import time
+from typing import Callable, Mapping
+
+from qdl.adapters.intervals import canonical_interval_ms
+from qdl.common.v1 import common_pb2
+from qdl.marketdata.v2 import market_data_pb2
+from qdl.query import DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
+from qdl.query.contracts import CanonicalErrorCode, QueryProblem
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
+from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
+from qdl.runtime.kn_bar_readback import binding_product_key
+from qdl.runtime.kn_market_cache import (
+    KnCacheError,
+    KnCacheIntegrityError,
+    KnCacheNotReady,
+    KnMarketCacheReader,
+    ProductView,
+)
+from qdl.runtime.stable_capacity import (
+    STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+    STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
+    STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+    STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+    STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
+    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+)
+from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
+from qdl.runtime.stable_source import (
+    StableSpoolQueryBackend,
+    _GapDiagnosticIncomplete,
+    _interval_ns,
+    _ParsedStoredEvent,
+)
+from qdl.domain.calendar import trading_calendar_for_id
+from qdl.transport import Cursor, StoredEvent
+from qdl.transport.contracts import DurableEvent
+
+PLACEHOLDER_PREFIX = "kn3-source:"
+_PLACEHOLDER = re.compile(r"kn3-source:([A-Za-z0-9._@|+=-]{1,256}):([0-9]{1,10}):([0-9]{1,19})")
+QUERY_BACKEND_ENV = "QDL_STABLE_QUERY_BACKEND"
+QUERY_BACKENDS = ("spool", "kn3")
+CURSOR_KEYS_FILE_ENV = "QDL_KN_CURSOR_KEYS_FILE"
+CURSOR_ACTIVE_KEY_ENV = "QDL_KN_CURSOR_ACTIVE_KEY_ID"
+TOPIC_ID_ENV = "QDL_KN_TOPIC_ID"
+PARTITION_PLAN_EPOCH_ENV = "QDL_KN_PARTITION_PLAN_EPOCH"
+ROUTE_GENERATION_ENV = "QDL_KN_ROUTE_GENERATION"
+CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
+
+
+def source_placeholder(view: ProductView) -> str:
+    boundary = view.boundary
+    return f"{PLACEHOLDER_PREFIX}{boundary.topic_id}:{boundary.partition}:{boundary.offset}"
+
+
+def parse_placeholder(value: str | None) -> tuple[str, int, int]:
+    match = _PLACEHOLDER.fullmatch(value or "")
+    if match is None:
+        raise ValueError("kn3 Query cursor has no source coordinate to sign")
+    return match.group(1), int(match.group(2)), int(match.group(3))
+
+
+def view_snapshot_id(view: ProductView) -> str:
+    boundary = view.boundary
+    digest = hashlib.sha256(
+        f"kn3|{view.lpk.encode()}|{boundary.topic_id}|{boundary.partition}|{boundary.offset}".encode()
+    ).hexdigest()
+    return f"qdl-v2-{digest[:32]}"
+
+
+def _not_ready(detail: str) -> QueryBackendError:
+    return QueryBackendError(QueryProblem(
+        CanonicalErrorCode.DATA_NOT_READY, detail, True, retry_after_ms=1_000,
+    ))
+
+
+class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
+    """The stable Query semantics over the KN-3 market cache."""
+
+    def __init__(
+        self,
+        reader: KnMarketCacheReader,
+        catalog: StableSourceCatalog,
+        *,
+        schema_digest: str,
+        topic_id: str,
+        config_revision: int = 1,
+        session_liveness_root: str | None = None,
+        clock_ns=time.time_ns,
+        monotonic_ns=time.monotonic_ns,
+        gap_scan_max_results: int = STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+        gap_scan_max_expected_bars: int = STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+        gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+    ) -> None:
+        super().__init__(
+            None,  # no spool: every read below goes to the market cache
+            catalog,
+            schema_digest=schema_digest,
+            config_revision=config_revision,
+            session_liveness_root=session_liveness_root,
+            clock_ns=clock_ns,
+            monotonic_ns=monotonic_ns,
+            gap_scan_max_results=gap_scan_max_results,
+            gap_scan_max_expected_bars=gap_scan_max_expected_bars,
+            gap_scan_max_work_ms=gap_scan_max_work_ms,
+            gap_scan_page_rows=STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
+            gap_scan_max_page_payload_bytes=STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
+        )
+        if not topic_id or ":" in topic_id:
+            raise ValueError("kn3 Query backend needs the canonical topic id")
+        self.reader = reader
+        self.topic_id = topic_id
+        self.environment = reader.environment
+
+    # ------------------------------------------------------------ cache view
+
+    def product_key(self, binding: StableSourceBinding):
+        return binding_product_key(binding, self.environment)
+
+    def _view(
+        self,
+        binding: StableSourceBinding,
+        *,
+        last: int | None = None,
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+    ) -> ProductView | None:
+        """The product's view; ``None`` when it has no state (DATA_NOT_READY)."""
+
+        lpk = self.product_key(binding)
+        try:
+            if binding.feed is not FeedType.BAR:
+                view = self.reader.latest(lpk)
+            elif start_ns is not None:
+                view = self.reader.bars(
+                    lpk, canonical_interval_ms(binding.interval or ""),
+                    start_ms=start_ns // 1_000_000, end_ms=end_ns // 1_000_000,
+                )
+            else:
+                view = self.reader.bars(
+                    lpk, canonical_interval_ms(binding.interval or ""), last=last or 1,
+                )
+        except KnCacheNotReady as error:
+            if error.state == "SOURCE_BOUNDARY_UNKNOWN":
+                raise _not_ready(
+                    f"SOURCE_BOUNDARY_UNKNOWN: {lpk.encode()} has no canonical fact in the cache yet"
+                ) from error
+            return None
+        except KnCacheIntegrityError as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.INTERNAL_ERROR, f"market cache integrity: {error}", False,
+            )) from error
+        except KnCacheError as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.DEPENDENCY_UNAVAILABLE, f"market cache: {error}", True,
+                retry_after_ms=500,
+            )) from error
+        if view.boundary.topic_id != self.topic_id:
+            raise _not_ready(
+                f"SOURCE_TOPIC_GENERATION: {lpk.encode()} was applied from another canonical topic"
+            )
+        return view
+
+    def _parsed(
+        self, binding: StableSourceBinding, view: ProductView
+    ) -> tuple[_ParsedStoredEvent, ...]:
+        cursor = Cursor(binding.canonical_stream, binding.partition_key, view.boundary.offset)
+        parsed = []
+        for row in view.rows:
+            envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
+            stored = StoredEvent(
+                event=DurableEvent(
+                    stream=binding.canonical_stream,
+                    partition_key=binding.partition_key,
+                    event_id=bytes(envelope.event_id),
+                    payload=row.canonical,
+                    accepted_at_ns=max(1, int(envelope.received_at_ns)),
+                ),
+                # D27: every item carries the view boundary (the handoff start).
+                cursor=cursor,
+                committed_at_ns=max(1, int(envelope.received_at_ns)),
+                payload_sha256=hashlib.sha256(row.canonical).hexdigest(),
+            )
+            parsed.append(_ParsedStoredEvent(stored=stored, envelope=envelope))
+        return self._select_records(binding, tuple(parsed), limit=max(1, len(parsed)))
+
+    def latest_stored_event(self, binding: StableSourceBinding) -> StoredEvent | None:
+        """The product's latest record as a stored event, ``None`` when it is
+        not ready (the alpha MARK/INDEX view, D31)."""
+
+        try:
+            view = self._view(binding, last=1)
+        except QueryBackendError:
+            return None
+        if view is None:
+            return None
+        records = self._parsed(binding, view)
+        return records[-1].stored if records else None
+
+    # ------------------------------------------------------------ backend API
+
+    def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
+        binding = self.catalog.binding_for(requirement)
+        requested = 1
+        if binding.feed is FeedType.BAR:
+            requested, _start, _end, _opens = self._requested_window(requirement)
+        view = self._view(binding, last=max(2, requested) if binding.feed is FeedType.BAR else 1)
+        if view is None:
+            return None
+        records = self._parsed(binding, view)
+        if not records:
+            return None
+        quality_records = (
+            records[-max(2, requested):] if binding.feed is FeedType.BAR else records[-1:]
+        )
+        self._validate_records(binding, quality_records)
+        items = self._items(requirement, quality_records)
+        if not items:
+            return None
+        return replace(items[-1], cursor=source_placeholder(view), snapshot_id=view_snapshot_id(view))
+
+    def history(self, requirement: DataRequirement) -> HistoryResult | None:
+        requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
+        binding = self.catalog.binding_for(requirement)
+        view, records = self._history_view(binding, requested, start_ns, end_ns)
+        if view is None:
+            return None
+        result = self._history_from_records(
+            requirement, binding, records,
+            requested=requested, start_ns=start_ns, end_ns=end_ns, expected_opens=expected_opens,
+        )
+        if result is None:
+            return None
+        snapshot_id = view_snapshot_id(view)
+        return replace(
+            result,
+            snapshot_id=snapshot_id,
+            stream_cursor=source_placeholder(view),
+            watermark_offset=view.boundary.offset,
+            items=tuple(replace(item, snapshot_id=snapshot_id) for item in result.items),
+        )
+
+    def _history_view(self, binding, requested, start_ns, end_ns):
+        if binding.feed is not FeedType.BAR:
+            view = self._view(binding, last=1)
+        elif start_ns is not None:
+            view = self._view(binding, start_ns=start_ns, end_ns=end_ns)
+        else:
+            view = self._view(binding, last=requested)
+        if view is None:
+            return None, ()
+        return view, self._parsed(binding, view)
+
+    def history_many(
+        self,
+        requirements: tuple[DataRequirement, ...],
+    ) -> dict[DataRequirement, HistoryResult | None | Exception]:
+        """One bounded batch; every item is its own product view (per-item
+        watermark, never an atomic global snapshot - contract section 5)."""
+
+        if len(requirements) > 100:
+            raise ValueError("stable history batch exceeds the public request bound")
+        results: dict[DataRequirement, HistoryResult | None | Exception] = {}
+        for requirement in requirements:
+            try:
+                results[requirement] = self.history(requirement)
+            except Exception as error:  # per-item outcome, as the spool batch
+                results[requirement] = error
+        return results
+
+    def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
+        requested, start_ns, end_ns, _ = self._requested_window(requirement)
+        binding = self.catalog.binding_for(requirement)
+        _view, rows = self._history_view(binding, requested, start_ns, end_ns)
+        if start_ns is None:
+            selected = rows[-requested:]
+        else:
+            selected = tuple(
+                parsed for parsed in rows if start_ns <= parsed.envelope.bar.open_time_ns < end_ns
+            )
+        self._validate_records(binding, selected)
+        return tuple(item.stored for item in selected)
+
+    # ------------------------------------------------------------ diagnostics
+
+    def _scan_binding_gaps_bounded(
+        self,
+        binding: StableSourceBinding,
+        *,
+        detected_at_ns: int,
+        append_gap: Callable[[GapRecord], None],
+        check_budget: Callable[[], None],
+        cancelled: Callable[[], bool],
+    ) -> None:
+        """One product's retained window, inside the existing global budget."""
+
+        try:
+            view = self._view(
+                binding,
+                last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW if binding.feed is FeedType.BAR else 1,
+            )
+        except QueryBackendError as error:
+            if error.problem.code is CanonicalErrorCode.DATA_NOT_READY:
+                return  # no canonical state yet: nothing observed, no gap
+            raise
+        if view is None:
+            return
+        observed_opens: set[int] = set()
+        for row in view.rows:
+            check_budget()
+            envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
+            if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
+                append_gap(self._gap(
+                    binding, f"sequence:{envelope.source_sequence}", envelope.source_sequence,
+                    detected_at_ns,
+                ))
+            if binding.feed is FeedType.BAR:
+                observed_opens.add(int(envelope.bar.open_time_ns))
+        if binding.feed is not FeedType.BAR or not observed_opens:
+            return
+        step = _interval_ns(binding.interval or "")
+        first_open, last_open = min(observed_opens), max(observed_opens)
+        if binding.continuous_calendar:
+            if ((last_open - first_open) // step) + 1 > self._gap_scan_max_expected_bars:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                )
+            expected_opens = range(first_open, last_open + step, step)
+        else:
+            try:
+                expected_opens = trading_calendar_for_id(
+                    binding.instrument.session_calendar_id
+                ).bar_opens_between_ns(
+                    start_ns=first_open, end_ns=last_open + step, interval_ns=step,
+                    max_rows=self._gap_scan_max_expected_bars,
+                )
+            except ValueError as error:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                ) from error
+        for expected_open in expected_opens:
+            check_budget()
+            if expected_open not in observed_opens:
+                append_gap(self._gap(binding, str(expected_open), "MISSING", detected_at_ns))
+
+    # ------------------------------------------------------------ readiness
+
+    def readiness_summary(self) -> tuple[int, int]:
+        """(READY products, bound products) of the catalog - per product, never
+        a global flag (D32)."""
+
+        lpks = [self.product_key(binding) for binding in self.catalog.bindings]
+        generations = self.reader.ready_generations(lpks)
+        return sum(1 for generation in generations if generation is not None), len(lpks)
+
+
+@dataclass(frozen=True)
+class KnCursorSettings:
+    keys: Mapping[str, bytes]
+    active_key_id: str
+    environment: str
+    topic_id: str
+    partition_plan_epoch: int
+    route_generation: str
+    ttl_seconds: int
+
+    @classmethod
+    def from_environment(cls, environ: Mapping[str, str], *, environment: str) -> "KnCursorSettings":
+        path = environ.get(CURSOR_KEYS_FILE_ENV, "").strip()
+        if not path:
+            raise ValueError(f"the kn3 Query backend requires {CURSOR_KEYS_FILE_ENV}")
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not raw:
+            raise ValueError("cursor key file must map key ids to hex secrets")
+        keys = {str(key_id): bytes.fromhex(str(secret)) for key_id, secret in raw.items()}
+        for name in (CURSOR_ACTIVE_KEY_ENV, TOPIC_ID_ENV, ROUTE_GENERATION_ENV):
+            if not environ.get(name, "").strip():
+                raise ValueError(f"the kn3 Query backend requires {name}")
+        return cls(
+            keys=keys,
+            active_key_id=environ[CURSOR_ACTIVE_KEY_ENV].strip(),
+            environment=environment.lower(),
+            topic_id=environ[TOPIC_ID_ENV].strip(),
+            partition_plan_epoch=int(environ.get(PARTITION_PLAN_EPOCH_ENV, "1")),
+            route_generation=environ[ROUTE_GENERATION_ENV].strip(),
+            ttl_seconds=int(environ.get(CURSOR_TTL_ENV, "3600")),
+        )
+
+
+class KnCursorV3Issuer:
+    """Signs the backend's source coordinate as a cursor v3 (D28).
+
+    Same ``bind_item``/``bind_history`` surface as ``StableConsumerCursorIssuer``.
+    The claims are exactly what the Rust Stream expects: bundle canonical
+    stream and revisions come from the same catalog, the product key from the
+    bundle LPK rule, the digest from the normalized requirement.
+    """
+
+    def __init__(
+        self,
+        settings: KnCursorSettings,
+        catalog: StableSourceCatalog,
+        *,
+        clock_ns=time.time_ns,
+    ) -> None:
+        if settings.ttl_seconds < 1:
+            raise ValueError("cursor TTL must be positive")
+        self.settings = settings
+        self.catalog = catalog
+        self.codec = SignedCursorV3Codec(settings.keys, active_key_id=settings.active_key_id)
+        self._clock_ns = clock_ns
+
+    def bind_item(
+        self, requirement: DataRequirement, item: MarketDataItem, *, consumer_id: str
+    ) -> MarketDataItem:
+        if self._preserve_non_replayable(requirement, item.cursor, item.watermark_offset):
+            return item
+        token = self._issue(requirement, consumer_id, item.snapshot_id or "", item.cursor)
+        return replace(item, cursor=token)
+
+    def bind_history(
+        self, requirement: DataRequirement, history: HistoryResult, *, consumer_id: str
+    ) -> HistoryResult:
+        if self._preserve_non_replayable(requirement, history.stream_cursor, history.watermark_offset):
+            return history
+        token = self._issue(requirement, consumer_id, history.snapshot_id, history.stream_cursor)
+        return replace(
+            history,
+            stream_cursor=token,
+            items=tuple(
+                replace(item, snapshot_id=history.snapshot_id, cursor=token) for item in history.items
+            ),
+        )
+
+    @staticmethod
+    def _preserve_non_replayable(requirement: DataRequirement, cursor: str | None, offset: int) -> bool:
+        if cursor != NON_REPLAYABLE_STREAM_CURSOR:
+            return False
+        if requirement.recovery is not RecoveryPolicy.FRESH_SNAPSHOT or offset != 0:
+            raise ValueError("non-replayable cursor requires FRESH_SNAPSHOT and zero watermark")
+        return True
+
+    def _issue(
+        self, requirement: DataRequirement, consumer_id: str, snapshot_id: str, placeholder: str | None
+    ) -> str:
+        topic_id, partition, offset = parse_placeholder(placeholder)
+        if topic_id != self.settings.topic_id:
+            raise ValueError("kn3 Query cursor coordinate belongs to another canonical topic")
+        binding = self.catalog.binding_for(requirement)
+        now = self._clock_ns()
+        claims = CursorV3Claims(
+            key_id=self.codec.active_key_id,
+            environment=self.settings.environment,
+            consumer_id=consumer_id,
+            requirement_digest=requirement_digest(requirement),
+            schema_major=2,
+            stream=self.catalog.canonical_stream,
+            product_key=binding_product_key(binding, self.settings.environment).encode(),
+            snapshot_id=snapshot_id,
+            source_topic_id=topic_id,
+            source_partition=partition,
+            source_offset=offset,
+            partition_plan_epoch=self.settings.partition_plan_epoch,
+            source_policy_revision=self.catalog.source_policy_revision,
+            catalog_revision=self.catalog.catalog_revision,
+            route_generation=self.settings.route_generation,
+            issued_at_ns=now,
+            expires_at_ns=now + self.settings.ttl_seconds * 1_000_000_000,
+        )
+        return self.codec.encode(claims)

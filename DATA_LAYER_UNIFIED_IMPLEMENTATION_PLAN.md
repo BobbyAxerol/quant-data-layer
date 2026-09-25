@@ -56671,6 +56671,35 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   one tiny hash per BAR product + one field per (state, canonical)
   partition pair | runtime NONE | services stopped after the run | next:
   K4.1 Python backend and v3 issuer.
+- 2026-09-25: **K4 slice 2 (K4.1 backend, D25/D26/D27/D28/D31/D32)** |
+  this commit | `tests.test_kn_query_backend` 15/15 on a disposable Redis
+  (real Lua scripts): BAR history item-for-item equal to the spool backend
+  on the same records (payload, quality, source, contract, lifecycle,
+  coverage, `data_as_of`) with every item at the view boundary; time range;
+  last-N walk past missing opens and never below the floor; legacy rows ->
+  boundary = watermark; latest `max(o, W)` incl. offset 0; typed outcomes
+  (no pointer -> DATA_NOT_READY, legacy-only -> `SOURCE_BOUNDARY_UNKNOWN`,
+  other topic -> `SOURCE_TOPIC_GENERATION`, corrupt row -> INTERNAL_ERROR
+  non-retryable, generation churn -> retried then DEPENDENCY_UNAVAILABLE);
+  read-only (`DUMP` of every key equal before/after); per-item batch; gap
+  diagnostic; issuer claims verified with the Stream's expectation; HTTP
+  warmup/snapshot through `create_v2_app` + JWT: signed v3 cursor at the
+  boundary, digest of the REST requirement matches, no placeholder in the
+  body. Regression: 275 tests of `test_pass_through_wiring`,
+  `test_phase533_query_readiness`, `test_runtime_readiness_recovery`,
+  `test_phaseb_stable_edge`, `test_dlv2_r1_delivery_lock`,
+  `test_kn_bar_readback`, `test_routed_query_backend`,
+  `test_phase10_universal_warmup`, `test_query_cold_work`,
+  `test_phase113_reference_v2` OK (1 pre-existing skip) | new
+  `qdl/runtime/kn_market_cache.py` (reader), `qdl/runtime/kn_query_backend.py`
+  (backend, issuer, settings), `CacheRefreshingMarkIndexView`
+  (`qdl/reference/local_mark_index.py`), `build_stable_query_stack` accepts a
+  backend/issuer/alpha-reader triple, `create_stable_query_app` selects
+  `QDL_STABLE_QUERY_BACKEND=spool|kn3` (default spool, unchanged), readiness
+  `query_cache` = cache reachability + READY coverage | observed failure:
+  the first wiring refused `handoff=None`, which `test_pass_through_wiring`
+  (and so the old contract) allows -> only the spool is required | runtime
+  NONE | next: K4.2 render/lanes, then the Stream ReadView (D29).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
