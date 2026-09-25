@@ -505,7 +505,10 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         self.assertEqual([item.payload for item in later.items], [item.payload for item in first.items])
 
         def render(history) -> bytes:
-            return router._render_warmup_chunked(router._warmup(WarmupResult("req-1", history)))
+            body = router._render_warmup_chunked(router._warmup(WarmupResult("req-1", history)))
+            # D39: the per-chunk renderer the endpoint uses is byte-identical.
+            self.assertEqual(router._render_warmup_result(WarmupResult("req-1", history)), body)
+            return body
 
         def stripped(history):
             return replace(history, items=tuple(replace(item, render_key=None) for item in history.items))

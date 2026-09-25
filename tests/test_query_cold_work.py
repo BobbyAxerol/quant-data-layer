@@ -162,6 +162,48 @@ class CancelledWorkHoldsItsPermitTests(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertEqual(done, [1])
 
+    async def test_the_batch_render_holds_its_lease_through_cancellation(self):
+        """D39: the batch render used ``asyncio.to_thread``; a cancelled request
+        released the local lease while the thread still built its response,
+        so the next large render could overlap it."""
+        import importlib
+
+        router = importlib.import_module("qdl.api_v2.router")
+        started, release, done = threading.Event(), threading.Event(), []
+
+        def build():
+            started.set()
+            release.wait(5)
+            done.append(threading.current_thread().name)
+            raise RuntimeError("never rendered: the request is gone")
+
+        task = self.asyncio.create_task(router._json_off_loop(build))
+        await self.asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await self.asyncio.sleep(0.05)
+        self.assertFalse(task.done())
+        release.set()
+        with self.assertRaises(self.asyncio.CancelledError):
+            await task
+        self.assertEqual(len(done), 1)
+        self.assertTrue(done[0].startswith("qdl-query-render"), "renders use the bounded render threads")
+
+    async def test_large_renders_never_use_the_loops_default_executor(self):
+        import importlib
+
+        router = importlib.import_module("qdl.api_v2.router")
+        names = []
+
+        def build():
+            names.append(threading.current_thread().name)
+            raise RuntimeError("stop after recording the thread")
+
+        for _ in range(6):
+            with self.assertRaises(RuntimeError):
+                await router._warmup_json_off_loop(build)
+        self.assertTrue(all(name.startswith("qdl-query-render") for name in names), names)
+        self.assertLessEqual(len(set(names)), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

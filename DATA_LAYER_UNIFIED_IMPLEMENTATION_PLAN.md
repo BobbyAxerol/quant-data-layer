@@ -57202,6 +57202,56 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   topics and a consumer group on the production cluster. The shadow therefore
   keeps the existing KN reader on the isolated broker and feeds it with the
   slice-9 mirror (assign mode, no production write of any kind).
+- 2026-09-25: **K4 slice 11 (D39 Query memory: measure, then bound)** | this
+  commit | Method: a scratch bench (session scratchpad, not evidence of
+  record) drives the real HTTP warmup (`TestClient` -> router -> service ->
+  KN backend -> real Lua reads) on the disposable kn3-lead Redis, one 1h BAR
+  product with 10,010 cached rows, image `qdl-v2-python:2.1.1-83fa1bc`;
+  tracemalloc for Python heap per stage, `/proc/self/status` for RSS/HWM,
+  `malloc_trim(0)` after the rounds. **Before** (at `c0f86e0`): per request
+  heap peak 51.4 / 101.9 / 202.5 MB for 2.5k / 5k / 10k rows (body 6.8 /
+  13.7 / 27.4 MB); of the 10k peak, `_warmup` built every `MarketDataView`
+  first (109.6 MB retained = ~11 KB/row) and the chunked render added 82.8 MB
+  (str parts + joined str + bytes); the KN row cache is 2,819 B/entry
+  (26.9 MB for 10k rows, <= 56 MB at the 20k default) - not the cause. Across
+  6 sequential 10k rounds RSS ratcheted 410 -> 510 MB (HWM 567) while the
+  Python heap retained only 7-41 MB per request; with `MALLOC_ARENA_MAX=2`
+  the same run is flat at 380 MB (HWM 441) and trims to 288 -> the growth is
+  glibc arena retention, not a Python leak. Renders ran on the loop's default
+  executor (host `nproc` 16 -> up to 20 threads, each able to keep a
+  ~200 MB arena high-water), and the batch render used `asyncio.to_thread`,
+  which releases the local lease on cancellation while the thread still
+  renders. Fix: (1) `_render_warmup_result` renders views one 250-row chunk
+  at a time from the result (never all views), (2) each piece is UTF-8
+  encoded as made (no whole-body str next to its bytes), (3) all large
+  renders run on a fixed 2-thread `qdl-query-render` executor via
+  `await_in_thread`, so the batch render also holds its lease through
+  cancellation. Bytes unchanged (existing byte-identity tests plus a new
+  equality with the model renderer). **After** (same bench): heap peak 18.1 /
+  34.8 / 68.4 MB (-66% at 10k; render stage 55.9 MB); 6 x 10k RSS plateau 391
+  (HWM 394) default arenas, 358 flat (HWM 358) with `MALLOC_ARENA_MAX=2`;
+  10k latency 5.6-6.0 s -> 5.0-5.2 s. Not changed, with reason: the local
+  lane's 1 KiB/row reservation is a queue-depth budget (queued waiters hold
+  no rows; the memory bound is `max_active=1`, `service.py:288-299`); raising
+  it to the measured ~7 KB/row would reinstate the 09-23 cold-start
+  `RATE_LIMITED` refusals. No Rust work: a cProfile of the 10k render shows
+  `_market_item` 3.5 s (Decimal text checks, Pydantic validation, `asdict`)
+  and 2.06 s of deliberate `cold_yield` sleeps, json 0.33 s; the guide applies
+  no latency budget to a whole warmup (`upgrade/...REVIEW.md:2357`) and its
+  P2.5 criterion is hot p95/p99 during a 5k warmup, met in stage 35 run 1
+  (QUOTE 19.5/30.6 ms) - no measured gate violation justifies native render.
+  Deployment setting carried to the shadow/KN-5 packet: `MALLOC_ARENA_MAX=2`
+  for Query (measured above). The stage-35 OOM (930-992 MiB of 1 GiB) is
+  CONSISTENT with these two mechanisms but not proven by this bench; the
+  watched stage 35 rerun must show it (memory sampling kept). Tests: new
+  `test_the_batch_render_holds_its_lease_through_cancellation`,
+  `test_large_renders_never_use_the_loops_default_executor` (before: FAIL
+  both - `asyncio_0` threads, the batch task finished while its thread still
+  ran; after OK); `test_query_cold_work` 10, `test_fund_phase5_api` 15,
+  `test_kn_query_backend` 19 OK (one combined invocation was killed with exit
+  137 before printing; rerun per module OK); full suite 2,189 OK / 10 skipped |
+  `tested locally`; runtime NONE | next: D40 (alpha inventory, sealed
+  binding, candidate image), then the D38/D41 watched packet.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

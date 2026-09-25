@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
@@ -392,6 +393,14 @@ def _market_item(item) -> MarketDataView:
 
 
 def _warmup(result) -> WarmupResponse:
+    return _warmup_envelope(result).model_copy(
+        update={"data": [_market_item(item) for item in _cold_rows(result.history.items)]}
+    )
+
+
+def _warmup_envelope(result) -> WarmupResponse:
+    """The warmup response without its rows (``data`` is rendered per chunk)."""
+
     history = result.history
     return WarmupResponse(
         request_id=result.request_id,
@@ -401,7 +410,7 @@ def _warmup(result) -> WarmupResponse:
         watermark_offset=history.watermark_offset,
         coverage=history.coverage.value,
         count=len(history.items),
-        data=[_market_item(item) for item in _cold_rows(history.items)],
+        data=[],
     )
 
 
@@ -416,12 +425,22 @@ async def _json_off_loop(build) -> JSONResponse:
     by_alias=True))``; only the thread that computes them changes.
     """
 
-    return await asyncio.to_thread(
-        lambda: JSONResponse(content=build().model_dump(mode="json", by_alias=True))
+    # The render thread holds the caller's local lease until it returns, also
+    # when the request is cancelled (KN-4 D39): an abandoned render may not
+    # overlap the next admitted one.
+    return await await_in_thread(
+        _RENDER_EXECUTOR,
+        lambda: JSONResponse(content=build().model_dump(mode="json", by_alias=True)),
     )
 
 
 _RENDER_CHUNK_ROWS = 250
+# Large responses render on two fixed threads, not on the loop's default
+# executor (up to cpu_count + 4 threads): each thread that renders a 10k-row
+# warmup grows its own malloc arena to the render's peak and keeps it, so the
+# number of render threads bounds the replica's retained memory (KN-4 D39,
+# measured). The local batch lease already admits one large render at a time.
+_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qdl-query-render")
 
 
 def _cold_rows(values):
@@ -431,6 +450,30 @@ def _cold_rows(values):
 
 
 def _render_warmup_chunked(model: WarmupResponse) -> bytes:
+    """Encode a warmup model in bounded pieces, byte-identical to ``JSONResponse``."""
+
+    rows = model.data
+    return _render_chunked(model, len(rows), lambda start, stop: _cold_rows(rows[start:stop]))
+
+
+def _render_warmup_result(result) -> bytes:
+    """Encode a warmup result directly, one chunk of public views at a time.
+
+    Only ``_RENDER_CHUNK_ROWS`` views exist at once: building every
+    ``MarketDataView`` first held ~11 KB per row (110 MB for 10,000 rows,
+    measured KN-4 D39) next to the rendered text. Bytes are identical to
+    ``_render_warmup_chunked(_warmup(result))``.
+    """
+
+    items = result.history.items
+    return _render_chunked(
+        _warmup_envelope(result),
+        len(items),
+        lambda start, stop: (_market_item(item) for item in _cold_rows(items[start:stop])),
+    )
+
+
+def _render_chunked(envelope: WarmupResponse, count: int, views) -> bytes:
     """Encode a warmup in bounded pieces, byte-identical to ``JSONResponse``.
 
     One ``model_dump`` and one ``json.dumps`` over 5,000 rows are two C-level
@@ -438,38 +481,44 @@ def _render_warmup_chunked(model: WarmupResponse) -> bytes:
     can preempt them: on 2026-09-23 (v2.1.1 Phase-3 stage 5) every probe on
     the rendering replica took ~1.4 s at once. Per-chunk calls hand the GIL
     back between pieces. ``data`` is the model's last field, so the envelope
-    is rendered with an empty list and the rows are spliced into it.
+    is rendered with an empty list and the rows are spliced into it. Each
+    piece is encoded to UTF-8 as it is made, so the text of the whole body
+    never exists next to its bytes.
     """
 
-    def encode(value) -> str:
+    def encode(value) -> bytes:
         return json.dumps(
             value, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
-        )
+        ).encode("utf-8")
 
-    suffix = ',"data":[]}'
-    head = encode(model.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
+    suffix = b',"data":[]}'
+    head = encode(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
     if not head.endswith(suffix):
         raise RuntimeError("warmup response layout no longer ends with its data list")
-    parts = [head[: -len(suffix)], ',"data":[']
-    rows = model.data
-    for start in range(0, len(rows), _RENDER_CHUNK_ROWS):
+    parts = [head[: -len(suffix)], b',"data":[']
+    for start in range(0, count, _RENDER_CHUNK_ROWS):
         chunk = encode([
-            item.model_dump(mode="json", by_alias=True)
-            for item in _cold_rows(rows[start:start + _RENDER_CHUNK_ROWS])
+            view.model_dump(mode="json", by_alias=True)
+            for view in views(start, start + _RENDER_CHUNK_ROWS)
         ])
         if start:
-            parts.append(",")
+            parts.append(b",")
         parts.append(chunk[1:-1])
-    parts.append("]}")
-    return "".join(parts).encode("utf-8")
+    parts.append(b"]}")
+    return b"".join(parts)
 
 
 async def _warmup_json_off_loop(build) -> Response:
-    """A warmup response rendered off the loop and in chunks (see above)."""
+    """A warmup response rendered off the loop and in chunks (see above).
+
+    ``build`` returns the (cursor-bound) warmup result, not its model.
+    """
 
     # The render thread holds the local lease until it returns, also when the
     # request is cancelled (KN-4 K4-T06).
-    body = await await_in_thread(None, lambda: _render_warmup_chunked(build()), cold=True)
+    body = await await_in_thread(
+        _RENDER_EXECUTOR, lambda: _render_warmup_result(build()), cold=True
+    )
     return Response(content=body, media_type="application/json")
 
 
@@ -491,10 +540,10 @@ async def _single_warmup_response(request, access, service, requirement, purpose
             )
         # Cursor binding copies every item and reads the durable watermark, so
         # it belongs off the loop with the rest of the response.
-        return await _warmup_json_off_loop(lambda: _warmup(type(item.result)(
+        return await _warmup_json_off_loop(lambda: type(item.result)(
             item.result.request_id,
             _bind_history_cursor(request, access, requirement, item.result.history),
-        )))
+        ))
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
