@@ -57429,6 +57429,54 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   - KN-4 status stays IMPLEMENTING: slices 1-16 `tested locally`; K4-T01..T08
     live evidence for the new candidate is NOT collected; no latency or
     capacity claim.
+- 2026-09-25: **Owner decision after the stopped watched run (D42-D45,
+  recorded before action).** Protecting TS on the old path is not a reason to
+  keep the old architecture; resources are provisioned to accept KN, and the
+  old path is retired (resources reclaimed) in KN-5. `rust_core_2` is not a
+  spool component: it produces canonical data used by both the old path and
+  KN and is never stopped or removed.
+  - **D42 shared canonical core CPU:** raise only `rust_core_2` 0.5 -> 1.0
+    vCPU; image, business config and RAM (256 MiB) unchanged; old config
+    recorded for rollback; throttling, raw lag and MARK/INDEX measured before
+    and after (one variable, the target metric decides).
+  - **D43 history:** one bounded, checkpointed historical migration from the
+    spool (CPU/IO bounded), joined to canonical Kafka by watermark with
+    overlap and dedup; the spool is never the live tail; a verified import
+    artifact is reused, not re-read from the spool on each retry; import,
+    mirror catch-up and cold build never run at the same time.
+  - **D44 mirror namespace:** keep a unique id under the granted read prefix
+    `qdl-c40-handoff-`; never join/commit, never a real group; no ACL change.
+  - **D45 run discipline:** guard before every preparation step; sequential
+    bootstrap, matrix -> T07 -> stage 20/35 only after lag is stable; report
+    the KN stack's resources separately and old+new totals on the host
+    (a raised cap does not remove cost from the benchmark); Query RAM stays
+    1 GiB unless real load shows a bounded working set without headroom.
+  - KN-5: 50 alpha + TS, Query/Stream handoff, rollback/return, then stop the
+    old projectors/stream/spool without consumers; time-limited rollback, no
+    two permanent stacks; v2.2.0 release; cleanup of images/caches/worktrees,
+    never history/volumes only because a container stopped.
+- 2026-09-25: **D42 capacity packet (recorded before the change).**
+  - Evidence without any shadow (13:40-14:25, `window.py` scratch, read-only
+    logs): `rust_core_2` n median 17.3k per progress line (08:00-09:20: 5.2k),
+    raw_age max 31.2 s / mean-of-means 2.9 s, 17 full batches; `rust_core`
+    and `rust_core_3` normal (3.2/7.1 s max, 0 full); projector canonical age
+    p90-of-max 172 s (morning 1.4 s); TS disconnects MARK_INDEX 461 and
+    BOOK_SNAPSHOT 368 in 45 min (morning 45 / 0); core_2 cgroup 65 %
+    periods throttled at its 0.5 quota. The degradation continues with the
+    shadow down, so it is production input on core_2's partitions.
+  - Change: `docker update --cpus 1.0 qdl_v2_stable_candidate-rust_core_2-1`
+    - a live cgroup quota change: no restart, no recreate, same container,
+    image `qdl-v2-rust:2.0.20-f1c9e1d` `sha256:389753b3...`, memory 256 MiB
+    and every env/mount unchanged. Before: NanoCpus 500000000, restart 0,
+    started 2026-09-19T17:23:49Z. Data-layer CPU ceiling sum 22.0 -> 22.5
+    vCPU (owner-approved addition, not resource-neutral; recorded).
+  - Not touched: every other role, Kafka, projectors, stream, Query, TS,
+    alphas, compose file (drift noted: compose still says 0.5 for this role;
+    the rule is `docker start`, never `compose up`; KN-5 packet reconciles).
+  - Windows: baseline 10 min (watch set, `kn4_watch.sh`) before; after 10 min
+    minimum, then compare the same metrics. Rollback
+    `docker update --cpus 0.5 qdl_v2_stable_candidate-rust_core_2-1` only if
+    the target metric worsens and no backlog is draining (drain first).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
