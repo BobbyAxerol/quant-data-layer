@@ -57842,6 +57842,22 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   history bar as `VENUE_NATIVE` (`rust/qdl-core/src/canonical.rs:656,745`);
   only the Binance REST path carries `BACKFILLED` (`:453-478`) - OKX history
   provenance is not distinguishable today.
+- 2026-09-25: **Probe over the live log, first run: FAIL by method (receipt
+  `run/probe-matrix.json` `2a1a9682...`), fixed in K4 slice 24** | this commit
+  | Two defects of slice 13's mirror mode: (1) the verdict counted the 76
+  products without a record in the window (e.g. BAR 12h/1d/1h, deliberately
+  not streamed) as missing subscriptions; (2) the final oracle was read after
+  the streams stopped while the live log kept growing, so records produced
+  after a subscription ended were "expected" - every lossless live feed showed
+  missing_lossless (TRADE 687-1,945, BOOK_DELTA 827-939, BOOK_SNAPSHOT ~52,
+  BAR 1m/3m 1) and QUOTE unsuperseded_drops=1: the same method error D41 names.
+  Fix (`scripts/kn_native_slice_probe.py`, mirror mode only): each wave's
+  window boundary is every partition's end offset at the moment its streams
+  stop; delivered and expected records are judged inside it
+  (`delivered_after_boundary` counted); unsampled products are excluded from
+  "missing" and stay listed. Test `test_unsampled_products_are_reported_not_missing`;
+  `test_kn_native_slice_probe` 38 OK | `tested locally`; the probe is rerun on
+  the same shadow with an image at this commit (measurement client only).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

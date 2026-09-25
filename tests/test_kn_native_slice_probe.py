@@ -483,6 +483,12 @@ class MirrorSourceModeTests(unittest.TestCase):
         self.assertEqual(commits, {(1, 7): 5_000, (1, 8): 6_000, (2, 1): 7_000})
         self.assertEqual(sources, {(1, 7): 3})
 
+    def test_unsampled_products_are_reported_not_missing(self):
+        base = {"subscriptions": [], "unsampled_in_window": ["a|BAR|1d"], "negatives": [], "rpcs": []}
+        failures = PROBE.matrix_verdict(base, expected_ids=["a|BAR|1d", "b|TRADE|-"])
+        self.assertTrue(any("1 missing" in item and "b|TRADE|-" in item for item in failures), failures)
+        self.assertFalse(any("a|BAR|1d" in item for item in failures), failures)
+
     def test_the_mirror_mode_reads_a_fixed_window_and_capture_the_whole_topic(self):
         args = types.SimpleNamespace(source_mode="mirror", bootstrap="kn4-kafka:9092", topic="t",
                                      oracle_back_seconds=600)

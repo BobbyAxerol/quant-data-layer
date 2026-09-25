@@ -1074,7 +1074,10 @@ def matrix_verdict(result: dict[str, Any], *, expected_ids: Sequence[str]) -> li
     ids = [item.get("id") if isinstance(item, dict) else None for item in subscriptions]
     if _duplicates(ids):
         failures.append(f"subscriptions: duplicated {_duplicates(ids)[:5]}")
-    missing = sorted(set(expected_ids) - set(ids))
+    # Mirror mode (live log): products without a record in the window are
+    # listed as unsampled, not streamed, and never counted as delivered.
+    unsampled = set(result.get("unsampled_in_window") or [])
+    missing = sorted(set(expected_ids) - set(ids) - unsampled)
     unexpected = sorted(set(ids) - set(expected_ids), key=str)
     if missing:
         failures.append(f"subscriptions: {len(missing)} missing, e.g. {missing[:3]}")
@@ -1424,6 +1427,7 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
                 waves.append([])
             waves[wave].extend(consumer_rows[start:start + size])
     results = []
+    wave_ends: list[dict[int, int] | None] = []
     for wave, members in enumerate(waves):
         seconds = float(args.window_seconds) if wave == 0 else float(args.tail_seconds)
         wave_started_ns = started_ns
@@ -1434,9 +1438,18 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
             oracle = _matrix_oracle(args, time.time_ns())
             wave_started_ns = time.time_ns()
         until = time.time_ns() + int(seconds * 1e9)
-        results += await asyncio.gather(*(
+
+        async def boundary_at(until_ns: int) -> dict[int, int] | None:
+            # Mirror mode: the live log keeps growing after a wave's streams
+            # stop, so the judged window ends where they stopped (D41).
+            await asyncio.sleep(max(0.0, (until_ns - time.time_ns()) / 1e9))
+            return canonical_end_offsets(args.bootstrap, args.topic) if mirror else None
+
+        *wave_results, ends = await asyncio.gather(*(
             _matrix_stream(runner, row, oracle.get(row["physical_key"], []), until, wave_started_ns,
-                           int(args.replay_back)) for row in members))
+                           int(args.replay_back)) for row in members), boundary_at(until))
+        results += wave_results
+        wave_ends.extend([ends] * len(members))
     # After the waves: the committed log grew during the live phase; judge
     # every subscription against the final oracle.
     ended_ns = time.time_ns()
@@ -1448,7 +1461,14 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     latency_by_feed: dict[str, list[float]] = {}
     catchup_by_feed: dict[str, list[float]] = {}
     source_by_feed: dict[str, list[float]] = {}
-    for row, item in zip([row for members in waves for row in members], results, strict=True):
+    for row, item, ends in zip([row for members in waves for row in members], results, wave_ends, strict=True):
+        if ends is not None:
+            # Judge only what existed when this wave's streams stopped.
+            def inside(values, ends=ends):
+                return [value for value in values if value[1] < ends.get(value[0], 0)]
+            item["_received"] = inside(item["_received"])
+            item["_delivered"] = [offset for (_partition, offset, *_rest) in item["_received"]]
+            item["delivered_after_boundary"] = item["delivered"] - len(item["_delivered"])
         received = item.pop("_received")
         live, catchup = commit_to_client_ms(received, commits)
         source_by_feed.setdefault(row["feed"], []).extend(
@@ -1458,8 +1478,10 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
         latency_by_feed.setdefault(row["feed"], []).extend(live)
         catchup_by_feed.setdefault(row["feed"], []).extend(catchup)
         delivered = item.pop("_delivered")
-        expected = expected_delivery(row, final.get(row["physical_key"], []), item["after"], started_ns,
-                                     ended_ns)
+        records = final.get(row["physical_key"], [])
+        if ends is not None:
+            records = [record for record in records if record[1] < ends.get(record[0], 0)]
+        expected = expected_delivery(row, records, item["after"], started_ns, ended_ns)
         item["expected_deliverable"] = sum(1 for entry in expected if entry["filtered"] == "no")
         item.update(judge_subscription(expected, delivered))
         item["coverage"] = coverage_class(expected, delivered)
