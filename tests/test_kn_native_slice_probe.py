@@ -483,6 +483,48 @@ class MirrorSourceModeTests(unittest.TestCase):
         self.assertEqual(commits, {(1, 7): 5_000, (1, 8): 6_000, (2, 1): 7_000})
         self.assertEqual(sources, {(1, 7): 3})
 
+    def test_the_rotated_commit_log_is_streamed_and_filtered_to_the_wanted_coordinates(self):
+        with tempfile.TemporaryDirectory() as root:
+            log = Path(root) / "commit-log.jsonl"
+            Path(str(log) + ".1").write_text(json.dumps(
+                {"partition": 0, "offset": 1, "commit_ns": 10, "source_timestamp_ms": 1,
+                 "source_timestamp_type": 1}) + "\n", encoding="utf-8")
+            log.write_text("".join(json.dumps({"partition": p, "offset": o, "commit_ns": 20 + o}) + "\n"
+                                   for p, o in ((0, 2), (1, 2), (1, 3))), encoding="utf-8")
+            commits, sources = PROBE.mirror_source_clocks(PROBE.commit_log_lines(log), {(0, 1), (1, 2)})
+            self.assertEqual(commits, {(0, 1): 10, (1, 2): 22})
+            self.assertEqual(sources, {(0, 1): 1})
+            self.assertEqual(list(PROBE.commit_log_lines(Path(root) / "absent.jsonl")), [])
+
+    def test_an_unexpected_delivery_is_located_by_partition_and_offset_with_its_identity(self):
+        from qdl.marketdata.v2 import market_data_pb2
+
+        def bar(open_ns, revision, event=b"e1"):
+            value = market_data_pb2.EventEnvelope(event_id=event)
+            value.bar.interval = "5m"
+            value.bar.open_time_ns = open_ns
+            value.bar.revision = revision
+            value.bar.lifecycle = 2
+            value.bar.is_final = True
+            return value
+
+        mine, other = "BINANCE|USDM|x|BAR|5m", "BINANCE|USDM|y|BAR|5m"
+        # Offset 40 exists on partition 3 (another product) and partition 1 (mine).
+        final = {mine: [(1, 40, bar(300, 1).SerializeToString()), (1, 41, bar(600, 1).SerializeToString())],
+                 other: [(3, 40, bar(900, 1, b"zz").SerializeToString())]}
+        delivered = {40: PROBE.record_identity(bar(300, 1)), 41: PROBE.record_identity(bar(600, 2)),
+                     9: PROBE.record_identity(bar(0, 1)), 55: PROBE.record_identity(bar(0, 1)),
+                     50: PROBE.record_identity(bar(0, 1))}
+        out = PROBE.unexpected_diagnosis([40, 41, 9, 55, 50], partition=1, after=10, ends={1: 52},
+                                         product_key=mine, final=final, identities=delivered)
+        reasons = {item["offset"]: item["reason"] for item in out}
+        self.assertEqual(reasons, {40: "same_record_not_expected", 41: "identity_differs",
+                                   9: "at_or_before_cursor", 55: "after_boundary", 50: "not_in_oracle"})
+        # Never the other partition's record at the same offset.
+        self.assertEqual(out[0]["log_key"], mine)
+        self.assertEqual(out[0]["logged"]["open_time_ns"], 300)
+        self.assertEqual(out[1]["delivered"]["revision"], 2)
+
     def test_unsampled_products_are_reported_not_missing(self):
         base = {"subscriptions": [], "unsampled_in_window": ["a|BAR|1d"], "negatives": [], "rpcs": []}
         failures = PROBE.matrix_verdict(base, expected_ids=["a|BAR|1d", "b|TRADE|-"])
@@ -502,6 +544,70 @@ class MirrorSourceModeTests(unittest.TestCase):
         with mock.patch.object(PROBE, "kafka_oracle", return_value={}) as whole:
             PROBE._matrix_oracle(types.SimpleNamespace(source_mode="capture", bootstrap="b", topic="t"), 1)
         whole.assert_called_once_with("b", "t")
+
+
+class QuotaNegativeTests(unittest.TestCase):
+    """KN-4 review F3: the shared-quota negative proves its own condition."""
+
+    class _Redis:
+        def __init__(self):
+            self.values = {}
+
+        def set(self, key, value, px=None):
+            self.values[key] = int(value)
+
+        def get(self, key):
+            return self.values.get(key)
+
+        def delete(self, *keys):
+            for key in keys:
+                self.values.pop(key, None)
+
+        def incr(self, key):
+            self.values[key] = self.values.get(key, 0) + 1
+            return self.values[key]
+
+    def _runner(self):
+        runner = PROBE.Slice.__new__(PROBE.Slice)
+        runner.args = types.SimpleNamespace(quota_prefix="qdl:stable:v2:paper:kn4shadow:identity:")
+        runner.manifests = {"c": types.SimpleNamespace(quotas=types.SimpleNamespace(requests_per_minute=5))}
+        return runner
+
+    def run_case(self, *, call_minute_offset=0, gateway_consumes=True, observed="RESOURCE_EXHAUSTED"):
+        import asyncio
+
+        client, clock = self._Redis(), [60 * 1000 + 59.9]
+
+        async def call():
+            clock[0] += 60 * call_minute_offset
+            if gateway_consumes:
+                client.incr(PROBE.quota_minute_key("qdl:stable:v2:paper:kn4shadow:identity", "c",
+                                                   int(clock[0] // 60)))
+            return observed
+
+        result = asyncio.run(self._runner().quota_case(client, call, "c", clock=lambda: clock[0]))
+        self.assertEqual(client.values, {})  # both seeded keys removed
+        return result
+
+    def test_the_key_is_the_servers_key(self):
+        from qdl.security.data_plane import RedisMinuteQuota
+
+        server = RedisMinuteQuota(mock.Mock(), prefix="qdl:stable:v2:paper:kn4shadow:identity")
+        manifest = types.SimpleNamespace(consumer_id="alpha.okx.paper.stable")
+        self.assertEqual(PROBE.quota_minute_key("qdl:stable:v2:paper:kn4shadow:identity:", manifest.consumer_id, 7),
+                         server._key(manifest, 7))
+
+    def test_a_call_after_the_minute_turns_still_meets_an_exhausted_counter(self):
+        result = self.run_case(call_minute_offset=1)
+        self.assertTrue(result["pass"])
+        self.assertEqual((result["call_minute"] - result["seeded_minute"], result["seeded_key_consumed"]), (1, 1))
+
+    def test_ok_or_an_unconsumed_seed_fails_the_case(self):
+        self.assertFalse(self.run_case(observed="OK")["pass"])
+        # Refused, but not by the seeded counter: the condition was not held.
+        unconsumed = self.run_case(gateway_consumes=False)
+        self.assertEqual((unconsumed["pass"], unconsumed["seeded_key_consumed"]), (False, 0))
+
 
 @unittest.skipUnless(__import__("os").environ.get("QDL_KN_TEST_KAFKA"), "SKIPPED LOUDLY: QDL_KN_TEST_KAFKA is not set")
 class WindowOracleKafkaTests(unittest.TestCase):

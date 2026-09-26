@@ -26,7 +26,9 @@ timestamp, plus ``qdl-mirror-source-partition``/``-offset``/``-timestamp``
 headers. ``--commit-log`` gets one line per mirrored record
 ``{partition, offset, commit_ns, source_offset, source_timestamp_ms,
 source_timestamp_type}`` (the probe's commit-log shape plus the source clock),
-so a latency report never has to pose a receive time as a commit time.
+so a latency report never has to pose a receive time as a commit time. The log
+is bounded: past ``--commit-log-max-bytes`` it rotates to ``<log>.1`` (the
+previous ``.1`` is dropped), so it never holds more than twice the bound.
 
 Boundary: reads only ``--source-bootstrap``; writes only ``--dest-bootstrap``,
 which must be a plaintext broker that is not a stable production broker
@@ -64,6 +66,38 @@ PRODUCTION_PROJECT = "qdl_v2_stable_candidate"
 GROUP_PREFIXES = ("kn-shadow-mirror-", "qdl-c40-handoff-")
 MIRROR_HEADERS = ("qdl-mirror-source-partition", "qdl-mirror-source-offset", "qdl-mirror-source-timestamp")
 PARTITION_EOF = -191  # librdkafka _PARTITION_EOF: informational
+
+
+class RotatingLineLog:
+    """Append-only line log bounded to two files of ``max_bytes``: the live
+    file rotates to ``<path>.1`` (replacing the previous one) when it passes
+    the bound. Line-buffered, so a killed mirror keeps every line it logged."""
+
+    def __init__(self, path: str | Path, max_bytes: int) -> None:
+        if max_bytes < 1:
+            raise ValueError("commit log bound must be positive")
+        self.path = Path(path)
+        self.max_bytes = max_bytes
+        self.handle = open(self.path, "a", encoding="utf-8", buffering=1)
+        self.size = self.path.stat().st_size
+
+    def write(self, line: str) -> None:
+        if self.size >= self.max_bytes:
+            self.handle.close()
+            self.path.replace(self.path.with_name(self.path.name + ".1"))
+            self.handle = open(self.path, "a", encoding="utf-8", buffering=1)
+            self.size = 0
+        self.handle.write(line)
+        self.size += len(line.encode("utf-8"))
+
+    def close(self) -> None:
+        self.handle.close()
+
+    def __enter__(self) -> "RotatingLineLog":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
 
 class MirrorRefused(ValueError):
@@ -297,6 +331,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--deadline-seconds", type=float, required=True)
     run.add_argument("--max-bytes-per-second", type=float, default=8 * 1024 * 1024)
     run.add_argument("--commit-log", required=True)
+    run.add_argument("--commit-log-max-bytes", type=int, default=64 * 1024 * 1024,
+                     help="rotate the commit log past this size (at most two files are kept)")
     run.add_argument("--resume-from-destination", action="store_true",
                      help="start after the mirror's durable checkpoint (written with every copy)")
     run.add_argument("--checkpoint-topic", default=CHECKPOINT_TOPIC,
@@ -347,8 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         products = bundle_products(json.loads(Path(args.bundle).read_text(encoding="utf-8")))
         stopping: list[bool] = []
         signal.signal(signal.SIGTERM, lambda *_: stopping.append(True))
-        # Line-buffered: a killed mirror keeps every line it logged.
-        with open(args.commit_log, "a", encoding="utf-8", buffering=1) as handle:
+        with RotatingLineLog(args.commit_log, args.commit_log_max_bytes) as handle:
             result = run_mirror(consumer, producer, topic=args.topic, start=start, products=products,
                                 deadline_s=args.deadline_seconds, max_bytes_per_second=args.max_bytes_per_second,
                                 log=lambda row: handle.write(json.dumps(row, sort_keys=True) + "\n"),

@@ -58028,6 +58028,33 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   diagnostics; SDK decode keeps/drops them; harness evidence bounded and
   field-filtered; `test_fund_phase5_api`, SDK, harness, contract-golden,
   release suites 145 OK | `tested locally`.
+- 2026-09-26: **Evidence tools: bounded mirror log, streamed probe log,
+  coordinate-exact BAR diagnosis, a quota negative that proves its own
+  condition; K4 slice 30 (Astra KN-4 review F3/F5)** | this commit |
+  (1) The mirror commit log grew to 894 MiB (one line per record); it now
+  rotates past `--commit-log-max-bytes` (64 MiB) to `<log>.1`, at most two
+  files. (2) The probe read the whole log with `read_text().splitlines()`
+  (client OOM risk); it now streams `<log>.1` then `<log>` and keeps only the
+  received coordinates (matrix) or received event ids (slice). (3) The BAR
+  `unexpected` diagnosis looked a delivered offset up by offset alone across
+  every partition; it now locates it by (partition, offset), compares the
+  delivered identity (event id, interval, open, revision, lifecycle, final)
+  with the log record's and names the reason (`at_or_before_cursor`,
+  `after_boundary`, `not_in_oracle`, `other_product_key`, `identity_differs`,
+  `same_record_not_expected`). (4) `quota_exhausted_shared_redis` passed in
+  probe runs 1-3 and observed `OK` in the diagnostic run: it seeded only the
+  current minute's counter, so a call authenticated after the minute turned
+  met an empty counter, and it never checked that the gateway consumed the
+  seeded key. It now seeds this and the next minute with the server's exact
+  key (`quota_minute_key` = `RedisMinuteQuota._key` = gateway `auth.rs`),
+  reads the counters back and passes only on RESOURCE_EXHAUSTED with a
+  consumed seeded key; `kn_native_slice_probe.py quota --repeat N` runs it
+  alone plus an unseeded control that must be OK. Tests:
+  `test_kn_native_slice_probe` 43 (1 Kafka skip), `test_kn_canonical_mirror`
+  (rotation) | `tested locally`. Orchestration (outside Git): the guard now
+  tears the run down at its deadline (it used to only exit, leaving 11
+  containers; they were torn down 2026-09-26 02:50Z without purge);
+  `purge` also removes the commit log; `L` label defined for every step.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

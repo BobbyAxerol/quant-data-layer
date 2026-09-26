@@ -85,6 +85,14 @@ NEGATIVE_CASES = {
 EXPECTED_NEGATIVES = len(NEGATIVE_CASES)
 
 
+def quota_minute_key(prefix: str, consumer_id: str, minute: int) -> str:
+    """The shared minute-quota key exactly as Query (`RedisMinuteQuota._key`)
+    and the Rust gateway (`auth.rs` `RedisMinuteQuota::key`) build it."""
+    normalized = prefix.strip(": ")
+    identity = hashlib.sha256(consumer_id.encode()).hexdigest()[:24]
+    return f"{normalized}:quota:minute:{identity}:{minute}"
+
+
 def _duplicates(values: Sequence[Any]) -> list[Any]:
     seen: set[Any] = set()
     return sorted({value for value in values if value in seen or seen.add(value)}, key=str)
@@ -456,6 +464,29 @@ class Slice:
         finally:
             await channel.close()
 
+    async def quota_case(self, client, call, consumer_id: str, clock=time.time) -> dict[str, Any]:
+        """Shared quota (KN-4 review F3): seed the consumer's counter at its
+        manifest limit - this minute and the next, so a call that lands after
+        the minute turns still meets an exhausted counter - make one call,
+        then read the counters back: the gateway must have consumed a seeded
+        key (the condition was really held) and refused RESOURCE_EXHAUSTED."""
+        limit = int(self.manifests[consumer_id].quotas.requests_per_minute)
+        minute = int(clock() // 60)
+        keys = [quota_minute_key(self.args.quota_prefix, consumer_id, value) for value in (minute, minute + 1)]
+        for key in keys:
+            client.set(key, limit, px=180_000)
+        try:
+            code = await call()
+            after_minute = int(clock() // 60)
+            counters = [int(client.get(key) or 0) for key in keys]
+        finally:
+            client.delete(*keys)
+        consumed = sum(max(0, value - limit) for value in counters)
+        return {"case": "quota_exhausted_shared_redis", "expected": "RESOURCE_EXHAUSTED", "observed": code,
+                "seeded_minute": minute, "call_minute": after_minute, "limit": limit,
+                "seeded_key_consumed": consumed,
+                "pass": code == "RESOURCE_EXHAUSTED" and consumed >= 1}
+
     async def negatives(self) -> list[dict[str, Any]]:
         import redis
 
@@ -531,16 +562,9 @@ class Slice:
         code = await self.expect_status(okx, domain, good, meta(self.jwt(okx)), None)
         results.append({"case": "no_client_certificate", "expected": "UNAVAILABLE", "observed": code,
                         "pass": code == "UNAVAILABLE"})
-        # Shared quota: seed this minute's counter at the manifest limit on the
-        # disposable quota Redis, expect RESOURCE_EXHAUSTED, then remove it.
-        client = redis.Redis.from_url(self.args.quota_redis_url)
-        identity = hashlib.sha256(okx.encode()).hexdigest()[:24]
-        key = f"{self.args.quota_prefix}:quota:minute:{identity}:{int(time.time() // 60)}"
-        client.set(key, self.manifests[okx].quotas.requests_per_minute, px=120_000)
-        code = await self.expect_status(okx, domain, good, meta(self.jwt(okx)), okx)
-        client.delete(key)
-        results.append({"case": "quota_exhausted_shared_redis", "expected": "RESOURCE_EXHAUSTED", "observed": code,
-                        "pass": code == "RESOURCE_EXHAUSTED"})
+        results.append(await self.quota_case(
+            redis.Redis.from_url(self.args.quota_redis_url),
+            lambda: self.expect_status(okx, domain, good, meta(self.jwt(okx)), okx), okx))
         ran = {result["case"]: result["expected"] for result in results}
         if ran != NEGATIVE_CASES:
             raise RuntimeError("negative matrix drifted from NEGATIVE_CASES; update both together")
@@ -997,6 +1021,57 @@ def expected_delivery(row: dict[str, Any], records: list[tuple[int, int, bytes]]
     return out
 
 
+MAX_DELIVERED_IDENTITIES = 20_000
+
+
+def record_identity(envelope) -> dict[str, Any]:
+    """What makes a delivered record comparable with a log record beyond its
+    offset: event id, feed, and for a BAR its interval, open, revision,
+    lifecycle and finality."""
+    feed = envelope.WhichOneof("payload") or ""
+    identity: dict[str, Any] = {"event_id": bytes(envelope.event_id).hex()[:32], "feed": feed.upper()}
+    if feed == "bar":
+        identity.update(interval=envelope.bar.interval, open_time_ns=int(envelope.bar.open_time_ns),
+                        revision=int(envelope.bar.revision), lifecycle=int(envelope.bar.lifecycle),
+                        is_final=bool(envelope.bar.is_final))
+    return identity
+
+
+def unexpected_diagnosis(offsets: Sequence[int], *, partition: int, after: int, ends: dict[int, int] | None,
+                         product_key: str, final: dict[str, list[tuple[int, int, bytes]]],
+                         identities: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Locate each unexpected delivered record by its full coordinate
+    (topic partition, offset) - an offset alone names a different record on
+    every partition - and compare the delivered identity with the log's."""
+    from qdl.marketdata.v2 import market_data_pb2
+
+    at_partition = {offset: (key, payload) for key, values in final.items()
+                    for record_partition, offset, payload in values if record_partition == partition}
+    out = []
+    for offset in offsets:
+        key, payload = at_partition.get(offset, (None, b""))
+        logged = None
+        if payload:
+            with contextlib.suppress(Exception):
+                logged = record_identity(market_data_pb2.EventEnvelope.FromString(payload))
+        delivered = identities.get(offset)
+        if offset <= after:
+            reason = "at_or_before_cursor"
+        elif ends is not None and offset >= ends.get(partition, 0):
+            reason = "after_boundary"
+        elif key is None:
+            reason = "not_in_oracle"
+        elif key != product_key:
+            reason = "other_product_key"
+        elif logged is not None and delivered is not None and logged != delivered:
+            reason = "identity_differs"
+        else:
+            reason = "same_record_not_expected"
+        out.append({"partition": partition, "offset": offset, "after": after, "reason": reason,
+                    "log_key": key, "logged": logged, "delivered": delivered})
+    return out
+
+
 def judge_subscription(expected: list[dict[str, Any]], delivered: list[int]) -> dict[str, int]:
     """Exactness of one subscription against its oracle view."""
     index = {item["offset"]: item for item in expected}
@@ -1179,6 +1254,7 @@ async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, unti
     sdk = sdk_requirement(types.SimpleNamespace(requirement=requirement))
     transport = runner.shared_transport(consumer_id)
     delivered: list[int] = []
+    identities: dict[int, dict[str, Any]] = {}
     received: list[tuple[int, int, int, int | None]] = []
     controls: list[str] = []
     errors: list[dict[str, Any]] = []
@@ -1233,6 +1309,8 @@ async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, unti
                 except Exception:  # noqa: BLE001
                     token_errors += 1
                 delivered.append(item.logical_offset)
+                if len(identities) < MAX_DELIVERED_IDENTITIES:
+                    identities[item.logical_offset] = record_identity(envelope)
                 segments[-1] += 1
                 received.append((partition, item.logical_offset, time.time_ns(), live_since_ns))
                 token = item.resume_token
@@ -1255,7 +1333,7 @@ async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, unti
             "delivered": len(delivered), "age_filtered_capture": filtered_all, "controls": controls[:6],
             "reached_live": reached_live, "errors": errors, "failovers": failovers,
             "token_errors": token_errors, "cross_mix": cross_mix, "segments": segments,
-            "_delivered": delivered,
+            "_delivered": delivered, "_identities": identities, "partition": partition,
             "_received": received}
 
 
@@ -1375,11 +1453,24 @@ def _matrix_oracle(args: argparse.Namespace, since_ns: int) -> dict[str, list[tu
 MIRROR_DRAIN_S = 15.0
 
 
-def mirror_source_clocks(lines) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], int]]:
+def commit_log_lines(path: str | Path):
+    """Stream a (possibly rotated) commit log: ``<path>.1`` then ``<path>``,
+    one line at a time - the log is never read into memory whole."""
+    for candidate in (Path(str(path) + ".1"), Path(path)):
+        if candidate.exists():
+            with open(candidate, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        yield line
+
+
+def mirror_source_clocks(lines, wanted: set[tuple[int, int]] | None = None,
+                         ) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], int]]:
     """Commit log -> ``(isolated commit ns, production record timestamp ms)``
-    by isolated coordinate. The production value is the canonical record's
-    Kafka timestamp (CreateTime: the producer's clock at produce), never a
-    commit time; rows without it (capture loads) give none."""
+    by isolated coordinate, kept only for the ``wanted`` coordinates (the
+    received records) when given. The production value is the canonical
+    record's Kafka timestamp (CreateTime: the producer's clock at produce),
+    never a commit time; rows without it (capture loads) give none."""
     commits: dict[tuple[int, int], int] = {}
     sources: dict[tuple[int, int], int] = {}
     for line in lines:
@@ -1387,6 +1478,8 @@ def mirror_source_clocks(lines) -> tuple[dict[tuple[int, int], int], dict[tuple[
         if "offset" not in entry:
             continue
         coordinate = (int(entry["partition"]), int(entry["offset"]))
+        if wanted is not None and coordinate not in wanted:
+            continue
         commits[coordinate] = int(entry["commit_ns"])
         if entry.get("source_timestamp_type") == 1 and int(entry.get("source_timestamp_ms", 0)) > 0:
             sources[coordinate] = int(entry["source_timestamp_ms"])
@@ -1464,8 +1557,9 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     final = _matrix_oracle(args, started_ns)
     commits: dict[tuple[int, int], int] = {}
     sources: dict[tuple[int, int], int] = {}
-    if args.commit_log and Path(args.commit_log).exists():
-        commits, sources = mirror_source_clocks(Path(args.commit_log).read_text(encoding="utf-8").splitlines())
+    if args.commit_log:
+        wanted = {(partition, offset) for item in results for partition, offset, *_rest in item["_received"]}
+        commits, sources = mirror_source_clocks(commit_log_lines(args.commit_log), wanted)
     latency_by_feed: dict[str, list[float]] = {}
     catchup_by_feed: dict[str, list[float]] = {}
     source_by_feed: dict[str, list[float]] = {}
@@ -1492,16 +1586,13 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
         expected = expected_delivery(row, records, item["after"], started_ns, ended_ns)
         item["expected_deliverable"] = sum(1 for entry in expected if entry["filtered"] == "no")
         item.update(judge_subscription(expected, delivered))
-        if item.get("unexpected") and ends is not None:
-            # Diagnosis: where each unexpected delivered offset lives in the log.
+        identities = item.pop("_identities")
+        if item.get("unexpected"):
             known = {entry["offset"] for entry in expected}
-            located = {offset: (key, partition) for key, values in final.items()
-                       for partition, offset, _value in values}
-            item["unexpected_sample"] = [
-                {"offset": offset, "after": item["after"],
-                 "log_key": (located.get(offset) or (None, None))[0],
-                 "log_partition": (located.get(offset) or (None, None))[1]}
-                for offset in [offset for offset in delivered if offset not in known][:5]]
+            item["unexpected_sample"] = unexpected_diagnosis(
+                [offset for offset in delivered if offset not in known][:5],
+                partition=item["partition"], after=item["after"], ends=ends,
+                product_key=row["physical_key"], final=final, identities=identities)
         item["coverage"] = coverage_class(expected, delivered)
     for transport in runner.__dict__.get("_transports", {}).values():
         with contextlib.suppress(Exception):
@@ -1535,15 +1626,38 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
             "oracle_keys": len(final), "oracle_records": sum(len(value) for value in final.values())}
 
 
+async def quota_async(args: argparse.Namespace) -> dict[str, Any]:
+    import redis
+
+    runner = Slice(args)
+    okx = "alpha.okx.paper.stable"
+    probe = next(p for p in runner.probes if p["consumer_id"] == okx)
+    domain = runner.requirement(okx, probe["instrument_uid"], probe["feed"])
+    good = runner.codec.encode(runner.claims(okx, domain, int(probe["offset"]), partition=int(probe["partition"])))
+    meta = (("authorization", f"Bearer {runner.jwt(okx)}"), ("x-qdl-consumer-id", okx),
+            ("x-qdl-purpose", "INTERNAL_ALPHA"))
+    client = redis.Redis.from_url(args.quota_redis_url)
+    runs = []
+    for _ in range(int(args.repeat)):
+        runs.append(await runner.quota_case(
+            client, lambda: runner.expect_status(okx, domain, good, meta, okx), okx))
+    # Unseeded control: the same call with the counters absent must be OK.
+    control = await runner.expect_status(okx, domain, good, meta, okx)
+    return {"schema": "qdl.kn.v220.quota-negative.v1", "target": args.target, "runs": runs,
+            "unseeded_control": control, "pass": all(run["pass"] for run in runs) and control == "OK"}
+
+
 async def main_async(args: argparse.Namespace) -> dict[str, Any]:
     runner = Slice(args)
     positives = await asyncio.gather(*(runner.run_product(probe) for probe in runner.probes))
     negatives = await runner.negatives()
     commits: dict[str, int] = {}
-    if args.commit_log and Path(args.commit_log).exists():
-        for line in Path(args.commit_log).read_text(encoding="utf-8").splitlines():
+    if args.commit_log:
+        wanted_events = {event for product in positives for event in product["_received_by_event"]}
+        for line in commit_log_lines(args.commit_log):
             row = json.loads(line)
-            commits[row["event_id"]] = int(row["commit_ns"])
+            if row.get("event_id") in wanted_events:
+                commits[row["event_id"]] = int(row["commit_ns"])
     for product in positives:
         received = product.pop("_received_by_event")
         live_since = product.pop("_live_since_ns")
@@ -1610,6 +1724,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--replay-back", type=int, default=2000)
     run.add_argument("--buffer", type=int, default=2000)
     run.add_argument("--out", required=True)
+    quota = sub.add_parser("quota", help="the shared-quota negative alone, repeated (KN-4 review F3)")
+    for name in ("--target", "--profile", "--bundle", "--cursor-keys", "--probes", "--topic-id",
+                 "--route-generation", "--quota-redis-url", "--quota-prefix", "--out"):
+        quota.add_argument(name, required=True)
+    quota.add_argument("--repeat", type=int, default=5)
     mat = sub.add_parser("matrix")
     mat.add_argument("--targets", nargs=2, required=True, help="replica A (killed during the run), replica B")
     mat.add_argument("--bootstrap", required=True)
@@ -1646,6 +1765,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                           "failures": failures[:25], "subscriptions": len(result["subscriptions"])}),
               file=sys.stderr)
         return 0 if not failures else 1
+    if args.command == "quota":
+        result = asyncio.run(quota_async(args))
+        Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps({"out": args.out, "pass": result["pass"], "runs": len(result["runs"])}), file=sys.stderr)
+        return 0 if result["pass"] else 1
     if args.command == "capture":
         print(json.dumps(capture(args)), file=sys.stderr)
         return 0

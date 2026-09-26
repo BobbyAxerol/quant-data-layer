@@ -257,5 +257,29 @@ class MirrorKafkaTests(unittest.TestCase):
                          "the mirror never registers or commits a consumer group")
 
 
+class CommitLogBoundTests(unittest.TestCase):
+    def test_the_commit_log_rotates_and_never_holds_more_than_two_bounds(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "commit-log.jsonl"
+            line = json.dumps({"offset": 1, "partition": 0, "commit_ns": 1}) + "\n"
+            with mirror.RotatingLineLog(path, 10 * len(line)) as log:
+                for _ in range(35):
+                    log.write(line)
+            rotated = path.with_name(path.name + ".1")
+            self.assertTrue(rotated.exists())
+            self.assertEqual(len(rotated.read_text().splitlines()), 10)
+            self.assertEqual(len(path.read_text().splitlines()), 5)
+            self.assertEqual(sorted(p.name for p in Path(root).iterdir()),
+                             ["commit-log.jsonl", "commit-log.jsonl.1"])
+            # A restarted mirror appends to the live file and keeps the bound.
+            with mirror.RotatingLineLog(path, 10 * len(line)) as log:
+                for _ in range(6):
+                    log.write(line)
+            self.assertEqual(len(path.read_text().splitlines()), 1)
+            self.assertEqual(len(rotated.read_text().splitlines()), 10)
+
+
 if __name__ == "__main__":
     unittest.main()
