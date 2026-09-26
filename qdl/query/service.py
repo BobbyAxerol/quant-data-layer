@@ -7,7 +7,7 @@ import uuid
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.data_quality.binding_decision import freshness_verdict
@@ -97,12 +97,14 @@ class QueryServiceError(RuntimeError):
         request_id: str,
         instrument_uid: str | None = None,
         quality_state: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(problem.detail)
         self.problem = problem
         self.request_id = request_id
         self.instrument_uid = instrument_uid
         self.quality_state = quality_state
+        self.diagnostics = diagnostics
 
 
 @dataclass(frozen=True)
@@ -506,6 +508,7 @@ class V2QueryService:
             CoverageStatus.FULL,
             request_id,
             authoritative=item.source.authoritative,
+            item=item,
         )
         return QueryResult(
             request_id,
@@ -686,6 +689,7 @@ class V2QueryService:
             history.coverage,
             request_id,
             authoritative=history.items[-1].source.authoritative,
+            item=history.items[-1],
         )
         return WarmupResult(
             request_id,
@@ -1928,6 +1932,7 @@ class V2QueryService:
         request_id: str,
         *,
         authoritative: bool,
+        item: MarketDataItem | None = None,
     ) -> None:
         if quality.policy_id != requirement.source_policy_id:
             raise QueryServiceError(
@@ -1975,7 +1980,30 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
                 quality_state=quality.state,
+                diagnostics=self._refusal_diagnostics(quality, source_id, item),
             )
+
+    def _refusal_diagnostics(
+        self, quality: QualityMetadata, source_id: str, item: MarketDataItem | None
+    ) -> dict[str, Any]:
+        """The quality this refusal was decided on, taken now (not re-read)."""
+
+        return {
+            "evaluated_at_ns": self._clock_ns(),
+            "state": quality.state,
+            "freshness_ms": quality.freshness_ms,
+            "event_recency_state": quality.event_recency_state,
+            "provider_session_state": quality.provider_session_state,
+            "provider_session_liveness_ms": quality.provider_session_liveness_ms,
+            "execution_eligible": quality.execution_eligible,
+            "gap_open": quality.gap_open,
+            "complete": quality.complete,
+            "reason_codes": list(quality.flags)[:32],
+            "source_id": source_id,
+            "watermark_offset": item.watermark_offset if item is not None else None,
+            "observed_at_ns": item.observed_at_ns if item is not None else None,
+            "received_at_ns": (item.received_at_ns or None) if item is not None else None,
+        }
 
     def _with_execution_eligibility(
         self,

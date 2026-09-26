@@ -9,12 +9,15 @@ class DataLayerError(RuntimeError):
         *,
         retryable: bool = False,
         retry_after_ms: int | None = None,
+        diagnostics: dict | None = None,
     ) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail
         self.retryable = retryable
         self.retry_after_ms = retry_after_ms
+        # Query's quality at the refusal, when the server sent it.
+        self.diagnostics = diagnostics
 
 
 class ContinuityError(DataLayerError):

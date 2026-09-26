@@ -58008,6 +58008,26 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   malformed -> repaired -> removed, ambiguous copy, age per call);
   `test_dlv2_r1_stale_reason` +1; session/quality/Query/KN suites 253 OK |
   `tested locally`.
+- 2026-09-26: **Refusal diagnostics: the quality a request was refused on
+  travels with the refusal; K4 slice 29 (Astra KN-4 review step 1)** | this
+  commit | The stage-35 receipt held only a detail hash for its two BNB QUOTE
+  refusals, so their cause could not be read. Query now attaches, to every
+  refusal decided in `_enforce` (snapshot and warmup), the quality it was
+  decided on, taken at that moment: `evaluated_at_ns`, state, freshness,
+  event-recency and provider-session state, session liveness, execution
+  eligibility, gap/complete, reason codes (session flags name generation,
+  config, skew or ambiguity), source id, watermark, observed/received times.
+  `ProblemDetails.diagnostics` (`ProblemDiagnostics`, optional, numeric
+  bounds only so a diagnostic can never turn a refusal into a 500) is an
+  additive OpenAPI change (semantic diff `PASS_PRE_BETA_FREEZE`, 0 hard
+  breaks; schema pin 68 -> 69); the SDK keeps it on `DataLayerError.diagnostics`
+  (deployed clients decode error bodies as dicts and ignore it). The Phase-3
+  harness records, at the failed request, the typed reason, the bounded
+  diagnostics, the serving replica, wall-clock send/fail times and elapsed
+  time (both failure sites). Tests: API stale refusal carries the
+  diagnostics; SDK decode keeps/drops them; harness evidence bounded and
+  field-filtered; `test_fund_phase5_api`, SDK, harness, contract-golden,
+  release suites 145 OK | `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

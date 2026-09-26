@@ -72,3 +72,21 @@ class ReplicaReadTransportTests(unittest.IsolatedAsyncioTestCase):
         await transport.close()
         self.assertTrue(first.closed)
         self.assertTrue(second.closed)
+
+
+class RefusalDiagnosticsDecodeTests(unittest.TestCase):
+    def test_a_refusal_keeps_the_servers_quality_diagnostics(self) -> None:
+        from qdl_sdk.transport import RestQueryTransport
+
+        body = {"code": "DATA_STALE", "detail": "required data exceeds its freshness policy (SESSION_STATE)",
+                "retryable": True, "diagnostics": {"state": "STALE", "provider_session_state": "UNKNOWN",
+                                                   "reason_codes": ["SOURCE_SESSION_CLOCK_SKEW"]}}
+        with self.assertRaises(DataLayerError) as raised:
+            RestQueryTransport._decode(httpx.Response(503, json=body))
+        self.assertEqual(raised.exception.code, "DATA_STALE")
+        self.assertEqual(raised.exception.diagnostics["reason_codes"], ["SOURCE_SESSION_CLOCK_SKEW"])
+        # An older server sends none; a malformed value is dropped, not trusted.
+        for extra in ({}, {"diagnostics": "x"}):
+            with self.assertRaises(DataLayerError) as raised:
+                RestQueryTransport._decode(httpx.Response(503, json={**body, "diagnostics": None, **extra}))
+            self.assertIsNone(raised.exception.diagnostics)

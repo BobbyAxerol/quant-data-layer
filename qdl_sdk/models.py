@@ -147,6 +147,27 @@ class WarmupSpecification(ClosedModel):
         return self
 
 
+class ProblemDiagnostics(ClosedModel):
+    """Quality as Query evaluated it for the refused request (KN-4 review):
+    the same non-secret metadata a served item carries, taken at the refusal,
+    so a failure is never diagnosed from a status read seconds later."""
+
+    evaluated_at_ns: int = Field(ge=0)
+    state: str = Field(max_length=64)
+    freshness_ms: int = Field(ge=0)
+    event_recency_state: str = Field(max_length=64)
+    provider_session_state: str = Field(max_length=64)
+    provider_session_liveness_ms: int | None = Field(default=None, ge=0)
+    execution_eligible: bool
+    gap_open: bool
+    complete: bool
+    reason_codes: list[str] = Field(default_factory=list, max_length=32)
+    source_id: str | None = None
+    watermark_offset: int | None = Field(default=None, ge=0)
+    observed_at_ns: int | None = Field(default=None, ge=0)
+    received_at_ns: int | None = Field(default=None, ge=0)
+
+
 class ProblemDetails(ClosedModel):
     type: str
     title: str
@@ -158,6 +179,7 @@ class ProblemDetails(ClosedModel):
     retry_after_ms: int | None = None
     instrument_uid: str | None = None
     quality_state: str | None = None
+    diagnostics: ProblemDiagnostics | None = None
 
 
 class DecimalValue(ClosedModel):

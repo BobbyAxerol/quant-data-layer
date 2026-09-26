@@ -228,6 +228,11 @@ class RestQueryTransport:
             str(payload.get("detail", response.text)),
             retryable=bool(payload.get("retryable", False)),
             retry_after_ms=payload.get("retry_after_ms"),
+            diagnostics=(
+                payload.get("diagnostics")
+                if isinstance(payload.get("diagnostics"), dict)
+                else None
+            ),
         )
 
 

@@ -575,6 +575,26 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
 
 
 
+class RefusalEvidenceTests(unittest.TestCase):
+    def test_a_refusal_records_its_typed_reason_and_bounded_server_diagnostics(self):
+        from qdl_sdk.errors import DataLayerError
+
+        error = DataLayerError(
+            "DATA_STALE", "required data exceeds its freshness policy (SESSION_STATE)", retryable=True,
+            diagnostics={"state": "STALE", "provider_session_state": "UNKNOWN", "freshness_ms": 6_100,
+                         "reason_codes": [f"F{i}" for i in range(40)], "watermark_offset": 12,
+                         "unknown_field": "dropped"})
+        evidence = _MODULE._safe_error(error)
+        self.assertEqual(evidence["code"], "DATA_STALE")
+        self.assertEqual(evidence["reason"], "SESSION_STATE")
+        self.assertEqual(evidence["diagnostics"]["provider_session_state"], "UNKNOWN")
+        self.assertEqual(len(evidence["diagnostics"]["reason_codes"]), 32)
+        self.assertNotIn("unknown_field", evidence["diagnostics"])
+        plain = _MODULE._safe_error(RuntimeError("boom"))
+        self.assertNotIn("reason", plain)
+        self.assertNotIn("diagnostics", plain)
+
+
 class Kn4FixedWindowHandoffVerdictTests(unittest.TestCase):
     """KN-4 D41: the handoff is judged over one fixed window against the
     canonical log, with the KN-2 rules, from real golden TRADE records."""

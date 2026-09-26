@@ -513,6 +513,18 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["code"], "DATA_STALE")
         self.assertEqual(response.json()["quality_state"], "STALE")
+        # KN-4 review: the quality the refusal was decided on travels with it.
+        diagnostics = response.json()["diagnostics"]
+        self.assertEqual(
+            {key: diagnostics[key] for key in (
+                "state", "freshness_ms", "execution_eligible", "gap_open", "complete",
+                "provider_session_state", "watermark_offset", "source_id")},
+            {"state": "STALE", "freshness_ms": 20_000, "execution_eligible": False,
+             "gap_open": False, "complete": True, "provider_session_state": "NOT_APPLICABLE",
+             "watermark_offset": stale.watermark_offset, "source_id": stale.source.source_id},
+        )
+        self.assertGreater(diagnostics["evaluated_at_ns"], 0)
+        self.assertEqual(diagnostics["observed_at_ns"], stale.observed_at_ns)
 
         denied_service = V2QueryService(
             instruments=InstrumentQuery(self.registry),

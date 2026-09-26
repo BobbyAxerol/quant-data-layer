@@ -57,13 +57,35 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+_DIAGNOSTIC_FIELDS = (
+    "evaluated_at_ns", "state", "freshness_ms", "event_recency_state", "provider_session_state",
+    "provider_session_liveness_ms", "execution_eligible", "gap_open", "complete", "reason_codes",
+    "source_id", "watermark_offset", "observed_at_ns", "received_at_ns",
+)
+
+
 def _safe_error(error: BaseException) -> dict[str, object]:
     code = getattr(error, "code", None)
-    return {
+    detail = str(getattr(error, "detail", error))
+    out: dict[str, object] = {
         "type": type(error).__name__,
         "code": str(code) if isinstance(code, str) and re.fullmatch(r"[A-Z0-9_]{1,80}", code) else None,
-        "detail_sha256": _sha256(str(getattr(error, "detail", error)).encode()),
+        "detail_sha256": _sha256(detail.encode()),
     }
+    # The typed reason inside the server's fixed sentence (e.g. EVENT_AGE,
+    # SESSION_STATE): vocabulary, never free text.
+    reason = re.search(r"\(([A-Z_]{1,40})\)$", detail)
+    if reason:
+        out["reason"] = reason.group(1)
+    # Query's quality at the refusal (KN-4 review): only the known,
+    # non-secret fields, bounded.
+    diagnostics = getattr(error, "diagnostics", None)
+    if isinstance(diagnostics, dict):
+        out["diagnostics"] = {
+            key: (list(diagnostics[key])[:32] if key == "reason_codes" else diagnostics[key])
+            for key in _DIAGNOSTIC_FIELDS if key in diagnostics
+        }
+    return out
 
 
 def _stream_frame_quality_diagnostic(event, requirement, *, now_ns: int | None = None) -> dict[str, object]:
@@ -1894,14 +1916,18 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             ledger.sent += 1
             window = recorder.window(sent)
             _SERVED_BY.set(None)
+            sent_ns = time.time_ns()
             try:
                 await _target_read(client, operation, products)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
                 recorder.error(operation=operation, poll=label, window=window,
-                               product=_product_evidence(products[0]), error=_safe_error(error))
+                               product=_product_evidence(products[0]), error=_safe_error(error),
+                               served_by=_SERVED_BY.get(), sent_ns=sent_ns, failed_ns=failed_ns,
+                               elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
                 continue
             done = time.monotonic()
             ledger.completed += 1
@@ -2117,14 +2143,17 @@ async def _target_rotating_probe(*, client, venue, feed, products, period, start
             ledger.sent += 1
             window = recorder.window(sent)
             _SERVED_BY.set(None)
+            sent_ns = time.time_ns()
             try:
                 await _target_read(client, "SNAPSHOT", (product,))
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
                 recorder.error(operation="PROBE", window=window, product=_product_evidence(product),
-                               error=_safe_error(error))
+                               error=_safe_error(error), served_by=_SERVED_BY.get(), sent_ns=sent_ns,
+                               failed_ns=failed_ns, elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
                 continue
             ledger.completed += 1
             recorder.read(operation="SNAPSHOT", products=(product,),

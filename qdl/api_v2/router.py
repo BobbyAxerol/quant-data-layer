@@ -696,6 +696,7 @@ def _problem(error: QueryServiceError) -> ProblemDetails:
         retry_after_ms=error.problem.retry_after_ms,
         instrument_uid=error.instrument_uid,
         quality_state=error.quality_state,
+        diagnostics=error.diagnostics,
     )
 
 

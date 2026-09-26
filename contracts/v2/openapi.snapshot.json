@@ -1382,6 +1382,16 @@
             "title": "Detail",
             "type": "string"
           },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "instrument_uid": {
             "anyOf": [
               {
@@ -1446,6 +1456,128 @@
           "retryable"
         ],
         "title": "ProblemDetails",
+        "type": "object"
+      },
+      "ProblemDiagnostics": {
+        "additionalProperties": false,
+        "description": "Quality as Query evaluated it for the refused request (KN-4 review):\nthe same non-secret metadata a served item carries, taken at the refusal,\nso a failure is never diagnosed from a status read seconds later.",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "evaluated_at_ns": {
+            "minimum": 0.0,
+            "title": "Evaluated At Ns",
+            "type": "integer"
+          },
+          "event_recency_state": {
+            "maxLength": 64,
+            "title": "Event Recency State",
+            "type": "string"
+          },
+          "execution_eligible": {
+            "title": "Execution Eligible",
+            "type": "boolean"
+          },
+          "freshness_ms": {
+            "minimum": 0.0,
+            "title": "Freshness Ms",
+            "type": "integer"
+          },
+          "gap_open": {
+            "title": "Gap Open",
+            "type": "boolean"
+          },
+          "observed_at_ns": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At Ns"
+          },
+          "provider_session_liveness_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Session Liveness Ms"
+          },
+          "provider_session_state": {
+            "maxLength": 64,
+            "title": "Provider Session State",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "received_at_ns": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At Ns"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "state": {
+            "maxLength": 64,
+            "title": "State",
+            "type": "string"
+          },
+          "watermark_offset": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark Offset"
+          }
+        },
+        "required": [
+          "evaluated_at_ns",
+          "state",
+          "freshness_ms",
+          "event_recency_state",
+          "provider_session_state",
+          "execution_eligible",
+          "gap_open",
+          "complete"
+        ],
+        "title": "ProblemDiagnostics",
         "type": "object"
       },
       "QualityView": {
