@@ -157,6 +157,7 @@ end
 
 -- Pass 2: apply.
 local results = {}
+local diagnostic_buckets = {}
 for index, op in ipairs(ops) do
   local code, lpk = op[1], op[2]
   if code == 'S' then
@@ -218,6 +219,7 @@ for index, op in ipairs(ops) do
     else
       redis.call('HSET', key('b', gen, lpk, bucket), open_ms, op[10])
       redis.call('HSET', key('bd', gen, lpk, bucket), open_ms, op[13])
+      diagnostic_buckets[key('b', gen, lpk, bucket)] = {gen, lpk, bucket}
       if op[9] == '' then
         redis.call('HINCRBY', meta, 'rows', 1)
       end
@@ -251,11 +253,13 @@ for index, op in ipairs(ops) do
         for bucket in string.gmatch(op[8], '[^,]+') do
           local bucket_key = key('b', gen, lpk, bucket)
           removed = removed + redis.call('HLEN', bucket_key)
-          redis.call('UNLINK', bucket_key, key('bd', gen, lpk, bucket))
+          redis.call('UNLINK', bucket_key, key('bd', gen, lpk, bucket), key('bs', gen, lpk, bucket))
+          diagnostic_buckets[bucket_key] = nil
         end
       end
       if op[9] ~= '' then
         local boundary = key('b', gen, lpk, op[9])
+        diagnostic_buckets[boundary] = {gen, lpk, op[9]}
         local fields = redis.call('HKEYS', boundary)
         for _, open_ms in ipairs(fields) do
           if cmp(open_ms, floor_ms) < 0 then
@@ -290,6 +294,44 @@ for index, op in ipairs(ops) do
     redis.call('HSET', key('src', lpk), 't', op[3], 'p', op[4])
     results[index] = 'SOURCE'
   end
+end
+
+-- BEGIN diagnostic_summary: shared by isolated cache initialization only.
+local function diagnostic_summary(bucket_key, index_key, summary_key, interval)
+  local amount, unit = string.match(interval, '^(%d+)([smhdw])$')
+  local units = {s=1000, m=60000, h=3600000, d=86400000, w=604800000}
+  local step = amount and tonumber(amount) * units[unit]
+  local opens = redis.call('HKEYS', bucket_key)
+  if not step or step <= 0 or #opens > 112 or #opens ~= redis.call('HLEN', index_key) then
+    redis.call('DEL', summary_key); return false
+  end
+  local flags, values, spans = {}, {}, {}
+  for _, opened in ipairs(opens) do
+    local n, flag = tonumber(opened), redis.call('HGET', index_key, opened)
+    if not n or n > 9007199254740991 or not string.match(opened, '^%d+$')
+       or (#opened > 1 and string.sub(opened, 1, 1) == '0')
+       or not flag or (flag ~= 'N' and string.sub(flag, 1, 1) ~= 'G') then
+      redis.call('DEL', summary_key); return false
+    end
+    table.insert(values, n)
+    if flag ~= 'N' then table.insert(flags, {opened, string.sub(flag, 2)}) end
+  end
+  table.sort(values)
+  for _, n in ipairs(values) do
+    if #spans > 0 and n == spans[#spans][2] + step then spans[#spans][2] = n
+    else table.insert(spans, {n, n}) end
+  end
+  for _, span in ipairs(spans) do
+    span[1], span[2] = string.format('%.0f', span[1]), string.format('%.0f', span[2])
+  end
+  redis.call('SET', summary_key, cjson.encode({1, step, #opens, spans, flags}))
+  return true
+end
+-- END diagnostic_summary
+
+for bucket_key, item in pairs(diagnostic_buckets) do
+  diagnostic_summary(bucket_key, key('bd', item[1], item[2], item[3]),
+    key('bs', item[1], item[2], item[3]), string.match(item[2], '|([^|]+)$'))
 end
 
 redis.call('HSET', key('ckpt', topic, partition), 'next', next_offset, 'fence', owner_fence, 'at_ms', now_ms)

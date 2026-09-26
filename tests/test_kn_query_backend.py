@@ -199,6 +199,44 @@ class KnQueryBackendRedisTests(unittest.TestCase):
             key = f"{self.prefix}bd:{generation}:{lpk.encode()}:{opened // (BUCKET_OPENS * step)}"
             self.client.hset(key, str(opened), flag)
 
+    def summarize_buckets(self, binding, payloads, generation=7):
+        source = (ROOT / "rust/qdl-projector/src/apply.lua").read_text()
+        function = source.split("-- BEGIN diagnostic_summary", 1)[1].split("-- END diagnostic_summary", 1)[0]
+        function = function[function.index("local function diagnostic_summary"):]
+        lpk = self.lpk(binding)
+        step = canonical_interval_ms(binding.interval)
+        for bucket in {open_ms_of(p) // (BUCKET_OPENS * step) for p in payloads}:
+            suffix = f"{generation}:{lpk.encode()}:{bucket}"
+            self.client.eval(function + "\nreturn diagnostic_summary(KEYS[1],KEYS[2],KEYS[3],ARGV[1])", 3,
+                self.prefix + "b:" + suffix, self.prefix + "bd:" + suffix,
+                self.prefix + "bs:" + suffix, binding.interval)
+
+    def test_materialized_summary_matches_oracle_floor_and_missing_index(self):
+        rows = self.history_rows(350)
+        rows.pop(140)
+        env = market_data_pb2.EventEnvelope.FromString(rows[20])
+        env.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+        env.source_sequence = "summary-sequence"
+        rows[20] = env.SerializeToString()
+        lpk = self.put_bars(self.bar_binding, rows)
+        self.put_diagnostic_index(self.bar_binding, rows)
+        expected = self.backend().open_gaps()
+        self.summarize_buckets(self.bar_binding, rows)
+        self.assertEqual(self.backend().open_gaps(), expected)
+        for limit in (1, 112, 240, 350):
+            _, entries = self.reader.bar_diagnostics(lpk, self.interval_ms, last=limit, check_budget=lambda: None)
+            self.assertEqual([o for o, _ in entries], sorted(open_ms_of(p) for p in rows)[-limit:])
+        floor = open_ms_of(rows[142])
+        self.client.hset(f"{self.prefix}bm:7:{lpk.encode()}", "floor", floor)
+        _, entries = self.reader.bar_diagnostics(lpk, self.interval_ms, last=350, check_budget=lambda: None)
+        self.assertEqual([o for o, _ in entries], sorted(open_ms_of(p) for p in rows if open_ms_of(p) >= floor))
+        opened = max(open_ms_of(p) for p in rows)
+        key = f"{self.prefix}bd:7:{lpk.encode()}:{opened // (BUCKET_OPENS * self.interval_ms)}"
+        self.client.hdel(key, str(opened))
+        from qdl.runtime.kn_market_cache import KnCacheIntegrityError
+        with self.assertRaises(KnCacheIntegrityError):
+            self.reader.bar_diagnostics(lpk, self.interval_ms, last=350, check_budget=lambda: None)
+
     def test_indexed_diagnostic_matches_verified_scan_without_decoding(self):
         from unittest.mock import patch
         rows = self.history_rows(300)

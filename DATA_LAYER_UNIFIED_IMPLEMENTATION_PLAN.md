@@ -58768,6 +58768,25 @@ cases; only the two global diagnostic HTTP calls failed (retain evidence).
 Next isolated edge image includes the validated nonnegative OKX weekly window;
 only test edge is recreated, all production remains unchanged.
 
+**Diagnostic closure scope before edit:** all four public probes still hit the
+5s work deadline as the universe fills. Materialize exact per-bucket run summaries
+inside Rust projector's existing atomic Lua apply, once per touched bucket/batch;
+Query reads summaries with bounded key-count/interval/head/floor/source checks.
+Old caches retain the exact slower scanner, never an empty success. This removes
+repeated sorting of millions of opens from a diagnostic request. Test correction,
+floor, generation, reclaim and incomplete summary against the verified scan.
+An isolated-cache-only summary initialization may use the same source Lua over
+existing test buckets; no production cache/migration or Kafka offsets touched.
+
+Summary slice verification: Python real-Redis reader 27/27 PASS; Rust real-Redis
+atomic cache 6/6 and Stage-B recovery/revision/floor/reclaim 27/27 PASS. The first
+new Python corruption test modified an open below its own test floor; corrected
+to newest retained open and reran. Rust builder first used wrong workspace path
+(no Cargo.toml, no tests executed); corrected to qdl-projector. Derived summaries
+are trusted projector outputs atomically coupled to row/index changes; they are
+not an independent tamper-proof database. Count mismatch or malformed summary
+fails closed; legacy indexes still perform exact key-set checks.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

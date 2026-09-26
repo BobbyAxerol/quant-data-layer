@@ -102,6 +102,28 @@ return {'OK', ptr[1], ptr[2] or '0', src[1] or '', src[2] or '', mark,
 _BAR_DIAGNOSTIC = """#!lua flags=no-writes
 local replies, step, floor = {}, tonumber(ARGV[2]), tonumber(ARGV[3])
 for _, key in ipairs(KEYS) do
+  local suffix = string.sub(key, #('kn3:' .. ARGV[1] .. ':b:') + 1)
+  local summary = redis.call('GET', 'kn3:' .. ARGV[1] .. ':bs:' .. suffix)
+  if summary then
+    local ok, s = pcall(cjson.decode, summary)
+    if not ok or type(s) ~= 'table' or s[1] ~= 1 or s[2] ~= step
+       or s[3] ~= redis.call('HLEN', key)
+       or s[3] ~= redis.call('HLEN', 'kn3:' .. ARGV[1] .. ':bd:' .. suffix) then
+      return {'INVALID'}
+    end
+    local spans, flags = {}, {}
+    for _, span in ipairs(s[4]) do
+      if tonumber(span[2]) >= floor then
+        local first = tonumber(span[1])
+        if first < floor then first = first + math.ceil((floor - first) / step) * step end
+        table.insert(spans, {string.format('%.0f', first), span[2]})
+      end
+    end
+    for _, flag in ipairs(s[5]) do
+      if tonumber(flag[1]) >= floor then table.insert(flags, flag) end
+    end
+    table.insert(replies, {spans, flags})
+  else
   local opens = redis.call('HKEYS', key)
   local flat = redis.call('HGETALL', 'kn3:' .. ARGV[1] .. ':bd:' .. string.sub(key, #('kn3:' .. ARGV[1] .. ':b:') + 1))
   if #opens * 2 ~= #flat then return {'MISSING'} end
@@ -129,6 +151,7 @@ for _, key in ipairs(KEYS) do
     span[1], span[2] = string.format('%.0f', span[1]), string.format('%.0f', span[2])
   end
   table.insert(replies, {spans, flags})
+  end
 end
 return {'OK', cjson.encode(replies)}
 """
@@ -384,9 +407,10 @@ class KnMarketCacheReader:
                                for opened in range(first, end + interval_ms, interval_ms))
 
     def bar_diagnostic_ranges(self, lpk, interval_ms, *, last, check_budget):
-        """Exact open-key/index equality, returned as contiguous runs, not 1M fields.
+        """Atomically materialized runs, with exact legacy-index scan fallback.
 
-        The bounded read-only script checks every retained key, not a sample.
+        Run summaries are written by the same Rust transaction as rows/index.
+        The bounded read-only script checks counts; legacy indexes check every key.
         Complete head/floor/source fences still surround the reads. Each script
         examines at most eight buckets to avoid monopolizing hot Redis reads.
         """

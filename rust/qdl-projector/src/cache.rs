@@ -865,6 +865,7 @@ impl Cache {
                 for bucket in bucket_of(first, interval_ms)..=bucket_of(last, interval_ms) {
                     keys.push(self.layout.bar_bucket(generation, lpk, bucket));
                     keys.push(self.layout.bar_diagnostic(generation, lpk, bucket));
+                    keys.push(format!("{}bs:{generation}:{lpk}:{bucket}", self.layout.prefix()));
                 }
             }
             keys.push(meta);
