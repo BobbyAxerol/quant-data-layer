@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from scripts import benchmark_consumer_endpoints as bench
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
 
 
 class ConsumerEndpointBenchmarkTests(unittest.TestCase):
@@ -40,7 +41,7 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
             cases = bench.cases_for(scope.products, 8)
             singles = {ps[0].identity for op, ps in cases if op in ("snapshot", "reference_batch") and len(ps) == 1}
             self.assertEqual(singles, {p.identity for p in scope.products})
-        self.assertEqual(len(products), 299)
+        self.assertEqual(len(products), 299 + UNIVERSE_TOTAL)
         reference_feeds = set()
         for p in products:
             if p.delivery.value == "ON_DEMAND":

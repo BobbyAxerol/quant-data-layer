@@ -6,7 +6,7 @@
   "note": "Frozen before any KN runtime exists. Latency, stages, workload and TS gates are inherited unchanged from the v2.1.1 budget by hash; resource and retention values are measured or derived from measurements named below. A missed target is an open exit, never a threshold edited after results.",
   "inherits": {
     "path": "config/v2/v211-target-acceptance-budget.json",
-    "sha256": "974f009ea3688b7d6cd25f9aed586a462dccad6f8a93d7502581b911c7e1d21a",
+    "sha256": "473ea6b12f0d56278c3830ca6484e9129c4e9646de0021e3505395debf01baa8",
     "unchanged": ["stages", "latency_ms", "latency_scope", "sample_rule", "requests", "streams", "cold", "startup", "probes", "final", "trading_system"]
   },
   "latency_quantities": {
@@ -175,5 +175,6 @@
       "approval": "topic creation and ACLs are a separate KN-3 runtime packet"
     },
     "demand_only": "only products with manifest demand are materialized; provider wrappers keep serving bounded on-demand history outside the cache"
-  }
+  },
+  "universe_d48": {"status": "sizing for owner decision; no cap, maxmemory or retention is changed by this block", "products": 500, "interval": "1d", "universe_revision": 1, "rows_now": 497453, "rows_now_basis": "sum over 500 products of min(listing age in days, 12,064) at revision 1 (Binance 255,448, OKX 242,005; max age 2,473/2,604 d, median 740/683 d)", "bytes_per_row": 756.0, "bytes_now": 376000000, "growth_rows_per_year": 182500, "growth_bytes_per_year": 138000000, "rows_plus_3_years": 1044953, "bytes_plus_3_years": 790000000, "rows_at_d15_cap": 6032000, "bytes_at_d15_cap": 4560000000, "with_current_cache": "measured shadow cache before the universe 651 MB (2026-09-26) + 376 MB now = about 1.03 GB against maxmemory 1.5 GB; reaches about 1.29 GB in 3 years if the execution products stay at today's rows", "streams": "none: the universe is read with the daily batch warmup (deep_momentum polls daily); the 60-stream identity quota stays for execution QUOTE/L2/TRADE/MARK", "decision_needed": "retention for universe products: keep D15 (10,000 served + 2,064) or bound them (e.g. 2,500 served + 500), and when to raise maxmemory; measured before load, not assumed"}
 }

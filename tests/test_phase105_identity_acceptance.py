@@ -72,6 +72,8 @@ from scripts.phase105_consumer_v2_identity_acceptance import (
 )
 
 
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
+
 class Phase105IdentityAcceptanceTests(unittest.TestCase):
     def test_main_emits_typed_l2_closing_failure(self) -> None:
         product = SimpleNamespace(
@@ -928,18 +930,19 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 )
             },
             {
-                "global_release_route_count": 303,
-                "global_v2_primary_product_count": 299,
+                "global_release_route_count": 303 + UNIVERSE_TOTAL,
+                "global_v2_primary_product_count": 299 + UNIVERSE_TOTAL,
                 "global_v1_primary_route_count": 4,
-                "selected_release_route_count": 301,
-                "selected_v2_primary_product_count": 299,
+                "selected_release_route_count": 301 + UNIVERSE_TOTAL,
+                "selected_v2_primary_product_count": 299 + UNIVERSE_TOTAL,
                 "selected_v1_primary_excluded_count": 2,
-                # ceil(pacing 25.5 + native-basis deferral 600 + tail 75). The
-                # pacing floor is the slowest identity's opening operations at its
-                # sealed quota; v2.1.1 option A raised the alpha identities from
-                # 180 to 2,400 rpm, so alpha.binance fell from 340.0 s to 25.5 s
-                # (exactly 2400/180) and the minimum from 1015.0 to 701.0.
-                "minimum_deadline_seconds": 701.0,
+                # ceil(pacing + native-basis deferral 600 + tail 75). The pacing
+                # floor is the slowest identity's opening operations at its sealed
+                # quota; v2.1.1 option A raised the alpha identities from 180 to
+                # 2,400 rpm (alpha.binance 340.0 s -> 25.5 s, minimum 1015 -> 701).
+                # D48 adds the daily universe's BAR products to alpha.binance, so
+                # its opening operations and the minimum grow to 768.0.
+                "minimum_deadline_seconds": 768.0,
             },
         )
         self.assertEqual(
@@ -958,13 +961,16 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             plan["consumers"]["alpha.binance.paper.stable"][
                 "opening_operation_budget"
             ],
-            {"QUERY_READ": 560, "REFERENCE_BATCH": 26, "STREAM_SUBSCRIBE": 180},
+            # D48: each universe BAR product opens with 6 reads and 2 subscribes.
+            {"QUERY_READ": 560 + 6 * UNIVERSE_PER_VENUE["BINANCE"], "REFERENCE_BATCH": 26,
+             "STREAM_SUBSCRIBE": 180 + 2 * UNIVERSE_PER_VENUE["BINANCE"]},
         )
         self.assertEqual(
             plan["consumers"]["alpha.okx.paper.stable"][
                 "opening_operation_budget"
             ],
-            {"QUERY_READ": 540, "REFERENCE_BATCH": 4, "STREAM_SUBSCRIBE": 180},
+            {"QUERY_READ": 540 + 6 * UNIVERSE_PER_VENUE["OKX"], "REFERENCE_BATCH": 4,
+             "STREAM_SUBSCRIBE": 180 + 2 * UNIVERSE_PER_VENUE["OKX"]},
         )
         self.assertEqual(set(plan["consumers"]), set(consumer_ids))
         self.assertGreater(plan["total_operations"], len(scope.products))

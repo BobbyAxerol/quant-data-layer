@@ -57,8 +57,10 @@ def _is_managed_reference(item: Mapping[str, Any]) -> bool:
 
 def _source_uids(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     values = []
+    # Execution instruments carry TRADE; the D48 daily universe adds BAR-only
+    # instruments that get no reference products.
     for item in manifest["spec"]["requirements"]:
-        if str(item.get("feed")) in {"TRADE", "BAR"}:
+        if str(item.get("feed")) == "TRADE":
             uid = str(item["instrument_uid"])
             if uid not in values:
                 values.append(uid)

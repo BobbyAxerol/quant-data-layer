@@ -421,6 +421,13 @@ class ProductionCatalogBuilder:
         selected: dict[str, InstrumentRecord] = {}
         bindings: list[dict[str, Any]] = []
         acquisitions: list[dict[str, Any]] = []
+        # An execution symbol has realtime demand beyond BAR; a symbol demanded
+        # only for bars (the D48 daily market-cap universe) needs one final bar
+        # per boundary, so it stays on the shared REST final lane.
+        execution_symbols = {
+            (item.venue, item.market, item.native_symbol)
+            for item in demand.demands if item.feed is not FeedType.BAR
+        }
         for item in demand.demands:
             key = (item.venue, item.market, item.native_symbol)
             try:
@@ -435,7 +442,9 @@ class ProductionCatalogBuilder:
             selected[record.instrument_id] = record
             binding_id = self._binding_id(item)
             bindings.append(self._source_binding(binding_id, item, record))
-            acquisitions.append(self._acquisition(binding_id, item))
+            acquisitions.append(self._acquisition(
+                binding_id, item, execution_symbol=key in execution_symbols
+            ))
         source = {
             "schema": _SOURCE_SCHEMA,
             "canonical_stream": self.canonical_stream,
@@ -689,7 +698,9 @@ class ProductionCatalogBuilder:
         return f"{item.venue.lower()}-{item.market.lower()}-{symbol}-book"
 
     @staticmethod
-    def _acquisition(binding_id: str, item: ProductionDemand) -> dict[str, Any]:
+    def _acquisition(
+        binding_id: str, item: ProductionDemand, *, execution_symbol: bool = True
+    ) -> dict[str, Any]:
         if item.venue == "BINANCE":
             # The provider kind and the stream endpoint both follow the market:
             # a Spot demand generated with USD-M kinds would subscribe the wrong
@@ -771,7 +782,7 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = (
                     "RUST_NATIVE", "okx_mark_index", "mark-price", "NONE"
                 )
-            elif item.feed is FeedType.BAR and item.market == "SWAP":
+            elif item.feed is FeedType.BAR and item.market == "SWAP" and execution_symbol:
                 # A bounded real-provider gate proved the shared OKX business
                 # candle lane emits ``confirm=1`` final rows with canonical
                 # OHLCV parity and lower first-final latency than REST. The
@@ -784,7 +795,9 @@ class ProductionCatalogBuilder:
                     okx_candle_channel(item.interval or "1m"), "NONE",
                 )
             else:
-                # Only OKX Swap passed the native final-bar provider gate.
+                # Only OKX Swap passed the native final-bar provider gate, and
+                # only an execution symbol uses it: a bar-only universe symbol
+                # needs one final row per boundary, not a streaming candle.
                 # Other OKX markets retain the shared REST final lane until
                 # they carry equivalent real-provider evidence.
                 mode, kind, channel, sequence = (

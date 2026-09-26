@@ -37,6 +37,8 @@ from scripts.phase10_real_provider_admission import (
 )
 
 
+from tests.universe_support import UNIVERSE_SYMBOLS
+
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
@@ -528,7 +530,10 @@ class UniversalDemandTests(unittest.TestCase):
                 ("OKX", "SWAP", "SOL-USDT-SWAP"),
                 ("OKX", "SWAP", "DOGE-USDT-SWAP"),
                 ("OKX", "SWAP", "BNB-USDT-SWAP"),
-            },
+            }
+            # D48: the daily market-cap universe's bar-only symbols.
+            | {("BINANCE", "USDM", symbol) for symbol in UNIVERSE_SYMBOLS["BINANCE"]}
+            | {("OKX", "SWAP", symbol) for symbol in UNIVERSE_SYMBOLS["OKX"]},
         )
 
         class Response:

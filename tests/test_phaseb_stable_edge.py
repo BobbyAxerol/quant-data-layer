@@ -107,6 +107,8 @@ from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
 
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
+
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 FIXTURE_PATH = ROOT / "tests/fixtures/phase2"
@@ -383,6 +385,8 @@ class StableCatalogContractTests(unittest.TestCase):
             10
             + 5 * (2 + len(BINANCE_USDM_NATIVE_INTERVALS))
             + 5 * (2 + len(OKX_NATIVE_INTERVALS))
+            # D48: one daily BAR per universe symbol and venue.
+            + UNIVERSE_TOTAL
         )
         l2_bindings = [
             item for item in catalog.bindings

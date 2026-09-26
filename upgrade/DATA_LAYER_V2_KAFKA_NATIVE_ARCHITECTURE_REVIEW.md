@@ -2737,6 +2737,44 @@ batch with native sampling/retention; it is not forced through a fake WebSocket
 or treated as an executable quote. DNSE remains its existing V1 route; options
 and unsupported products require their own approved provider contracts.
 
+<a id="kn-d48-daily-universe"></a>
+#### D48 Daily Market-Cap Universe (owner decision, 2026-09-26)
+
+**Rule.** One crypto universe for daily bars: at most **300** bases, ranked by
+CoinGecko market cap, among bases that trade as USDT-margined perpetuals on
+**both** Binance USD-M (`TRADING`) and OKX Swap (`live`, linear), listed at
+least 30 days on each, excluding stable/fiat-pegged/wrapped assets. An
+incumbent stays while eligible and ranked <= 330; newcomers enter by rank while
+fewer than 300 members. Only **1d** bars are admitted for universe symbols and
+consumers read them with the batch warmup (`warmup:batch`, SDK
+`iter_warmup_batches`, alpha `warmup_batch`).
+
+**Files.** `config/v2/universes/crypto-top300-1d.json` (signed membership:
+rank, market cap, Binance symbol, OKX instId, listing times, rules, source
+hashes) and `crypto-top300-1d.changes.jsonl` (one line per revision:
+`effective_date`, added with rank/`SIGNED`/`ENTERED_BY_RANK`, removed with
+`NOT_TRADING_BINANCE`/`NOT_LIVE_OKX`/`TOO_NEW`/`NO_MARKET_CAP`/`EXCLUDED_ASSET`/
+`RANK_BELOW_BAND`). Revision 1 (2026-09-26) signed **255** members: only 265
+bases were listed on both venues; 1 stablecoin, 5 without a market cap and 4
+listed < 30 days were excluded. The cap binds when more bases qualify.
+
+**Backtest contract.** Use point-in-time membership, never today's list:
+`scripts/kn_universe_top300.py::members_as_of(changes, "YYYY-MM-DD")` replays
+the change log; the same `select()` rules apply to historical inputs. A symbol
+removed on day D is out from D (no survivor bias); a short listing yields
+honest short history (never padded).
+
+**Re-run.** `python -B scripts/kn_universe_top300.py` (dry run) then `--apply`
+(new revision only when membership changes; one Binance, one OKX and six
+market-cap GETs with 429 back-off), then `--sync --apply` (BAR 1d demand rows
+for bar-only symbols and verbatim metadata rows of new symbols appended to
+the captures), `phase115c_materialize_active_native_bars.py --apply` (catalog,
+acquisition, scope, routing; universe symbols stay 1d and on the REST final
+lane - one poll per daily boundary through provider admission) and
+`phase533_materialize_alpha_runtime_entitlements.py --apply` (alpha manifests;
+bump consumers' JWT manifest revision in the same rollout). A catalog revision
+strands the bar-edge checkpoint (C.19): it ships only in an approved rollout.
+
 <a id="kn-guide-phase-5"></a>
 ### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

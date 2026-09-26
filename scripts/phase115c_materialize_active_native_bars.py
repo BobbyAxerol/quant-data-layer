@@ -99,7 +99,10 @@ def expand_demand(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
 
     Disabled Spot records are deliberately excluded.  Adding a new active
     symbol still requires an explicit demand row; this compiler never turns an
-    exchange-wide universe into an implicit runtime subscription.
+    exchange-wide universe into an implicit runtime subscription. Only an
+    execution symbol (one with any non-BAR demand) gets the full bar family: a
+    market-cap universe symbol (D48, `scripts/kn_universe_top300.py`) keeps
+    exactly the interval it declares.
     """
     result = deepcopy(dict(payload))
     if result.get("schema") != "qdl.v2.production-demand.v1":
@@ -109,6 +112,12 @@ def expand_demand(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
         raise ValueError("Phase 11.5-C3.5 demand consumers are invalid")
 
     additions = 0
+    active = {
+        (str(item.get("venue", "")).upper(), str(item.get("native_symbol", "")))
+        for consumer in consumers if isinstance(consumer, dict)
+        for item in consumer.get("requirements") or () if isinstance(item, dict)
+        and str(item.get("feed", "")).upper() != "BAR"
+    }
     for consumer in consumers:
         requirements = consumer.get("requirements") if isinstance(consumer, dict) else None
         if not isinstance(requirements, list):
@@ -121,6 +130,8 @@ def expand_demand(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
             family = (str(requirement.get("venue", "")).upper(), str(requirement.get("market", "")).upper())
             intervals = ACTIVE_BAR_FAMILIES.get(family)
             if intervals is None:
+                continue
+            if (family[0], str(requirement.get("native_symbol", ""))) not in active:
                 continue
             for interval in intervals:
                 candidate = dict(requirement)
@@ -327,11 +338,28 @@ def build_documents(
     generated_source = bundle.source_catalog
     generated_acquisition = bundle.acquisition_plan
     current_instrument_ids = {str(item["instrument_id"]) for item in source_catalog["instruments"]}
-    generated_instrument_ids = {str(item["instrument_id"]) for item in generated_source["instruments"]}
-    if not generated_instrument_ids.issubset(current_instrument_ids):
-        raise ValueError("Phase 11.5-C3.5 generated an undeclared instrument")
+    generated_instruments = {str(item["instrument_id"]): item for item in generated_source["instruments"]}
+    # A new instrument is admitted only when a demand row names it explicitly
+    # (the D48 market-cap universe does, symbol by symbol); nothing enters from
+    # an exchange-wide capture on its own.
+    declared = {
+        (str(row["venue"]).upper(), str(row["native_symbol"]))
+        for consumer in expanded_demand["consumers"] for row in consumer["requirements"]
+    }
+    new_instrument_ids = sorted(set(generated_instruments) - current_instrument_ids)
+    undeclared = [
+        instrument_id for instrument_id in new_instrument_ids
+        if (str(generated_instruments[instrument_id]["venue"]).upper(),
+            str(generated_instruments[instrument_id]["native_symbol"])) not in declared
+    ]
+    if undeclared:
+        raise ValueError(f"Phase 11.5-C3.5 generated an undeclared instrument: {undeclared[:5]}")
 
     source_result = deepcopy(dict(source_catalog))
+    source_result["instruments"] = [
+        *source_catalog["instruments"],
+        *(deepcopy(generated_instruments[instrument_id]) for instrument_id in new_instrument_ids),
+    ]
     source_result["catalog_revision"] = current_catalog.catalog_revision + revision_increment
     source_result["bindings"], remap = _merge_source_bindings(
         existing=list(source_catalog["bindings"]),

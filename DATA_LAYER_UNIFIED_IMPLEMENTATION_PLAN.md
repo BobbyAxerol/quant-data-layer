@@ -56525,6 +56525,49 @@ declared endpoint surface; hot latency survives heavy warmup and recovery.
 - [ ] K4.5 real no-order SDK consumers on paired shadow targets, fallback/return/BLOCKED.
 - [ ] K4.6 both-replica fast matrix, targeted protocols and shadow stages 20/35.
 **Completed:** none in this documentation update.
+
+#### KN-5 Tested-Slice Journal
+- 2026-09-26: **K5.1 inputs read; owner decision D48 (daily universe).**
+  Handoff `86e15e8`/`2da88a9`/`c22f4d3` (DL) and `4a820bf` (alpha) read. The
+  only real multi-symbol demand is `deep_momentum` (317 Binance USD-M symbols,
+  1d, lookback 480-600) while the catalog held 22 instruments; public
+  `exchangeInfo`: 317/317 have >= 480 daily rows, 1 has 2,500, 0 have 5,000,
+  10 are SETTLING. Owner D48: at most 300 bases by market cap listed on both
+  Binance and OKX, bad symbols removed, every change logged from the first
+  signed set, 1d only, batch reads, backtest follows the same rules, bounded
+  effort. Guide: [D48](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-d48-daily-universe).
+- 2026-09-26: **Handoff sync, K5.1 slice 1** | this commit | Two tests failed
+  on `c22f4d3` itself (also on a clean `HEAD` archive): `test_phase111` still
+  expected OKX SWAP long/short to be unsupported (now a real capability) - the
+  unsupported case moved to Binance Spot long/short with the committed capture
+  row; `kn-v220-candidate-budget.json` inherited the pre-`86e15e8` hash of
+  `v211-target-acceptance-budget.json` (quiet exemption removed) - re-pinned.
+  19 OK | `tested locally`.
+- 2026-09-26: **D48 universe admitted in source, K5.1 slice 2** | this commit
+  | `scripts/kn_universe_top300.py` (selection, hysteresis 330, change log,
+  `members_as_of`, `--sync`); revision 1 signed **255** members (265 bases
+  listed on both venues; USDC, 5 without market cap, 4 < 30 days excluded).
+  Sync added 250 BAR 1d rows per alpha consumer (demand rev 7) and the
+  verbatim provider rows of 250 new symbols per venue to the captures (old
+  rows byte-identical, provenance `appended_captures`). Compilers: C3.5 expands
+  only execution symbols and admits only demand-declared new instruments;
+  the catalog builder keeps bar-only symbols on the REST final lane (one poll
+  per daily boundary; OKX execution symbols stay native); phase533 renders
+  universe BAR rows; the reference compiler counts TRADE instruments only; the
+  manifest bound 256 -> 1024. Result: catalog rev 10 (716 bindings, 320 BAR per
+  venue), acquisition 18, scope 9, release routing 25, primary routing 7,
+  alpha manifests Binance rev 14 (375) / OKX rev 13 (360) - consumer JWT
+  manifest revisions must move in the same rollout. Pinned-count tests now
+  derive the universe share from the demand (`tests/universe_support.py`);
+  full suite **2,309 OK, 38 skipped** (41 min, one run after the fixes;
+  targeted reruns before it). Budget: `universe_d48` block - 497,453 rows now
+  (~376 MB at 756 B/row), +182,500 rows/year, 6.03 M rows (4.56 GB) at the D15
+  cap: retention for universe products and maxmemory are an owner decision
+  before load. Streams: none needed (daily batch warmup); the 60-stream quota
+  stays for execution feeds. Candidate runtime (outside Git):
+  `~/.local/state/qdl-v2/kn5-20260926/bundle/runtime` via
+  `refresh_stable_runtime_bundle.py` (placeholder stable.env/identities, no
+  secret; authority `03126d6477ac...`) | `tested locally`; no runtime change.
 **Verification:** K4-T01..T08 not run; full endpoint inventory includes strict
 batch 1/8/16/32/50, 2.5k/5k/10k history where declared, source/session quality,
 book sequence, immutable-vs-dynamic response fields and hot/cold concurrency.
@@ -58383,7 +58426,11 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status:** PENDING_KN1_KN4_REVIEW / NOT STARTED.
+**Status:** IN_PROGRESS - K5.1 freeze (2026-09-26), KN-4 review still pending;
+no runtime mutation, deploy or release. Source/config slices below are
+`tested locally`; the universe matrix, 50-alpha + TS-60 load, cutover,
+acceptance and release are not started. Stop conditions: any production
+mutation needs the owner's exact packet; no C2; no rerun of KN-1..KN-4 evidence.
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
 **Guide index:** [18.12 work items and K5-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),

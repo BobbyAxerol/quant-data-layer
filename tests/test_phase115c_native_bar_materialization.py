@@ -13,6 +13,7 @@ import yaml
 from qdl.adapters.intervals import BINANCE_USDM_NATIVE_INTERVALS, OKX_NATIVE_INTERVALS
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_SYMBOLS, UNIVERSE_TOTAL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,9 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         """Recover the immediate pre-C3.5 shape from the checked-in result."""
         families = {("BINANCE", "USDM"), ("OKX", "SWAP")}
         before_demand = deepcopy(demand)
+        # C3.5 expands execution symbols only; the D48 universe rows are owned
+        # by `kn_universe_top300.py --sync` and stay in the recovered input.
+        universe = {(venue, symbol) for venue, symbols in UNIVERSE_SYMBOLS.items() for symbol in symbols}
         for consumer in before_demand["consumers"]:
             consumer["requirements"] = [
                 item for item in consumer["requirements"]
@@ -55,6 +59,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                     item["feed"] == "BAR"
                     and (item["venue"], item["market"]) in families
                     and item["interval"] != "1m"
+                    and (item["venue"], item["native_symbol"]) not in universe
                 )
             ]
         before_demand["revision"] -= 1
@@ -180,10 +185,12 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         )
         self.assertEqual(self.summary["demand_additions"], expected_demand_additions)
         self.assertEqual(self.summary["bar_binding_counts"], {
-            "binance_usdm": 70, "okx_swap": 70, "dnse": 2,
+            "binance_usdm": 70 + UNIVERSE_PER_VENUE["BINANCE"],
+            "okx_swap": 70 + UNIVERSE_PER_VENUE["OKX"], "dnse": 2,
         })
         self.assertEqual(self.summary["price_binding_counts"], {
-            "binance_usdm": 80, "okx_swap": 80,
+            "binance_usdm": 80 + UNIVERSE_PER_VENUE["BINANCE"],
+            "okx_swap": 80 + UNIVERSE_PER_VENUE["OKX"],
         })
         self.assertEqual(
             self._canonical_demand(self.demand),
@@ -324,6 +331,13 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                     self.assertEqual(item.provider_kind, "binance_usdm_rest_bar")
                     self.assertEqual(item.mode, "PYTHON_REST")
                     self.assertEqual(item.native_channel, f"rest-klines/{source.interval}")
+            elif source.instrument.native_symbol in UNIVERSE_SYMBOLS["OKX"]:
+                # D48 bar-only universe symbol: the shared REST final lane.
+                self.assertEqual(item.provider_kind, "okx_bar")
+                self.assertEqual(item.mode, "PYTHON_REST")
+                self.assertEqual(item.native_channel, f"candle{self.tool.okx_candle_channel(source.interval)[6:]}")
+                self.assertIsNone(item.websocket_url)
+                self.assertIsNone(item.business_websocket_url)
             else:
                 self.assertEqual(item.provider_kind, "okx_bar")
                 self.assertEqual(item.mode, "RUST_NATIVE")
