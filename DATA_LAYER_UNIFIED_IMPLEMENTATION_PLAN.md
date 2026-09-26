@@ -58683,6 +58683,16 @@ KN history-cap affected suite: 120 run, 119 PASS, 1 existing skipped integration
 21/21 PASS. These changes will recreate only isolated Query x2 and BAR edge;
 production untouched. Candidate retains exact non-null diagnostic evidence.
 
+**Restart regression found on isolated edge:** 10k weekly rows made checkpoint
+verification request negative timestamps. Restrict KN checkpoint verification to
+positive source-time opens; provider pagination still determines actual available
+history. No production effect. Background guard from the setup shell stopped
+with its tool process: replaced with an explicitly held exec session before
+continuing load, recorded as a harness supervision defect, not claimed continuous.
+
+Checkpoint positive-time regression: 18 tests run, 17 PASS, one existing skip.
+First regression setup missed a mock property; corrected fixture, then pass.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

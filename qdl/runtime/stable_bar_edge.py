@@ -676,6 +676,8 @@ class StableBinanceBarEdge:
             expected_opens = frozenset(
                 last_open_ms - index * interval_ms
                 for index in range(self._bootstrap_rows_for(source))
+                if (getattr(self, "bar_readback", None) is None
+                    or last_open_ms - index * interval_ms > 0)
             )
             missing = len(expected_opens - self._durable_final_bar_opens(
                 source, expected_opens

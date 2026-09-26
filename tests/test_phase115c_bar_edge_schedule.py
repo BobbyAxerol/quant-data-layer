@@ -83,6 +83,21 @@ class Phase115CBarScheduleTests(unittest.TestCase):
         edge.warmup_rows = 2500
         self.assertEqual(edge._bootstrap_rows_for(SimpleNamespace(binding_id="daily", interval="1d")), 2500)
 
+    def test_kn_weekly_checkpoint_never_requests_pre_epoch_rows(self) -> None:
+        source = SimpleNamespace(binding_id="weekly", interval="1w")
+        edge = _edge(source)
+        edge.bar_readback = object()
+        edge.canonical_cache_path = None
+        edge.warmup_rows = 10000
+        edge.history_bindings = edge.bindings
+        edge.history_okx_bindings = ()
+        edge._durable_final_bar_opens = Mock(side_effect=lambda _source, opens: opens)
+        self.assertEqual(edge._checkpoint_history_gaps({"weekly": 1790035200000}), {})
+        opens = edge._durable_final_bar_opens.call_args.args[1]
+        self.assertTrue(opens)
+        self.assertGreater(min(opens), 0)
+        self.assertLess(len(opens), 10000)
+
     def test_due_check_skips_unchanged_long_bar_without_provider_call(self) -> None:
         source = SimpleNamespace(binding_id="weekly", interval="1w")
         edge = _edge(source)
