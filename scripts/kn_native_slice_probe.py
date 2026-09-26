@@ -1456,6 +1456,17 @@ def _matrix_oracle(args: argparse.Namespace, since_ns: int) -> dict[str, list[tu
 MIRROR_DRAIN_S = 15.0
 
 
+def judging_window_ns(cursor_oracle_ns: Sequence[int]) -> int:
+    """The time the judging oracle's window is anchored at: the earliest
+    cursor oracle. Anchoring it at the run start instead (a few seconds after
+    the first cursor oracle, once the client was set up) left a gap
+    [first - back, start - back): a record in it chose a cursor but was not
+    judged, so the stream's correct delivery of it counted as `unexpected`.
+    Run 3 (2026-09-25): the 19:15:07 Binance 5m/15m closes fell in that gap on
+    all ten Binance 5m/15m streams; OKX publishes at :01 and missed it."""
+    return min(cursor_oracle_ns)
+
+
 def commit_log_lines(path: str | Path):
     """Stream a (possibly rotated) commit log: ``<path>.1`` then ``<path>``,
     one line at a time - the log is never read into memory whole."""
@@ -1492,7 +1503,11 @@ def mirror_source_clocks(lines, wanted: set[tuple[int, int]] | None = None,
 async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     rows = selected_streams(args.consumers)
     mirror = getattr(args, "source_mode", "capture") == "mirror"
-    oracle = _matrix_oracle(args, time.time_ns())
+    # Every time a cursor oracle is taken; the final (judging) oracle opens at
+    # the earliest of them, so no record a cursor was chosen from can fall
+    # outside the window it is judged in.
+    cursor_oracle_ns = [time.time_ns()]
+    oracle = _matrix_oracle(args, cursor_oracle_ns[0])
     unsampled: list[str] = []
     if mirror:
         # A product without a record in the window has no cursor inside it;
@@ -1536,7 +1551,8 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
             # A later wave chooses its cursors from the log as it is now: with
             # near-live load, cursors from the run start would lie behind the
             # bounded replay window (typed CURSOR_EXPIRED, rightly).
-            oracle = _matrix_oracle(args, time.time_ns())
+            cursor_oracle_ns.append(time.time_ns())
+            oracle = _matrix_oracle(args, cursor_oracle_ns[-1])
             wave_started_ns = time.time_ns()
         until = time.time_ns() + int(seconds * 1e9)
 
@@ -1557,7 +1573,7 @@ async def matrix_async(args: argparse.Namespace) -> dict[str, Any]:
     # After the waves: the committed log grew during the live phase; judge
     # every subscription against the final oracle.
     ended_ns = time.time_ns()
-    final = _matrix_oracle(args, started_ns)
+    final = _matrix_oracle(args, judging_window_ns(cursor_oracle_ns))
     commits: dict[tuple[int, int], int] = {}
     sources: dict[tuple[int, int], int] = {}
     if args.commit_log:

@@ -546,6 +546,58 @@ class MirrorSourceModeTests(unittest.TestCase):
         whole.assert_called_once_with("b", "t")
 
 
+class JudgingWindowTests(unittest.TestCase):
+    """Astra KN-4 re-review: the run-3 BAR `unexpected=1`, reproduced and pinned.
+
+    The cursor oracle opened at T0 - back; the judging oracle opened at the
+    run start - back, a few seconds later. A Binance 5m close published at
+    :07 inside that gap chose the cursor but was not judged.
+    """
+
+    def test_a_record_in_the_gap_between_the_two_windows_is_unexpected_only_with_the_old_anchor(self):
+        from types import SimpleNamespace
+
+        from qdl.marketdata.v2 import market_data_pb2
+
+        back_ms = 600_000
+        t0_ms = 1_790_000_000_000                 # cursor oracle
+        start_ms = t0_ms + 4_000                  # run start after client setup
+        gap_ts = t0_ms - back_ms + 2_000          # the Binance close published at :07
+
+        def bar(open_ms):
+            value = market_data_pb2.EventEnvelope()
+            value.bar.interval = "5m"
+            value.bar.open_time_ns = open_ms * 1_000_000
+            value.bar.close_time_ns = (open_ms + 300_000 - 1) * 1_000_000
+            value.bar.lifecycle = 2
+            value.bar.is_final = True
+            return value.SerializeToString()
+
+        # (partition, offset, kafka timestamp ms, payload); other keys omitted.
+        log = [(2, 100, gap_ts, bar(gap_ts - 307_000)),
+               (2, 200, gap_ts + 300_000, bar(gap_ts - 7_000)),
+               (2, 300, gap_ts + 600_000, bar(gap_ts + 293_000))]
+
+        def window(anchor_ms):  # kafka_oracle_window: first offset at or after the time, then all after it
+            return [(p, o, v) for p, o, ts, v in log if ts >= anchor_ms - back_ms]
+
+        row = {"feed": "BAR", "interval": "5m", "requirement": SimpleNamespace(
+            max_freshness_ms=900_000, effective_event_recency_policy=SimpleNamespace(value="BLOCK"))}
+        now_ns = (gap_ts + 610_000) * 1_000_000
+        cursor = PROBE.expected_delivery(row, window(t0_ms), -1, now_ns)
+        after = cursor[0]["offset"] - 1          # `_matrix_stream`: few records, start before the first
+        delivered = [o for _p, o, _v in window(t0_ms) if o > after]
+        self.assertEqual(delivered, [100, 200, 300])
+
+        def unexpected(anchor_ms):
+            expected = PROBE.expected_delivery(row, window(anchor_ms), after, now_ns, now_ns)
+            return PROBE.judge_subscription(expected, delivered)["unexpected"]
+
+        self.assertEqual(unexpected(start_ms), 1, "the old anchor reproduces run 3")
+        self.assertEqual(PROBE.judging_window_ns([t0_ms * 10**6, (t0_ms + 120_000) * 10**6]), t0_ms * 10**6)
+        self.assertEqual(unexpected(PROBE.judging_window_ns([t0_ms * 10**6]) // 10**6), 0)
+
+
 class QuotaNegativeTests(unittest.TestCase):
     """KN-4 review F3: the shared-quota negative proves its own condition."""
 

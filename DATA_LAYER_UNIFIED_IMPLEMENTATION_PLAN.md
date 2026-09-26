@@ -58143,6 +58143,21 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   `evaluate_binding_quality`, and 1,999 without a clock) and a Query clock-order
   test; both fail on the previous commit and pass now; session/quality/MARK/
   Query/KN/edge suites 415 OK | `tested locally`.
+- 2026-09-26: **The run-3 BAR `unexpected=1` explained and pinned; K4 slice
+  34 (Astra KN-4 re-review)** | this commit | Reconstructed from the retained
+  shadow log (168 h): on all ten Binance 5m/15m streams the cursor was the
+  offset just before the 19:15:07Z close record, the stream delivered that
+  record and the later closes (5m: 19:15:07, 19:20:06, 19:25:08; 15m:
+  19:15:07), and the judging oracle lacked exactly the 19:15:07 record.
+  `matrix_async` took the cursor oracle at T0 (window from T0 - 600 s), set
+  up the client, and anchored the judging oracle at the later run start: a
+  record in [T0 - 600 s, start - 600 s) chose a cursor but was not judged.
+  Binance publishes 5m/15m closes at :07, OKX at :01 (measured on the shadow
+  broker), so only Binance fell in the gap; the new run's green result was
+  timing, not a fix. The judging oracle now opens at the earliest cursor
+  oracle (`judging_window_ns`). Regression `JudgingWindowTests`: a synthetic
+  log with a close in the gap gives `unexpected=1` with the old anchor and 0
+  with the new one; `test_kn_native_slice_probe` 44 OK | `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
