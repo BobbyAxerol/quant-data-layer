@@ -38,11 +38,18 @@ class BoundedBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.success_count, 350)
 
     async def test_row_budget_does_not_reduce_requested_history(self):
-        for rows, sizes in ((2500, [4, 4, 2]), (5000, [2] * 5), (10000, [1] * 10)):
+        for rows, sizes in ((480, [5, 5]), (2500, [1] * 10), (5000, [1] * 10), (10000, [1] * 10)):
             query = _SdkBatchTransport()
             chunks = [part async for part in client(query).iter_warmup_batches(requirements(10, rows))]
             self.assertEqual(query.chunk_sizes, sizes)
             self.assertEqual(sum(len(part.results) for part in chunks), 10)
+
+    async def test_explicit_larger_row_budget_remains_supported(self):
+        query = _SdkBatchTransport()
+        chunks = [part async for part in client(query).iter_warmup_batches(
+            requirements(10, 2500), max_batch_rows=10000)]
+        self.assertEqual(query.chunk_sizes, [4, 4, 2])
+        self.assertEqual(sum(len(part.results) for part in chunks), 10)
 
     async def test_invalid_duplicate_execution_partial_rejected_before_io(self):
         query = _SdkBatchTransport()

@@ -38,7 +38,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
             "2b0dcf74454c9f87c352d3c47389955aeb955804",
         )
         self.assertEqual(len(plan.consumers), 5)
-        self.assertEqual(len(plan.products()), 303 + UNIVERSE_TOTAL)
+        self.assertEqual(len(plan.products()), 318 + UNIVERSE_TOTAL)
         self.assertEqual(
             {
                 consumer.consumer_id: len(consumer.products)
@@ -48,7 +48,7 @@ class StableReleaseRoutePlanTests(unittest.TestCase):
                 "monitoring.multivenue.stable": 5,
                 "trading-system.paper.stable": 61,
                 "alpha.binance.paper.stable": 125 + UNIVERSE_PER_VENUE["BINANCE"],
-                "alpha.okx.paper.stable": 110 + UNIVERSE_PER_VENUE["OKX"],
+                "alpha.okx.paper.stable": 125 + UNIVERSE_PER_VENUE["OKX"],
                 "alpha.vn.paper.stable": 2,
             },
         )

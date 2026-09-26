@@ -72,8 +72,8 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
                 FeedType.QUOTE: 5,
                 FeedType.BOOK_SNAPSHOT: 5,
                 FeedType.BOOK_DELTA: 5,
-                "reference": 20,
-                "total": 110 + UNIVERSE_PER_VENUE["OKX"],
+                "reference": 35,
+                "total": 125 + UNIVERSE_PER_VENUE["OKX"],
             },
         }
         reference_feeds = {

@@ -369,3 +369,45 @@ class DriverHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlowReaderReplayTests(unittest.TestCase):
+    def test_only_declared_slow_reader_may_drain_old_non_executable_frames(self):
+        from tests.test_qdl_sdk_stream_projection import NOW, envelope, template
+        from qdl_sdk import DataRequirement, Feed, Grade, StreamEvent
+        from qdl_sdk.errors import ContinuityError
+        for feed in (Feed.QUOTE, Feed.TRADE):
+            view = template(feed)
+            requirement = DataRequirement(view.instrument_uid, feed, Grade.EXECUTION,
+                                          view.quality.policy_id, max_freshness_ms=2000)
+            event = StreamEvent(11, "signed-test-only", envelope(feed))
+            with self.assertRaises(ContinuityError):
+                _DRIVER._target_project_frame(event, template=view, requirement=requirement,
+                                             now_ns=NOW + 5_000_000_000)
+            projected, replay = _DRIVER._target_project_frame(
+                event, template=view, requirement=requirement, draining=True,
+                now_ns=NOW + 5_000_000_000)
+            self.assertTrue(replay)
+            self.assertFalse(projected.quality.execution_eligible)
+            _, replay = _DRIVER._target_project_frame(
+                event, template=view, requirement=requirement, draining=True, now_ns=NOW + 1)
+            self.assertFalse(replay)
+
+    def test_replay_never_ignores_gap_or_identity(self):
+        from tests.test_qdl_sdk_stream_projection import NOW, envelope, template
+        from qdl.common.v1 import common_pb2
+        from qdl_sdk import DataRequirement, Feed, Grade, StreamEvent
+        from qdl_sdk.errors import ContinuityError
+        for fault in ("gap", "identity"):
+            view = template(Feed.QUOTE)
+            requirement = DataRequirement(view.instrument_uid, Feed.QUOTE, Grade.EXECUTION,
+                                          view.quality.policy_id, max_freshness_ms=2000)
+            raw = envelope(Feed.QUOTE)
+            if fault == "gap":
+                raw.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+            else:
+                raw.instrument_uid = "wrong-test-only"
+            with self.assertRaises(ContinuityError):
+                _DRIVER._target_project_frame(StreamEvent(11, "signed-test-only", raw),
+                    template=view, requirement=requirement, draining=True,
+                    now_ns=NOW + 5_000_000_000)

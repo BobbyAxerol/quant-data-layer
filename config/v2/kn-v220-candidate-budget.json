@@ -177,6 +177,29 @@
     "demand_only": "only products with manifest demand are materialized; provider wrappers keep serving bounded on-demand history outside the cache"
   },
   "universe_d48": {"status": "sizing for owner decision; no cap, maxmemory or retention is changed by this block", "products": 500, "interval": "1d", "universe_revision": 1, "rows_now": 497453, "rows_now_basis": "sum over 500 products of min(listing age in days, 12,064) at revision 1 (Binance 255,448, OKX 242,005; max age 2,473/2,604 d, median 740/683 d)", "bytes_per_row": 756.0, "bytes_now": 376000000, "growth_rows_per_year": 182500, "growth_bytes_per_year": 138000000, "rows_plus_3_years": 1044953, "bytes_plus_3_years": 790000000, "rows_at_d15_cap": 6032000, "bytes_at_d15_cap": 4560000000, "with_current_cache": "measured shadow cache before the universe 651 MB (2026-09-26) + 376 MB now = about 1.03 GB against maxmemory 1.5 GB; reaches about 1.29 GB in 3 years if the execution products stay at today's rows", "streams": "none: the universe is read with the daily batch warmup (deep_momentum polls daily); the 60-stream identity quota stays for execution QUOTE/L2/TRADE/MARK", "decision_needed": "retention for universe products: keep D15 (10,000 served + 2,064) or bound them (e.g. 2,500 served + 500), and when to raise maxmemory; measured before load, not assumed"},
+  "kn5_current_demand_measurement": {
+    "status": "MEASURED_CURRENT_DEMAND_NOT_FULL_RETENTION_CAP",
+    "evidence": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cache-inventory.json",
+    "sha256": "4538c87600d1f2ecaea976db4071b798912968a8885d3e4017ed71f15a765b62",
+    "bar_rows": 1525787,
+    "daily_products": 510,
+    "additional_daily_products": 500,
+    "used_memory_bytes": 1171251296,
+    "rss_bytes": 1169522688,
+    "peak_used_memory_bytes": 1175775800,
+    "evicted_keys": 0,
+    "bytes_per_row_whole_cache": 767.637,
+    "steady_bytes_at_full_cap_extrapolated": 5934771209,
+    "shadow_maxmemory_bytes": 6500000000,
+    "shadow_container_limit_bytes": 7516192768,
+    "shadow_only": true,
+    "limits": [
+      "row mix and future depth affect allocator size classes",
+      "native per-product rebuild evidence inherited, not a new full-cap rebuild",
+      "all production memory settings unchanged",
+      "old stack and build/client resources excluded from this Redis measurement; report separately"
+    ]
+  },
   "whole_cache_d48": {
     "status": "NOT_FROZEN_REQUIRES_WHOLE_CACHE_MEASUREMENT",
     "scope": "Execution/VN baseline PLUS 500 additional D48 daily BAR products, not universe alone. Source-only arithmetic; no runtime limit change.",

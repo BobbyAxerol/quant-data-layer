@@ -58850,6 +58850,92 @@ API module (one import error); corrected exact suite rerun, no failed domain cas
 
 Cold-prefetch targeted suite85/85 PASS; public API/render suite16/16 PASS.
 
+**19:22 UTC isolated update:** Query1 history clients have moved to Query2.
+Install validated9e81171 only on test Query1 now; Query2 waits for its active
+universe clients to complete, preserving measurements. Guard renewed before
+terminating the old guard, continuous production stop supervision. Candidate
+17a35977...599d06 retains all limits/config/mounts. No production rollout.
+
+**Source-suite limitation:** broad unittest run was interrupted after~48min
+to obtain a stack, not reported as PASS: repeated pure-Python YAML catalogue
+loads at `test_trading_consumer_scope.setUp`, not a runtime deadlock. It had
+advanced farther than quiet log implied. Run the remaining scoped checks and
+an immutable-candidate full suite with test-only compiled SafeLoader, after
+checking its parsed config values match the standard safe loader. This does
+not change production YAML parsing; report the test harness variation explicitly.
+
+Statistics self-review: TS benchmark selected one rank too high when n*q
+was integral. Align to ceil(n*q)-1, retaining sparse-sample rules. The old test
+pinned that off-by-one (one reproduced failure); correct it and cover explicit
+1..100 ranks. Existing raw read samples permit recalculation; final writer
+measurement will use the corrected helper. Harness-only, no image rebuild.
+
+**19:32 UTC history/load checkpoint:** 10 execution1m products each have
+5,000 exact contiguous rows, no sequence flags. Universe2500 original reads:
+1,008/1,020 usable; universe5000:1,012/1,020. All20 refusals are bounded
+RATE_LIMITED on Query1 during overlapping bootstrap load, not missing history.
+Retain these failures. Candidate9e81171 Query1 reread whole510-product480
+profile:510/510 usable,119.5s OKX and117.9s Binance. Exact12 failed2500
+products recovered12/12 on candidate; no full-suite rerun to hide failures.
+Query2 upgraded only after both original universe clients completed. Stage35
+now runs candidate pair with unchanged budgets. No final300s yet.
+
+**Broad-suite classification before final acceptance:** 2,339 run,12 failures,
+20 errors,46 skip. Four import errors are test read-only log configuration;
+two Dockerfile assertions inspected the test overlay instead of tracked release
+Dockerfile. Remaining failures pin pre-extension counts;16 errors expose a
+real certification-harness hard-code (55 refs instead of manifest-derived scope).
+Fix that harness to exact manifest identities, preserve duplicate/policy checks,
+update golden counts for15 approved OKX requirements and run all affected
+modules with writable tmpfs logs and original source Dockerfile. No reader
+behavior changes, no need to rebuild/roll Query for test-only corrections.
+
+Stage35 candidate9e81171 PASS: all frozen gates,6,527 requests/63 streams,
+QUOTE p99 31.0/28.6ms, MARK p99 30.1/31.4ms. This is the declared stage
+workload, not a controlled one-variable speedup claim vs two whole-universe
+profiles. Final50/300s waits for corrected source gate.
+
+Corrected broad failure matrix170 ran:166PASS/4 remaining stale assertions,
+all four corrected and rerun in exact affected modules. Environment errors
+are gone; exact manifest identity regression passes. Statistics5/5 PASS.
+Next: the existing final50-alpha300s, plus actual TS bridge/Redis writer and
+a single whole-universe480 profile on secondary. This is isolated acceptance,
+not production handoff. Reader image9e81171 unchanged; certification/test-only
+changes do not require another runtime image. No freshness/latency gate changed.
+
+Resource accounting update: append exact whole-cache measurement (execution
+plus510 daily products), not only universe increment:1,525,787BAR rows,
+1,171,251,296B used,1,169,522,688B RSS,zero evictions. Retention-cap arithmetic
+remains labelled extrapolated; production caps unchanged. Shadow7GiB is a
+ceiling, not actual allocation. Historical budget blocks preserved.
+
+**19:55 UTC final50 result and bounded correction (not certified):** 15,504 hot
+requests, zero request failures;90 streams, one failure. That stream is exactly
+the intentionally paused5s BNB QUOTE reader: harness applied current2s price
+freshness to its queued replay. Fix only the fault oracle: validate delayed
+frames as non-executable state replay, acknowledge ordered frames, require strict
+current snapshot recovery, and keep replay out of usable-price latency samples.
+Record typed quality on any remaining stream failure. Do not relax actual SDK
+execution eligibility or current-view validation. The final also exposed8s
+cold admission timeout when another universe10k-row chunk owned the serial
+materialization lane. Reduce SDK default aggregate chunk to2,500 rows (individual
+5k/10k requests stay intact), test requested-history preservation and run exact
+whole universe with the same total rows. No lane/SLA/quota/resource increase.
+TRADE OKX p95 121ms also failed100ms; preserve result, rerun affected mixed-load
+only after bounded chunk/fault tests. Shadow mirror/guard may be renewed once
+for this exact test namespace with1h deadline, source read-only unchanged.
+
+Actual TS600s measurement completed:115/115 steady health samples60/60 READY;
+133,878 actual Redis pipeline writes,258,764 readback keys verified; ACK p99
+6.7ms, ACK+readback11.1ms. No TS production write/config change. Snapshot
+3,600 reads had86 TRADE-only freshness refusals; all60products succeeded on
+both replicas, other feeds600/600 each. Retained raw facts are not execution
+prices merely because Redis accepted a write. Initial189test rerun had8test-
+environment errors because /tmp was read-only; rerun adds private tmpfs only.
+
+Final affected source/SDK/fault-oracle regression:189/189 PASS,83.973s, no skip.
+Runtime Query remains9e81171; next image is test-client/SDK only.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

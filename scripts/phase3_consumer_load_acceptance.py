@@ -1964,6 +1964,23 @@ class _ReconnectDue:
         return self._stream.reconnect and self._reconnect_now.is_set()
 
 
+def _target_project_frame(event, *, template, requirement, draining=False, now_ns=None):
+    """The deliberate slow-reader backlog is state replay, never a price."""
+    from qdl_sdk.projection import market_data_view_from_stream
+
+    view = market_data_view_from_stream(
+        event, template=template, requirement=requirement,
+        replay_only=draining, now_ns=now_ns,
+    )
+    replay = draining and (
+        view.quality.event_recency_state == "STALE"
+        or view.quality.provider_session_state != "LIVE"
+    )
+    if replay and view.quality.execution_eligible:
+        raise ValueError("delayed replay incorrectly became execution eligible")
+    return view, replay
+
+
 async def _target_stream(*, client, stream: _TargetStream, series, recorder, observing, stop,
                          reconnect_now, established, startup=None) -> None:
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
@@ -1977,6 +1994,8 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
         requirement = replace(requirement, warmup_limit=1)
     resume = False
     slowed = False
+    draining = False
+    last_event = None
     signalled = False
     attempts = 0
     try:
@@ -2005,8 +2024,16 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
                             continue
                         if not isinstance(event, StreamEvent):
                             raise ValueError("stream returned an unknown event type")
-                        view = market_data_view_from_stream(event, template=template, requirement=requirement)
-                        validate_product_view(product, view, require_current_quality=True)
+                        last_event = event
+                        view, replay = _target_project_frame(
+                            event, template=template, requirement=requirement, draining=draining)
+                        validate_product_view(product, view, require_current_quality=not replay,
+                                              state_replay=replay)
+                        if draining and not replay:
+                            # A drained backlog alone is not execution readiness.
+                            await _target_read(client, "SNAPSHOT", (product,))
+                            recorder.counters["slow_reader_strict_recovery"] += 1
+                            draining = False
                         if event.logical_offset <= stream.last_offset:
                             raise ValueError("stream logical offset regressed")
                         stream.last_offset = event.logical_offset
@@ -2014,6 +2041,9 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
                         validated_at = time.perf_counter()
                         validated_ns = delivered_ns + int((validated_at - delivered_at) * 1_000_000_000)
                         stream.events += 1
+                        if replay:
+                            recorder.counters["slow_reader_non_executable_replay"] += 1
+                            continue
                         byte_size = getattr(event.event, "ByteSize", None)
                         stream.bytes += byte_size() if callable(byte_size) else 0
                         sample = {
@@ -2038,6 +2068,7 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
                             recorder.stream_samples.append(sample)
                             if stream.slow and not slowed:
                                 slowed = True
+                                draining = True
                                 recorder.counters["slow_reader_pauses"] += 1
                                 await asyncio.sleep(5.0)
             except asyncio.CancelledError:
@@ -2062,12 +2093,17 @@ async def _target_stream(*, client, stream: _TargetStream, series, recorder, obs
             if stop.is_set():
                 break
             resume = True
+        if draining:
+            raise ValueError("slow reader did not recover a current execution view")
     except asyncio.CancelledError:
         raise
     except Exception as error:
         stream.errors += 1
+        diagnostic = _safe_error(error)
+        if last_event is not None:
+            diagnostic["stream_quality"] = _stream_frame_quality_diagnostic(last_event, requirement)
         recorder.error(operation="STREAM", stream=stream.name, product=_product_evidence(product),
-                       error=_safe_error(error))
+                       error=diagnostic)
     finally:
         if not signalled:
             established.set_result("FAILED")

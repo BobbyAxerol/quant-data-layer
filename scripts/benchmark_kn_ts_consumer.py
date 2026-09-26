@@ -6,14 +6,14 @@ No orders/DB/production Redis. The fixed kn5-astra-ts-cache DNS name is required
 Records milliseconds after actual Redis ACK and readback, not callback entry.
 Inherited KN4 runner logic; semaphore wait is included, refusals stay separate.
 """
-import asyncio, json, os, random, sys, time, traceback
+import asyncio, json, math, os, random, sys, time, traceback
 
 
 def _dist(values):
     values = sorted(values)
     if not values:
         return {"n": 0}
-    pick = lambda q: round(values[min(len(values) - 1, int(q * len(values)))], 1)  # noqa: E731
+    pick = lambda q: round(values[min(len(values) - 1, math.ceil(q * len(values)) - 1)], 1)  # noqa: E731
     return {"n": len(values), "p50": pick(0.5), "p95": pick(0.95) if len(values) >= 20 else None,
             "p99": pick(0.99) if len(values) >= 100 else None, "max": round(values[-1], 1)}
 

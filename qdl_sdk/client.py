@@ -497,7 +497,7 @@ class AsyncDataLayerClient:
         *,
         require_all: bool = True,
         batch_size: int = 100,
-        max_batch_rows: int = 10_000,
+        max_batch_rows: int = 2_500,
     ) -> AsyncIterator[BatchResponse]:
         """Yield validated bounded chunks without retaining the whole universe.
 

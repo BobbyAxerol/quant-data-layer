@@ -61,12 +61,12 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in scope.products
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(scope.products), 299 + UNIVERSE_TOTAL)
+        self.assertEqual(len(scope.products), 314 + UNIVERSE_TOTAL)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
                 DeliveryClass.DURABLE: 234 + UNIVERSE_TOTAL,
-                DeliveryClass.ON_DEMAND: 65,
+                DeliveryClass.ON_DEMAND: 80,
             },
         )
 
@@ -102,13 +102,13 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             (product.consumer_id, requirement_key(product.requirement))
             for product in scope.products
         }
-        self.assertEqual(len(scope.products), 295 + UNIVERSE_TOTAL)
+        self.assertEqual(len(scope.products), 310 + UNIVERSE_TOTAL)
         self.assertEqual(actual, expected)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
                 DeliveryClass.DURABLE: 230 + UNIVERSE_TOTAL,
-                DeliveryClass.ON_DEMAND: 65,
+                DeliveryClass.ON_DEMAND: 80,
             },
         )
         self.assertEqual(

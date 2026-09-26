@@ -930,11 +930,11 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 )
             },
             {
-                "global_release_route_count": 303 + UNIVERSE_TOTAL,
-                "global_v2_primary_product_count": 299 + UNIVERSE_TOTAL,
+                "global_release_route_count": 318 + UNIVERSE_TOTAL,
+                "global_v2_primary_product_count": 314 + UNIVERSE_TOTAL,
                 "global_v1_primary_route_count": 4,
-                "selected_release_route_count": 301 + UNIVERSE_TOTAL,
-                "selected_v2_primary_product_count": 299 + UNIVERSE_TOTAL,
+                "selected_release_route_count": 316 + UNIVERSE_TOTAL,
+                "selected_v2_primary_product_count": 314 + UNIVERSE_TOTAL,
                 "selected_v1_primary_excluded_count": 2,
                 # ceil(pacing + native-basis deferral 600 + tail 75). The pacing
                 # floor is the slowest identity's opening operations at its sealed
@@ -969,7 +969,7 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             plan["consumers"]["alpha.okx.paper.stable"][
                 "opening_operation_budget"
             ],
-            {"QUERY_READ": 540 + 6 * UNIVERSE_PER_VENUE["OKX"], "REFERENCE_BATCH": 4,
+            {"QUERY_READ": 540 + 6 * UNIVERSE_PER_VENUE["OKX"], "REFERENCE_BATCH": 6,
              "STREAM_SUBSCRIBE": 180 + 2 * UNIVERSE_PER_VENUE["OKX"]},
         )
         self.assertEqual(set(plan["consumers"]), set(consumer_ids))

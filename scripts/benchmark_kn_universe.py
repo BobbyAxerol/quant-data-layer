@@ -126,7 +126,7 @@ class Profile(Closed):
     bar_anchor_ns: int = Field(ge=0, strict=True)
     maxlen: int = Field(ge=1, le=10000, strict=True)
     batch_size: int = Field(default=50, ge=1, le=100, strict=True)
-    max_batch_rows: int = Field(default=10000, ge=1, le=100000, strict=True)
+    max_batch_rows: int = Field(default=2500, ge=1, le=100000, strict=True)
     timeout_ms: int = Field(default=120000, ge=1, le=3600000, strict=True)
     stream_ms: int = Field(default=0, ge=0, le=60000, strict=True)
 
