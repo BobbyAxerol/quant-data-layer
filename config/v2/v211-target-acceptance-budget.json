@@ -140,7 +140,7 @@
   },
   "trading_system": {
     "demanded_routes": 60,
-    "every_sample_ready": "except allowed_quiet_slices",
+    "every_sample_ready": true,
     "max_fallback": 0,
     "max_v2_error_increase": 0,
     "max_disconnect_rate_over_baseline_per_minute": 10.0,
@@ -150,18 +150,7 @@
       "MANIFEST_REVISION_MISMATCH",
       "INVALID_ARGUMENT"
     ],
-    "allowed_quiet_slices": [
-      {
-        "provider": "OKX",
-        "symbol": "DOGE-USDT-SWAP",
-        "feed": "QUOTE",
-        "states": [
-          "STALE",
-          "DISCONNECTED"
-        ],
-        "reason": "Owner decision 2026-09-23: OKX DOGE best bid/offer trades rarely and may exceed the 2 s QUOTE age; recorded before the post-fix stage runs, not after."
-      }
-    ]
+    "allowed_quiet_slices": []
   },
   "writer_health_report_only": {
     "projector_canonical_age_ms_max": 60000,

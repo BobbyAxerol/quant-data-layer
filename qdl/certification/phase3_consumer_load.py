@@ -852,26 +852,14 @@ def evaluate_target_acceptance(
     gates.append(_gate("teardown:no_leaked_work", receipt["leaked_tasks"] == 0, leaked=receipt["leaked_tasks"]))
     ts_budget = budget["trading_system"]
     samples = trading_system.get("samples", [])
-    allowed = ts_budget.get("allowed_quiet_slices", ())
-
-    def is_allowed(slice_: Mapping[str, object]) -> bool:
-        return any(
-            slice_.get("provider") == rule["provider"] and slice_.get("symbol") == rule["symbol"]
-            and slice_.get("feed") == rule["feed"] and slice_.get("state") in rule["states"]
-            for rule in allowed
-        )
-
     def sample_ready(item: Mapping[str, object]) -> bool:
-        if (item.get("demanded") != ts_budget["demanded_routes"]
-                or (item.get("fallback") or 0) > ts_budget["max_fallback"]):
-            return False
-        if item.get("ready") == ts_budget["demanded_routes"]:
-            return True
-        unhealthy = item.get("unhealthy") or []
-        # Only an owner-approved quiet slice may be unready, and it must be the
-        # whole shortfall: any other unready slice fails the sample.
-        return (bool(unhealthy) and all(is_allowed(slice_) for slice_ in unhealthy)
-                and (item.get("ready") or 0) + len(unhealthy) >= ts_budget["demanded_routes"])
+        # Quiet/live is evaluated by the typed read plane, not a symbol-name
+        # exception in the load harness. An unhealthy/disconnected route
+        # cannot be certified by copying an old budget's exemption.
+        return (item.get("demanded") == ts_budget["demanded_routes"]
+                and item.get("ready") == ts_budget["demanded_routes"]
+                and (item.get("fallback") or 0) <= ts_budget["max_fallback"]
+                and not item.get("unhealthy"))
 
     not_ready = [item for item in samples if not sample_ready(item)]
     gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Protocol
+from typing import AsyncIterator, Protocol
 
 from pydantic import ValidationError
 
@@ -128,7 +128,7 @@ def _allows_quiet_execution_continuity(requirement: DataRequirement, quality) ->
 
 
 def _validate_query_payload(
-    requirement: DataRequirement, payload: dict, *, warmup: bool
+    requirement: DataRequirement, payload: dict | WarmupResponse | SnapshotResponse, *, warmup: bool
 ) -> SnapshotResponse | WarmupResponse:
     try:
         response = (
@@ -491,61 +491,85 @@ class AsyncDataLayerClient:
         self._record_query("/v2/market-data/warmup", response)
         return response
 
+    async def iter_warmup_batches(
+        self,
+        requirements: tuple[DataRequirement, ...] | list[DataRequirement],
+        *,
+        require_all: bool = True,
+        batch_size: int = 100,
+        max_batch_rows: int = 10_000,
+    ) -> AsyncIterator[BatchResponse]:
+        """Yield validated bounded chunks without retaining the whole universe.
+
+        Successful chunks may precede a later failure. ``require_all`` does
+        not create an atomic snapshot across HTTP requests. No prefetch tasks
+        survive cancellation or a caller stopping iteration.
+        """
+        values = tuple(requirements)
+        if not 1 <= len(values) <= 10_000:
+            raise ValueError("warmup batch requires between 1 and 10000 items")
+        if type(batch_size) is not int or not 1 <= batch_size <= 100:
+            raise ValueError("batch_size must be between 1 and 100")
+        if type(max_batch_rows) is not int or not 1 <= max_batch_rows <= 100_000:
+            raise ValueError("max_batch_rows must be between 1 and 100000")
+        if not all(isinstance(item, DataRequirement) for item in values):
+            raise TypeError("warmup batch requires typed DataRequirement items")
+        identities = {(item.instrument_uid, item.feed.value, item.interval) for item in values}
+        if len(identities) != len(values):
+            raise ValueError("warmup batch contains duplicate requirements")
+        if not require_all and any(item.consumer_grade is Grade.EXECUTION for item in values):
+            raise ValueError("execution-grade warmup batch must require all items")
+        # Row caps avoid a 100 x 10000 BAR request; a single long-history
+        # requirement is not truncated to fit the aggregate batching budget.
+        offset = 0
+        while offset < len(values):
+            end, rows = offset, 0
+            while end < len(values) and end - offset < batch_size:
+                spec = values[end].warmup_specification
+                estimate = spec.rows if spec is not None and spec.rows is not None else 10_000
+                if end > offset and rows + estimate > max_batch_rows:
+                    break
+                rows += estimate
+                end += 1
+            chunk = values[offset:end]
+            payload = await self.query_transport.warmup_batch(
+                chunk, consumer_id=self.consumer_id, require_all=require_all,
+            )
+            response = self._validate_batch_chunk(chunk, payload)
+            del payload
+            if require_all and response.partial:
+                raise DataLayerError(
+                    "PARTIAL_RESULT",
+                    "required warmup batch contains one or more explicit failures",
+                    retryable=any(item.problem is not None and item.problem.retryable
+                                  for item in response.results),
+                )
+            self._record_batch(response)
+            yield response
+            del response
+            offset = end
+
     async def warmup_batch(
         self,
         requirements: tuple[DataRequirement, ...] | list[DataRequirement],
         *,
         require_all: bool = True,
     ) -> BatchResponse:
-        values = tuple(requirements)
-        if not 1 <= len(values) <= 10_000:
-            raise ValueError("warmup batch requires between 1 and 10000 items")
-        identities = {
-            (item.instrument_uid, item.feed.value, item.interval)
-            for item in values
-        }
-        if len(identities) != len(values):
-            raise ValueError("warmup batch contains duplicate requirements")
-        if not require_all and any(
-            item.consumer_grade is Grade.EXECUTION for item in values
-        ):
-            raise ValueError("execution-grade warmup batch must require all items")
-        responses = []
-        for offset in range(0, len(values), 100):
-            chunk = values[offset:offset + 100]
-            payload = await self.query_transport.warmup_batch(
-                chunk,
-                consumer_id=self.consumer_id,
-                require_all=require_all,
-            )
-            responses.append(self._validate_batch_chunk(chunk, payload))
-        response = BatchResponse.model_validate({
-            "schema": "qdl.marketdata.batch.v2",
-            "request_id": responses[0].request_id,
-            "partial": any(item.partial for item in responses),
-            "success_count": sum(item.success_count for item in responses),
-            "error_count": sum(item.error_count for item in responses),
-            "results": [
-                result.model_dump(mode="json", by_alias=True)
-                for item in responses
-                for result in item.results
-            ],
-        })
-        if len(response.results) != len(values):
-            raise ContinuityError(
-                "PARTIAL_RESULT", "batch response cardinality differs from request"
-            )
-        if require_all and response.partial:
-            raise DataLayerError(
-                "PARTIAL_RESULT",
-                "required warmup batch contains one or more explicit failures",
-                retryable=any(
-                    item.problem is not None and item.problem.retryable
-                    for item in response.results
-                ),
-            )
-        self._record_batch(response)
-        return response
+        # Aggregate only when explicitly requested; reuse typed rows rather
+        # than serializing and parsing the complete universe a second time.
+        results = []
+        request_id = ""
+        success_count = error_count = 0
+        async for response in self.iter_warmup_batches(requirements, require_all=require_all):
+            if not request_id:
+                request_id = response.request_id
+            results.extend(response.results)
+            success_count += response.success_count
+            error_count += response.error_count
+        return BatchResponse(
+            request_id=request_id, partial=error_count > 0,
+            success_count=success_count, error_count=error_count, results=results,
+        )
 
     async def reference_batch(
         self,
@@ -677,15 +701,22 @@ class AsyncDataLayerClient:
             raise ContinuityError(
                 "PARTIAL_RESULT", "batch response cardinality differs from request"
             )
+        actual_success = sum(item.status == "OK" for item in response.results)
+        if actual_success != response.success_count:
+            raise ContinuityError("PARTIAL_RESULT", "batch status counts disagree with results")
         for requirement, item in zip(values, response.results, strict=True):
             if item.instrument_uid != requirement.instrument_uid:
                 raise ContinuityError(
                     "CONFLICT", "batch response order or instrument identity changed"
                 )
+            if (item.status == "OK") != (item.data is not None) or (
+                (item.data is not None) == (item.problem is not None)
+            ):
+                raise ContinuityError("PARTIAL_RESULT", "batch item data/problem contradicts status")
             if item.data is not None:
                 _validate_query_payload(
                     requirement,
-                    item.data.model_dump(mode="json", by_alias=True),
+                    item.data,
                     warmup=True,
                 )
             elif item.problem is None:
@@ -792,10 +823,23 @@ class AsyncDataLayerClient:
         requirement: DataRequirement,
         *,
         resume_restored_state: bool = False,
+        initial_warmup: WarmupResponse | None = None,
     ):
+        """Open a stream, optionally reusing a validated batch item unchanged.
+
+        The gateway still verifies the signed requirement/generation binding;
+        an expired cursor follows the existing bounded resnapshot path.
+        """
         cursor_key = self._cursor_key(requirement)
         checkpoint = self.cursor_store.load(cursor_key)
-        if requirement.warmup_specification is not None:
+        if initial_warmup is not None:
+            if requirement.feed is not Feed.BAR:
+                raise ValueError("initial_warmup reuse is for BAR history, not a fresh execution price")
+            if not isinstance(initial_warmup, WarmupResponse):
+                raise TypeError("initial_warmup must be a typed WarmupResponse")
+            warmup = _validate_query_payload(requirement, initial_warmup, warmup=True)
+            assert isinstance(warmup, WarmupResponse)
+        elif requirement.warmup_specification is not None:
             raw_warmup = await self.query_transport.warmup(
                 requirement, consumer_id=self.consumer_id
             )

@@ -58188,6 +58188,66 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   profile) and the consumer-cache end-to-end (KN-5 handoff) | shadow
   evidence.
 
+<a id="kn-pre5-owner-read-completion"></a>
+### KN Pre-5 Owner Read-Plane Completion (Astra, 2026-09-26)
+
+**Status: OWNER_APPROVED / IN_PROGRESS / SOURCE_ONLY.** Completion of
+K4.3/K4.4/K4.5 before Claude starts KN-5, not a new architecture/phase train.
+Guide: [read completion](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-owner-read-completion).
+Bobby requires actual universe daily warmup, reusable execution feeds and
+Binance/OKX reference parity, not a certificate inferred from the TS 60 routes.
+**Baseline:** Data Layer `f176ad6`, `feat/consumer-endpoint-benchmark`;
+alpha `f266097`, feature `fix/kn5-alpha-read-completion` from current dev.
+Preserve the two pre-existing owner markdown hunks. No extra worktree.
+**Scope:** SDK bounded true batch and validated per-item warmup/cursor reuse;
+alpha batch/QUOTE facade; OKX OI history, long/short and taker analytics with
+exact native units/scopes; focused reusable latency/universe test tooling;
+affected capability/contracts/guides and release checks.
+**Invariants:** no strategy/sizing/order changes; V1/serving roles, Kafka/Redis/
+spool/ACL/identities unchanged; no new service, freshness relaxation, fake
+history, cross-venue substitution or invented metric cursor.
+**Tests/exit:** SDK/alpha behavioral tests on both venues: chunk bounds,
+partial/identity/interval/finality/coverage, cancellation, reconnect and ack;
+OKX pagination/boundary/unit/ratio/missing/retry tests and bounded authentic
+provider reads when reachable. All latency in ms from caller before queue to
+decoded/validated usable window, separate source age and per-item failures.
+Universe tests declare symbols, daily anchor, requested/available rows/maxlen;
+50 mixed products x100 rows is not 350 symbols x2500/5000 rows.
+Only affected tests rerun. No C2/runtime deployment in this task.
+**Rollback/cleanup:** revert these source commits only. Disposable tests have
+read-only source, bounded CPU/RAM, no network except public provider reads.
+Reuse existing image; remove own containers/temp artifacts, no broad cleanup.
+Active/rollback artifacts retained. No push/merge/tag in this task.
+**Handoff:** Claude freezes both repos/artifacts and runs universe/hot coexistence
+plus actual cache-write latency in KN-5. Source tests do not certify load.
+
+#### Tested-Slice Journal
+- Entry: rules, guide, source, retained KN-4 matrix and Git inspected. SDK real
+  batch exists but alpha fans out single reads; KN-4 batch used 100 rows/item.
+  OKX explicitly refuses OI history/ratios/taker. Implementation/testing pending;
+  no runtime mutation or certification claimed. Both apply_patch tool and CLI
+  fail mount setup; exact-match scripted replacement used and diff verified.
+
+
+- SDK/source slice: true batch iterator bounds both item count and row budget
+  (default 100 items/10000 estimated rows), eliminates full typed->JSON->typed
+  aggregation, rejects contradictory per-item status/data/counts, and accepts
+  caller-owned BAR warmup for cursor handoff without a second query. Hot price
+  feeds cannot reuse an old initial warmup. CI wheel install/import now uses
+  emitted build manifest instead of a stale 2.0.3 literal. Removed legacy quiet
+  exemptions from target budget/gate: disconnect is never quiet/live.
+- Verification: existing SDK/batch/reconnect suite 31 PASS; expanded run first
+  exposed two new fixture mistakes (interval envelope mismatch, invalid lifecycle
+  FORMING). Corrected fixtures to test valid-shaped wrong interval and
+  IN_PROGRESS; final expanded command in reused `qdl-v2-python:kn4-abda016`:
+  `python -B -m unittest tests.test_kn_pre5_sdk tests.test_phase10_universal_warmup
+  tests.test_fund_phase5_stream_sdk tests.test_qdl_sdk_release
+  tests.test_qdl_sdk_read_reconnect tests.test_qdl_sdk_offset_zero
+  tests.test_phase3_target_driver tests.test_phase3_target_workload`:
+  **155 PASS, 0 fail, 0 skip, 10.195s**, network none, cpus1, memory768m.
+  Container self-removed; no image build/provider/production operation.
+  Source OKX/alpha/benchmark slices still being verified; no KN-5 start.
+
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

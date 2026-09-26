@@ -2614,6 +2614,41 @@ test stopped, old targets giữ nguyên. **Cleanup:** scoped read clients/networ
 không để compose alpha test chạy nền. **Debt:** deferred venue capability đã kê khai
 không mở rộng; lỗi public read path trong scope phải sửa trước close.
 
+<a id="kn-owner-read-completion"></a>
+#### Owner Read-Plane Completion Before KN-5 (2026-09-26)
+
+Owner-approved completion of K4.3/K4.4/K4.5; five-phase architecture and rollout
+boundaries unchanged. Astra implements source; Claude reads its journal before K5.1.
+
+1. Universe warmup is one logical SDK batch with bounded HTTP chunks/response
+   memory, declared interval/limit and native identity per item. Alpha uses
+   this batch instead of single-read fanout. No unbounded workers or silent
+   universe/row reduction. Listing/history bounds are explicit, never padded.
+   Daily anchor/as-of cutoff matter; strict batch is not a globally atomic
+   snapshot. Test sufficient history separately from honest short history.
+2. Reuse validated warmup/cursor for stream handoff without a second full
+   warmup. Preserve signed identity/generation, resnapshot, duplicate handling
+   and ack after application. Pass-through has no invented durable cursor.
+   Add thin alpha QUOTE subscription over existing gRPC, no venue bypass.
+   MARKET uses bid/ask/L2 as reference, not candle/mark as a guaranteed fill;
+   Risk remains admission owner.
+3. Complete OKX contract analytics for OI history, long/short variants and
+   taker flow through Python vendor edges and shared admission/pagination.
+   Instrument/currency scope, contracts/base/USD, ratio population, sampling
+   and history coverage must be explicit. Missing is not zero; no native OKX
+   basis claim, new execution permission or fake replay. New sources reuse
+   typed capability/schema/provider contracts, not services per symbol.
+4. All latency durations are ms: caller-to-first-usable and caller-to-complete
+   validated batch/window, queue/SDK/decode and source age separately. Report
+   counts/bytes/failures per venue/symbol/feed/interval/limit/replica. Callback
+   completion differs from actual TS Redis-write completion. Do not report
+   successful-only timing or handler time as total consumer latency.
+5. KN-5 freezes an actual universe profile alongside 60 TS routes: same-interval
+   daily batch, 2500/5000 rows where available, bounded incremental windows and
+   reconnect; reference coverage per venue; hot QUOTE/L2/TRADE/MARK concurrent
+   with cold work. Reuse unchanged KN evidence; affected source/fast matrix
+   precedes final 300s in KN-5. No additional phase train is introduced.
+
 <a id="kn-guide-phase-5"></a>
 ### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

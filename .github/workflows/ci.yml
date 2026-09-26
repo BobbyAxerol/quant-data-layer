@@ -96,10 +96,11 @@ jobs:
 
       - name: Build and import standalone SDK wheel
         run: |
-          python scripts/build_qdl_sdk_release.py --output-dir /tmp/qdl-sdk
-          python -m pip install --disable-pip-version-check /tmp/qdl-sdk/qdl_sdk-2.0.3-py3-none-any.whl
+          python scripts/build_qdl_sdk_release.py --output-dir /tmp/qdl-sdk > /tmp/qdl-sdk-build.json
+          WHEEL=$(python -c 'import json; print(json.load(open("/tmp/qdl-sdk-build.json"))["wheel"])')
+          python -m pip install --disable-pip-version-check "/tmp/qdl-sdk/$WHEEL"
           cd "$(mktemp -d)"
-          PYTHONPATH= python -c 'import qdl_sdk; assert qdl_sdk.__version__ == "2.0.3"'
+          PYTHONPATH= python -c 'import json, qdl_sdk; assert qdl_sdk.__version__ == json.load(open("/tmp/qdl-sdk-build.json"))["version"]'
 
   unit-tests:
     runs-on: ubuntu-latest
