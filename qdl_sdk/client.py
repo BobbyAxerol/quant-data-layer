@@ -445,6 +445,7 @@ class AsyncDataLayerClient:
         cursor_store: CursorStore | None = None,
         max_buffer_events: int = 1000,
         max_reconnect_attempts: int = 5,
+        max_warmup_attempts: int = 3,
         telemetry: TelemetryRecorder | None = None,
     ) -> None:
         if not consumer_id.strip():
@@ -460,6 +461,34 @@ class AsyncDataLayerClient:
             raise ValueError("max_reconnect_attempts must be between 0 and 20")
         self.max_reconnect_attempts = max_reconnect_attempts
         self.telemetry = telemetry
+        if type(max_warmup_attempts) is not int or not 1 <= max_warmup_attempts <= 3:
+            raise ValueError("max_warmup_attempts must be between 1 and 3")
+        self.max_warmup_attempts = max_warmup_attempts
+        self.warmup_read_attempts = 0
+        self.warmup_admission_retries = 0
+
+    async def _cold_read(self, fetch, *, enabled=True, retry_result=None):
+        # Read-only admission recovery. Never retry quality/auth failures, or
+        # hold unbounded tasks while an overloaded reader rejects work.
+        for attempt in range(self.max_warmup_attempts if enabled else 1):
+            self.warmup_read_attempts += 1
+            try:
+                value = await fetch()
+            except DataLayerError as caught:
+                error = caught
+            else:
+                error = retry_result(value) if enabled and retry_result is not None else None
+                if error is None or attempt + 1 >= self.max_warmup_attempts:
+                    return value
+            if (not enabled or error.code != "RATE_LIMITED" or not error.retryable
+                    or attempt + 1 >= self.max_warmup_attempts):
+                raise error
+            retry_ms = error.retry_after_ms
+            if retry_ms is not None and (type(retry_ms) is not int or not 0 <= retry_ms <= 2000):
+                raise error
+            delay = max(250 * (attempt + 1), retry_ms or 0)
+            self.warmup_admission_retries += 1
+            await asyncio.sleep(delay / 1000)
 
     async def snapshot(self, requirement: DataRequirement) -> SnapshotResponse:
         payload = await self.query_transport.snapshot(
@@ -483,8 +512,11 @@ class AsyncDataLayerClient:
         return _validate_feed_status_payload(requirement, payload)
 
     async def warmup(self, requirement: DataRequirement) -> WarmupResponse:
-        payload = await self.query_transport.warmup(
-            requirement, consumer_id=self.consumer_id
+        spec = requirement.warmup_specification
+        payload = await self._cold_read(
+            lambda: self.query_transport.warmup(requirement, consumer_id=self.consumer_id),
+            enabled=requirement.feed is Feed.BAR and spec is not None
+                    and (spec.rows is None or spec.rows > 2),
         )
         response = _validate_query_payload(requirement, payload, warmup=True)
         assert isinstance(response, WarmupResponse)
@@ -532,11 +564,26 @@ class AsyncDataLayerClient:
                 rows += estimate
                 end += 1
             chunk = values[offset:end]
-            payload = await self.query_transport.warmup_batch(
-                chunk, consumer_id=self.consumer_id, require_all=require_all,
+            async def fetch_chunk():
+                payload = await self.query_transport.warmup_batch(
+                    chunk, consumer_id=self.consumer_id, require_all=require_all,
+                )
+                return self._validate_batch_chunk(chunk, payload)
+
+            def retry_batch(checked):
+                if checked.results and all(item.problem is not None
+                        and item.problem.code == "RATE_LIMITED" and item.problem.retryable
+                        for item in checked.results):
+                    return DataLayerError("RATE_LIMITED", "cold batch admission refused",
+                                          retryable=True,
+                                          retry_after_ms=max((item.problem.retry_after_ms or 0)
+                                                             for item in checked.results))
+                return None
+
+            response = await self._cold_read(
+                fetch_chunk, enabled=all(item.feed is Feed.BAR for item in chunk) and rows > 2,
+                retry_result=retry_batch,
             )
-            response = self._validate_batch_chunk(chunk, payload)
-            del payload
             if require_all and response.partial:
                 raise DataLayerError(
                     "PARTIAL_RESULT",

@@ -2,7 +2,7 @@
 import asyncio
 from dataclasses import replace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from qdl_sdk.client import AsyncDataLayerClient
 from qdl_sdk.errors import ContinuityError, DataLayerError
@@ -145,3 +145,76 @@ class InitialHandoffTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mutation=mutation), self.assertRaises((DataLayerError, ValueError)):
                 async with client(query).warmup_then_stream(req, initial_warmup=initial):
                     self.fail("unsafe handoff")
+
+
+class ColdAdmissionRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_is_bounded_counted_and_resets_for_next_read(self):
+        sdk = client(_SdkBatchTransport())
+        calls = []
+        async def fetch():
+            calls.append(1)
+            if len(calls) < 3:
+                raise DataLayerError("RATE_LIMITED", "test-only", retryable=True)
+            return "validated"
+        with patch("qdl_sdk.client.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            self.assertEqual(await sdk._cold_read(fetch), "validated")
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.25, 0.5])
+            self.assertEqual(await sdk._cold_read(fetch), "validated")
+        self.assertEqual((sdk.warmup_read_attempts, sdk.warmup_admission_retries), (4, 2))
+
+    async def test_permanent_quality_and_excessive_retry_after_are_not_retried(self):
+        for code, retryable, delay in (("DATA_STALE", True, None), ("OPEN_SEQUENCE_GAP", True, None),
+                                      ("PERMISSION_DENIED", False, None), ("RATE_LIMITED", False, None),
+                                      ("RATE_LIMITED", True, 30000)):
+            sdk = client(_SdkBatchTransport())
+            error = DataLayerError(code, "test-only", retryable=retryable, retry_after_ms=delay)
+            async def fetch(): raise error
+            with self.assertRaises(DataLayerError) as caught:
+                await sdk._cold_read(fetch)
+            self.assertIs(caught.exception, error)
+            self.assertEqual(sdk.warmup_read_attempts, 1)
+
+    async def test_all_retries_exhaust_with_original_problem(self):
+        sdk = client(_SdkBatchTransport())
+        error = DataLayerError("RATE_LIMITED", "test-only", retryable=True)
+        async def fetch(): raise error
+        with patch("qdl_sdk.client.asyncio.sleep", new_callable=AsyncMock):
+            with self.assertRaises(DataLayerError) as caught:
+                await sdk._cold_read(fetch)
+        self.assertIs(caught.exception, error)
+        self.assertEqual((sdk.warmup_read_attempts, sdk.warmup_admission_retries), (3, 2))
+
+    async def test_whole_batch_refusal_retries_exact_identity_but_mixed_does_not(self):
+        for mixed in (False, True):
+            query = _SdkBatchTransport(fail_uids={"uid-0"} if mixed else {"uid-0", "uid-1"})
+            original = query.warmup_batch
+            seen = []
+            async def fetch(values, **kwargs):
+                seen.append(tuple(values))
+                body = await original(values, **kwargs)
+                for item in body["results"]:
+                    if item.get("problem"):
+                        item["problem"].update(code="RATE_LIMITED", retryable=True)
+                query.fail_uids.clear()
+                return body
+            query.warmup_batch = fetch
+            sdk = client(query)
+            with patch("qdl_sdk.client.asyncio.sleep", new_callable=AsyncMock):
+                result = await sdk.warmup_batch(requirements(2, 480), require_all=False)
+            self.assertEqual(len(seen), 1 if mixed else 2)
+            self.assertEqual(result.partial, mixed)
+            self.assertTrue(all(value == seen[0] for value in seen))
+
+    async def test_cancel_during_backoff_never_dispatches_again(self):
+        sdk = client(_SdkBatchTransport())
+        waiting = asyncio.Event()
+        async def fetch(): raise DataLayerError("RATE_LIMITED", "test-only", retryable=True)
+        async def wait(_seconds):
+            waiting.set()
+            await asyncio.Event().wait()
+        with patch("qdl_sdk.client.asyncio.sleep", side_effect=wait):
+            task = asyncio.create_task(sdk._cold_read(fetch))
+            await waiting.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+        self.assertEqual(sdk.warmup_read_attempts, 1)

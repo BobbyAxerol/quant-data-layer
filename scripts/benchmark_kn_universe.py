@@ -364,7 +364,10 @@ async def run_target(profile, identity, target, client, *, on_ready=None, semaph
         first_chunk_complete_ms=report["chunks"][0].get("complete_ms") if report["chunks"] else None,
         all_callbacks_complete_ms=(max(r["callback_complete_ms"] for r in rows)
                                    if all(r["callback_complete_ms"] is not None for r in rows) else None),
-        elapsed_ms=elapsed(), returned_rows=sum(r["returned_rows"] or 0 for r in rows),
+        elapsed_ms=elapsed(),
+        sdk_warmup_attempts=getattr(client, "warmup_read_attempts", 0),
+        sdk_admission_retries=getattr(client, "warmup_admission_retries", 0),
+        returned_rows=sum(r["returned_rows"] or 0 for r in rows),
         returned_rows_unknown_items=sum(r["returned_rows"] is None for r in rows),
         completed=sum(r["status"] == "USABLE" for r in rows),
         response_body_bytes=getattr(query, "body_bytes", 0) - initial_bytes if initial_bytes is not None else None,

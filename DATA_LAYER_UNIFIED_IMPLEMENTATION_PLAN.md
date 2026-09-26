@@ -58936,6 +58936,34 @@ environment errors because /tmp was read-only; rerun adds private tmpfs only.
 Final affected source/SDK/fault-oracle regression:189/189 PASS,83.973s, no skip.
 Runtime Query remains9e81171; next image is test-client/SDK only.
 
+**20:12 UTC bounded-universe result:** OKX255/255 completed113,270ms;
+Binance230/255 during final50 startup,25 explicit RATE_LIMITED, not data loss.
+Smaller chunks alone do not handle admitted fleet cold-start contention. Add
+bounded SDK cold-read recovery: at most3 attempts, only typed retryable
+RATE_LIMITED (or a whole validated batch with that same outcome), same identity/
+requirements, bounded Retry-After and cancellable waits. No retry for stale,
+gap, auth, partial mixed outcomes or snapshot/reference/execution price reads.
+Expose attempts/retry counters in benchmark and retain first-attempt failures;
+wall latency includes all waits. This is reusable SDK read backpressure, not a
+provider cooldown or hidden acceptance rerun. Query/runtime unchanged. Existing
+final50 candidate21fda1d continues unchanged and keeps its own provenance.
+
+SDK cold-admission regression133/133 PASS (including exhaustion, no retry for
+quality/auth, mixed partial preservation, cancellation and identity stability).
+Environment/legacy source rerun48/48 PASS; all initial broad-suite failures are
+accounted for by affected reruns, not a claim of a single full green run.
+Final50-bounded candidate21fda1d now PASS all frozen gates:15,504 requests,
+90 streams,30 BAR streams,12 restored reconnects, deliberate5s slow-reader replay
+8 non-executable frames followed by1 strict recovery. Cold4/4 complete,
+no leaked tasks. Initial final50 failure is retained. Additional real TS writer
+450s had84/85 steady samples60/60; one sample58/60 (QUOTE ages3.325/3.127s),
+recovered next sample; this stricter concurrent consumer observation is NOT
+hidden by the frozen gate's production-TS33/33 READY. Need distinguish test
+consumer1CPU instrumentation saturation from provider/session status before
+claiming whole-consumer readiness. No production TS change. Next bounded check
+uses2CPU test consumer (production TS is not capped at1CPU), keeps readback and
+records cgroup use; all Data Layer limits stay unchanged.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**
