@@ -4,21 +4,28 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from qdl.admission.contracts import ProviderAdmissionRuntime
+from qdl.admission.edge import AdmissionDeadlineExceeded, ProviderRateLimited
+from qdl.adapters.intervals import canonical_interval_ms, okx_bar_size
+from qdl.adapters.okx.admitted_rest import AsyncAdmittedOkxStatisticsClient
 from qdl.adapters.okx.client import OkxRestClient
 from qdl.adapters.okx.history import (
     HistoryCoverage,
     OkxHistoricalClient,
     OkxOpenInterestSnapshot,
+    PaginationStalled,
 )
-from qdl.domain.capabilities import FeedCapability
+from qdl.domain.capabilities import FeedCapability, OKX_REFERENCE_INTERVALS
 from qdl.domain.instrument import ProductType
 from qdl.reference.contracts import (
+    LongShortKind,
     MarkIndexKind,
     ReferenceCoverage,
     ReferenceFetch,
     ReferenceObservation,
     ReferenceProduct,
     ReferenceProviderError,
+    ReferenceProviderExhausted,
     ReferenceRequest,
     ReferenceUnavailable,
     decimal_field,
@@ -27,7 +34,13 @@ from qdl.reference.contracts import (
 )
 
 
-_ADAPTER_VERSION = "qdl-okx-reference/1"
+_ADAPTER_VERSION = "qdl-okx-reference/2"
+_CONTRACT_STATISTICS = "/api/v5/rubik/stat/contracts/"
+_LONG_SHORT_ENDPOINTS = {
+    LongShortKind.GLOBAL_ACCOUNT: _CONTRACT_STATISTICS + "long-short-account-ratio-contract",
+    LongShortKind.TOP_ACCOUNT: _CONTRACT_STATISTICS + "long-short-account-ratio-contract-top-trader",
+    LongShortKind.TOP_POSITION: _CONTRACT_STATISTICS + "long-short-position-ratio-contract-top-trader",
+}
 
 
 def _fields(*items):
@@ -42,9 +55,21 @@ class OkxSwapReferenceAdapter:
         client: OkxRestClient,
         *,
         history: OkxHistoricalClient | None = None,
+        statistics_client: OkxRestClient | None = None,
+        statistics_admission: ProviderAdmissionRuntime | None = None,
+        require_statistics_admission: bool = False,
     ) -> None:
         self._client = client
+        self._statistics_admission_missing = require_statistics_admission and statistics_admission is None
         self._history = history if history is not None else OkxHistoricalClient(client)
+        if statistics_admission is not None:
+            self._statistics_history = OkxHistoricalClient(
+                AsyncAdmittedOkxStatisticsClient(statistics_client or client, statistics_admission)
+            )
+        else:
+            self._statistics_history = (
+                OkxHistoricalClient(statistics_client) if statistics_client is not None else self._history
+            )
 
     async def fetch(
         self,
@@ -62,10 +87,11 @@ class OkxSwapReferenceAdapter:
         if product is ReferenceProduct.OPEN_INTEREST:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
             if request.is_history:
-                raise ReferenceUnavailable(
-                    "OKX public open-interest is snapshot-only; no historical series is certified"
-                )
+                return await self._contract_statistics(request, capability)
             return await self._open_interest_snapshot(request, capability)
+        if product in {ReferenceProduct.LONG_SHORT_RATIO, ReferenceProduct.TAKER_FLOW}:
+            require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
+            return await self._contract_statistics(request, capability)
         if product is ReferenceProduct.MARK_INDEX_PRICE:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
             return await self._mark_index_snapshot(request, capability, received_at_ns)
@@ -78,6 +104,125 @@ class OkxSwapReferenceAdapter:
             )
         raise ReferenceUnavailable(
             f"OKX has no provider-equivalent public {product.value} reference product"
+        )
+
+    async def _contract_statistics(
+        self, request: ReferenceRequest, capability: FeedCapability
+    ) -> ReferenceFetch:
+        assert request.start_ms is not None and request.end_ms is not None
+        if self._statistics_admission_missing:
+            raise ReferenceUnavailable("OKX contract statistics requires configured shared Rust admission")
+        if request.interval not in OKX_REFERENCE_INTERVALS:
+            raise ReferenceUnavailable(
+                "OKX contract statistics requires a supported canonical fixed-duration interval"
+            )
+        period = okx_bar_size(request.interval)
+        interval_ms = canonical_interval_ms(request.interval)
+        params = {"instId": request.instrument.native_symbol, "period": period}
+        labels = [
+            ("native_symbol", request.instrument.native_symbol),
+            ("inst_type", request.instrument.identity.market),
+            ("scope", "EXACT_CONTRACT"),
+            ("identity_origin", "REQUEST_INST_ID"),
+            ("interval", request.interval),
+            ("provider_period", period),
+            ("timestamp_origin", "PROVIDER"),
+            ("finality", "PROVIDER_NOT_SUPPLIED"),
+            ("history_limit_samples", "1440"),
+        ]
+        if request.product is ReferenceProduct.OPEN_INTEREST:
+            endpoint = _CONTRACT_STATISTICS + "open-interest-history"
+            columns = (
+                ("open_interest_contracts", "CONTRACTS"),
+                ("open_interest_ccy", "BASE_ASSET_QUANTITY"),
+                ("open_interest_usd", "USD_NOTIONAL"),
+            )
+        elif request.product is ReferenceProduct.LONG_SHORT_RATIO:
+            assert request.long_short_kind is not None
+            endpoint = _LONG_SHORT_ENDPOINTS[request.long_short_kind]
+            columns = (("long_short_ratio", "RATIO"),)
+            labels.extend((
+                ("ratio_kind", request.long_short_kind.value),
+                ("ratio_population", "ALL_TRADERS" if request.long_short_kind is LongShortKind.GLOBAL_ACCOUNT
+                 else "TOP_5_PERCENT_BY_OPEN_POSITION_VALUE"),
+                ("ratio_measure", "POSITION" if request.long_short_kind is LongShortKind.TOP_POSITION else "ACCOUNT"),
+            ))
+        else:
+            endpoint = "/api/v5/rubik/stat/taker-volume-contract"
+            # The provider returns SELL before BUY. Pin contracts explicitly;
+            # do not relabel native units or manufacture a buy/sell ratio.
+            params["unit"] = "1"
+            labels.append(("provider_unit", "1"))
+            columns = (("sell_volume", "CONTRACTS"), ("buy_volume", "CONTRACTS"))
+
+        def parse(row: object) -> ReferenceObservation:
+            if not isinstance(row, list) or len(row) != len(columns) + 1:
+                raise ReferenceProviderError("OKX contract statistics row has invalid shape")
+            timestamp_ns = self._timestamp_ns_optional({"ts": row[0]}, "ts")
+            if timestamp_ns is None or timestamp_ns // 1_000_000 > request.end_ms:
+                raise ReferenceProviderError("OKX contract statistics timestamp is missing or beyond request end")
+            fields = _fields(*(decimal_field(name, value, unit)
+                               for (name, unit), value in zip(columns, row[1:], strict=True)))
+            if not fields:
+                raise ReferenceProviderError("OKX contract statistics row has no numeric fields")
+            if any(field.value.as_decimal() < 0 for field in fields):
+                raise ReferenceProviderError("OKX contract statistics values must be nonnegative")
+            return self._observation(request, timestamp_ns, fields, labels=tuple(labels))
+
+        try:
+            observations, history = await self._statistics_history._paginate_time_window(
+                endpoint=endpoint,
+                base_params=params,
+                bucket="public",
+                start_ms=request.start_ms,
+                end_ms=request.end_ms,
+                page_limit=min(100, request.page_size or request.limit),
+                max_records=min(request.limit, 1440),
+                max_pages=request.max_pages,
+                parser=parse,
+                timestamp=lambda item: item.observed_at_ns // 1_000_000,
+                merge=self._history._merge_identical,
+                cursor_parameter="end",
+            )
+        except (AdmissionDeadlineExceeded, ProviderRateLimited) as error:
+            raise ReferenceProviderExhausted(
+                "OKX contract statistics deferred by shared provider admission",
+                retry_after_ms=(error.decision.retry_after_ms if isinstance(error, AdmissionDeadlineExceeded)
+                                else error.retry_after_ms),
+            ) from error
+        except (ValueError, PaginationStalled) as error:
+            raise ReferenceProviderError(str(error)) from error
+
+        times = [item.observed_at_ns // 1_000_000 for item in observations]
+        gaps = any(right - left != interval_ms for left, right in zip(times, times[1:]))
+        # Coverage describes supplied sample timestamps, never candle closure.
+        # Retention, listing and internal gaps must not inherit the paginator's
+        # unconditional right-edge flag or imply padded/continuous history.
+        complete_left = bool(times) and times[0] - request.start_ms < interval_ms
+        complete_right = bool(times) and request.end_ms - times[-1] < interval_ms
+        reason = history.terminal_reason
+        if history.truncated and request.limit > 1440 and reason == "MAX_RECORDS":
+            reason = "PROVIDER_HISTORY_LIMIT"
+        elif not history.truncated:
+            if gaps:
+                reason = "PROVIDER_GAP"
+            elif complete_left and complete_right:
+                reason = "REQUEST_WINDOW_COVERED"
+            elif times:
+                reason = "PROVIDER_PARTIAL"
+        return ReferenceFetch(
+            observations=tuple(observations),
+            lineage=(self._lineage(endpoint, capability),),
+            coverage=ReferenceCoverage(
+                requested_start_ms=request.start_ms,
+                requested_end_ms=request.end_ms,
+                observed_min_ms=times[0] if times else None,
+                observed_max_ms=times[-1] if times else None,
+                complete_left=complete_left and not gaps and not history.truncated,
+                complete_right=complete_right and not gaps,
+                truncated=history.truncated,
+                terminal_reason=reason,
+            ),
         )
 
     async def _funding_history(

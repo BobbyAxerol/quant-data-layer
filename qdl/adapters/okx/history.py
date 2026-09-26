@@ -247,8 +247,10 @@ class OkxHistoricalClient:
         parser: Callable[[Any], Any],
         timestamp: Callable[[Any], int],
         merge: Callable[[Any, Any], Any],
+        cursor_parameter: str = "after",
     ) -> tuple[list[Any], HistoryCoverage]:
-        # OKX `after` means strictly older. end+1 preserves an inclusive end.
+        # OKX `after` (candles/funding) and `end` (contract statistics) are
+        # strictly older cursors. end+1 preserves an inclusive request end.
         cursor = end_ms + 1
         selected: dict[int, Any] = {}
         complete_left = False
@@ -258,10 +260,12 @@ class OkxHistoricalClient:
         while pages < max_pages:
             rows = await self._client.get(
                 endpoint,
-                params={**base_params, "after": str(cursor), "limit": str(page_limit)},
+                params={**base_params, cursor_parameter: str(cursor), "limit": str(page_limit)},
                 bucket=bucket,
             )
             pages += 1
+            if cursor_parameter == "end" and (not isinstance(rows, list) or len(rows) > page_limit):
+                raise ValueError("OKX contract statistics page has invalid shape or size")
             if not rows:
                 terminal_reason = "PROVIDER_EXHAUSTED"
                 break

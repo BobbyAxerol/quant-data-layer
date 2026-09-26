@@ -58191,7 +58191,7 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
 <a id="kn-pre5-owner-read-completion"></a>
 ### KN Pre-5 Owner Read-Plane Completion (Astra, 2026-09-26)
 
-**Status: OWNER_APPROVED / IN_PROGRESS / SOURCE_ONLY.** Completion of
+**Status: IMPLEMENTED / TESTED_LOCALLY / SOURCE_ONLY_HANDOFF.** Completion of
 K4.3/K4.4/K4.5 before Claude starts KN-5, not a new architecture/phase train.
 Guide: [read completion](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-owner-read-completion).
 Bobby requires actual universe daily warmup, reusable execution feeds and
@@ -58274,6 +58274,111 @@ plus actual cache-write latency in KN-5. Source tests do not certify load.
   Existing KN matrix still owns all11 HTTP/four gRPC RPC coverage. No old spool
   scan benchmark is used to certify KN. No new phase or runtime operation.
   OKX reference/provider-admission slice still under verification.
+
+#### Final Pre-5 Source Receipt (2026-09-26)
+
+**Completed scope:** shared SDK/alpha batch + BAR handoff + QUOTE facade;
+OKX exact-contract analytics/admission/capabilities; bounded consumer universe
+measurement and explicit KN-5 workload/endpoint/latency handoff. No new phase,
+service, Rust reducer or Kafka/spool path. This is **source completion**, not
+new production load/latency certification or a runtime handoff.
+
+**OKX correction:** removed obsolete snapshot-only/unsupported assumptions for
+SWAP/FUTURES OI history, global-account/top-account/top-position long-short and
+taker volume. Native instId, UTC interval, contracts/base/USD, top-population,
+SELL-before-BUY, pagination/dedup/gaps/retention/missing fields are explicit.
+No false native basis, ratio component, finality, execution grant or cursor.
+Official docs, bounded real receipts and candidate materialization steps:
+[OKX provider addendum](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#okx-kn-owner-reference-completion).
+
+**Admission correction:** new statistics pages use Query's existing async Rust
+provider-admission runtime. Missing config/lane or a deferred grant makes zero
+provider calls; Python local buckets are not substituted for shared authority.
+Each retry takes a new lease. Cancellation drains the actual worker before
+completion, relays late429/50011 cooldown, does not spawn a retry, and retains
+caller cancellation. Candidate source policy adds only statistics lanes; default
+1/s and one in-flight per market is deliberately conservative, not a throughput
+claim. KN-5 must union these entries with its exact runtime BAR/history policy,
+not replace the compiled policy with the reference-only candidate document.
+No live policy/image/config/entitlement was changed. Existing funding/OI snapshot/
+MARK/INDEX/metadata and provider-specific Binance/DNSE quotas remain unchanged.
+
+**Compiler proof:** in-memory copies of existing compiler inputs add15 OKX
+reference entitlements (five symbols x OI-history/ratio/taker at1d), preserve all
+old requirements: OKX20->35, combined reference55->70, reference/L2 manifest
+79->94. Ratio variants remain typed selectors, not duplicate bindings. This is
+UNIT_TEST metadata, not a sealed production bundle; actual universe/identity
+and reference bindings are frozen and tested by Claude in K5.1/K5.2.
+
+**Final parent verification:** existing image `qdl-v2-python:kn4-abda016`,
+`sha256:1596ce7a239bc65d623ee3b37c2d1299a7af0fbdcca256eae58b1341dc7a45f7`;
+source mounted read-only, network none, cpus1/memory768m/pids128, tmpfs192m,
+`PYTHONDONTWRITEBYTECODE=1`. Command `python -B -m unittest -q` with:
+```text
+tests.test_kn_pre5_sdk tests.test_kn_universe_benchmark
+tests.test_phase10_universal_warmup tests.test_fund_phase5_stream_sdk
+tests.test_qdl_sdk_release tests.test_qdl_sdk_read_reconnect
+tests.test_qdl_sdk_offset_zero tests.test_phase3_target_driver
+tests.test_phase3_target_workload tests.test_okx_reference_completion
+tests.test_fund_phase3_okx tests.test_fund_phase4_okx_history
+tests.test_phase104_reference_batch tests.test_kn_provider_admission_edge
+tests.test_phase113_reference_v2 tests.test_phase104_v2_query_stream_integration
+tests.test_phase104_contract_foundation tests.test_phase1_instrument_domain
+tests.test_phase10_universal_demand tests.test_reference_l2_materializer
+tests.test_phase24315_reference_entitlement_materialization
+tests.test_phasec36_liquid_crypto_features
+```
+**323 run:322 pass,1 opt-in public-provider skip,0 fail/error,35.173s.**
+Source/test tree hash remained
+`a410ead1fb3edb593834796ada804dd888bad992247600b866575094f8a41bb9`
+during the run. It emitted a Starlette deprecation and event-loop ResourceWarning
+from the test suite; neither is claimed as a production observation. No full
+Rust/C2 suite rerun: no Rust/IDL changes; affected Python/SDK/contract tests ran.
+Additional worker run includes `tests.test_phasec36_admission_binding`:
+102 run/101 pass/1 public skip; overlap is not additive coverage.
+Alpha:147 pass,0 fail/skip on SDK`86e15e8`, committed `4a820bf`.
+
+**Authentic provider check:** two bounded opt-in OKX runs, each10 public GETs,
+five series x two pages,20 observations,zero failures, no raw rows persisted.
+The final run took5.872s; per-product complete request1075.656-1549.347ms,
+including deliberately500ms pacing before each page. This is BTC/5m direct
+provider wrapper evidence, NOT alpha->Query KN latency, all-symbol/daily proof
+or shared-Rust throughput. Full hashes/window/results are in the provider guide.
+
+**Evidence inheritance:** independently verified all21 files referenced by
+`~/.local/state/qdl-v2/kn4-20260925/evidence/kn4-closure-receipt-v2.json` against
+its hashes;21/21 match. Receipt SHA256
+`32c8ee9214928e8a90bb05cc7a5d2ec80d8f1bfe274783cff7d2cf43ef2b453a`.
+Its stage35 retained run has6527 requests/0failure,63 streams/0error;
+`abda016..f176ad6` changes only the plan. Preserve those results with their old
+artifacts, including prior failed runs,59/60 strict snapshot coverage and
+callback-vs-Redis limitation. Do not relabel them as measurements of this patch.
+This source handoff does not silently change KN-4's review status or KN-5 exit.
+
+**Claude next:** read the detailed guide anchor `kn-owner-read-completion`,
+freeze both source commits and SDK2.0.4 candidate, compile actual universe and
+new reference entitlement/policy copies, then affected fast matrix and existing
+K5 workload/cutover/release sequence. Measure exact60 TS routes plus declared
+universe1d/2500/5000 and all existing endpoints; not350 inferred from5 symbols.
+Do not publish an alpha image with SDK2.0.3 and the new iterator facade. No
+additional architecture or C2 debugging loop is requested.
+
+**Runtime/provenance/cleanup:** no production mutation, restart, build, push,
+merge, tag or release in this task. Canonical DL `/home/bobby/data_layer`,
+`feat/consumer-endpoint-benchmark` (`86e15e8`, `2da88a9` plus this receipt's
+reference commit); alpha `/home/bobby/execution_alpha`,
+`fix/kn5-alpha-read-completion` at`4a820bf`, clean. One checkout per repo, no
+extra worktree. Stable local release tag remains`v2.1.0`, not this source HEAD.
+Serving Query x2`2.1.1-83fa1bc` image`dd065fdf8c43...`, Stream x2
+`2.1.1-ae2d62a` image`37d7f5182ea1...`, Rust x3`389753b37c4f...`, projector
+x6`56d331db87d9...`, BAR/ingestors/Kafka/Redis unchanged. Exact image IDs and
+Query config hashes recorded in provider guide; Query/Stream/Rust restart0.
+All disposable task test containers self-removed. No task-created images/cache
+exist to prune. Inventory:51 images/21.6GB, BuildKit87/6.771GB; disk166GB used,
+124GB available of290GB. Existing active/rollback/Claude candidate artifacts
+retained intentionally; no broad prune or volume cleanup. Two owner plan hunks
+remain unstaged; scoped/staged whitespace checks pass, their old whitespace is
+not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

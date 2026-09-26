@@ -211,8 +211,11 @@ class PhaseC36LiquidCryptoFeatureTests(unittest.TestCase):
         self.assertTrue(registry.resolve(
             venue="OKX", market="FUTURES", product_type="FUTURE", feed=DemandFeed.CONTRACT_METADATA
         ).enabled)
-        self.assertFalse(registry.resolve(
+        self.assertTrue(registry.resolve(
             venue="OKX", market="SWAP", product_type="PERPETUAL", feed=DemandFeed.LONG_SHORT_RATIO
+        ).enabled)
+        self.assertFalse(registry.resolve(
+            venue="OKX", market="SPOT", product_type="SPOT", feed=DemandFeed.LONG_SHORT_RATIO
         ).enabled)
         future = next(item for item in self.records if item.native_symbol == "BTC-USD-260925")
         self.assertIn(DemandFeed.CONTRACT_METADATA, reference_feeds_for(future))

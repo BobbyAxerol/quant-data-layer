@@ -1094,11 +1094,11 @@ class OkxReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(sol, eth)
         self.assertIs(index, client._buckets["market"])
 
-    async def test_unavailable_okx_products_are_explicit_and_make_no_provider_call(self):
+    async def test_unavailable_okx_interval_and_basis_make_no_provider_call(self):
         before = len(self.rest.calls)
         long_short = await self.batch.fetch_one(ReferenceRequest(
             instrument=self.btc, product=ReferenceProduct.LONG_SHORT_RATIO,
-            start_ms=100, end_ms=200, interval="1h", long_short_kind=LongShortKind.GLOBAL_ACCOUNT,
+            start_ms=100, end_ms=200, interval="1m", long_short_kind=LongShortKind.GLOBAL_ACCOUNT,
         ))
         basis = await self.batch.fetch_one(ReferenceRequest(
             instrument=self.btc, product=ReferenceProduct.BASIS,
