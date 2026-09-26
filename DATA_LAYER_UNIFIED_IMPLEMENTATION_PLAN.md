@@ -56505,9 +56505,9 @@ Astra requested review points and next allowed step:
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
 
 **Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-26; receipt
-`~/.local/state/qdl-v2/kn4-20260925/evidence/kn4-closure-receipt.json`, four
-items left open for the review). KN-3 PASS recorded (`f0380a4`). Slices
-1-32 and the alpha adapter fix (`execution_alpha` `f266097`) implemented and
+`~/.local/state/qdl-v2/kn4-20260925/evidence/kn4-closure-receipt-v2.json`,
+three items left open for the review). KN-3 PASS recorded (`f0380a4`). Slices
+1-34 and the alpha adapter fix (`execution_alpha` `f266097`) implemented and
 tested; D35-D47 and the 2026-09-26 Astra review items are in the journal.
 **Goal:** actual SDK/consumer reads use the new backend correctly across the
 declared endpoint surface; hot latency survives heavy warmup and recovery.
@@ -58158,6 +58158,35 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   oracle (`judging_window_ns`). Regression `JudgingWindowTests`: a synthetic
   log with a close in the gap gives `unexpected=1` with the old anchor and 0
   with the new one; `test_kn_native_slice_probe` 44 OK | `tested locally`.
+- 2026-09-26: **Astra KN-4 re-review: F1 fixed, benchmark corrected, run-3
+  explained; evidence rerun on `kn4-abda016`** | this commit | Receipt
+  `evidence/kn4-closure-receipt-v2.json` (`32c8ee9214928e8a...`, v1 kept)
+  lists four corrections to v1 made on my own review: v1 claimed TS 60/60 on
+  both replicas while its file said 59; "queue wait included" was false
+  (the timer started after the consumer semaphore); the TS age p99 came from
+  an end-biased sampler; stage 35 and the probe ran on the Query binary
+  before the F1 fix. Runner (outside Git) now times from the call
+  (`queue_wait` / `sdk_call` / `call_to_usable`), keeps a uniform per-slice
+  reservoir with start-up and steady apart, stores per binding x replica
+  results and, for a client refusal, the quality of the exact view refused
+  (the TS `_validate_identity` rule wrapped, not changed). Results on
+  `kn4-abda016` (Query recreated one replica at a time): TS A 60/60 positive on
+  both replicas (063818) and 59/60 (065612: OKX BNB-USDT-SWAP had no trade
+  for 18-29 s); every refusal is TRADE with quality LIVE / event STALE /
+  session LIVE / not eligible / `LAST_EVENT_STALE` (TS's 3 s snapshot rule);
+  call_to_usable p50/p99 ms QUOTE 233/575, MARK 204/606, BAR 321/602 - mostly
+  the runner's own 8-slot queue (sdk_call p50 56-75, p99 146-195). TS bridge
+  60/60 READY in 30/30, 36/36 and 66/66 samples; steady age to the projector
+  callback p50/p99 ms QUOTE 380/893, BOOK_DELTA 340/720, TRADE 396/1,504,
+  MARK 946/2,111, BAR (close) 1,276/3,402. Alpha 52/52, warmups from the KN
+  cache. Probe 184 subscriptions PASS (75,553 events, 0 defects, negatives
+  24/24, RPC 17/17). Stage 35 (064645) PASS on every gate - KN gates
+  (6,527 requests / 0 failed, 63 streams / 0 errors, no OOM/restart/leak,
+  lag 29/51) and, this run, production TS 20/20; the production gate varies
+  by run (044319 failed 3/21) and is reported apart from KN. Open: the
+  production-TS readiness variation (old path), the warmup row cost (KN-5
+  profile) and the consumer-cache end-to-end (KN-5 handoff) | shadow
+  evidence.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
