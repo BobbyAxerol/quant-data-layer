@@ -204,7 +204,9 @@ def apply_window(profile, product, warmup, window):
         if view.instrument_id != product.instrument_id or view.source.venue != product.venue:
             raise ContinuityError("CONFLICT", "declared instrument/venue differs")
         if ((bar.open_time_ns - profile.bar_anchor_ns) % duration
-                or bar.close_time_ns not in (bar.open_time_ns + duration - 1, bar.open_time_ns + duration)):
+                or bar.close_time_ns not in (bar.open_time_ns + duration - 1_000_000,
+                                             bar.open_time_ns + duration - 1,
+                                             bar.open_time_ns + duration)):
             raise ContinuityError("BAR_ANCHOR_MISMATCH", "bar duration or anchor differs")
         if bar.open_time_ns + duration > profile.as_of_ns:
             raise ContinuityError("AS_OF_EXCEEDED", "bar closes after declared cutoff")

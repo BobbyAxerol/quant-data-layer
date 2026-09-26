@@ -58745,6 +58745,29 @@ error in the benchmark, not a provider outage or successful universe test.
 Universe benchmark factory regression: 18/18 PASS, including actual SDK
 constructor signature checks. Harness-only change; no reader image rebuild.
 
+**Expanded OKX history boundary:** weekly 10k now reaches before Unix epoch in
+the provider window constructor. Clamp request start to 0, preserving requested
+row count and actual provider exhaustion. Regression calls the real history
+window validator, not only a mock. No provider response is synthesized or clipped
+to pretend the requested depth exists. Native Binance 3d discontinuities remain
+typed with exact historical coordinates; current-window histories still serve.
+
+**Actual universe timing and oracle correction:** requests now execute; 480-row
+chunks of 20 symbols measured ~1.7-2.3s for partly unfilled OKX, ~6.8-8.1s for
+Binance. The benchmark itself then falsely rejected native inclusive millisecond
+close (`end_ns - 1,000,000`), accepting only exclusive/one-nanosecond endpoints.
+Align the test oracle with the existing stable canonical BAR contract; timestamps
+and provider payloads remain unchanged. New regression accepts native ms close
+and rejects a two-ms wrong close. Full matrix already passed 132 target reads,
+48 history ladders, 20 batches, 16 handoffs, 24 replica parity and 8 freshness
+cases; only the two global diagnostic HTTP calls failed (retain evidence).
+
+**18:21 UTC checkpoint:** source history/oracle suite 38 run, 37 PASS,
+1 pre-existing real-Kafka integration skip. Stage20 actual load PASS (receipt
+`shadow-run/evidence/stage-20-181605`); this does not certify stage50 or diagnostics.
+Next isolated edge image includes the validated nonnegative OKX weekly window;
+only test edge is recreated, all production remains unchanged.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

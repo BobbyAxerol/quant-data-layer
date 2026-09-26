@@ -104,6 +104,19 @@ class UniverseBenchmarkTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.consumer_id, "TEST_ONLY")
             await client.close()
 
+    async def test_provider_millisecond_inclusive_close_is_not_a_false_anchor_error(self):
+        p = bench.Profile.model_validate(profile_mapping(2))
+        def native_close(item, _call):
+            for view in item["data"]["data"]:
+                view["payload"]["close_time_ns"] -= 1_000_000
+        result = await self.run_one(p, local_client(p, mutate=native_close))
+        self.assertEqual(result["usable"], 2)
+        def invalid_close(item, _call):
+            for view in item["data"]["data"]:
+                view["payload"]["close_time_ns"] -= 2_000_000
+        result = await self.run_one(p, local_client(p, mutate=invalid_close))
+        self.assertTrue(all(row["error_code"] == "BAR_ANCHOR_MISMATCH" for row in result["items"]))
+
     async def test_inventory_never_opens_client_or_credentials(self):
         p = bench.Profile.model_validate(profile_mapping(350, 5000))
         factory = Mock(side_effect=AssertionError("network"))

@@ -93,7 +93,7 @@ async def fetch_closed_bar_history_raw_envelopes(
         observed_ms,
         provider="OKX",
     ) - 1
-    start_ms = end_ms - (limit + 2) * interval_ms
+    start_ms = max(0, end_ms - (limit + 2) * interval_ms)
     client = history_client or OkxHistoricalClient(OkxRestClient())
     history = await client.candles(
         inst_id=binding.native_symbol,

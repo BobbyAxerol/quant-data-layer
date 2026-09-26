@@ -97,6 +97,28 @@ class ShortProviderHistoryTests(unittest.TestCase):
             fetch_closed_bar_history_raw_envelopes(self._binding(), limit=100, now_ms=now, attempts=1,
                                                    fetcher=fetcher(False), sleep=lambda _s: None)
 
+    def test_okx_ten_thousand_weeks_never_requests_a_negative_window(self):
+        import asyncio
+        from qdl.adapters.okx.bar_edge import OkxBarRawBinding, fetch_closed_bar_history_raw_envelopes
+        from qdl.adapters.okx.history import HistoryCoverage, OkxCandleHistory, OkxHistoricalClient
+        calls = []
+        class Client:
+            async def candles(self, **kwargs):
+                OkxHistoricalClient._validate_window(kwargs["inst_id"], kwargs["bar"], kwargs["start_ms"],
+                    kwargs["end_ms"], kwargs["max_records"], kwargs["max_pages"])
+                calls.append(kwargs)
+                return OkxCandleHistory((), HistoryCoverage(requested_start_ms=kwargs["start_ms"],
+                    requested_end_ms=kwargs["end_ms"], observed_min_ts_ms=None, observed_max_ts_ms=None,
+                    complete_left=False, complete_right=False, truncated=False,
+                    terminal_reason="PROVIDER_EXHAUSTED", provider_endpoint="TEST_ONLY"))
+        binding = OkxBarRawBinding(market="SWAP", product_type="PERPETUAL", native_symbol="TEST-USDT-SWAP",
+            interval="1w", subscription_id="s", source_session_id="x", connection_generation=1, lease_epoch=1,
+            authority_revision=1, partition_plan_epoch=1, adapter_version="test", config_revision=1, instrument_catalog_revision=1)
+        result = asyncio.run(fetch_closed_bar_history_raw_envelopes(binding, limit=10000,
+            now_ms=1790442145049, history_client=Client(), allow_short=True))
+        self.assertEqual(result, ())
+        self.assertEqual(calls[0]["start_ms"], 0)
+
     def test_okx_accepts_a_short_window_only_when_okx_itself_is_exhausted(self):
         import asyncio
 
