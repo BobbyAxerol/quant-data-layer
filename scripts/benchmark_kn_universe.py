@@ -180,7 +180,7 @@ class MeasuredQuery(RestQueryTransport):
 
 
 def client_for(identity, target, timeout_ms):
-    tls = WorkloadTlsConfig(**identity.tls.model_dump())
+    tls = WorkloadTlsConfig(identity.tls.ca_file, identity.tls.cert_file, identity.tls.key_file)
     credential = RotatingJwtCredentialProvider(
         **identity.jwt.model_dump(), algorithm="RS256", subject=identity.subject,
         environment=identity.environment, consumer_manifest_revision=identity.manifest_revision)

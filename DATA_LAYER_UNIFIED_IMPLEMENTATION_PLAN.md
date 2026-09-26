@@ -58734,6 +58734,17 @@ feed groups each 2,000/2,000 successful. Real TS bridge 60/60 READY for 60 sampl
 300s, 75,475 Redis writes, 153,745 keys verified; results in acceptance directory.
 No provider freshness policy, risk eligibility, orders or production changed.
 
+**Universe harness defect found by authentic invocation:** `client_for()` used
+TLS keyword names `cert_file/key_file`, while released SDK constructor uses
+`certificate_file/private_key_file`. All 510 products x2 replicas were correctly
+reported NOT_ATTEMPTED; no request or latency evidence from that run. Fix factory
+mapping and add signature-checked factory regression; prior fake-transport tests
+did not exercise credential/transport construction. This is an implementation
+error in the benchmark, not a provider outage or successful universe test.
+
+Universe benchmark factory regression: 18/18 PASS, including actual SDK
+constructor signature checks. Harness-only change; no reader image rebuild.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

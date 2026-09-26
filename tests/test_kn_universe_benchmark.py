@@ -93,6 +93,17 @@ class UniverseBenchmarkTests(unittest.IsolatedAsyncioTestCase):
         client = client or local_client(profile)
         return await bench.run_target(profile, profile.identities[0], profile.targets[0], client, **kwargs)
 
+    async def test_real_client_factory_uses_sdk_constructor_signatures(self):
+        p = bench.Profile.model_validate(profile_mapping())
+        with patch.object(bench, "WorkloadTlsConfig", autospec=True) as tls, \
+             patch.object(bench, "RotatingJwtCredentialProvider", autospec=True), \
+             patch.object(bench, "MeasuredQuery", autospec=True), \
+             patch.object(bench, "GrpcStreamTransport", autospec=True):
+            client = bench.client_for(p.identities[0], p.targets[0], p.timeout_ms)
+            tls.assert_called_once_with("/TEST_ONLY/ca_file", "/TEST_ONLY/cert_file", "/TEST_ONLY/key_file")
+            self.assertEqual(client.consumer_id, "TEST_ONLY")
+            await client.close()
+
     async def test_inventory_never_opens_client_or_credentials(self):
         p = bench.Profile.model_validate(profile_mapping(350, 5000))
         factory = Mock(side_effect=AssertionError("network"))
