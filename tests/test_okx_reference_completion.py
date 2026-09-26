@@ -493,13 +493,17 @@ class OkxReferenceCompletionTests(unittest.IsolatedAsyncioTestCase):
                  root / "config/v2/stable-v2-release-routing.yaml", root / "config/v2/stable-primary-consumer-routing.yaml"]
         before = {path: path.read_bytes() for path in paths}
         inventory = fixture.ReferenceL2MaterializerTests._inventory()
+        # Reconstruct the pre-completion demand; current source now includes these rows.
+        new_metric = lambda r: (r.universe.venue == "OKX" and r.interval == "1d" and
+                               r.feed in {DemandFeed.OPEN_INTEREST, DemandFeed.LONG_SHORT_RATIO, DemandFeed.TAKER_FLOW})
+        inventory = replace(inventory, requirements=tuple(r for r in inventory.requirements if not new_metric(r)))
         base = next(r for r in inventory.requirements if r.universe.venue == "OKX"
                     and r.feed is DemandFeed.OPEN_INTEREST and r.interval is None)
         additions = tuple(replace(base, feed=feed, interval="1d", max_freshness_ms=86_400_000)
                           for feed in (DemandFeed.OPEN_INTEREST, DemandFeed.LONG_SHORT_RATIO, DemandFeed.TAKER_FLOW))
         candidate = replace(inventory, requirements=inventory.requirements + additions)
         policy = ActiveDemandSourceRegistry.load(fixture.REGISTRY_PATH).admission_policy
-        policy = replace(policy, budgets=policy.budgets + tuple(
+        policy = replace(policy, budgets=tuple(b for b in policy.budgets if not (b.venue == "OKX" and b.market == "SWAP" and b.feed in {DemandFeed.LONG_SHORT_RATIO, DemandFeed.TAKER_FLOW})) + tuple(
             AdmissionBudget("OKX", "SWAP", feed, 128) for feed in (DemandFeed.LONG_SHORT_RATIO, DemandFeed.TAKER_FLOW)))
         admitted = admit_provider_metadata(candidate, fixture._metadata())
         convergence = converge_active_demand(candidate, admitted, policy)
@@ -536,6 +540,8 @@ class OkxReferenceCompletionTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(summary["alpha_reference_counts"]["alpha.okx.paper.stable"], 35)
         old = fixture._load(root / "consumers/stable/alpha-okx-paper.yaml")["spec"]["requirements"]
+        old = [r for r in old if not (r.get("interval") == "1d" and r["feed"] in
+               {"OPEN_INTEREST", "LONG_SHORT_RATIO", "TAKER_FLOW"})]
         new = manifests["alpha.okx.paper.stable"]["spec"]["requirements"]
         key = lambda row: (row["instrument_uid"], row["feed"], row.get("interval"))
         added_keys = {key(r) for r in new} - {key(r) for r in old}

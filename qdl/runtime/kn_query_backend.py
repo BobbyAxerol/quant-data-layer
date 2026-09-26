@@ -183,6 +183,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         last: int | None = None,
         start_ns: int | None = None,
         end_ns: int | None = None,
+        check_budget: Callable[[], None] | None = None,
     ) -> ProductView | None:
         """The product's view; ``None`` when it has no state (DATA_NOT_READY)."""
 
@@ -194,10 +195,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 view = self.reader.bars(
                     lpk, canonical_interval_ms(binding.interval or ""),
                     start_ms=start_ns // 1_000_000, end_ms=end_ns // 1_000_000,
+                    check_budget=check_budget,
                 )
             else:
                 view = self.reader.bars(
                     lpk, canonical_interval_ms(binding.interval or ""), last=last or 1,
+                    check_budget=check_budget,
                 )
         except KnCacheNotReady as error:
             if error.state == "SOURCE_BOUNDARY_UNKNOWN":
@@ -433,6 +436,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             view = self._view(
                 binding,
                 last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW if binding.feed is FeedType.BAR else 1,
+                check_budget=check_budget,
             )
         except QueryBackendError as error:
             if error.problem.code is CanonicalErrorCode.DATA_NOT_READY:

@@ -2653,6 +2653,19 @@ async def _kn4_raw(identity, url: str, method: str, path: str, *, requirement=No
     return response.status_code, payload if isinstance(payload, dict) else {"items": payload}
 
 
+def _kn4_http_result(path: str, status: int, payload: dict) -> dict:
+    result = {"http": status, "code": payload.get("code")}
+    if path != "/v2/data-quality/gaps":
+        return result
+    complete = (status == 200 and payload.get("schema") == "qdl.data-quality.gaps.v2"
+                and isinstance(payload.get("items"), list))
+    result.update(scan_complete=complete)
+    if not complete:
+        result.update(status="FAIL", contract_safe=status in {206, 409, 503},
+                      error="GAP_SCAN_NOT_COMPLETE")
+    return result
+
+
 def _kn4_opens_contiguous(opens: list[int], interval_ns: int) -> bool:
     return bool(opens) and all(later - earlier == interval_ns for earlier, later in zip(opens, opens[1:]))
 
@@ -3013,7 +3026,7 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
                     text = json.dumps(payload)
                     if "kn3-source" in text:
                         raise ValueError("an unsigned cursor placeholder left the process")
-                    return {"http": status, "code": payload.get("code")}
+                    return _kn4_http_result(path, status, payload)
                 await timed("http", {"replica": replica, "operation": name}, http)
             # The three POST operations through the SDK (typed bodies).
             async def sdk_posts():

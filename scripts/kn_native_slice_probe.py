@@ -178,7 +178,7 @@ def slice_verdict(result: dict[str, Any], *, expected_products: Sequence[str]) -
     return failures
 
 
-def _dist(values: Sequence[float]) -> dict[str, float]:
+def _dist(values: Sequence[float]) -> dict[str, float | None]:
     if not values:
         return {"n": 0}
     ordered = sorted(values)
@@ -187,7 +187,8 @@ def _dist(values: Sequence[float]) -> dict[str, float]:
         return round(ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))], 3)
 
     return {"n": len(ordered), "mean": round(statistics.fmean(ordered), 3), "p50": pick(0.5),
-            "p95": pick(0.95), "p99": pick(0.99), "max": round(ordered[-1], 3)}
+            "p95": pick(0.95) if len(ordered) >= 20 else None,
+            "p99": pick(0.99) if len(ordered) >= 100 else None, "max": round(ordered[-1], 3)}
 
 
 class Slice:

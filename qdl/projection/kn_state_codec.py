@@ -235,13 +235,15 @@ def _restore_bar(envelope: market_data_pb2.EventEnvelope, lpk: LogicalProductKey
     return envelope.SerializeToString()
 
 
-def decode_bar_row(row: bytes, lpk: LogicalProductKey) -> DecodedState:
+def decode_bar_row(row: bytes, lpk: LogicalProductKey, *, expected_open_ms: int | None = None) -> DecodedState:
     source_offset, materializer_epoch, digest = _read_trailer(row)
     envelope = _parse_envelope(row[TRAILER_BYTES:])
     if envelope.WhichOneof("payload") != "bar":
         raise StateCodecError("NOT_BAR")
     if envelope.instrument_uid or envelope.venue or envelope.market or envelope.bar.interval:
         raise StateCodecError("NON_CANONICAL")
+    if expected_open_ms is not None and _open_time_ms(envelope) != expected_open_ms:
+        raise StateCodecError("OPEN_TIME_MISMATCH")
     canonical = _restore_bar(envelope, lpk)
     if hashlib.sha256(canonical).digest() != digest:
         raise StateCodecError("CONTENT_HASH")

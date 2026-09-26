@@ -3,7 +3,7 @@
   "frozen_at": "2026-09-23",
   "refrozen": "2026-09-23 after Astra KN-1 review F5: the BAR cache row is sized contract-complete; the earlier 275 B compact row omitted coordinates, quality and provenance",
   "source": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-1 (K1.4); guide upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency",
-  "note": "Frozen before any KN runtime exists. Latency, stages, workload and TS gates are inherited unchanged from the v2.1.1 budget by hash; resource and retention values are measured or derived from measurements named below. A missed target is an open exit, never a threshold edited after results.",
+  "note": "Latency, workload and TS gates remain frozen by the inherited v2.1.1 hash. Resource sizing is historical or extrapolated as labelled; D48 invalidates the old whole-cache fit. The current resource decision is NOT_FROZEN in whole_cache_d48, pending expanded-cache measurements. No threshold is edited to turn a miss into a pass.",
   "inherits": {
     "path": "config/v2/v211-target-acceptance-budget.json",
     "sha256": "473ea6b12f0d56278c3830ca6484e9129c4e9646de0021e3505395debf01baa8",
@@ -176,5 +176,30 @@
     },
     "demand_only": "only products with manifest demand are materialized; provider wrappers keep serving bounded on-demand history outside the cache"
   },
-  "universe_d48": {"status": "sizing for owner decision; no cap, maxmemory or retention is changed by this block", "products": 500, "interval": "1d", "universe_revision": 1, "rows_now": 497453, "rows_now_basis": "sum over 500 products of min(listing age in days, 12,064) at revision 1 (Binance 255,448, OKX 242,005; max age 2,473/2,604 d, median 740/683 d)", "bytes_per_row": 756.0, "bytes_now": 376000000, "growth_rows_per_year": 182500, "growth_bytes_per_year": 138000000, "rows_plus_3_years": 1044953, "bytes_plus_3_years": 790000000, "rows_at_d15_cap": 6032000, "bytes_at_d15_cap": 4560000000, "with_current_cache": "measured shadow cache before the universe 651 MB (2026-09-26) + 376 MB now = about 1.03 GB against maxmemory 1.5 GB; reaches about 1.29 GB in 3 years if the execution products stay at today's rows", "streams": "none: the universe is read with the daily batch warmup (deep_momentum polls daily); the 60-stream identity quota stays for execution QUOTE/L2/TRADE/MARK", "decision_needed": "retention for universe products: keep D15 (10,000 served + 2,064) or bound them (e.g. 2,500 served + 500), and when to raise maxmemory; measured before load, not assumed"}
+  "universe_d48": {"status": "sizing for owner decision; no cap, maxmemory or retention is changed by this block", "products": 500, "interval": "1d", "universe_revision": 1, "rows_now": 497453, "rows_now_basis": "sum over 500 products of min(listing age in days, 12,064) at revision 1 (Binance 255,448, OKX 242,005; max age 2,473/2,604 d, median 740/683 d)", "bytes_per_row": 756.0, "bytes_now": 376000000, "growth_rows_per_year": 182500, "growth_bytes_per_year": 138000000, "rows_plus_3_years": 1044953, "bytes_plus_3_years": 790000000, "rows_at_d15_cap": 6032000, "bytes_at_d15_cap": 4560000000, "with_current_cache": "measured shadow cache before the universe 651 MB (2026-09-26) + 376 MB now = about 1.03 GB against maxmemory 1.5 GB; reaches about 1.29 GB in 3 years if the execution products stay at today's rows", "streams": "none: the universe is read with the daily batch warmup (deep_momentum polls daily); the 60-stream identity quota stays for execution QUOTE/L2/TRADE/MARK", "decision_needed": "retention for universe products: keep D15 (10,000 served + 2,064) or bound them (e.g. 2,500 served + 500), and when to raise maxmemory; measured before load, not assumed"},
+  "whole_cache_d48": {
+    "status": "NOT_FROZEN_REQUIRES_WHOLE_CACHE_MEASUREMENT",
+    "scope": "Execution/VN baseline PLUS 500 additional D48 daily BAR products, not universe alone. Source-only arithmetic; no runtime limit change.",
+    "served_rows_per_d48_product": 10000,
+    "retained_headroom_per_product": 2064,
+    "additional_d48_products": 500,
+    "baseline_rows_at_cap": 1699216,
+    "additional_rows_at_cap": 6032000,
+    "total_rows_at_cap": 7731216,
+    "bytes_per_row_basis": 756.0,
+    "bytes_per_row_is_measurement_on": "KN3 mixed capture/synthetic fill at 1,537,810 rows, not KN5 universe",
+    "steady_bytes_at_cap_extrapolated": 5844799296,
+    "staging_delta_bytes_inherited_measurement": 20991944,
+    "peak_bytes_at_cap_extrapolated": 5865791240,
+    "existing_candidate_maxmemory_bytes": 1500000000,
+    "existing_cap_fits_full_retention": false,
+    "excluded_unmeasured": [
+      "allocator/RSS fragmentation for expanded symbol mix",
+      "client output buffers and large batch replies",
+      "state-topic revision/tombstone disk growth",
+      "shadow plus old/new runtime overlap"
+    ],
+    "decision": "Keep the promised 10,000 served rows. Measure actual universe + execution cache, staging and RSS before choosing maxmemory/container caps in K5.3. Do not claim 1.13 GB is whole-cache capacity; a smaller retention requires matching manifest/contract approval. No silent truncation.",
+    "warmup_certification": "Coverage depends on listing/provider history. 10,000 is a supported limit, not invented 10,000 historical days for newly listed instruments."
+  }
 }

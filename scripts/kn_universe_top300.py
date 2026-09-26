@@ -50,6 +50,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = ROOT / "config/v2/universes/crypto-top300-1d.json"
 CHANGES = ROOT / "config/v2/universes/crypto-top300-1d.changes.jsonl"
+OWNERSHIP = ROOT / "config/v2/universes/crypto-top300-1d.ownership.json"
 SCHEMA = "qdl.v2.market-cap-universe.v1"
 CAP = 300
 KEEP_RANK = 330
@@ -173,6 +174,11 @@ def change_record(*, revision: int, effective_date: str, before: Mapping[str, Ma
                    "reason": "SIGNED" if not before else "ENTERED_BY_RANK"}
                   for base in sorted(set(now) - set(before), key=lambda base: now[base]["market_cap_rank"])],
         "removed": [{"base": base, "reason": reasons.get(base, "UNKNOWN")} for base in sorted(set(before) - set(now))],
+        "identity_changes": [{"base": base,
+                              "before": {k: before[base][k] for k in ("binance_symbol", "okx_inst_id")},
+                              "after": {k: now[base][k] for k in ("binance_symbol", "okx_inst_id")}}
+                             for base in sorted(set(before) & set(now))
+                             if any(before[base][k] != now[base][k] for k in ("binance_symbol", "okx_inst_id"))],
     }
 
 
@@ -204,36 +210,65 @@ def active_symbols(demand: Mapping[str, Any]) -> set[tuple[str, str]]:
             if str(row["feed"]).upper() != "BAR"}
 
 
-def sync_demand(demand: Mapping[str, Any], members: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict]:
-    """Universe members -> BAR 1d demand of the venue's alpha consumer; departed
-    universe-only rows removed. Execution symbols are never touched."""
+def demand_row_key(row: Mapping[str, Any]) -> str:
+    return "|".join(str(row.get(field, "")) for field in (
+        "venue", "market", "product_type", "native_symbol", "feed", "interval", "source_policy_id"))
+
+
+def demand_row_digest(row: Mapping[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(dict(row), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def sync_demand(demand: Mapping[str, Any], members: Sequence[Mapping[str, Any]], *,
+                owned: Mapping[str, Mapping[str, str]] | None = None
+                ) -> tuple[dict[str, Any], dict, dict]:
+    """Remove only exact D48-owned rows; borrowed or independently edited rows survive.
+
+    An absent ownership ledger grants no deletion/adoption rights. New rows are
+    owned, existing equivalent rows are borrowed. Execution demand relinquishes
+    universe ownership. Fingerprints prevent an operator edit being overwritten.
+    """
     import copy
 
     result = copy.deepcopy(dict(demand))
     active = active_symbols(result)
-    summary: dict[str, dict[str, int]] = {}
+    summary, next_owned = {}, {}
     for venue, spec in UNIVERSE_CONSUMERS.items():
-        consumer = next(item for item in result["consumers"] if item["consumer_id"] == spec["consumer_id"])
-        wanted = [str(row[spec["field"]]) for row in members if (venue, str(row[spec["field"]])) not in active]
-        rows = consumer["requirements"]
-        universe_rows = {(row["native_symbol"]) for row in rows
-                         if row["feed"] == "BAR" and row["interval"] in INTERVALS
-                         and (venue, row["native_symbol"]) not in active and str(row["venue"]).upper() == venue}
-        keep = [row for row in rows if not (row["feed"] == "BAR" and str(row["venue"]).upper() == venue
-                                            and (venue, row["native_symbol"]) not in active
-                                            and row["native_symbol"] not in set(wanted))]
+        consumer_id = spec["consumer_id"]
+        consumer = next(item for item in result["consumers"] if item["consumer_id"] == consumer_id)
+        wanted = {str(row[spec["field"]]) for row in members if (venue, str(row[spec["field"]])) not in active}
+        previous = (owned or {}).get(consumer_id, {})
+        managed, keep, removed = {}, [], 0
+        for row in consumer["requirements"]:
+            key = demand_row_key(row)
+            ours = (row.get("feed") == "BAR" and row.get("interval") == "1d"
+                    and row.get("venue") == venue and row.get("market") == spec["market"]
+                    and previous.get(key) == demand_row_digest(row)
+                    and (venue, row["native_symbol"]) not in active)
+            if ours and row["native_symbol"] not in wanted:
+                removed += 1
+                continue
+            keep.append(row)
+            if ours:
+                managed[key] = demand_row_digest(row)
+        present = {demand_row_key(row) for row in keep}
         added = 0
-        for symbol in wanted:
-            if symbol not in universe_rows:
-                keep.append({"venue": venue, "market": spec["market"], "product_type": "PERPETUAL",
-                             "native_symbol": symbol, "feed": "BAR", "interval": INTERVALS[0],
-                             "source_policy_id": "crypto_primary_v2"})
+        for symbol in sorted(wanted):
+            row = {"venue": venue, "market": spec["market"], "product_type": "PERPETUAL",
+                   "native_symbol": symbol, "feed": "BAR", "interval": "1d",
+                   "source_policy_id": "crypto_primary_v2"}
+            key = demand_row_key(row)
+            if key not in present:
+                keep.append(row)
+                present.add(key)
+                managed[key] = demand_row_digest(row)
                 added += 1
-        summary[venue] = {"added": added, "removed": len(rows) + added - len(keep), "universe_rows": len(wanted)}
+        summary[venue] = {"added": added, "removed": removed, "universe_rows": len(wanted)}
+        next_owned[consumer_id] = managed
         consumer["requirements"] = keep
     if any(item["added"] or item["removed"] for item in summary.values()):
         result["revision"] = int(result["revision"]) + 1
-    return result, summary
+    return result, summary, next_owned
 
 
 def merge_capture(existing: Mapping[str, Any], full: Mapping[str, Any], *, rows_field: str, key: str,
@@ -296,7 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     record = change_record(revision=revision, effective_date=dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
                            .strftime("%Y-%m-%d"), before=before, after=result["members"],
                            reasons=result["reasons"], sources=sources)
-    changed = bool(record["added"] or record["removed"])
+    changed = bool(record["added"] or record["removed"] or record["identity_changes"])
     print(json.dumps({"changed": changed, "revision": revision if changed else (current or {}).get("revision"),
                       "members": len(result["members"]), "eligible": result["eligible"],
                       "added": len(record["added"]), "removed": record["removed"],
@@ -316,7 +351,12 @@ def _sync(*, apply: bool) -> int:
     import yaml
 
     universe = json.loads(UNIVERSE.read_text(encoding="utf-8"))
-    demand, summary = sync_demand(yaml.safe_load(DEMAND.read_text(encoding="utf-8")), universe["members"])
+    ledger = json.loads(OWNERSHIP.read_text(encoding="utf-8")) if OWNERSHIP.exists() else {
+        "schema": "qdl.d48.demand-ownership.v1", "consumers": {}}
+    if ledger.get("schema") != "qdl.d48.demand-ownership.v1":
+        raise ValueError("unsupported universe ownership ledger")
+    demand, summary, owned = sync_demand(
+        yaml.safe_load(DEMAND.read_text(encoding="utf-8")), universe["members"], owned=ledger["consumers"])
     provenance_path = CAPTURES / "provenance.json"
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     captures = {}
@@ -335,6 +375,14 @@ def _sync(*, apply: bool) -> int:
     if not apply:
         return 0
     DEMAND.write_bytes(yaml.safe_dump(demand, sort_keys=False, allow_unicode=False).encode("utf-8"))
+    # Demand first: an interrupted ledger update loses deletion rights, never
+    # grants ownership of a row that was not successfully written.
+    ownership_bytes = json.dumps({"schema": "qdl.d48.demand-ownership.v1",
+                                 "universe_revision": universe["revision"], "consumers": owned},
+                                indent=2, sort_keys=True) + "\n"
+    temporary = OWNERSHIP.with_suffix(".tmp")
+    temporary.write_text(ownership_bytes, encoding="utf-8")
+    temporary.replace(OWNERSHIP)
     captured_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for venue, (path, merged, added, full_sha) in captures.items():
         if not added:

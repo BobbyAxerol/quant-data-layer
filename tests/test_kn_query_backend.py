@@ -187,6 +187,44 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         spool.append_many(events)
         return StableSpoolQueryBackend(spool, self.catalog, schema_digest=DIGEST, clock_ns=lambda: self.now_ns)
 
+    def test_bar_hash_valid_but_wrong_open_is_rejected(self):
+        from qdl.runtime.kn_market_cache import KnCacheIntegrityError
+        lpk = self.put_bars(self.bar_binding, [self.real_bar])
+        bucket = self.base // (BUCKET_OPENS * self.interval_ms)
+        key = self.reader.bucket_key(7, lpk, bucket)
+        self.client.hset(key, str(self.base), encode_bar_row(
+            derived_bar(self.real_bar, -1), lpk, MAX_OFFSET, EPOCH))
+        with self.assertRaises(KnCacheIntegrityError):
+            self.reader.bars(lpk, self.interval_ms, last=1)
+
+    def test_diagnostic_deadline_is_checked_inside_bucket_decode(self):
+        from unittest.mock import patch
+        from qdl.runtime.stable_source import _GapDiagnosticIncomplete
+        import qdl.runtime.kn_market_cache as cache
+        lpk = self.put_bars(self.bar_binding, self.history_rows(200))
+        checks = 0
+        def budget():
+            nonlocal checks
+            checks += 1
+            if checks == 5:
+                raise _GapDiagnosticIncomplete("test deadline")
+        with patch.object(cache, "decode_bar_row", wraps=cache.decode_bar_row) as decode:
+            with self.assertRaises(_GapDiagnosticIncomplete):
+                self.reader.bars(lpk, self.interval_ms, last=200, check_budget=budget)
+            self.assertLessEqual(decode.call_count, 2)
+
+    def test_cancelled_cold_bucket_read_stops_before_redis_io(self):
+        import threading
+        from unittest.mock import patch
+        from qdl.query.cold_work import _run_cancellable, ColdWorkCancelled
+        lpk = self.put_bars(self.bar_binding, [self.real_bar])
+        cancelled = threading.Event()
+        cancelled.set()
+        with patch.object(self.client, "pipeline", wraps=self.client.pipeline) as pipeline:
+            with self.assertRaises(ColdWorkCancelled):
+                _run_cancellable(cancelled, True, self.reader.bars, lpk, self.interval_ms, last=1)
+            pipeline.assert_not_called()
+
     # ------------------------------------------------------------ K4-T01/T03
 
     def test_bar_history_matches_the_spool_semantics_at_the_view_boundary(self):

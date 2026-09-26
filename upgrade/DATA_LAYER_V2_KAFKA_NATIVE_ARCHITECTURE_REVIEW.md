@@ -2775,6 +2775,48 @@ lane - one poll per daily boundary through provider admission) and
 bump consumers' JWT manifest revision in the same rollout). A catalog revision
 strands the bar-edge checkpoint (C.19): it ships only in an approved rollout.
 
+<a id="kn5-astra-correctness-review-handoff"></a>
+#### Astra Implementation Handoff To Claude - 2026-09-26
+
+The owner assigned Astra implementation and Claude review for this correction.
+Read the [main journal](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-astra-correctness-handoff)
+and [source/evidence receipt](evidence/KN5_ASTRA_PREDEPLOY_REVIEW.md) before K5.2.
+This addendum does not grant deployment or execution authority and does not add
+another phase or change the five-phase architecture.
+
+- D48 owns only fingerprinted demand rows in the checked-in ownership ledger.
+  Missing ownership means no deletion authority. Independently edited/borrowed
+  rows and non-universe intervals survive. Native symbol changes are logged
+  even if base-asset membership does not change.
+- OKX alpha source manifest is revision 14, with 35 reference requirements,
+  including five each of daily OI history, long/short and taker flow. Binance
+  stays revision 14/35 reference requirements. Reference/L2 source revision 5;
+  release routing 26 and primary routing 8. Regenerate the sealed candidate and
+  JWT revisions together; do not infer runtime entitlement from these YAMLs.
+  New OKX statistics must retain the existing shared Rust provider-admission
+  policy/bucket wiring; offline authorization tests are not a live-provider run.
+- Preserve 10,000-row entitlement. `whole_cache_d48` supersedes the old whole-
+  cache fit: full-cap peak is approximately 5.87 GB **extrapolated**, excluding
+  unmeasured RSS/client-buffer/overlap reserves. Measure existing execution plus
+  daily universe plus staging, not 500 daily products in isolation. A lower
+  retention is a contract change, not a hidden internal optimization.
+- Timestamp/open/bucket integrity and cooperative cancellation/deadline checks
+  apply to the KN Redis BAR reader. Wire/state encoding is unchanged; no new
+  Rust writer, replica or service is needed for these source corrections.
+- Diagnostic 409/206/503 is fail-closed but incomplete; it does not certify a
+  completed scan. The KN HTTP matrix now records FAIL for incomplete/malformed
+  diagnostics. Do not loosen its budget to turn the old result green.
+- Report every declared binding x replica, attempted/usable/refused counts,
+  queue + SDK + application + completed cache-write latency separately, all in
+  ms. Withhold p99 below 100 and p95 below 20 samples. Raw event/component age
+  and session health do not replace execution eligibility. Quiet TRADE remains
+  blocked as an execution price; MARKET references explicit fresh QUOTE/L2 and
+  Risk revalidation, never a fabricated latest trade.
+- K5.2 must still measure actual whole-universe completion and TS Redis-write
+  boundary under load. These are not proven by source tests or the old callback
+  receipt. After Claude review, the existing K5.3 packet remains the deployment
+  boundary. No rerun of unrelated certified Rust/Kafka evidence is requested.
+
 <a id="kn-guide-phase-5"></a>
 ### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

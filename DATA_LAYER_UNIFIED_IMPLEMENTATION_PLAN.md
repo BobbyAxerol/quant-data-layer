@@ -58472,6 +58472,115 @@ no automatic execution or new architecture expansion.
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append tested-slice receipts, release review and publication/cleanup outcome here.
 
+<a id="kn5-astra-correctness-handoff"></a>
+#### KN-5 Astra Implementation / Claude Review (2026-09-26)
+
+**Status: SOURCE_TESTED_PENDING_CLAUDE_REVIEW / NOT_DEPLOYED.**
+Implementer Astra, reviewer Claude; this closes the correction source slice,
+not KN-5 load/cutover/release acceptance.
+Owner approved the four findings and related in-scope defects. Baseline
+`718631d`, canonical `feat/consumer-endpoint-benchmark`; the two existing owner
+plan hunks are preserved and excluded from these commits.
+Guide: [owner read completion](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-owner-read-completion),
+[D48](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-d48-daily-universe),
+[KN-5](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5).
+
+**Scope / gates:** explicit universe ownership preserving independent BAR demand;
+actual-alpha OKX reference entitlement and negative authorization tests; whole
+cache capacity accounting including staging/overhead without silently reducing
+10,000-row entitlement; additive evidence corrections for partial diagnostics,
+sample-qualified percentiles, refusals, queue/SDK/application/cache timing.
+Inspect affected KN read/render/diagnostic bottlenecks and fix bounded source
+defects with correctness-first tests and source-only performance measurements.
+TRADE may legitimately be quiet: never invent ticks, relax execution freshness,
+substitute candles/mark for executable quotes, or call a refused price usable.
+
+**Tests:** targeted unit/contract/authorization/negative/concurrency tests;
+retained-evidence hash verification and a new derived receipt, never rewriting
+old evidence. Use bounded existing test images if dependencies are absent.
+No broad C2 rerun or new architecture. Report exact tests and live limitations.
+**Rollback / boundary:** source/config revert only until runtime review. No
+production writes/recreate, authority/offset/cache reset, credential changes,
+TS/order/alpha activation, push/merge/tag/release. No production latency
+improvement claim without rollout evidence.
+**Exit:** tested source and evidence handed to Claude, not release certification.
+K5.2 load, actual TS Redis-write timing and K5.3-K5.6 remain runtime acceptance
+items. Cleanup only this task's disposable tests; retain active/rollback images.
+**Tool note:** apply_patch (tool and elevated executable) failed before writing
+with `bubblewrap: mountinfo path is not absolute`. Exact-match scripted edits
+are used under workspace rule 32, followed by diff verification.
+
+**Tested slice checkpoint (Astra):** ownership regression `python3 -B -m
+unittest tests.test_kn_universe_top300 -v`: **11 PASS**. Seed ledger owns only
+500 exact rows introduced between `c22f4d3` and `718631d`; modified, borrowed,
+non-universe and independently declared BAR rows remain intact. No provider
+call/config apply was used to test deletion. Compiler dry-run and source apply
+add exactly 15 OKX reference requirements (five symbols x OI-history/long-short/
+taker), retaining current OI. Alpha OKX revision 14; Binance unchanged 14;
+reference revision 5; release routing 26, primary routing 8 (source only).
+Source admission budget must include the same two OKX feed types; no poller,
+acquisition, topic or stream was added. Test image UID 1000 could not write the
+source files; rerun as file owner 1001 succeeded, only four listed YAML files.
+
+**Additional findings being tested:** cache BAR trailer hash previously did
+not bind the Redis open-time field; reader now validates it using the already
+parsed protobuf. Cold bucket decode now polls the existing cooperative cancel
+signal before I/O and per row. Neither changes writer/state format or Rust
+contracts. Test fixture compiler needed its pre-completion baseline restored
+in memory after the source demand acquired the new metrics (otherwise duplicate
+selectors failed convergence). No production mutation resulted from that failure.
+
+**Budget/evidence correction:** `whole_cache_d48` keeps 10,000 served rows and
+2,064 headroom; 7,731,216 total rows imply 5,844,799,296 B steady and
+5,865,791,240 B including inherited staging delta, **extrapolated**, not measured
+KN5 capacity. Current 1.5 GB candidate cap does not fit full retention. Client
+buffers/RSS/mix and old-plus-new overlap remain explicitly unmeasured. No RAM
+or retention changed. Additive corrected evidence:
+`/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/corrected-kn4-evidence.json`
+SHA256 `1475d9e2065670011e052ead29abbd0fe1575b24e6c1311b1f910d02619b7e06`.
+Original evidence unchanged: gap 409 is incomplete, TRADE 74 usable/26 refused,
+small-sample p99 withheld. Current harness must also fail incomplete diagnostics,
+not quietly count them as PASS. This is not a new live acceptance certificate.
+
+**Final verification / reviewer receipt:**
+[KN5_ASTRA_PREDEPLOY_REVIEW.md](upgrade/evidence/KN5_ASTRA_PREDEPLOY_REVIEW.md)
+contains scope, exact test modules/skips, inherited endpoint latency by venue,
+known safety/availability distinctions, deployment requirements and handoff.
+Final affected suite **235 run / 232 PASS / 0 FAIL / 3 SKIP**, 107.961 s;
+`QDL_KN_TEST_REDIS` pointed only to this task's isolated Redis. Skips are opt-in
+provider GET, absent full KN3 capture and Kafka oracle; golden vectors, API
+identity and real Redis tests did run. Test log SHA256
+`6613f20899f1cabff802b9559d4c605264d6c5f74c05db5d592f0de7de397132`.
+All **21/21** inherited artifact hashes match; verification receipt SHA256
+`04efdfcc745e35873bebc2c39ac9ad54a919d4d9578dc1019db1b73c9208c714`.
+New negative checks cover independent demand ownership, native identity change,
+actual compiled alpha subject/manifest (test JWT/provider), open/bucket binding,
+inside-decode deadline/cancel, partial diagnostic and sample-size honesty.
+No full C2, real-provider rerun, Rust build or production performance claim.
+The bounded local 5,000-row profile (test-derived rows, cProfile, 1 CPU) measured
+cold 2,957.661 ms / cached 992.086 ms; not HTTP, not two versions, not p99.
+
+**Cleanup / runtime:** every `kn5-astra-*` container was auto-removed; exact
+Redis ID `643f0e88db93` was stopped after all tests, no volumes or custom network
+were created. No image/build cache was created. Inventory: images 21.58 GB,
+BuildKit 6.771 GB (120.9 MB reclaimable); existing shared candidate/active/
+rollback images were NOT pruned under this source-only scope. Whole-host free
+space before/after cleanup: 131,683,557,376 / 131,627,868,160 B; other host writes
+continued, so no invented disk saving. Query `dd065fdf8c43`, Stream
+`37d7f5182ea1`, TS market-data `06e992004735` keep identical image/start time,
+restart=0/OOM=false. Canonical `/home/bobby/data_layer` remains the only Data
+Layer worktree; source branch `feat/consumer-endpoint-benchmark`, local released
+main tag `v2.1.0`. Source manifests/routing are NOT runtime activation.
+
+Runtime reader mount remains `/home/bobby/.local/state/qdl-v2/r135-b2-335792a-20260920T015057Z/runtime`; no candidate manifest was copied there.
+
+**Next permitted step:** Claude reviews this correction commit and the linked
+addendum in the detailed guide. KN-5 still must measure total cache/RSS/rebuild,
+whole-universe completion, actual TS Redis-write boundary and load; then the
+existing K5.3 packet governs deploy/rollback. Partial gap scan stays visible as
+incomplete, not an all-endpoint PASS. No SLA relaxation, auto-reclassification
+of stale TRADE, hidden retention cut, additional phase, push/merge/release.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

@@ -38,7 +38,9 @@ never the control/quota Redis. No Kafka access.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+
+from qdl.query.cold_work import cold_yield
 
 from qdl.projection.kn_state_codec import (
     StateCodecError,
@@ -288,6 +290,7 @@ class KnMarketCacheReader:
         last: int | None = None,
         start_ms: int | None = None,
         end_ms: int | None = None,
+        check_budget: Callable[[], None] | None = None,
     ) -> ProductView:
         """Rows of the last ``last`` opens, or of opens in ``[start_ms, end_ms)``."""
 
@@ -302,12 +305,14 @@ class KnMarketCacheReader:
         ckpt = self.checkpoint_key(self.bars_topic, state_partition(lpk, self.bars_partitions))
         view: ProductView | None = None
         for _attempt in range(self.attempts):
+            if check_budget is not None:
+                check_budget()
             head = self._bar_head(lpk, ckpt)
             generation, fence, boundary, low, high = head
             rows: dict[int, CacheRow] = {}
             if high is not None:
                 rows = self._read_rows(lpk, generation, interval_ms, low, high,
-                                       last=last, start_ms=start_ms, end_ms=end_ms)
+                                       last=last, start_ms=start_ms, end_ms=end_ms, check_budget=check_budget)
             tail = self._bar_head(lpk, ckpt)
             if (tail[0], tail[1]) != (generation, fence):
                 continue
@@ -364,6 +369,7 @@ class KnMarketCacheReader:
         last: int | None,
         start_ms: int | None,
         end_ms: int | None,
+        check_budget: Callable[[], None] | None = None,
     ) -> dict[int, CacheRow]:
         lowest = bucket_of(low, interval_ms)
         rows: dict[int, CacheRow] = {}
@@ -372,7 +378,7 @@ class KnMarketCacheReader:
             last_bucket = min(bucket_of(max(end_ms - 1, 0), interval_ms), bucket_of(high, interval_ms))
             buckets = list(range(first_bucket, last_bucket + 1))
             for index in range(0, len(buckets), MAX_BUCKETS_PER_ROUND_TRIP):
-                self._fetch(lpk, generation, buckets[index:index + MAX_BUCKETS_PER_ROUND_TRIP], rows)
+                self._fetch(lpk, generation, buckets[index:index + MAX_BUCKETS_PER_ROUND_TRIP], rows, interval_ms=interval_ms, check_budget=check_budget)
             return {open_ms: row for open_ms, row in rows.items() if start_ms <= open_ms < end_ms}
         assert last is not None
         top = bucket_of(high, interval_ms)
@@ -381,7 +387,7 @@ class KnMarketCacheReader:
         want = min(-(-last // BUCKET_OPENS) + 1, MAX_BUCKETS_PER_ROUND_TRIP)
         while top >= lowest and len(rows) < last:
             bottom = max(lowest, top - want + 1)
-            self._fetch(lpk, generation, list(range(bottom, top + 1)), rows)
+            self._fetch(lpk, generation, list(range(bottom, top + 1)), rows, interval_ms=interval_ms, check_budget=check_budget)
             top = bottom - 1
             want = MAX_BUCKETS_PER_ROUND_TRIP
         return rows
@@ -392,7 +398,13 @@ class KnMarketCacheReader:
         generation: int,
         buckets: list[int],
         rows: dict[int, CacheRow],
+        *,
+        interval_ms: int,
+        check_budget: Callable[[], None] | None = None,
     ) -> None:
+        cold_yield()
+        if check_budget is not None:
+            check_budget()
         if not buckets:
             return
         try:
@@ -404,11 +416,16 @@ class KnMarketCacheReader:
             raise KnCacheError("market cache is unavailable") from error
         if len(replies) != len(buckets):
             raise KnCacheError("market cache returned a short bucket reply")
-        for fields in replies:
+        for bucket, fields in zip(buckets, replies, strict=True):
             for raw_open, raw_row in fields.items():
+                cold_yield()
+                if check_budget is not None:
+                    check_budget()
                 open_ms = _decimal(raw_open, "BAR open")
                 try:
-                    decoded = decode_bar_row(bytes(raw_row), lpk)
+                    if open_ms is None or bucket_of(open_ms, interval_ms) != bucket:
+                        raise StateCodecError("OPEN_TIME_BUCKET_MISMATCH")
+                    decoded = decode_bar_row(bytes(raw_row), lpk, expected_open_ms=open_ms)
                 except (StateCodecError, TypeError, ValueError) as error:
                     raise KnCacheIntegrityError(
                         f"market cache BAR row failed its trailer check: {lpk.encode()} open_ms={open_ms}"
