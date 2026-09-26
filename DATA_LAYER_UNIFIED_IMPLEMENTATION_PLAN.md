@@ -58581,6 +58581,58 @@ existing K5.3 packet governs deploy/rollback. Partial gap scan stays visible as
 incomplete, not an all-endpoint PASS. No SLA relaxation, auto-reclassification
 of stale TRADE, hidden retention cut, additional phase, push/merge/release.
 
+<a id="kn5-astra-acceptance-completion"></a>
+#### KN-5 Astra Acceptance Completion (2026-09-26)
+
+**Status: IN_PROGRESS, owner rejected source-only handoff as the acceptance exit.**
+Continue existing K5.1/K5.2 at `e8d3435`; implementer Astra, reviewer Claude.
+The source receipt above remains historical evidence, not completion of this task.
+Scope: complete bounded gap diagnostics; fresh real-data endpoint/binding and
+universe batch/history measurements; actual TS Redis-write/readback timing;
+capacity and whole-cache accounting. Optimize measured bottlenecks without
+weakening freshness, identity, generation, gap or manifest semantics. Preserve
+10k history entitlement and report actual provider availability separately.
+Guide remains KN-5 and D48; no additional phase or architecture.
+
+**Test/exit:** affected source/protocol tests first, then isolated KN real-data
+matrix (both replicas/venues), sufficient per-product samples for percentiles,
+whole-universe warmup, load steps and TS60. Distinguish SDK/request/queue,
+event/component age, source-to-cache and completed consumer write. Never call
+quiet stale TRADE usable or substitute QUOTE without an explicit product choice.
+Incomplete diagnostics and insufficient sample counts cannot be marked PASS.
+Record failures and changes as they occur; no production certification until
+actual results meet the declared gates and Claude reviews the evidence.
+
+**Runtime boundary/rollback:** isolated `kn4-*`/`kn5-astra-*` test namespace,
+existing native binaries/images where source unchanged; candidate reader image
+only after source tests. Reuse retained authentic Kafka/history with provenance;
+no production spool import, source offset commit/reset, Redis flush, production
+recreate, TS/order/alpha activation or release. Read-only canonical mirror uses
+existing authorized namespace. Guard starts before shadow setup; bounded CPU,
+RAM, I/O/provider admission; teardown only owned test resources. Production
+cutover remains K5.3, not implicit in these tests. Keep active plus rollback
+artifacts; inventory cleanup/disk and runtime identity at exit.
+
+**Initial finding:** KN gap scan decodes full retained protobuf BAR history
+under one 5s diagnostic budget. At hundreds of products this is an algorithmic
+read-amplification issue, not evidence that the requested scan is complete.
+`apply_patch` still fails before writing (sandbox mountinfo error); workspace
+rule 32 exact-match edits with diff verification remain necessary.
+
+**Implementation checkpoint:** compact per-bucket BAR diagnostic index is now
+written by Rust Stage B in the SAME Redis Lua transaction as row/revision/floor
+and checkpoint. Generation reclaim deletes it. Query compares exact open-key
+sets, fences generation/source/retention before/after, reports sequence flags,
+and falls back to the verified bounded scan for older/incomplete indexes.
+This is a derived cache index, not a new durable authority or public data schema.
+Python affected reader tests: 25/25 PASS on isolated Redis. Rust library: 20/20
+PASS. Rust Redis integration/revision/floor/reclaim tests running. Initial Rust
+builder cache mount was incorrect; corrected to registry-only mount, no source
+or runtime effects. Actual TS benchmark now invokes the unchanged TS projector,
+awaits Redis pipeline ACK and verifies stored values in test-only Redis; no
+production TS writer replacement. Every duration is milliseconds, sparse p99
+withheld, refused prices retained as refusals. Full runtime measurements pending.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

@@ -59,6 +59,9 @@ impl Layout {
     pub fn bar_bucket(&self, generation: u64, lpk: &str, bucket: u64) -> String {
         self.key(&["b", &generation.to_string(), lpk, &bucket.to_string()])
     }
+    pub fn bar_diagnostic(&self, generation: u64, lpk: &str, bucket: u64) -> String {
+        self.key(&["bd", &generation.to_string(), lpk, &bucket.to_string()])
+    }
     pub fn fact_keys(&self, generation: u64, lpk: &str) -> String {
         self.key(&["rk", &generation.to_string(), lpk])
     }
@@ -174,6 +177,8 @@ pub enum Op {
         /// 48-byte trailer of the current row (`None` = absent).
         expected_trailer: Option<Vec<u8>>,
         row: Vec<u8>,
+        /// Compact diagnostic: N, or G followed by the canonical source sequence.
+        diagnostic: String,
         is_final: bool,
         /// Fact key suffix (`f<rev>|<sha16>`) of the row this one replaces.
         superseded: Option<String>,
@@ -289,6 +294,7 @@ impl Op {
                 open_ms,
                 expected_trailer,
                 row,
+                diagnostic,
                 is_final,
                 superseded,
             } => {
@@ -302,6 +308,7 @@ impl Op {
                 args.push(row.clone());
                 args.push(text(if *is_final { "1" } else { "0" }));
                 args.push(text(superseded.as_deref().unwrap_or_default()));
+                args.push(text(diagnostic));
             }
             Op::BarNote {
                 lpk,
@@ -857,6 +864,7 @@ impl Cache {
             ) {
                 for bucket in bucket_of(first, interval_ms)..=bucket_of(last, interval_ms) {
                     keys.push(self.layout.bar_bucket(generation, lpk, bucket));
+                    keys.push(self.layout.bar_diagnostic(generation, lpk, bucket));
                 }
             }
             keys.push(meta);
@@ -996,10 +1004,11 @@ mod tests {
                     open_ms: 60_000,
                     expected_trailer: None,
                     row: vec![1; 60],
+                    diagnostic: "N".into(),
                     is_final: true,
                     superseded: None,
                 },
-                12,
+                13,
             ),
             (
                 Op::BarNote {

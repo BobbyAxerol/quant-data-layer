@@ -25,6 +25,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.projection.kn_state_codec import encode_bar_row, encode_latest_value, state_partition
 from qdl.projection.state_contract import MAX_OFFSET
 from qdl.query import ConsumerGrade, DataRequirement, FeedType
+from qdl.common.v1 import common_pb2
 from qdl.query.contracts import BarRevisionPolicy, CanonicalErrorCode
 from qdl.query.results import QueryBackendError
 from qdl.replay.cursor_v3 import CursorV3Expectation, SignedCursorV3Codec, requirement_digest
@@ -186,6 +187,72 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         ]
         spool.append_many(events)
         return StableSpoolQueryBackend(spool, self.catalog, schema_digest=DIGEST, clock_ns=lambda: self.now_ns)
+
+    def put_diagnostic_index(self, binding, payloads, generation=7):
+        lpk = self.lpk(binding)
+        step = canonical_interval_ms(binding.interval)
+        for payload in payloads:
+            opened = open_ms_of(payload)
+            envelope = market_data_pb2.EventEnvelope.FromString(payload)
+            flag = ("G" + envelope.source_sequence
+                    if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags else "N")
+            key = f"{self.prefix}bd:{generation}:{lpk.encode()}:{opened // (BUCKET_OPENS * step)}"
+            self.client.hset(key, str(opened), flag)
+
+    def test_indexed_diagnostic_matches_verified_scan_without_decoding(self):
+        from unittest.mock import patch
+        rows = self.history_rows(300)
+        rows.pop(110)
+        self.put_bars(self.bar_binding, rows)
+        backend = self.backend()
+        expected = backend.open_gaps()
+        self.assertEqual(len(expected), 1)
+        self.put_diagnostic_index(self.bar_binding, rows)
+        with patch("qdl.runtime.kn_market_cache.decode_bar_row", side_effect=AssertionError("decoded BAR")):
+            self.assertEqual(backend.open_gaps(), expected)
+
+    def test_indexed_diagnostic_sequence_revision_floor_and_legacy_fallback(self):
+        rows = self.history_rows(5)
+        env = market_data_pb2.EventEnvelope.FromString(rows[1])
+        env.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+        env.source_sequence = "gap-123"
+        rows[1] = env.SerializeToString()
+        lpk = self.put_bars(self.bar_binding, rows)
+        expected = self.backend().open_gaps()
+        self.put_diagnostic_index(self.bar_binding, rows)
+        self.assertEqual(self.backend().open_gaps(), expected)
+        self.assertEqual(len(expected), 1)
+        # A partial index (including count-preserving wrong opens) never hides gaps.
+        opened = open_ms_of(rows[1])
+        key = f"{self.prefix}bd:7:{lpk.encode()}:{opened // (BUCKET_OPENS * self.interval_ms)}"
+        self.client.hdel(key, str(opened))
+        self.client.hset(key, str(opened + 1), "N")
+        self.assertEqual(self.backend().open_gaps(), expected)
+        self.client.hdel(key, str(opened + 1))
+        self.put_diagnostic_index(self.bar_binding, rows)
+        self.client.hset(f"{self.prefix}bm:7:{lpk.encode()}", "floor", self.base)
+        self.assertEqual(self.backend().open_gaps(), ())
+
+    def test_indexed_diagnostic_generation_and_deadline_fail_closed(self):
+        from unittest.mock import patch
+        from qdl.runtime.kn_market_cache import KnCacheViewChanged
+        rows = self.history_rows(200)
+        lpk = self.put_bars(self.bar_binding, rows)
+        self.put_diagnostic_index(self.bar_binding, rows)
+        original = self.reader._bar_head
+        count = 0
+        def changing(*args):
+            nonlocal count
+            count += 1
+            head = original(*args)
+            return head[0], count, *head[2:]
+        with patch.object(self.reader, "_bar_head", side_effect=changing):
+            with self.assertRaises(KnCacheViewChanged):
+                self.reader.bar_diagnostics(lpk, self.interval_ms, last=200, check_budget=lambda: None)
+        def cancel():
+            raise RuntimeError("cancel diagnostic")
+        with self.assertRaisesRegex(RuntimeError, "cancel diagnostic"):
+            self.reader.bar_diagnostics(lpk, self.interval_ms, last=200, check_budget=cancel)
 
     def test_bar_hash_valid_but_wrong_open_is_rejected(self):
         from qdl.runtime.kn_market_cache import KnCacheIntegrityError

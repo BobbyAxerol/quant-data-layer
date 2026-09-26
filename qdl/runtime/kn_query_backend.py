@@ -432,29 +432,58 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
     ) -> None:
         """One product's retained window, inside the existing global budget."""
 
-        try:
-            view = self._view(
-                binding,
-                last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW if binding.feed is FeedType.BAR else 1,
-                check_budget=check_budget,
-            )
-        except QueryBackendError as error:
-            if error.problem.code is CanonicalErrorCode.DATA_NOT_READY:
-                return  # no canonical state yet: nothing observed, no gap
-            raise
-        if view is None:
-            return
+        from qdl.runtime.kn_market_cache import KnDiagnosticIndexMissing
+
         observed_opens: set[int] = set()
-        for row in view.rows:
-            check_budget()
-            envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
-            if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
-                append_gap(self._gap(
-                    binding, f"sequence:{envelope.source_sequence}", envelope.source_sequence,
-                    detected_at_ns,
-                ))
-            if binding.feed is FeedType.BAR:
-                observed_opens.add(int(envelope.bar.open_time_ns))
+        indexed = False
+        if binding.feed is FeedType.BAR:
+            try:
+                boundary, entries = self.reader.bar_diagnostics(
+                    self.product_key(binding), canonical_interval_ms(binding.interval or ""),
+                    last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, check_budget=check_budget,
+                )
+                if boundary.topic_id != self.topic_id:
+                    raise _not_ready("diagnostic source topic generation mismatch")
+                for opened_ms, sequence in entries:
+                    observed_opens.add(opened_ms * 1_000_000)
+                    if sequence is not None:
+                        append_gap(self._gap(binding, f"sequence:{sequence}", sequence, detected_at_ns))
+                indexed = True
+            except KnDiagnosticIndexMissing:
+                pass  # old projector: exact verified scan, never an empty success
+            except KnCacheNotReady:
+                return
+            except KnCacheIntegrityError as error:
+                raise QueryBackendError(QueryProblem(
+                    CanonicalErrorCode.INTERNAL_ERROR, f"diagnostic integrity: {error}", False,
+                )) from error
+            except KnCacheError as error:
+                raise QueryBackendError(QueryProblem(
+                    CanonicalErrorCode.DEPENDENCY_UNAVAILABLE, str(error), True,
+                )) from error
+        if not indexed:
+            try:
+                view = self._view(
+                    binding,
+                    last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW if binding.feed is FeedType.BAR else 1,
+                    check_budget=check_budget,
+                )
+            except QueryBackendError as error:
+                if error.problem.code is CanonicalErrorCode.DATA_NOT_READY:
+                    return
+                raise
+            if view is None:
+                return
+            for row in view.rows:
+                check_budget()
+                envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
+                if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
+                    append_gap(self._gap(
+                        binding, f"sequence:{envelope.source_sequence}", envelope.source_sequence,
+                        detected_at_ns,
+                    ))
+                if binding.feed is FeedType.BAR:
+                    observed_opens.add(int(envelope.bar.open_time_ns))
         if binding.feed is not FeedType.BAR or not observed_opens:
             return
         step = _interval_ns(binding.interval or "")

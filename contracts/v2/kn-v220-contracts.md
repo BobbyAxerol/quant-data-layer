@@ -229,3 +229,18 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   `max_streams`; Replay also has a separate replica cap of 32. Successful
   payload/cursor semantics do not change; overload is typed and retryable,
   never silently truncated or reinterpreted as an empty successful page.
+
+
+### KN-5 Derived BAR Diagnostic Index
+
+The Rust market-cache writer also maintains `bd:<generation>:<lpk>:<bucket>`.
+Fields are exact BAR opens in milliseconds; values are `N` (no sequence flag)
+or `G<source_sequence>` (canonical SEQUENCE_GAP_BEFORE, including an empty
+sequence). Index and BAR row, correction, retention floor and partition
+checkpoint are one Lua transaction. Reclaim removes both bucket keys.
+This is additive, disposable cache state, not a new Kafka event or authority.
+The reader compares exact BAR/index open sets and generation, floor and source
+watermark before/after reading. Missing/partial old-writer indexes use the
+verified bounded row scanner; corruption and races never mean gap-free.
+Diagnostic scans use this small index, not the OHLC protobuf history. Query
+history still verifies every payload hash/open/product and is not weakened.

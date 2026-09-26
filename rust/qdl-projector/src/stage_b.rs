@@ -285,7 +285,7 @@ struct PendingBar {
     expected: Option<Vec<u8>>,
     current: Option<BarState>,
     current_is_final: bool,
-    write: Option<(Vec<u8>, bool)>,
+    write: Option<(Vec<u8>, bool, String)>,
     superseded: Vec<String>,
 }
 
@@ -970,7 +970,7 @@ impl<S: StateSource> StageB<S> {
                     }
                 }
                 Some(Group::Bar(pending)) => {
-                    if let Some((row, is_final)) = pending.write {
+                    if let Some((row, is_final, diagnostic)) = pending.write {
                         self.metrics.bars_applied += 1;
                         written
                             .entry((entry.0, entry.1.clone()))
@@ -984,6 +984,7 @@ impl<S: StateSource> StageB<S> {
                             open_ms: entry.2.unwrap_or_default(),
                             expected_trailer: pending.expected,
                             row,
+                            diagnostic,
                             is_final,
                             superseded: (!pending.superseded.is_empty())
                                 .then(|| pending.superseded.join(",")),
@@ -1200,7 +1201,16 @@ impl<S: StateSource> StageB<S> {
                 }
                 pending.current = Some(incoming.clone());
                 pending.current_is_final = incoming.is_final;
-                pending.write = Some((row, incoming.is_final));
+                let envelope = EventEnvelope::decode(frame.envelope.as_slice())
+                    .map_err(|error| StageBError::Source(error.to_string()))?;
+                let gap_flag =
+                    qdl_contracts::qdl::common::v1::QualityFlag::SequenceGapBefore as i32;
+                let diagnostic = if envelope.quality_flags.contains(&gap_flag) {
+                    format!("G{}", envelope.source_sequence)
+                } else {
+                    "N".to_owned()
+                };
+                pending.write = Some((row, incoming.is_final, diagnostic));
             }
             ApplyDecision::Duplicate => self.metrics.duplicates += 1,
             ApplyDecision::Conflict => {

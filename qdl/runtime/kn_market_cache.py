@@ -98,6 +98,21 @@ return {'OK', ptr[1], ptr[2] or '0', src[1] or '', src[2] or '', mark,
 """
 
 
+_BAR_DIAGNOSTIC = """#!lua flags=no-writes
+local replies = {}
+for _, key in ipairs(KEYS) do
+  local opens = redis.call('HKEYS', key)
+  local index = redis.call('HGETALL', 'kn3:' .. ARGV[1] .. ':bd:' .. string.sub(key, #('kn3:' .. ARGV[1] .. ':b:') + 1))
+  table.insert(replies, {opens, index})
+end
+return replies
+"""
+
+
+class KnDiagnosticIndexMissing(RuntimeError):
+    """Older materializer or incomplete index: use the verified row scanner."""
+
+
 class KnCacheError(RuntimeError):
     """The market cache cannot answer now (typed retryable)."""
 
@@ -200,6 +215,7 @@ class KnMarketCacheReader:
         self.attempts = attempts
         self._latest_script = client.register_script(_LATEST_READ)
         self._bar_head_script = client.register_script(_BAR_HEAD)
+        self._bar_diagnostic_script = client.register_script(_BAR_DIAGNOSTIC)
 
     # ---------------------------------------------------------------- layout
 
@@ -333,6 +349,59 @@ class KnMarketCacheReader:
                 f"market cache READY generation kept changing during the read: {lpk.encode()}"
             )
         return view
+
+    def bar_diagnostics(self, lpk, interval_ms, *, last, check_budget):
+        """Exact opens/sequence flags from the atomically written compact index.
+
+        Verify both key sets, not only counts. No payload/price is served here.
+        An old/incomplete index falls back to verified canonical row decoding.
+        Pointer, retention and source watermark are fenced around the scan.
+        """
+        if lpk.feed != "BAR" or interval_ms < 1 or last < 1:
+            raise ValueError("BAR diagnostics requires a bounded BAR window")
+        ckpt = self.checkpoint_key(self.bars_topic, state_partition(lpk, self.bars_partitions))
+        for _attempt in range(self.attempts):
+            check_budget()
+            head = self._bar_head(lpk, ckpt)
+            generation, _fence, boundary, low, high = head
+            found = {}
+            if high is not None:
+                top, bottom = bucket_of(high, interval_ms), bucket_of(low, interval_ms)
+                while top >= bottom and len(found) < last:
+                    check_budget()
+                    # Bounded Redis script: <=64 x 112 fields, never a global scan.
+                    start = max(bottom, top - MAX_BUCKETS_PER_ROUND_TRIP + 1)
+                    buckets = list(range(start, top + 1))
+                    keys = [self.bucket_key(generation, lpk, b) for b in buckets]
+                    try:
+                        replies = self._bar_diagnostic_script(keys=keys, args=[self.environment])
+                    except _RedisError as error:
+                        raise KnCacheError("market cache diagnostic unavailable") from error
+                    if len(replies) != len(buckets):
+                        raise KnCacheIntegrityError("short diagnostic bucket reply")
+                    for bucket, (opens, flat) in zip(buckets, replies, strict=True):
+                        check_budget()
+                        if len(flat) % 2:
+                            raise KnCacheIntegrityError("malformed diagnostic index")
+                        index = dict(zip(flat[::2], flat[1::2], strict=True))
+                        if set(opens) != set(index):
+                            raise KnDiagnosticIndexMissing(lpk.encode())
+                        for raw_open, raw_flag in index.items():
+                            check_budget()
+                            opened = _decimal(raw_open, "diagnostic open")
+                            if opened is None or bucket_of(opened, interval_ms) != bucket:
+                                raise KnCacheIntegrityError("diagnostic open/bucket mismatch")
+                            flag = _text(raw_flag)
+                            if flag != "N" and not flag.startswith("G"):
+                                raise KnCacheIntegrityError("malformed diagnostic sequence flag")
+                            if opened >= low:
+                                found[opened] = None if flag == "N" else flag[1:]
+                    top = start - 1
+            check_budget()
+            if self._bar_head(lpk, ckpt) != head:
+                continue
+            return boundary, tuple((opened, found[opened]) for opened in sorted(found)[-last:])
+        raise KnCacheViewChanged("diagnostic source/generation changed during scan")
 
     def _bar_head(
         self, lpk: LogicalProductKey, ckpt: str

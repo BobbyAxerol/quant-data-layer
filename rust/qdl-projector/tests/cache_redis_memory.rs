@@ -77,6 +77,7 @@ fn memory_pressure_is_typed_and_applies_nothing() {
             open_ms: MIN,
             expected_trailer: None,
             row: row(1),
+            diagnostic: "N".into(),
             is_final: true,
             superseded: None,
         }],

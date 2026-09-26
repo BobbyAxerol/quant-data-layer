@@ -91,6 +91,7 @@ fn bar(
         open_ms,
         expected_trailer: expected,
         row,
+        diagnostic: "N".into(),
         is_final: true,
         superseded: None,
     }
@@ -425,4 +426,77 @@ fn staging_publish_and_reclaim_swap_one_product() {
         .query(cache.connection())
         .unwrap();
     assert!(left.is_empty(), "old generation fully reclaimed: {left:?}");
+}
+
+#[test]
+#[ignore = "requires QDL_KN_TEST_REDIS (isolated Redis)"]
+fn bar_diagnostic_is_atomic_with_revision_floor_and_reclaim() {
+    let mut cache = cache(&unique("diagnostic"));
+    let topic = "md.bars.v2";
+    let (fence, generation, pointer) = ready_product(&mut cache, topic);
+    let mut first = bar(generation, &pointer, 10 * MIN, None, row(10, 1));
+    if let Op::Bar { diagnostic, .. } = &mut first {
+        *diagnostic = "Gseq-7".into();
+    }
+    assert!(matches!(
+        cache.apply(topic, 0, fence, 11, 3, &[first]).unwrap(),
+        Applied::Ok(_)
+    ));
+    let key = cache
+        .layout
+        .bar_diagnostic(generation, LPK, bucket_of(10 * MIN, MIN));
+    assert_eq!(
+        get(&mut cache, &key, &(10 * MIN).to_string()),
+        Some("Gseq-7".into())
+    );
+    let revision = bar(
+        generation,
+        &pointer,
+        10 * MIN,
+        Some(trailer(10, 1)),
+        row(11, 2),
+    );
+    assert!(matches!(
+        cache.apply(topic, 0, fence, 12, 4, &[revision]).unwrap(),
+        Applied::Ok(_)
+    ));
+    assert_eq!(
+        get(&mut cache, &key, &(10 * MIN).to_string()),
+        Some("N".into())
+    );
+    let failed = bar(
+        generation,
+        &pointer,
+        10 * MIN,
+        Some(trailer(10, 1)),
+        row(12, 3),
+    );
+    assert!(!matches!(
+        cache.apply(topic, 0, fence, 13, 5, &[failed]).unwrap(),
+        Applied::Ok(_)
+    ));
+    assert_eq!(
+        get(&mut cache, &key, &(10 * MIN).to_string()),
+        Some("N".into())
+    );
+    let floor = Op::Floor {
+        lpk: LPK.into(),
+        generation,
+        pointer: pointer.clone(),
+        floor_ms: 11 * MIN,
+        buckets: vec![],
+        boundary: Some(0),
+    };
+    assert!(matches!(
+        cache.apply(topic, 0, fence, 14, 6, &[floor]).unwrap(),
+        Applied::Ok(_)
+    ));
+    assert_eq!(get(&mut cache, &key, &(10 * MIN).to_string()), None);
+    let new = bar(generation, &pointer, 12 * MIN, None, row(15, 4));
+    assert!(matches!(
+        cache.apply(topic, 0, fence, 16, 7, &[new]).unwrap(),
+        Applied::Ok(_)
+    ));
+    cache.reclaim(generation, LPK, Some(MIN)).unwrap();
+    assert_eq!(get(&mut cache, &key, &(12 * MIN).to_string()), None);
 }

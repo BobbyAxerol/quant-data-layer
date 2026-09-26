@@ -48,7 +48,7 @@ local WIDTH = {
   -- D: latest del   lpk gen exp_ready exp_staging exp_fence
   D = 6,
   -- B: bar row      lpk gen exp_ready exp_staging exp_fence bucket open_ms exp_trailer row is_final rk_append
-  B = 12,
+  B = 13,
   -- N: bar note     lpk gen exp_ready exp_staging exp_fence open_ms rk_append conflict
   N = 9,
   -- F: floor        lpk gen exp_ready exp_staging exp_fence floor_ms buckets_csv boundary_bucket
@@ -217,6 +217,7 @@ for index, op in ipairs(ops) do
       results[index] = 'STALE_BELOW_FLOOR'
     else
       redis.call('HSET', key('b', gen, lpk, bucket), open_ms, op[10])
+      redis.call('HSET', key('bd', gen, lpk, bucket), open_ms, op[13])
       if op[9] == '' then
         redis.call('HINCRBY', meta, 'rows', 1)
       end
@@ -250,7 +251,7 @@ for index, op in ipairs(ops) do
         for bucket in string.gmatch(op[8], '[^,]+') do
           local bucket_key = key('b', gen, lpk, bucket)
           removed = removed + redis.call('HLEN', bucket_key)
-          redis.call('UNLINK', bucket_key)
+          redis.call('UNLINK', bucket_key, key('bd', gen, lpk, bucket))
         end
       end
       if op[9] ~= '' then
@@ -259,6 +260,7 @@ for index, op in ipairs(ops) do
         for _, open_ms in ipairs(fields) do
           if cmp(open_ms, floor_ms) < 0 then
             redis.call('HDEL', boundary, open_ms)
+            redis.call('HDEL', key('bd', gen, lpk, op[9]), open_ms)
             removed = removed + 1
           end
         end
