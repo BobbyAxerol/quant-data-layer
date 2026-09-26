@@ -58787,6 +58787,28 @@ are trusted projector outputs atomically coupled to row/index changes; they are
 not an independent tamper-proof database. Count mismatch or malformed summary
 fails closed; legacy indexes still perform exact key-set checks.
 
+**18:41 UTC real acceptance checkpoint:** `20e5062` reader + native projector
+now serve complete global diagnostics on both replicas/identities: HTTP200,
+833.8-1,250.3ms, 937 actual shadow retained-window gaps. One-time isolated-cache
+summary initialization used the identical committed Lua on 12,523 test buckets,
+9,091ms, zero failures; no source offsets/cache reset/production writes. Native
+future writes maintain summaries atomically. Clippy all-targets PASS; rustfmt
+found own line wrapping plus an older unrelated Stage-B fixture, only own files
+formatted. The obsolete SDK null-error path remains fixed.
+
+Reference matrix: 70/70 authenticated real-provider reads PASS across two query
+replicas for alpha Binance/OKX OI, long-short and taker scope; new OKX identity
+entitlements are exercised, not inferred from wrapper existence. First scratch
+probe attempted a single-replica replicated transport and made zero calls; used
+the proper direct transport for per-replica attribution and ran the matrix.
+
+Stage35 `183541`: FAIL `startup:bounded`, two SETUP OPEN_SEQUENCE_GAP refusals
+(sessions10/30) while expanded provider BAR bootstrap was still applying. This is
+not hidden as latency success. Running streams had zero errors; no OOM/restart.
+Diagnose exact warmup products/window and wait for actual bootstrap/readback,
+not retry full acceptance blindly. Complete global diagnostic does NOT imply
+all historical provider windows are gap-free; exact gaps remain visible.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

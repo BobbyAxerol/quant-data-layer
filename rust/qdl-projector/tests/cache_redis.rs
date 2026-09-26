@@ -450,7 +450,10 @@ fn bar_diagnostic_is_atomic_with_revision_floor_and_reclaim() {
         Some("Gseq-7".into())
     );
     let summary_key = format!("{}bs:{generation}:{LPK}:0", cache.layout.prefix());
-    let summary: String = redis::cmd("GET").arg(&summary_key).query(cache.connection()).unwrap();
+    let summary: String = redis::cmd("GET")
+        .arg(&summary_key)
+        .query(cache.connection())
+        .unwrap();
     let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(summary[0], 1);
     assert_eq!(summary[1], MIN);
@@ -472,7 +475,10 @@ fn bar_diagnostic_is_atomic_with_revision_floor_and_reclaim() {
         get(&mut cache, &key, &(10 * MIN).to_string()),
         Some("N".into())
     );
-    let revised_summary: String = redis::cmd("GET").arg(&summary_key).query(cache.connection()).unwrap();
+    let revised_summary: String = redis::cmd("GET")
+        .arg(&summary_key)
+        .query(cache.connection())
+        .unwrap();
     let revised: serde_json::Value = serde_json::from_str(&revised_summary).unwrap();
     assert!(revised[4].as_array().map_or(true, |v| v.is_empty()));
     let failed = bar(
@@ -510,6 +516,9 @@ fn bar_diagnostic_is_atomic_with_revision_floor_and_reclaim() {
     ));
     cache.reclaim(generation, LPK, Some(MIN)).unwrap();
     assert_eq!(get(&mut cache, &key, &(12 * MIN).to_string()), None);
-    let exists: bool = redis::cmd("EXISTS").arg(&summary_key).query(cache.connection()).unwrap();
+    let exists: bool = redis::cmd("EXISTS")
+        .arg(&summary_key)
+        .query(cache.connection())
+        .unwrap();
     assert!(!exists);
 }
