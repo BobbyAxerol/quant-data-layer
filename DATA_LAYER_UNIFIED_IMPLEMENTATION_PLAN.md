@@ -58066,6 +58066,15 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   edge saw three fake bindings. The fixture now uses a test-local subclass;
   the history-fill + bootstrap + admission + readback modules together: 82 OK
   | `tested locally` (full suite rerun follows).
+- 2026-09-26: **Probe: identity capture on BAR streams only; K4 slice 32** |
+  this commit | The first live-log probe with the slice-30 diagnosis ended
+  many busy streams with the gateway's typed `RATE_LIMITED: bounded outbound
+  buffer exhausted` (TRADE/QUOTE/BOOK, `missing_lossless` up to 1,437): the
+  probe decoded an identity for every delivered event on all 194 streams,
+  slowing the client below the stream rate - the gateway's slow-consumer
+  bound did its job. Only BAR streams (a few events a minute, the open
+  question) keep delivered identities; `test_kn_native_slice_probe` 43 OK |
+  `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

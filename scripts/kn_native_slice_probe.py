@@ -1309,7 +1309,10 @@ async def _matrix_stream(runner: Slice, row: dict[str, Any], records: list, unti
                 except Exception:  # noqa: BLE001
                     token_errors += 1
                 delivered.append(item.logical_offset)
-                if len(identities) < MAX_DELIVERED_IDENTITIES:
+                # BAR only: a BAR stream carries a few events a minute, and the
+                # per-event decode on every busy stream (194 of them) slowed the
+                # client until the gateway ended its streams RATE_LIMITED.
+                if row["feed"] == "BAR" and len(identities) < MAX_DELIVERED_IDENTITIES:
                     identities[item.logical_offset] = record_identity(envelope)
                 segments[-1] += 1
                 received.append((partition, item.logical_offset, time.time_ns(), live_since_ns))
