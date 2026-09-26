@@ -2649,6 +2649,94 @@ boundaries unchanged. Astra implements source; Claude reads its journal before K
    with cold work. Reuse unchanged KN evidence; affected source/fast matrix
    precedes final 300s in KN-5. No additional phase train is introduced.
 
+##### Concrete Consumer Contract And KN-5 Handoff
+
+The public API remains parameterized; 60 TS bindings are not 60 distinct HTTP
+paths and are not the universe capacity certificate. Keep these read classes:
+
+| Consumer work | Shared API / facade | Correct interpretation |
+|---|---|---|
+| Universe daily signal initialization | `POST /v2/market-data/warmup:batch`; SDK `iter_warmup_batches`; alpha `warmup_batch` | One logical universe, sequential bounded chunks, native instrument identity, interval, requested rows and per-item outcome |
+| Single history/latest closed bar | `GET /v2/market-data/{instrument_uid}/warmup`, `/history`, `/snapshot` | Final/revised bars, declared calendar, short history reported; never pad missing candles |
+| Incremental indicator updates | gRPC `QueryStream/Subscribe`; SDK `warmup_then_stream(initial_warmup=...)` | Caller owns applied window; BAR-only reuse, signed cursor, generation, dedup and application-before-ack |
+| MARKET/limit advisory prices | QUOTE snapshot / alpha `stream_quotes`, TRADE; L2 snapshot/delta when depth matters | Bid/ask and liquidity are references, not guaranteed execution price; no trade-as-quote substitution |
+| Conditional trigger/margin context | MARK/INDEX typed snapshot plus declared trigger reference | Native component timestamps/lineage and execution eligibility; not bar-close substitutes |
+| Liquidity/slippage/market impact | BOOK_SNAPSHOT, BOOK_DELTA; alpha `book_snapshot`, `stream_book_delta` | Sequence/generation/gap/resync and native depth, never disconnected cached book as execution input |
+| Funding/OI/ratios/taker/basis/metadata | `POST /v2/market-data/reference:batch`; alpha `reference_batch` | Venue-specific capability, unit, population and cadence; reference input does not acquire execution authority or replay cursor |
+
+Alpha `warmup_batch` defaults to **50 items / 10000 estimated rows** per HTTP
+chunk, respecting current alpha item quotas. At limit2500 that is at most four
+items/chunk; at5000 two; at10000 one. The SDK protocol permits100 items, not an
+entitlement to exceed an identity's50. No additional per-symbol worker exists.
+The compatibility result map retains the requested output; callers needing
+bounded incremental universe processing use the SDK iterator and release each
+chunk. A universe of350 x5000 retained strategy rows still consumes consumer
+memory and must be measured, not hidden by clearing test scratch windows.
+
+A caller-owned BAR `WarmupResponse` can seed `warmup_then_stream` or alpha
+`stream_messages(initial_warmup=..., warmup_limit=<original limit>)`. The alpha
+legacy dictionary does not contain a trusted signed cursor and must not be cast
+into one. The last bar may be re-emitted; dedup by native identity, interval,
+open time and revision. Only update the retained deque and ACK after successful
+application. A historical pass-through window never invents replay continuity.
+QUOTE messages from `stream_quotes` contain advisory `QuoteRead`; existing
+`decode_message` passes it through. Trade/BAR legacy JSON payloads stay unchanged.
+Risk re-reads eligible market context at order admission; this task does not
+change MARKET, limit, OCO, sizing, order submission or strategy logic.
+
+**Bounded universe measurement tool:** `scripts/benchmark_kn_universe.py`.
+`--schema` prints the closed profile schema; `--manifest <profile.json>` is
+inventory-only and opens no credentials/network. `--run-approved` performs
+reads against explicit paired HTTPS/gRPC targets with mounted file credentials.
+Run in one disposable consumer container, read-only source/credentials, bounded
+CPU/RAM, existing candidate image, no Docker socket or order credentials. Do
+not use synthetic unit fixtures as a real profile. The report contains no tokens
+or row payloads. The existing KN endpoint matrix remains responsible for all
+11 HTTP endpoints / four gRPC RPCs; this tool supplements, not replaces it.
+
+Freeze per profile: catalog snapshot, venue/native symbol/UID, manifest+JWT
+revision, interval, native daily anchor, `limit`, `maxlen`, item/row/stream quota,
+source policy and paired replica targets. `as_of_ns` is a client-side validation
+cutoff, NOT an atomic historical snapshot request. Stop/re-plan a run crossing
+its next daily close; do not ignore a newer bar or claim chunks are simultaneous.
+Listing age/retention can make2500 or5000 daily bars unavailable: record actual
+rows, coverage and typed short-history result, never generate or silently claim
+full-depth PASS. Test the long-row compute/memory case on sufficiently old
+supported intervals as a separate profile when daily listing age is insufficient.
+
+**Claude must include these in K5.1/K5.2/K5.6, not add a new phase:**
+1. Freeze Data Layer + alpha commits, publish/pin the corresponding SDK candidate
+   together, compile/seal actual admitted universe and reference demand with
+   aligned JWT/manifest revisions. No five-liquid manifest inference for350.
+2. Run changed source/protocol matrix once, then real exact endpoint matrix on
+   both KN replicas, true1d universe batch and2500/5000 window scenarios above.
+   Source tests, provider-only smoke and historical shadow receipts are distinct.
+3. Run hot QUOTE/TRADE/MARK/L2 alongside cold universe at stages to50 logical
+   alpha plus real TS60. Report offered/admitted/usable/partial/failed/timed-out/
+   not-attempted counts by binding, interval, rows and replica; missing metrics
+   cannot disappear from denominators. No symbol-specific quiet exemptions.
+4. Report **milliseconds** for caller-before-queue -> decoded/validated/applied
+   first item and whole batch, queue/SDK/decode separately, actual consumer
+   cache-write completion where instrumented, source component/event age,
+   provider->canonical and event/bar-close->consumer usable. Callback timing
+   is not Redis-write timing; Kafka CreateTime is not commit time. Small sample
+   count cannot justify p99. Include errors and refused execution eligibility.
+5. Optimize measured bottlenecks first. Preserve bounded executors/admission,
+   disclose retained universe RAM and full-stack CPU/IO/lag. Increase a resource
+   cap only with measured benefit and the approved resource envelope. One final
+   300s acceptance follows green affected matrix; do not rerun C2 to debug.
+6. Paired cutover, old-path retirement, remote feature->dev->main and release
+   provenance/cleanup stay exactly K5.3-K5.6. Keep V1 only for allowed fallback;
+   preserve named old-V2 rollback for V2-only products. No alpha execution here.
+
+Future venues/metrics extend native instrument identity, typed units/capability
+and adapter/normalizer tests, then explicit demand and existing admission/cache
+lanes. Realtime authoritative products additionally require canonical lineage,
+watermark, replay and quality semantics. A REST-only metric uses reference
+batch with native sampling/retention; it is not forced through a fake WebSocket
+or treated as an executable quote. DNSE remains its existing V1 route; options
+and unsupported products require their own approved provider contracts.
+
 <a id="kn-guide-phase-5"></a>
 ### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

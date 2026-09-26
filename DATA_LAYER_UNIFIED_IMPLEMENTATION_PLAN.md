@@ -58248,6 +58248,33 @@ plus actual cache-write latency in KN-5. Source tests do not certify load.
   Container self-removed; no image build/provider/production operation.
   Source OKX/alpha/benchmark slices still being verified; no KN-5 start.
 
+- Alpha integration slice committed separately as `4a820bf` on canonical
+  `/home/bobby/execution_alpha`, `fix/kn5-alpha-read-completion` from dev`f266097`:
+  true bounded SDK batch, typed QUOTE PubSub, policy-correct per-item projection,
+  BAR cursor reuse and backwards-compatible legacy result map. **147 PASS,
+  0 fail/skip,17.15s** with actual2500/5000-row synthetic outputs on both venues.
+  Exact command and cleanup are in alpha main-plan anchor of the same name.
+  No strategy/order/runtime edits; no push/merge. SDK dependency is `86e15e8`.
+- Benchmark/handoff slice: `scripts/benchmark_kn_universe.py` is inventory-only
+  by default, requires explicit target pairs/identity/profile for approved reads,
+  uses real SDK batch with default50 respecting alpha quotas and row-budget
+  chunks. Reports ms before queue -> usable item/window, callback separately,
+  HTTP-body bytes, source ages, per-item typed failure/short-history and counts.
+  Scratch rows released, no fabricated retained-universe memory/capacity claim.
+  Supports explicit BAR stream selection and signed initial handoff; never
+  subscribes350 streams implicitly. `--schema` documents the profile contract.
+  Tests: **17 PASS,0 fail/skip**, deterministic TEST_ONLY; parent combined run
+  `python -B -m unittest tests.test_kn_universe_benchmark tests.test_kn_pre5_sdk
+  tests.test_phase3_target_driver -q`: **51 PASS,0 fail/skip,1.632s**. Counts
+  overlap the SDK slice; do not sum repeated runs as independent coverage.
+- Detailed guide now maps consumer jobs to exact shared HTTP/gRPC endpoints,
+  script/profile usage, ms accounting, native daily anchor/listing limits,
+  caller-owned cursor vs legacy dictionary, QUOTE advisory vs Risk authority,
+  future provider extension and the concrete K5.1/K5.2/K5.6 acceptance checklist.
+  Existing KN matrix still owns all11 HTTP/four gRPC RPC coverage. No old spool
+  scan benchmark is used to certify KN. No new phase or runtime operation.
+  OKX reference/provider-admission slice still under verification.
+
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
