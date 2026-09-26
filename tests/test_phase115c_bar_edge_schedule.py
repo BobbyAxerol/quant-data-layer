@@ -72,6 +72,17 @@ class Phase115CBarScheduleTests(unittest.TestCase):
             edge._bootstrap_rows_for(SimpleNamespace(interval="1w")), 156
         )
 
+    def test_kn_history_honors_demand_not_the_legacy_three_year_horizon(self) -> None:
+        edge = _edge()
+        edge.bar_readback = object()
+        edge.warmup_rows = 10000
+        edge.history_demand = {"daily": 5000, "weekly": 10000}
+        self.assertEqual(edge._bootstrap_rows_for(SimpleNamespace(binding_id="daily", interval="1d")), 5000)
+        self.assertEqual(edge._bootstrap_rows_for(SimpleNamespace(binding_id="weekly", interval="1w")), 10000)
+        self.assertEqual(edge._bootstrap_rows_for(SimpleNamespace(binding_id="unclaimed", interval="1d")), 1)
+        edge.warmup_rows = 2500
+        self.assertEqual(edge._bootstrap_rows_for(SimpleNamespace(binding_id="daily", interval="1d")), 2500)
+
     def test_due_check_skips_unchanged_long_bar_without_provider_call(self) -> None:
         source = SimpleNamespace(binding_id="weekly", interval="1w")
         edge = _edge(source)

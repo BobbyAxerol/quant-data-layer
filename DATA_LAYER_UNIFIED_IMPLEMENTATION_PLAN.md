@@ -58633,6 +58633,56 @@ awaits Redis pipeline ACK and verifies stored values in test-only Redis; no
 production TS writer replacement. Every duration is milliseconds, sparse p99
 withheld, refused prices retained as refusals. Full runtime measurements pending.
 
+**Isolated runtime packet, recorded before start:** source `1643049` (Bobby
+identity), Python `qdl-v2-python:kn5-1643049`; Rust projector release built from
+the same tree, existing unchanged stream/core binaries. Reuse ONLY retained
+`kn4-kafka-data` test volume and authentic state records, fresh mirror start
+(last 60s), fresh cursor route generation `kn5-astra-1643049`. Old shadow
+outage is NOT a gap-free continuity claim; provider history repairs/bootstrap
+and new cursor boundary define this acceptance window. No production spool read.
+Namespace remains owned `kn4-*`, no host ports; orchestration/evidence copied to
+`kn5-astra-20260926/shadow-run`, previous evidence left intact. Guard/watcher
+before setup, existing read-only source ACL, isolated groups/Redis, no source
+commit. Query two x1 CPU-equivalent scheduling limit remains existing 1.5 CPU/
+1GiB each; projector two x0.5 CPU/256MiB; Kafka 1 CPU/1.5GiB; unchanged stream
+x0.5CPU/256MiB; core 0.75CPU/256MiB. Cache ceiling 6.5GB noeviction/7GiB container
+only on shadow, based on full retained-row extrapolation plus diagnostic index;
+actual allocation and overhead must be measured. Host available ~16GiB before
+setup; do not confuse maximum ceiling with allocation or certification. Existing
+production images/config unchanged. Rollback is stopping this test namespace.
+Affected Python suite 76/76 PASS; Rust real Redis 33/33 PASS plus library 20/20.
+No final C2 yet: use matrix to diagnose, not repeated full certification runs.
+
+**Live setup/finding checkpoint:** copied test `core.json`/`core.env` had old
+UID ownership, causing two safe setup failures; exact test files corrected.
+Query then rejected production authority ENV copied onto the KN candidate's
+`RUST_SHADOW` record. Corrected isolated ENV to that record, never promoted
+production authority. Added Rust provider-admission lanes for new reference
+metrics, using the shared Query ingest-secret binding required by the existing
+adapter (secret values not recorded). Guard remains active, production unchanged.
+
+Real provider bootstrap exposed an additional contract issue: the legacy
+1,095-day spool sizing horizon still capped KN daily/weekly history. KN now uses
+the 10,000-row public bound plus actual manifest demand and provider pagination;
+legacy spool behavior remains unchanged. No invented history: listing/provider
+availability remains an explicit short result. Affected tests and next edge-only
+candidate follow; do not claim whole-universe depth from the old capped fill.
+
+**Actual TS writer probe (during bootstrap, NOT acceptance):** 120 snapshot
+reads included 28 refusals and 43/60 products with successful reads on both
+replicas. The unchanged TS projector completed 11,426 Redis writes and verified
+23,926 keys in isolated `kn5-astra-ts-cache`; writer ACK/readback is now measured,
+not inferred from callback. A new compatibility defect surfaced: nested reference
+errors serialize `diagnostics: null`, rejected by the deployed strict SDK 2.0.3.
+Fix only absent optional diagnostics serialization, keep non-null typed evidence
+and all existing error/nullable fields. Regression includes nested batch problems
+and old-SDK parsing. Freshness failures remain refusals; no eligibility relaxation.
+KN history-cap affected suite: 120 run, 119 PASS, 1 existing skipped integration.
+
+**Source checkpoint:** nullable-diagnostic compatibility and reference/API suite
+21/21 PASS. These changes will recreate only isolated Query x2 and BAR edge;
+production untouched. Candidate retains exact non-null diagnostic evidence.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

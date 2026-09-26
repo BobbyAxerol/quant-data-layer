@@ -135,10 +135,10 @@ def _bar_interval_ms(interval: str) -> int:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
-def durable_bar_history_capacity_rows(interval: str) -> int:
-    """Return the truthful retained-row ceiling for one durable BAR interval."""
-
-    return max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // _bar_interval_ms(interval))
+def durable_bar_history_capacity_rows(interval: str, *, kafka_native: bool = False) -> int:
+    """Legacy spool sizing horizon or the KN public row bound, not listing age."""
+    step = _bar_interval_ms(interval)
+    return _MAX_DURABLE_BAR_ROWS if kafka_native else max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // step)
 
 
 def _source_provider(source: StableSourceBinding) -> str:
@@ -966,7 +966,9 @@ class StableBinanceBarEdge:
         # never couple it to the live loop's configured warmup size.
         maximum_rows = min(
             _MAX_DURABLE_BAR_ROWS,
-            durable_bar_history_capacity_rows(source.interval or ""),
+            durable_bar_history_capacity_rows(
+                source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
+            ),
         )
         if rows > maximum_rows:
             raise ValueError(
@@ -1173,10 +1175,12 @@ class StableBinanceBarEdge:
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.
         """
-        rows = min(
-            self.warmup_rows,
-            durable_bar_history_capacity_rows(source.interval or ""),
+        # KN discovers real listing/provider history through bounded pagination.
+        # The old three-year spool sizing horizon is not a provider capability.
+        capacity = durable_bar_history_capacity_rows(
+            source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
         )
+        rows = min(self.warmup_rows, capacity)
         demand = getattr(self, "history_demand", None)
         if demand is not None:
             # The largest max_warmup_rows of a manifest requiring the product
@@ -1533,7 +1537,9 @@ class StableBinanceBarEdge:
             rows = self.native_recovery_lookback_rows
         else:
             rows = max(self.native_recovery_lookback_rows, (newest_open_ms - verified) // interval_ms)
-        maximum = min(self.max_catchup_rows, durable_bar_history_capacity_rows(source.interval or ""))
+        maximum = min(self.max_catchup_rows, durable_bar_history_capacity_rows(
+            source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
+        ))
         if rows > maximum:
             raise RuntimeError(
                 f"stable native BAR recovery exceeds bounded history binding={source.binding_id} "

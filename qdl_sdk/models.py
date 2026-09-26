@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover - exercised by the Python 3.10 artifact 
         def __str__(self) -> str:
             return self.value
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from qdl.query.v2 import query_pb2
 
@@ -180,6 +180,14 @@ class ProblemDetails(ClosedModel):
     instrument_uid: str | None = None
     quality_state: str | None = None
     diagnostics: ProblemDiagnostics | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_problem(self, handler):
+        result = handler(self)
+        # Strict older SDKs accept the original problem schema, not a new null key.
+        if self.diagnostics is None:
+            result.pop("diagnostics", None)
+        return result
 
 
 class DecimalValue(ClosedModel):
