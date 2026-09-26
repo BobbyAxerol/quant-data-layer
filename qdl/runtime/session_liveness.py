@@ -99,13 +99,13 @@ class ProviderSessionStatus:
 class StableSessionLivenessReader:
     """Read bounded, session-scoped liveness records from stable_state.
 
-    ``now_ns`` is the caller's clock, sampled before this read. The ingestor
-    rewrites its record continuously, so a record read after that sample can
-    carry a transport time a few microseconds past it - not a skewed clock,
-    a fresher heartbeat. With ``clock_ns`` (the caller's own clock source)
-    such a record is judged at a clock sampled after the read; a transport
-    time still in the future then is a real skew and fails closed. Without
-    ``clock_ns`` the caller's sample is the only clock (strict).
+    ``now_ns`` is the caller's clock, sampled before this read. With
+    ``clock_ns`` (the caller's own clock source) every record is judged at a
+    clock sampled after the read (never earlier than ``now_ns``): an old
+    heartbeat is aged by the full read, and one the ingestor rewrote during
+    the read is not mistaken for a skewed clock; a transport time still in the
+    future after the read is a real skew and fails closed. Without
+    ``clock_ns`` the caller's sample is the only clock.
     """
 
     def __init__(self, root: str | Path, *, clock_ns: Callable[[], int] | None = None) -> None:
@@ -218,9 +218,12 @@ class StableSessionLivenessReader:
             return ProviderSessionStatus("UNKNOWN", None, (flag,))
         if match.config_revision != config_revision:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CONFIG_MISMATCH",))
+        # The record is judged at the end of this read, never at the caller's
+        # earlier sample: that sample would under-state the age of an old
+        # heartbeat (1,999 ms at the sample, 2,019 ms after the read passed a
+        # 2,000 ms SLA) and over-state skew for one rewritten meanwhile.
         evaluated_ns = now_ns
-        if match.last_transport_at_ns > now_ns and self._clock_ns is not None:
-            # Rewritten between the caller's sample and this read.
+        if self._clock_ns is not None:
             evaluated_ns = max(now_ns, int(self._clock_ns()))
         if match.last_transport_at_ns > evaluated_ns:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CLOCK_SKEW",))

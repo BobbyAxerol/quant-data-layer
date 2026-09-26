@@ -79,11 +79,26 @@ class HeartbeatReadClockTests(unittest.TestCase):
         result = self.status(self.reader(), now_ns=1_000_000_000)
         self.assertEqual(result.flags, ("SOURCE_SESSION_CLOCK_SKEW",))
 
-    def test_an_ordinary_heartbeat_is_judged_at_the_callers_sample(self) -> None:
+    def test_an_old_heartbeat_is_aged_by_the_whole_read(self) -> None:
+        """Astra KN-4 re-review F1: 1,999 ms old at the caller's sample,
+        2,019 ms when the read ends - the SLA of 2,000 ms is already passed."""
+        from qdl.data_quality.binding_decision import BindingQualityInput, evaluate_binding_quality
+
         write(self.root, transport_ns=1_000_000_000)
-        self.clock[0] = 99_000_000_000  # never consulted: the record is not ahead
-        result = self.status(self.reader(), now_ns=3_000_000_000)
-        self.assertEqual((result.state, result.liveness_ms), ("LIVE", 2_000))
+        self.clock[0] = 3_019_000_000  # the clock after the read
+        result = self.status(self.reader(), now_ns=2_999_000_000)
+        self.assertEqual((result.state, result.liveness_ms), ("LIVE", 2_019))
+        decision = evaluate_binding_quality(BindingQualityInput(
+            binding_id="b", instrument_uid="u", feed="QUOTE", source_role="PRIMARY", authoritative=True,
+            acquisition_enabled=True, acquisition_mode="RUST_NATIVE", market_open=True, event_present=True,
+            event_age_ms=10, event_limit_ms=2_000, event_recency_policy="OBSERVE",
+            session_state=result.state, session_liveness_ms=result.liveness_ms, session_limit_ms=2_000,
+            delivery_semantics="ON_CHANGE", allow_quiet_execution=True))
+        self.assertEqual(decision.state, "STALE")
+        self.assertIn("SOURCE_SESSION_HEARTBEAT_EXPIRED", decision.reason_codes)
+        # The same record judged at the caller's sample would have passed.
+        strict = self.status(self.reader(injected=False), now_ns=2_999_000_000)
+        self.assertEqual(strict.liveness_ms, 1_999)
 
     def test_disconnect_generation_and_config_mismatch_still_fail_closed(self) -> None:
         self.clock[0] = 1_000_001_000
@@ -148,6 +163,50 @@ class ParsedContentCacheTests(unittest.TestCase):
         write(self.root, transport_ns=9_000_000_000)
         self.assertEqual(self.status(now_ns=10_000_000_000).liveness_ms, 1_000)
         self.assertEqual(self.status(now_ns=60_000_000_000).liveness_ms, 51_000)
+
+
+class QueryQualityClockOrderTests(unittest.TestCase):
+    """Query's event age is taken after the session read, like the session's."""
+
+    def test_event_and_session_age_are_judged_after_the_read(self) -> None:
+        from types import SimpleNamespace
+
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.query.contracts import StalePolicy
+        from qdl.runtime.stable_source import StableSpoolQueryBackend
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write(root, transport_ns=1_000_000_000)
+            ticks = iter(range(3_000_000_000, 4_000_000_000, 20_000_000))  # +20 ms per clock read
+            samples = []
+
+            def clock():
+                samples.append(next(ticks))
+                return samples[-1]
+
+            backend = SimpleNamespace(
+                _clock_ns=clock, config_revision=17,
+                _session_liveness=StableSessionLivenessReader(root, clock_ns=clock))
+            envelope = market_data_pb2.EventEnvelope(
+                source_event_time_ns=1_000_000_000, received_at_ns=1_000_000_000, venue="BINANCE", market="USDM",
+                source_session_id=SESSION, connection_generation=5, config_revision=17)
+            envelope.quote.level = 1  # selects the quote payload
+            binding = SimpleNamespace(
+                freshness_basis="SOURCE_EVENT", continuous_calendar=True, stale_after_ms=5_000,
+                binding_id="b", instrument=SimpleNamespace(instrument_uid="u", session_calendar_id=None),
+                feed=SimpleNamespace(value="QUOTE"), source_role="PRIMARY", authoritative=True,
+                delivery_semantics="ON_CHANGE", require_final_bar=False, source_policy_id="p")
+            requirement = SimpleNamespace(max_freshness_ms=5_000, max_session_liveness_ms=45_000,
+                                          effective_event_recency_policy=StalePolicy.OBSERVE)
+            quality = StableSpoolQueryBackend._quality(backend, requirement, binding, envelope,
+                                                       gap_open=False, watermark_offset=1)
+            # Samples in order: the caller's (before the read), the reader's
+            # (after it), then the event-age sample; each age uses a sample
+            # taken after the read, never the caller's.
+            self.assertGreaterEqual(len(samples), 3)
+            self.assertEqual(quality.provider_session_liveness_ms, (samples[1] - 1_000_000_000) // 1_000_000)
+            self.assertEqual(quality.freshness_ms, (samples[2] - 1_000_000_000) // 1_000_000)
 
 
 if __name__ == "__main__":

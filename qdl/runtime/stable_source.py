@@ -1036,7 +1036,6 @@ class StableSpoolQueryBackend:
             if binding.freshness_basis == "PROVIDER_CONFIRMATION"
             else source_observed_ns
         )
-        freshness_ms = max(0, (self._clock_ns() - freshness_observed_ns) // 1_000_000)
         flags = _quality_flag_names(envelope)
         explicit_gap = any(
             value in {"SEQUENCE_GAP_BEFORE", "OUT_OF_ORDER", "RESYNC_REQUIRED"}
@@ -1052,9 +1051,6 @@ class StableSpoolQueryBackend:
             binding.stale_after_ms
             if requirement.max_freshness_ms is None
             else min(binding.stale_after_ms, requirement.max_freshness_ms)
-        )
-        source_value_age_ms = max(
-            0, (self._clock_ns() - source_observed_ns) // 1_000_000
         )
         session_state = "NOT_APPLICABLE"
         session_liveness_ms = None
@@ -1084,6 +1080,11 @@ class StableSpoolQueryBackend:
                 ):
                     session_state = "STALE"
                     session_flags += ("SOURCE_SESSION_HEARTBEAT_EXPIRED",)
+        # Event age is taken after the session read, like the session's own
+        # age: a sample from before the read would under-state both.
+        evaluated_ns = self._clock_ns()
+        freshness_ms = max(0, (evaluated_ns - freshness_observed_ns) // 1_000_000)
+        source_value_age_ms = max(0, (evaluated_ns - source_observed_ns) // 1_000_000)
         payload_name = envelope.WhichOneof("payload")
         book_unverified = payload_name in {"book_snapshot", "book_delta"} and not (
             bool(getattr(envelope, payload_name).sequence_verified)

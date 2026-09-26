@@ -58125,6 +58125,24 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   review: the production-TS readiness samples, the unexplained run-3 BAR
   artefact, the warmup row cost, and that the TS runner measures to the
   projector call, not the TS Redis write | shadow evidence.
+- 2026-09-26: **Freshness judged at the end of the read, every time; K4
+  slice 33 (Astra KN-4 re-review F1)** | this commit | Slice 28 re-sampled the
+  clock only for a heartbeat newer than the caller's sample; an older one was
+  still aged at that earlier sample: 1,999 ms at the sample, 2,019 ms when the
+  read ended, reported 1,999 and passed a 2,000 ms SLA (Astra reproduced it
+  with a mock clock; my slice-28 test pinned the wrong behaviour). With an
+  injected clock the reader now judges every record at a clock sampled after
+  the read, never earlier than the caller's sample; real skew, disconnect,
+  generation and config mismatch still fail closed. Self-review found the
+  same flaw in two more places, fixed alike: `StableSpoolQueryBackend._quality`
+  took the event age before the session read (now after it, from one later
+  sample), and the execution MARK/INDEX view aged the event and its
+  components before its session read (now re-sampled after it when the
+  caller did not inject a clock). Tests: the over-SLA-during-read case (1,999
+  -> 2,019 ms, `SOURCE_SESSION_HEARTBEAT_EXPIRED` through
+  `evaluate_binding_quality`, and 1,999 without a clock) and a Query clock-order
+  test; both fail on the previous commit and pass now; session/quality/MARK/
+  Query/KN/edge suites 415 OK | `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
