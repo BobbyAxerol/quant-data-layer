@@ -2817,6 +2817,43 @@ another phase or change the five-phase architecture.
   receipt. After Claude review, the existing K5.3 packet remains the deployment
   boundary. No rerun of unrelated certified Rust/Kafka evidence is requested.
 
+<a id="kn5-astra-postpatch-review"></a>
+#### KN-5 Astra Implementation Handoff - 2026-09-26
+
+Owner assigned Astra implementation and Claude independent review for the
+predeployment corrections. Read the [new authentic acceptance receipt](evidence/KN5_ASTRA_PREDEPLOY_REVIEW.md#post-patch-acceptance)
+and [main journal](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-astra-acceptance-completion)
+instead of treating the historical source-only receipt as completion.
+
+Architecture is unchanged: Kafka durable authority, shared native projector/cache,
+Python public compatibility, bounded client-side history chunks. Do not reintroduce
+SQLite spool, symbol-workers, synthetic candles or execution eligibility based only
+on heartbeat. Rust BAR diagnostic summaries are derived versioned indexes atomically
+written with rows/checkpoint. Fresh KN caches create them naturally; an older cache
+keeps the exact fallback scanner until approved rebuild, not a fake empty diagnostic.
+The one-time summary initialization in the receipt was ISOLATED TEST STATE ONLY.
+
+SDK aggregate history chunk defaults to2,500 rows without truncating a single5k/10k
+request. Read-only cold admission may retry at most3times on typed retryable
+RATE_LIMITED, respecting bounded Retry-After. No quality/auth retry, cross-feed
+substitution, hidden fallback or replayed order. Consumer wall time includes queue,
+retry, decode and application; attempt counts remain visible. A mixed partial batch
+is not silently merged. Real provider gaps remain explicit unavailable history.
+
+The50-alpha gate must report startup retries separately from steady successful reads,
+state replay separately from usable execution prices, and actual TS Redis ACK/readback
+separately from SDK response. A deliberate slow-reader fault must prove non-executable
+replay plus strict current recovery, not accept5s-old quotes against a2s price bound.
+Whole current-cache memory is now measured; full-retention growth is still explicitly
+projected. The final rollout must account for production ingress, old/new overlap,
+rebuild and buffers, not quote the read-plane-onlyCPU as a full-stack result.
+
+Continue existing K5.3-K5.6 only after Claude review and owner deployment decision.
+Build release images from the reviewed source; use affected smoke for changed SDK
+or packaging rather than repeat unrelated provider/domain certifications. No new
+phase, production authority grant, blanket resource increase or remote merge is
+implied by the isolated acceptance.
+
 <a id="kn-guide-phase-5"></a>
 ### 18.12 KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 

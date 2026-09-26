@@ -58584,7 +58584,7 @@ of stale TRADE, hidden retention cut, additional phase, push/merge/release.
 <a id="kn5-astra-acceptance-completion"></a>
 #### KN-5 Astra Acceptance Completion (2026-09-26)
 
-**Status: IN_PROGRESS, owner rejected source-only handoff as the acceptance exit.**
+**Status: IMPLEMENTED_SHADOW_TESTED_PENDING_CLAUDE_REVIEW. No deploy/release.**
 Continue existing K5.1/K5.2 at `e8d3435`; implementer Astra, reviewer Claude.
 The source receipt above remains historical evidence, not completion of this task.
 Scope: complete bounded gap diagnostics; fresh real-data endpoint/binding and
@@ -58963,6 +58963,56 @@ consumer1CPU instrumentation saturation from provider/session status before
 claiming whole-consumer readiness. No production TS change. Next bounded check
 uses2CPU test consumer (production TS is not capped at1CPU), keeps readback and
 records cgroup use; all Data Layer limits stay unchanged.
+
+**Final measured checkpoint (20:35 UTC):** whole universe480 is now1020/1020
+PASS (510 products x2replicas) on SDK2dad966, validated authentic rows with
+explicit short-listing history. Real cold-contention probe16/16 PASS:24attempts,
+8typed admission retries, exact5000rows each, no quality/freshness retry. Final
+TS600s with2CPU TEST client:115/115 steady samples60/60;149,656 actual pipeline
+writes,305,252 verified keys; ACKp997.9ms/readbackp9913.4ms. Five startup
+RATE_LIMITED stream openings recovered. The earlier1CPU test's one58/60 sample
+is preserved; no controlled causality claim. Query limits stayed unchanged.
+Cold full-universe480 completes in115,681-129,963ms per255symbol venue/replica,
+not a single-symbol latency. Explicit16cold5k contention calls take5,323-19,417ms
+including queue/retry. No claim of instantaneous history or100%usable quietTRADE.
+
+**Cleanup packet before execution:** all tests are finished. Inventory and remove
+only containers carrying exact `kn4.run=kn5-astra-1643049` plus this run's
+`kn5-astra-cache-test`; no production container. Remove empty `kn4-net` and
+`kn4-egress` only. Preserve pre-existing `kn4-kafka-data` volume and every shared
+volume. Stop exact owned guard/watch processes. Retain evidence/native binary and
+one explicit review image `qdl-v2-python:kn5-9e81171`; remove this run's other eight
+unreferenced Python images, exact build-context directories and Rust target.
+Remove only individually identified reclaimable build-cache IDs from this run;
+no blanket prune. Save production start/restart/image inventory and disk pre/post.
+Production rollback and Claude's other images remain untouched. No push/merge,
+release, order activity or production runtime mutation is approved by this cleanup.
+
+**Final handoff / cleanup receipt:** fresh implementation and isolated tests are
+complete for Claude review, NOT an unconditional production/release certificate.
+[Full report](upgrade/evidence/KN5_ASTRA_PREDEPLOY_REVIEW.md#post-patch-acceptance)
+and [37-artifact index](upgrade/evidence/KN5_ASTRA_ACCEPTANCE_INDEX.json) bind the
+exact source/image/test tuple. Reader9e81171, projector20e5062/a95310a, edge822a150,
+final50client21fda1d; SDK2dad966 separately proves16/16 real5k contention reads
+with24attempts/8typed retries. Full universe480:1020/1020PASS across both replicas.
+Keep the earlier2500/5000 original failures plus exact12/12and8/8 recovery, not a
+false fresh full-depth rerun. 70reference reads and4complete diagnostic scans pass.
+Final50:15,504hotreads/90streams,0errors; TS actual Redis600s115/115ready samples,
+149,656writes; ACK+readbackp9913.4ms. Earlier transient58/60sample remains visible.
+TRADE-only stale price refusals remain correct; Risk must request/recheck QUOTE/L2.
+
+Cleanup executed exact scope:14testcontainers/2networks,8image tags,35testcacheIDs,
+9build contexts/Rust target and scoped secret copies. Retain one reader9e81171
+for Claude review, native binary/evidence, pre-existing Kafka and5anonymous test
+volumes; no volume/broad prune. Net free disk121,209,298,944 ->122,719,633,408B
+(+1,510,334,464B). Verified57outside-scopecontainers unchanged image/start/restart,
+and no restart drift from initial shadow inventory. All owned worker/guard sessions
+ended. Main/dev/runtime/rollback untouched; main`e6955f3` is one release-closure
+docs commit after local tag`v2.1.0`; no push/merge/tag.
+Only owner two pre-existing plan hunks remain outside scoped commits. No extra
+worktree. Remaining KN-5 rollout/release/whole-final-topology qualification is the
+existing K5.3-K5.6, with Claude independent review first; not disguised as debt or
+an assertion that current production already uses this implementation.
 
 ### KN Documentation And Handoff Receipt - 2026-09-23
 

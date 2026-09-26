@@ -1,6 +1,10 @@
 # KN-5 Astra Corrections / Claude Review Receipt
 
-Status: **SOURCE_TESTED_PENDING_CLAUDE_REVIEW. NOT DEPLOYED. NOT A RELEASE CERTIFICATE.**
+Status: **IMPLEMENTED_SHADOW_TESTED_PENDING_CLAUDE_REVIEW. NOT DEPLOYED. NOT A RELEASE CERTIFICATE.**
+> **Current review: see [post-patch authentic acceptance](#post-patch-acceptance).**
+> The source-only and old-shadow report below is preserved as history, not the
+> latest acceptance result. No production cutover or release is authorized here.
+
 Date: 2026-09-26. Canonical `/home/bobby/data_layer`, branch
 `feat/consumer-endpoint-benchmark`, source baseline `718631d`.
 The commit containing this receipt is the review candidate. No push/merge/tag.
@@ -163,3 +167,272 @@ all four readers and TS market-data restart=0, OOM=false at the read-only check.
 Local stable main tag remains `v2.1.0`; this is not a new published release.
 Active/rollback and Claude's shared candidate images are retained. Exact cleanup
 and final commit/diff inventory are recorded in the main journal.
+
+
+<a id="post-patch-acceptance"></a>
+## Post-Patch Authentic Acceptance - 2026-09-26
+
+**Status: IMPLEMENTED_SHADOW_TESTED_PENDING_CLAUDE_REVIEW; scoped cleanup complete.**
+The owner rejected source-only closure. This section supersedes the old latency
+and remaining-measurement statements above, without erasing failed runs.
+All new data is real provider history or read-committed canonical mirror bytes.
+The namespace is isolated; this is NOT production, independent HA or order certification.
+
+### Implementation And Root Causes
+
+- D48 ownership and OKX reference entitlements above are retained and now exercised
+  with actual alpha identity, not only test credentials.
+- Global gap scan decoded/sorted too much retained history for its 5,000ms deadline.
+  Rust projector now maintains per-bucket interval/run summaries in the SAME Lua
+  transaction as rows, floors, revisions and checkpoints. Query validates generation,
+  source, head, count and floor, then reads bounded summaries. Legacy missing indexes
+  use the exact scanner, not an empty success. Corrupt/incomplete state fails closed.
+- KN history no longer inherits the old 1,095-day cap. Positive-time history checkpoints
+  and OKX weekly REST boundaries handle 10k requested lookback without negative Unix time.
+- SDK2.0.3 rejected `diagnostics:null`; omission of absent diagnostic fields preserves
+  strict compatibility without ignoring unknown fields.
+- Two mixed-load CPU bottlenecks: batch warmup rendered the whole response without
+  the single-warmup chunking/lease policy; prefetched row validation also ran on the
+  asyncio loop. Both now use the existing bounded cold workers and cooperative yields.
+  Cancellation holds admission until the worker exits. No provider limiter or hot SLA changed.
+- SDK default aggregate warmup chunk is2,500 rows; a single5k/10k requirement is not
+  truncated. Bounded admission recovery makes at most3 attempts ONLY on retryable
+  RATE_LIMITED cold reads, retaining identity, interval, count and policy. Snapshot,
+  quality, auth and mixed partial errors are not retried. Attempts and waits are measured.
+- Slow-reader test deliberately queued5s of QUOTE, then wrongly required that backlog
+  to pass2s current-price freshness. The corrected oracle validates ordered replay as
+  non-executable, then requires strict current snapshot recovery. It never relabels
+  old quotes/trades as prices. Unexpected stream failures now retain bounded typed quality.
+- Reference/L2 certification had a frozen55-product assumption; it now derives exact
+  identities from the signed manifest, retaining uniqueness/policy checks.
+- Percentile rank correction uses nearest-rank ceil(q*n)-1. Sparse cohorts withhold
+  p99 below100 and p95 below20; raw older gate output is retained, not rewritten.
+
+### Artifact Provenance
+
+Reader image: `qdl-v2-python:kn5-9e81171`,
+`sha256:17a359779702e7b1ced2bd38acdf07267246b54db969f9bc25d6aec238599d06`.
+Native projector semantic source20e5062 (a95310a formatting); isolated history edge822a150.
+Final50 test client21fda1d; subsequent SDK recovery source2dad966 is a read-only,
+Git-archived client overlay, not a new server image. State the tuple, not one false SHA.
+Production images, manifests, consumer Redis, Kafka offsets and authority did not change.
+
+### Tests And Honest Denominators
+
+- Python affected/API/cancellation/history/identity suite189/189 PASS, plus48/48
+  environment/legacy modules and133/133 SDK/read-backpressure regressions. Suites overlap;
+  do not add these as unique test counts.
+- Earlier full2339 run had12 failures,20 errors,46 skips; all failures/errors were
+  classified and their affected modules rerun after correction. This is NOT a claim
+  of a new single full-suite green run. Test-only compiled SafeLoader was checked
+  against standard parsed configs; production parser unchanged.
+- Real Redis reader27/27; Rust real-Redis atomic cache6/6 and Stage-B27/27; clippy
+  all-targets PASS. Isolated summary initialization12,523 buckets,0 failures.
+- Read-plane matrix:132/132 target cases,48/48 history ladders,20/20 batch shapes,
+ 16/16 handoffs,24/24 replica parity,8/8 freshness. Its two original diagnostic
+  failures were then tested separately after the Rust summary patch.
+- Actual alpha Reference70/70 PASS across two replicas. Current/history OI, long/short,
+  taker flow identities/selectors are checked, not inferred from provider support.
+- All10 execution1m products have5,000 contiguous retained rows,0 sequence gaps.
+- Final50-bounded:15,504 hot requests,0 failure/missed/starved;90 streams,0 errors;
+  all30 BAR streams received final bars;12/12 cursor reconnects restored. Deliberate
+  slow reader drained8 non-executable frames and passed strict current recovery.
+  Four cold2500/5000 reads complete; no leaked tasks, OOM or restart. Startup took
+ 69,387ms with119 bounded admission retries, not instantaneous fleet readiness.
+  Production TS observed33/33 samples60/60, one DATA_STALE disconnect within the
+  frozen baseline gate. Actual isolated TS writer is measured separately below.
+
+### Request To Validated Consumer Result (ms)
+
+Final50 load uses real SDK calls, including decode/validation. This table is not
+source event age or TS Redis latency. No synthetic processing delay was added.
+
+| Read | Venue | Successful N | p50 | p95 | p99 | Gate p95 / p99 |
+|---|---|---:|---:|---:|---:|---|
+| QUOTE | Binance |2750|11.443|51.341|129.338|100 /250|
+| QUOTE | OKX |2750|12.138|57.779|149.327|100 /250|
+| MARK/INDEX | Binance |4125|12.931|53.510|149.794|250 /500|
+| MARK/INDEX | OKX |4125|12.941|54.318|141.716|250 /500|
+| TRADE | Binance |55|10.050|56.619|withheld|100 /reported only|
+| TRADE | OKX |55|11.469|78.993|withheld|100 /reported only|
+| L2 snapshot | Binance |54|28.683|79.125|withheld|300 /reported only|
+| L2 snapshot | OKX |55|40.476|257.138|withheld|300 /reported only|
+| Latest BAR | Binance |55|16.327|47.524|withheld|1000 /reported only|
+| Latest BAR | OKX |55|22.225|77.375|withheld|1000 /reported only|
+
+The separate TS3600-read run measured30 requests per binding per replica, all60
+bindings positive on BOTH replicas. Five feed groups were600/600; TRADE514/600,
+86 correctly rejected execution-freshness reads. Consumer60-read burst uses8 slots:
+its complete call-to-usable p99 includes runner queue, not just Query speed.
+
+| TS read | SDK p99 ms | Queue-inclusive call-to-usable p99 ms | Usable / attempted |
+|---|---:|---:|---:|
+| BAR |249.9|964.7|600/600|
+| BOOK_DELTA |219.8|930.4|600/600|
+| BOOK_SNAPSHOT |237.5|788.5|600/600|
+| MARK_INDEX_PRICE |155.9|896.4|600/600|
+| QUOTE |212.1|856.3|600/600|
+| TRADE |203.8|927.3|514/600|
+
+Those runner-burst numbers are not the scheduling pattern of deployed TS. Per-binding
+N30 p95/max, rejection quality and source ages remain in `acceptance/ts-final.json`.
+MARKET/LIMIT price selection must explicitly request QUOTE/L2 and let Risk revalidate;
+TRADE rejection cannot be fixed by changing its timestamp or quietly substituting feed.
+
+### Actual TS Cache Boundary (ms)
+
+Unmodified TS image/adapter/bridge/cache-projector wrote only the isolated Redis.
+The measurement calls the actual pipeline, waits for ACK, then verifies written keys
+by MGET. It adds verification work and is not a production load claim.
+600s run:133,878 writes,258,764 verified keys; ACK p50/p95/p99=0.8/3.3/6.7;
+ACK+readback=1.1/4.8/11.1. All115 steady samples60/60 READY.
+
+| Source event or BAR close -> Redis readback, steady | N sampled | p50 ms | p95 ms | p99 ms |
+|---|---:|---:|---:|---:|
+| BAR |90|1094|3002|withheld|
+| BOOK_DELTA |5120|379|661|868|
+| BOOK_SNAPSHOT |190|1041|1599|1843|
+| MARK_INDEX_PRICE |5120|1007|1640|2152|
+| QUOTE |5120|471|1006|1931|
+| TRADE |4761|512|2307|3584|
+
+Raw stored fact age is NOT execution-price eligibility, especially quiet TRADE and
+component-aware MARK/INDEX. Reservoir samples are uniform per binding, not a tail-only
+sample. The read-only canonical mirror adds a hop that final production will not use;
+do not subtract an unmeasured number to claim a future latency.
+Additional450s run overlapping final50 had84/85 steady samples60/60; one58/60
+QUOTE-age sample self-recovered. It is retained, not merged into the600s green result.
+The subsequent600s consumer-headroom run is complete:115/115 steady samples60/60;
+149,656 writes,305,252 verified keys, ACKp997.9ms, ACK+readbackp9913.4ms.
+It used a2CPU TEST-client ceiling (not a Data Layer or production TS change),
+with0.683core mean,144.2MB peak cgroup memory and0 throttle/OOM. Five startup
+RATE_LIMITED stream opens recovered; zero steady unhealthy samples. This is
+additional evidence, not a controlled proof that CPU caused the earlier transient.
+
+### HTTP, gRPC, History And Reference Coverage
+
+| Public endpoint / method | Actual scope / result |
+|---|---|
+| GET /v2/instruments; /v2/instruments/{identity} | Both replicas200;12-16ms small matrix samples, notp99 |
+| GET /v2/market-data/{uid}/snapshot | TRADE,QUOTE,BAR,BOOK_SNAPSHOT,BOOK_DELTA; timing tables above |
+| GET /v2/feeds/{uid}/status | Typed identity/session/event/gap/watermark status,17-20ms small samples |
+| GET /v2/market-data/{uid}/warmup | Signed boundary, requested lookback up to10k, final-only; no generated candles |
+| GET /v2/market-data/{uid}/history | Bounded retained ranges; replicas/ordering/identity checked |
+| POST /v2/market-data/warmup:batch | Same interval/multiple symbols, bounded SDK chunks, strict/partial errors explicit |
+| POST /v2/market-data/reference:batch | Funding,OI,long-short,taker,mark/index,metadata,basis by signed capability; metric/type/selector is not interchangeable |
+| GET /v2/system/readiness; POST /v2/system/readiness:check | Manifest/product readiness, not an execution grant |
+| GET /v2/data-quality/gaps | Complete HTTP200 on both replicas/alpha identities;833.8-1250.3ms unloaded,1594.7-3571.8ms under load |
+| gRPC Subscribe / Replay / GetSnapshot / GetFeedStatus | KN native stream; inherited exact oracle/negative RPC evidence plus affected90-stream live load/reconnect |
+
+Intervals are typed parameters/bindings, not separate REST route paths.5liquid
+symbols on both venues retain140 BAR bindings (14 native intervals per venue),
+plus510 daily universe products,500 of them additional to existing execution history.
+Universe is BAR1d batch input, not510 extra WS subscriptions or an execution grant.
+The original market catalog has716 bindings including4 legacy Spot/VN exclusions;
+this run does not activate those exclusions.
+
+Fresh history matrix (before final cold-worker scheduling patch):48 reads at
+2500/5000/10000, range751-9869ms depending venue/interval and actual available
+listing history. Each row count/short-history label is in the receipt. Under
+final50 load:2500=3641/6909ms;5000=8150/11321ms (Binance/OKX). Four observations,
+notp99. Hot isolation improved; history is still multi-second, not an instant
+callback or a promised universal speedup. Final batch50 samples3912-4369ms in
+the earlier matrix; whole-universe wall time is reported independently.
+
+Five Binance deep3d provider windows have authentic timestamp discontinuities.
+The history edge isolates typed failures per binding and never fabricates missing
+bars. Recent demanded1m and daily acceptance are complete; do not certify deep3d
+continuity across those specific old discontinuities. Venue/listing history can
+be shorter than10k; the request is a lookback cap, not permission to invent rows.
+
+### Capacity, Limits And Review Boundary
+
+Whole measured cache:1,525,787BAR rows,1,171,251,296B used,1,169,522,688B RSS,
+zero evictions. This includes execution plus universe, not just a376MB increment.
+7,731,216 full-retention rows remain an extrapolation (~5.94GB before additional
+allocator/buffer/staging headroom), NOT a filled-cap stress measurement.
+Shadow Redis cap7GiB/maxmemory6.5GB does not mean7GiB was consumed. Production caps
+and10k retention promises were not silently changed. Final release packet must
+use measured current demand plus explicit growth/rebuild allowance.
+
+Final50 sampled read-plane averageCPU: Query1/2=0.261/0.509 core, projectors=
+0.078/0.080, streams=0.083/0.013, cache=0.041, isolated Kafka=0.229. This sums
+about1.294 cores, but EXCLUDES production ingress/core, mirror and clients. It
+is not the guide's full production-stack<=5CPU certificate. No Query throttling;
+Stream-A0.7% throttled periods. Whole-host/new-old overlap is captured separately.
+
+Claude must review this source/evidence tuple, replay oracle, SDK bounded retries,
+atomic summary migration and complete memory budget before K5.3 paired handoff.
+K5.3 rollout/rollback and remote release provenance remain the EXISTING approved
+KN-5 work, not a new phase or permission to call shadow production.
+
+### Whole Universe And Retry Closure
+
+New source2dad966: **1,020/1,020 PASS**,510 daily products on both replicas,
+255symbols per venue. Requested480rows, with explicit authentic shorter listing
+history where applicable. Each255-symbol SDK call used51bounded chunks,0retries:
+
+| Venue | Replica | Complete usable ms | Returned rows | Decoded HTTP body bytes |
+|---|---|---:|---:|---:|
+| OKX | Query1 |126498.411|104812|304267454|
+| Binance | Query1 |129963.392|108250|313734265|
+| OKX | Query2 |115681.395|104812|304267454|
+| Binance | Query2 |119922.661|108250|313734265|
+
+This is about1.9-2.2minutes for a255-symbol cold initialization, NOT milliseconds
+for a single symbol and not a daily signal/execution path. Payload sizes above
+are decoded response bytes, not encrypted wire bytes. No continuity/finality
+or history-depth requirement was relaxed. The runner does not self-attest
+provider provenance (`provenance_verified=false`); pair it with the isolated
+read-committed mirror/history-edge setup and logs, not a fabricated true flag.
+
+Earlier full2500/5000 universe attempts had12/8 RATE_LIMITED reads. Their exact
+failed subsets recovered12/12 and8/8. Successful row/identity/window evidence
+is inherited; these are NOT freshly rerun1020/1020 zero-rejection deep profiles.
+To prove the new SDK retry path really executes, an additional real contention
+probe made4concurrent5000-row requests for each alpha identity/replica:
+**16/16PASS,24attempts,8typed retries**, exact5000rows each,5,322.7-19,417.3ms
+including queue and retry. Negative source tests prove stale/auth/gap/snapshot
+and mixed-partial responses are not silently retried or converted to success.
+
+### Resource, Cleanup And Next Review
+
+Separate597.5s whole-host/component capture distinguishes production from shadow.
+New Query peaks580.7/488.3MB, no throttling/OOM; native projectors65.5/78.0MB;
+streams113.5/85.0MB; cache1,164.7MB. Isolated Kafka cgroup peak1,610.5MB includes
+page cache, not just heap;0OOM. Query average0.324/0.251core during that window.
+Production ingress/core/Kafka are recorded separately in `resource-summary.json`.
+Do not add maxima from different times into a claimed simultaneous RSS, or claim
+final whole-stack<=5CPU from a read-plane subtotal. Rebuild/full-retention growth
+and final paired deployment still use existing K5.3 gates, not this shadow receipt.
+
+Cleanup:14owned test containers and2empty test networks removed;8test Python
+image tags removed;35exact reclaimable cache references and9build contexts/Rust
+target removed. Exact scoped TLS/private-secret copies deleted. One tested reader
+image9e81171 and the native binary are retained for independent review; production
+active/rollback and Claude's unrelated artifacts are unchanged. The guard removed
+some stopped containers concurrently, so the first `rm` returned already-absent;
+all owned IDs were verified absent, without broadening cleanup. No volume deletion:
+pre-existing test Kafka and5anonymous test volumes are retained, alongside every
+production/shared volume. This is NOT a blanket Docker cleanup claim.
+
+Disk free121,209,298,944 ->122,719,633,408B, net+1,510,334,464B while production
+continued running. All57outside-scope containers preserved image/restart/start;
+comparison to pre-shadow start also finds no restart changes. No surviving owned
+guard/watch/client session. Canonical `/home/bobby/data_layer`, one checkout on
+`feat/consumer-endpoint-benchmark`; main is`e6955f3`, the release-closure docs
+commit after tag`v2.1.0` (`v2.1.0-1-ge6955f3`); no push/merge.
+
+Machine-readable [acceptance index](KN5_ASTRA_ACCEPTANCE_INDEX.json) contains37
+hashed artifacts, exact source/image tuple, per-file add/delete counts from718631d,
+latencies and all material limits. Review the12source/testing commits aftere8d3435
+plus that first ownership/entitlement correction; don't treat this docs commit as
+one magically tested binary. Main plan includes every tested slice and failed run.
+
+**Handoff to Claude:** review atomic diagnostic summaries/generation safety,
+SDK backpressure/partial semantics, non-executable replay oracle, source ownership,
+and new evidence denominators. If accepted, continue the existing paired deployment
+and release packet K5.3-K5.6. No additional phase. Do not rerun unrelated certified
+venue/domain tests just because a documentation SHA changes; packaging/SDK changes
+still need affected smoke. No release/production readiness assertion before review
+and actual handoff, and no unconditional execution permission from this data proof.
