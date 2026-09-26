@@ -56504,10 +56504,11 @@ Astra requested review points and next allowed step:
 <a id="kn-plan-phase-4"></a>
 ### KN-4 - Query, SDK And Full Read-Plane Compatibility
 
-**Status:** IN_PROGRESS (2026-09-25). KN-3 PASS recorded (`f0380a4`). Slices
-1-7 implemented and tested; the first shadow run stopped on the TS stop
-condition; the owner chose a narrow investigation first, then watched load
-(decisions D35-D41 in the journal).
+**Status:** IMPLEMENTED_PENDING_ASTRA_REVIEW (2026-09-26; receipt
+`~/.local/state/qdl-v2/kn4-20260925/evidence/kn4-closure-receipt.json`, four
+items left open for the review). KN-3 PASS recorded (`f0380a4`). Slices
+1-32 and the alpha adapter fix (`execution_alpha` `f266097`) implemented and
+tested; D35-D47 and the 2026-09-26 Astra review items are in the journal.
 **Goal:** actual SDK/consumer reads use the new backend correctly across the
 declared endpoint surface; hot latency survives heavy warmup and recovery.
 **Guide index:** [18.11 work items and K4-T01..T08](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-4),
@@ -58075,6 +58076,55 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   bound did its job. Only BAR streams (a few events a minute, the open
   question) keep delivered identities; `test_kn_native_slice_probe` 43 OK |
   `tested locally`.
+- 2026-09-26: **Astra KN-4 review closed item by item on the resumed D47
+  shadow; KN-4 IMPLEMENTED_PENDING_ASTRA_REVIEW** | this commit | Shadow
+  (images `kn4-3b853f5` services, `kn4-f6606ad` steps) brought up again with
+  the broker volume kept: the mirror resumed from its transactional
+  checkpoint (22:51Z, the production canonical topic keeps 6 h, so the mirror
+  was started right after the broker; `auto.offset.reset=error` would have
+  refused a lost range) and caught up 5 h 17 min in 29 min; the cache
+  rebuilt from the log (12/12 partitions in 35 s, 202/216 READY, 651 MB).
+  Evidence, all on the isolated shadow: (1) history after the resume: 10k
+  1m/1h, both venues, FULL and contiguous, isolated cursor VERIFIED. (2)
+  Quota negative alone (`kn4_steps.sh quota`): 8/8 RESOURCE_EXHAUSTED with
+  the seeded key consumed, unseeded control OK, on both gateways. (3) TS 60
+  bindings (`kn4_consumer_matrix.py ts60`, TS image, real adapter): A - every
+  binding on both Query replicas, 587/600 reads OK at 8 in flight per replica
+  (queue wait included): request -> validated view p50/p95/p99 ms QUOTE
+  61.6/115.7/144.8, MARK 59.8/94.6/119.6, BOOK 76.6/119.6/183.0, BAR
+  62.6/123.7/176.4; the 13 refusals are the TS client rejecting quiet TRADE
+  snapshots as not execution eligible (its own rule); a 50-way burst is
+  refused typed by the hot lane's 15 pending TS reads per replica (by
+  design). B - the real `DataLayerMarketDataBridge` (streams + MARK/BOOK
+  polls, recording projector, no TS Redis/DB): 30/30 samples 60/60 READY;
+  age at the projector p50/p99 ms QUOTE 460/963, BOOK_DELTA 409/890, TRADE
+  485/1,705, MARK 986/2,131, BAR from close 1,262/3,930 (n 30). (4) Alpha,
+  sealed compiled bindings, both venues (grid 1h, fib 5m, fib 15m): 52/52
+  reads incl. QUOTE, BAR 5m/15m/1h latest, warmup 500 contiguous from the KN
+  materialised cache (`DATA_LAYER_V2_MATERIALISED_BAR_INTERVALS` = the 14 KN
+  intervals; 0 pass-through). (5) Live-log probe (2 client CPUs): 194
+  subscriptions PASS, 0 duplicate/out-of-order/unexpected/missing over 89,633
+  events, negatives 24/24, RPC 17/17; commit -> client after LIVE p50/p99
+  14.6/880 ms (n 64,717). The run-3 BAR 5m/15m `unexpected=1` (every Binance
+  5m/15m stream, none on OKX) did not recur with a 15m close inside the
+  window; Kafka CreateTime equals publish time on both venues (checked), so
+  the stale-timestamp hypothesis is refuted; the mechanism stays
+  unexplained. (6) Stage 35 with the TS runner attached: run 043712 - 10
+  OKX QUOTE refusals in 2 s, diagnostics `SOURCE_SESSION_DISCONNECTED` then
+  `SOURCE_SESSION_UNAVAILABLE` = a production OKX public-session reconnect
+  (generations +3 in 8 h), a correct fail-closed refusal; run 044319 -
+  6,527 requests 0 failed, 63 streams 0 errors, no OOM/restart/leak, lag
+  82/68 records, latency p99 ms QUOTE 32-40, MARK 34-37, L2 55-84, BAR 25,
+  TRADE 20-62; KN TS runner 66/66 samples 60/60 READY; the only failed gate
+  is production TS on the old path (3/21 samples OKX BTC QUOTE STALE, age
+  2.746 s repeated), host idle 32-35 %: not attributed. (7) Warmup cost
+  measured: TTFB 235 ms for 500 BAR rows and 4.5-4.75 s for 10k (~0.47 ms a
+  row in Query), body 7-9 ms, JSON 1.5 MB / 30 MB (~3 KB a bar) - the next
+  latency target, profile first. Cleanup: images `kn4-1213fd5`,
+  `kn4-0ea3850` removed by digest; the mirror log is bounded. Open for the
+  review: the production-TS readiness samples, the unexplained run-3 BAR
+  artefact, the warmup row cost, and that the TS runner measures to the
+  projector call, not the TS Redis write | shadow evidence.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
