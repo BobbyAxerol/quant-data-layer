@@ -57978,6 +57978,36 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   618-1,526 (n 63). These include the mirror hop, which KN-5 removes.
   Resources: KN stack ~0.45 vCPU / ~2.1 GiB idle; Query 307/384 MiB of 1 GiB
   after stage 35 (D45 holds) | shadow evidence.
+- 2026-09-26: **Session read path: heartbeat read clock, session-named
+  staleness, parsed-content cache; K4 slice 28 (Astra KN-4 review F2)** | this
+  commit | (1) Query sampled `now_ns` before reading the ingestor's session
+  record; the ingestor rewrites it continuously (temp file + rename), so a
+  record read after the sample could carry a transport time just past it and
+  was refused as `SOURCE_SESSION_CLOCK_SKEW` -> UNKNOWN -> STALE -> DATA_STALE
+  although no clock was wrong. `StableSessionLivenessReader(clock_ns=...)`
+  (wired with the caller's own clock in `stable_source.py` and `stable.py`)
+  judges only such a record at a clock sampled after the read (never earlier
+  than the caller's sample); a transport time still in the future is a real
+  skew and fails closed; without `clock_ns` the old strict rule holds. Not yet
+  proven to be the cause of the two stage-35 BNB refusals - that needs the
+  refusal diagnostics of slice 29. (2) `freshness_verdict` named every STALE
+  state `EVENT_AGE`, although a quiet ON_CHANGE quote / OBSERVE feed is STALE
+  only through its session; a session-caused STALE is now `SESSION_STATE`
+  (admission unchanged; the old `SESSION_STATE` branch was unreachable).
+  (3) Astra's optimisation note, measured first: `status()` listed the lane
+  directory and read + parsed every record per call, per item (13 Binance
+  USDM lanes, 8 long DISCONNECTED) - 918.6 us per call on 1 CPU (2,000 calls,
+  host loaded by a concurrent suite). Parsed content is now kept per file
+  under its (inode, mtime, size) key - exact because the ingestor writes by
+  rename - and re-read only when the file changes; no verdict, age or match
+  is cached, the directory is re-listed every call and the cache holds only
+  the files listed now: 280.2 us per call (3.3x). Tests: new
+  `test_session_liveness_read_clock` 11 (rewrite-during-read LIVE, strict
+  without clock, real skew, clock behind the sample, ordinary heartbeat,
+  disconnect/generation/config mismatch; rename, in-place rewrite,
+  malformed -> repaired -> removed, ambiguous copy, age per call);
+  `test_dlv2_r1_stale_reason` +1; session/quality/Query/KN suites 253 OK |
+  `tested locally`.
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

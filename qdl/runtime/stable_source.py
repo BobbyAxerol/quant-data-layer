@@ -232,7 +232,7 @@ class StableSpoolQueryBackend:
         self.schema_digest = schema_digest
         self.config_revision = config_revision
         self._session_liveness = (
-            StableSessionLivenessReader(session_liveness_root)
+            StableSessionLivenessReader(session_liveness_root, clock_ns=clock_ns)
             if session_liveness_root is not None
             else None
         )

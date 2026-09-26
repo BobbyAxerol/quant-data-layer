@@ -11,9 +11,11 @@ trade or from a newer, different session.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 SESSION_LIVENESS_SCHEMA = "qdl.provider-session-liveness.v1"
@@ -95,10 +97,61 @@ class ProviderSessionStatus:
 
 
 class StableSessionLivenessReader:
-    """Read bounded, session-scoped liveness records from stable_state."""
+    """Read bounded, session-scoped liveness records from stable_state.
 
-    def __init__(self, root: str | Path) -> None:
+    ``now_ns`` is the caller's clock, sampled before this read. The ingestor
+    rewrites its record continuously, so a record read after that sample can
+    carry a transport time a few microseconds past it - not a skewed clock,
+    a fresher heartbeat. With ``clock_ns`` (the caller's own clock source)
+    such a record is judged at a clock sampled after the read; a transport
+    time still in the future then is a real skew and fails closed. Without
+    ``clock_ns`` the caller's sample is the only clock (strict).
+    """
+
+    def __init__(self, root: str | Path, *, clock_ns: Callable[[], int] | None = None) -> None:
         self.root = Path(root)
+        self._clock_ns = clock_ns
+        # Parsed file contents by directory and name, keyed by the file's
+        # (inode, mtime, size). Only content is kept - never a verdict: age,
+        # skew and the session match are judged on every call.
+        self._parsed: dict[str, dict[str, tuple[tuple[int, int, int], ProviderSessionLiveness | None]]] = {}
+
+    def _records(
+        self, directory: Path, names: list[str]
+    ) -> list[ProviderSessionLiveness | None]:
+        """The records of ``names``, each re-read only when its file changed.
+
+        The ingestor replaces a record by rename (a new inode), so the stat key
+        names one content exactly; a file that changes between the stat and the
+        read is stored under the older key and re-read on the next call. The
+        cache holds only the files listed now (at most ``_MAX_STATE_FILES``).
+        """
+
+        previous = self._parsed.get(str(directory), {})
+        current: dict[str, tuple[tuple[int, int, int], ProviderSessionLiveness | None]] = {}
+        records: list[ProviderSessionLiveness | None] = []
+        for name in names:
+            path = directory / name
+            try:
+                stat = os.stat(path)
+            except OSError:
+                records.append(None)
+                continue
+            key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            cached = previous.get(name)
+            if cached is not None and cached[0] == key:
+                record = cached[1]
+            else:
+                try:
+                    record = ProviderSessionLiveness.from_mapping(
+                        json.loads(path.read_text(encoding="utf-8"))
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                    record = None
+            current[name] = (key, record)
+            records.append(record)
+        self._parsed[str(directory)] = current
+        return records
 
     @staticmethod
     def _directory(*, venue: str, market: str) -> str:
@@ -131,27 +184,26 @@ class StableSessionLivenessReader:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_INVALID",))
         try:
             candidates = []
-            for path in directory.iterdir():
-                if path.is_file() and _SAFE_FILE.fullmatch(path.name):
-                    candidates.append(path)
-                    if len(candidates) > _MAX_STATE_FILES:
-                        return ProviderSessionStatus(
-                            "UNKNOWN", None, ("SOURCE_SESSION_UNAVAILABLE",)
-                        )
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if entry.is_file() and _SAFE_FILE.fullmatch(entry.name):
+                        candidates.append(entry.name)
+                        if len(candidates) > _MAX_STATE_FILES:
+                            return ProviderSessionStatus(
+                                "UNKNOWN", None, ("SOURCE_SESSION_UNAVAILABLE",)
+                            )
             candidates.sort()
         except FileNotFoundError:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_UNAVAILABLE",))
         except OSError:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_UNREADABLE",))
         if not candidates:
+            self._parsed.pop(str(directory), None)
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_UNAVAILABLE",))
         match: ProviderSessionLiveness | None = None
         malformed = False
-        for path in candidates:
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                record = ProviderSessionLiveness.from_mapping(raw)
-            except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        for record in self._records(directory, candidates):
+            if record is None:
                 malformed = True
                 continue
             if (
@@ -166,7 +218,11 @@ class StableSessionLivenessReader:
             return ProviderSessionStatus("UNKNOWN", None, (flag,))
         if match.config_revision != config_revision:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CONFIG_MISMATCH",))
-        if match.last_transport_at_ns > now_ns:
+        evaluated_ns = now_ns
+        if match.last_transport_at_ns > now_ns and self._clock_ns is not None:
+            # Rewritten between the caller's sample and this read.
+            evaluated_ns = max(now_ns, int(self._clock_ns()))
+        if match.last_transport_at_ns > evaluated_ns:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CLOCK_SKEW",))
-        age_ms = (now_ns - match.last_transport_at_ns) // 1_000_000
+        age_ms = (evaluated_ns - match.last_transport_at_ns) // 1_000_000
         return ProviderSessionStatus(match.state, int(age_ms))

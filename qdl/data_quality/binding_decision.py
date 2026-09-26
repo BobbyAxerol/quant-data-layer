@@ -324,10 +324,13 @@ def freshness_verdict(
     # Gap/completeness are evaluated by the caller's declared gap policy after
     # this freshness verdict. Collapsing them into DATA_STALE would lose the
     # actionable OPEN_SEQUENCE_GAP error contract.
-    if state in {"STALE", "OFFLINE", "UNAVAILABLE"}:
-        return False, "EVENT_AGE"
+    # A STALE state caused by the provider session (lost, expired, unknown,
+    # generation/config mismatch) is named as such; only an old event is
+    # EVENT_AGE. The admission decision is the same either way.
     if provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}:
         return False, "SESSION_STATE"
+    if state in {"STALE", "OFFLINE", "UNAVAILABLE"}:
+        return False, "EVENT_AGE"
     if max_session_liveness_ms is not None and not (
         provider_session_state == "LIVE"
         and provider_session_liveness_ms is not None

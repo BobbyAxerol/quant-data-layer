@@ -744,7 +744,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
             build_cache_execution_mark_index_reader(
                 catalog=catalog, backend=kn_backend,
                 acquisition=StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog),
-                session_liveness_reader=StableSessionLivenessReader(config.session_liveness_dir),
+                session_liveness_reader=StableSessionLivenessReader(
+                    config.session_liveness_dir, clock_ns=time.time_ns),
             )
             if config.reference_data_enabled
             else None
@@ -874,7 +875,7 @@ def create_stable_stream_runtime(
         catalog,
         acquisition=acquisition,
         session_liveness_reader=StableSessionLivenessReader(
-            config.session_liveness_dir
+            config.session_liveness_dir, clock_ns=time.time_ns
         ),
     )
 

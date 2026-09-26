@@ -126,6 +126,18 @@ class FreshnessVerdictTests(unittest.TestCase):
             (False, STALE_REASON_SESSION_LIVENESS),
         )
 
+    def test_a_stale_state_caused_by_the_session_is_named_session_state(self) -> None:
+        """KN-4 review F2: a quiet ON_CHANGE quote is STALE only through its
+        session (lost, expired, unknown record, generation/config mismatch);
+        that must not read as EVENT_AGE."""
+
+        for session in ("STALE", "DISCONNECTED", "UNKNOWN"):
+            with self.subTest(session=session):
+                verdict = _freshness_verdict(
+                    requirement(), quality(state="STALE", provider_session_state=session)
+                )
+                self.assertEqual(verdict, (False, STALE_REASON_SESSION_STATE))
+
     def test_session_state_is_checked_before_event_age(self) -> None:
         """A disconnected provider is the more actionable of two true facts."""
 
