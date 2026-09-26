@@ -32,7 +32,7 @@ from qdl.query.contracts import (
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
-from qdl.query.cold_work import await_in_thread
+from qdl.query.cold_work import await_in_thread, cold_yield
 from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
@@ -691,18 +691,14 @@ class V2QueryService:
             authoritative=history.items[-1].source.authoritative,
             item=history.items[-1],
         )
-        return WarmupResult(
-            request_id,
-            replace(
-                history,
-                items=tuple(
-                    self._with_execution_eligibility(
-                        requirement, item, DataProduct.CANONICAL_HISTORY
-                    )
-                    for item in history.items
-                ),
-            ),
-        )
+        def eligible_items():
+            for item in history.items:
+                cold_yield()
+                yield self._with_execution_eligibility(
+                    requirement, item, DataProduct.CANONICAL_HISTORY
+                )
+
+        return WarmupResult(request_id, replace(history, items=tuple(eligible_items())))
 
     def warmup_batch(
         self,
@@ -908,7 +904,8 @@ class V2QueryService:
                     history = await local_history(requirement)
                     if isinstance(history, Exception):
                         raise history
-                    return self._warmup_from_history(
+                    return await self._query_work_pools_for().cold(
+                        self._warmup_from_history,
                         requirement,
                         history,
                         purpose=purpose,

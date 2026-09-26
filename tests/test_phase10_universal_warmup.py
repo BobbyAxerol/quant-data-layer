@@ -1601,6 +1601,9 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.warmup_executor._pending, {})
 
     async def test_query_local_batch_shares_one_snapshot_and_keeps_item_failure_typed(self):
+        from qdl.query import cold_work
+        loop_thread = threading.get_ident()
+        observed = []
         first_uid = "local-batch-history-a"
         second_uid = "local-batch-history-b"
 
@@ -1649,6 +1652,7 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
 
             def _warmup_from_history(self, requirement, history, *, purpose, request_id):
                 del requirement, purpose, request_id
+                observed.append((threading.get_ident(), getattr(cold_work._state, "since", None)))
                 return history
 
         def requirement(instrument_uid: str) -> DataRequirement:
@@ -1671,6 +1675,10 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual([item.status for item in result.results], ["OK", "DATA_NOT_READY"])
+        self.assertEqual(len(observed), 1)
+        self.assertNotEqual(observed[0][0], loop_thread)
+        self.assertIsNotNone(observed[0][1], "materialization is cooperative cold work")
+        service._query_work_pools_for().close()
         self.assertEqual(service.backend.history_many_calls, 1)
         self.assertTrue(service.last_batch_evidence["local_batch_snapshot"])
         self.assertEqual(service.last_batch_evidence["local_batch_items"], 2)

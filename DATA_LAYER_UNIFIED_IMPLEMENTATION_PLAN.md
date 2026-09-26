@@ -58836,6 +58836,20 @@ mixed-load failure is retained; not reported as a passing whole-universe gate.
 
 Focused chunked-batch/API/cancellation/universe suite:46/46 PASS.
 
+**19:13 UTC mixed-load follow-up:** chunked batch reduced failures to one gate:
+QUOTE Binance p99 312.8ms vs250ms under two simultaneous universe profiles.
+6,527 reads/63 streams had zero errors, no OOM. Inspection finds prefetched batch
+`_warmup_from_history` still runs synchronously on the asyncio loop, validating
+and replacing thousands of row objects. Move that work to the existing bounded
+cold pool, preserve its batch lease/cancellation and add cold checkpoints to the
+eligibility walk. Regression asserts actual worker identity/cold context, not
+source text. No provider/quota/resource or public schema changes.
+
+Verification: first command ran85 tests successfully but named a nonexistent
+API module (one import error); corrected exact suite rerun, no failed domain case.
+
+Cold-prefetch targeted suite85/85 PASS; public API/render suite16/16 PASS.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**
