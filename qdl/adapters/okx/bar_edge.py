@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from qdl.adapters.intervals import (
+    BarHistoryGapError,
     canonical_interval_ms,
     latest_closed_boundary_ms,
     okx_bar_size,
@@ -116,11 +117,9 @@ async def fetch_closed_bar_history_raw_envelopes(
         )
     records = tuple(sorted(confirmed, key=lambda item: item.open_ts_ms))[-limit:]
     opens = [item.open_ts_ms for item in records]
-    if any(
-        current - previous != interval_ms
-        for previous, current in zip(opens, opens[1:])
-    ):
-        raise RuntimeError("OKX closed-bar history contains a time gap")
+    for previous, current in zip(opens, opens[1:]):
+        if current - previous != interval_ms:
+            raise BarHistoryGapError("OKX", binding.native_symbol, binding.interval, previous, current)
     if any(not item.confirmed for item in records):
         raise RuntimeError("OKX history returned a provisional candle in the closed window")
 

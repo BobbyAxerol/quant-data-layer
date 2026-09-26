@@ -438,16 +438,27 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         indexed = False
         if binding.feed is FeedType.BAR:
             try:
-                boundary, entries = self.reader.bar_diagnostics(
+                boundary, spans, flags = self.reader.bar_diagnostic_ranges(
                     self.product_key(binding), canonical_interval_ms(binding.interval or ""),
                     last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, check_budget=check_budget,
                 )
                 if boundary.topic_id != self.topic_id:
                     raise _not_ready("diagnostic source topic generation mismatch")
-                for opened_ms, sequence in entries:
-                    observed_opens.add(opened_ms * 1_000_000)
-                    if sequence is not None:
-                        append_gap(self._gap(binding, f"sequence:{sequence}", sequence, detected_at_ns))
+                for _opened_ms, sequence in flags:
+                    append_gap(self._gap(binding, f"sequence:{sequence}", sequence, detected_at_ns))
+                if binding.continuous_calendar:
+                    step_ms = canonical_interval_ms(binding.interval or "")
+                    if spans and (spans[-1][1] - spans[0][0]) // step_ms + 1 > self._gap_scan_max_expected_bars:
+                        raise _GapDiagnosticIncomplete("global gap diagnostic expected-bar window exceeds its bound")
+                    for (_first, prior_end), (next_start, _end) in zip(spans, spans[1:]):
+                        for opened in range(prior_end + step_ms, next_start, step_ms):
+                            check_budget()
+                            ns = opened * 1_000_000
+                            append_gap(self._gap(binding, str(ns), "MISSING", detected_at_ns))
+                    return
+                observed_opens.update(opened * 1_000_000 for first, end in spans
+                    for opened in range(first, end + canonical_interval_ms(binding.interval or ""),
+                                        canonical_interval_ms(binding.interval or "")))
                 indexed = True
             except KnDiagnosticIndexMissing:
                 pass  # old projector: exact verified scan, never an empty success

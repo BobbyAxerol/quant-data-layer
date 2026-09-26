@@ -38,6 +38,7 @@ never the control/quota Redis. No Kafka access.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, Callable, Mapping
 
 from qdl.query.cold_work import cold_yield
@@ -99,13 +100,37 @@ return {'OK', ptr[1], ptr[2] or '0', src[1] or '', src[2] or '', mark,
 
 
 _BAR_DIAGNOSTIC = """#!lua flags=no-writes
-local replies = {}
+local replies, step, floor = {}, tonumber(ARGV[2]), tonumber(ARGV[3])
 for _, key in ipairs(KEYS) do
   local opens = redis.call('HKEYS', key)
-  local index = redis.call('HGETALL', 'kn3:' .. ARGV[1] .. ':bd:' .. string.sub(key, #('kn3:' .. ARGV[1] .. ':b:') + 1))
-  table.insert(replies, {opens, index})
+  local flat = redis.call('HGETALL', 'kn3:' .. ARGV[1] .. ':bd:' .. string.sub(key, #('kn3:' .. ARGV[1] .. ':b:') + 1))
+  if #opens * 2 ~= #flat then return {'MISSING'} end
+  if #opens > tonumber(ARGV[4]) then return {'INVALID'} end
+  local index, values, flags, spans = {}, {}, {}, {}
+  for i = 1, #flat, 2 do index[flat[i]] = flat[i + 1] end
+  for _, opened in ipairs(opens) do
+    local flag, n = index[opened], tonumber(opened)
+    if not flag then return {'MISSING'} end
+    if not string.match(opened, '^%d+$') or (#opened > 1 and string.sub(opened, 1, 1) == '0')
+       or not n or n > 9007199254740991
+       or math.floor(n / step / tonumber(ARGV[4])) ~= tonumber(string.match(key, ':(%d+)$'))
+       or (flag ~= 'N' and string.sub(flag, 1, 1) ~= 'G') then return {'INVALID'} end
+    if n >= floor then
+      table.insert(values, n)
+      if flag ~= 'N' then table.insert(flags, {opened, string.sub(flag, 2)}) end
+    end
+  end
+  table.sort(values)
+  for _, n in ipairs(values) do
+    if #spans > 0 and n == spans[#spans][2] + step then spans[#spans][2] = n
+    else table.insert(spans, {n, n}) end
+  end
+  for _, span in ipairs(spans) do
+    span[1], span[2] = string.format('%.0f', span[1]), string.format('%.0f', span[2])
+  end
+  table.insert(replies, {spans, flags})
 end
-return replies
+return {'OK', cjson.encode(replies)}
 """
 
 
@@ -351,11 +376,19 @@ class KnMarketCacheReader:
         return view
 
     def bar_diagnostics(self, lpk, interval_ms, *, last, check_budget):
-        """Exact opens/sequence flags from the atomically written compact index.
+        """Expanded oracle view; production diagnostics use compact ranges."""
+        boundary, spans, flags = self.bar_diagnostic_ranges(
+            lpk, interval_ms, last=last, check_budget=check_budget)
+        sequences = dict(flags)
+        return boundary, tuple((opened, sequences.get(opened)) for first, end in spans
+                               for opened in range(first, end + interval_ms, interval_ms))
 
-        Verify both key sets, not only counts. No payload/price is served here.
-        An old/incomplete index falls back to verified canonical row decoding.
-        Pointer, retention and source watermark are fenced around the scan.
+    def bar_diagnostic_ranges(self, lpk, interval_ms, *, last, check_budget):
+        """Exact open-key/index equality, returned as contiguous runs, not 1M fields.
+
+        The bounded read-only script checks every retained key, not a sample.
+        Complete head/floor/source fences still surround the reads. Each script
+        examines at most eight buckets to avoid monopolizing hot Redis reads.
         """
         if lpk.feed != "BAR" or interval_ms < 1 or last < 1:
             raise ValueError("BAR diagnostics requires a bounded BAR window")
@@ -364,43 +397,53 @@ class KnMarketCacheReader:
             check_budget()
             head = self._bar_head(lpk, ckpt)
             generation, _fence, boundary, low, high = head
-            found = {}
+            spans, flags, count = [], [], 0
             if high is not None:
                 top, bottom = bucket_of(high, interval_ms), bucket_of(low, interval_ms)
-                while top >= bottom and len(found) < last:
+                while top >= bottom and count < last:
                     check_budget()
-                    # Bounded Redis script: <=64 x 112 fields, never a global scan.
                     start = max(bottom, top - MAX_BUCKETS_PER_ROUND_TRIP + 1)
-                    buckets = list(range(start, top + 1))
-                    keys = [self.bucket_key(generation, lpk, b) for b in buckets]
+                    keys = [self.bucket_key(generation, lpk, b) for b in range(start, top + 1)]
                     try:
-                        replies = self._bar_diagnostic_script(keys=keys, args=[self.environment])
+                        with self.client.pipeline(transaction=False) as pipe:
+                            for begin in range(0, len(keys), 8):
+                                self._bar_diagnostic_script(keys=keys[begin:begin + 8],
+                                    args=[self.environment, interval_ms, low, BUCKET_OPENS], client=pipe)
+                            replies = pipe.execute()
                     except _RedisError as error:
                         raise KnCacheError("market cache diagnostic unavailable") from error
-                    if len(replies) != len(buckets):
-                        raise KnCacheIntegrityError("short diagnostic bucket reply")
-                    for bucket, (opens, flat) in zip(buckets, replies, strict=True):
+                    for reply in replies:
                         check_budget()
-                        if len(flat) % 2:
-                            raise KnCacheIntegrityError("malformed diagnostic index")
-                        index = dict(zip(flat[::2], flat[1::2], strict=True))
-                        if set(opens) != set(index):
+                        if reply == [b"MISSING"]:
                             raise KnDiagnosticIndexMissing(lpk.encode())
-                        for raw_open, raw_flag in index.items():
-                            check_budget()
-                            opened = _decimal(raw_open, "diagnostic open")
-                            if opened is None or bucket_of(opened, interval_ms) != bucket:
-                                raise KnCacheIntegrityError("diagnostic open/bucket mismatch")
-                            flag = _text(raw_flag)
-                            if flag != "N" and not flag.startswith("G"):
-                                raise KnCacheIntegrityError("malformed diagnostic sequence flag")
-                            if opened >= low:
-                                found[opened] = None if flag == "N" else flag[1:]
+                        if not isinstance(reply, list) or len(reply) != 2 or _text(reply[0]) != "OK":
+                            raise KnCacheIntegrityError("malformed diagnostic bucket")
+                        try:
+                            buckets = json.loads(reply[1])
+                            for runs, sequences in buckets:
+                                for first, end in runs:
+                                    first, end = _decimal(first, "range start"), _decimal(end, "range end")
+                                    if first is None or end is None or end < first:
+                                        raise ValueError("invalid range")
+                                    spans.append((first, end))
+                                    count += (end - first) // interval_ms + 1
+                                flags.extend((int(opened), sequence) for opened, sequence in sequences)
+                        except (ValueError, TypeError) as error:
+                            raise KnCacheIntegrityError("malformed diagnostic bulk reply") from error
                     top = start - 1
             check_budget()
             if self._bar_head(lpk, ckpt) != head:
                 continue
-            return boundary, tuple((opened, found[opened]) for opened in sorted(found)[-last:])
+            selected, remaining = [], last
+            for first, end in sorted(spans, reverse=True):
+                rows = min(remaining, (end - first) // interval_ms + 1)
+                selected.append((end - (rows - 1) * interval_ms, end))
+                remaining -= rows
+                if remaining == 0:
+                    break
+            selected.reverse()
+            lower = selected[0][0] if selected else 0
+            return boundary, tuple(selected), tuple((o, seq) for o, seq in flags if o >= lower)
         raise KnCacheViewChanged("diagnostic source/generation changed during scan")
 
     def _bar_head(

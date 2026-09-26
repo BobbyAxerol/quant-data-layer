@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
-from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
+from qdl.adapters.intervals import BarHistoryGapError, canonical_interval_ms, latest_closed_boundary_ms
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -276,8 +276,9 @@ def fetch_closed_bar_history_raw_envelopes(
             f"Binance closed-bar history is incomplete requested={limit} observed={len(selected)}"
         )
     opens = [int(row[0]) for row in selected]
-    if any(current - previous != interval_ms for previous, current in zip(opens, opens[1:])):
-        raise RuntimeError("Binance closed-bar history contains a time gap")
+    for previous, current in zip(opens, opens[1:]):
+        if current - previous != interval_ms:
+            raise BarHistoryGapError("Binance", binding.native_symbol, binding.interval, previous, current)
     received_at_ns = time.time_ns()
     return tuple(
         _capture_row(

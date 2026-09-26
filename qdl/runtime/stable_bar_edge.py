@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qdl.adapters.intervals import (
+    BarHistoryGapError,
     canonical_interval_ms,
     is_valid_bar_open_ms,
     latest_closed_boundary_ms,
@@ -1377,6 +1378,7 @@ class StableBinanceBarEdge:
         return {"bindings": len(self._binding_ids), "published": len(self._last_open_ms),
                 "served": len(self._served), "pending": len(self._serving_pending),
                 "overdue": len(self._serve_overdue), "short": len(getattr(self, "_history_short", {})),
+                "history_failed": len(getattr(self, "_history_retry", {})),
                 "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
 
     def bootstrap_history(self) -> int:
@@ -1394,19 +1396,29 @@ class StableBinanceBarEdge:
             observed_ms = min(observed_ms, history_end_ms)
         published = 0
         kn_mode = getattr(self, "bar_readback", None) is not None
+        failures = getattr(self, "_history_retry", {})
+        self._history_retry = failures
         for source, acquisition in self.history_bindings + self.history_okx_bindings:
             if source.binding_id in self._last_open_ms or source.binding_id in self._history_short_empty():
                 continue
             if kn_mode and not self._history_gate_open():
                 return published  # resumed on a later turn; live bars keep flowing
+            attempt, retry_at = failures.get(source.binding_id, (0, 0))
+            if kn_mode and self.clock() < retry_at:
+                continue
             bootstrap_rows = self._bootstrap_rows_for(source)
-            values = self._fetch_history(
-                source,
-                acquisition,
-                rows=bootstrap_rows,
-                observed_ms=observed_ms,
-                allow_short=kn_mode,
-            )
+            try:
+                values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
+                    observed_ms=observed_ms, allow_short=kn_mode)
+            except BarHistoryGapError as error:
+                if not kn_mode:
+                    raise
+                attempt += 1
+                failures[source.binding_id] = (attempt, self.clock() + min(2 ** min(attempt, 6), 30))
+                logger.error("stable BAR provider history refused binding=%s attempt=%s error=%s",
+                             source.binding_id, attempt, error)
+                continue
+            failures.pop(source.binding_id, None)
             if len(values) < bootstrap_rows:
                 # The venue has no older bars (new listing / long interval):
                 # reported, never invented, never retried as an error.
@@ -1425,6 +1437,8 @@ class StableBinanceBarEdge:
             set(self._last_open_ms) | self._history_short_empty() == set(self._binding_ids)
         )
         if not self._history_bootstrapped:
+            if kn_mode and failures:
+                return published  # other bindings progressed; failed histories are not complete
             raise RuntimeError("stable BAR bootstrap did not checkpoint every binding")
         logger.info(
             "stable multi-venue BAR bootstrap complete bindings=%s rows=%s",

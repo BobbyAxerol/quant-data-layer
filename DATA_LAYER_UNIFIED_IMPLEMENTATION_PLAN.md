@@ -58693,6 +58693,47 @@ continuing load, recorded as a harness supervision defect, not claimed continuou
 Checkpoint positive-time regression: 18 tests run, 17 PASS, one existing skip.
 First regression setup missed a mock property; corrected fixture, then pass.
 
+**Diagnostic real matrix:** both replicas/alpha identities still returned typed
+409 PARTIAL_RESULT at ~5s. A bounded profiler (no new history/provider reads)
+measured 716 products / 9,484ms and 920 genuine retained-window gaps in the shadow.
+Index exists; next optimization preserves exact key-set/sequence/fence checks,
+but packs the bounded Lua reply as JSON to avoid per-field Python RESP overhead.
+Do not increase the diagnostic work deadline or report these reads as PASS.
+
+**Diagnostic optimization measurement:** JSON bulk alone did not meet 5s.
+Exact contiguous-run encoding reduces Python profile calls 15.4M -> 1.02M;
+remaining 8.5s/9.2s is Redis round-trip/server work. Test-only capacity experiment:
+`kn4-cache` CPU 0.5 -> 1.0, same image/memory/data, rollback `docker update
+--cpus .5 kn4-cache`. Measure before/after; not a production capacity change.
+All 25 affected reader tests passed on real isolated Redis (the first command
+used the wrong test env name and skipped 25; corrected command ran all 25).
+
+**New authentic bootstrap finding:** the expanded provider history reaches a
+Binance BNBUSDT 3d time discontinuity and aborts the whole bootstrap loop,
+starving every later binding including OKX. Do not manufacture missing candles
+or silently truncate the requested horizon. Implement a typed history-gap error
+with exact source/open coordinates and isolate retries to that binding only;
+unknown transport, admission 418/429 and publication failures retain existing
+fail-closed behavior. Incomplete binding stays incomplete, never marks bootstrap
+complete. This fixes cross-product starvation; authentic provider gaps still
+need classification from captured coordinates before whole-universe acceptance.
+
+**Tested slice checkpoint:** run-length diagnostic ranges plus bounded pipeline
+of eight-key readonly scripts completed the actual 716-product scan in 4,550ms
+on isolated cache CPU 1.0; 920 real retained-window gaps reported (not zero-gap
+acceptance). This profiler allows 25s for attribution only; public gate remains
+5s and HTTP/loaded tests still required. Exact index key equality, revision/floor,
+generation/source fencing and partial-index fallback remain; no payload decoded
+on indexed path. Final affected reader/history-retry suite: 45/45 PASS. Earlier
+combined suite 91 ran with two errors in the new test fixture (read-only property
+assignment); corrected and rerun. Remaining bootstrap tests in that run passed.
+History errors are scoped and typed, not accepted as complete histories.
+TS actual measurement on reader `5242526`: 12,000 reads, 243 refusals exclusively
+TRADE eligibility, all 60 products read successfully on both replicas. Other five
+feed groups each 2,000/2,000 successful. Real TS bridge 60/60 READY for 60 samples /
+300s, 75,475 Redis writes, 153,745 keys verified; results in acceptance directory.
+No provider freshness policy, risk eligibility, orders or production changed.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**

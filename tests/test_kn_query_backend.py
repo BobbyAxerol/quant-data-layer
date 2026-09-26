@@ -211,6 +211,23 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         with patch("qdl.runtime.kn_market_cache.decode_bar_row", side_effect=AssertionError("decoded BAR")):
             self.assertEqual(backend.open_gaps(), expected)
 
+    def test_diagnostic_ranges_preserve_trimming_and_cross_bucket_gaps(self):
+        rows = self.history_rows(350)
+        rows.pop(140)
+        rows.pop(141)
+        lpk = self.put_bars(self.bar_binding, rows)
+        self.put_diagnostic_index(self.bar_binding, rows)
+        for limit in (1, 17, 112, 240, 350):
+            boundary, entries = self.reader.bar_diagnostics(lpk, self.interval_ms,
+                last=limit, check_budget=lambda: None)
+            self.assertEqual([o for o, _ in entries], sorted(open_ms_of(x) for x in rows)[-limit:])
+        opened = open_ms_of(rows[-1])
+        key = f"{self.prefix}bd:7:{lpk.encode()}:{opened // (BUCKET_OPENS * self.interval_ms)}"
+        self.client.hset(key, str(opened), "INVALID")
+        from qdl.runtime.kn_market_cache import KnCacheIntegrityError
+        with self.assertRaises(KnCacheIntegrityError):
+            self.reader.bar_diagnostics(lpk, self.interval_ms, last=350, check_budget=lambda: None)
+
     def test_indexed_diagnostic_sequence_revision_floor_and_legacy_fallback(self):
         rows = self.history_rows(5)
         env = market_data_pb2.EventEnvelope.FromString(rows[1])
