@@ -188,6 +188,28 @@ class CancelledWorkHoldsItsPermitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(done), 1)
         self.assertTrue(done[0].startswith("qdl-query-render"), "renders use the bounded render threads")
 
+    async def test_chunked_batch_render_is_cold_and_holds_owner_on_cancel(self):
+        import importlib
+        from unittest.mock import patch
+        from qdl.query import cold_work as module
+        router = importlib.import_module("qdl.api_v2.router")
+        started, release, done = threading.Event(), threading.Event(), []
+        def render(*args):
+            done.append(getattr(module._state, "since", None) is not None)
+            started.set()
+            release.wait(5)
+            return b"{}"
+        with patch.object(router, "_render_warmup_batch", side_effect=render):
+            task = self.asyncio.create_task(router._warmup_batch_json_off_loop(None, None, None, ()))
+            await self.asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            await self.asyncio.sleep(.05)
+            self.assertFalse(task.done())
+            release.set()
+            with self.assertRaises(self.asyncio.CancelledError):
+                await task
+        self.assertEqual(done, [True])
+
     async def test_large_renders_never_use_the_loops_default_executor(self):
         import importlib
 

@@ -609,6 +609,41 @@ def _warmup_batch_response(
     )
 
 
+def _render_warmup_batch(request, access, result, requirements) -> bytes:
+    """Render bounded row chunks per item, preserving the existing batch bytes."""
+    def encode(value):
+        return json.dumps(value, ensure_ascii=False, allow_nan=False,
+                          separators=(",", ":")).encode("utf-8")
+
+    bodies, item_models = [], []
+    for item, requirement in zip(result.results, requirements, strict=True):
+        cold_yield()
+        problem = None if item.problem is None else _problem(QueryServiceError(
+            item.problem, request_id=result.request_id, instrument_uid=item.instrument_uid))
+        item_model = BatchItemResponse(instrument_uid=item.instrument_uid,
+            status=item.status, data=None, problem=problem)
+        item_models.append(item_model)
+        metadata = item_model.model_dump(mode="json", by_alias=True)
+        data = b"null"
+        if item.result is not None:
+            bound = type(item.result)(item.result.request_id,
+                _bind_history_cursor(request, access, requirement, item.result.history))
+            data = _render_warmup_result(bound)
+        bodies.append(b"{" + b",".join(encode(key) + b":" + (data if key == "data" else encode(value))
+            for key, value in metadata.items()) + b"}")
+    envelope = BatchResponse(request_id=result.request_id, partial=result.partial,
+        success_count=result.success_count, error_count=result.error_count, results=item_models)
+    return b"{" + b",".join(encode(key) + b":" +
+        (b"[" + b",".join(bodies) + b"]" if key == "results" else encode(value))
+        for key, value in envelope.model_dump(mode="json", by_alias=True).items()) + b"}"
+
+
+async def _warmup_batch_json_off_loop(request, access, result, requirements) -> Response:
+    body = await await_in_thread(_RENDER_EXECUTOR,
+        lambda: _render_warmup_batch(request, access, result, requirements), cold=True)
+    return Response(content=body, media_type="application/json")
+
+
 def _reference_data(result) -> dict:
     """Serialize provider-authentic reference data without float coercion."""
 
@@ -996,9 +1031,7 @@ async def warmup_batch(
         # Returning an already-rendered Response prevents FastAPI from doing a
         # second Pydantic walk after the fully-local service lease is released;
         # rendering off the loop keeps other requests on this replica moving.
-        return await _json_off_loop(
-            lambda: _warmup_batch_response(request, access, result, requirements)
-        )
+        return await _warmup_batch_json_off_loop(request, access, result, requirements)
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):

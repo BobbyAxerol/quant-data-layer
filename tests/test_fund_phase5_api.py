@@ -492,6 +492,31 @@ class Phase5ApiTests(unittest.TestCase):
                 JSONResponse(content=sized.model_dump(mode="json", by_alias=True)).body,
             )
 
+    def test_batch_chunk_renderer_matches_full_bytes_for_success_and_errors(self):
+        from dataclasses import replace
+        from qdl.query.service import BatchItemResult, BatchQueryResult, WarmupResult
+        history = self.backend.history(self.requirement)
+        for rows in (0, 250, 601):
+            sized = replace(history, items=(history.items * 301)[:rows])
+            result = BatchQueryResult("batch-render", (
+                BatchItemResult(self.binance.instrument_uid, "READY", WarmupResult("row", sized)),
+                BatchItemResult(self.okx.instrument_uid, "DATA_NOT_READY", problem=QueryProblem(
+                    CanonicalErrorCode.DATA_NOT_READY, 'quoted "data":null detail', True)),
+            ))
+            requirements = (self.requirement, replace(self.requirement, instrument_uid=self.okx.instrument_uid))
+            with patch.object(router_module, "_bind_history_cursor", side_effect=lambda _r, _a, _q, h: h), \
+                 patch.object(router_module, "cold_yield") as yields:
+                expected = JSONResponse(content=router_module._warmup_batch_response(
+                    None, None, result, requirements).model_dump(mode="json", by_alias=True)).body
+                actual = router_module._render_warmup_batch(None, None, result, requirements)
+                self.assertEqual(actual, expected)
+                self.assertGreaterEqual(yields.call_count, rows)
+                self.assertEqual(BatchResponse.model_validate_json(actual).error_count, 1)
+        empty = BatchQueryResult("empty", ())
+        self.assertEqual(router_module._render_warmup_batch(None, None, empty, ()),
+            JSONResponse(content=router_module._warmup_batch_response(None, None, empty, ())
+                         .model_dump(mode="json", by_alias=True)).body)
+
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(
             **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}

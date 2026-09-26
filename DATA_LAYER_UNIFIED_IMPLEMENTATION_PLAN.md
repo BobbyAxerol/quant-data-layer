@@ -58809,6 +58809,33 @@ Diagnose exact warmup products/window and wait for actual bootstrap/readback,
 not retry full acceptance blindly. Complete global diagnostic does NOT imply
 all historical provider windows are gap-free; exact gaps remain visible.
 
+**Measured mixed-load root cause and next bounded edit:** after provider fill,
+Session10/30 failures no longer reproduce after SOL OKX 1m 5k fill. Stage35 plus real universe
+batch had 6,527 successful hot reads and63 error-free streams, but QUOTE p99
+535/573ms and MARK p99 660/630ms missed the frozen gate. Query is not materially
+CPU-throttled. Code inspection finds single warmup uses cooperative chunked
+rendering while `warmup:batch` still builds/dumps the WHOLE batch in one GIL-held
+path, and does not mark render cold. Fix this asymmetry using the same chunked
+renderer/lease/cancellation semantics, no new process/service or quota changes.
+Test byte-for-byte schema equivalence including partial errors, empty results,
+cursor binding, large chunks and cancelled requests before isolated Query update.
+No final C2 until targeted mixed load succeeds.
+
+**Chunked-batch regression:** first implementation assembled a non-empty
+batch envelope with an empty item list, correctly rejected by the count validator
+(2 failures/1 error). Fixed by validating the lightweight per-item metadata list,
+then rendering each item's rows in existing bounded chunks. Public counts/schema,
+per-item problems and cursor binding are unchanged; cancellation holds the same
+lease until cold work exits. Full previous suite still running separately; do
+not conflate that revision with this new focused suite.
+
+Whole universe480 initial corrected-oracle run: 1,000/1,020 products usable,
+20 typed RATE_LIMITED from one OKX chunk overlapping load startup. Other three
+venue/replica runs255/255; venue completion105.5-127.6s for ~105k rows. This
+mixed-load failure is retained; not reported as a passing whole-universe gate.
+
+Focused chunked-batch/API/cancellation/universe suite:46/46 PASS.
+
 ### KN Documentation And Handoff Receipt - 2026-09-23
 
 **Status: DOCUMENTATION VERIFIED / IMPLEMENTATION NOT STARTED.**
