@@ -58055,6 +58055,17 @@ freshness/security, replica consistency, warmup/cursor and load methodology.
   tears the run down at its deadline (it used to only exit, leaving 11
   containers; they were torn down 2026-09-26 02:50Z without purge);
   `purge` also removes the commit log; `L` label defined for every step.
+- 2026-09-26: **Test isolation: the order-dependent bar-bootstrap failures
+  were my slice-21 test; K4 slice 31** | this commit | The full suite
+  (2,241 tests) failed 1 + 7 tests of `test_phaseb_bar_history_bootstrap`
+  (checkpoint "binding watermarks are invalid") on `HEAD` and on the working
+  tree alike, while the module passed alone. A bisect over the 172 preceding
+  modules named `test_kn_history_fill`, then `EdgeFillTests`: its fixture
+  assigned `type(edge)._binding_ids = property(...)`, replacing the property
+  on `StableBinanceBarEdge` itself for the rest of the process, so every later
+  edge saw three fake bindings. The fixture now uses a test-local subclass;
+  the history-fill + bootstrap + admission + readback modules together: 82 OK
+  | `tested locally` (full suite rerun follows).
 
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release

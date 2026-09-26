@@ -139,7 +139,13 @@ class EdgeFillTests(unittest.TestCase):
     def _edge(self, *, demand, gate):
         from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 
-        edge = StableBinanceBarEdge.__new__(StableBinanceBarEdge)
+        class _Edge(StableBinanceBarEdge):
+            # A test-local subclass: the three fake bindings must never leak
+            # into `StableBinanceBarEdge` itself (a class-level property
+            # assignment here broke every later edge in the process).
+            _binding_ids = property(lambda self: ("a", "b", "c"))
+
+        edge = _Edge.__new__(_Edge)
         sources = [type("S", (), {"binding_id": name, "interval": "1m"})() for name in ("a", "b", "c")]
         edge.history_bindings = tuple((source, None) for source in sources)
         edge.history_okx_bindings = ()
@@ -175,7 +181,6 @@ class EdgeFillTests(unittest.TestCase):
 
         edge._fetch_history = fetch
         edge._publish_history = publish
-        type(edge)._binding_ids = property(lambda self: ("a", "b", "c"))
         return edge
 
     def test_depth_by_demand_and_short_or_empty_history_are_reported(self):
