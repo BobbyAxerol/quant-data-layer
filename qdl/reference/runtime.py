@@ -128,7 +128,10 @@ def build_default_reference_runtime(
     never need a venue branch.
     """
 
-    okx = OkxSwapReferenceAdapter(OkxRestClient())
+    okx = OkxSwapReferenceAdapter(
+        OkxRestClient(), statistics_admission=native_basis_admission,
+        require_statistics_admission=True,
+    )
     return ReferenceRuntime(
         ReferenceBatch({
             ("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(

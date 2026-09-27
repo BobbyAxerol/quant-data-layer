@@ -219,7 +219,7 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
         acquisition_ids = {item.binding_id for item in self.acquisition.bindings}
         self.assertEqual(acquisition_ids, catalog_ids)
 
-    def test_every_instrument_has_a_materialized_or_reference_product(self):
+    def test_every_active_instrument_has_a_materialized_or_reference_product(self):
         referenced = {
             binding.instrument.identity.instrument_uid
             for binding in self.catalog.bindings
@@ -236,7 +236,16 @@ class CatalogDemandConsistencyTests(unittest.TestCase):
                 CATALOG_PATH.read_text(encoding="utf-8")
             )["instruments"]
         }
-        self.assertEqual(declared - referenced - reference_served, set())
+        # KN-5 retires expired research feeds but retains immutable metadata.
+        retired = {
+            "f1228887-3053-5b61-9aea-11d3833f8a62",
+            "9e24d8dd-e74b-5f9b-a770-2556bbc89d37",
+        }
+        self.assertEqual(declared - referenced - reference_served, retired)
+        for uid in retired:
+            instrument = self.catalog.instrument_for(uid)
+            self.assertEqual(instrument.expiry_time_ns, 1790323200000000000)
+            self.assertNotIn(uid, referenced | reference_served)
 
     def test_reference_product_never_weakens_domain_boundaries(self):
         manifest = ConsumerManifestLoader.load(CONSUMER_DIR / "reference-l2-stable.yaml")

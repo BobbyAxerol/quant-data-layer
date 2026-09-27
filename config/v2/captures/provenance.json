@@ -2,11 +2,20 @@
   "captured_at_utc": "2026-08-29T05:06:21Z",
   "captures": [
     {
+      "appended_captures": [
+        {
+          "captured_at_utc": "2026-09-26T10:19:40Z",
+          "full_response_sha256": "f06f2a50f6273cc9c6334f8c6be318690803dbd23c16c4af1bd6acb0f9b21029",
+          "note": "verbatim rows of new universe symbols appended; earlier rows unchanged",
+          "symbols_added": 250,
+          "universe_revision": 1
+        }
+      ],
       "captured_at_utc": "2026-08-29T05:06:21Z",
       "endpoint": "https://fapi.binance.com/fapi/v1/exchangeInfo",
       "filtered_capture": "config/v2/captures/binance-usdm-exchangeinfo.filtered.json",
-      "filtered_capture_bytes": 6208,
-      "filtered_capture_sha256": "7f7c387ed491887bd87803c68d2bb48a553d69a82490309bf16e26414a71f702",
+      "filtered_capture_bytes": 316769,
+      "filtered_capture_sha256": "f44322f960a78ce03a36242e2a00006a33838d3bc0ddd63a2a1f2dde0f999107",
       "full_response_bytes": 1090684,
       "full_response_sha256": "160c4857ad00a29a1156bbd0b2993a01cce6c227420a2e1a0d1a77b2c7b97a08",
       "market": "USDM",
@@ -24,11 +33,20 @@
       "venue": "BINANCE"
     },
     {
+      "appended_captures": [
+        {
+          "captured_at_utc": "2026-09-26T10:19:40Z",
+          "full_response_sha256": "9ba6abcda0b51fff7406d55a4d86e4ac23aa4cbcc7fa8138e4cdc124e327eace",
+          "note": "verbatim rows of new universe symbols appended; earlier rows unchanged",
+          "symbols_added": 250,
+          "universe_revision": 1
+        }
+      ],
       "captured_at_utc": "2026-08-29T05:06:21Z",
       "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SWAP",
       "filtered_capture": "config/v2/captures/okx-instruments-swap.filtered.json",
-      "filtered_capture_bytes": 5257,
-      "filtered_capture_sha256": "506de7a36ec11912eb8d039ff245a8a42fe359a79b65ff9a2a1bc30dde74cfe0",
+      "filtered_capture_bytes": 274835,
+      "filtered_capture_sha256": "1f2f3a040600d175ca61bdb1b4b7fe5f5121a0e67e7077948368b43c1392ed38",
       "full_response_bytes": 483705,
       "full_response_sha256": "afa3702b14306fe75c5616259a758836dc236927a6d6c178df64247cdbc9f3f7",
       "market": "SWAP",

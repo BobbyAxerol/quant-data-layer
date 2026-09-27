@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import time
 import unittest
 from unittest.mock import patch
 
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from qdl.api_v2 import create_v2_app
-from qdl.api_v2.models import BatchResponse
+from qdl.api_v2.models import BatchResponse, WarmupResponse
 from qdl.consumer import ConsumerManifestLoader
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.domain.instrument import (
@@ -22,6 +24,7 @@ from tests.phase7_support import make_identity, make_token, manifest_mapping
 from qdl.query import (
     AccessPurpose,
     BarLifecycle,
+    CanonicalErrorCode,
     ConsumerGrade,
     ContractMetadata,
     CoverageStatus,
@@ -36,6 +39,7 @@ from qdl.query import (
     MarketDataItem,
     MemoryMarketDataBackend,
     QualityMetadata,
+    QueryProblem,
     QueryServiceError,
     SourceMetadata,
     V2QueryService,
@@ -255,13 +259,68 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(gaps[0]["source_id"], "OKX_DIRECT")
         self.assertEqual(self.client.get("/v2/system/readiness").json()["authority"], "V1")
 
-    def test_sync_query_routes_use_the_existing_thread_boundary(self):
-        calls = []
-        original = router_module.asyncio.to_thread
+    def test_gap_coverage_is_opt_in_and_missing_generation_never_empty_success(self):
+        from qdl.query.results import GapScanResult
+        from qdl_sdk.models import GapListResponse
+        row = {"binding_id": "test-bar", "instrument_uid": self.binance.instrument_uid,
+               "feed": "BAR", "interval": "1m", "state": "UNAVAILABLE",
+               "retained_rows": None, "first_open_ns": None, "last_open_ns": None,
+               "reason": "NO_GENERATION"}
 
-        async def record(callable_, *args, **kwargs):
-            calls.append(callable_.__name__)
-            return await original(callable_, *args, **kwargs)
+        async def scan():
+            return GapScanResult((), [row])
+
+        with patch.object(self.service, "open_gaps_async", new=scan):
+            strict = self.client.get("/v2/data-quality/gaps")
+            self.assertEqual(strict.status_code, 409, strict.text)
+            self.assertEqual(strict.json()["code"], "PARTIAL_RESULT")
+            report = self.client.get("/v2/data-quality/gaps?include_coverage=true")
+            self.assertEqual(report.status_code, 200, report.text)
+            view = GapListResponse.model_validate(report.json())
+            self.assertFalse(view.coverage.materialization_complete)
+            self.assertIsNone(view.coverage.history_complete)
+            self.assertEqual(view.coverage.products[0].state, "UNAVAILABLE")
+            row["state"] = "SCANNED"
+            legacy = self.client.get("/v2/data-quality/gaps")
+            self.assertEqual(legacy.status_code, 200, legacy.text)
+            self.assertNotIn("coverage", legacy.json())
+            self.assertEqual(legacy.headers["X-QDL-Gap-Scope"], "RETAINED_WINDOW")
+
+    def test_gap_diagnostic_preserves_typed_incomplete_result(self):
+        async def incomplete_scan():
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.PARTIAL_RESULT,
+                    "global gap diagnostic exceeded its work deadline",
+                    True,
+                    retry_after_ms=1_000,
+                ),
+                request_id="phase1-gap-diagnostic",
+            )
+
+        with patch.object(self.service, "open_gaps_async", new=incomplete_scan):
+            response = self.client.get("/v2/data-quality/gaps")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["code"], "PARTIAL_RESULT")
+        self.assertTrue(response.json()["retryable"])
+
+    def test_query_routes_pass_authenticated_identity_to_owned_read_lanes(self):
+        calls = []
+        snapshot_original = self.service.snapshot_async
+        status_original = self.service.status_async
+        readiness_original = self.service.readiness_async
+
+        async def record_snapshot(*args, **kwargs):
+            calls.append(("snapshot", kwargs["consumer_id"]))
+            return await snapshot_original(*args, **kwargs)
+
+        async def record_status(*args, **kwargs):
+            calls.append(("status", kwargs["consumer_id"]))
+            return await status_original(*args, **kwargs)
+
+        async def record_readiness(*args, **kwargs):
+            calls.append(("readiness", args[0].consumer_id))
+            return await readiness_original(*args, **kwargs)
 
         requirement = {
             "instrument_uid": self.binance.instrument_uid,
@@ -271,7 +330,11 @@ class Phase5ApiTests(unittest.TestCase):
             "interval": "1m",
             "max_freshness_ms": 10_000,
         }
-        with patch.object(router_module.asyncio, "to_thread", new=record):
+        with (
+            patch.object(self.service, "snapshot_async", new=record_snapshot),
+            patch.object(self.service, "status_async", new=record_status),
+            patch.object(self.service, "readiness_async", new=record_readiness),
+        ):
             snapshot = self.client.get(
                 f"/v2/market-data/{self.binance.instrument_uid}/snapshot",
                 params=self.params(),
@@ -291,7 +354,14 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(snapshot.status_code, 200, snapshot.text)
         self.assertEqual(status.status_code, 200, status.text)
         self.assertEqual(readiness.status_code, 200, readiness.text)
-        self.assertEqual(calls, ["snapshot", "status", "readiness"])
+        self.assertEqual(
+            calls,
+            [
+                ("snapshot", self.consumer_id),
+                ("status", self.consumer_id),
+                ("readiness", self.consumer_id),
+            ],
+        )
 
     def test_batch_partial_semantics_and_execution_fail_closed(self):
         missing = self.requirement.__dict__ | {
@@ -374,6 +444,106 @@ class Phase5ApiTests(unittest.TestCase):
             response.json(),
         )
 
+    def test_single_warmup_renders_inside_the_local_lease_like_the_batch(self):
+        original = self.service.warmup_batch_completed_async
+        completed = []
+
+        async def instrumented(*args, **kwargs):
+            response = await original(*args, **kwargs)
+            completed.append(response)
+            return response
+
+        with patch.object(self.service, "warmup_batch_completed_async", instrumented):
+            response = self.client.get(
+                f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+                params=self.params(limit=2),
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(completed), 1)
+        # The completion returned the rendered response, so rendering happened
+        # while the local lease was still held.
+        self.assertEqual(completed[0].media_type, "application/json")
+        validated = WarmupResponse.model_validate_json(response.content)
+        self.assertEqual(validated.count, 2)
+        self.assertEqual(validated.model_dump(mode="json", by_alias=True), response.json())
+
+    def test_large_response_rendering_leaves_the_event_loop_serving(self):
+        router_module = importlib.import_module("qdl.api_v2.router")
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+            params=self.params(limit=2),
+        )
+        model = WarmupResponse.model_validate_json(response.content)
+
+        def slow_build():
+            time.sleep(0.3)  # stands in for seconds of Pydantic work on 5,000 rows
+            return model
+
+        async def scenario():
+            ticks = 0
+            done = asyncio.Event()
+
+            async def ticker():
+                nonlocal ticks
+                while not done.is_set():
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            task = asyncio.create_task(ticker())
+            rendered = await router_module._json_off_loop(slow_build)
+            done.set()
+            await task
+            return ticks, rendered
+
+        ticks, rendered = asyncio.run(scenario())
+        self.assertGreaterEqual(ticks, 15)
+        self.assertEqual(
+            rendered.body,
+            JSONResponse(content=model.model_dump(mode="json", by_alias=True)).body,
+        )
+
+    def test_chunked_warmup_rendering_is_byte_identical_to_the_full_render(self):
+        router_module = importlib.import_module("qdl.api_v2.router")
+        response = self.client.get(
+            f"/v2/market-data/{self.binance.instrument_uid}/warmup",
+            params=self.params(limit=2),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        model = WarmupResponse.model_validate_json(response.content)
+        # The served body is exactly what the chunked renderer produces.
+        self.assertEqual(response.content, router_module._render_warmup_chunked(model))
+        for rows in (601, 250, 0):  # across chunk boundaries, one exact chunk, empty
+            sized = model.model_copy(update={"data": (model.data * 301)[:rows], "count": rows})
+            self.assertEqual(
+                router_module._render_warmup_chunked(sized),
+                JSONResponse(content=sized.model_dump(mode="json", by_alias=True)).body,
+            )
+
+    def test_batch_chunk_renderer_matches_full_bytes_for_success_and_errors(self):
+        from dataclasses import replace
+        from qdl.query.service import BatchItemResult, BatchQueryResult, WarmupResult
+        history = self.backend.history(self.requirement)
+        for rows in (0, 250, 601):
+            sized = replace(history, items=(history.items * 301)[:rows])
+            result = BatchQueryResult("batch-render", (
+                BatchItemResult(self.binance.instrument_uid, "READY", WarmupResult("row", sized)),
+                BatchItemResult(self.okx.instrument_uid, "DATA_NOT_READY", problem=QueryProblem(
+                    CanonicalErrorCode.DATA_NOT_READY, 'quoted "data":null detail', True)),
+            ))
+            requirements = (self.requirement, replace(self.requirement, instrument_uid=self.okx.instrument_uid))
+            with patch.object(router_module, "_bind_history_cursor", side_effect=lambda _r, _a, _q, h: h), \
+                 patch.object(router_module, "cold_yield") as yields:
+                expected = JSONResponse(content=router_module._warmup_batch_response(
+                    None, None, result, requirements).model_dump(mode="json", by_alias=True)).body
+                actual = router_module._render_warmup_batch(None, None, result, requirements)
+                self.assertEqual(actual, expected)
+                self.assertGreaterEqual(yields.call_count, rows)
+                self.assertEqual(BatchResponse.model_validate_json(actual).error_count, 1)
+        empty = BatchQueryResult("empty", ())
+        self.assertEqual(router_module._render_warmup_batch(None, None, empty, ()),
+            JSONResponse(content=router_module._warmup_batch_response(None, None, empty, ())
+                         .model_dump(mode="json", by_alias=True)).body)
+
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(
             **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}
@@ -395,6 +565,18 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["code"], "DATA_STALE")
         self.assertEqual(response.json()["quality_state"], "STALE")
+        # KN-4 review: the quality the refusal was decided on travels with it.
+        diagnostics = response.json()["diagnostics"]
+        self.assertEqual(
+            {key: diagnostics[key] for key in (
+                "state", "freshness_ms", "execution_eligible", "gap_open", "complete",
+                "provider_session_state", "watermark_offset", "source_id")},
+            {"state": "STALE", "freshness_ms": 20_000, "execution_eligible": False,
+             "gap_open": False, "complete": True, "provider_session_state": "NOT_APPLICABLE",
+             "watermark_offset": stale.watermark_offset, "source_id": stale.source.source_id},
+        )
+        self.assertGreater(diagnostics["evaluated_at_ns"], 0)
+        self.assertEqual(diagnostics["observed_at_ns"], stale.observed_at_ns)
 
         denied_service = V2QueryService(
             instruments=InstrumentQuery(self.registry),

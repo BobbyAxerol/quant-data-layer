@@ -41,12 +41,19 @@ class VnstockPoller:
 
     def start(self, poll_interval: float = None):
         """Start the background polling loop as a daemon thread."""
+        try:
+            from vnstock import Trading
+        except ModuleNotFoundError as error:
+            if error.name != "vnstock":
+                raise
+            raise RuntimeError(
+                "VNSTOCK_UNAVAILABLE: VN-stock SDK is excluded from KN images; "
+                "use the retained V1 VN service"
+            ) from error
         interval = poll_interval or VNSTOCK_POLL_INTERVAL
         self._running = True
 
         def _poll():
-            # Lazy import to avoid import errors if vnstock not in container
-            from vnstock import Trading
             if VNSTOCK_API_KEY:
                 try:
                     from vnstock import register_user

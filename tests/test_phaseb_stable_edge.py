@@ -14,6 +14,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
@@ -40,17 +41,21 @@ from qdl.domain.instrument import (
     InstrumentRecord,
     ProductType,
 )
+from qdl.domain.calendar import trading_calendar_for_id
 from qdl.domain.decimal import CanonicalDecimal
 from qdl.query import (
     AccessPurpose,
     BarRevisionPolicy,
+    CanonicalErrorCode,
     ConsumerGrade,
     DataRequirement,
+    FeedType,
     InstrumentQuery,
     QueryServiceError,
     StalePolicy,
     V2QueryService,
 )
+from qdl.query.results import QueryBackendError
 from qdl.projection.stable import (
     InMemoryStableProjectionTarget,
     ProjectionCacheMismatch,
@@ -101,6 +106,8 @@ from qdl.transport.sqlite_spool import (
 from qdl.transport.kafka_projector import KafkaProjectorRecord
 from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
+
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -366,7 +373,8 @@ class StableCatalogContractTests(unittest.TestCase):
         # The fixed non-crypto capability plane has 10 rows. Each of the five
         # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
         # QUOTE and every provider-native BAR interval. C3.6 adds the declared
-        # 18 physical L2 books as 36 snapshot/delta logical bindings. The same
+        # 18 physical books; two expired2026-09-25 books are retired by KN-5.
+        # The remaining16 have32 snapshot/delta logical bindings. The same
         # ten crypto instruments each have one official mark/index binding;
         # keep that inventory explicit so a count change cannot hide a missing
         # execution reference route or an unrelated catalog expansion.
@@ -378,6 +386,8 @@ class StableCatalogContractTests(unittest.TestCase):
             10
             + 5 * (2 + len(BINANCE_USDM_NATIVE_INTERVALS))
             + 5 * (2 + len(OKX_NATIVE_INTERVALS))
+            # D48: one daily BAR per universe symbol and venue.
+            + UNIVERSE_TOTAL
         )
         l2_bindings = [
             item for item in catalog.bindings
@@ -387,7 +397,10 @@ class StableCatalogContractTests(unittest.TestCase):
             item for item in catalog.bindings
             if item.feed.value == "MARK_INDEX_PRICE"
         ]
-        self.assertEqual(len(l2_bindings), 36)
+        self.assertEqual(len(l2_bindings), 32)
+        self.assertTrue({"BTCUSDT_260925", "ETHUSDT_260925"}.isdisjoint(
+            item.instrument.native_symbol for item in l2_bindings
+        ))
         self.assertEqual(len(mark_index_bindings), 10)
         self.assertEqual(
             len(catalog.bindings),
@@ -767,6 +780,93 @@ class StableQueryContractTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
         self.assertEqual(fallback_reads, [])
+
+    def _latest_both_ways(self, backend, requirement):
+        """latest() through the exact index and through the full retained tail."""
+
+        tail_reads = []
+        read_tail = self.spool.read_tail
+
+        def tracked_read_tail(**kwargs):
+            tail_reads.append(kwargs["partition_key"])
+            return read_tail(**kwargs)
+
+        self.spool.read_tail = tracked_read_tail
+        try:
+            fast = backend.latest(requirement)
+            fast_tail_reads = len(tail_reads)
+            exact_reader = self.spool.read_final_bar_window
+            self.spool.read_final_bar_window = lambda **_kwargs: None
+            try:
+                full = backend.latest(requirement)
+            finally:
+                self.spool.read_final_bar_window = exact_reader
+        finally:
+            self.spool.read_tail = read_tail
+        return fast, full, fast_tail_reads
+
+    def test_latest_final_bar_reads_the_exact_index_and_matches_the_full_tail(self):
+        newest = []
+        requirements = []
+        for binding_id, fixture in (
+            ("binance-usdm-btcusdt-bar-1m", "binance_usdm_rest_bar.json"),
+            ("okx-swap-btcusdt-bar-1m", "okx_bar.json"),
+        ):
+            binding = next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            older = _final_bar_at(self.catalog, binding, fixture, offset=-1,
+                                  label=f"latest-exact-{binding_id}-older")
+            current = _final_bar_at(self.catalog, binding, fixture, offset=0,
+                                    label=f"latest-exact-{binding_id}-current")
+            _append(self.spool, self.catalog, current, final_bar_watermark=True)
+            # A repair appended after the live bar: append order is not market order.
+            _append(self.spool, self.catalog, older, final_bar_watermark=True)
+            newest.append(current)
+            # warmup 0 is what the alpha runtime's latest_bar sends.
+            requirements.append(_requirement(binding, warmup=0))
+        backend = StableSpoolQueryBackend(
+            self.spool, self.catalog, schema_digest="a" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        for requirement, current in zip(requirements, newest, strict=True):
+            fast, full, tail_reads = self._latest_both_ways(backend, requirement)
+            self.assertIsNotNone(fast)
+            self.assertEqual(fast, full)
+            self.assertEqual(tail_reads, 0)
+
+    def test_latest_final_bar_falls_back_for_missing_gap_or_revision(self):
+        cases = (
+            ("binance-usdm-btcusdt-bar-1m", "missing", (0,)),
+            ("binance-usdm-ethusdt-bar-1m", "gap", (0, 2)),
+            ("binance-usdm-solusdt-bar-1m", "duplicate", (0, 1)),
+        )
+        newest = []
+        requirements = []
+        for binding_id, shape, offsets in cases:
+            binding = next(item for item in self.catalog.bindings if item.binding_id == binding_id)
+            values = []
+            for offset in offsets:
+                event = _final_bar_at(self.catalog, binding, "binance_usdm_rest_bar.json",
+                                      offset=offset, label=f"latest-fallback-{shape}-{offset}")
+                _append(self.spool, self.catalog, event, final_bar_watermark=True)
+                values.append(event)
+            if shape == "duplicate":
+                revised = _final_bar_at(self.catalog, binding, "binance_usdm_rest_bar.json",
+                                        offset=offsets[-1], label="latest-fallback-duplicate-revised")
+                revised.bar.revision = 1
+                revised.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_REVISED
+                revised.bar.supersedes_event_id = values[-1].event_id
+                _append(self.spool, self.catalog, revised, final_bar_watermark=True)
+                values.append(revised)
+            newest.extend(values)
+            requirements.append(_requirement(binding, warmup=0))
+        backend = StableSpoolQueryBackend(
+            self.spool, self.catalog, schema_digest="b" * 64,
+            clock_ns=lambda: max(item.bar.close_time_ns for item in newest) + 1_000_000,
+        )
+        for requirement in requirements:
+            fast, full, tail_reads = self._latest_both_ways(backend, requirement)
+            self.assertEqual(fast, full)
+            self.assertEqual(tail_reads, 1)
 
     def test_history_many_exact_final_window_supports_emit_revisions_when_unique(self):
         binding = next(
@@ -1470,6 +1570,324 @@ class StableQueryContractTests(unittest.TestCase):
             observed_limits,
             [1, 1, STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW],
         )
+
+    def test_gap_diagnostic_pages_tails_without_using_read_tail(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        template = _stable_event(
+            self.catalog, "binance_usdm_trade.json", binding.binding_id
+        )
+        for index in range(9):
+            event = type(template)()
+            event.CopyFrom(template)
+            event.event_id = hashlib.sha256(
+                f"phase1-gap-page-{index}".encode()
+            ).digest()[:16]
+            event.source_sequence = str(index + 1)
+            event.partition_sequence = index + 1
+            event.source_event_time_ns += index * 1_000_000
+            event.received_at_ns = event.source_event_time_ns + 1
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            _append(self.spool, self.catalog, event)
+
+        page_sizes: list[int] = []
+        self.spool.visit_tail_pages(
+            stream=binding.canonical_stream,
+            partition_key=binding.partition_key,
+            limit=9,
+            page_rows=4,
+            max_page_payload_bytes=8 * 1024 * 1024,
+            visit=lambda page: page_sizes.append(len(page)),
+        )
+        self.assertEqual(page_sizes, [4, 4, 1])
+
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="a" * 64,
+            clock_ns=lambda: template.source_event_time_ns + 20_000_000,
+        )
+        with patch.object(
+            self.spool,
+            "read_tail",
+            side_effect=AssertionError("gap diagnostic must use paged tails"),
+        ):
+            self.assertEqual(backend.open_gaps(), ())
+
+    def test_gap_diagnostic_is_complete_or_typed_partial_never_truncated(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        first = _stable_event(
+            self.catalog, "binance_usdm_rest_bar.json", binding.binding_id
+        )
+        second = type(first)()
+        second.CopyFrom(first)
+        interval_ns = 60 * 1_000_000_000
+        second.event_id = hashlib.sha256(b"phase1-gap-second").digest()[:16]
+        second.raw_capture_id = hashlib.sha256(b"phase1-gap-second-raw").digest()[:16]
+        second.source_sequence = "phase1-gap-second"
+        second.partition_sequence = 2
+        second.bar.open_time_ns += 3 * interval_ns
+        second.bar.close_time_ns += 3 * interval_ns
+        second.source_event_time_ns = second.bar.close_time_ns
+        second.received_at_ns = second.source_event_time_ns + 1
+        second.normalized_at_ns = second.received_at_ns + 1
+        second.published_at_ns = second.received_at_ns + 2
+        _append(self.spool, self.catalog, first)
+        _append(self.spool, self.catalog, second)
+
+        complete = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="b" * 64,
+            clock_ns=lambda: second.bar.close_time_ns + 1,
+        )
+        self.assertEqual(len(complete.open_gaps()), 2)
+
+        bounded = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="c" * 64,
+            clock_ns=lambda: second.bar.close_time_ns + 1,
+            gap_scan_max_results=1,
+        )
+        with self.assertRaises(QueryBackendError) as error:
+            bounded.open_gaps()
+        self.assertEqual(error.exception.problem.code, CanonicalErrorCode.PARTIAL_RESULT)
+        self.assertTrue(error.exception.problem.retryable)
+
+        far = type(second)()
+        far.CopyFrom(second)
+        far.event_id = hashlib.sha256(b"phase1-gap-far").digest()[:16]
+        far.raw_capture_id = hashlib.sha256(b"phase1-gap-far-raw").digest()[:16]
+        far.source_sequence = "phase1-gap-far"
+        far.partition_sequence = 3
+        far.bar.open_time_ns += 10_000 * interval_ns
+        far.bar.close_time_ns += 10_000 * interval_ns
+        far.source_event_time_ns = far.bar.close_time_ns
+        far.received_at_ns = far.source_event_time_ns + 1
+        far.normalized_at_ns = far.received_at_ns + 1
+        far.published_at_ns = far.received_at_ns + 2
+        _append(self.spool, self.catalog, far)
+        long_window = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="d" * 64,
+            clock_ns=lambda: far.bar.close_time_ns + 1,
+            gap_scan_max_expected_bars=64,
+        )
+        with self.assertRaises(QueryBackendError) as error:
+            long_window.open_gaps()
+        self.assertEqual(error.exception.problem.code, CanonicalErrorCode.PARTIAL_RESULT)
+
+    def test_gap_diagnostic_keeps_shared_book_partitions_logically_separate(self):
+        snapshot = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-book_snapshot"
+        )
+        delta = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-book_delta"
+        )
+        self.assertEqual(snapshot.partition_key, delta.partition_key)
+
+        event = market_data_pb2.EventEnvelope(
+            schema_name="qdl.marketdata.v2",
+            schema_major=2,
+            schema_minor=0,
+            event_id=hashlib.sha256(b"phase1-book-delta-gap").digest()[:16],
+            instrument_uid=delta.instrument.instrument_uid,
+            instrument_id=delta.instrument.instrument_id,
+            instrument_revision=delta.instrument.metadata_revision,
+            venue=delta.instrument.identity.venue,
+            market=delta.instrument.identity.market,
+            product_type=delta.instrument.identity.product_type.value,
+            native_symbol=delta.instrument.native_symbol,
+            provider=delta.provider,
+            source_id=delta.source_id,
+            source_role=common_pb2.SOURCE_ROLE_PRIMARY,
+            lease_epoch=1,
+            source_event_time_ns=1_700_000_000_000_000_000,
+            received_at_ns=1_700_000_000_000_000_001,
+            normalized_at_ns=1_700_000_000_000_000_002,
+            published_at_ns=1_700_000_000_000_000_003,
+            source_sequence="phase1-book-delta-gap",
+            partition_sequence=1,
+            normalizer_version=delta.normalizer_version,
+            adapter_version=delta.adapter_version,
+            raw_capture_id=hashlib.sha256(b"phase1-book-delta-gap-raw").digest()[:16],
+        )
+        event.quality_flags.append(common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE)
+        event.book_delta.native_sequence_start = "1"
+        event.book_delta.native_sequence_end = "2"
+        event.book_delta.book_generation = 1
+        event.book_delta.sequence_verified = False
+        _append_unvalidated(self.spool, delta, event)
+
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="e" * 64,
+            clock_ns=lambda: event.received_at_ns + 1,
+        )
+        gaps = backend.open_gaps()
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual(gaps[0].feed.value, "BOOK_DELTA")
+        self.assertEqual(gaps[0].instrument_uid, delta.instrument.instrument_uid)
+
+    def test_gap_diagnostic_uses_calendar_and_late_repair_closes_exact_gap(self):
+        binding = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "dnse-vn30f1m-bar-1m"
+        )
+        self.assertFalse(binding.continuous_calendar)
+        template = _stable_event(
+            self.catalog, "dnse_derivative_bar.json", binding.binding_id
+        )
+        interval_ns = canonical_interval_ms(binding.interval) * 1_000_000
+        calendar = trading_calendar_for_id(binding.instrument.session_calendar_id)
+        session_open_ns = int(datetime(
+            2026, 8, 10, 9, 0, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh")
+        ).timestamp() * 1_000_000_000)
+        opens = calendar.bar_opens_between_ns(
+            start_ns=session_open_ns,
+            end_ns=session_open_ns + 3 * interval_ns,
+            interval_ns=interval_ns,
+        )
+        self.assertEqual(len(opens), 3)
+
+        def at(open_time_ns: int, *, label: str, sequence: int):
+            event = type(template)()
+            event.CopyFrom(template)
+            event.event_id = hashlib.sha256(label.encode()).digest()[:16]
+            event.raw_capture_id = hashlib.sha256(f"{label}-raw".encode()).digest()[:16]
+            event.bar.open_time_ns = open_time_ns
+            event.bar.close_time_ns = open_time_ns + interval_ns
+            event.source_event_time_ns = event.bar.close_time_ns
+            event.received_at_ns = event.source_event_time_ns + 1
+            event.normalized_at_ns = event.received_at_ns + 1
+            event.published_at_ns = event.received_at_ns + 2
+            event.source_sequence = label
+            event.partition_sequence = sequence
+            event.correlation_id = label
+            return event
+
+        _append(self.spool, self.catalog, at(opens[0], label="phase1-calendar-first", sequence=1))
+        _append(self.spool, self.catalog, at(opens[2], label="phase1-calendar-later", sequence=2))
+        backend = StableSpoolQueryBackend(
+            self.spool,
+            self.catalog,
+            schema_digest="f" * 64,
+            clock_ns=lambda: opens[2] + interval_ns,
+        )
+        gaps = backend.open_gaps()
+        missing = [
+            gap
+            for gap in gaps
+            if gap.feed is FeedType.BAR and gap.expected_sequence == str(opens[1])
+        ]
+        self.assertEqual(len(missing), 1)
+
+        # Provider repair can append later than the surrounding realtime rows;
+        # it must remove the exact calendar-derived gap rather than invent one.
+        _append(self.spool, self.catalog, at(opens[1], label="phase1-calendar-repair", sequence=3))
+        self.assertEqual(backend.open_gaps(), ())
+
+    def test_gap_diagnostic_large_tail_preserves_latest_quote_and_bar(self):
+        trade = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-trade"
+        )
+        quote = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-quote"
+        )
+        bar = next(
+            item
+            for item in self.catalog.bindings
+            if item.binding_id == "binance-usdm-btcusdt-bar-1m"
+        )
+        path = Path(self.temp.name) / "phase1-large-gap-tail.sqlite3"
+        with SQLiteDurableSpool(SpoolConfig(
+            path=path,
+            max_records=4_096,
+            max_payload_bytes=32 * 1024 * 1024,
+            max_storage_bytes=48 * 1024 * 1024,
+            min_free_disk_bytes=0,
+            max_partition_records=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
+        )) as spool:
+            template = _stable_event(
+                self.catalog, "binance_usdm_trade.json", trade.binding_id
+            )
+            for index in range(2_048):
+                event = type(template)()
+                event.CopyFrom(template)
+                event.event_id = hashlib.sha256(
+                    f"phase1-large-tail-{index}".encode()
+                ).digest()[:16]
+                event.raw_capture_id = hashlib.sha256(
+                    f"phase1-large-tail-raw-{index}".encode()
+                ).digest()[:16]
+                event.source_sequence = f"phase1-large-tail-{index}"
+                event.partition_sequence = index + 1
+                event.source_event_time_ns += index * 1_000_000
+                event.received_at_ns = event.source_event_time_ns + 1
+                event.normalized_at_ns = event.received_at_ns + 1
+                event.published_at_ns = event.received_at_ns + 2
+                event.correlation_id = f"phase1-large-tail-{index}"
+                _append(spool, self.catalog, event)
+            quote_event = _stable_event(
+                self.catalog, "binance_usdm_bbo.json", quote.binding_id
+            )
+            bar_event = _stable_event(
+                self.catalog, "binance_usdm_rest_bar.json", bar.binding_id
+            )
+            _append(spool, self.catalog, quote_event)
+            _append(spool, self.catalog, bar_event)
+            backend = StableSpoolQueryBackend(
+                spool,
+                self.catalog,
+                schema_digest="0" * 64,
+                clock_ns=lambda: max(
+                    template.source_event_time_ns + 2_048 * 1_000_000,
+                    quote_event.source_event_time_ns,
+                    bar_event.bar.close_time_ns,
+                ) + 1,
+            )
+            quote_requirement = _requirement(quote)
+            bar_requirement = _requirement(bar)
+            before_quote = backend.latest(quote_requirement)
+            before_bar = backend.latest(bar_requirement)
+            page_sizes = []
+            visit_tail_pages = spool.visit_tail_pages
+
+            def bounded_pages(**kwargs):
+                visit = kwargs.pop("visit")
+
+                def record_page(page):
+                    page_sizes.append(len(page))
+                    visit(page)
+
+                return visit_tail_pages(visit=record_page, **kwargs)
+
+            spool.visit_tail_pages = bounded_pages
+            self.assertEqual(backend.open_gaps(), ())
+            self.assertTrue(page_sizes)
+            self.assertLessEqual(max(page_sizes), 4)
+            self.assertEqual(backend.latest(quote_requirement), before_quote)
+            self.assertEqual(backend.latest(bar_requirement), before_bar)
 
     def test_latest_uses_newest_tail_after_partition_exceeds_query_window(self):
         binding = next(

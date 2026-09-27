@@ -42,6 +42,8 @@ from qdl.runtime.stable_deployment import (
 )
 
 
+from tests.universe_support import UNIVERSE_SYMBOLS
+
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
@@ -548,8 +550,13 @@ class StableDeploymentContractTests(unittest.TestCase):
             for item in self.acquisition.bindings
             if item.binding_id in final_crypto_bars and item.runtime == "BINANCE"
         ))
+        # OKX Swap execution symbols use the certified native candle lane; a
+        # D48 universe symbol (bar-only demand) keeps the REST final lane: one
+        # final row per daily boundary, not a streaming candle.
+        universe_okx = set(UNIVERSE_SYMBOLS["OKX"])
         self.assertTrue(all(
-            item.mode == "RUST_NATIVE"
+            item.mode == ("PYTHON_REST" if sources[item.binding_id].instrument.native_symbol in universe_okx
+                          else "RUST_NATIVE")
             for item in self.acquisition.bindings
             if item.binding_id in final_crypto_bars and item.runtime == "OKX"
         ))

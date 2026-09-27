@@ -108,7 +108,7 @@ class RustHttpProviderAdmission:
         provider_code: int | None,
         retry_after_ms: int | None,
     ) -> AdmissionDecision:
-        if http_status not in {None, 418, 429} or provider_code not in {None, -1003}:
+        if http_status not in {None, 418, 429} or provider_code not in {None, -1003, 50011}:
             raise AdmissionContractError("provider rate-limit signal is not recognized")
         if http_status is None and provider_code is None:
             raise AdmissionContractError("provider rate-limit signal is empty")

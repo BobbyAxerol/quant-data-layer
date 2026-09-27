@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import ssl
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -61,6 +62,69 @@ def _bounded_rejection_text(detail: str) -> str:
     )[:_MAX_REJECTION_DETAIL_CHARS]
 
 
+class _IngestSpans:
+    """Where the single stream writer spends an ingest request, per 10 s.
+
+    Phase-3 (2026-09-23): during market bursts every projector's
+    ``durable_append`` - one HTTP round trip into this handler - rose from tens
+    of milliseconds to seconds at once, and the handler said nothing about why.
+    One line per ten seconds splits it: decode/validation, raw-reference
+    lookup, pre-spool view, publish (spool lock wait + held append + fan-out,
+    the first two read from the spool's own counters), post-append view.
+    """
+
+    _NAMES = ("decode", "raw_lookup", "view_pre", "publish", "view_post", "total")
+
+    def __init__(self) -> None:
+        self._reset()
+        self._reported_at_ns = time.monotonic_ns()
+        self._append_before: dict[str, int] | None = None
+
+    def _reset(self) -> None:
+        self._requests = 0
+        self._events = 0
+        self._sum = {name: 0 for name in self._NAMES}
+        self._max = {name: 0 for name in self._NAMES}
+
+    def observe(self, *, events: int, **spans_ns: int) -> None:
+        self._requests += 1
+        self._events += events
+        for key, value in spans_ns.items():
+            name = key.removesuffix("_ns")
+            self._sum[name] += value
+            self._max[name] = max(self._max[name], value)
+
+    def maybe_report(self, *, spool, gateway) -> None:
+        now_ns = time.monotonic_ns()
+        elapsed_ns = now_ns - self._reported_at_ns
+        if elapsed_ns < 10_000_000_000 or not self._requests:
+            return
+        timing = dict(getattr(spool, "append_timing", {}) or {})
+        before = self._append_before or {key: 0 for key in timing}
+        calls = timing.get("calls", 0) - before.get("calls", 0)
+        wait = timing.get("wait_ns", 0) - before.get("wait_ns", 0)
+        hold = timing.get("hold_ns", 0) - before.get("hold_ns", 0)
+        spans = " ".join(
+            f"{name}_ms=mean:{self._sum[name] / self._requests / 1e6:.1f},max:{self._max[name] / 1e6:.1f}"
+            for name in self._NAMES
+        )
+        logger.info(
+            "qdl_stable_ingest_spans requests=%d events_per_s=%.0f %s "
+            "append_calls=%d lock_wait_ms=mean:%.1f,max:%.1f lock_hold_ms=mean:%.1f,max:%.1f subscribers=%d",
+            self._requests, self._events / (elapsed_ns / 1e9), spans,
+            calls,
+            wait / max(1, calls) / 1e6, timing.get("max_wait_ns", 0) / 1e6,
+            hold / max(1, calls) / 1e6, timing.get("max_hold_ns", 0) / 1e6,
+            getattr(gateway, "subscriber_count", -1),
+        )
+        if isinstance(getattr(spool, "append_timing", None), dict):
+            spool.append_timing["max_wait_ns"] = 0
+            spool.append_timing["max_hold_ns"] = 0
+            self._append_before = dict(spool.append_timing)
+        self._reported_at_ns = now_ns
+        self._reset()
+
+
 def install_stable_canonical_ingest(
     app: FastAPI,
     *,
@@ -72,6 +136,7 @@ def install_stable_canonical_ingest(
 ) -> None:
     if len(secret) < 32:
         raise ValueError("stable internal ingest secret must contain at least 256 bits")
+    spans = _IngestSpans()
 
     @app.post("/internal/v2/canonical/events", include_in_schema=False)
     async def ingest(
@@ -79,6 +144,7 @@ def install_stable_canonical_ingest(
         signature: str | None = Header(None, alias="X-QDL-Stable-Signature"),
     ):
         body = await request.body()
+        started_ns = time.perf_counter_ns()
         if not signature or not hmac.compare_digest(
             signature, stable_hmac_signature(secret, body)
         ):
@@ -101,6 +167,7 @@ def install_stable_canonical_ingest(
             raise HTTPException(status_code=409, detail="stable gateway is not active") from error
 
         references = []
+        decode_started_ns = time.perf_counter_ns()
         for value in values:
             try:
                 required_fields = {"canonical", "raw_stream", "raw_event_id"}
@@ -148,6 +215,7 @@ def install_stable_canonical_ingest(
                 raise HTTPException(status_code=422, detail=str(error)) from error
 
         raw_by_reference = {}
+        raw_started_ns = time.perf_counter_ns()
         for raw_stream in sorted({
             item[3] for item in references if item[5] is None
         }):
@@ -193,6 +261,7 @@ def install_stable_canonical_ingest(
                 },
             )))
 
+        view_started_ns = time.perf_counter_ns()
         pre_spool_view_records: list[tuple[StableSourceBinding, market_data_pb2.EventEnvelope]] = []
         if execution_mark_index_view is not None:
             # The signed projector is the read-committed canonical Kafka
@@ -220,6 +289,7 @@ def install_stable_canonical_ingest(
                 )
 
         try:
+            publish_started_ns = time.perf_counter_ns()
             stored_values = await gateway.publish_many(
                 [event for _binding, _envelope, event in prepared]
             )
@@ -239,6 +309,7 @@ def install_stable_canonical_ingest(
         except BaseException:
             await withdraw_pre_spool_view_records()
             raise
+        publish_done_ns = time.perf_counter_ns()
         duplicate_ids = [
             event.event_id
             for (_binding, _envelope, event), stored in zip(
@@ -280,6 +351,16 @@ def install_stable_canonical_ingest(
                 "offset": stored.cursor.offset,
                 "duplicate": duplicate,
             })
+        spans.observe(
+            events=len(values),
+            decode_ns=raw_started_ns - decode_started_ns,
+            raw_lookup_ns=view_started_ns - raw_started_ns,
+            view_pre_ns=publish_started_ns - view_started_ns,
+            publish_ns=publish_done_ns - publish_started_ns,
+            view_post_ns=time.perf_counter_ns() - publish_done_ns,
+            total_ns=time.perf_counter_ns() - started_ns,
+        )
+        spans.maybe_report(spool=spool, gateway=gateway)
         return {
             "schema": _RESULT_SCHEMA,
             "lease_epoch": lease_epoch,

@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, replace
+from typing import Callable
 
+from qdl.query.cold_work import cold_yield
 from qdl.adapters.intervals import (
     canonical_interval_ms,
     latest_closed_boundary_ms,
@@ -36,7 +38,8 @@ from qdl.query import (
     StalePolicy,
     V2QueryService,
 )
-from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR
+from qdl.query.contracts import CanonicalErrorCode, QueryProblem
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
 from qdl.replay import GapFreeHandoff
 from qdl.runtime.stable_catalog import (
     StableSourceBinding,
@@ -44,6 +47,11 @@ from qdl.runtime.stable_catalog import (
     canonical_payload_interval,
 )
 from qdl.runtime.stable_capacity import (
+    STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+    STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
+    STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+    STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+    STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
     STABLE_SPOOL_PUBLIC_PARTITION_WINDOW,
 )
@@ -51,7 +59,11 @@ from qdl.runtime.session_liveness import StableSessionLivenessReader
 from qdl.stream import GrpcSnapshot
 from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.transport import Cursor, SQLiteDurableSpool, StoredEvent
-from qdl.transport.sqlite_spool import FinalBarTailWindow
+from qdl.transport.sqlite_spool import (
+    FinalBarTailWindow,
+    TailReadCancelled,
+    TailReadLimitExceeded,
+)
 
 
 def _decimal_text(value) -> str:
@@ -174,6 +186,18 @@ class _ParsedStoredEvent:
     envelope: market_data_pb2.EventEnvelope
 
 
+class _GapDiagnosticIncomplete(RuntimeError):
+    """The global gap diagnostic reached a declared safe work bound."""
+
+
+
+def _cold_iter(values):
+    """Iterate, pausing cooperatively when the thread runs cold work."""
+
+    for value in values:
+        cold_yield()
+        yield value
+
 class StableSpoolQueryBackend:
     """Provider-neutral stable query view over a Kafka-rebuildable SQLite cache."""
 
@@ -186,19 +210,41 @@ class StableSpoolQueryBackend:
         config_revision: int = 1,
         session_liveness_root: str | None = None,
         clock_ns=time.time_ns,
+        monotonic_ns=time.monotonic_ns,
+        gap_scan_max_results: int = STABLE_GAP_DIAGNOSTIC_MAX_RESULTS,
+        gap_scan_max_expected_bars: int = STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
+        gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
+        gap_scan_page_rows: int = STABLE_GAP_DIAGNOSTIC_PAGE_ROWS,
+        gap_scan_max_page_payload_bytes: int = STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES,
     ) -> None:
         if len(schema_digest) != 64:
             raise ValueError("stable query schema digest must be SHA-256")
+        if min(
+            gap_scan_max_results,
+            gap_scan_max_expected_bars,
+            gap_scan_max_work_ms,
+            gap_scan_page_rows,
+            gap_scan_max_page_payload_bytes,
+        ) < 1:
+            raise ValueError("stable gap diagnostic bounds must be positive")
         self.spool = spool
         self.catalog = catalog
         self.schema_digest = schema_digest
         self.config_revision = config_revision
         self._session_liveness = (
-            StableSessionLivenessReader(session_liveness_root)
+            StableSessionLivenessReader(session_liveness_root, clock_ns=clock_ns)
             if session_liveness_root is not None
             else None
         )
         self._clock_ns = clock_ns
+        self._monotonic_ns = monotonic_ns
+        self._gap_scan_max_results = int(gap_scan_max_results)
+        self._gap_scan_max_expected_bars = int(gap_scan_max_expected_bars)
+        self._gap_scan_max_work_ns = int(gap_scan_max_work_ms) * 1_000_000
+        self._gap_scan_page_rows = int(gap_scan_page_rows)
+        self._gap_scan_max_page_payload_bytes = int(
+            gap_scan_max_page_payload_bytes
+        )
 
     def warmup_is_local(self, requirement: DataRequirement) -> bool:
         self.catalog.binding_for(requirement)
@@ -206,14 +252,20 @@ class StableSpoolQueryBackend:
 
     def latest(self, requirement: DataRequirement) -> MarketDataItem | None:
         binding = self.catalog.binding_for(requirement)
-        records = self._records(
-            requirement,
-            limit=(
-                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-                if requirement.feed is FeedType.BAR
-                else 1
-            ),
+        records = (
+            self._exact_latest_final_bars(requirement, binding)
+            if binding.feed is FeedType.BAR
+            else None
         )
+        if records is None:
+            records = self._records(
+                requirement,
+                limit=(
+                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                    if requirement.feed is FeedType.BAR
+                    else 1
+                ),
+            )
         if not records:
             return None
         if binding.feed is FeedType.BAR:
@@ -229,6 +281,48 @@ class StableSpoolQueryBackend:
         self._validate_records(binding, quality_records)
         items = self._items(requirement, quality_records)
         return items[-1] if items else None
+
+    def _exact_latest_final_bars(
+        self, requirement: DataRequirement, binding: StableSourceBinding
+    ) -> tuple[_ParsedStoredEvent, ...] | None:
+        """The newest two final BARs by header index, or ``None`` for the tail.
+
+        ``latest`` judges BAR quality over ``max(2, requested)`` rows. For the
+        common ``requested <= 2`` - the alpha runtime's ``latest_bar`` sends no
+        warmup - this reads two indexed rows instead of decoding the ~12,000-row
+        physical window, measured at about 0.5 CPU-s per read on 2026-09-23
+        (v2.1.1 Phase-3 stage 5). Any doubt returns ``None`` and the retained
+        tail stays authoritative, exactly as in ``history_many``.
+        """
+
+        try:
+            requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
+            if max(2, requested) != 2:
+                return None
+            window = self._final_bar_window(
+                requirement=requirement, binding=binding, requested=2,
+                start_ns=start_ns, end_ns=end_ns, expected_opens=expected_opens,
+            )
+            reader = getattr(self.spool, "read_final_bar_window", None)
+            if window is None or not callable(reader):
+                return None
+            exact = reader(
+                stream=binding.canonical_stream,
+                partition_key=binding.partition_key,
+                window=window,
+            )
+            if exact is None:
+                return None
+            rows, expected_closes = exact
+            records = self._select_records(binding, self._parse_records(rows), limit=2)
+            if not self._exact_final_bar_window(
+                binding=binding, records=records, requested=2,
+                expected_closes=expected_closes,
+            ):
+                return None
+            return records
+        except Exception:
+            return None
 
     def history(self, requirement: DataRequirement) -> HistoryResult | None:
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
@@ -613,19 +707,136 @@ class StableSpoolQueryBackend:
         return item.quality if item else None
 
     def open_gaps(self) -> tuple[GapRecord, ...]:
-        gaps = []
-        for binding in self.catalog.bindings:
-            records = self._parse_records(self.spool.read_tail(
-                stream=binding.canonical_stream,
-                partition_key=binding.partition_key,
-                limit=(
-                    STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
-                    if binding.feed is FeedType.BAR
-                    else STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
-                ),
-            ))
-            gaps.extend(self._gaps(binding, records))
+        return self.open_gaps_bounded()
+
+    def open_gaps_bounded(
+        self,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[GapRecord, ...]:
+        """Return a complete global diagnostic result or a typed failure.
+
+        The public diagnostic route must never turn a bounded partial scan into
+        an empty/success response.  Each physical tail is decoded in a small
+        page, then released before the next page/binding.  The output itself
+        is bounded and a caller receives ``PARTIAL_RESULT`` if its exact scope
+        cannot complete within the declared work budget.
+        """
+
+        stop = cancelled or (lambda: False)
+        deadline_ns = self._monotonic_ns() + self._gap_scan_max_work_ns
+        detected_at_ns = self._clock_ns()
+        gaps: list[GapRecord] = []
+
+        def check_budget() -> None:
+            if stop():
+                raise _GapDiagnosticIncomplete("global gap diagnostic was cancelled")
+            if self._monotonic_ns() >= deadline_ns:
+                raise _GapDiagnosticIncomplete("global gap diagnostic exceeded its work deadline")
+
+        def append_gap(gap: GapRecord) -> None:
+            check_budget()
+            if len(gaps) >= self._gap_scan_max_results:
+                raise _GapDiagnosticIncomplete("global gap diagnostic exceeded its result bound")
+            gaps.append(gap)
+
+        try:
+            for binding in self.catalog.bindings:
+                check_budget()
+                self._scan_binding_gaps_bounded(
+                    binding,
+                    detected_at_ns=detected_at_ns,
+                    append_gap=append_gap,
+                    check_budget=check_budget,
+                    cancelled=stop,
+                )
+        except (TailReadCancelled, TailReadLimitExceeded, _GapDiagnosticIncomplete) as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.PARTIAL_RESULT,
+                str(error),
+                True,
+                retry_after_ms=1_000,
+            )) from error
         return tuple(sorted(gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
+
+    def _scan_binding_gaps_bounded(
+        self,
+        binding: StableSourceBinding,
+        *,
+        detected_at_ns: int,
+        append_gap: Callable[[GapRecord], None],
+        check_budget: Callable[[], None],
+        cancelled: Callable[[], bool],
+    ) -> None:
+        """Scan one exact logical binding without retaining its physical tail."""
+
+        observed_opens: set[int] = set()
+
+        def visit(page: tuple[StoredEvent, ...]) -> None:
+            for stored in page:
+                check_budget()
+                envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+                if (
+                    envelope.WhichOneof("payload") != binding.feed.value.lower()
+                    or canonical_payload_interval(envelope) != binding.interval
+                ):
+                    continue
+                if common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE in envelope.quality_flags:
+                    append_gap(self._gap(
+                        binding,
+                        f"sequence:{envelope.source_sequence}",
+                        envelope.source_sequence,
+                        detected_at_ns,
+                    ))
+                if binding.feed is FeedType.BAR:
+                    observed_opens.add(int(envelope.bar.open_time_ns))
+
+        self.spool.visit_tail_pages(
+            stream=binding.canonical_stream,
+            partition_key=binding.partition_key,
+            limit=(
+                STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+                if binding.feed is FeedType.BAR
+                else STABLE_SPOOL_PUBLIC_PARTITION_WINDOW
+            ),
+            page_rows=self._gap_scan_page_rows,
+            max_page_payload_bytes=self._gap_scan_max_page_payload_bytes,
+            visit=visit,
+            cancelled=cancelled,
+        )
+        if binding.feed is not FeedType.BAR or not observed_opens:
+            return
+
+        step = _interval_ns(binding.interval or "")
+        first_open = min(observed_opens)
+        last_open = max(observed_opens)
+        if binding.continuous_calendar:
+            expected_count = ((last_open - first_open) // step) + 1
+            if expected_count > self._gap_scan_max_expected_bars:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                )
+            expected_opens = range(first_open, last_open + step, step)
+        else:
+            try:
+                expected_opens = trading_calendar_for_id(
+                    binding.instrument.session_calendar_id
+                ).bar_opens_between_ns(
+                    start_ns=first_open,
+                    end_ns=last_open + step,
+                    interval_ns=step,
+                    max_rows=self._gap_scan_max_expected_bars,
+                )
+            except ValueError as error:
+                raise _GapDiagnosticIncomplete(
+                    "global gap diagnostic expected-bar window exceeds its bound"
+                ) from error
+        for expected_open in expected_opens:
+            check_budget()
+            if expected_open not in observed_opens:
+                append_gap(self._gap(
+                    binding, str(expected_open), "MISSING", detected_at_ns
+                ))
 
     def stored_events(self, requirement: DataRequirement) -> tuple[StoredEvent, ...]:
         requested, start_ns, end_ns, _ = self._requested_window(requirement)
@@ -653,6 +864,7 @@ class StableSpoolQueryBackend:
         """Fail closed on lineage mismatch within the returned data window."""
 
         for parsed in records:
+            cold_yield()
             resolved = self.catalog.binding_for_envelope(parsed.envelope)
             if resolved.binding_id != binding.binding_id:
                 raise ValueError("canonical event resolves to a different stable binding")
@@ -740,7 +952,7 @@ class StableSpoolQueryBackend:
                 stored=row,
                 envelope=market_data_pb2.EventEnvelope.FromString(row.event.payload),
             )
-            for row in rows
+            for row in _cold_iter(rows)
         )
 
     def _records(
@@ -802,7 +1014,7 @@ class StableSpoolQueryBackend:
                 parsed.envelope,
                 effective_gap,
             )
-            for parsed in records
+            for parsed in _cold_iter(records)
         )
 
     def _quality(
@@ -824,7 +1036,6 @@ class StableSpoolQueryBackend:
             if binding.freshness_basis == "PROVIDER_CONFIRMATION"
             else source_observed_ns
         )
-        freshness_ms = max(0, (self._clock_ns() - freshness_observed_ns) // 1_000_000)
         flags = _quality_flag_names(envelope)
         explicit_gap = any(
             value in {"SEQUENCE_GAP_BEFORE", "OUT_OF_ORDER", "RESYNC_REQUIRED"}
@@ -840,9 +1051,6 @@ class StableSpoolQueryBackend:
             binding.stale_after_ms
             if requirement.max_freshness_ms is None
             else min(binding.stale_after_ms, requirement.max_freshness_ms)
-        )
-        source_value_age_ms = max(
-            0, (self._clock_ns() - source_observed_ns) // 1_000_000
         )
         session_state = "NOT_APPLICABLE"
         session_liveness_ms = None
@@ -872,6 +1080,11 @@ class StableSpoolQueryBackend:
                 ):
                     session_state = "STALE"
                     session_flags += ("SOURCE_SESSION_HEARTBEAT_EXPIRED",)
+        # Event age is taken after the session read, like the session's own
+        # age: a sample from before the read would under-state both.
+        evaluated_ns = self._clock_ns()
+        freshness_ms = max(0, (evaluated_ns - freshness_observed_ns) // 1_000_000)
+        source_value_age_ms = max(0, (evaluated_ns - source_observed_ns) // 1_000_000)
         payload_name = envelope.WhichOneof("payload")
         book_unverified = payload_name in {"book_snapshot", "book_delta"} and not (
             bool(getattr(envelope, payload_name).sequence_verified)
@@ -1346,7 +1559,7 @@ class StableConsumerCursorIssuer:
             stream_cursor=token,
             items=tuple(
                 replace(item, snapshot_id=history.snapshot_id, cursor=token)
-                for item in history.items
+                for item in _cold_iter(history.items)
             ),
         )
 
@@ -1426,12 +1639,17 @@ class StableGrpcSnapshotLoader:
         )
 
 
+
+def build_local_alpha_mark_index_reader(*, catalog, spool):
+    from qdl.reference.local_mark_index import build_local_alpha_mark_index_reader as build
+    return build(catalog=catalog, spool=spool)
+
 def build_stable_query_stack(
     *,
-    spool: SQLiteDurableSpool,
+    spool: SQLiteDurableSpool | None,
     catalog: StableSourceCatalog,
     schema_digest: str,
-    handoff: GapFreeHandoff,
+    handoff: GapFreeHandoff | None,
     cursor_ttl_seconds: int,
     pass_through_enabled: bool = False,
     reference_data_enabled: bool = False,
@@ -1439,6 +1657,9 @@ def build_stable_query_stack(
     provider_admission_secret: bytes | None = None,
     session_liveness_root: str | None = None,
     execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
+    backend: StableSpoolQueryBackend | None = None,
+    issuer=None,
+    alpha_mark_index_reader_factory=None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -1446,13 +1667,23 @@ def build_stable_query_stack(
     metadata for an instrument never opens a data product by itself. When it is
     off, the registry, the entitlements and the backend are exactly what they
     were before, which keeps the default deployment unchanged.
+
+    ``backend``/``issuer``/``alpha_mark_index_reader_factory`` replace the spool
+    backend, its v2 cursor issuer and the spool MARK/INDEX reader together
+    (the KN-4 market-cache backend, ``QDL_STABLE_QUERY_BACKEND=kn3``); omitted,
+    the spool stack is built exactly as before.
     """
-    backend = StableSpoolQueryBackend(
-        spool,
-        catalog,
-        schema_digest=schema_digest,
-        session_liveness_root=session_liveness_root,
-    )
+    if (backend is None) != (issuer is None):
+        raise ValueError("a replacement Query backend needs its own cursor issuer")
+    if backend is None:
+        if spool is None:
+            raise ValueError("the spool Query backend needs its spool")
+        backend = StableSpoolQueryBackend(
+            spool,
+            catalog,
+            schema_digest=schema_digest,
+            session_liveness_root=session_liveness_root,
+        )
     served: MarketDataQueryBackend = backend
     if pass_through_enabled:
         from qdl.runtime.provider_history import ProviderBarHistorySource
@@ -1494,8 +1725,25 @@ def build_stable_query_stack(
         reference_batch=reference_batch,
         reference_source_id=reference_source_id,
         execution_mark_index_reader=execution_mark_index_reader,
+        # Stream handoffs and latest-style warmups (<= 2 rows) must not wait
+        # behind 2,500/5,000-row warmups in the single-active lane.
+        small_local_warmup_lane=True,
+        # A fleet cold start queues its large warmups instead of refusing them.
+        queued_local_batch_lane=True,
+        # Alpha MARK/INDEX reads from this replica's own spool (or, with the
+        # market-cache backend, its cache view), in-process.
+        alpha_mark_index_reader=(
+            (
+                alpha_mark_index_reader_factory()
+                if alpha_mark_index_reader_factory is not None
+                else build_local_alpha_mark_index_reader(catalog=catalog, spool=spool)
+            )
+            if reference_batch is not None
+            else None
+        ),
     )
-    issuer = StableConsumerCursorIssuer(
-        handoff, catalog, ttl_seconds=cursor_ttl_seconds
-    )
+    if issuer is None:
+        issuer = StableConsumerCursorIssuer(
+            handoff, catalog, ttl_seconds=cursor_ttl_seconds
+        )
     return service, backend, issuer

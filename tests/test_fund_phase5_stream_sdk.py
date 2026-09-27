@@ -511,6 +511,149 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await subscription.close()
 
+    async def test_strict_initial_replay_rechecks_after_cursor_advance(self):
+        """A durable cursor I/O wait must not leak a now-stale replay frame."""
+
+        clock = {"now_ns": 10_000_000_000}
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-initial-replay",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: clock["now_ns"],
+        )
+        requirement = DomainRequirement(
+            self.record.instrument_uid,
+            FeedType.QUOTE,
+            ConsumerGrade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=100,
+        )
+        await self.gateway.publish(durable_quote(
+            self.record, 1, source_event_time_ns=clock["now_ns"] - 1,
+        ))
+        subscription = await self.gateway.open(
+            consumer_id=self.consumer_id,
+            stream=QUOTE_STREAM,
+            partition_key=partition,
+            token=token,
+            accepts=lambda stored: service._matches_requirement(stored, requirement),
+        )
+        original_record = subscription.record
+
+        async def delayed_record(stored):
+            result = await original_record(stored)
+            clock["now_ns"] += 1_000_000_000
+            return result
+
+        subscription.record = delayed_record
+        try:
+            self.assertIsNone(await service._record_initial_replay_if_current(
+                subscription, subscription.initial[0]
+            ))
+            self.assertEqual(
+                self.handoff.resolve_scope(
+                    token=subscription.token, consumer_id=self.consumer_id,
+                ).watermark_offset,
+                1,
+            )
+
+            subscription.record = original_record
+            fresh = await self.gateway.publish(durable_quote(
+                self.record, 2, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+            assert fresh is not None
+            emitted = await service._record_initial_replay_if_current(
+                subscription, fresh
+            )
+            self.assertIsNotNone(emitted)
+            assert emitted is not None
+            self.assertEqual(emitted.stored.cursor.offset, 2)
+        finally:
+            await subscription.close()
+
+    async def test_grpc_initial_replay_does_not_emit_after_cursor_io_ages_frame(self):
+        """Exercise the public Stream path, not only its replay helper."""
+
+        clock = {"now_ns": 10_000_000_000}
+        partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"
+        token = self.handoff.issue(
+            consumer_id=self.consumer_id,
+            snapshot_id="quote-snapshot-grpc-initial-replay",
+            snapshot_watermark=Cursor(QUOTE_STREAM, partition, 0),
+            ttl_seconds=3600,
+        ).token
+        manifest = ConsumerManifestLoader.from_mapping(manifest_mapping(
+            consumer_id=self.consumer_id,
+            subject=self.subject,
+            instrument_uid=self.record.instrument_uid,
+            feed="QUOTE",
+            interval=None,
+            source_policy_id="alpha_binance_v1",
+        ))
+        identity = make_identity(manifest)
+        await self.gateway.publish(durable_quote(
+            self.record, 1, source_event_time_ns=clock["now_ns"] - 1,
+        ))
+        service = GrpcMarketDataService(
+            gateway=self.gateway,
+            query_service=None,
+            snapshot_loader=SnapshotLoader(self.record, token),
+            clock_ns=lambda: clock["now_ns"],
+        )
+        original_advance = self.gateway.advance_token
+        delayed_once = False
+
+        async def delayed_advance(*args, **kwargs):
+            nonlocal delayed_once
+            result = await original_advance(*args, **kwargs)
+            if not delayed_once:
+                delayed_once = True
+                clock["now_ns"] += 11_000_000_000
+            return result
+
+        self.gateway.advance_token = delayed_advance
+        server = create_grpc_server(service, identity_service=identity)
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        transport = GrpcStreamTransport(
+            f"127.0.0.1:{port}",
+            allow_insecure_loopback=True,
+            credential_provider=StaticBearerCredential(make_token(self.subject)),
+        )
+        requirement = DataRequirement(
+            self.record.instrument_uid,
+            Feed.QUOTE,
+            Grade.ALPHA,
+            "alpha_binance_v1",
+            max_freshness_ms=10_000,
+        )
+        events = transport.subscribe(
+            requirement,
+            consumer_id=self.consumer_id,
+            cursor_token=token,
+            max_buffer_events=1,
+        ).__aiter__()
+        try:
+            self.assertEqual((await events.__anext__()).code, "REPLAYING")
+            self.assertEqual((await events.__anext__()).code, "LIVE")
+            await self.gateway.publish(durable_quote(
+                self.record, 2, source_event_time_ns=clock["now_ns"] - 1,
+            ))
+            live = await asyncio.wait_for(events.__anext__(), timeout=0.5)
+            self.assertEqual(live.logical_offset, 2)
+        finally:
+            self.gateway.advance_token = original_advance
+            await events.aclose()
+            await transport.close()
+            await server.stop(grace=0)
+
     async def test_strict_stream_rechecks_freshness_after_queue_wait(self):
         clock = {"now_ns": 10_000_000_000}
         partition = f"{self.record.instrument_uid}/quote/BINANCE_DIRECT"

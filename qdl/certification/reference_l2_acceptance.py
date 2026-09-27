@@ -114,8 +114,8 @@ class ReferenceL2AcceptanceScope:
     books: tuple[AcceptanceProduct, ...]
 
     def __post_init__(self) -> None:
-        if len(self.references) != 55 or len(self.books) != 24:
-            raise ValueError("Reference/L2 acceptance must contain exactly 55 reference and 24 book products")
+        if not self.references or not self.books:
+            raise ValueError("Reference/L2 acceptance requires references and book products")
         identities = [item.identity for item in self.references] + [item.identity for item in self.books]
         if len(identities) != len(set(identities)):
             raise ValueError("Reference/L2 acceptance contains duplicate product identities")

@@ -1,0 +1,842 @@
+{
+  "allocator_capacity": {
+    "all_keys": 211244,
+    "before": {
+      "allocator_frag_ratio": 1.09,
+      "maxmemory": 8000000000,
+      "mem_clients_normal": 22400,
+      "mem_fragmentation_ratio": 7.93,
+      "used_memory": 963512,
+      "used_memory_peak": 978792,
+      "used_memory_rss": 7643136
+    },
+    "bucket_opens": 112,
+    "canonical_data_written": false,
+    "encodings": [
+      "listpack"
+    ],
+    "evicted_keys": 0,
+    "limitations": [
+      "allocator/layout capacity only, not native Kafka replay or market correctness",
+      "future canonical payloads over the measured padded bound require resizing",
+      "no provider history was invented or served"
+    ],
+    "padded_value_bytes_by_venue": {
+      "BINANCE": 819,
+      "OKX": 799
+    },
+    "products": 644,
+    "provenance": "synthetic layout fill using padded real canonical row size upper bounds",
+    "rows_per_product": 12064,
+    "schema": "qdl.kn5.allocator-capacity.v1",
+    "seconds": 80.492,
+    "staging_products": 4,
+    "steady": {
+      "allocator_frag_ratio": 1.0,
+      "maxmemory": 8000000000,
+      "mem_clients_normal": 42421,
+      "mem_fragmentation_ratio": 0.96,
+      "used_memory": 6970460232,
+      "used_memory_peak": 6970535808,
+      "used_memory_rss": 6711365632
+    },
+    "steady_rows": 7769216,
+    "test_only": true,
+    "with_staging": {
+      "allocator_frag_ratio": 1.0,
+      "maxmemory": 8000000000,
+      "mem_clients_normal": 22400,
+      "mem_fragmentation_ratio": 0.96,
+      "used_memory": 7013770760,
+      "used_memory_peak": 7013847560,
+      "used_memory_rss": 6757109760
+    }
+  },
+  "backpressure_and_diagnostics": {
+    "cursor": {
+      "delta": {
+        "acknowledged": 29995,
+        "commits": 7805,
+        "errors": 0,
+        "io_seconds": 117.74174810037948
+      },
+      "max_batch_ms_since_start": 406.2049819622189,
+      "mean_batch_ms": 15.085425765583533,
+      "pending_end": 0,
+      "pending_max_sampled": 17,
+      "pending_peak_since_start": 28
+    },
+    "errors": {},
+    "groups": 60,
+    "loop_probe": {
+      "max_ms": 4.961793078109622,
+      "n": 29,
+      "p50_ms": 1.0778079740703106,
+      "p95_ms": 2.511420985683799,
+      "p99_ms": null,
+      "period_seconds": 10,
+      "scope": "timer wakeup delay at 10s sampling, not all callback stall distribution"
+    },
+    "seconds": 300.00084915198386,
+    "stream": {
+      "qdl_v2_stable_candidate-stream_kn_1-1": {
+        "closures": [],
+        "delta": {
+          "cpu_seconds": 20.660000000000082,
+          "delivered": 82522,
+          "overflow": 0,
+          "replayed": 0,
+          "subscriptions_opened": 0
+        },
+        "queue_end_bytes": 0,
+        "queue_max_bytes": 167390,
+        "rss_first": 318238720,
+        "rss_last": 318238720,
+        "samples": 31
+      },
+      "qdl_v2_stable_candidate-stream_kn_2-1": {
+        "closures": [],
+        "delta": {
+          "cpu_seconds": 12.289999999999964,
+          "delivered": 0,
+          "overflow": 0,
+          "replayed": 0,
+          "subscriptions_opened": 0
+        },
+        "queue_end_bytes": 0,
+        "queue_max_bytes": 0,
+        "rss_first": 131649536,
+        "rss_last": 131649536,
+        "samples": 31
+      }
+    },
+    "worst_get_p99_ms": 0.905
+  },
+  "ci": {
+    "jobs": [
+      "unit-tests",
+      "contract-tests",
+      "sdk-python310",
+      "kn-native-integration"
+    ],
+    "publication_head_requires_checks": true,
+    "run_id": 36311629772,
+    "status": "PASS",
+    "tested_source_sha": "3ccb8ee02ec1e6f33b67d7ccba49d04238eb5f37"
+  },
+  "classification": "Bounded production data-consumer acceptance, not broker orders, unlimited capacity, multi-day soak or independent-host HA",
+  "endpoint_report_sha256": "d87e7f70650d954cb31051627e9c85b93d1d7372ad7b1753f1ec9018487f2eec",
+  "evidence_sha256": {
+    "candidate-bundle.json": "3fa2403743224a85e3f3769872d50478505bcc9461f15c6e0141b3c4431743c7",
+    "final-load-resource-summary.json": "bddbed2898452de60a876014c6303fa607f89e4242347eea0ddb6d51ef804e15",
+    "final-production50-replacement/gates.json": "72760a8a7da9fefda54d52c15ef5e9516205b18484577914d0f20fca5441f6b3",
+    "final-production50-replacement/receipt.json": "75ea19fe69d695f8aa56e7608c37235bc801e2124dfef67f8fed93c0388ca871",
+    "full-capacity.json": "ea682b78580480303e4582da70237aa2e7cfd770810e26cf735722ffca8b9a70",
+    "paired-rollback-return.json": "628e21941f3595e41aeeb063b7337a8974376368c96b94ed2de7eb860b01b3e3",
+    "production-coverage.json": "31ce5a3a12cc0239d5547562256b04121f1ea0512de2b53cab942205efd3834d",
+    "production-reference.json": "e47654ebe2ec51c2fe31d7b7e38c378793b22a1a5f47434e1ce8d49e22636a65",
+    "sdk205-controlled-reconnect.json": "903de3aae2f6fa18a08a6b454f30c687d868b4c614b50909b9c74cbf811bfdaa",
+    "sdk205-fast-matrix/receipt.json": "64a039260a9ed91d0e7872f1fc17176b5bc2067a895b3f747be3d4bfff942c8c",
+    "sdk205-release-acceptance/cache.json": "a1acdb21047062722d0a05ceeb7c7f9dfd330b69309ae6bd16a19492edfa52c2",
+    "sdk205-release-acceptance/reader-diagnostics.json": "6b7db0c7442bcf88e50b6240ec023f60838a74d5ad2ac5ccb43aed57139ee99a",
+    "sdk205-release-acceptance/receipt.json": "3a4eb40d32f18820d331b2075f8462acbeb35461751950362e4b0f6195847fd5",
+    "sdk205-release-acceptance/summary.json": "583de9aec4711cfbd10f28daf2fe1c34d317efce32f5605701855c60247f298e",
+    "sdk205-shutdown-acceptance/cursor-fsync-summary.json": "426dfd49a7084df664fd04b39470045a17173446435a9da2e11e12be2a3b6f6b"
+  },
+  "limits": [
+    "VN/DNSE and deferred Spot remain V1/excluded from KN crypto certification; vnstock/vnai absent from new image.",
+    "Five Binance3d historical windows are provider-discontinuous; strict complete-history reads fail closed, no invented candles.",
+    "Diagnostics:702SCANNED/6EXCLUDED/4VN UNAVAILABLE retained windows only, not listing-to-now completeness.",
+    "50 logical alpha workload applies to declared mix/cadences, not arbitrary50 strategies.10000 is a request limit, not invented provider history.",
+    "Quiet source age and session liveness differ; execution eligibility stays manifest/component/risk controlled.",
+    "Old SQLite rollback was rehearsed before retirement. Canonical retention6h: recheck offset floors before restarting old groups. Immediate reader rollback uses KN."
+  ],
+  "load50": {
+    "class_counts": {
+      "CANDLE": 20,
+      "GRID": 10,
+      "MULTI": 5,
+      "REALTIME": 15
+    },
+    "errors": 0,
+    "gates": [
+      {
+        "count": 55,
+        "gate": "latency:BAR_LATEST:BINANCE",
+        "max": 48.435,
+        "p50": 15.314,
+        "p95": 29.554,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 1000,
+        "target_p99": 2000
+      },
+      {
+        "count": 55,
+        "gate": "latency:BAR_LATEST:OKX",
+        "max": 65.489,
+        "p50": 18.583,
+        "p95": 36.151,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 1000,
+        "target_p99": 2000
+      },
+      {
+        "count": 54,
+        "gate": "latency:L2_SNAPSHOT:BINANCE",
+        "max": 214.894,
+        "p50": 25.76,
+        "p95": 44.754,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 300,
+        "target_p99": 750
+      },
+      {
+        "count": 55,
+        "gate": "latency:L2_SNAPSHOT:OKX",
+        "max": 56.117,
+        "p50": 28.924,
+        "p95": 44.529,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 300,
+        "target_p99": 750
+      },
+      {
+        "count": 4125,
+        "gate": "latency:MARK_INDEX_REFERENCE:BINANCE",
+        "max": 417.91,
+        "p50": 11.068,
+        "p95": 23.259,
+        "p99": 39.685,
+        "rule": "p95 and p99",
+        "status": "PASS",
+        "target_p95": 250,
+        "target_p99": 500
+      },
+      {
+        "count": 4125,
+        "gate": "latency:MARK_INDEX_REFERENCE:OKX",
+        "max": 324.901,
+        "p50": 11.184,
+        "p95": 22.52,
+        "p99": 38.111,
+        "rule": "p95 and p99",
+        "status": "PASS",
+        "target_p95": 250,
+        "target_p99": 500
+      },
+      {
+        "count": 2750,
+        "gate": "latency:QUOTE_SNAPSHOT:BINANCE",
+        "max": 409.578,
+        "p50": 9.721,
+        "p95": 24.382,
+        "p99": 46.529,
+        "rule": "p95 and p99",
+        "status": "PASS",
+        "target_p95": 100,
+        "target_p99": 250
+      },
+      {
+        "count": 2750,
+        "gate": "latency:QUOTE_SNAPSHOT:OKX",
+        "max": 286.807,
+        "p50": 9.913,
+        "p95": 21.591,
+        "p99": 33.301,
+        "rule": "p95 and p99",
+        "status": "PASS",
+        "target_p95": 100,
+        "target_p99": 250
+      },
+      {
+        "count": 55,
+        "gate": "latency:TRADE_SNAPSHOT:BINANCE",
+        "max": 365.128,
+        "p50": 9.79,
+        "p95": 23.78,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 100,
+        "target_p99": 250
+      },
+      {
+        "count": 55,
+        "gate": "latency:TRADE_SNAPSHOT:OKX",
+        "max": 203.762,
+        "p50": 13.233,
+        "p95": 29.511,
+        "p99": null,
+        "rule": "p95; p99 reported only",
+        "status": "PASS",
+        "target_p95": 100,
+        "target_p99": 250
+      },
+      {
+        "gate": "requests:offered_equals_sent_plus_missed",
+        "offered": 15504,
+        "status": "PASS",
+        "unbalanced": 0
+      },
+      {
+        "gate": "requests:no_missed_ticks",
+        "missed": 0,
+        "status": "PASS"
+      },
+      {
+        "codes": {},
+        "failed": 0,
+        "gate": "requests:no_failures",
+        "status": "PASS"
+      },
+      {
+        "gate": "requests:no_starved_session",
+        "starved": 0,
+        "status": "PASS"
+      },
+      {
+        "gate": "client:scheduler_lag_valid",
+        "p99_ms": 2.822,
+        "status": "PASS"
+      },
+      {
+        "errors": 0,
+        "gate": "streams:no_errors",
+        "status": "PASS",
+        "streams": 90
+      },
+      {
+        "gate": "streams:every_live_stream_delivered",
+        "silent": [],
+        "status": "PASS"
+      },
+      {
+        "bar_streams": 30,
+        "gate": "streams:final_bar_every_bar_stream",
+        "missing": [],
+        "status": "PASS"
+      },
+      {
+        "bad": 0,
+        "gate": "cold:2500_5000_overlap_per_venue",
+        "runs": 4,
+        "status": "PASS"
+      },
+      {
+        "failures": [],
+        "gate": "startup:bounded",
+        "retries": 27,
+        "seconds": 55.516,
+        "status": "PASS"
+      },
+      {
+        "gate": "teardown:no_leaked_work",
+        "leaked": 0,
+        "status": "PASS"
+      },
+      {
+        "gate": "ts:ready_60_every_sample",
+        "not_ready": 0,
+        "samples": 32,
+        "status": "PASS"
+      },
+      {
+        "first": 0,
+        "gate": "ts:v2_error_not_increased",
+        "last": 0,
+        "status": "PASS"
+      },
+      {
+        "forbidden": {},
+        "gate": "ts:no_auth_or_manifest_disconnect",
+        "status": "PASS"
+      },
+      {
+        "baseline_per_minute": 0.0,
+        "codes": {
+          "STREAM_ENDED": 1
+        },
+        "gate": "ts:disconnects_within_baseline",
+        "run_per_minute": 0.158,
+        "status": "PASS"
+      },
+      {
+        "gate": "final:fault_windows_ran",
+        "status": "PASS",
+        "windows": {
+          "BURST": [
+            120.0,
+            130.0
+          ],
+          "RECONNECT": 12,
+          "SLOW_READER": 1,
+          "reconnect_restored": 12
+        }
+      },
+      {
+        "count": 632,
+        "gate": "final:burst_window_measured",
+        "status": "PASS"
+      },
+      {
+        "count": 770,
+        "gate": "final:reconnect_window_measured",
+        "status": "PASS"
+      }
+    ],
+    "requests": 15504,
+    "resource_window_seconds": 374.414891175,
+    "status": "PASS",
+    "whole_serving_stack_mean_vcpu": 4.668720898130555
+  },
+  "publication_rule": "Tag only after required remote CI and feature -> dev -> main integration. PASS here describes runtime evidence, not a claim remote publication already happened.",
+  "release": "v2.2.0",
+  "retired_sqlite_roles": [
+    {
+      "container": "qdl_v2_stable_candidate-query_v2_1-1",
+      "cpu_cap": 1.5,
+      "image": "sha256:dd065fdf8c439ce9034bca47817e1e88ce0a69bbdbd24a2d1f6b0d2f6f693951",
+      "memory_cap_bytes": 1073741824,
+      "oom": false,
+      "restarts": 0,
+      "service": "query_v2_1",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-stream_v2_active-1",
+      "cpu_cap": 2.0,
+      "image": "sha256:37d7f5182ea170f5cc35967aabba0d7f0c1b4b934c12aa25a51ac79664b181f9",
+      "memory_cap_bytes": 1073741824,
+      "oom": false,
+      "restarts": 0,
+      "service": "stream_v2_active",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-stream_v2_passive-1",
+      "cpu_cap": 2.0,
+      "image": "sha256:37d7f5182ea170f5cc35967aabba0d7f0c1b4b934c12aa25a51ac79664b181f9",
+      "memory_cap_bytes": 1073741824,
+      "oom": false,
+      "restarts": 0,
+      "service": "stream_v2_passive",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-query_v2_2-1",
+      "cpu_cap": 1.5,
+      "image": "sha256:dd065fdf8c439ce9034bca47817e1e88ce0a69bbdbd24a2d1f6b0d2f6f693951",
+      "memory_cap_bytes": 1073741824,
+      "oom": false,
+      "restarts": 0,
+      "service": "query_v2_2",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2_6-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2_6",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2_5-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2_5",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2_4-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2_4",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2_3-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2_3",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2_2-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2_2",
+      "status": "exited"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-projector_v2-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+      "memory_cap_bytes": 805306368,
+      "oom": false,
+      "restarts": 0,
+      "service": "projector_v2",
+      "status": "exited"
+    }
+  ],
+  "rollback": {
+    "packet": "ts-release-reader-rollback.compose.json",
+    "reader_image": "sha256:5b66c2cd68459cda3c0273256e7cf1ad9c5a0560875e57b88559056d35b6213e",
+    "scope": "market_data_service image only, same env/mount/binding10"
+  },
+  "runtime": [
+    {
+      "container": "qdl_v2_stable_candidate-binance_bar_edge-1",
+      "cpu_cap": 0.75,
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "memory_cap_bytes": 536870912,
+      "oom": false,
+      "restarts": 0,
+      "service": "binance_bar_edge",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-query_kn_2-1",
+      "cpu_cap": 1.5,
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "memory_cap_bytes": 1610612736,
+      "oom": false,
+      "restarts": 0,
+      "service": "query_kn_2",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-query_kn_1-1",
+      "cpu_cap": 1.5,
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "memory_cap_bytes": 1610612736,
+      "oom": false,
+      "restarts": 0,
+      "service": "query_kn_1",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-rust_core_2-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 268435456,
+      "oom": false,
+      "restarts": 0,
+      "service": "rust_core_2",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-rust_core_3-1",
+      "cpu_cap": 0.5,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 268435456,
+      "oom": false,
+      "restarts": 0,
+      "service": "rust_core_3",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "cpu_cap": 0.5,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 268435456,
+      "oom": false,
+      "restarts": 0,
+      "service": "ingestor_okx_swap",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "cpu_cap": 0.5,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 268435456,
+      "oom": false,
+      "restarts": 0,
+      "service": "ingestor_binance_usdm",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-rust_core-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 268435456,
+      "oom": false,
+      "restarts": 0,
+      "service": "rust_core",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-stream_kn_2-1",
+      "cpu_cap": 0.75,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 536870912,
+      "oom": false,
+      "restarts": 0,
+      "service": "stream_kn_2",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-stream_kn_1-1",
+      "cpu_cap": 0.75,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 536870912,
+      "oom": false,
+      "restarts": 0,
+      "service": "stream_kn_1",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-market_projector_2-1",
+      "cpu_cap": 0.75,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 536870912,
+      "oom": false,
+      "restarts": 0,
+      "service": "market_projector_2",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-market_projector_1-1",
+      "cpu_cap": 0.75,
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "memory_cap_bytes": 536870912,
+      "oom": false,
+      "restarts": 1,
+      "service": "market_projector_1",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-market_cache-1",
+      "cpu_cap": 1.0,
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "memory_cap_bytes": 9663676416,
+      "oom": false,
+      "restarts": 0,
+      "service": "market_cache",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-kafka3-1",
+      "cpu_cap": 1.75,
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "memory_cap_bytes": 1610612736,
+      "oom": false,
+      "restarts": 0,
+      "service": "kafka3",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-kafka2-1",
+      "cpu_cap": 1.75,
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "memory_cap_bytes": 2147483648,
+      "oom": false,
+      "restarts": 1,
+      "service": "kafka2",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-kafka1-1",
+      "cpu_cap": 1.25,
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "memory_cap_bytes": 1610612736,
+      "oom": false,
+      "restarts": 5,
+      "service": "kafka1",
+      "status": "running"
+    },
+    {
+      "container": "qdl_v2_stable_candidate-stable_redis-1",
+      "cpu_cap": 0.5,
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "memory_cap_bytes": 167772160,
+      "oom": false,
+      "restarts": 0,
+      "service": "stable_redis",
+      "status": "running"
+    },
+    {
+      "container": "market_data_service",
+      "cpu_cap": 0.0,
+      "image": "sha256:7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea",
+      "memory_cap_bytes": 0,
+      "oom": false,
+      "restarts": 0,
+      "service": "market_data",
+      "status": "running"
+    }
+  ],
+  "schema": "qdl.v220.kafka-native-runtime-certificate.v1",
+  "scope": {
+    "actual_ts_routes": 60,
+    "catalog_bindings": 712,
+    "catalog_counts": {
+      "BAR": 644,
+      "BOOK_DELTA": 16,
+      "BOOK_SNAPSHOT": 16,
+      "MARK_INDEX_PRICE": 10,
+      "QUOTE": 12,
+      "TRADE": 14
+    },
+    "catalog_revision": 11,
+    "consumer_manifests": [
+      {
+        "consumer_id": "alpha.binance.paper.stable",
+        "requirements": 375,
+        "revision": 14,
+        "sha256": "96a06ce715055804a0695abcf5159235b4d7ba13738698983833de5f3ec5bc5f"
+      },
+      {
+        "consumer_id": "alpha.okx.paper.stable",
+        "requirements": 375,
+        "revision": 14,
+        "sha256": "9e48000e26c1283dd6e786c17d51a79e812bfa2bb97e122f8b944641b8329cdf"
+      },
+      {
+        "consumer_id": "alpha.vn.paper.stable",
+        "requirements": 2,
+        "revision": 1,
+        "sha256": "f2f03f87bfeb775d90099e0bdb38ee9b158ee1506dd333581ef54635e20d3e2a"
+      },
+      {
+        "consumer_id": "monitoring.multivenue.stable",
+        "requirements": 5,
+        "revision": 2,
+        "sha256": "eaf828db40cac3b256fee087fa4cb7730fcb4894c9300ce4a319433aec4d88ea"
+      },
+      {
+        "consumer_id": "qdl.crypto.reference-l2.stable",
+        "requirements": 90,
+        "revision": 6,
+        "sha256": "c9b165eae1af968e283d309db4b45d1f8527ab5367b9472fcf7440a6e49d0199"
+      },
+      {
+        "consumer_id": "trading-system.paper.stable",
+        "requirements": 61,
+        "revision": 10,
+        "sha256": "5ca9aff1960883f59827e3a34ed709f4c30cf5db96c4e1253dd6f1116fb20cdf"
+      }
+    ],
+    "execution_symbols": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "DOGE",
+      "BNB"
+    ],
+    "universe_is_daily_history_not_execution_streams": true,
+    "universe_members": 255,
+    "universe_venue_products": 510,
+    "venues": [
+      "BINANCE_USDM",
+      "OKX_SWAP"
+    ]
+  },
+  "sdk": {
+    "ack_after_application": true,
+    "fsync_disabled": false,
+    "max_pending": 64,
+    "version": "2.0.5",
+    "wheel_sha256": "a1a3af7d12188a70154a948f5bfa707135c1d674848e8dc892403eb2d2b14a88"
+  },
+  "sealed_runtime_bundle_sha256": "1b479ec288ed6ce87df770f3fd1615761fd80a3bdc5a8e076347aafa7002f9e2",
+  "source_components": {
+    "alpha_shared_source": "49587c34517c90d29368bd0f7c13c2f0bc978bdf",
+    "python_reader_bar": "4fe7e9298d32c207d7822d1e03df4986b9c35d9c",
+    "rust_runtime": "02cd8276d65d263944001ee8b3c88a916e1264cb",
+    "sdk": "3ccb8ee02ec1e6f33b67d7ccba49d04238eb5f37",
+    "trading_reader": "a9a92e53ad6250d788e52ebc7078802beaeb579f"
+  },
+  "status": "PASS",
+  "tests": {
+    "alpha_runtime_activated": false,
+    "alpha_source": 174,
+    "budget_release_metadata": 9,
+    "fast_two_query_reads": 132,
+    "final_reader_packaged": 245,
+    "reference_targeted_reads": 70,
+    "sdk_stream_release": 60
+  },
+  "ts_acceptance": {
+    "all_ts60_ready": true,
+    "end": "2026-09-27T10:40:58.117486+00:00",
+    "heartbeat_samples": 29,
+    "observer_exit": 0,
+    "runtime_after": [
+      {
+        "image": "sha256:7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea",
+        "name": "/market_data_service",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T10:33:34.046067587Z",
+        "status": "running"
+      },
+      {
+        "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+        "name": "/qdl_v2_stable_candidate-stream_kn_1-1",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T05:29:57.979641697Z",
+        "status": "running"
+      },
+      {
+        "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+        "name": "/qdl_v2_stable_candidate-stream_kn_2-1",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T05:29:58.009420278Z",
+        "status": "running"
+      }
+    ],
+    "runtime_before": [
+      {
+        "image": "sha256:7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea",
+        "name": "/market_data_service",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T10:33:34.046067587Z",
+        "status": "running"
+      },
+      {
+        "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+        "name": "/qdl_v2_stable_candidate-stream_kn_1-1",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T05:29:57.979641697Z",
+        "status": "running"
+      },
+      {
+        "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+        "name": "/qdl_v2_stable_candidate-stream_kn_2-1",
+        "oom": false,
+        "restart": 0,
+        "started": "2026-09-27T05:29:58.009420278Z",
+        "status": "running"
+      }
+    ],
+    "scope": "actual TS60, no order action; Redis observer read-only",
+    "start": "2026-09-27T10:35:48.318330+00:00"
+  }
+}

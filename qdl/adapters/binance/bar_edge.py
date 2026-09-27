@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
-from qdl.adapters.intervals import canonical_interval_ms, latest_closed_boundary_ms
+from qdl.adapters.intervals import BarHistoryGapError, canonical_interval_ms, latest_closed_boundary_ms
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -194,7 +194,15 @@ def fetch_closed_bar_history_raw_envelopes(
     fetcher: Callable = fetch_klines,
     sleep: Callable[[float], None] = time.sleep,
     test_provenance: bool = False,
+    allow_short: bool = False,
 ) -> tuple[raw_provider_pb2.RawProviderEnvelope, ...]:
+    """Walk back ``limit`` closed bars page by page.
+
+    ``allow_short`` (KN-4 D47-3): a page with fewer closed rows than asked is
+    accepted as the venue's first bars only when one more row older than it
+    does not exist (a new listing); the shorter, still contiguous window is
+    returned and the caller reports it. Otherwise a short page stays an error.
+    """
     if limit < 1 or limit > _MAX_HISTORY_ROWS:
         raise ValueError(
             f"Binance history limit must be between 1 and {_MAX_HISTORY_ROWS}"
@@ -228,11 +236,17 @@ def fetch_closed_bar_history_raw_envelopes(
             observed_ms=observed_ms,
             interval_ms=interval_ms,
         )
+        exhausted = False
         if len(closed) != page_limit:
-            raise RuntimeError(
-                "Binance closed-bar history page is incomplete "
-                f"requested={page_limit} observed={len(closed)}"
-            )
+            if not (allow_short and len(closed) < page_limit and _provider_exhausted_before(
+                binding, closed, page_end_ms=page_end_ms, observed_ms=observed_ms, interval_ms=interval_ms,
+                attempts=attempts, fetcher=fetcher, sleep=sleep,
+            )):
+                raise RuntimeError(
+                    "Binance closed-bar history page is incomplete "
+                    f"requested={page_limit} observed={len(closed)}"
+                )
+            exhausted = True
         if any(int(row[6]) > page_end_ms for row in closed):
             raise RuntimeError(
                 "Binance closed-bar history page exceeds requested end boundary"
@@ -245,6 +259,8 @@ def fetch_closed_bar_history_raw_envelopes(
                     "Binance history pages conflict for one open time"
                 )
             selected_by_open[open_time] = row
+        if exhausted or not closed:
+            break
         earliest_open_ms = min(int(row[0]) for row in closed)
         next_page_end_ms = earliest_open_ms - 1
         if next_page_end_ms >= page_end_ms:
@@ -255,13 +271,14 @@ def fetch_closed_bar_history_raw_envelopes(
         remaining -= page_limit
 
     selected = tuple(selected_by_open[key] for key in sorted(selected_by_open))
-    if len(selected) != limit:
+    if len(selected) != limit and not (allow_short and len(selected) < limit):
         raise RuntimeError(
             f"Binance closed-bar history is incomplete requested={limit} observed={len(selected)}"
         )
     opens = [int(row[0]) for row in selected]
-    if any(current - previous != interval_ms for previous, current in zip(opens, opens[1:])):
-        raise RuntimeError("Binance closed-bar history contains a time gap")
+    for previous, current in zip(opens, opens[1:]):
+        if current - previous != interval_ms:
+            raise BarHistoryGapError("Binance", binding.native_symbol, binding.interval, previous, current)
     received_at_ns = time.time_ns()
     return tuple(
         _capture_row(
@@ -273,6 +290,28 @@ def fetch_closed_bar_history_raw_envelopes(
         )
         for index, row in enumerate(selected)
     )
+
+
+def _provider_exhausted_before(
+    binding: BinanceBarRawBinding,
+    closed: tuple,
+    *,
+    page_end_ms: int,
+    observed_ms: int,
+    interval_ms: int,
+    attempts: int,
+    fetcher: Callable,
+    sleep: Callable[[float], None],
+) -> bool:
+    """True when no closed bar exists before this page (the venue's first bars)."""
+
+    before_ms = (min(int(row[0]) for row in closed) if closed else page_end_ms + 1) - 1
+    older = _closed_rows(
+        _fetch_rows(binding, end_time_ms=before_ms, limit=1, attempts=attempts, fetcher=fetcher, sleep=sleep),
+        observed_ms=observed_ms,
+        interval_ms=interval_ms,
+    )
+    return not [row for row in older if int(row[6]) <= before_ms]
 
 
 def fetch_settled_closed_bar_raw_envelope(

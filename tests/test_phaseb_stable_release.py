@@ -317,7 +317,7 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         )
         generated = build_openapi()
         self.assertEqual(package["project"]["version"], "2.0.0")
-        self.assertEqual(qdl_sdk.__version__, "2.0.3")
+        self.assertEqual(qdl_sdk.__version__, "2.0.5")
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         # ``reference:batch`` is a governed V2 public path in the checked-in
@@ -327,7 +327,10 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         # identity fence so a future generator collision cannot look harmless.
         self.assertEqual(len(generated["paths"]), 11)
         schemas = generated["components"]["schemas"]
-        self.assertEqual(len(schemas), 68)
+        # KN adds refusal diagnostics and explicit retained-window coverage.
+        self.assertEqual(len(schemas), 71)
+        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage"):
+            self.assertIn(name, schemas)
         self.assertNotIn("StalePolicy", schemas)
         self.assertIn("qdl__query__contracts__StalePolicy", schemas)
         self.assertIn("qdl_sdk__models__StalePolicy", schemas)

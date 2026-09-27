@@ -25,3 +25,14 @@ STABLE_SPOOL_LATE_BACKFILL_HEADROOM = 2_064
 STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW = (
     STABLE_SPOOL_PUBLIC_PARTITION_WINDOW + STABLE_SPOOL_LATE_BACKFILL_HEADROOM
 )
+
+# `/v2/data-quality/gaps` is an operational diagnostic over retained canonical
+# tails, not a normal consumer read.  These bounds deliberately favor a typed
+# incomplete result over competing with hot reads or retaining a catalog in
+# memory.  A page is smaller than the maximum accepted spool event batch and
+# the scanner releases it before moving to the next page/binding.
+STABLE_GAP_DIAGNOSTIC_PAGE_ROWS = 4
+STABLE_GAP_DIAGNOSTIC_MAX_PAGE_PAYLOAD_BYTES = 8 * 1024 * 1024
+STABLE_GAP_DIAGNOSTIC_MAX_RESULTS = 2_048
+STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS = STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
+STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS = 5_000

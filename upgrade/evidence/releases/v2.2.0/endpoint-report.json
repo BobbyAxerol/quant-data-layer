@@ -1,0 +1,2228 @@
+{
+  "age_caveat": "Quiet source timestamps can repeat. Age is not transport delay or proof of execution eligibility. BAR uses close time; p99 unavailable below100 samples.",
+  "cold_history_samples": [
+    {
+      "continuous": true,
+      "ms": 3188.501,
+      "native_symbol": "BNB-USDT-SWAP",
+      "returned": 2500,
+      "rows": 2500,
+      "venue": "OKX",
+      "window": "STEADY"
+    },
+    {
+      "continuous": true,
+      "ms": 5144.257,
+      "native_symbol": "BNBUSDT",
+      "returned": 2500,
+      "rows": 2500,
+      "venue": "BINANCE",
+      "window": "STEADY"
+    },
+    {
+      "continuous": true,
+      "ms": 4837.645,
+      "native_symbol": "BNB-USDT-SWAP",
+      "returned": 5000,
+      "rows": 5000,
+      "venue": "OKX",
+      "window": "STEADY"
+    },
+    {
+      "continuous": true,
+      "ms": 6956.188,
+      "native_symbol": "BNBUSDT",
+      "returned": 5000,
+      "rows": 5000,
+      "venue": "BINANCE",
+      "window": "STEADY"
+    }
+  ],
+  "evidence_sha256": {
+    "candidate-bundle.json": "3fa2403743224a85e3f3769872d50478505bcc9461f15c6e0141b3c4431743c7",
+    "final-load-resource-summary.json": "bddbed2898452de60a876014c6303fa607f89e4242347eea0ddb6d51ef804e15",
+    "final-production50-replacement/gates.json": "72760a8a7da9fefda54d52c15ef5e9516205b18484577914d0f20fca5441f6b3",
+    "final-production50-replacement/receipt.json": "75ea19fe69d695f8aa56e7608c37235bc801e2124dfef67f8fed93c0388ca871",
+    "full-capacity.json": "ea682b78580480303e4582da70237aa2e7cfd770810e26cf735722ffca8b9a70",
+    "paired-rollback-return.json": "628e21941f3595e41aeeb063b7337a8974376368c96b94ed2de7eb860b01b3e3",
+    "production-coverage.json": "31ce5a3a12cc0239d5547562256b04121f1ea0512de2b53cab942205efd3834d",
+    "production-reference.json": "e47654ebe2ec51c2fe31d7b7e38c378793b22a1a5f47434e1ce8d49e22636a65",
+    "sdk205-controlled-reconnect.json": "903de3aae2f6fa18a08a6b454f30c687d868b4c614b50909b9c74cbf811bfdaa",
+    "sdk205-fast-matrix/receipt.json": "64a039260a9ed91d0e7872f1fc17176b5bc2067a895b3f747be3d4bfff942c8c",
+    "sdk205-release-acceptance/cache.json": "a1acdb21047062722d0a05ceeb7c7f9dfd330b69309ae6bd16a19492edfa52c2",
+    "sdk205-release-acceptance/reader-diagnostics.json": "6b7db0c7442bcf88e50b6240ec023f60838a74d5ad2ac5ccb43aed57139ee99a",
+    "sdk205-release-acceptance/receipt.json": "3a4eb40d32f18820d331b2075f8462acbeb35461751950362e4b0f6195847fd5",
+    "sdk205-release-acceptance/summary.json": "583de9aec4711cfbd10f28daf2fe1c34d317efce32f5605701855c60247f298e",
+    "sdk205-shutdown-acceptance/cursor-fsync-summary.json": "426dfd49a7084df664fd04b39470045a17173446435a9da2e11e12be2a3b6f6b"
+  },
+  "external_ts_cache_get": {
+    "BINANCE/BNBUSDT/BAR": {
+      "max_ms": 0.329,
+      "n": 5,
+      "p50_ms": 0.21,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BNBUSDT/BOOK_DELTA": {
+      "max_ms": 0.662,
+      "n": 474,
+      "p50_ms": 0.213,
+      "p95_ms": 0.337,
+      "p99_ms": 0.412
+    },
+    "BINANCE/BNBUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 0.556,
+      "n": 10,
+      "p50_ms": 0.276,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BNBUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 0.947,
+      "n": 291,
+      "p50_ms": 0.227,
+      "p95_ms": 0.364,
+      "p99_ms": 0.776
+    },
+    "BINANCE/BNBUSDT/QUOTE": {
+      "max_ms": 3.671,
+      "n": 908,
+      "p50_ms": 0.211,
+      "p95_ms": 0.337,
+      "p99_ms": 0.565
+    },
+    "BINANCE/BNBUSDT/TRADE": {
+      "max_ms": 3.067,
+      "n": 438,
+      "p50_ms": 0.21,
+      "p95_ms": 0.332,
+      "p99_ms": 0.459
+    },
+    "BINANCE/BTCUSDT/BAR": {
+      "max_ms": 0.268,
+      "n": 5,
+      "p50_ms": 0.259,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BTCUSDT/BOOK_DELTA": {
+      "max_ms": 1.542,
+      "n": 476,
+      "p50_ms": 0.229,
+      "p95_ms": 0.335,
+      "p99_ms": 0.82
+    },
+    "BINANCE/BTCUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 0.562,
+      "n": 10,
+      "p50_ms": 0.259,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BTCUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 0.658,
+      "n": 292,
+      "p50_ms": 0.233,
+      "p95_ms": 0.358,
+      "p99_ms": 0.567
+    },
+    "BINANCE/BTCUSDT/QUOTE": {
+      "max_ms": 0.83,
+      "n": 952,
+      "p50_ms": 0.214,
+      "p95_ms": 0.333,
+      "p99_ms": 0.465
+    },
+    "BINANCE/BTCUSDT/TRADE": {
+      "max_ms": 1.483,
+      "n": 711,
+      "p50_ms": 0.209,
+      "p95_ms": 0.341,
+      "p99_ms": 0.46
+    },
+    "BINANCE/DOGEUSDT/BAR": {
+      "max_ms": 0.438,
+      "n": 5,
+      "p50_ms": 0.234,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/DOGEUSDT/BOOK_DELTA": {
+      "max_ms": 0.719,
+      "n": 470,
+      "p50_ms": 0.216,
+      "p95_ms": 0.332,
+      "p99_ms": 0.447
+    },
+    "BINANCE/DOGEUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 0.364,
+      "n": 10,
+      "p50_ms": 0.283,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/DOGEUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 3.024,
+      "n": 291,
+      "p50_ms": 0.232,
+      "p95_ms": 0.369,
+      "p99_ms": 0.905
+    },
+    "BINANCE/DOGEUSDT/QUOTE": {
+      "max_ms": 1.845,
+      "n": 956,
+      "p50_ms": 0.21,
+      "p95_ms": 0.322,
+      "p99_ms": 0.526
+    },
+    "BINANCE/DOGEUSDT/TRADE": {
+      "max_ms": 0.679,
+      "n": 491,
+      "p50_ms": 0.214,
+      "p95_ms": 0.352,
+      "p99_ms": 0.46
+    },
+    "BINANCE/ETHUSDT/BAR": {
+      "max_ms": 0.282,
+      "n": 5,
+      "p50_ms": 0.258,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/ETHUSDT/BOOK_DELTA": {
+      "max_ms": 2.506,
+      "n": 475,
+      "p50_ms": 0.223,
+      "p95_ms": 0.384,
+      "p99_ms": 0.554
+    },
+    "BINANCE/ETHUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 0.463,
+      "n": 10,
+      "p50_ms": 0.302,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/ETHUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 0.982,
+      "n": 292,
+      "p50_ms": 0.24,
+      "p95_ms": 0.357,
+      "p99_ms": 0.674
+    },
+    "BINANCE/ETHUSDT/QUOTE": {
+      "max_ms": 2.013,
+      "n": 981,
+      "p50_ms": 0.215,
+      "p95_ms": 0.351,
+      "p99_ms": 0.603
+    },
+    "BINANCE/ETHUSDT/TRADE": {
+      "max_ms": 1.83,
+      "n": 637,
+      "p50_ms": 0.216,
+      "p95_ms": 0.354,
+      "p99_ms": 0.523
+    },
+    "BINANCE/SOLUSDT/BAR": {
+      "max_ms": 0.245,
+      "n": 5,
+      "p50_ms": 0.229,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/SOLUSDT/BOOK_DELTA": {
+      "max_ms": 0.78,
+      "n": 476,
+      "p50_ms": 0.217,
+      "p95_ms": 0.338,
+      "p99_ms": 0.444
+    },
+    "BINANCE/SOLUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 0.372,
+      "n": 10,
+      "p50_ms": 0.261,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/SOLUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 0.762,
+      "n": 291,
+      "p50_ms": 0.235,
+      "p95_ms": 0.367,
+      "p99_ms": 0.503
+    },
+    "BINANCE/SOLUSDT/QUOTE": {
+      "max_ms": 1.481,
+      "n": 975,
+      "p50_ms": 0.21,
+      "p95_ms": 0.334,
+      "p99_ms": 0.438
+    },
+    "BINANCE/SOLUSDT/TRADE": {
+      "max_ms": 1.394,
+      "n": 716,
+      "p50_ms": 0.216,
+      "p95_ms": 0.343,
+      "p99_ms": 0.445
+    },
+    "OKX/BNB-USDT-SWAP/BAR": {
+      "max_ms": 0.26,
+      "n": 5,
+      "p50_ms": 0.211,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BNB-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1.388,
+      "n": 433,
+      "p50_ms": 0.211,
+      "p95_ms": 0.328,
+      "p99_ms": 0.535
+    },
+    "OKX/BNB-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1.607,
+      "n": 10,
+      "p50_ms": 0.269,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BNB-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 1.202,
+      "n": 292,
+      "p50_ms": 0.24,
+      "p95_ms": 0.402,
+      "p99_ms": 0.9
+    },
+    "OKX/BNB-USDT-SWAP/QUOTE": {
+      "max_ms": 0.774,
+      "n": 789,
+      "p50_ms": 0.212,
+      "p95_ms": 0.33,
+      "p99_ms": 0.487
+    },
+    "OKX/BNB-USDT-SWAP/TRADE": {
+      "max_ms": 0.634,
+      "n": 92,
+      "p50_ms": 0.205,
+      "p95_ms": 0.301,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/BAR": {
+      "max_ms": 0.321,
+      "n": 5,
+      "p50_ms": 0.204,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1.502,
+      "n": 472,
+      "p50_ms": 0.22,
+      "p95_ms": 0.348,
+      "p99_ms": 0.482
+    },
+    "OKX/BTC-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1.387,
+      "n": 10,
+      "p50_ms": 0.32,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 0.731,
+      "n": 291,
+      "p50_ms": 0.234,
+      "p95_ms": 0.342,
+      "p99_ms": 0.472
+    },
+    "OKX/BTC-USDT-SWAP/QUOTE": {
+      "max_ms": 0.851,
+      "n": 970,
+      "p50_ms": 0.217,
+      "p95_ms": 0.338,
+      "p99_ms": 0.463
+    },
+    "OKX/BTC-USDT-SWAP/TRADE": {
+      "max_ms": 1.699,
+      "n": 635,
+      "p50_ms": 0.211,
+      "p95_ms": 0.329,
+      "p99_ms": 0.651
+    },
+    "OKX/DOGE-USDT-SWAP/BAR": {
+      "max_ms": 0.389,
+      "n": 5,
+      "p50_ms": 0.199,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/DOGE-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1.696,
+      "n": 470,
+      "p50_ms": 0.207,
+      "p95_ms": 0.344,
+      "p99_ms": 0.567
+    },
+    "OKX/DOGE-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 0.558,
+      "n": 10,
+      "p50_ms": 0.235,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/DOGE-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 3.514,
+      "n": 291,
+      "p50_ms": 0.236,
+      "p95_ms": 0.364,
+      "p99_ms": 0.494
+    },
+    "OKX/DOGE-USDT-SWAP/QUOTE": {
+      "max_ms": 1.34,
+      "n": 939,
+      "p50_ms": 0.213,
+      "p95_ms": 0.328,
+      "p99_ms": 0.447
+    },
+    "OKX/DOGE-USDT-SWAP/TRADE": {
+      "max_ms": 1.473,
+      "n": 372,
+      "p50_ms": 0.211,
+      "p95_ms": 0.344,
+      "p99_ms": 0.729
+    },
+    "OKX/ETH-USDT-SWAP/BAR": {
+      "max_ms": 0.3,
+      "n": 5,
+      "p50_ms": 0.282,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/ETH-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 2.231,
+      "n": 472,
+      "p50_ms": 0.213,
+      "p95_ms": 0.332,
+      "p99_ms": 0.615
+    },
+    "OKX/ETH-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 0.59,
+      "n": 10,
+      "p50_ms": 0.269,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/ETH-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 1.137,
+      "n": 292,
+      "p50_ms": 0.238,
+      "p95_ms": 0.385,
+      "p99_ms": 0.701
+    },
+    "OKX/ETH-USDT-SWAP/QUOTE": {
+      "max_ms": 1.454,
+      "n": 955,
+      "p50_ms": 0.211,
+      "p95_ms": 0.337,
+      "p99_ms": 0.462
+    },
+    "OKX/ETH-USDT-SWAP/TRADE": {
+      "max_ms": 1.635,
+      "n": 615,
+      "p50_ms": 0.213,
+      "p95_ms": 0.34,
+      "p99_ms": 0.521
+    },
+    "OKX/SOL-USDT-SWAP/BAR": {
+      "max_ms": 0.279,
+      "n": 5,
+      "p50_ms": 0.234,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/SOL-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1.925,
+      "n": 471,
+      "p50_ms": 0.216,
+      "p95_ms": 0.347,
+      "p99_ms": 0.628
+    },
+    "OKX/SOL-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 0.449,
+      "n": 10,
+      "p50_ms": 0.283,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/SOL-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 1.313,
+      "n": 291,
+      "p50_ms": 0.239,
+      "p95_ms": 0.351,
+      "p99_ms": 0.67
+    },
+    "OKX/SOL-USDT-SWAP/QUOTE": {
+      "max_ms": 1.248,
+      "n": 955,
+      "p50_ms": 0.208,
+      "p95_ms": 0.33,
+      "p99_ms": 0.448
+    },
+    "OKX/SOL-USDT-SWAP/TRADE": {
+      "max_ms": 0.769,
+      "n": 643,
+      "p50_ms": 0.209,
+      "p95_ms": 0.318,
+      "p99_ms": 0.452
+    }
+  },
+  "grpc_methods": [
+    "GetSnapshot",
+    "Subscribe",
+    "Replay",
+    "GetFeedStatus"
+  ],
+  "health_and_cursor": {
+    "cursor": {
+      "delta": {
+        "acknowledged": 29995,
+        "commits": 7805,
+        "errors": 0,
+        "io_seconds": 117.74174810037948
+      },
+      "max_batch_ms_since_start": 406.2049819622189,
+      "mean_batch_ms": 15.085425765583533,
+      "pending_end": 0,
+      "pending_max_sampled": 17,
+      "pending_peak_since_start": 28
+    },
+    "errors": {},
+    "groups": 60,
+    "loop_probe": {
+      "max_ms": 4.961793078109622,
+      "n": 29,
+      "p50_ms": 1.0778079740703106,
+      "p95_ms": 2.511420985683799,
+      "p99_ms": null,
+      "period_seconds": 10,
+      "scope": "timer wakeup delay at 10s sampling, not all callback stall distribution"
+    },
+    "seconds": 300.00084915198386,
+    "stream": {
+      "qdl_v2_stable_candidate-stream_kn_1-1": {
+        "closures": [],
+        "delta": {
+          "cpu_seconds": 20.660000000000082,
+          "delivered": 82522,
+          "overflow": 0,
+          "replayed": 0,
+          "subscriptions_opened": 0
+        },
+        "queue_end_bytes": 0,
+        "queue_max_bytes": 167390,
+        "rss_first": 318238720,
+        "rss_last": 318238720,
+        "samples": 31
+      },
+      "qdl_v2_stable_candidate-stream_kn_2-1": {
+        "closures": [],
+        "delta": {
+          "cpu_seconds": 12.289999999999964,
+          "delivered": 0,
+          "overflow": 0,
+          "replayed": 0,
+          "subscriptions_opened": 0
+        },
+        "queue_end_bytes": 0,
+        "queue_max_bytes": 0,
+        "rss_first": 131649536,
+        "rss_last": 131649536,
+        "samples": 31
+      }
+    },
+    "worst_get_p99_ms": 0.905
+  },
+  "http_contract_paths": [
+    "/v2/data-quality/gaps",
+    "/v2/feeds/{instrument_uid}/status",
+    "/v2/instruments",
+    "/v2/instruments/{identity}",
+    "/v2/market-data/reference:batch",
+    "/v2/market-data/warmup:batch",
+    "/v2/market-data/{instrument_uid}/history",
+    "/v2/market-data/{instrument_uid}/snapshot",
+    "/v2/market-data/{instrument_uid}/warmup",
+    "/v2/system/readiness",
+    "/v2/system/readiness:check"
+  ],
+  "request_boundary": "consumer SDK call to decoded validated usable response; inherited production load50",
+  "request_latency": [
+    {
+      "count": 55,
+      "gate": "latency:BAR_LATEST:BINANCE",
+      "max": 48.435,
+      "p50": 15.314,
+      "p95": 29.554,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 1000,
+      "target_p99": 2000
+    },
+    {
+      "count": 55,
+      "gate": "latency:BAR_LATEST:OKX",
+      "max": 65.489,
+      "p50": 18.583,
+      "p95": 36.151,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 1000,
+      "target_p99": 2000
+    },
+    {
+      "count": 54,
+      "gate": "latency:L2_SNAPSHOT:BINANCE",
+      "max": 214.894,
+      "p50": 25.76,
+      "p95": 44.754,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 300,
+      "target_p99": 750
+    },
+    {
+      "count": 55,
+      "gate": "latency:L2_SNAPSHOT:OKX",
+      "max": 56.117,
+      "p50": 28.924,
+      "p95": 44.529,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 300,
+      "target_p99": 750
+    },
+    {
+      "count": 4125,
+      "gate": "latency:MARK_INDEX_REFERENCE:BINANCE",
+      "max": 417.91,
+      "p50": 11.068,
+      "p95": 23.259,
+      "p99": 39.685,
+      "rule": "p95 and p99",
+      "status": "PASS",
+      "target_p95": 250,
+      "target_p99": 500
+    },
+    {
+      "count": 4125,
+      "gate": "latency:MARK_INDEX_REFERENCE:OKX",
+      "max": 324.901,
+      "p50": 11.184,
+      "p95": 22.52,
+      "p99": 38.111,
+      "rule": "p95 and p99",
+      "status": "PASS",
+      "target_p95": 250,
+      "target_p99": 500
+    },
+    {
+      "count": 2750,
+      "gate": "latency:QUOTE_SNAPSHOT:BINANCE",
+      "max": 409.578,
+      "p50": 9.721,
+      "p95": 24.382,
+      "p99": 46.529,
+      "rule": "p95 and p99",
+      "status": "PASS",
+      "target_p95": 100,
+      "target_p99": 250
+    },
+    {
+      "count": 2750,
+      "gate": "latency:QUOTE_SNAPSHOT:OKX",
+      "max": 286.807,
+      "p50": 9.913,
+      "p95": 21.591,
+      "p99": 33.301,
+      "rule": "p95 and p99",
+      "status": "PASS",
+      "target_p95": 100,
+      "target_p99": 250
+    },
+    {
+      "count": 55,
+      "gate": "latency:TRADE_SNAPSHOT:BINANCE",
+      "max": 365.128,
+      "p50": 9.79,
+      "p95": 23.78,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 100,
+      "target_p99": 250
+    },
+    {
+      "count": 55,
+      "gate": "latency:TRADE_SNAPSHOT:OKX",
+      "max": 203.762,
+      "p50": 13.233,
+      "p95": 29.511,
+      "p99": null,
+      "rule": "p95; p99 reported only",
+      "status": "PASS",
+      "target_p95": 100,
+      "target_p99": 250
+    }
+  ],
+  "schema": "qdl.v220.endpoint-report.v1",
+  "source_event_age_at_ts_cache_read": {
+    "BINANCE/BNBUSDT/BAR": {
+      "max_ms": 1115.82,
+      "n": 5,
+      "p50_ms": 940.769,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BNBUSDT/BOOK_DELTA": {
+      "max_ms": 1582.459,
+      "n": 474,
+      "p50_ms": 466.57,
+      "p95_ms": 762.004,
+      "p99_ms": 1020.028
+    },
+    "BINANCE/BNBUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 1962.237,
+      "n": 10,
+      "p50_ms": 1196.027,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BNBUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 2273.542,
+      "n": 291,
+      "p50_ms": 1363.095,
+      "p95_ms": 1884.189,
+      "p99_ms": 2099.462
+    },
+    "BINANCE/BNBUSDT/QUOTE": {
+      "max_ms": 2360.254,
+      "n": 908,
+      "p50_ms": 561.667,
+      "p95_ms": 1088.363,
+      "p99_ms": 1472.159
+    },
+    "BINANCE/BNBUSDT/TRADE": {
+      "max_ms": 3164.923,
+      "n": 438,
+      "p50_ms": 471.675,
+      "p95_ms": 1205.201,
+      "p99_ms": 2615.499
+    },
+    "BINANCE/BTCUSDT/BAR": {
+      "max_ms": 986.146,
+      "n": 5,
+      "p50_ms": 768.204,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BTCUSDT/BOOK_DELTA": {
+      "max_ms": 1441.215,
+      "n": 476,
+      "p50_ms": 513.642,
+      "p95_ms": 879.845,
+      "p99_ms": 1123.938
+    },
+    "BINANCE/BTCUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 1711.872,
+      "n": 10,
+      "p50_ms": 1253.888,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/BTCUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 2652.791,
+      "n": 292,
+      "p50_ms": 1266.078,
+      "p95_ms": 1850.801,
+      "p99_ms": 2043.174
+    },
+    "BINANCE/BTCUSDT/QUOTE": {
+      "max_ms": 2042.957,
+      "n": 952,
+      "p50_ms": 560.483,
+      "p95_ms": 1012.899,
+      "p99_ms": 1326.336
+    },
+    "BINANCE/BTCUSDT/TRADE": {
+      "max_ms": 3084.447,
+      "n": 711,
+      "p50_ms": 448.316,
+      "p95_ms": 1146.287,
+      "p99_ms": 2435.385
+    },
+    "BINANCE/DOGEUSDT/BAR": {
+      "max_ms": 2835.083,
+      "n": 5,
+      "p50_ms": 1116.105,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/DOGEUSDT/BOOK_DELTA": {
+      "max_ms": 1677.527,
+      "n": 470,
+      "p50_ms": 508.658,
+      "p95_ms": 850.101,
+      "p99_ms": 1073.132
+    },
+    "BINANCE/DOGEUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 1894.039,
+      "n": 10,
+      "p50_ms": 1455.812,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/DOGEUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 2132.625,
+      "n": 291,
+      "p50_ms": 1354.824,
+      "p95_ms": 1826.152,
+      "p99_ms": 2061.877
+    },
+    "BINANCE/DOGEUSDT/QUOTE": {
+      "max_ms": 1559.658,
+      "n": 956,
+      "p50_ms": 557.163,
+      "p95_ms": 984.975,
+      "p99_ms": 1337.09
+    },
+    "BINANCE/DOGEUSDT/TRADE": {
+      "max_ms": 6183.94,
+      "n": 491,
+      "p50_ms": 458.922,
+      "p95_ms": 1394.0,
+      "p99_ms": 1930.592
+    },
+    "BINANCE/ETHUSDT/BAR": {
+      "max_ms": 934.826,
+      "n": 5,
+      "p50_ms": 641.826,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/ETHUSDT/BOOK_DELTA": {
+      "max_ms": 1740.209,
+      "n": 475,
+      "p50_ms": 514.379,
+      "p95_ms": 872.494,
+      "p99_ms": 1153.7
+    },
+    "BINANCE/ETHUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 1784.193,
+      "n": 10,
+      "p50_ms": 1218.862,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/ETHUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 2122.164,
+      "n": 292,
+      "p50_ms": 1284.658,
+      "p95_ms": 1875.85,
+      "p99_ms": 2050.371
+    },
+    "BINANCE/ETHUSDT/QUOTE": {
+      "max_ms": 1811.557,
+      "n": 981,
+      "p50_ms": 524.329,
+      "p95_ms": 879.649,
+      "p99_ms": 1193.24
+    },
+    "BINANCE/ETHUSDT/TRADE": {
+      "max_ms": 4249.956,
+      "n": 637,
+      "p50_ms": 463.465,
+      "p95_ms": 1199.536,
+      "p99_ms": 2474.492
+    },
+    "BINANCE/SOLUSDT/BAR": {
+      "max_ms": 994.403,
+      "n": 5,
+      "p50_ms": 379.979,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/SOLUSDT/BOOK_DELTA": {
+      "max_ms": 1776.523,
+      "n": 476,
+      "p50_ms": 510.197,
+      "p95_ms": 853.546,
+      "p99_ms": 1070.239
+    },
+    "BINANCE/SOLUSDT/BOOK_SNAPSHOT": {
+      "max_ms": 1816.288,
+      "n": 10,
+      "p50_ms": 1332.765,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "BINANCE/SOLUSDT/MARK_INDEX_PRICE": {
+      "max_ms": 2653.378,
+      "n": 291,
+      "p50_ms": 1252.127,
+      "p95_ms": 1783.511,
+      "p99_ms": 2207.538
+    },
+    "BINANCE/SOLUSDT/QUOTE": {
+      "max_ms": 1630.428,
+      "n": 975,
+      "p50_ms": 562.754,
+      "p95_ms": 996.253,
+      "p99_ms": 1410.046
+    },
+    "BINANCE/SOLUSDT/TRADE": {
+      "max_ms": 2703.555,
+      "n": 716,
+      "p50_ms": 405.807,
+      "p95_ms": 899.567,
+      "p99_ms": 1548.695
+    },
+    "OKX/BNB-USDT-SWAP/BAR": {
+      "max_ms": 1600.098,
+      "n": 5,
+      "p50_ms": 1116.36,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BNB-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1758.611,
+      "n": 433,
+      "p50_ms": 471.434,
+      "p95_ms": 854.507,
+      "p99_ms": 1142.369
+    },
+    "OKX/BNB-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 2011.981,
+      "n": 10,
+      "p50_ms": 1355.625,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BNB-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 2841.942,
+      "n": 292,
+      "p50_ms": 1212.016,
+      "p95_ms": 2120.097,
+      "p99_ms": 2515.592
+    },
+    "OKX/BNB-USDT-SWAP/QUOTE": {
+      "max_ms": 3652.433,
+      "n": 789,
+      "p50_ms": 546.273,
+      "p95_ms": 1651.568,
+      "p99_ms": 2657.635
+    },
+    "OKX/BNB-USDT-SWAP/TRADE": {
+      "max_ms": 47193.353,
+      "n": 92,
+      "p50_ms": 595.446,
+      "p95_ms": 10724.102,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/BAR": {
+      "max_ms": 1688.118,
+      "n": 5,
+      "p50_ms": 1253.226,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1591.746,
+      "n": 472,
+      "p50_ms": 462.37,
+      "p95_ms": 764.929,
+      "p99_ms": 1186.798
+    },
+    "OKX/BTC-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1789.689,
+      "n": 10,
+      "p50_ms": 1303.68,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/BTC-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 2745.096,
+      "n": 291,
+      "p50_ms": 1133.774,
+      "p95_ms": 1923.59,
+      "p99_ms": 2488.836
+    },
+    "OKX/BTC-USDT-SWAP/QUOTE": {
+      "max_ms": 2288.875,
+      "n": 970,
+      "p50_ms": 512.366,
+      "p95_ms": 955.271,
+      "p99_ms": 1235.891
+    },
+    "OKX/BTC-USDT-SWAP/TRADE": {
+      "max_ms": 1820.789,
+      "n": 635,
+      "p50_ms": 423.277,
+      "p95_ms": 1100.563,
+      "p99_ms": 1645.859
+    },
+    "OKX/DOGE-USDT-SWAP/BAR": {
+      "max_ms": 1252.428,
+      "n": 5,
+      "p50_ms": 933.639,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/DOGE-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1661.366,
+      "n": 470,
+      "p50_ms": 504.007,
+      "p95_ms": 830.684,
+      "p99_ms": 1096.782
+    },
+    "OKX/DOGE-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1843.133,
+      "n": 10,
+      "p50_ms": 1401.812,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/DOGE-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 4395.046,
+      "n": 291,
+      "p50_ms": 1264.364,
+      "p95_ms": 2345.426,
+      "p99_ms": 2827.228
+    },
+    "OKX/DOGE-USDT-SWAP/QUOTE": {
+      "max_ms": 1971.901,
+      "n": 939,
+      "p50_ms": 515.853,
+      "p95_ms": 927.195,
+      "p99_ms": 1233.471
+    },
+    "OKX/DOGE-USDT-SWAP/TRADE": {
+      "max_ms": 7517.044,
+      "n": 372,
+      "p50_ms": 453.266,
+      "p95_ms": 1301.074,
+      "p99_ms": 3059.129
+    },
+    "OKX/ETH-USDT-SWAP/BAR": {
+      "max_ms": 2071.106,
+      "n": 5,
+      "p50_ms": 1408.911,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/ETH-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1584.685,
+      "n": 472,
+      "p50_ms": 503.485,
+      "p95_ms": 838.134,
+      "p99_ms": 1047.998
+    },
+    "OKX/ETH-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1778.907,
+      "n": 10,
+      "p50_ms": 1468.359,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/ETH-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 2947.01,
+      "n": 292,
+      "p50_ms": 1125.059,
+      "p95_ms": 2030.346,
+      "p99_ms": 2583.183
+    },
+    "OKX/ETH-USDT-SWAP/QUOTE": {
+      "max_ms": 1750.083,
+      "n": 955,
+      "p50_ms": 572.57,
+      "p95_ms": 1012.544,
+      "p99_ms": 1292.836
+    },
+    "OKX/ETH-USDT-SWAP/TRADE": {
+      "max_ms": 2963.885,
+      "n": 615,
+      "p50_ms": 454.274,
+      "p95_ms": 1044.092,
+      "p99_ms": 1696.492
+    },
+    "OKX/SOL-USDT-SWAP/BAR": {
+      "max_ms": 1376.83,
+      "n": 5,
+      "p50_ms": 807.311,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/SOL-USDT-SWAP/BOOK_DELTA": {
+      "max_ms": 1492.323,
+      "n": 471,
+      "p50_ms": 505.801,
+      "p95_ms": 855.488,
+      "p99_ms": 1034.449
+    },
+    "OKX/SOL-USDT-SWAP/BOOK_SNAPSHOT": {
+      "max_ms": 1498.438,
+      "n": 10,
+      "p50_ms": 1319.245,
+      "p95_ms": null,
+      "p99_ms": null
+    },
+    "OKX/SOL-USDT-SWAP/MARK_INDEX_PRICE": {
+      "max_ms": 2488.487,
+      "n": 291,
+      "p50_ms": 1111.259,
+      "p95_ms": 1931.29,
+      "p99_ms": 2396.603
+    },
+    "OKX/SOL-USDT-SWAP/QUOTE": {
+      "max_ms": 1517.247,
+      "n": 955,
+      "p50_ms": 556.155,
+      "p95_ms": 986.206,
+      "p99_ms": 1216.442
+    },
+    "OKX/SOL-USDT-SWAP/TRADE": {
+      "max_ms": 1933.204,
+      "n": 643,
+      "p50_ms": 453.86,
+      "p95_ms": 856.982,
+      "p99_ms": 1327.071
+    }
+  },
+  "stream_delivery_inherited": [
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 886.363,
+        "n": 15,
+        "p50_ms": 379.69,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "BNBUSDT",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 2293.65,
+        "n": 15,
+        "p50_ms": 972.383,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.632,
+        "n": 15,
+        "p50_ms": 0.239,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 916.88,
+        "n": 256,
+        "p50_ms": 321.559,
+        "p95_ms": 571.123,
+        "p99_ms": 727.61
+      },
+      "interval": null,
+      "native_symbol": "BNBUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 943.236,
+        "n": 256,
+        "p50_ms": 348.407,
+        "p95_ms": 597.971,
+        "p99_ms": 754.18
+      },
+      "validation": {
+        "max_ms": 7.257,
+        "n": 256,
+        "p50_ms": 0.404,
+        "p95_ms": 1.901,
+        "p99_ms": 3.868
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 2690.811,
+        "n": 512,
+        "p50_ms": 419.815,
+        "p95_ms": 691.71,
+        "p99_ms": 874.409
+      },
+      "interval": null,
+      "native_symbol": "BNBUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 2717.596,
+        "n": 512,
+        "p50_ms": 447.008,
+        "p95_ms": 726.824,
+        "p99_ms": 901.249
+      },
+      "validation": {
+        "max_ms": 4.38,
+        "n": 512,
+        "p50_ms": 0.147,
+        "p95_ms": 0.319,
+        "p99_ms": 0.432
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1672.121,
+        "n": 512,
+        "p50_ms": 433.76,
+        "p95_ms": 1192.545,
+        "p99_ms": 1643.82
+      },
+      "interval": null,
+      "native_symbol": "BNBUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1938.097,
+        "n": 512,
+        "p50_ms": 463.125,
+        "p95_ms": 1565.389,
+        "p99_ms": 1910.468
+      },
+      "validation": {
+        "max_ms": 1.014,
+        "n": 512,
+        "p50_ms": 0.13,
+        "p95_ms": 0.264,
+        "p99_ms": 0.345
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 717.618,
+        "n": 15,
+        "p50_ms": 378.566,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "BTCUSDT",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 2265.623,
+        "n": 15,
+        "p50_ms": 777.391,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.339,
+        "n": 15,
+        "p50_ms": 0.252,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1115.268,
+        "n": 256,
+        "p50_ms": 384.677,
+        "p95_ms": 635.484,
+        "p99_ms": 924.339
+      },
+      "interval": null,
+      "native_symbol": "BTCUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1166.757,
+        "n": 256,
+        "p50_ms": 411.073,
+        "p95_ms": 668.248,
+        "p99_ms": 950.65
+      },
+      "validation": {
+        "max_ms": 30.115,
+        "n": 256,
+        "p50_ms": 1.328,
+        "p95_ms": 4.539,
+        "p99_ms": 11.264
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1150.275,
+        "n": 512,
+        "p50_ms": 421.924,
+        "p95_ms": 687.861,
+        "p99_ms": 910.288
+      },
+      "interval": null,
+      "native_symbol": "BTCUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1177.562,
+        "n": 512,
+        "p50_ms": 449.669,
+        "p95_ms": 715.298,
+        "p99_ms": 937.099
+      },
+      "validation": {
+        "max_ms": 1.681,
+        "n": 512,
+        "p50_ms": 0.154,
+        "p95_ms": 0.319,
+        "p99_ms": 0.657
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1685.891,
+        "n": 512,
+        "p50_ms": 486.11,
+        "p95_ms": 1119.065,
+        "p99_ms": 1483.503
+      },
+      "interval": null,
+      "native_symbol": "BTCUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1967.136,
+        "n": 512,
+        "p50_ms": 524.997,
+        "p95_ms": 1214.058,
+        "p99_ms": 1814.848
+      },
+      "validation": {
+        "max_ms": 0.787,
+        "n": 512,
+        "p50_ms": 0.122,
+        "p95_ms": 0.221,
+        "p99_ms": 0.334
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 665.066,
+        "n": 15,
+        "p50_ms": 566.998,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "DOGEUSDT",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1998.908,
+        "n": 15,
+        "p50_ms": 1393.597,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.981,
+        "n": 15,
+        "p50_ms": 0.257,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 939.224,
+        "n": 256,
+        "p50_ms": 365.937,
+        "p95_ms": 686.199,
+        "p99_ms": 832.83
+      },
+      "interval": null,
+      "native_symbol": "DOGEUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 966.093,
+        "n": 256,
+        "p50_ms": 392.232,
+        "p95_ms": 719.077,
+        "p99_ms": 859.138
+      },
+      "validation": {
+        "max_ms": 6.943,
+        "n": 256,
+        "p50_ms": 0.512,
+        "p95_ms": 1.263,
+        "p99_ms": 3.869
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1005.568,
+        "n": 512,
+        "p50_ms": 408.61,
+        "p95_ms": 697.526,
+        "p99_ms": 910.632
+      },
+      "interval": null,
+      "native_symbol": "DOGEUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1032.275,
+        "n": 512,
+        "p50_ms": 436.205,
+        "p95_ms": 734.352,
+        "p99_ms": 937.376
+      },
+      "validation": {
+        "max_ms": 1.07,
+        "n": 512,
+        "p50_ms": 0.15,
+        "p95_ms": 0.318,
+        "p99_ms": 0.639
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1246.12,
+        "n": 512,
+        "p50_ms": 489.062,
+        "p95_ms": 966.268,
+        "p99_ms": 1241.613
+      },
+      "interval": null,
+      "native_symbol": "DOGEUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1732.992,
+        "n": 512,
+        "p50_ms": 517.399,
+        "p95_ms": 1351.917,
+        "p99_ms": 1694.004
+      },
+      "validation": {
+        "max_ms": 0.623,
+        "n": 512,
+        "p50_ms": 0.124,
+        "p95_ms": 0.211,
+        "p99_ms": 0.348
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 479.595,
+        "n": 15,
+        "p50_ms": 333.926,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "ETHUSDT",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 990.384,
+        "n": 15,
+        "p50_ms": 920.684,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.366,
+        "n": 15,
+        "p50_ms": 0.233,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1186.359,
+        "n": 256,
+        "p50_ms": 383.621,
+        "p95_ms": 650.906,
+        "p99_ms": 1035.947
+      },
+      "interval": null,
+      "native_symbol": "ETHUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1213.174,
+        "n": 256,
+        "p50_ms": 411.373,
+        "p95_ms": 677.254,
+        "p99_ms": 1062.788
+      },
+      "validation": {
+        "max_ms": 28.948,
+        "n": 256,
+        "p50_ms": 1.014,
+        "p95_ms": 4.295,
+        "p99_ms": 23.217
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1100.137,
+        "n": 512,
+        "p50_ms": 350.711,
+        "p95_ms": 627.268,
+        "p99_ms": 776.545
+      },
+      "interval": null,
+      "native_symbol": "ETHUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1126.993,
+        "n": 512,
+        "p50_ms": 377.669,
+        "p95_ms": 659.207,
+        "p99_ms": 804.142
+      },
+      "validation": {
+        "max_ms": 0.934,
+        "n": 512,
+        "p50_ms": 0.155,
+        "p95_ms": 0.323,
+        "p99_ms": 0.4
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1705.266,
+        "n": 256,
+        "p50_ms": 458.106,
+        "p95_ms": 1153.119,
+        "p99_ms": 1679.949
+      },
+      "interval": null,
+      "native_symbol": "ETHUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 2078.379,
+        "n": 256,
+        "p50_ms": 494.124,
+        "p95_ms": 1563.618,
+        "p99_ms": 2027.378
+      },
+      "validation": {
+        "max_ms": 0.581,
+        "n": 256,
+        "p50_ms": 0.121,
+        "p95_ms": 0.221,
+        "p99_ms": 0.352
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 682.336,
+        "n": 15,
+        "p50_ms": 503.127,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "SOLUSDT",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 747.458,
+        "n": 15,
+        "p50_ms": 583.044,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.609,
+        "n": 15,
+        "p50_ms": 0.351,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 952.037,
+        "n": 256,
+        "p50_ms": 372.526,
+        "p95_ms": 669.185,
+        "p99_ms": 905.873
+      },
+      "interval": null,
+      "native_symbol": "SOLUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 978.384,
+        "n": 256,
+        "p50_ms": 399.192,
+        "p95_ms": 695.471,
+        "p99_ms": 932.133
+      },
+      "validation": {
+        "max_ms": 4.813,
+        "n": 256,
+        "p50_ms": 0.574,
+        "p95_ms": 1.715,
+        "p99_ms": 2.776
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1189.939,
+        "n": 512,
+        "p50_ms": 411.799,
+        "p95_ms": 721.529,
+        "p99_ms": 990.864
+      },
+      "interval": null,
+      "native_symbol": "SOLUSDT",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1217.764,
+        "n": 512,
+        "p50_ms": 439.263,
+        "p95_ms": 748.949,
+        "p99_ms": 1018.217
+      },
+      "validation": {
+        "max_ms": 1.297,
+        "n": 512,
+        "p50_ms": 0.145,
+        "p95_ms": 0.296,
+        "p99_ms": 0.468
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1044.126,
+        "n": 256,
+        "p50_ms": 374.595,
+        "p95_ms": 886.242,
+        "p99_ms": 1019.585
+      },
+      "interval": null,
+      "native_symbol": "SOLUSDT",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1433.896,
+        "n": 256,
+        "p50_ms": 403.412,
+        "p95_ms": 1305.739,
+        "p99_ms": 1411.629
+      },
+      "validation": {
+        "max_ms": 1.464,
+        "n": 256,
+        "p50_ms": 0.13,
+        "p95_ms": 0.32,
+        "p99_ms": 0.406
+      },
+      "venue": "BINANCE"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 549.747,
+        "n": 15,
+        "p50_ms": 439.159,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "BNB-USDT-SWAP",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1531.439,
+        "n": 15,
+        "p50_ms": 967.704,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.372,
+        "n": 15,
+        "p50_ms": 0.231,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1427.637,
+        "n": 256,
+        "p50_ms": 371.449,
+        "p95_ms": 716.529,
+        "p99_ms": 971.326
+      },
+      "interval": null,
+      "native_symbol": "BNB-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1458.497,
+        "n": 256,
+        "p50_ms": 404.376,
+        "p95_ms": 754.886,
+        "p99_ms": 1002.06
+      },
+      "validation": {
+        "max_ms": 2.449,
+        "n": 256,
+        "p50_ms": 0.265,
+        "p95_ms": 0.746,
+        "p99_ms": 1.55
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1091.914,
+        "n": 512,
+        "p50_ms": 412.413,
+        "p95_ms": 766.342,
+        "p99_ms": 1021.299
+      },
+      "interval": null,
+      "native_symbol": "BNB-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1118.928,
+        "n": 512,
+        "p50_ms": 445.003,
+        "p95_ms": 794.782,
+        "p99_ms": 1049.966
+      },
+      "validation": {
+        "max_ms": 4.443,
+        "n": 512,
+        "p50_ms": 0.162,
+        "p95_ms": 0.337,
+        "p99_ms": 0.923
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1062.231,
+        "n": 146,
+        "p50_ms": 355.913,
+        "p95_ms": 726.849,
+        "p99_ms": 1059.096
+      },
+      "interval": null,
+      "native_symbol": "BNB-USDT-SWAP",
+      "reservoir_samples": 146,
+      "source_or_close_to_usable": {
+        "max_ms": 1090.526,
+        "n": 146,
+        "p50_ms": 389.627,
+        "p95_ms": 832.984,
+        "p99_ms": 1087.39
+      },
+      "validation": {
+        "max_ms": 0.354,
+        "n": 146,
+        "p50_ms": 0.154,
+        "p95_ms": 0.314,
+        "p99_ms": 0.344
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 342.541,
+        "n": 15,
+        "p50_ms": 242.01,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "BTC-USDT-SWAP",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1699.656,
+        "n": 15,
+        "p50_ms": 924.07,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.328,
+        "n": 15,
+        "p50_ms": 0.233,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1124.615,
+        "n": 256,
+        "p50_ms": 340.088,
+        "p95_ms": 612.277,
+        "p99_ms": 866.728
+      },
+      "interval": null,
+      "native_symbol": "BTC-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1154.644,
+        "n": 256,
+        "p50_ms": 370.197,
+        "p95_ms": 641.543,
+        "p99_ms": 894.612
+      },
+      "validation": {
+        "max_ms": 5.617,
+        "n": 256,
+        "p50_ms": 0.623,
+        "p95_ms": 2.195,
+        "p99_ms": 4.168
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 992.306,
+        "n": 512,
+        "p50_ms": 343.052,
+        "p95_ms": 624.248,
+        "p99_ms": 801.528
+      },
+      "interval": null,
+      "native_symbol": "BTC-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1019.682,
+        "n": 512,
+        "p50_ms": 370.814,
+        "p95_ms": 651.23,
+        "p99_ms": 828.552
+      },
+      "validation": {
+        "max_ms": 0.719,
+        "n": 512,
+        "p50_ms": 0.151,
+        "p95_ms": 0.316,
+        "p99_ms": 0.395
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 996.657,
+        "n": 512,
+        "p50_ms": 352.242,
+        "p95_ms": 868.078,
+        "p99_ms": 990.025
+      },
+      "interval": null,
+      "native_symbol": "BTC-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1025.991,
+        "n": 512,
+        "p50_ms": 384.306,
+        "p95_ms": 897.564,
+        "p99_ms": 1019.102
+      },
+      "validation": {
+        "max_ms": 2.246,
+        "n": 512,
+        "p50_ms": 0.149,
+        "p95_ms": 0.343,
+        "p99_ms": 0.897
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 525.594,
+        "n": 15,
+        "p50_ms": 357.041,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1702.043,
+        "n": 15,
+        "p50_ms": 1391.045,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.542,
+        "n": 15,
+        "p50_ms": 0.272,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1011.853,
+        "n": 256,
+        "p50_ms": 369.977,
+        "p95_ms": 644.625,
+        "p99_ms": 891.917
+      },
+      "interval": null,
+      "native_symbol": "DOGE-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1041.314,
+        "n": 256,
+        "p50_ms": 399.225,
+        "p95_ms": 675.398,
+        "p99_ms": 921.127
+      },
+      "validation": {
+        "max_ms": 5.052,
+        "n": 256,
+        "p50_ms": 0.452,
+        "p95_ms": 1.23,
+        "p99_ms": 2.816
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1104.039,
+        "n": 512,
+        "p50_ms": 356.197,
+        "p95_ms": 623.029,
+        "p99_ms": 862.573
+      },
+      "interval": null,
+      "native_symbol": "DOGE-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1136.294,
+        "n": 512,
+        "p50_ms": 383.412,
+        "p95_ms": 652.243,
+        "p99_ms": 890.047
+      },
+      "validation": {
+        "max_ms": 0.884,
+        "n": 512,
+        "p50_ms": 0.151,
+        "p95_ms": 0.296,
+        "p99_ms": 0.516
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 1106.751,
+        "n": 256,
+        "p50_ms": 399.51,
+        "p95_ms": 762.225,
+        "p99_ms": 1090.397
+      },
+      "interval": null,
+      "native_symbol": "DOGE-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1135.035,
+        "n": 256,
+        "p50_ms": 429.82,
+        "p95_ms": 872.295,
+        "p99_ms": 1119.675
+      },
+      "validation": {
+        "max_ms": 1.791,
+        "n": 256,
+        "p50_ms": 0.162,
+        "p95_ms": 0.332,
+        "p99_ms": 0.456
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 569.225,
+        "n": 15,
+        "p50_ms": 402.804,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "ETH-USDT-SWAP",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1772.601,
+        "n": 15,
+        "p50_ms": 919.333,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.411,
+        "n": 15,
+        "p50_ms": 0.227,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1046.033,
+        "n": 256,
+        "p50_ms": 373.466,
+        "p95_ms": 651.687,
+        "p99_ms": 803.968
+      },
+      "interval": null,
+      "native_symbol": "ETH-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1074.231,
+        "n": 256,
+        "p50_ms": 403.05,
+        "p95_ms": 686.143,
+        "p99_ms": 832.45
+      },
+      "validation": {
+        "max_ms": 9.883,
+        "n": 256,
+        "p50_ms": 0.438,
+        "p95_ms": 3.03,
+        "p99_ms": 8.497
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1085.639,
+        "n": 512,
+        "p50_ms": 386.486,
+        "p95_ms": 656.876,
+        "p99_ms": 833.013
+      },
+      "interval": null,
+      "native_symbol": "ETH-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1112.627,
+        "n": 512,
+        "p50_ms": 413.95,
+        "p95_ms": 686.173,
+        "p99_ms": 860.442
+      },
+      "validation": {
+        "max_ms": 0.657,
+        "n": 512,
+        "p50_ms": 0.142,
+        "p95_ms": 0.31,
+        "p99_ms": 0.401
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 930.771,
+        "n": 256,
+        "p50_ms": 429.902,
+        "p95_ms": 895.316,
+        "p99_ms": 928.444
+      },
+      "interval": null,
+      "native_symbol": "ETH-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 959.47,
+        "n": 256,
+        "p50_ms": 474.534,
+        "p95_ms": 923.939,
+        "p99_ms": 957.123
+      },
+      "validation": {
+        "max_ms": 0.699,
+        "n": 256,
+        "p50_ms": 0.142,
+        "p95_ms": 0.311,
+        "p99_ms": 0.469
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BAR",
+      "host_receive_to_usable": {
+        "max_ms": 510.267,
+        "n": 15,
+        "p50_ms": 429.683,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "interval": "1m",
+      "native_symbol": "SOL-USDT-SWAP",
+      "reservoir_samples": 15,
+      "source_or_close_to_usable": {
+        "max_ms": 1686.633,
+        "n": 15,
+        "p50_ms": 1403.837,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "validation": {
+        "max_ms": 0.597,
+        "n": 15,
+        "p50_ms": 0.253,
+        "p95_ms": null,
+        "p99_ms": null
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "BOOK_DELTA",
+      "host_receive_to_usable": {
+        "max_ms": 1105.478,
+        "n": 256,
+        "p50_ms": 378.439,
+        "p95_ms": 657.843,
+        "p99_ms": 957.269
+      },
+      "interval": null,
+      "native_symbol": "SOL-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1135.147,
+        "n": 256,
+        "p50_ms": 407.257,
+        "p95_ms": 687.546,
+        "p99_ms": 986.84
+      },
+      "validation": {
+        "max_ms": 3.517,
+        "n": 256,
+        "p50_ms": 0.419,
+        "p95_ms": 1.818,
+        "p99_ms": 2.726
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "QUOTE",
+      "host_receive_to_usable": {
+        "max_ms": 1180.083,
+        "n": 512,
+        "p50_ms": 387.905,
+        "p95_ms": 674.064,
+        "p99_ms": 880.113
+      },
+      "interval": null,
+      "native_symbol": "SOL-USDT-SWAP",
+      "reservoir_samples": 512,
+      "source_or_close_to_usable": {
+        "max_ms": 1207.308,
+        "n": 512,
+        "p50_ms": 415.662,
+        "p95_ms": 701.509,
+        "p99_ms": 907.051
+      },
+      "validation": {
+        "max_ms": 0.857,
+        "n": 512,
+        "p50_ms": 0.146,
+        "p95_ms": 0.292,
+        "p99_ms": 0.39
+      },
+      "venue": "OKX"
+    },
+    {
+      "feed": "TRADE",
+      "host_receive_to_usable": {
+        "max_ms": 999.535,
+        "n": 256,
+        "p50_ms": 384.534,
+        "p95_ms": 754.573,
+        "p99_ms": 901.832
+      },
+      "interval": null,
+      "native_symbol": "SOL-USDT-SWAP",
+      "reservoir_samples": 256,
+      "source_or_close_to_usable": {
+        "max_ms": 1035.597,
+        "n": 256,
+        "p50_ms": 413.161,
+        "p95_ms": 870.061,
+        "p99_ms": 930.793
+      },
+      "validation": {
+        "max_ms": 2.458,
+        "n": 256,
+        "p50_ms": 0.169,
+        "p95_ms": 0.359,
+        "p99_ms": 0.473
+      },
+      "venue": "OKX"
+    }
+  ],
+  "unit": "milliseconds"
+}

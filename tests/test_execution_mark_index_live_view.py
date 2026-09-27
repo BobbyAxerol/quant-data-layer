@@ -14,6 +14,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from dataclasses import replace
+
+from qdl.query.lanes import ReadLaneRejected
 from pathlib import Path
 
 import httpx
@@ -171,35 +175,31 @@ def _envelope(
     envelope.canonical_payload_hash = hashlib.sha256(
         envelope.mark_index_price.SerializeToString(deterministic=True)
     ).digest()
+    # Every retained MARK/INDEX event carries Rust pair lineage (D35): both
+    # components confirmed at `received_at_ns`, source values 1 ms earlier.
+    source_ms = (received_at_ns - 1_000_000) // 1_000_000
+    _apply_pair_lineage(
+        envelope,
+        tag=f"{binding.instrument.instrument_uid}:{sequence}:{generation}",
+        source_times=(source_ms, source_ms),
+        mark_received_at_ns=received_at_ns,
+        index_received_at_ns=received_at_ns,
+    )
     return envelope
 
 
-def _paired_envelope(
-    binding: StableSourceBinding,
+def _apply_pair_lineage(
+    envelope: market_data_pb2.EventEnvelope,
     *,
-    sequence: int,
-    generation: int = 1,
+    tag: str,
+    source_times: tuple[int, int],
     mark_received_at_ns: int,
     index_received_at_ns: int,
-) -> market_data_pb2.EventEnvelope:
-    """Build deterministic Rust-shaped pair lineage for quiet-contract tests."""
+) -> None:
+    """Rust-shaped pair lineage (``qdl-realtime-core`` pair emission)."""
 
-    envelope = _envelope(
-        binding,
-        sequence=sequence,
-        generation=generation,
-        received_at_ns=min(mark_received_at_ns, index_received_at_ns),
-    )
-    mark_capture = hashlib.sha256(
-        f"mark:{binding.instrument.instrument_uid}:{sequence}".encode()
-    ).digest()[:16]
-    index_capture = hashlib.sha256(
-        f"index:{binding.instrument.instrument_uid}:{sequence}".encode()
-    ).digest()[:16]
-    source_times = (
-        mark_received_at_ns // 1_000_000,
-        index_received_at_ns // 1_000_000,
-    )
+    mark_capture = hashlib.sha256(f"mark:{tag}".encode()).digest()[:16]
+    index_capture = hashlib.sha256(f"index:{tag}".encode()).digest()[:16]
     envelope.source_event_time_ns = min(source_times) * 1_000_000
     envelope.received_at_ns = min(mark_received_at_ns, index_received_at_ns)
     envelope.normalized_at_ns = envelope.received_at_ns + 1
@@ -222,6 +222,34 @@ def _paired_envelope(
     envelope.raw_payload_hash = hashlib.sha256(
         b"paired-mark-index-test" + mark_capture + index_capture
     ).digest()
+
+
+def _paired_envelope(
+    binding: StableSourceBinding,
+    *,
+    sequence: int,
+    generation: int = 1,
+    mark_received_at_ns: int,
+    index_received_at_ns: int,
+) -> market_data_pb2.EventEnvelope:
+    """Build deterministic Rust-shaped pair lineage for quiet-contract tests."""
+
+    envelope = _envelope(
+        binding,
+        sequence=sequence,
+        generation=generation,
+        received_at_ns=min(mark_received_at_ns, index_received_at_ns),
+    )
+    _apply_pair_lineage(
+        envelope,
+        tag=f"{binding.instrument.instrument_uid}:{sequence}",
+        source_times=(
+            mark_received_at_ns // 1_000_000,
+            index_received_at_ns // 1_000_000,
+        ),
+        mark_received_at_ns=mark_received_at_ns,
+        index_received_at_ns=index_received_at_ns,
+    )
     return envelope
 
 
@@ -658,6 +686,83 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.record.delivery_stage, "SPOOL_CONFIRMED")
         self.assertEqual(result.record.spool_watermark_offset, 44)
+
+    async def test_a_corrupt_durable_row_is_a_typed_hydration_failure(self):
+        """D35 (1): an undecodable spool payload is refused as ValueError, not
+        a NameError from an unimported exception class."""
+        stored = _hydration_stored(self.binding, _envelope(self.binding, sequence=21), offset=46)
+        stored = replace(stored, event=replace(stored.event, payload=b"\xff\xff\xff"))
+
+        class _Spool:
+            def read_tail(self, *, stream, partition_key, limit):
+                return [stored]
+
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+        with self.assertRaisesRegex(ValueError, "hydration canonical payload is invalid"):
+            await view.hydrate_from_spool(spool=_Spool(), canonical_stream=STREAM, gateway_epoch=9)
+
+    async def test_the_strict_read_never_retains_a_pair_without_its_lineage(self):
+        """D35 (2, 3): the strict (BLOCK) path retained MARK/INDEX without
+        checking the Rust pair lineage; it now refuses a broken sequence, a
+        wrong capture digest, a zero component time and envelope clocks that
+        are not the components' oldest."""
+        view = ExecutionMarkIndexLiveView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        )
+
+        def broken_sequence(envelope):
+            envelope.source_sequence = f"test:4:{envelope.partition_sequence}"
+
+        def wrong_capture(envelope):
+            envelope.raw_capture_id = b"\x00" * 16
+
+        def zero_component_time(envelope):
+            fields = envelope.source_sequence.split(":")
+            fields[1] = "0"
+            envelope.source_sequence = ":".join(fields)
+
+        def newest_confirmation(envelope):
+            fields = envelope.source_sequence.split(":")
+            fields[3] = str(int(fields[2]) + 5_000_000)
+            envelope.source_sequence = ":".join(fields)
+            envelope.received_at_ns = int(fields[3])
+
+        def newest_source_value(envelope):
+            envelope.source_event_time_ns += 1_000_000
+
+        for sequence, damage in enumerate(
+            (broken_sequence, wrong_capture, zero_component_time, newest_confirmation, newest_source_value),
+            start=31,
+        ):
+            with self.subTest(damage=damage.__name__):
+                envelope = _envelope(self.binding, sequence=sequence, generation=4)
+                damage(envelope)
+                with self.assertRaisesRegex(ValueError, "MARK_INDEX"):
+                    await view.remember(binding=self.binding, envelope=envelope, stored=None, gateway_epoch=9)
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual((result.record, result.reason), (None, "NOT_READY"))
+        good = _envelope(self.binding, sequence=40, generation=4)
+        await view.remember(binding=self.binding, envelope=good, stored=None, gateway_epoch=9)
+        result = await view.read(
+            instrument_uid=self.record.instrument_uid,
+            instrument_revision=self.record.metadata_revision,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=2_000,
+            gateway_epoch=9,
+            now_ns=NOW_NS + 500_000_000,
+        )
+        self.assertEqual(result.record.event_id, bytes(good.event_id))
 
     async def test_durable_hydration_preserves_gap_and_identity_fences(self):
         gap = _envelope(
@@ -1274,7 +1379,18 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             deadline_ms=deadline_ms,
         )
 
-    async def test_execution_uses_live_view_but_alpha_reference_keeps_existing_adapter(self):
+    def _alpha_requirement(self) -> ReferenceDataRequirement:
+        return ReferenceDataRequirement(
+            instrument_uid=self.record.instrument_uid,
+            product=ReferenceProduct.MARK_INDEX_PRICE,
+            consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_liquid_v2",
+            max_freshness_ms=60_000,
+        )
+
+    async def test_execution_and_alpha_read_the_live_view_not_the_venue(self):
+        # v2.1.1 stage 50: alpha REST reads of OKX MARK/INDEX exceeded the
+        # venue bucket and reached p50 420 ms; the ingested view serves both.
         live = _LiveReader()
         service = V2QueryService(**self.common, execution_mark_index_reader=live)
         execution = await service.reference_data_batch_async(
@@ -1282,21 +1398,23 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_EXECUTION,
         )
         self.assertFalse(execution.partial)
-        self.assertEqual(live.calls, 1)
-        self.assertEqual(self.fallback.calls, 0)
         self.assertEqual(
             execution.results[0].result.lineage[0].provider_endpoint, LIVE_ENDPOINT
         )
-
-        alpha_requirement = ReferenceDataRequirement(
-            instrument_uid=self.record.instrument_uid,
-            product=ReferenceProduct.MARK_INDEX_PRICE,
-            consumer_grade=ConsumerGrade.ALPHA,
-            source_policy_id="crypto_liquid_v2",
-            max_freshness_ms=2_000,
-        )
         alpha = await service.reference_data_batch_async(
-            ReferenceBatchRequirement("alpha-reader", (alpha_requirement,)),
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(alpha.partial)
+        self.assertEqual(live.calls, 2)
+        self.assertEqual(self.fallback.calls, 0)
+        self.assertEqual(alpha.results[0].result.lineage[0].provider_endpoint, LIVE_ENDPOINT)
+
+    async def test_alpha_falls_back_to_the_venue_when_the_view_cannot_serve(self):
+        live = _LiveReader(status=ReferenceStatus.ERROR)
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+        alpha = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
             purpose=AccessPurpose.INTERNAL_ALPHA,
         )
         self.assertFalse(alpha.partial)
@@ -1306,6 +1424,21 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             alpha.results[0].result.lineage[0].provider_endpoint,
             "TEST_REFERENCE_REST_ADAPTER",
         )
+
+    async def test_alpha_falls_back_when_the_hot_lane_refuses(self):
+        live = _LiveReader()
+        service = V2QueryService(**self.common, execution_mark_index_reader=live)
+
+        async def refused(**_kwargs):
+            raise ReadLaneRejected("read lane consumer is at its finite pending bound")
+
+        service._fetch_execution_mark_index_hot = refused
+        alpha = await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertFalse(alpha.partial)
+        self.assertEqual(self.fallback.calls, 1)
 
     async def test_execution_live_view_stale_is_typed_and_never_falls_back_to_rest(self):
         live = _LiveReader(status=ReferenceStatus.ERROR)
@@ -1466,3 +1599,91 @@ class ExecutionMarkIndexQueryRoutingTests(unittest.IsolatedAsyncioTestCase):
             set(live.calls_by_policy),
             {("policy-a", 2_000, 2_000), ("policy-b", 1_500, 1_500)},
         )
+
+
+class LocalAlphaMarkIndexReaderTests(unittest.IsolatedAsyncioTestCase):
+    """Alpha reads served in-process from the Query replica's own spool.
+
+    v2.1.1 stage 35 (2026-09-23): serving alpha reads through the stream
+    gateway added HTTP work to the single writer process, and a market burst
+    then left it 46 s behind. The same view and endpoint now run in Query.
+    """
+
+    def setUp(self) -> None:
+        from qdl.reference.local_mark_index import SpoolRefreshingMarkIndexView
+        self.record = _record(venue="OKX", market="SWAP", native_symbol="BTC-USDT-SWAP", base="BTC")
+        self.binding = _binding(self.record)
+        test = self
+
+        class _Spool:
+            def __init__(self):
+                self.rows = []
+                self.calls = []
+
+            def read_tail(self, *, stream, partition_key, limit):
+                self.calls.append((stream, partition_key, limit))
+                return self.rows[-limit:]
+
+        self.spool = _Spool()
+        self.view = SpoolRefreshingMarkIndexView(
+            frozenset({self.record.instrument_uid}),
+            bindings={self.record.instrument_uid: self.binding},
+        ).attach(spool=self.spool, canonical_stream=STREAM)
+        del test
+
+    def _request(self):
+        return ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE, mark_index_kind=MarkIndexKind.BOTH)
+
+    async def test_reads_the_latest_spooled_record_through_the_unchanged_endpoint(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        first = _envelope(self.binding, sequence=1, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, first, offset=10))
+        reader = reader_for_view(self.view)
+        result = await reader.fetch(self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        self.assertEqual({field.name for field in result.observations[0].fields}, {"mark_price", "index_price"})
+        self.assertEqual(self.spool.calls[-1], (STREAM, self.binding.partition_key, 1))
+        newer = _envelope(self.binding, sequence=2, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, newer, offset=11))
+        await reader.fetch(self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        current = self.view._records[self.record.instrument_uid]
+        self.assertEqual(current.spool_watermark_offset, 11)
+
+    async def test_alpha_reads_use_the_alphas_freshness_not_the_execution_bound(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        envelope = _envelope(self.binding, sequence=1, generation=2)
+        self.spool.rows.append(_hydration_stored(self.binding, envelope, offset=10))
+        record_age_ms = 5_000  # older than the binding's 2 s execution bound
+        with patch("qdl.runtime.execution_mark_index.time.time_ns",
+                   return_value=NOW_NS + record_age_ms * 1_000_000):
+            ok = await reader_for_view(self.view).fetch(
+                self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+            strict = await reader_for_view(self.view).fetch(
+                self._request(), max_freshness_ms=2_000, source_policy_id="crypto_liquid_v2")
+        self.assertEqual(ok.status, ReferenceStatus.OK)
+        self.assertNotEqual(strict.status, ReferenceStatus.OK)
+
+    async def test_an_empty_spool_is_typed_not_ready(self):
+        from qdl.reference.local_mark_index import reader_for_view
+        result = await reader_for_view(self.view).fetch(
+            self._request(), max_freshness_ms=60_000, source_policy_id="crypto_liquid_v2")
+        self.assertNotEqual(result.status, ReferenceStatus.OK)
+
+
+class AlphaReaderRoutingTests(ExecutionMarkIndexQueryRoutingTests):
+    async def test_alpha_uses_its_own_reader_and_execution_keeps_the_stream(self):
+        execution_reader, alpha_reader = _LiveReader(), _LiveReader()
+        service = V2QueryService(
+            **self.common, execution_mark_index_reader=execution_reader,
+            alpha_mark_index_reader=alpha_reader,
+        )
+        await service.reference_data_batch_async(
+            ReferenceBatchRequirement("execution-reader", (self._execution_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_EXECUTION,
+        )
+        await service.reference_data_batch_async(
+            ReferenceBatchRequirement("alpha-reader", (self._alpha_requirement(),)),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        self.assertEqual((execution_reader.calls, alpha_reader.calls), (1, 1))
+        self.assertEqual(self.fallback.calls, 0)

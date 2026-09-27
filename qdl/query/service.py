@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.data_quality.binding_decision import freshness_verdict
@@ -30,12 +32,15 @@ from qdl.query.contracts import (
     evaluate_requirement,
 )
 from qdl.query.lifecycle import BarLifecycle
+from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
     ReferenceBatchRequirement,
     ReferenceDataRequirement,
 )
 from qdl.query.results import (
+    GapRecord,
     HistoryResult,
     InstrumentPage,
     InstrumentQuery,
@@ -92,12 +97,14 @@ class QueryServiceError(RuntimeError):
         request_id: str,
         instrument_uid: str | None = None,
         quality_state: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(problem.detail)
         self.problem = problem
         self.request_id = request_id
         self.instrument_uid = instrument_uid
         self.quality_state = quality_state
+        self.diagnostics = diagnostics
 
 
 @dataclass(frozen=True)
@@ -179,8 +186,130 @@ class ReadinessResult:
     results: tuple[ReadinessItemResult, ...]
 
 
-class _LocalBatchAdmissionRejected(RuntimeError):
+_TS_RESERVED_CONSUMER_ID = "trading-system.paper.stable"
+_HOT_SNAPSHOT_RESERVED_BYTES = 16 * 1024
+_HOT_REFERENCE_RESERVED_BYTES = 16 * 1024
+_LOCAL_HISTORY_BYTES_PER_ROW = 1024
+_LOCAL_HISTORY_BASE_BYTES = 16 * 1024
+
+
+def _hot_snapshot_lane_policy() -> ReadLanePolicy:
+    """Finite latest/status capacity sized for the current TS hot slice set.
+
+    One identity may queue a fleet-sized burst (KN-4 K4.2). An alpha identity
+    fronts every session of its runtime (up to its manifest's 60 streams), and
+    those sessions read snapshots together at a bar close. With four queued
+    requests per identity the fifth concurrent read of one identity on a
+    replica was refused ``RATE_LIMITED`` although the lane was idle a moment
+    later (``Phase5ApiReplicaLoadTests``, first bad ``13b3594``). Queued reads
+    still run one at a time per identity (``max_active_per_consumer``), wait
+    at most their request deadline, stay inside 1 MiB of reservations, and
+    the Trading System keeps its active and pending reserves.
+    """
+
+    return ReadLanePolicy(
+        max_active=2,
+        max_pending=64,
+        max_pending_bytes=64 * _HOT_SNAPSHOT_RESERVED_BYTES,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=32,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=2,
+        reserved_max_pending_per_consumer=15,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
+def _hot_reference_lane_policy() -> ReadLanePolicy:
+    """Finite execution-reference capacity without changing provider quotas."""
+
+    return ReadLanePolicy(
+        max_active=4,
+        max_pending=32,
+        max_pending_bytes=1024 * 1024,
+        max_active_per_consumer=2,
+        max_pending_per_consumer=8,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=4,
+        reserved_max_pending_per_consumer=31,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
+class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
+
+
+_SMALL_LOCAL_WARMUP_ROWS = 2
+
+
+def _small_local_warmup_lane_policy() -> ReadLanePolicy:
+    """Finite lane for warmups of at most two rows, shaped like the hot lanes.
+
+    A stream handoff or latest-style warmup reads one or two rows through the
+    exact final-BAR index or a one-row tail - snapshot-sized work. In the
+    single-active local batch lane it waited behind 2,500/5,000-row warmups
+    that take seconds: on 2026-09-23 (v2.1.1 Phase-3 stage 20) alpha stream
+    handoffs were refused ``RATE_LIMITED`` and TS slices stayed unready while
+    alpha sessions warmed. Large warmups keep the single-active lane.
+    """
+
+    return ReadLanePolicy(
+        max_active=2,
+        max_pending=16,
+        max_pending_bytes=512 * 1024,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=4,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=1,
+        reserved_max_active_per_consumer=2,
+        reserved_max_pending_per_consumer=15,
+        reserved_pending_slots=1,
+        non_reserved_pending_slots=1,
+    )
+
+
+_QUEUED_LOCAL_BATCH_MAX_WAIT_MS = 8_000
+
+
+def _queued_local_batch_lane_policy() -> ReadLanePolicy:
+    """The single-active large-warmup lane with a bounded queue per identity.
+
+    The default admits one pending batch per consumer and refuses the next at
+    once. Many alpha sessions share one platform identity, so a fleet cold
+    start became immediate ``RATE_LIMITED`` refusals: on 2026-09-23 (v2.1.1
+    Phase-3) 5 of 35 and 13 of 50 sessions never started. Queuing keeps one
+    active materialization per replica - the memory bound - while each waiter
+    is still limited by its own request deadline and by 64 MiB of reserved
+    rows (about twelve 5,000-row warmups), with queue slots kept for TS.
+    """
+
+    return ReadLanePolicy(
+        max_active=1,
+        max_pending=16,
+        max_pending_bytes=64 * 1024 * 1024,
+        max_active_per_consumer=1,
+        max_pending_per_consumer=8,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_slots=0,
+        reserved_max_pending_per_consumer=8,
+        reserved_pending_slots=2,
+        non_reserved_pending_slots=1,
+    )
+
+
+def _is_small_local_warmup(requirement: DataRequirement) -> bool:
+    specification = requirement.warmup_specification
+    if specification is None:
+        return True
+    return (
+        specification.rows is not None
+        and specification.rows <= _SMALL_LOCAL_WARMUP_ROWS
+    )
 
 
 class _LocalBatchAdmission:
@@ -196,63 +325,94 @@ class _LocalBatchAdmission:
     declared work deadline; it is never provider pacing.
     """
 
-    def __init__(self, *, max_active: int = 1, max_pending: int = 5) -> None:
-        if max_active != 1:
-            raise ValueError("local canonical batch admission currently requires one active lane")
-        if max_pending < max_active:
-            raise ValueError("local canonical batch pending bound must include active work")
-        self._gate = asyncio.Semaphore(max_active)
-        self._lock = asyncio.Lock()
-        self._max_pending = max_pending
-        self._pending = 0
-        self._active = 0
-        self._admitted = 0
-        self._rejected = 0
-        self._queue_wait_timeouts = 0
+    def __init__(
+        self,
+        *,
+        max_active: int = 1,
+        max_pending: int = 5,
+        max_pending_bytes: int = 64 * 1024 * 1024,
+        reserved_consumer_id: str | None = _TS_RESERVED_CONSUMER_ID,
+        policy: ReadLanePolicy | None = None,
+    ) -> None:
+        if policy is None:
+            if max_active != 1:
+                raise ValueError("local canonical batch admission currently requires one active lane")
+            if max_pending < max_active:
+                raise ValueError("local canonical batch pending bound must include active work")
+            policy = ReadLanePolicy(
+                max_active=max_active,
+                max_pending=max_pending,
+                max_pending_bytes=max_pending_bytes,
+                max_active_per_consumer=1,
+                max_pending_per_consumer=1,
+                reserved_consumer_id=reserved_consumer_id,
+                reserved_slots=0,
+            )
+        self._lane = BoundedReadLane(policy)
+        self._anonymous_sequence = 0
 
-    async def run(self, work, *, wait_timeout_ms: int | None = None):
-        if wait_timeout_ms is not None and wait_timeout_ms < 1:
-            raise ValueError("local canonical batch admission wait must be positive")
-        async with self._lock:
-            if self._pending >= self._max_pending:
-                self._rejected += 1
-                raise _LocalBatchAdmissionRejected(
-                    "local canonical-cache batch admission is at capacity"
-                )
-            self._pending += 1
-        acquired = False
+    async def run(
+        self,
+        work,
+        *,
+        consumer_id: str | None = None,
+        reserved_bytes: int = _LOCAL_HISTORY_BASE_BYTES,
+        wait_timeout_ms: int | None = None,
+    ):
+        if consumer_id is None:
+            # Focused legacy callers did not carry an authenticated consumer
+            # identity. Preserve their old global-only behavior without
+            # weakening the real router path, which always supplies one.
+            self._anonymous_sequence += 1
+            consumer_id = f"qdl.v2.legacy.{self._anonymous_sequence}"
         try:
-            try:
-                if wait_timeout_ms is None:
-                    await self._gate.acquire()
-                else:
-                    await asyncio.wait_for(
-                        self._gate.acquire(), timeout=wait_timeout_ms / 1_000
-                    )
-            except asyncio.TimeoutError as error:
-                self._queue_wait_timeouts += 1
-                raise _LocalBatchAdmissionRejected(
-                    "local canonical-cache batch admission wait exceeded the declared deadline"
-                ) from error
-            acquired = True
-            self._active += 1
-            self._admitted += 1
-            return await work()
-        finally:
-            if acquired:
-                self._active -= 1
-                self._gate.release()
-            async with self._lock:
-                self._pending -= 1
+            return await self._lane.run(
+                work,
+                consumer_id=consumer_id,
+                reserved_bytes=reserved_bytes,
+                wait_timeout_ms=wait_timeout_ms,
+            )
+        except ReadLaneRejected as error:
+            raise _LocalBatchAdmissionRejected(
+                f"local canonical-cache batch admission {error}"
+            ) from error
 
     def stats(self) -> dict[str, int]:
-        return {
-            "active": self._active,
-            "pending": self._pending,
-            "admitted": self._admitted,
-            "rejected": self._rejected,
-            "queue_wait_timeouts": self._queue_wait_timeouts,
-        }
+        return self._lane.stats()
+
+
+
+class _QueryWorkPools:
+    """Small, explicit worker pools so cold reads cannot occupy hot threads."""
+
+    def __init__(self) -> None:
+        self._hot = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qdl-query-hot")
+        self._cold = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdl-query-cold")
+        self._diagnostic = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="qdl-query-diagnostic"
+        )
+        self._closed = False
+
+    # Every pool call holds its caller (and so the caller's admission permit)
+    # until the thread returns, also when the request is cancelled or times
+    # out; cold work is asked to stop at its next slice (KN-4 K4-T06).
+
+    async def hot(self, work: Callable, /, *args, **kwargs):
+        return await await_in_thread(self._hot, work, *args, **kwargs)
+
+    async def cold(self, work: Callable, /, *args, **kwargs):
+        # Cold threads run with a cooperative duty cycle (qdl.query.cold_work).
+        return await await_in_thread(self._cold, work, *args, cold=True, **kwargs)
+
+    async def diagnostic(self, work: Callable, /, *args, on_cancel=None, **kwargs):
+        return await await_in_thread(self._diagnostic, work, *args, on_cancel=on_cancel, **kwargs)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for pool in (self._hot, self._cold, self._diagnostic):
+            pool.shutdown(wait=False, cancel_futures=True)
 
 
 class V2QueryService:
@@ -269,6 +429,9 @@ class V2QueryService:
         reference_batch: ReferenceBatch | None = None,
         reference_source_id: Callable[[InstrumentRecord], str] | None = None,
         execution_mark_index_reader: ExecutionMarkIndexReader | None = None,
+        small_local_warmup_lane: bool = False,
+        queued_local_batch_lane: bool = False,
+        alpha_mark_index_reader: ExecutionMarkIndexReader | None = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -286,7 +449,24 @@ class V2QueryService:
         self.reference_batch = reference_batch
         self._reference_source_id = reference_source_id
         self.execution_mark_index_reader = execution_mark_index_reader
-        self._local_batch_admission = _LocalBatchAdmission()
+        # Alpha current MARK/INDEX reads; falls back to the execution reader.
+        self.alpha_mark_index_reader = alpha_mark_index_reader
+        # Opt-in: the stable runtime enables it; the default keeps every local
+        # warmup in the single-active lane.
+        self._small_local_warmup_lane = small_local_warmup_lane
+        self._queued_local_batch_lane = queued_local_batch_lane
+        self._local_batch_admission = (
+            _LocalBatchAdmission(policy=_queued_local_batch_lane_policy())
+            if queued_local_batch_lane
+            else _LocalBatchAdmission()
+        )
+        self._small_local_warmup_admission = _LocalBatchAdmission(
+            policy=_small_local_warmup_lane_policy()
+        )
+        self._hot_snapshot_admission = BoundedReadLane(_hot_snapshot_lane_policy())
+        self._hot_reference_admission = BoundedReadLane(_hot_reference_lane_policy())
+        self._query_work_pools = _QueryWorkPools()
+        self._gap_scan_task: asyncio.Task[tuple[GapRecord, ...]] | None = None
         self.last_batch_evidence: dict[str, object] = {}
         self.last_reference_batch_evidence: dict[str, object] = {}
 
@@ -328,6 +508,7 @@ class V2QueryService:
             CoverageStatus.FULL,
             request_id,
             authoritative=item.source.authoritative,
+            item=item,
         )
         return QueryResult(
             request_id,
@@ -335,6 +516,125 @@ class V2QueryService:
                 requirement, item, DataProduct.CANONICAL_SNAPSHOT
             ),
         )
+
+    def _hot_snapshot_admission_for(self) -> BoundedReadLane:
+        admission = getattr(self, "_hot_snapshot_admission", None)
+        if admission is None:
+            admission = BoundedReadLane(_hot_snapshot_lane_policy())
+            self._hot_snapshot_admission = admission
+        return admission
+
+    def _hot_reference_admission_for(self) -> BoundedReadLane:
+        admission = getattr(self, "_hot_reference_admission", None)
+        if admission is None:
+            admission = BoundedReadLane(_hot_reference_lane_policy())
+            self._hot_reference_admission = admission
+        return admission
+
+    def _query_work_pools_for(self) -> _QueryWorkPools:
+        pools = getattr(self, "_query_work_pools", None)
+        if pools is None:
+            pools = _QueryWorkPools()
+            self._query_work_pools = pools
+        return pools
+
+    @staticmethod
+    def _consume_detached_lane_task(task: asyncio.Task) -> None:
+        """Drain shielded work after its request owner has disconnected."""
+
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    @staticmethod
+    def _lane_error(
+        error: ReadLaneRejected,
+        *,
+        request_id: str,
+        instrument_uid: str | None = None,
+    ) -> QueryServiceError:
+        return QueryServiceError(
+            QueryProblem(CanonicalErrorCode.RATE_LIMITED, str(error), True),
+            request_id=request_id,
+            instrument_uid=instrument_uid,
+        )
+
+    async def snapshot_async(
+        self,
+        requirement: DataRequirement,
+        *,
+        purpose: AccessPurpose,
+        consumer_id: str,
+        request_id: str | None = None,
+    ) -> QueryResult:
+        """Serve a small latest view without borrowing cold/history workers."""
+
+        request_id = request_id or self.request_id()
+
+        async def execute() -> QueryResult:
+            return await self._query_work_pools_for().hot(
+                self.snapshot,
+                requirement,
+                purpose=purpose,
+                request_id=request_id,
+            )
+
+        task = asyncio.create_task(
+            self._hot_snapshot_admission_for().run(
+                execute,
+                consumer_id=consumer_id,
+                reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+            ),
+            name="qdl-v2-hot-snapshot",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._consume_detached_lane_task)
+            raise
+        except ReadLaneRejected as error:
+            raise self._lane_error(
+                error,
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+            ) from error
+
+    async def status_async(
+        self,
+        requirement: DataRequirement,
+        *,
+        consumer_id: str,
+        request_id: str | None = None,
+    ) -> QualityMetadata:
+        """Read current governed status on the same bounded hot cache lane."""
+
+        request_id = request_id or self.request_id()
+
+        async def execute() -> QualityMetadata:
+            return await self._query_work_pools_for().hot(self.status, requirement)
+
+        task = asyncio.create_task(
+            self._hot_snapshot_admission_for().run(
+                execute,
+                consumer_id=consumer_id,
+                reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+            ),
+            name="qdl-v2-hot-status",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._consume_detached_lane_task)
+            raise
+        except ReadLaneRejected as error:
+            raise self._lane_error(
+                error,
+                request_id=request_id,
+                instrument_uid=requirement.instrument_uid,
+            ) from error
 
     def warmup(
         self,
@@ -389,19 +689,16 @@ class V2QueryService:
             history.coverage,
             request_id,
             authoritative=history.items[-1].source.authoritative,
+            item=history.items[-1],
         )
-        return WarmupResult(
-            request_id,
-            replace(
-                history,
-                items=tuple(
-                    self._with_execution_eligibility(
-                        requirement, item, DataProduct.CANONICAL_HISTORY
-                    )
-                    for item in history.items
-                ),
-            ),
-        )
+        def eligible_items():
+            for item in history.items:
+                cold_yield()
+                yield self._with_execution_eligibility(
+                    requirement, item, DataProduct.CANONICAL_HISTORY
+                )
+
+        return WarmupResult(request_id, replace(history, items=tuple(eligible_items())))
 
     def warmup_batch(
         self,
@@ -426,9 +723,25 @@ class V2QueryService:
                 )
         return BatchQueryResult(request_id, tuple(results))
 
-    def _local_batch_admission_for(self) -> _LocalBatchAdmission:
-        """Lazily preserve compatibility for focused service test doubles."""
+    def _local_batch_admission_for(
+        self, requirements: tuple[DataRequirement, ...] = (),
+    ) -> _LocalBatchAdmission:
+        """The lane for one local batch; lazily built for focused test doubles.
 
+        With the small-warmup lane enabled, a batch whose every item needs at
+        most two rows uses it; anything larger keeps the single-active lane.
+        """
+
+        if (
+            getattr(self, "_small_local_warmup_lane", False)
+            and requirements
+            and all(_is_small_local_warmup(item) for item in requirements)
+        ):
+            admission = getattr(self, "_small_local_warmup_admission", None)
+            if admission is None:
+                admission = _LocalBatchAdmission(policy=_small_local_warmup_lane_policy())
+                self._small_local_warmup_admission = admission
+            return admission
         admission = getattr(self, "_local_batch_admission", None)
         if admission is None:
             admission = _LocalBatchAdmission()
@@ -456,13 +769,14 @@ class V2QueryService:
         requirement: DataRequirement,
         *,
         purpose: AccessPurpose,
+        consumer_id: str = "qdl.v2.single-warmup",
         request_id: str | None = None,
     ) -> WarmupResult:
         """Run one warmup through the same bounded policy as a batch item."""
         request_id = request_id or self.request_id()
         batch = await self.warmup_batch_async(
             BatchRequirement(
-                consumer_id="qdl.v2.single-warmup",
+                consumer_id=consumer_id,
                 requirements=(requirement,),
                 require_all=True,
             ),
@@ -541,6 +855,27 @@ class V2QueryService:
         local_history_lock = asyncio.Lock()
         local_histories_task = None
         prefetched_local_histories = None
+        local_reserved_bytes = self._local_history_reservation_bytes(local_requirements)
+
+        async def materialize_local_histories():
+            try:
+                return await self._local_batch_admission_for(local_requirements).run(
+                    lambda: self._query_work_pools_for().cold(
+                        history_many, local_requirements
+                    ),
+                    consumer_id=batch.consumer_id,
+                    reserved_bytes=local_reserved_bytes,
+                    wait_timeout_ms=local_admission_wait_ms,
+                )
+            except _LocalBatchAdmissionRejected as error:
+                return {
+                    requirement: self._lane_error(
+                        error,
+                        request_id=request_id,
+                        instrument_uid=requirement.instrument_uid,
+                    )
+                    for requirement in local_requirements
+                }
 
         async def local_history(requirement: DataRequirement):
             """Share one immutable local snapshot after an item is admitted."""
@@ -553,7 +888,8 @@ class V2QueryService:
             async with local_history_lock:
                 if local_histories_task is None:
                     local_histories_task = asyncio.create_task(
-                        asyncio.to_thread(history_many, local_requirements)
+                        materialize_local_histories(),
+                        name="qdl-v2-cold-local-history",
                     )
                 task = local_histories_task
             histories = await asyncio.shield(task)
@@ -568,13 +904,14 @@ class V2QueryService:
                     history = await local_history(requirement)
                     if isinstance(history, Exception):
                         raise history
-                    return self._warmup_from_history(
+                    return await self._query_work_pools_for().cold(
+                        self._warmup_from_history,
                         requirement,
                         history,
                         purpose=purpose,
                         request_id=request_id,
                     )
-                return await asyncio.to_thread(
+                return await self._query_work_pools_for().cold(
                     self.warmup,
                     requirement,
                     purpose=purpose,
@@ -613,6 +950,15 @@ class V2QueryService:
         local_admission_wait_ms = min(
             deadline(requirement) for requirement in local_requirements
         ) if local_requirements else None
+        if local_admission_wait_ms is not None and getattr(
+            self, "_queued_local_batch_lane", False
+        ):
+            # A queued large warmup must be refused while its client is still
+            # waiting: stage 20 (2026-09-23) saw 15 s client timeouts on queued
+            # 20 s waits, and the abandoned work then competed with hot reads.
+            local_admission_wait_ms = min(
+                local_admission_wait_ms, _QUEUED_LOCAL_BATCH_MAX_WAIT_MS
+            )
 
         def assemble_batch(executions) -> BatchQueryResult:
             results = []
@@ -692,7 +1038,7 @@ class V2QueryService:
                 ),
                 "local_batch_items": len(local_requirements),
                 "local_batch_admission": (
-                    self._local_batch_admission_for().stats()
+                    self._local_batch_admission_for(local_requirements).stats()
                     if local_requirements
                     else None
                 ),
@@ -705,12 +1051,12 @@ class V2QueryService:
             return await completion(assemble_batch(executions))
 
         if fully_local_batch:
-            admission = self._local_batch_admission_for()
+            admission = self._local_batch_admission_for(local_requirements)
 
             async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories
                 try:
-                    prefetched_local_histories = await asyncio.to_thread(
+                    prefetched_local_histories = await self._query_work_pools_for().cold(
                         history_many, local_requirements
                     )
                 except Exception as error:
@@ -722,6 +1068,8 @@ class V2QueryService:
             local_batch_task = asyncio.create_task(
                 admission.run(
                     execute_whole_local_batch,
+                    consumer_id=batch.consumer_id,
+                    reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
                 )
             )
@@ -764,6 +1112,32 @@ class V2QueryService:
             return {}
         return {str(key): int(value) for key, value in stats().items()}
 
+    @staticmethod
+    def _local_history_reservation_bytes(
+        requirements: tuple[DataRequirement, ...],
+    ) -> int:
+        """Reserve a conservative bounded response budget before cache decode.
+
+        A row limit is a consumer lookback cap, not a byte cap.  The admission
+        uses a deliberately conservative 1 KiB/row estimate, including an
+        envelope/decoded-object allowance, so a 50-item large batch cannot
+        build an unbounded in-process response queue.  This does not change
+        the actual provider/cache result or its public V2 shape.
+        """
+
+        rows = 0
+        for requirement in requirements:
+            specification = requirement.warmup_specification
+            if specification is None:
+                rows += 1
+            elif specification.rows is not None:
+                rows += specification.rows
+            else:
+                # Time-range requests are capped by the public endpoint but
+                # not expressed as a row count. Reserve the legal maximum.
+                rows += 10_000
+        return max(_LOCAL_HISTORY_BASE_BYTES, rows * _LOCAL_HISTORY_BYTES_PER_ROW)
+
     async def reference_data_batch_async(
         self,
         batch: ReferenceBatchRequirement,
@@ -799,6 +1173,7 @@ class V2QueryService:
             if self.execution_mark_index_reader is not None
             else {}
         )
+        hot_reference_before = self._hot_reference_admission_for().stats()
         results: list[ReferenceBatchItemResult | None] = [None] * len(batch.requirements)
         admitted: list[tuple[int, ReferenceDataRequirement, ReferenceRequest]] = []
         for index, requirement in enumerate(batch.requirements):
@@ -856,17 +1231,37 @@ class V2QueryService:
         ) -> ReferenceBatchResult:
             _index, requirement, request = candidate
             if self._uses_execution_mark_index_live_reader(requirement, request, purpose):
-                # This is deliberately not a provider retry/cache path. The
-                # active stream gateway either has one verified current view or
-                # query returns its typed fail-closed reason to the consumer.
-                result = await self.execution_mark_index_reader.fetch(
-                    request,
-                    max_freshness_ms=requirement.max_freshness_ms or 0,
-                    source_policy_id=requirement.source_policy_id,
-                    event_recency_policy=requirement.effective_event_recency_policy,
-                    max_session_liveness_ms=requirement.max_session_liveness_ms,
-                    deadline_ms=self._reference_deadline_ms(candidate, purpose),
-                )
+                # For execution this is deliberately not a provider retry/cache
+                # path: the active stream gateway either has one verified
+                # current view or query returns its typed fail-closed reason.
+                try:
+                    result = await self._fetch_execution_mark_index_hot(
+                        request=request,
+                        requirement=requirement,
+                        consumer_id=batch.consumer_id,
+                        deadline_ms=self._reference_deadline_ms(candidate, purpose),
+                    )
+                except ReadLaneRejected:
+                    if (
+                        self._is_execution_mark_index_read(requirement, purpose)
+                        or self.reference_batch is None
+                    ):
+                        raise
+                    result = None
+                if result is None:
+                    result = await self.reference_batch.fetch_one(
+                        request, bypass_cache=bypass_cache
+                    )
+                elif (
+                    result.status is not ReferenceStatus.OK
+                    and not self._is_execution_mark_index_read(requirement, purpose)
+                    and self.reference_batch is not None
+                ):
+                    # Alpha only: a view the stream cannot serve (handover,
+                    # quiet component) returns to the venue snapshot path.
+                    result = await self.reference_batch.fetch_one(
+                        request, bypass_cache=bypass_cache
+                    )
             else:
                 result = await self.reference_batch.fetch_one(
                     request, bypass_cache=bypass_cache
@@ -936,12 +1331,18 @@ class V2QueryService:
             index, requirement, request = execution.item
             if execution.error is not None:
                 retry_after_ms = getattr(execution.error, "retry_after_ms", None)
+                if isinstance(execution.error, ReadLaneRejected):
+                    code = CanonicalErrorCode.RATE_LIMITED
+                    detail = str(execution.error)
+                else:
+                    code = CanonicalErrorCode.SOURCE_UNAVAILABLE
+                    detail = "reference batch provider lane did not complete"
                 results[index] = ReferenceBatchItemResult(
                     requirement,
-                    CanonicalErrorCode.SOURCE_UNAVAILABLE.value,
+                    code.value,
                     problem=QueryProblem(
-                        CanonicalErrorCode.SOURCE_UNAVAILABLE,
-                        "reference batch provider lane did not complete",
+                        code,
+                        detail,
                         True,
                         retry_after_ms,
                     ),
@@ -972,6 +1373,7 @@ class V2QueryService:
             if self.execution_mark_index_reader is not None
             else {}
         )
+        hot_reference_after = self._hot_reference_admission_for().stats()
         self.last_reference_batch_evidence = {
             "request_id": request_id,
             "item_count": len(resolved),
@@ -991,6 +1393,19 @@ class V2QueryService:
                 - execution_live_before.get(key, 0)
                 for key in execution_live_after
             },
+            **{
+                f"hot_reference_{key}": hot_reference_after.get(key, 0)
+                - hot_reference_before.get(key, 0)
+                for key in hot_reference_after
+                if key
+                not in {
+                    "active",
+                    "pending",
+                    "pending_bytes",
+                    "active_reserved",
+                    "pending_reserved",
+                }
+            },
         }
         return ReferenceBatchQueryResult(request_id, resolved)
 
@@ -1000,13 +1415,44 @@ class V2QueryService:
         request: ReferenceRequest,
         purpose: AccessPurpose,
     ) -> bool:
-        return (
-            self.execution_mark_index_reader is not None
-            and purpose is AccessPurpose.INTERNAL_EXECUTION
+        if (
+            requirement.max_freshness_ms is None
+            or request.product is not ReferenceProduct.MARK_INDEX_PRICE
+            or request.is_history
+        ):
+            return False
+        if (
+            purpose is AccessPurpose.INTERNAL_EXECUTION
             and requirement.consumer_grade is ConsumerGrade.EXECUTION
-            and requirement.max_freshness_ms is not None
-            and request.product is ReferenceProduct.MARK_INDEX_PRICE
-            and not request.is_history
+        ):
+            return self.execution_mark_index_reader is not None
+        if self._alpha_mark_index_reader() is None:
+            return False
+        # Alpha reads of the current MARK/INDEX use the same verified live view
+        # of the ingested canonical record instead of a venue REST call. On
+        # 2026-09-23 (v2.1.1 Phase-3 stage 50) the REST path put OKX alpha
+        # reads at p50 420 ms: two replicas each refreshing five mark and five
+        # index ids every 0.75 s exceed OKX's market bucket (10/s), so provider
+        # admission deferred them. A view the stream cannot serve falls back to
+        # the REST path in ``work``, so alpha availability never gets worse.
+        return (
+            purpose is AccessPurpose.INTERNAL_ALPHA
+            and requirement.consumer_grade is ConsumerGrade.ALPHA
+        )
+
+    def _alpha_mark_index_reader(self) -> ExecutionMarkIndexReader | None:
+        return (
+            getattr(self, "alpha_mark_index_reader", None)
+            or self.execution_mark_index_reader
+        )
+
+    @staticmethod
+    def _is_execution_mark_index_read(
+        requirement: ReferenceDataRequirement, purpose: AccessPurpose
+    ) -> bool:
+        return (
+            purpose is AccessPurpose.INTERNAL_EXECUTION
+            and requirement.consumer_grade is ConsumerGrade.EXECUTION
         )
 
     def _reference_provider_lane(
@@ -1032,7 +1478,8 @@ class V2QueryService:
             # policy or deadline would make the result's admission ambiguous.
             return (
                 *request.cache_key,
-                "INTERNAL_EXECUTION",
+                purpose.value,
+                requirement.consumer_grade.value,
                 requirement.source_policy_id,
                 requirement.max_freshness_ms,
                 requirement.effective_event_recency_policy.value,
@@ -1051,6 +1498,40 @@ class V2QueryService:
             assert requirement.max_freshness_ms is not None
             return min(requirement.deadline_ms, requirement.max_freshness_ms)
         return requirement.deadline_ms
+
+    async def _fetch_execution_mark_index_hot(
+        self,
+        *,
+        request: ReferenceRequest,
+        requirement: ReferenceDataRequirement,
+        consumer_id: str,
+        deadline_ms: int,
+    ) -> ReferenceBatchResult:
+        """Read an execution view without competing with provider history work."""
+
+        reader = (
+            self.execution_mark_index_reader
+            if requirement.consumer_grade is ConsumerGrade.EXECUTION
+            else self._alpha_mark_index_reader()
+        )
+        assert reader is not None
+
+        async def fetch() -> ReferenceBatchResult:
+            return await reader.fetch(
+                request,
+                max_freshness_ms=requirement.max_freshness_ms or 0,
+                source_policy_id=requirement.source_policy_id,
+                event_recency_policy=requirement.effective_event_recency_policy,
+                max_session_liveness_ms=requirement.max_session_liveness_ms,
+                deadline_ms=deadline_ms,
+            )
+
+        return await self._hot_reference_admission_for().run(
+            fetch,
+            consumer_id=consumer_id,
+            reserved_bytes=_HOT_REFERENCE_RESERVED_BYTES,
+            wait_timeout_ms=deadline_ms,
+        )
 
     def _reference_snapshot_requires_refresh(
         self,
@@ -1323,8 +1804,72 @@ class V2QueryService:
             DataProduct.CANONICAL_SNAPSHOT,
         ).quality
 
-    def open_gaps(self):
-        return self.backend.open_gaps()
+    def open_gaps(self) -> tuple[GapRecord, ...]:
+        """Compatibility path for internal synchronous callers.
+
+        Production HTTP callers use :meth:`open_gaps_async`, which coalesces a
+        bounded scan.  Both paths select the bounded backend primitive when it
+        is available, so a direct caller cannot accidentally revive the old
+        catalog-wide retained-tail allocation pattern.
+        """
+
+        try:
+            scanner = getattr(self.backend, "open_gaps_bounded", None)
+            return scanner() if callable(scanner) else self.backend.open_gaps()
+        except QueryBackendError as error:
+            raise QueryServiceError(
+                error.problem,
+                request_id=self.request_id(),
+            ) from error
+
+    async def open_gaps_async(self) -> tuple[GapRecord, ...]:
+        """Coalesce one bounded global diagnostic scan per query service.
+
+        ``shield`` keeps an individual HTTP disconnect from cancelling the
+        shared task.  The worker itself owns a finite deadline and receives a
+        cooperative cancellation flag on application shutdown, so releasing a
+        waiting client never leaves an unbounded thread behind.
+        """
+
+        task = self._gap_scan_task
+        if task is None or task.done():
+            task = asyncio.create_task(
+                self._run_bounded_gap_scan(),
+                name="qdl-v2-bounded-gap-diagnostic",
+            )
+            self._gap_scan_task = task
+
+            def clear(completed: asyncio.Task[tuple[GapRecord, ...]]) -> None:
+                if self._gap_scan_task is completed:
+                    self._gap_scan_task = None
+
+            task.add_done_callback(clear)
+        try:
+            return await asyncio.shield(task)
+        except QueryBackendError as error:
+            raise QueryServiceError(
+                error.problem,
+                request_id=self.request_id(),
+            ) from error
+
+    async def _run_bounded_gap_scan(self) -> tuple[GapRecord, ...]:
+        cancelled = threading.Event()
+        try:
+            scanner = getattr(self.backend, "open_gaps_bounded", None)
+            if callable(scanner):
+                return await self._query_work_pools_for().diagnostic(
+                    scanner, cancelled=cancelled.is_set, on_cancel=cancelled.set
+                )
+            return await self._query_work_pools_for().diagnostic(self.backend.open_gaps)
+        finally:
+            cancelled.set()
+
+    async def close(self) -> None:
+        """Release only local Query worker pools during reader shutdown."""
+
+        pools = getattr(self, "_query_work_pools", None)
+        if pools is not None:
+            pools.close()
 
     def readiness(
         self,
@@ -1359,6 +1904,20 @@ class V2QueryService:
             results=tuple(results),
         )
 
+    async def readiness_async(
+        self,
+        batch: BatchRequirement,
+        *,
+        purpose: AccessPurpose,
+    ) -> ReadinessResult:
+        """Keep high-cardinality diagnostic work out of the default executor."""
+
+        return await self._query_work_pools_for().diagnostic(
+            self.readiness,
+            batch,
+            purpose=purpose,
+        )
+
     def _enforce(
         self,
         requirement: DataRequirement,
@@ -1370,6 +1929,7 @@ class V2QueryService:
         request_id: str,
         *,
         authoritative: bool,
+        item: MarketDataItem | None = None,
     ) -> None:
         if quality.policy_id != requirement.source_policy_id:
             raise QueryServiceError(
@@ -1417,7 +1977,30 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
                 quality_state=quality.state,
+                diagnostics=self._refusal_diagnostics(quality, source_id, item),
             )
+
+    def _refusal_diagnostics(
+        self, quality: QualityMetadata, source_id: str, item: MarketDataItem | None
+    ) -> dict[str, Any]:
+        """The quality this refusal was decided on, taken now (not re-read)."""
+
+        return {
+            "evaluated_at_ns": self._clock_ns(),
+            "state": quality.state,
+            "freshness_ms": quality.freshness_ms,
+            "event_recency_state": quality.event_recency_state,
+            "provider_session_state": quality.provider_session_state,
+            "provider_session_liveness_ms": quality.provider_session_liveness_ms,
+            "execution_eligible": quality.execution_eligible,
+            "gap_open": quality.gap_open,
+            "complete": quality.complete,
+            "reason_codes": list(quality.flags)[:32],
+            "source_id": source_id,
+            "watermark_offset": item.watermark_offset if item is not None else None,
+            "observed_at_ns": item.observed_at_ns if item is not None else None,
+            "received_at_ns": (item.received_at_ns or None) if item is not None else None,
+        }
 
     def _with_execution_eligibility(
         self,

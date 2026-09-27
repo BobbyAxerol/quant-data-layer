@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import tempfile
+import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
@@ -42,12 +46,53 @@ class MemoryCursorStore:
         self._items[key] = checkpoint
 
 
+async def _await_durable(awaitable):
+    """Drain accepted I/O even on repeated cancellation; never orphan a writer."""
+    task = asyncio.ensure_future(awaitable)
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancelled = True
+        except BaseException as error:
+            if cancelled:
+                raise asyncio.CancelledError() from error
+            raise
+    if cancelled:
+        raise asyncio.CancelledError()
+    return result
+
+
+@dataclass
+class _CursorWrite:
+    key: str
+    checkpoint: CursorCheckpoint
+    replace: bool
+    done: asyncio.Future
+
+
 class FileCursorStore:
     """Atomic single-process cursor store for research/paper consumers."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, max_pending: int = 64) -> None:
+        if not 1 <= max_pending <= 1024:
+            raise ValueError("cursor max_pending must be between 1 and 1024")
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._slots = asyncio.Semaphore(max_pending)
+        self._io_lock = asyncio.Lock()
+        self._queue: asyncio.Queue[_CursorWrite] = asyncio.Queue(max_pending)
+        self._worker: asyncio.Task | None = None
+        self._closed = False
+        self._last_report = time.monotonic()
+        self.metrics = {"pending": 0, "pending_peak": 0, "commits": 0,
+                        "acknowledged": 0, "errors": 0, "io_seconds": 0.0,
+                        "max_io_seconds": 0.0}
 
     def _read(self) -> dict[str, dict[str, str | int]]:
         if not self.path.exists():
@@ -58,22 +103,139 @@ class FileCursorStore:
         return payload["items"]
 
     def load(self, key: str) -> CursorCheckpoint | None:
-        value = self._read().get(key)
-        return CursorCheckpoint(**value) if value else None
+        with self._lock:
+            value = self._read().get(key)
+            return CursorCheckpoint(**value) if value else None
 
     def save(self, key: str, checkpoint: CursorCheckpoint) -> None:
-        items = self._read()
-        current = items.get(key)
-        if current is not None and checkpoint.offset < int(current["offset"]):
-            raise ValueError("cursor checkpoint cannot move backwards")
-        items[key] = asdict(checkpoint)
-        self._write(items)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("cursor store is closed")
+            items = self._read()
+            current = items.get(key)
+            if current is not None and checkpoint.offset < int(current["offset"]):
+                raise ValueError("cursor checkpoint cannot move backwards")
+            items[key] = asdict(checkpoint)
+            self._write(items)
 
     def replace(self, key: str, checkpoint: CursorCheckpoint) -> None:
         """Atomically establish a fresh snapshot as the new offset baseline."""
-        items = self._read()
-        items[key] = asdict(checkpoint)
-        self._write(items)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("cursor store is closed")
+            items = self._read()
+            items[key] = asdict(checkpoint)
+            self._write(items)
+
+    async def aload(self, key: str) -> CursorCheckpoint | None:
+        async with self._slots:
+            if self._closed:
+                raise RuntimeError("cursor store is closed")
+            async with self._io_lock:
+                return await _await_durable(
+                    asyncio.get_running_loop().run_in_executor(None, self.load, key)
+                )
+
+    async def asave(self, key: str, checkpoint: CursorCheckpoint) -> None:
+        await self._submit(key, checkpoint, replace=False)
+
+    async def areplace(self, key: str, checkpoint: CursorCheckpoint) -> None:
+        await self._submit(key, checkpoint, replace=True)
+
+    async def _submit(self, key: str, checkpoint: CursorCheckpoint, *, replace: bool) -> None:
+        await self._slots.acquire()
+        if self._closed:
+            self._slots.release()
+            raise RuntimeError("cursor store is closed")
+        done = asyncio.get_running_loop().create_future()
+        self._queue.put_nowait(_CursorWrite(key, checkpoint, replace, done))
+        self.metrics["pending"] += 1
+        self.metrics["pending_peak"] = max(self.metrics["pending_peak"], self.metrics["pending"])
+        if self._worker is None:
+            self._worker = asyncio.create_task(self._drain(), name="qdl-cursor-writer")
+        await _await_durable(done)
+
+    def _commit_batch(self, batch: list[_CursorWrite]) -> list[Exception | None]:
+        with self._lock:
+            items = self._read()
+            errors: list[Exception | None] = []
+            accepted = False
+            for request in batch:
+                previous = items.get(request.key)
+                value = asdict(request.checkpoint)
+                if (not request.replace and previous is not None
+                        and request.checkpoint.offset < int(previous["offset"])):
+                    errors.append(ValueError("cursor checkpoint cannot move backwards"))
+                    continue
+                errors.append(None)
+                accepted = True
+                items[request.key] = value
+            # Equal retries still need fsync: a prior directory fsync may have failed.
+            if accepted:
+                self._write(items)
+            return errors
+
+    async def _drain(self) -> None:
+        try:
+            while not self._queue.empty():
+                batch = []
+                while not self._queue.empty():
+                    batch.append(self._queue.get_nowait())
+                started = time.monotonic()
+                try:
+                    # The private worker must deliver results even when loop shutdown
+                    # cancels every Task. Executor Futures are not cancelled by that sweep.
+                    while True:
+                        try:
+                            await self._io_lock.acquire()
+                            break
+                        except asyncio.CancelledError:
+                            continue
+                    try:
+                        operation = asyncio.get_running_loop().run_in_executor(
+                            None, self._commit_batch, batch
+                        )
+                        while True:
+                            try:
+                                errors = await asyncio.shield(operation)
+                                break
+                            except asyncio.CancelledError:
+                                if operation.cancelled():
+                                    raise RuntimeError("cursor executor cancelled before durable completion")
+                    finally:
+                        self._io_lock.release()
+                except Exception as error:
+                    errors = [error] * len(batch)
+                elapsed = time.monotonic() - started
+                self.metrics["commits"] += 1
+                self.metrics["io_seconds"] += elapsed
+                self.metrics["max_io_seconds"] = max(self.metrics["max_io_seconds"], elapsed)
+                for request, error in zip(batch, errors):
+                    if error is None:
+                        self.metrics["acknowledged"] += 1
+                        request.done.set_result(None)
+                    else:
+                        self.metrics["errors"] += 1
+                        request.done.set_exception(error)
+                    self.metrics["pending"] -= 1
+                    self._slots.release()
+                if time.monotonic() - self._last_report >= 30:
+                    logging.getLogger(__name__).info("qdl_cursor_persistence %s", json.dumps(self.metrics))
+                    self._last_report = time.monotonic()
+        finally:
+            self._worker = None
+
+    async def aclose(self) -> None:
+        self._closed = True
+        await _await_durable(self._finish_close())
+
+    async def _finish_close(self) -> None:
+        worker = self._worker
+        if worker is not None:
+            await _await_durable(worker)
+        # Drain an admitted read as well; no new operation can pass _closed.
+        async with self._io_lock:
+            pass
 
     def _write(self, items: dict[str, dict[str, str | int]]) -> None:
         payload = json.dumps(

@@ -1,5 +1,5 @@
 schema: qdl.v2.active-demand-source-registry.v1
-revision: 3
+revision: 4
 owner_registry:
   root: trading_system
   path: config/_config/portfolio_account_config_setup.yaml
@@ -118,6 +118,14 @@ admission:
     - venue: OKX
       market: SWAP
       feed: OPEN_INTEREST
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: LONG_SHORT_RATIO
+      max_slices: 128
+    - venue: OKX
+      market: SWAP
+      feed: TAKER_FLOW
       max_slices: 128
     - venue: OKX
       market: SWAP

@@ -1,14 +1,14 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 22
+revision: 27
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: 2072202c76683788cf1d59905038787e4db194209df8266b5da44b6487f4947e
-  revision: 9
+  sha256: 9d4ab51e4880a3615e4171fe4cebc244c02522a20bbd3273973478ef32ec275d
+  revision: 11
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
-  sha256: 9ace71cd3e4ed6e224151e31699cfc3fe57ba2a6c17664c832da07eb1c6aa30f
-  revision: 6
+  sha256: be49571c31c6de515e1d47bbdaa47bf17e4fc233928cb463c21db0539619358b
+  revision: 7
 capability_matrix:
   path: /app/config/v2/stable-capabilities.yaml
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
@@ -29,7 +29,7 @@ consumers:
   manifest: /app/consumers/stable/monitoring-multivenue.yaml
   manifest_revision: 2
   manifest_sha256: eaf828db40cac3b256fee087fa4cb7730fcb4894c9300ce4a319433aec4d88ea
-  demand_revision: 6
+  demand_revision: 7
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -53,10 +53,514 @@ consumers:
     reason: V1_OKX_TRADE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.binance.paper.stable
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
-  manifest_revision: 12
-  manifest_sha256: ed44dc306d62379bfacd8032ad2016da14617aaf44ec8fb6eb82183600dbaaea
-  demand_revision: 6
+  manifest_revision: 14
+  manifest_sha256: 96a06ce715055804a0695abcf5159235b4d7ba13738698983833de5f3ec5bc5f
+  demand_revision: 7
   products:
+  - requirement_key: 00d1d68e-45b0-5cbf-9825-15ba00cb6a66:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 01c74f7d-2449-5630-b743-f563a900108b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 05658343-bcbb-5aed-87b2-1ce21349e227:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0638ba89-f890-535a-9fc7-3358aa53179f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0723c5e4-0af0-59a3-a7c6-d9c9c36968af:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 07b68da9-76a6-5e50-9de1-bf5ffe70711f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 07d4bbcf-2e5a-581c-81f5-a13caa3bfb0b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0bb4ca88-2c89-5118-a7de-5d58985ba27b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0c8454bd-825f-53f9-801c-1d1edc623a87:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0d772919-4b2c-57f4-9543-a60eb316e676:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0dc95513-2b93-56c1-8966-78e06012e967:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0e94d287-5960-5af4-89d2-a14bf24d8595:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0eee0320-f54c-50c6-8c31-cedc978f4246:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0f8b8578-7850-5863-929a-d3292a9cba31:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 115fba5d-673e-5ad8-b14d-53c6b077d8b8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 123ff4ea-21a7-54a0-9ad3-e56059b81bde:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 132d4a1b-3464-5de1-b9ad-1f3ebe728589:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 13d30031-2c7c-5df3-a625-d9aa62e58106:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1422c865-e99b-5cad-90dc-8f3ba4166691:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 145d10f1-0ec4-56ef-8098-050c7991da3a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 172daa75-28b7-5d37-a0bd-86a43f7d17b9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 17c00406-ec03-5025-8703-ed77896ef07c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 18112b74-b3c6-5c66-aeac-33daaf604127:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 18b9b339-1a7f-5110-bdd1-5b3585e2ebff:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 19c3628a-2fce-505b-bd05-aceefe47132e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1bee6fd7-6bff-59ec-8d72-50ffce31b6ed:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1de09ca8-0a41-5153-96f2-edfb42bd4cd6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1efbe499-8627-57ba-bb85-3a4546926231:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 21b23463-7fd8-5950-9f2b-7fe1e67fedc0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 23552d71-b038-5575-97b9-3ae8604876d0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 24a32009-108b-54bd-b8ba-3806976c4053:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 24ed3fe9-70d2-5715-a0e6-d2dd06e02d0e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 26260988-93d4-536e-8400-f3fadbd530de:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2832d236-116d-5e82-92d8-c4faae68ab1e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 28387599-f1ea-5df6-a4f2-a04aa341c5d0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 28486f53-7cf2-5fc7-a18c-3b39524c2969:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 29b5753d-f377-5c23-8df5-e40e8f7df423:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2a49a9f8-c5b7-546d-b55f-9cacf4855532:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2a8062eb-9c40-5101-9711-45c6d0a0b02a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2ba7c8e9-f2a8-5816-8b2d-9d6b0b0a6cd3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2e9f13cf-f529-575b-bb66-6caea3ee1a14:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 30e34c60-350e-5d13-8341-fe76633080c3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 327e2814-ea95-5cc6-a8d9-d6c2952dae9f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 334e1fb1-c81f-5660-b445-87aa58b5e0b4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 34043a94-1386-58d7-a507-e80a173199d7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 355cdfa9-18a0-5274-b761-ad8dffa29ed3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 35eea6b0-e366-5885-9c58-f1c850631acc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3726da06-2869-5143-b334-db8e1546f540:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 39392d40-34f4-5531-85db-da715726cec4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 397bdb54-bb4c-57d8-ba48-ab6b6712428a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3a14f40f-96cf-5810-8931-35ac5b2538b1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3c6f6997-1b46-5e9e-acf9-df60b2075142:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3c70b7c6-b026-5feb-8e8b-6693b7674f0a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3d2403d3-44cb-5989-924f-946704ccc6b8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3e2393ec-4ff4-5722-bc6d-01f7085e84d5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 40ecf915-b50f-5552-ae3b-b11ba6ce7aac:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4266e54f-5d02-511f-a9df-549689ea7361:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4275cccf-ed9f-5948-904f-e4b1ae933e66:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 44cfd3f6-82e1-54be-981c-254d7f805ce5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 463ef46b-8665-5a5b-a9c8-259d2a4f18f6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 46aca998-9432-55d5-a619-72ae55c92f7e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 46f4fd8b-58db-578c-9c23-01d890296726:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 473238ca-4cf4-5dcf-8dd6-8731dd1d10f5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 47574e33-d716-5573-ab29-c2a3635f6aeb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 47871e91-fb6a-5273-9f22-fc663cdc2f32:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 47ad1648-48ef-50a8-9daf-c8beadd93cdb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 47d98081-d269-5aeb-9766-5f689e2c6b35:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 486818ad-fab1-522c-bb5c-9258c3911afe:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 48c9207b-c6c9-5901-ad33-368f55774c47:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 49355b7d-5da7-5768-bded-cf08dfe0ddca:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4948e3b5-3037-57ba-88da-3b10f69d0627:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 49fd25fe-bbe4-5c84-97c2-510dd94dddd9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4aaf2734-e6e6-5ad1-b5dd-1dac4aa549a5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4e448108-2fdd-506a-9cf6-ca999736f8fb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5068359f-b79a-5501-833c-4bc0bdcddb8c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 51cce06a-7b90-5c59-be0e-433d02cc4f7e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 52a78a60-e48b-5507-b823-e5b8867db2df:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 54de4137-c09a-52f0-ad34-696fdd5b4f04:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 54dfc708-50c9-5cb4-aff3-3a7b372014b3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 555b8bc8-ad58-5bea-83ef-0a59f7d8032f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 56075a4c-2f7b-5773-a88c-a7b00323721a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 56277e8e-e8d2-56ec-bf9b-cb742cf17883:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5a093e28-0a61-5d94-adbf-5f88f221496a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5a5e88ec-7e10-5f61-9b23-78aacd43ad1d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5c42b635-5750-5801-82a7-95ed1d3d6e31:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5dd80de2-abd6-5fd9-aae6-2eb0fc73738b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 61352f58-1260-5a3f-a4c3-389c74b74ec5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6253da80-82c8-5692-9d71-73a071d66ca8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 64e64842-f7cc-52a3-a72b-8400375f5505:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 64f3b5bb-feb8-5035-909d-fd5aaff1f7cc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6765fdee-a03e-5596-bed2-a33b415087d8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6a503e86-9477-53de-be2a-2e9af1fd5163:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6aeb7e7c-9024-5160-8ede-be20c6d489d3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6af3697a-83a0-5c72-9e1f-22a111c47cd4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6bb5fd3e-27ef-5cbd-b535-df991800b752:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c00dc57-9aad-5881-910c-6dab3b593b53:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6cf90303-3b4a-58e9-94f8-3574c64c3fa2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6d64b790-bb5c-5d6c-9377-09b12c56b5eb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6e48b1c7-2340-5e07-aacf-1c6048498b00:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6f42584d-668f-5dab-80a1-a00058020e24:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7107b106-eed7-513c-8c1b-0a1ff512afee:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7228c509-3bf3-510f-9f00-63625011fc9b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7270dafa-54f4-5bc8-8190-71b330ee95b5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 72f3bbcf-3630-5e35-b583-5721f484266b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 746233b9-ee75-5cbc-8a6c-daa63a4d82ce:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7524658d-fa43-5121-91c5-fd55afea5953:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 77296e5e-bb08-5aa2-94e0-96d7e7adb517:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 78148a03-d1cf-5907-a639-ccbcbb0975fd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 789ea412-0d8d-5d54-a4a4-a0ea2dee338c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d3db013-5ac0-5483-ba8b-0f03441f5672:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d9c02f5-b2cd-507c-a478-ccfeba874b5d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7fec48ed-999d-52ef-8872-bbda8b1dffe7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 82c3d1ea-8098-5e21-b841-e51469ca5bb0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 830f340b-3646-5066-b5e7-4d0b126a44fe:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8375c606-0c2b-5e50-8f16-64650fcdedc0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 841529df-3a07-505f-b19e-dde3762242cf:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8425e4e9-5eef-59fe-aee3-50a5616aa529:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8540dfa8-3e81-5216-88b2-9a551d94fd6f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 86b2ba7e-454f-53d0-b404-803f937583a5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 870270bb-8d67-5eee-82e5-93f24b2fcdb1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 875e2059-18c6-5e10-bfbe-67894b86386c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 879ff3cb-0774-5705-b2fa-82101137410c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8832e103-2121-5ef4-b1c0-d8e55e1f40e9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8871d17f-b326-5ae6-9e7b-fd3dff2b0815:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8876d78b-3edf-5e4f-9be4-7be3b2db1966:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8947d88d-729a-59a7-bb25-3e1189b7a5ac:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -129,6 +633,134 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8b09286f-23d1-5740-8372-4a34941d74b7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 91733082-acf5-569b-8029-1e38ed470d51:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 921f65bb-ef9f-5869-9a43-52655e58aad9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 922e938c-8c6b-5c10-a6bd-8e21a0db4b35:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 933546f2-5d49-5a75-9313-231ce70bf001:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 935b8777-171b-5d46-94d7-cc6d55e57ea3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 94469df5-8e0e-5839-85c1-f6464481b1d3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9446e524-b1ae-5e7b-96ac-b699a171c87b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 944cf7e3-3429-5f32-9b47-594aa0c525c1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9492e60f-ef93-54c1-8a82-120a66af229a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9591218d-358d-5d5b-aa1c-7d9653e487ad:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 96004c94-3fb4-5eba-863e-3e0167e7a606:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9603abcf-8d45-588f-a676-2872dc3c62ba:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 966b2e80-c83a-5ad2-bb60-af1daea63fca:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 98d54c7c-3319-5a73-9c36-6a66dcbabd6a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9c67e4be-b8bd-5203-ae50-445479a4a48e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9cea9ea3-bffb-5af7-ba48-266c77a830bf:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9d5eafc6-2af9-5f86-9950-c9bc0beef049:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9e012444-b0b9-55ab-a994-a6a2b8384b02:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9fb02777-3d2f-51bd-86e9-a37e52224326:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a0053062-3a08-5328-8869-5148cf4def68:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a0d9742b-a58d-5cbf-808a-efe8de857cbe:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a0e845a9-a853-50b1-b256-913925fbf1d2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a1899d6f-1b1b-53e4-9f6d-53850d91f93b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a2ded063-b730-5294-a024-b1c4abcadc5e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a2ecb519-7c65-5c8e-b489-b6b0aa663e53:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a478a674-5118-59a0-8a89-49f9d9d17910:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a570e234-e1e3-5c85-aade-f95859ac928a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a5b65023-ca4e-522a-a14a-42d57ed978a9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a76839ab-ecdd-59ef-9416-17ac1af4b3d0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a76febbe-c89f-5d57-b68a-3089e7b1a512:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a90edd17-ed7a-5b6e-90c6-b38c9de23edd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -201,6 +833,46 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: a9813a7f-04b3-537b-abbb-8bc599de3873:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: aa92932b-1957-545f-825d-8d62cff956cb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ab468c88-f893-52e4-8334-f04ec8907fa6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ad64efb9-c362-5e43-a52d-369589b8f662:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: af23ec18-0a39-56bf-ac1b-87d5e2248251:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: af73725a-ff81-59f4-980d-06bd4cc2c082:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: af7e715a-ccad-5012-9fd4-bd7c16d4fcc2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: afb33b46-b1fd-53cf-8df6-7c881c12f6a1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: afd75136-bcc0-57ed-a85b-10d470fb8336:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: afdb7e7f-fd83-5bd7-ac2b-5bfa08397f66:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -273,6 +945,218 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: b41b2b3f-65b7-509d-a0b3-e7f3440d9a6a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b616b571-b4db-5d27-ae73-0e03e71e3125:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b6af67f3-e4ea-5982-a4d2-e2a4ed8b823e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b7b0141d-1de2-5b79-af97-a4d60ff6a9f5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b7b526a6-9361-5d6f-b4cc-f33a0ed80d47:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b96798e4-730a-5634-8c1a-8a4094b01660:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b9c46ba4-1d0f-5fbe-a751-b2bd086f5a23:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bc65c082-4ca8-5450-8597-f7f65a0ba923:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bcd51a8d-2e9f-5c7e-9796-eda0427c43b1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bdf97724-b6a0-5891-801a-a6a951c9174e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: be066d07-eee6-50a8-a137-73949877eeea:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: be32efaa-307f-595b-bc0a-4f1e5e00aba2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: be6c712f-0218-5350-b162-75cd18a1e8d1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bf08776d-5b74-54e8-8330-dd87635e9435:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bf1f6c47-30eb-5467-aea4-a66760bf5e5e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bf47b0d3-dd95-53fe-be70-52a0d8975e44:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bfbd909d-851e-5b08-93f3-197719ad65e2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c07b42ad-ab20-599a-b33f-053209030c55:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c26690f5-48a3-5cc3-8997-3c10a2a8b413:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c494f843-964d-549c-ae22-7831f47327ea:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c4f936dd-3d28-54c6-8b01-30296462bbb9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c62e2e82-9528-5d8b-96d5-2b22eaa4badd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c684a346-4477-5d60-a3a2-07907ea6657c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c76c9c52-1ca5-5d63-a9c4-03b9df5954b6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c7717222-2721-54a5-9119-4397db9205f0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cc0ebfed-f4ea-55dd-a7a6-fa83ff72befc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ceddccfd-3365-5c05-bfb8-660f7ec23bad:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cf1b39f8-e1e2-5826-9683-67f3a1e11da8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d0a88aa5-d055-594d-9db7-fb56b8c06680:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d0b4908a-8eb5-5155-9c19-0880eb94aace:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d152df3e-e0d3-59b1-ba1f-7fa427418803:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d155abb8-8f0f-5934-81cc-39f102c4f2f5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d3583ef9-febd-54a0-9d23-5a2f62f6dbbe:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d397ccef-78a6-582e-a22a-52f39137a180:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d3a82a86-2d20-5b86-b9fe-5e53176d94d7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d4316760-92df-50ad-b291-79b043564d85:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d4ab40bf-f09d-5fe5-9d04-e9f3fef19d69:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d4b0d87b-fdeb-5b7b-86bc-381ee82ecd1f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d4f4fccc-77ba-584a-893d-db5c7fe40d9a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d7ab8d28-d6c2-5fab-876c-c968296b482d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d909a518-8b6e-5286-ad80-ac435c739328:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: da43e311-fa63-5201-ba73-a92e3672a3b4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: db35329e-fec3-5e5e-8dea-0e0e42aa71df:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: dd71effc-462a-5862-997d-74a587a49b61:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: de05bab8-6979-5f2a-ac65-fe3ca6141157:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: dfbcd529-82a2-52f0-892c-529e0a38c350:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e0377966-ec4b-5dd6-994b-ad4c0542e214:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e10c1a3c-f11a-57d8-ba19-c3c04dbeb028:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e11e62f8-26b3-5d07-8bfe-1d4603547dc9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e178f3a4-1ceb-5e0e-adc2-a3123c89d420:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e1c5a42c-cd07-53de-b750-372fe3f3879a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e2688e6c-660f-5deb-ba4b-5690d98ee452:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e395cb40-0cbd-5603-83b9-9c30ec14b062:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -345,6 +1229,46 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4cebf99-5916-5aa6-ab39-f66cbecba1ca:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4e0e48e-9508-50c5-bce5-0abce19965b9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e52590aa-7cd3-5cc9-9fd6-71026ee0eb26:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e70f56d4-69db-5b2c-9484-de67bd4ec8bf:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e840b0bc-066b-5a63-9368-8654ade8462f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e85dc2e1-f82f-544f-b55e-3176925d996c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e8fe4622-da4d-5922-a87c-eddfb07c88f6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ea9b707d-7913-5476-b9c7-a17a3c42d7c9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ecfceb71-472a-5e6b-8228-51fe99af10dd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ed47715e-b8e0-53b8-a82c-686b40c69eaa:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: V1
@@ -417,6 +1341,82 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: ef08a051-1cfb-5456-83e2-a0ceff1a1bf4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f0fc7947-d63b-5d68-9693-e57180133118:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f122c0e0-d424-55af-a030-a421e88e6549:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f1fa334d-15e7-5ca3-9e11-5b805b3426a1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2816e98-1b6c-5558-a201-02b744d72cc3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f3d07537-e856-5793-9fe4-75d9f1e54e5b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f41d64f2-dc4f-53f1-8911-bf8dd7a59249:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f51c770c-f711-54e5-ab83-8ef6cc63d247:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f5fb66fd-577f-59cf-87a4-9d1d43547626:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f693e7fa-26b4-554f-b4ab-5d34841777e5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f6a20794-dd2f-5d62-943e-dadb6e05749b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f6b38750-2d9a-52ff-b76e-9f26fb70bd46:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f75e5f45-7f1b-5282-9acc-18800ba9364e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f888a2f7-79c3-5a8f-9170-cca6be1325f5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f975d17f-3347-5fcf-b56a-fb8b8f6b0de2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fa2e9712-8ce9-538a-8b92-37c85401156c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fdde788f-16a2-5b0b-a66b-19ae99a38d08:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fdfdbfc0-5545-5fb1-bd8f-5c4a345ada59:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fe2efca0-97a3-5b71-977a-e64af44d657c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:BASIS:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -559,10 +1559,470 @@ consumers:
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.okx.paper.stable
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
-  manifest_revision: 11
-  manifest_sha256: 3b39c485e1043a9dd648121e9f62cdd94f4f801565e021ace13d59f56c23bc4e
-  demand_revision: 6
+  manifest_revision: 14
+  manifest_sha256: 9e48000e26c1283dd6e786c17d51a79e812bfa2bb97e122f8b944641b8329cdf
+  demand_revision: 7
   products:
+  - requirement_key: 00014941-4c7d-5d7a-92cc-00a83d5cf499:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0414ddcb-cdf9-5526-bee6-c1e163b0dddc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0641ed20-dbfb-52af-be4c-fa513302dda6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 07013277-a316-5034-b845-949aef2c6d33:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0894b131-b84e-5572-8739-cdf71c3635d9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 08aae292-6843-515e-9dc0-b3df41676f40:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0937b736-4c89-563f-ab1d-ffdab60ff40a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0c366f91-4035-5e8f-a90d-79b7fe6f9d8f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0c4da48d-3f48-5d08-a5ab-077db6880253:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0c9901a2-d4ff-53d6-b55e-66bc1fe92f23:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0d6874fd-9a88-5f6f-bb81-61233d9870db:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0dcec1fa-50ad-5331-9f21-54a763d63728:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 0e38b4ee-be80-5bf8-9c23-2ff2172781bd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 12db7dc2-d833-569e-ade1-36d630dc90a8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1386e6fa-2743-506b-90e9-e312c87d0b30:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 14d5f443-1410-568b-9cad-ea30566aa1f2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 15e8ca6e-7618-524c-8548-dab9d49d155c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 15fc9a9d-0df2-5151-a349-584edc626597:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 176b8d35-f51e-5abb-8eda-fcd70b43b2f0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 178533cf-690f-53b6-892b-8d2064e856cb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 17b0014a-f8aa-54b3-aba3-8bb3b53a0cb5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 17b7003c-122e-5e83-9347-757a0f55deb8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 183d6b91-1ac1-5334-9b0c-f86a98316df3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 195652dd-5450-5ed1-8059-3a90ff9d2e3d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1a495947-d440-5313-b4b5-491c73ded166:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1d51893f-f23d-5ea1-a0db-e98d5d85ddf8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1ddf760f-6bde-550c-81ab-928b528b0796:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1df523d5-6806-57a8-80d0-7a86598b321b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1e759e5a-7609-57d9-8376-dd32765a78a6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 1ff01016-b08e-5be8-b10f-30e4a459c5e3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 203a98b3-8a3e-5453-8355-e54e502f3e0e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 20646822-2fc8-5481-b537-5512f04bbfcd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 20b68200-9172-5ad5-9bbf-de59df6bf723:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 20df3a21-188b-5d43-bd86-89cdb130b05f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 235049a1-cf7f-5522-b01e-e37d40f9369a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 235dac6d-c8f4-5fdf-9e43-c63b7acb2695:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 24c96a8e-7426-5015-b35c-6f3d68a07ab2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 256ec9a1-8d20-597a-b2fb-38f5dc1fe565:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 25e71abf-12a5-5592-bb66-01aeb4ec654e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 25eef1f1-eee5-5f91-8312-4e63c09d3a06:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 26baedc8-2048-50f2-9a1c-af80f289753e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 26e96bfc-418b-534a-b86b-8845cec5b53b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 270bf956-2840-5f96-8280-f4d6086edf9f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 27982e73-8051-5150-9427-09d97acfe909:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 289763f0-b5a1-54c7-bba4-056f17165f0c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 292be648-85a0-5bc0-b2ac-a92b78bf59b3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2938c47d-5ce9-5831-902c-39668fde211f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2a20f1eb-ccd6-591d-aea6-310c5273eef7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2b84d2ac-ae1c-5f7b-892d-0ee66ea524ce:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2bf7bb7d-d4be-51fa-934f-89687d9c89f9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2d440aae-79d3-5944-821b-0dca146f4f5a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2d9b86aa-6d14-5b37-9606-cbeb7f9fb99f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2e519d06-1197-50f2-acf8-62f5dfc66e2a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 2f110c43-e43d-5784-8ceb-9970d2d16742:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 30f599c1-3235-58aa-a8cb-734f70804b89:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3146ec6a-27dc-5e20-9a42-39063691ca94:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 318696f4-cfb2-52b1-9f52-105f6a8ac140:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 319aae36-a24a-5e82-9b70-aa2770aabbee:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 31fa85a6-84af-5460-a60b-60d36d7dd9c1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3225191d-c00c-585f-b9b2-38638a334156:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 33e59369-e856-5e56-a8ce-7353901b4145:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 35774e81-f965-5c8e-accf-3324fecc1fa5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 35b1c49f-18fe-5ef3-945c-e49b6201ffc7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 35bf552b-63d1-5895-9701-0250484053ab:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 36634174-d68e-5d1b-8a57-0746757d61ae:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 38720d66-4542-519f-8340-f51bc0435fc5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 387cd038-59b0-5bbc-a1d0-b70c809fdbaf:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3972e5a1-86e2-5ad3-b618-fb0c3c3883b5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3a073d46-0cc7-52c3-84ab-7e9dcc070d29:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3a3e5936-9911-56a6-8c11-f74a5df1ae48:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3b9dba04-5e62-5afa-9646-1ea56ea22c71:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3bf03be6-473d-5b0d-98c1-229146bb1ca9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3c1609c9-5606-53bd-ba2f-92ee45eadf5c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3da91678-916e-5b47-89e8-f17415a6c86f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3e398787-071d-5908-a5e1-2ce40fdc1ab5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3fc9f34e-9f0b-51f7-88e5-541bce2ffa01:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 3ffaf140-0a92-512f-9024-d5e2ee2fe059:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 42cadfc3-bbc5-57c8-9dd7-3db712ea2c50:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4546dfee-c278-5efd-932e-6c7d70fe7614:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4577295f-71f8-5786-b492-3860d3628a0b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 45d2fda2-8fd6-58da-a98f-7f88ecfdb233:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 489ea514-438e-557d-afd0-1f45af70d83e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 48ab37f6-4785-5ad6-b3e3-916d52a99fcd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4ad24830-64f9-5e62-b115-f11c5619bdef:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4c64df18-1b0c-5421-8fa7-311e99b8f2c3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4dfc6d0e-ead5-5b66-b680-ab4be9fcb006:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 4ed9c3b0-c7a2-5503-9b76-6e55bfd2796b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 507e7575-15f4-5f2e-bd0b-e846fe5526a0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5165ddf3-9ae3-58de-ac8a-8d63ccaee28b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 529720c7-b5fc-5cbf-a468-bf7d090de894:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5336b28c-d8c6-5ec9-a71d-f35fffe2b35d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 54f7a9c4-b91b-50d5-a8d9-8c4e0481f2ec:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 570343fe-2838-5406-bbfb-f33f719eeb93:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5788acc3-3acc-56dc-91b5-3864d190995f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 58356b9a-8f38-5bb9-b04a-9f6955732264:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 584edfc0-b4dc-55fb-92ba-6c11d6c23beb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 58d2c7fc-59d2-5269-9523-6303dfc8bcce:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5b8fa4b3-8e22-527e-9c5f-1bc4bce52ea1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5c0400ee-5571-5e36-ae79-5898f75f7e49:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5cdb4aec-8296-5fe4-8819-4d4c59359237:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5d2fbdcc-38dd-56be-b409-25f9a6e292eb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5e2aad21-b8c6-5a22-badf-df62fcfd8b8b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 5f170209-f395-577f-8871-bac517578c30:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6060943d-4f6b-5a3f-a7b7-33e32b136f9f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 60a93fc7-e0c2-5bf1-baba-91248afba2d0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 61db3057-2ee1-5185-a84f-639b8bc5f0e8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 62df6d23-97c0-56d2-b692-2599900de181:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 63b3db9e-afe4-5b72-821a-184be6395dd4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 646c3736-dfab-5991-b6da-630371e190dd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 65a8ce81-79af-5f85-9e44-4475ae3605d2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 65f789bb-7953-55b3-88ed-bb47357ad12a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 65ff2489-e48d-5bf9-add1-c6914ee0256a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6725804c-2929-5315-bd4e-4a21d3825f75:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 690463df-9bd3-5454-a02c-5f4ed16d0cc3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 695383b0-8790-5789-9eac-4704b3087cbb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -635,6 +2095,214 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6ce36c6d-918e-59a9-8b5d-372b6ab95d52:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6d3356bb-1bd4-53ae-9e44-f6f5f922c113:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6eab37a2-e239-501a-9c28-bdb217207626:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7152cd4d-c839-54cb-9380-833718f8ed53:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 71811c18-9781-5d02-9d09-26e6177ae6c2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 71938fe0-fd7b-55ea-b43d-569751b83945:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 71f6156c-a6f2-5cc1-b917-0a60c5966bd3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 73db6ef0-8d34-55fa-ae44-a531598b5c19:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 748fd517-7800-5b0c-a9b0-fbd43c6fa65f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7550c6c6-2f96-55cf-b1ba-d4cc98f0ff29:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 75ca584b-3205-54bf-81bf-e1e712bbb724:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 79f2eb58-b5bc-5319-8e8a-4b7951365d67:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d0a90b7-1135-5fda-9dd3-1679af5ca334:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d199ba4-65b9-5d0a-a61e-0329cad893f2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d5325c8-5aca-5be3-9f12-f32e1ee54403:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7d65b700-2308-5a0c-a7a9-252d41c80981:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 7e348480-a4c5-564c-b594-8c78c1b61c38:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8198b1a1-966b-584b-95cf-40fd8877de2c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 82032262-6777-5cf9-8f1a-bf683a6ddb41:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 853e2ca1-d5ec-5ce1-b7aa-2d0384a242f2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 86b10bc8-6dd9-51a0-ad1d-5c56b1491bee:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 884cf4b4-b78d-5b31-862f-92f6c3a59781:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 895966bd-d394-5110-81da-212f87eb5f1b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8ae72fb1-bcd8-59de-8a72-dce8afc111b9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8b6e8b7c-bbef-5f4b-bd43-26d6807b7ed3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8c029be8-d578-5909-b2af-10ed4d7092c4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8c38db3b-1506-5cb8-aad8-88eff197632b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8d648cb4-d326-52d5-8812-5b75a638c275:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8d68ba2a-28c6-597c-94ec-a34cbda836d1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8d97188f-2e7d-5da4-8119-f0a72b370ce0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8f467d3f-0a67-5b81-82f9-16f0d8385b39:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 90c794b3-17ca-5335-876f-244747669c7f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 90f3b14e-e641-5e4f-a838-139b568ae459:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 911d8f09-a9c1-5d0f-b448-8ff475f26fac:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9351416b-7e70-583d-8b77-869eb6c5bea0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9413e3e7-2a07-5580-a1e2-c94693917f36:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 95294011-4f97-5df4-bac8-b9a1e128e595:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9662e66c-84cc-5cfa-a5e6-28339c41bdc2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 98d5b8b5-75af-5e2b-b9ce-1d0480d98316:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 99660d9e-89eb-5e36-82a9-386a20e9456a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 99a4b5da-751f-54f9-85b2-b37fac4f1c84:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9f885fc0-baed-514b-8208-93680d827cd5:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: 9f8acd08-a48b-5250-8f11-cfba5a08d003:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a06885be-3b01-5dcf-80a0-a06da823219d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a0a4d5db-8302-5642-9bd4-b2793fe1be87:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a0ae3b67-529c-5c60-b1d5-992b2a5dfe90:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a2098fe2-1ea7-524b-973a-51a12170995b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a34f42e7-0573-5df3-80cd-9084b7f75687:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a3b5105d-867a-5642-8bd6-839890060801:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a447abdb-17fa-52da-9499-aaf4cf51048e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a583d89b-cbb8-522a-b0ef-2d45958b97be:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a640fd51-235d-59b7-b21a-c2e6b42e8eea:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -707,6 +2375,230 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6acc2cc-47b2-5408-956c-6d9516376d78:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: a94e40cf-8e6a-5861-ba13-dafed1d90271:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ab30f1b5-36ae-5ed3-8d53-75389fa69760:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ab646932-485c-5c6f-92c1-65427d0c4a96:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ac172201-2cdd-5d63-906a-5e567bf2a6f7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: adc4bf83-b054-5f94-8ff6-7678579db124:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ae8a6bb7-2cd4-54c3-b4f8-361b9e8975d1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ae998e95-9c34-5d87-9e0e-8677dcea9e1f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: aeb5de89-5b1b-55ee-9168-09d36928c04d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: afefd678-4d6f-51a9-82aa-8cf6584c1280:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b05f357a-776d-5fb2-a701-483e0838bf6d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b07cf454-cbe6-58ab-a0db-c6f2cd0c9aaa:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b1eba3de-3bef-55a7-9f3d-a83b0f5b2883:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b62cec8c-d821-5a30-bb62-3fccb691e94c:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b825c1a3-edec-52b7-999c-a336a4bcd817:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: b9e653fa-d3cf-5fae-bd8e-c5abc89f8a0f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: baa311c7-ab43-5131-b076-64337b2e2c39:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bad074bb-5acd-5bcd-943c-0219c7fd7beb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bd0199bd-f1ef-591c-b8e8-302087a52eb8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: be5ea6cc-f563-51fa-bc10-9c058c425bf3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bee2d394-e836-518d-ab8e-2df7c5d2f804:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: bfef0630-a478-5996-a534-78a181d72cbc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c2577593-ef21-50d4-ad40-3c23bb0fa4cc:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c2a4cfc9-f776-5b5f-92e5-93968a3b5f7f:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c3705bd0-6cfc-5fce-b553-a7a9cadfae83:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c3b6e04c-e7ea-5345-8bf7-53548d7ca3e6:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c3b75c12-276b-5a3d-8313-dc7145c321e7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c464706c-3b06-56e0-944e-f267bc9a6ce3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c5b36eb9-1f69-5f18-90db-6d517c0488bb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c6ae2a4c-3338-544d-b14e-05035b0976cb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c7931346-0c07-52e2-86ff-54453b265e14:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c82e28aa-40a0-50b0-94b1-67d52f67689e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c86dd48a-f192-5370-9023-cc8654f83f30:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: c93702ef-d71b-512e-8cc8-5ecd3615a644:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: caa279de-37c7-5511-aa49-c173cd3b2208:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cc8696da-de35-5b97-a735-305be3007c5d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ccdc25a6-00a2-593f-bf6c-98d6a45441fd:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cdb92414-5c7b-5513-a600-371746aa36fb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cec3acd8-dd93-5666-8aaa-257f41cd90ef:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cf6b9041-4ee3-5085-b4fe-96dca6d5e559:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cf8247ac-2438-5123-90c0-5774c79d0ca2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: cfb1b966-854f-5ae3-ada3-a20f775cc056:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d10ee13d-a2a2-5305-bb0d-678a9c63c5e2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d35d084c-ebb6-5fc0-9e7c-f71a1a0b1228:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d3d01f05-c55c-5871-bac8-26ccfe5af5b0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d51c82b5-73b7-59ac-9619-162ae56cbf31:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d5a36311-364a-5c91-bdc1-e4aa7a6a6847:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d7657b6a-8c62-5c36-b0cf-865b310a50e0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: d7d32090-97db-5095-8253-b5de3e21d5d1:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: da4e0df9-0b8c-54c1-9a9c-309187cbb94d:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: de72f091-5621-58d0-af8a-db73f1c171ee:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e00eeab2-0a7b-50a1-ba68-05d951812aac:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e0acf5c2-36a0-586c-aa61-f605130f80b7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e1dbf2df-216a-589f-9d50-160825eec9c3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e20788ab-5f1e-54f9-9db7-eb43eadcd6d9:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e25cd054-6591-5215-ab8e-acea61b96e3b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -779,6 +2671,58 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: e653b192-ecf4-5325-88a8-a04551746c1a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e8d8b9ac-61c8-53d9-aa43-f8015e885f58:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: e8f4a1d8-7c75-5271-9f2c-cebed1e317c0:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ea7a81ea-5876-5db2-89f2-1af550f455ef:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ea9eb608-383e-5b81-9669-6a4afbf2b530:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: eac1a50e-ee45-5720-9299-5aedf9727450:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ebeef153-4f05-50b4-8152-fc22e2d2c5fe:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ed4319f7-8e4a-5570-a34d-88118cb1c276:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: edb2816d-e9d4-5547-bf3b-abb14dec58bb:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: eef06df7-cf51-5d7c-9642-e7a4309c225b:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: ef06e949-902e-5a7b-86fc-f4513675ca51:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f0218fe0-e2bf-56b3-b9c0-de1182f1c5f8:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2d5dfed-750e-5fe4-adc2-b7e0a731eff7:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -851,6 +2795,30 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: f356265e-f401-5851-8157-ff8e294f34d2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f5a63ee0-7db9-5696-b84e-ab0d4b06ce2a:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f6f6342f-5ea9-5491-be55-0d2cac840f88:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f8054e3a-1f79-57fb-9b98-a21a24348e74:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: f869a1e1-e714-53d9-9dfe-828b42ae81c3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fab3bb0f-c0e5-58b6-94b9-7515d3fef752:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:TRADE::crypto_primary_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -923,11 +2891,47 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: fc7a72ab-a650-5172-993f-9d097b16dcac:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fc938060-7733-5efe-9050-68be8f156a9e:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fcb15aad-f5e9-5245-9f5c-3aa66b4d6507:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fd7ff987-a411-5139-9f6b-e70c7f03d6e4:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fe05b11d-24ac-5fe8-8f49-f393e6a50748:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fe539963-7719-5e2b-85f8-213f889f2433:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fe9a679f-abf6-5670-9aa4-06c0c82e4af2:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  - requirement_key: fefc51a7-8247-5790-bf82-6817bf12e7b3:BAR:1d:crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
   - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:CONTRACT_METADATA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:LONG_SHORT_RATIO:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -939,11 +2943,23 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 6c7c9256-2905-5c75-a149-fa0ac36bbbc7:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:CONTRACT_METADATA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:LONG_SHORT_RATIO:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -955,11 +2971,23 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a6884fb3-1fa0-53e0-9621-d01ba5f9a2de:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:CONTRACT_METADATA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:LONG_SHORT_RATIO:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -971,11 +2999,23 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e49b54ae-c23d-5351-9e64-47934aac28f8:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:CONTRACT_METADATA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:LONG_SHORT_RATIO:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -987,11 +3027,23 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:CONTRACT_METADATA::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:FUNDING_RATE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:LONG_SHORT_RATIO:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -1003,11 +3055,19 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:OPEN_INTEREST:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: fb26214c-7b9b-5961-95b2-55154755af0f:TAKER_FLOW:1d:crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.vn.paper.stable
   manifest: /app/consumers/stable/alpha-vn-paper.yaml
   manifest_revision: 1
   manifest_sha256: f2f03f87bfeb775d90099e0bdb38ee9b158ee1506dd333581ef54635e20d3e2a
-  demand_revision: 6
+  demand_revision: 7
   products:
   - requirement_key: d0ac3d4c-2374-5690-8af5-b970448f91d3:BAR:1m:vn_primary_v2
     route: V1_PRIMARY
@@ -1021,7 +3081,7 @@ consumers:
   manifest: /app/consumers/stable/trading-system-paper.yaml
   manifest_revision: 10
   manifest_sha256: 5ca9aff1960883f59827e3a34ed709f4c30cf5db96c4e1253dd6f1116fb20cdf
-  demand_revision: 6
+  demand_revision: 7
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY

@@ -17,14 +17,60 @@ It currently serves:
 - Redis Pub/Sub streams for live consumers.
 - REST endpoints for warmup, recovery, diagnostics, and health checks.
 
+## KN Production Status (2026-09-27)
+
+The **new Kafka-native read path is serving Trading System**, with SDK2.0.5.
+Production final load passed: 50 logical alpha sessions, 15,504 requests,
+90 streams, 12 reconnects, actual TS60 READY in32/32 samples; no order actions.
+Ten old SQLite projector/query/stream roles are stopped, with state and exact
+rollback artifacts retained. The v2.2.0 runtime certificate is below; publication
+is established by green remote CI, the main-line tag and GitHub release, not
+by a healthy container alone. SDK cursor persistence is bounded and off-loop,
+with durable acknowledgement after successful fsync.
+
+```text
+Binance/OKX -> Rust ingestors + bounded BAR REST edge -> raw Kafka
+  -> Rust canonical core (identity, ordering, L2, quality) -> canonical Kafka
+  -> Rust projector Stage A -> compacted latest/bar Kafka state
+  -> Rust projector Stage B -> bounded Redis market cache -> Python V2 Query
+canonical Kafka -> native Rust Stream (snapshot / replay / subscribe / status)
+V2 Query + native Stream -> SDK -> TS market-cache / alpha bounded buffer
+```
+
+SQLite is not in this active read path. Cache loss rebuilds from Kafka state;
+consumer manifests, component freshness and execution eligibility remain strict.
+DNSE/VN stays V1; the quarantined vnstock/vnai SDK is excluded from new KN images.
+
+Actual consumer-call-to-validated-result latency, **milliseconds**, steady load:
+
+| Read | Binance p50 / p95 / p99 | OKX p50 / p95 / p99 |
+|---|---:|---:|
+| QUOTE (2,750 samples/venue) | 9.72 / 24.38 / 46.53 | 9.91 / 21.59 / 33.30 |
+| MARK/INDEX (4,125/venue) | 11.07 / 23.26 / 39.69 | 11.18 / 22.52 / 38.11 |
+| TRADE (55/venue; p99 unavailable) | 9.79 / 23.78 / - | 13.23 / 29.51 / - |
+| L2 snapshot (54/55; p99 unavailable) | 25.76 / 44.75 / - | 28.92 / 44.53 / - |
+| Final BAR latest (55/venue; p99 unavailable) | 15.31 / 29.55 / - | 18.58 / 36.15 / - |
+
+Cold history under this load: 2,500 rows3,189-5,144ms; 5,000 rows4,838-6,956ms
+(four reads, not a percentile). Full serving stack averaged4.669vCPU over the matched374.415-second load window,
+including brokers/provider Redis. A wider446-second window measured4.582vCPU;
+old rollback overhead1.337 and TS0.427 were measured separately.
+This does not certify arbitrary50 consumers, infinite history or multi-host HA.
+Retained-window diagnostic:702 scanned,6 disabled,4 VN unavailable; not full
+listing-history completeness. Provider-discontinuous Binance3d windows remain
+explicitly unavailable to strict full-history reads, never interpolated.
+
+See [current journal](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-production-handoff-20260927)
+and [cutover/rollback runbook](./docs/runbooks/kn5-paired-cutover.md).
+
 ## Quick Links
 
 - [Integration guide](./DATA_LAYER_SERVICE_ACCESS_GUIDE.md)
 - [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 - [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 - [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
-- [V2.1.0 release notes](./upgrade/evidence/releases/v2.1.0/RELEASE_NOTES.md)
-- [V2.1.0 machine-readable certificate](./upgrade/evidence/releases/v2.1.0/certificate.json)
+- [V2.2.0 release notes](./upgrade/evidence/releases/v2.2.0/RELEASE_NOTES.md)
+- [V2.2.0 runtime certificate](./upgrade/evidence/releases/v2.2.0/certificate.json)
 - [Contributing guide](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)
@@ -65,11 +111,11 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 
 - **V2 stable data plane** — manifest-authorized, mTLS/JWT V2 query and signed-cursor stream for Binance USD-M and OKX Swap
 - **Rust canonical core** — provider-neutral identity, decimal/unit normalization, event idempotency, sequencing, gap/resync and L2 book state
-- **Durable projection** — Kafka-compatible raw/canonical event planes with bounded SQLite/Redis projection, replay and typed freshness/quality state
+- **Durable projection** — Kafka raw/canonical and compacted state topics, native Rust projector, bounded rebuildable Redis market cache, replay and typed freshness/quality state
 - **Execution-grade context** — final BAR, TRADE, QUOTE, top-100 BOOK_SNAPSHOT/BOOK_DELTA and strict MARK_INDEX_PRICE for declared consumer demand
 - **Reference data** — bounded provider wrappers for funding, OI, long/short, taker flow, mark/index, contract metadata and native/continuous basis
 - **Real-time streaming** — WebSocket multiplexer for Binance (spot & futures trade + kline) and DNSE (VN stock live quotes)
-- **Automatic failover** — DNSE as primary VN source, vnstock REST poller as secondary fallback
+- **VN compatibility** — unchanged V1 deployment only; the new KN image excludes quarantined vnstock/vnai and does not certify that fallback
 - **Redis Pub/Sub distribution** — single upstream connection shared across many downstream consumers
 - **Historical warmup (VN)** — Parquet-backed preload service for 1-minute OHLCV candle warmup
 - **Binance derivatives REST wrappers** — OHLCV, funding, open interest, long/short ratios, taker ratio, depth, and basis bundle endpoints
@@ -78,7 +124,7 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 - **Alpha strategy example** — moving-average crossover strategy included as a reference implementation
 - 🐳 **Docker-first** — full Docker Compose stack with networking, volumes, and log management
 
-## V2 Stable Architecture
+## Historical V2.1.0 Architecture (Retained Rollback)
 
 ```text
  Binance USD-M WS/REST                 OKX Swap WS/REST

@@ -6,10 +6,48 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import math
 from enum import Enum
 from typing import Any
 
 import requests
+
+from qdl.reference.contracts import ReferenceProviderExhausted
+
+
+# Official Trading Statistics limits per endpoint + IP + instrument (2026-09-26).
+OKX_CONTRACT_STATISTICS_LIMITS = {
+    "/api/v5/rubik/stat/contracts/open-interest-history": 10,
+    "/api/v5/rubik/stat/contracts/long-short-account-ratio-contract": 5,
+    "/api/v5/rubik/stat/contracts/long-short-account-ratio-contract-top-trader": 5,
+    "/api/v5/rubik/stat/contracts/long-short-position-ratio-contract-top-trader": 5,
+    "/api/v5/rubik/stat/taker-volume-contract": 5,
+}
+
+
+class OkxStatisticsRateLimited(ReferenceProviderExhausted):
+    def __init__(self, *, http_status: int | None, provider_code: int | None,
+                 retry_after_ms: int | None) -> None:
+        super().__init__("OKX contract statistics rate limited; no local retry",
+                         retry_after_ms=retry_after_ms)
+        self.http_status = http_status
+        self.provider_code = provider_code
+
+
+def statistics_retry_after_ms(response: Any) -> int | None:
+    value = str(response.headers.get("Retry-After", "")).strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return math.ceil(max(0.0, seconds) * 1000) if math.isfinite(seconds) else None
 
 
 OKX_REST_BASE = "https://www.okx.com"
@@ -93,6 +131,21 @@ class OkxRestClient:
     ) -> AsyncTokenBucket:
         """Return the documented rate-limit scope without cross-symbol queueing."""
 
+        if path in OKX_CONTRACT_STATISTICS_LIMITS:
+            inst_id = str(params.get("instId") or "").strip().upper()
+            if not inst_id:
+                raise ValueError("OKX contract statistics requires instId")
+            key = ("contract_statistics", path, inst_id)
+            async with self._scoped_bucket_lock:
+                scoped = self._scoped_buckets.get(key)
+                if scoped is None:
+                    # Capacity one prevents initial bursts; leave 20% headroom
+                    # below the documented 2s window. No generic public bucket.
+                    scoped = AsyncTokenBucket(
+                        capacity=1, refill_per_second=OKX_CONTRACT_STATISTICS_LIMITS[path] * 0.4
+                    )
+                    self._scoped_buckets[key] = scoped
+                return scoped
         # OKX mark-price is budgeted by IP plus instrument. Do not put five
         # independent execution references behind the generic public bucket.
         if path == "/api/v5/public/mark-price":
@@ -122,8 +175,18 @@ class OkxRestClient:
                     params=dict(params),
                     timeout=self._timeout,
                 )
+                if path in OKX_CONTRACT_STATISTICS_LIMITS and response.status_code == 429:
+                    raise OkxStatisticsRateLimited(
+                        http_status=429, provider_code=None,
+                        retry_after_ms=statistics_retry_after_ms(response),
+                    )
                 response.raise_for_status()
                 payload = response.json()
+                if path in OKX_CONTRACT_STATISTICS_LIMITS and str(payload.get("code")) == "50011":
+                    raise OkxStatisticsRateLimited(
+                        http_status=None, provider_code=50011,
+                        retry_after_ms=statistics_retry_after_ms(response),
+                    )
                 if str(payload.get("code")) != "0" or not isinstance(payload.get("data"), list):
                     raise ValueError(f"OKX V5 error code={payload.get('code')} msg={payload.get('msg')}")
                 return payload["data"]
