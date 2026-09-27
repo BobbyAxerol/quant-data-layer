@@ -206,6 +206,9 @@ class FileCursorStore:
 
     async def aclose(self) -> None:
         self._closed = True
+        await _await_durable(self._finish_close())
+
+    async def _finish_close(self) -> None:
         worker = self._worker
         if worker is not None:
             await _await_durable(worker)

@@ -59800,3 +59800,36 @@ unavailable (bubblewrap mountinfo); exact scripted edits used and diff inspected
 
 Final SDK slice regression with version2.0.5:52/52PASS in15.147s (19 new,26
 existing stream/SDK,7 stable-release checks), no skips. Source-only evidence.
+
+Reader artifact packet,2026-09-27: SDK5af9a21/TS3e2a3b2,
+tradingsystem-market-data:v1.2.5-3e2a3b2-sdk2.0.5,
+sha256:aa9f737a90a22623d3d76490a0b1367880bd2ae32211ec8db9a164b379ae3dad.
+206/206 packaged TS/SDK tests PASS (Python3.10), no source adapter/SDK overlay.
+Earlier source-mounted187/187PASS. Initial build used bare image ID which Docker
+interprets as repository sha256; failed before build. Retried with inspected local
+base tag, build resolver recorded exact4dba0ac1 digest; network-free install.
+First packaged-test attempt failed nested read-only mount creation before tests;
+corrected separate /sdk-tests mount, all206 pass, --rm cleanup.
+
+Owner-approved narrow rollout: project trading_system service market_data,
+container market_data_service only, same existing packet env/mount/network/command;
+change only image4dba0ac1->aa9f737a. Exact current packet copied to separate rollback
+and SDK205 candidate files in private release root (0600). No other TS role,
+Data Layer role, authority, manifest/JWT revision10, Kafka/Redis/DB/alpha/order
+mutation. Rollback only market_data to4dba0ac1 with the copied config. Stop if
+startup/runtime matrix errors; do not mask cursor errors or raise quotas.
+After healthy startup run fast two-Query matrix then actual300s TS60/cache and
+stream backpressure observation. Acceptance/release still pending at this entry.
+
+Additional shutdown regression caught a real source edge in the new async API:
+cancelling session.aclose while it waits behind a durable acknowledgement returns
+before closing the transport; subsequent close sees _closed and returns early.
+Reproduced1/1FAIL before correction. Fix same scope: one retained close task,
+shield/drain it across repeated cancellation; FileCursorStore close also drains
+an admitted read on cancellation. This does not change feed/cursor contracts.
+Current TS60 observation remains diagnostic until final shutdown-corrected SDK
+artifact is verified; do not certify the first candidate as final silently.
+
+Shutdown correction regression:54/54PASS in the isolated existing runtime image;
+new cancelled-close checks cover both session transport and admitted disk reads.
+No runtime change from this follow-up yet; SDK2.0.5 remains unpublished candidate.

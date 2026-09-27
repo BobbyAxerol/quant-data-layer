@@ -208,6 +208,29 @@ class AsyncCursorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await read)
             await close
 
+    async def test_cancelled_store_close_drains_admitted_read(self):
+        entered, release = threading.Event(), threading.Event()
+        original = self.store.load
+
+        def load(key):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("test read release missing")
+            return original(key)
+        with patch.object(self.store, "load", side_effect=load):
+            read = asyncio.create_task(self.store.aload("a"))
+            await self.wait_for(entered.is_set)
+            close = asyncio.create_task(self.store.aclose())
+            await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0.01)
+            prematurely_done = close.done()
+            release.set()
+            await read
+            with self.assertRaises(asyncio.CancelledError):
+                await close
+        self.assertFalse(prematurely_done)
+
     async def test_process_crash_leaves_atomic_old_or_new_checkpoint(self):
         for after_replace in (False, True):
             with self.subTest(after_replace=after_replace):
@@ -371,3 +394,23 @@ class AsyncSessionTests(unittest.IsolatedAsyncioTestCase):
         await session.acknowledge_async(event)
         self.assertEqual(store.load("a"), checkpoint(1))
         await session.aclose()
+
+
+    async def test_cancelled_session_close_drains_ack_and_closes_transport(self):
+        session = self.session()
+        event = await anext(session)
+        entered, release, write = self.block_writer()
+        with patch.object(self.store, "_write", side_effect=write):
+            ack = asyncio.create_task(session.acknowledge_async(event))
+            await self.wait_for(entered.is_set)
+            close = asyncio.create_task(session.aclose())
+            await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0.01)
+            prematurely_done = close.done()
+            release.set()
+            await ack
+            with self.assertRaises(asyncio.CancelledError):
+                await close
+        self.assertFalse(prematurely_done, "cancelled close must drain accepted acknowledgement")
+        self.assertIsNone(session._events)

@@ -314,6 +314,7 @@ class WarmupStreamSession:
         self._checkpoint_generation_started = state_restored
         self._ack_lock = asyncio.Lock()
         self._observed: OrderedDict[str, int] = OrderedDict()
+        self._close_task: asyncio.Task | None = None
         self._closed = False
 
     def __aiter__(self):
@@ -427,9 +428,12 @@ class WarmupStreamSession:
             )
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        if self._close_task is None:
+            self._closed = True
+            self._close_task = asyncio.create_task(self._finish_close())
+        await _await_durable(self._close_task)
+
+    async def _finish_close(self) -> None:
         async with self._ack_lock:
             await self._close_events()
 
