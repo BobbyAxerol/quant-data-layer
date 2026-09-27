@@ -300,8 +300,15 @@ services:
 
   query_v2_1:
     <<: *python
-    # DL-V2 R1.5 measured allocation: 22% of its 0.75 ceiling.
-    cpus: 1.00
+    # v2.1.1 Phase-3 A/B (same image, same stage-5 workload, 2026-09-23): 1.00
+    # was throttled 2-4 s per 100 s at 0.2-0.4 CPU average; 1.50 cut that to
+    # 0.4 s and turned L2/MARK_INDEX/TS gates green. Retained per the
+    # contract's selective Query ceiling (1.5).
+    cpus: 1.50
+    # v2.1.1 Phase-3 final stage 50 (2026-09-23): the start-up warmup storm
+    # OOM-killed query_v2_1 at 512 MiB (kernel memcg, anon-rss 517 MB); at 1 GiB
+    # the same run completed with no restart. The contract's Query ceiling.
+    mem_limit: 1g
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -332,7 +339,8 @@ services:
   query_v2_2:
     <<: *python
     # DL-V2 R1.5 measured allocation: 1% measured, kept equal to query_v2_1 because the shared qdl-v2-query alias can send either reader all of the traffic.
-    cpus: 1.00
+    cpus: 1.50  # see query_v2_1
+    mem_limit: 1g  # see query_v2_1
     command: [python, -m, app.entrypoints.query_v2_stable]
     networks:
       stable_internal: {}
@@ -787,7 +795,12 @@ services:
     # 2026-09-18 while rust_core was pinned at its own. This cut pays for that
     # raise, same size, same step, and it held the drain criterion for a full
     # window at 0.50 drawing 9%.
-    cpus: 0.50
+    # KN-4 D42 (owner-approved, 2026-09-25): 1.0. Under the afternoon input
+    # burst it was throttled on 55-70% of its periods at 0.50 with raw_age up
+    # to 31 s; raised live with `docker update` (no recreate) and carried here so
+    # a recreate cannot return it to 0.50. Ceiling sum of the running roles
+    # 22.0 -> 22.5 vCPU (owner-approved addition, not resource-neutral).
+    cpus: 1.00
     entrypoint: [/usr/local/bin/qdl-realtime-core]
     command: [/runtime/core-002.json]
     environment:

@@ -5288,3 +5288,207 @@ Tích hợp OKX market data chỉ được coi là production-ready khi:
 - Contract service nội bộ hiện tại: `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`
 
 > **Lưu ý pin phiên bản:** API docs là tài liệu sống. Guide này được đối chiếu với docs/changelog khả dụng vào **2026-08-13**. Mọi implementation sau ngày đó phải rà soát lại changelog và cập nhật metadata xác minh.
+
+
+<a id="okx-kn-owner-reference-completion"></a>
+## KN Owner Reference Completion - 2026-09-26
+
+**Status: IMPLEMENTED / TESTED LOCALLY + BOUNDED PUBLIC READ; NOT ACTIVATED.**
+Parent journal: [KN Pre-5 owner completion](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-pre5-owner-read-completion).
+Parent owns main-plan/KN-guide reconciliation, combined tests and commit. This
+addendum does not declare the phase closed, runtime-active, shadow-certified or
+production-authoritative. Existing stable manifests/configuration are untouched.
+
+### Verified Provider Contract
+
+Official global documentation fetched 2026-09-26, last-modified 2026-09-23;
+5,244,919 bytes, SHA256
+`8a08f29d3da3ad1ecec9a6a36704b09dc61834e6fb9116efb51a7bbf4ae8a02c`.
+No raw documentation/provider payload persisted. The web reader exceeded its
+4 MiB limit; a bounded public curl GET was parsed locally instead. One earlier
+urllib documentation GET returned HTTP 403; this was not a market-data failure.
+
+| Product | Official contract | Scope / native mapping |
+|---|---|---|
+| OI history | [contract OI history](https://www.okx.com/docs-v5/en/#trading-statistics-rest-api-get-contract-open-interest-history) | Exact `instId`, SWAP/FUTURES; `[ts, oi, oiCcy, oiUsd]`; contracts/base crypto/USD, never currency-wide OI-volume |
+| Global account | [contract long/short](https://www.okx.com/docs-v5/en/#trading-statistics-rest-api-get-contract-long-short-ratio) | Exact contract, all-trader account ratio; not the `ccy` aggregate endpoint |
+| Top account | [top traders](https://www.okx.com/docs-v5/en/#trading-statistics-rest-api-get-top-traders-contract-long-short-ratio) | Account ratio of top traders ranked by open position value |
+| Top position | [top traders by position](https://www.okx.com/docs-v5/en/#trading-statistics-rest-api-get-top-traders-contract-long-short-ratio-by-position) | Position ratio of that same population, not account ratio |
+| Taker flow | [contract taker volume](https://www.okx.com/docs-v5/en/#trading-statistics-rest-api-get-contract-taker-volume) | `[ts, sellVol, buyVol]`; explicitly request `unit=1`, return CONTRACTS; no invented buy/sell ratio |
+
+Paraphrased unit/population evidence: OI is reported separately as contract
+count, underlying crypto quantity and USD value. Top-trader ratios use the
+highest-ranked 5% by open position value, whereas the global ratio covers all
+traders. Taker selector 1 explicitly denotes contract volume.
+The global endpoint's response-table account/position wording is inconsistent;
+the endpoint description and account-ratio selector govern, not a position alias.
+
+Each of these five analytics sections explicitly lists intraday
+`5m/15m/30m/1H/2H/4H` and UTC calendar tokens including
+`6Hutc/12Hutc/1Dutc/2Dutc/3Dutc/1Wutc`. `OKX_REFERENCE_INTERVALS` is an
+explicit canonical allowlist, not inferred from candles. `1d` maps to `1Dutc`;
+UTC+8 defaults are not substituted. Provider `5Dutc`, month/quarter and their
+UTC+8 variants remain outside the existing canonical interval surface.
+All five endpoints document 100 rows/page and latest 1,440 samples. OI/taker/global
+have history bounds in early 2024; top-account/top-position begin 2024-03-22.
+These are availability limits, not promises of full listing or universe history.
+
+Implementation reuses `OkxHistoricalClient` pagination with `end` instead of
+candle/funding `after`, inclusive caller end via `end+1`, newest bounded selection,
+ascending output, identical-overlap deduplication and conflicting/no-progress
+failure. Empty data is MISSING; absent values are omitted, never zero-filled.
+Finite nonnegative decimal text, exact row shapes and timestamps are checked.
+Gap, truncation, retention, stale right and short left coverage remain partial.
+Provider timestamps are preserved; no candle-close or finality claim is invented.
+Labels retain scope, request-derived identity, provider period, ratio population,
+ratio measure, and native units. Snapshot OI and old products remain available.
+
+### Quota And Admission Boundary
+
+Official limits are per endpoint + IP + instrument: OI 10 requests/2s; the other
+four 5/2s. Only the five new routes use capacity-one scoped shared-client buckets,
+4 starts/s for OI and 2/s for ratios/taker. They cannot fall into the generic
+public bucket. HTTP 429 and provider 50011 stop without local retry and expose
+Retry-After milliseconds; transient transport failures retain bounded retries.
+Other endpoint buckets, old non-contract profiles and execution permissions are
+unchanged. Process-local pacing is not shared-IP/multi-replica certification.
+
+Final source wiring: `build_default_reference_runtime(native_basis_admission=...)`
+passes that same existing async Rust runtime to OKX statistics. The adapter uses
+`AsyncAdmittedOkxStatisticsClient` for new statistics only; old funding/snapshot/
+mark/index/metadata paths remain unchanged. Every page and transient retry obtains
+one cost-1 Rust lease. Default runtime without admission returns UNAVAILABLE for
+new statistics with zero OKX calls; a missing Rust lane, transport failure or
+deferred grant fails closed, never falls back to local pacing. Explicit standalone
+adapter construction remains available for bounded public sampling/unit tests.
+
+Candidate-only `config/v2/provider-admission-policy-kn-reference-v1.json` preserves
+the original Binance lane and adds `OKX:SWAP:REFERENCE_CONTRACT_STATISTICS` and
+`OKX:FUTURES:REFERENCE_CONTRACT_STATISTICS`. Each market has capacity 1, refill
+1/s across all its statistics/symbols and one in-flight lease. This is deliberately
+conservative, not optimal or certified universe throughput. Stable policy JSON,
+its sealed hash, Dockerfile and compose pins remain untouched. Candidate activation
+still requires parent-reviewed policy path/digest and artifact reconciliation;
+source default wiring itself is implemented and tested, not left for the parent.
+
+**KN-5 policy merge warning:** this candidate preserves the repository reference
+policy baseline only, not necessarily every lane in the compiled KN-4 runtime
+policy. Union the two new statistics lanes into the exact frozen runtime policy,
+retaining all existing lanes and budgets, including BAR/history. Do not wholesale
+replace the compiled policy with this reference-only candidate file. Validate the
+merged policy and pin its resulting digest in the approved KN-5 artifact packet.
+
+Cancellation shields the actual worker-backed page plus its rate-limit relay,
+drains it before lease completion, preserves CancelledError and does not retry.
+Tests hold the worker open across repeated cancellation and verify late HTTP 429
+and code 50011 still record cooldown before exactly one completion. Existing REST
+timeout is 10s per blocking requests operation; candidate Rust leases expire after
+30s. Draining can delay cancellation until the worker exits; this is not a claim
+of a new total network deadline or a live lease-expiry stress certification.
+
+### Source-Only Candidate Handoff
+
+The current stable source has five exact OKX SWAP symbols:
+`BTC-USDT-SWAP`, `ETH-USDT-SWAP`, `SOL-USDT-SWAP`, `DOGE-USDT-SWAP`,
+`BNB-USDT-SWAP`. For each, retain existing `FUNDING_RATE/null`,
+`OPEN_INTEREST/null`, `MARK_INDEX_PRICE/null` (merged MARK/INDEX demand) and
+`CONTRACT_METADATA/null`. Current OKX reference entitlement count is 20.
+
+Candidate additions: three demand rows over that same five-symbol selector,
+`OPEN_INTEREST/1d`, `LONG_SHORT_RATIO/1d`, `TAKER_FLOW/1d`; keep
+`crypto_liquid_v2`, research purpose, no live/finality/execution requirement,
+warmup zero, and explicit daily freshness bound (e.g. 86400000 ms). This produces
+15 new entitlements while retaining OI snapshot: OKX 20 -> 35, combined reference
+55 -> 70 (existing 24 book requirements unchanged; total 79 -> 94). Ratio variants
+are request selectors, not three duplicate entitlement rows. Callers supply
+bounded start/end, interval, limit/pages and each `LongShortKind` independently.
+These counts describe proposed output, not current runtime activation.
+
+Also add two entries to a **candidate copy** of the source admission registry:
+`OKX/SWAP/LONG_SHORT_RATIO/max_slices=128` and
+`OKX/SWAP/TAKER_FLOW/max_slices=128`. Existing OI max_slices=128 covers snapshot
+plus history; it is not a separate live subscription. FUTURES remains tested
+source capability, not part of the proposed five-SWAP demand activation.
+
+Reuse `scripts/phasec36_materialize_reference_l2.py:run` or
+`build_reference_l2_materialization` with isolated copies of demand, source
+registry, catalog, acquisition, promotion scope and consumer manifest. Never
+`--apply` against defaults/stable paths. It generates exact registry UIDs; do not
+hand-author per-symbol manifests. Reuse
+`scripts/phase24315_materialize_alpha_reference_entitlements.py:build_documents`
+in memory on that candidate reference manifest and copied alpha/routing inputs;
+write only candidate outputs. Its CLI hardcodes stable alpha output paths, so do
+not use `--apply` for this rehearsal. Generated V2-primary route labels are only
+candidate text until parent-approved pins/digests, entitlement/config reconciliation
+and real consumer certification. A UNIT_TEST-only compiler smoke now builds both
+materializers from copied inputs and synthetic metadata entirely in memory, checks
+exactly 15 added alpha entitlements and no removed old requirements, verifies
+70 reference / 94 total research requirements, and checks stable source bytes are
+unchanged. Existing strict YAML loaders read virtual temporary documents; all
+write_text/write_bytes calls are forbidden in this test. No candidate publication,
+alpha entitlement activation or live pin change was performed by this slice.
+
+### Verification Receipt
+
+Image reused: `qdl-v2-python:kn4-abda016`, image ID
+`sha256:1596ce7a239bc65d623ee3b37c2d1299a7af0fbdcca256eae58b1341dc7a45f7`.
+Local tests use `docker run --rm --network none --read-only --cpus 1 --memory 768m
+--tmpfs /tmp -e PYTHONDONTWRITEBYTECODE=1 -v /home/bobby/data_layer:/app:ro -w /app`
+plus that image and `python -m unittest` with these exact module groups:
+
+- `tests.test_okx_reference_completion tests.test_fund_phase3_okx tests.test_fund_phase4_okx_history tests.test_phase104_reference_batch tests.test_kn_provider_admission_edge tests.test_phase113_reference_v2 tests.test_phase104_v2_query_stream_integration`: 100 run, 99 pass, 1 opt-in skip, 0 failures, 3.814s.
+- Old-contract probe: `tests.test_phase104_contract_foundation tests.test_phase1_instrument_domain tests.test_phase10_universal_demand tests.test_reference_l2_materializer tests.test_phase24315_reference_entitlement_materialization`: 35 run, 33 pass, 2 stale-assertion failures, 18.633s. Updated contract foundation for SWAP/FUTURES; retained negative universal-demand coverage using unsupported OKX SPOT. Instrument-domain test already passed and was not edited.
+- Final narrow run: `tests.test_okx_reference_completion` plus the five old-contract modules above: 55 run, 54 pass, 1 opt-in skip, 0 failures, 18.408s.
+- Final async/cancellation/compiler run: `tests.test_okx_reference_completion tests.test_phasec36_admission_binding tests.test_phasec36_liquid_crypto_features tests.test_kn_provider_admission_edge tests.test_phase104_reference_batch tests.test_phase113_reference_v2`: **102 run, 101 pass, 1 opt-in public skip, 0 failures/errors, 6.855s**. Includes default-builder missing-admission/missing-lane zero-I/O, all five series in both contract markets, per-attempt admission, cancellation + late quota signals, and the 15-entitlement compiler proof. Existing suites emit a Starlette deprecation and an event-loop ResourceWarning; no runtime resources are claimed by these warnings.
+- Intermediate new-test corrections: fixed a bytes-vs-str test secret, updated the additional stale `test_phasec36_liquid_crypto_features` SWAP assertion while preserving unsupported SPOT, and virtualized compiler validation documents to avoid temporary writes. Those failing probes are superseded by the final 102-test pass, not hidden as debt.
+- Owned-file `git diff --check` passed. Repository-wide check found parent-owned main-plan whitespace at line 13067; left untouched and handed off. Parent combined verification is recorded in the main-plan receipt.
+
+Real public smoke is opt-in `QDL_OKX_PUBLIC_REFERENCE_SMOKE=1` and only
+`tests.test_okx_reference_completion.OkxPublicReferenceSmoke`, using the same
+read-only resource limits but default isolated Docker bridge egress. Actual
+global domain is `https://www.okx.com`; no regional/account/auth endpoints.
+Two runs each made exactly 10 public GETs (five products x two pages x two rows),
+20 observations/run, no retries, zero failures/skips; final run 5.872s. No raw
+rows/credentials persisted, only bounded decoded-data SHA256 receipts printed.
+Final window: `[1790413200000,1790414100000]`, BTC-USDT-SWAP, 5m, limit=4,
+page_size=2, max_pages=2, full requested timestamp coverage for all five.
+
+| Final real case | Caller-to-complete ms | Provider newest-sample age ms | First decoded-page SHA256 |
+|---|---:|---:|---|
+| OI | 1549.347 | 889278.417 | `19b0e44e7913ec6a5d0ab4a89d41073b10487da02f51c322e9fe413d8ff13406` |
+| Taker | 1078.532 | 890357.226 | `1bb0ff2cd3dda4860f0518b6c82faedd855c8c0a163ed52a8e478b19179cd3cb` |
+| Global account | 1078.694 | 891436.112 | `bb84a3d1f07312e36edaf3945640f5192ab53af82f4e5e80c39f225675a60e17` |
+| Top account | 1082.733 | 892519.066 | `646fbd326904d01bb4c51d9948d1a8ff64137ce8fc07fd9af1d3fd89c2598dd6` |
+| Top position | 1075.656 | 893594.990 | `e81508d23a96b25beb19f38bc852fa65add50b69907aaebc8c2ab78814d51e79` |
+
+Mean request duration **1172.992 ms**, measured before batch queue through decoded
+result; includes 500ms deliberate test pacing before each GET. Mean provider age
+**891437.162 ms**, measured against the newest deliberately historical timestamp,
+not transport delay/live freshness. Public smoke uses the explicit standalone
+adapter, not a production admission connection; shared async admission is verified
+with deterministic fake-Rust/private-wire tests, not claimed as real deployment.
+This BTC/5m read does not certify other
+symbols, daily/calendar periods, dated/inverse contracts, multi-replica admission,
+load, streaming, durable capture/replay or production entitlement delivery.
+
+Runtime impact: none; no restarts/deployments/state/credentials/entitlement changes.
+Test containers self-removed (no containers remain using the test image); no image
+builds or cache were created, no broad cleanup/prune performed. Docker inventory:
+51 images / 21.6GB, BuildKit 87 entries / 6.771GB; existing active/parent-retained
+rollback/test artifacts intentionally retained. No source worktree created.
+Canonical checkout `/home/bobby/data_layer`, branch `feat/consumer-endpoint-benchmark`;
+entry commit `f176ad6`, parent advanced HEAD to `86e15e8` during the slice. No
+commit/push/merge by this worker. Stable tag location remains `v2.1.0`; serving
+images/config pins were only inspected, not equated with checkout HEAD.
+Serving Query image ID `dd065fdf8c439ce9034bca47817e1e88ce0a69bbdbd24a2d1f6b0d2f6f693951`,
+Stream `37d7f5182ea170f5cc35967aabba0d7f0c1b4b934c12aa25a51ac79664b181f9`,
+Rust `389753b37c4f3935193acc739687c4a18c5b307f3ea6a427153f5689d31c9762`.
+Query compose config hashes `ef1fccc54f18e780ebfd326445aeb0505638ac6c4eb1164a29458d4a6ab61fa3`
+and `2eb4b3d3be9eeb8a1dbf79843024ed911c42a5da514ddc69b9268ea4ee2e2153`;
+Query/Stream/Rust restart counts observed zero. Existing service set retained:
+2 Query, 2 Stream, 3 Rust, 6 projectors, 2 ingestors, Binance BAR edge, 3 Kafka,
+Redis. Kafka restart counters observed 5/1/0 are not claimed as task-induced.
+
+Final handoff: **READY FOR PARENT REVIEW / SOURCE ONLY**. Code/tests frozen after
+the 102-test pass; parent owns combined/full suite, main-plan reconciliation and
+coherent commit. This worker neither commits nor activates the candidate.

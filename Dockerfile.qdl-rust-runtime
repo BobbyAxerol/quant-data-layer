@@ -24,6 +24,7 @@ RUN apt-get update -qq \
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY rust ./rust
 COPY generated/rust ./generated/rust
+ENV CARGO_BUILD_JOBS=1
 RUN cargo build --release --locked \
         -p qdl-kafka \
             --bin qdl-realtime-core \
@@ -36,9 +37,17 @@ RUN cargo build --release --locked \
     && cargo build --release --locked \
         -p qdl-core --bin qdl-parity-replay --bin qdl-binance-shadow \
     && cargo build --release --locked \
-        -p qdl-venue-core --bin qdl-venue-core-certify
+        -p qdl-venue-core --bin qdl-venue-core-certify \
+    && cargo build --release --locked \
+        -p qdl-projector --bin qdl-projector \
+        -p qdl-stream-gateway --bin qdl-stream-gateway
 
 FROM debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+ARG QDL_GIT_SHA=unknown
+ARG QDL_RELEASE=development
+LABEL org.opencontainers.image.revision="${QDL_GIT_SHA}" \
+      org.opencontainers.image.version="${QDL_RELEASE}" \
+      org.opencontainers.image.title="Quant Data Layer Rust runtime"
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 libzstd1 zlib1g \
     && rm -rf /var/lib/apt/lists/* \
@@ -54,5 +63,8 @@ COPY --from=builder /src/target/release/qdl-phase92-primary-rehearsal /usr/local
 COPY --from=builder /src/target/release/qdl-parity-replay /usr/local/bin/qdl-parity-replay
 COPY --from=builder /src/target/release/qdl-binance-shadow /usr/local/bin/qdl-binance-shadow
 COPY --from=builder /src/target/release/qdl-venue-core-certify /usr/local/bin/qdl-venue-core-certify
+COPY --from=builder /src/target/release/qdl-projector /usr/local/bin/qdl-projector
+COPY --from=builder /src/target/release/qdl-stream-gateway /usr/local/bin/qdl-stream-gateway
+COPY config/v2/provider-admission-policy-v1.json /opt/qdl/config/v2/provider-admission-policy-v1.json
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/qdl-kafka-smoke"]

@@ -9,6 +9,7 @@ import yaml
 
 from qdl.consumer import ConsumerManifestLoader, requirement_key
 from qdl.query import ConsumerGrade, FeedType, StalePolicy
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,22 +58,22 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
     def test_five_liquid_manifests_are_complete_bounded_and_non_execution(self) -> None:
         expected = {
             "alpha.binance.paper.stable": {
-                FeedType.BAR: 70,
+                FeedType.BAR: 70 + UNIVERSE_PER_VENUE["BINANCE"],
                 FeedType.TRADE: 5,
                 FeedType.QUOTE: 5,
                 FeedType.BOOK_SNAPSHOT: 5,
                 FeedType.BOOK_DELTA: 5,
                 "reference": 35,
-                "total": 125,
+                "total": 125 + UNIVERSE_PER_VENUE["BINANCE"],
             },
             "alpha.okx.paper.stable": {
-                FeedType.BAR: 70,
+                FeedType.BAR: 70 + UNIVERSE_PER_VENUE["OKX"],
                 FeedType.TRADE: 5,
                 FeedType.QUOTE: 5,
                 FeedType.BOOK_SNAPSHOT: 5,
                 FeedType.BOOK_DELTA: 5,
-                "reference": 20,
-                "total": 110,
+                "reference": 35,
+                "total": 125 + UNIVERSE_PER_VENUE["OKX"],
             },
         }
         reference_feeds = {
@@ -130,8 +131,12 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
                 self.assertEqual((instrument["venue"], instrument["market"]), (venue, market))
                 if requirement.feed is FeedType.BAR:
                     bars_by_uid.setdefault(requirement.instrument_uid, set()).add(requirement.interval)
-            self.assertEqual(len(bars_by_uid), 5)
-            self.assertTrue(all(len(intervals) == 14 for intervals in bars_by_uid.values()))
+            # Five execution instruments carry every native interval; the D48
+            # universe instruments carry exactly one daily interval.
+            universe = UNIVERSE_PER_VENUE[venue]
+            self.assertEqual(len(bars_by_uid), 5 + universe)
+            self.assertEqual(sum(len(intervals) == 14 for intervals in bars_by_uid.values()), 5)
+            self.assertEqual(sum(intervals == {"1d"} for intervals in bars_by_uid.values()), universe)
 
     def test_declared_on_change_quotes_use_session_semantics_only(self) -> None:
         bindings = {
@@ -250,9 +255,9 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
 
         oversized = deepcopy(self.rendered["alpha.binance.paper.stable"])
         oversized["spec"]["requirements"] = (
-            oversized["spec"]["requirements"] * 3
-        )[:257]
-        with self.assertRaisesRegex(ValueError, "1..256"):
+            oversized["spec"]["requirements"] * 5
+        )[:1025]
+        with self.assertRaisesRegex(ValueError, "1..1024"):
             ConsumerManifestLoader.from_mapping(oversized)
 
 

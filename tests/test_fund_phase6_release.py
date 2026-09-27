@@ -29,9 +29,12 @@ class ReleaseBundleTests(unittest.TestCase):
             env_example,
         )
         self.assertIn(
-            "COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv",
+            "COPY --from=verified-dependencies --chown=qdl:qdl /opt/venv /opt/venv",
             dockerfile,
         )
+        self.assertIn("ARG QDL_DEPENDENCY_IMAGE=builder", dockerfile)
+        self.assertIn("verify_runtime_dependencies.py", dockerfile)
+        self.assertIn("/opt/qdl/dependency-receipt.json", dockerfile)
         self.assertNotIn("COPY --from=builder --chown=qdl:qdl /app/.venv", dockerfile)
         preparation = (ROOT / "scripts/prepare_nonroot_runtime.sh").read_text(
             encoding="utf-8"

@@ -37,6 +37,8 @@ from scripts.phase10_real_provider_admission import (
 )
 
 
+from tests.universe_support import UNIVERSE_SYMBOLS
+
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 ACQUISITION_PATH = ROOT / "config/v2/stable-acquisition-bindings.yaml"
@@ -347,16 +349,16 @@ class UniversalDemandTests(unittest.TestCase):
             self.assertTrue(resolved[0].provisioned)
             self.assertEqual(resolved[0].binding_id, "binance-spot-btcusdt-trade")
 
-    def test_unsupported_metric_is_truthful_and_does_not_create_subscription(self):
+    def test_unsupported_spot_metric_is_truthful_and_does_not_create_subscription(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = self._registry(Path(directory))
             selector = UniverseSelector(
-                selector_id="okx-swap-btc",
+                selector_id="okx-spot-btc",
                 kind=UniverseSelectorKind.EXPLICIT,
                 venue="OKX",
-                market="SWAP",
-                product_type="PERPETUAL",
-                native_symbols=("BTC-USDT-SWAP",),
+                market="SPOT",
+                product_type="SPOT",
+                native_symbols=("BTC-USDT",),
             )
             requirement = self._requirement(
                 feed=DemandFeed.LONG_SHORT_RATIO,
@@ -528,7 +530,10 @@ class UniversalDemandTests(unittest.TestCase):
                 ("OKX", "SWAP", "SOL-USDT-SWAP"),
                 ("OKX", "SWAP", "DOGE-USDT-SWAP"),
                 ("OKX", "SWAP", "BNB-USDT-SWAP"),
-            },
+            }
+            # D48: the daily market-cap universe's bar-only symbols.
+            | {("BINANCE", "USDM", symbol) for symbol in UNIVERSE_SYMBOLS["BINANCE"]}
+            | {("OKX", "SWAP", symbol) for symbol in UNIVERSE_SYMBOLS["OKX"]},
         )
 
         class Response:

@@ -51,9 +51,25 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             now_ns=NOW_NS,
         )
 
+    def test_manifest_expansion_is_exact_not_a_frozen_reference_count(self):
+        from dataclasses import replace
+        from qdl.consumer.manifest import ConsumerManifestLoader
+        manifest = ConsumerManifestLoader.load(MANIFEST)
+        expected = {(r.instrument_uid, r.feed.value, r.interval or "", r.source_policy_id)
+                    for r in manifest.requirements}
+        actual = {p.identity[1:] for p in self.scope.references + self.scope.books}
+        self.assertEqual(actual, expected)
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            replace(self.scope, references=self.scope.references + self.scope.references[:1])
+        with self.assertRaisesRegex(ValueError, "requires"):
+            replace(self.scope, references=())
+
     def test_scope_is_exact_v2_only_reference_and_book_product_set(self):
-        self.assertEqual(len(self.scope.references), 55)
-        self.assertEqual(len(self.scope.books), 24)
+        self.assertEqual(len(self.scope.references), 70)
+        self.assertEqual(len(self.scope.books), 20)
+        retired = {"f1228887-3053-5b61-9aea-11d3833f8a62",
+                   "9e24d8dd-e74b-5f9b-a770-2556bbc89d37"}
+        self.assertTrue(retired.isdisjoint(str(item.instrument_uid) for item in self.scope.books))
         self.assertEqual(
             {item.consumer_id for item in self.scope.references + self.scope.books},
             {REFERENCE_L2_CONSUMER_ID},
@@ -81,7 +97,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
                 self.assertIsNotNone(request.start_time_ns)
                 self.assertIsNotNone(request.end_time_ns)
             if item.requirement.feed.value == "OPEN_INTEREST":
-                if item.venue == "BINANCE":
+                if item.requirement.interval == "1d":
                     self.assertEqual(request.interval, "1d")
                     self.assertIsNotNone(request.start_time_ns)
                     self.assertIsNotNone(request.end_time_ns)

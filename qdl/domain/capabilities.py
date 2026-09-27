@@ -11,6 +11,13 @@ from qdl.adapters.intervals import (
 )
 
 
+# Explicit analytics subset of the fixed-duration canonical contract, verified
+# against OKX Trading Statistics docs on 2026-09-26 (not the candle capability).
+OKX_REFERENCE_INTERVALS = (
+    "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "2d", "3d", "1w",
+)
+
+
 class CapabilityAvailability(str, Enum):
     AVAILABLE = "AVAILABLE"
     UNAVAILABLE = "UNAVAILABLE"
@@ -72,6 +79,7 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
     if market_value not in {"SPOT", "SWAP", "FUTURES", "OPTION", "EVENTS"}:
         raise ValueError(f"unsupported OKX market profile: {market}")
     deep_book = CapabilityAvailability.TIER_GATED
+    contract_analytics = market_value in {"SWAP", "FUTURES"}
     return VenueCapabilityProfile(
         provider="OKX_DIRECT",
         venue="OKX",
@@ -121,8 +129,11 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
             ),
             "open_interest": FeedCapability(
                 CapabilityAvailability.AVAILABLE,
+                rest_history=contract_analytics,
                 snapshot=True,
-                constraint="public current snapshot; no certified historical series in this profile",
+                native_intervals=OKX_REFERENCE_INTERVALS if contract_analytics else (),
+                constraint=("exact-contract snapshot; SWAP/FUTURES history retains at most 1440 samples; contracts/base/USD"
+                            if contract_analytics else "public current snapshot; no certified historical series in this profile"),
             ),
             "mark_index_price": FeedCapability(
                 CapabilityAvailability.AVAILABLE,
@@ -131,12 +142,18 @@ def okx_global_capabilities(market: str, *, account_tier: str = "PUBLIC") -> Ven
                 constraint="mark/index history and current public reference reads",
             ),
             "long_short_ratio": FeedCapability(
-                CapabilityAvailability.UNAVAILABLE,
-                constraint="no provider-equivalent public OKX global/top account ratio",
+                CapabilityAvailability.AVAILABLE if contract_analytics else CapabilityAvailability.UNAVAILABLE,
+                rest_history=contract_analytics,
+                native_intervals=OKX_REFERENCE_INTERVALS if contract_analytics else (),
+                constraint=("SWAP/FUTURES exact-contract global account/top 5% account/top 5% position; at most 1440 samples"
+                            if contract_analytics else "no provider-equivalent public OKX global/top account ratio"),
             ),
             "taker_flow": FeedCapability(
-                CapabilityAvailability.UNAVAILABLE,
-                constraint="no provider-equivalent public OKX taker long/short ratio",
+                CapabilityAvailability.AVAILABLE if contract_analytics else CapabilityAvailability.UNAVAILABLE,
+                rest_history=contract_analytics,
+                native_intervals=OKX_REFERENCE_INTERVALS if contract_analytics else (),
+                constraint=("SWAP/FUTURES exact-contract buy/sell volume in contracts; at most 1440 samples; no native buy/sell ratio"
+                            if contract_analytics else "no provider-equivalent public OKX taker long/short ratio"),
             ),
             "basis": FeedCapability(
                 CapabilityAvailability.AVAILABLE,

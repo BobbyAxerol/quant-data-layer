@@ -288,6 +288,55 @@ def _realtime_templates(
     return rows
 
 
+def _universe_templates(
+    *,
+    consumer_id: str,
+    demand: Mapping[str, Any],
+    instruments: Mapping[str, Mapping[str, Any]],
+    bindings: Mapping[tuple[str, str, str | None, str], Mapping[str, Any]],
+    target: Mapping[str, str],
+    execution_uids: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """BAR rows of this consumer's bar-only symbols (the D48 daily universe).
+
+    A symbol with any other realtime demand is an execution symbol and is
+    rendered by ``_realtime_templates``; the rest are exactly what the demand
+    names (daily bars), never a widened interval family.
+    """
+    by_symbol = {
+        str(item["native_symbol"]).upper(): uid
+        for uid, item in instruments.items()
+        if all(str(item.get(field, "")).upper() == target[field] for field in ("venue", "market", "product_type"))
+    }
+    consumer = next(
+        (item for item in demand.get("consumers", []) if item.get("consumer_id") == consumer_id), None
+    )
+    if consumer is None:
+        return []
+    execution = {
+        str(row["native_symbol"]).upper()
+        for item in demand.get("consumers", []) for row in item.get("requirements", [])
+        if str(row.get("feed", "")).upper() != "BAR"
+    }
+    rows = []
+    for row in consumer.get("requirements", []):
+        symbol = str(row.get("native_symbol", "")).upper()
+        if (str(row.get("feed", "")).upper() != "BAR" or symbol in execution
+                or str(row.get("venue", "")).upper() != target["venue"]):
+            continue
+        uid = by_symbol.get(symbol)
+        if uid is None or uid in execution_uids:
+            raise ValueError(f"universe BAR demand has no catalog instrument: {symbol}")
+        interval = str(row["interval"]).lower()
+        policy_id = str(row["source_policy_id"])
+        try:
+            binding = bindings[(uid, "BAR", interval, policy_id)]
+        except KeyError as error:
+            raise ValueError(f"stable source catalog misses {uid}/BAR/{interval}/{policy_id}") from error
+        rows.append(_manifest_requirement(row, instrument_uid=uid, binding=binding))
+    return rows
+
+
 def _reference_templates(
     reference_manifest: Mapping[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -432,6 +481,21 @@ def build_documents(
             instruments=instruments,
             bindings=bindings,
             target=target,
+        )
+        realtime += _universe_templates(
+            consumer_id=consumer_id,
+            demand=demand,
+            instruments=instruments,
+            bindings=bindings,
+            target=target,
+            execution_uids=_target_uids(alpha_manifests[consumer_id], target=target, instruments=instruments),
+        )
+        realtime.sort(
+            key=lambda item: (
+                item["instrument_uid"],
+                _FEED_ORDER[item["feed"]],
+                _INTERVAL_ORDER.get(item.get("interval"), -1),
+            )
         )
         manifest, changed = _materialize_manifest(
             alpha_manifests[consumer_id],

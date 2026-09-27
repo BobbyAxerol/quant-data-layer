@@ -290,6 +290,20 @@ class GrpcMarketDataService:
             "checked": 0, "refused": 0, "age_sum_ns": 0, "worst_ns": 0,
         }
 
+    async def _record_initial_replay_if_current(self, subscription, stored):
+        """Advance a physical replay cursor without emitting an aged frame.
+
+        Initial replay is not queue-backed, but issuing its signed cursor can
+        still await a durable watermark read. A strict freshness predicate must
+        therefore be evaluated again after that await and immediately before
+        emission. The cursor intentionally remains advanced when the record
+        ages out: it is a filtered physical record, not a delivery the client
+        may safely resume into.
+        """
+
+        record = await subscription.record(stored)
+        return record if subscription.accepts(record.stored) else None
+
     async def subscribe(self, request: query_pb2.SubscribeRequest, context):
         subscription = None
         stream = ""
@@ -350,7 +364,11 @@ class GrpcMarketDataService:
                 if pending_skip is not None:
                     await subscription.record(pending_skip)
                     pending_skip = None
-                record = await subscription.record(stored)
+                record = await self._record_initial_replay_if_current(
+                    subscription, stored
+                )
+                if record is None:
+                    continue
                 yield query_pb2.SubscribeResponse(
                     record=self._event(record.stored, record.resume_token)
                 )

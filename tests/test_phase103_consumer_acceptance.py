@@ -33,6 +33,7 @@ from scripts.phase103_consumer_receipt_acceptance import (
 )
 from qdl_sdk import MarketDataView
 from qdl_sdk.models import DecimalValue
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,10 +65,10 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             {item.consumer_id for item in scope.products},
             PHASE103_CONSUMER_IDS,
         )
-        self.assertEqual(len(scope.products), 110)
+        self.assertEqual(len(scope.products), 110 + UNIVERSE_PER_VENUE["BINANCE"])
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            110,
+            110 + UNIVERSE_PER_VENUE["BINANCE"],
         )
         pass_through = [
             item

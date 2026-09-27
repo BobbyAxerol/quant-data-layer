@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qdl.adapters.intervals import (
+    BarHistoryGapError,
     canonical_interval_ms,
     is_valid_bar_open_ms,
     latest_closed_boundary_ms,
@@ -31,6 +32,7 @@ from qdl.adapters.okx.bar_edge import (
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.runtime.heartbeat import write_heartbeat
+from qdl.runtime.kn_bar_readback import KnBarReadbackError
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_capacity import (
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
@@ -61,6 +63,18 @@ _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # reports real coverage rather than inventing missing rows.
 _BOOTSTRAP_HISTORY_LOOKBACK_DAYS = 1_095
 _BOOTSTRAP_HISTORY_LOOKBACK_MS = _BOOTSTRAP_HISTORY_LOOKBACK_DAYS * 86_400_000
+# Native websocket BAR delivery is primary. These bounds only govern the
+# provider-history repair path after durable evidence proves a native hole.
+_NATIVE_RECOVERY_LOOKBACK_ROWS = 3
+_NATIVE_RECOVERY_GRACE_SECONDS = 3.0
+_NATIVE_RECOVERY_VISIBILITY_SECONDS = 10.0
+_NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS = 4
+# KN-4 D47-1: published history is "served" only when the market cache reads it
+# back; a binding still unserved after this long is reported overdue (never
+# re-fetched from the venue while the cache is catching up).
+_SERVE_OVERDUE_SECONDS = 900.0
+# Bindings whose serving is verified per loop turn (bounded cache reads).
+_SERVE_VERIFY_PER_TURN = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,10 +136,10 @@ def _bar_interval_ms(interval: str) -> int:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
-def durable_bar_history_capacity_rows(interval: str) -> int:
-    """Return the truthful retained-row ceiling for one durable BAR interval."""
-
-    return max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // _bar_interval_ms(interval))
+def durable_bar_history_capacity_rows(interval: str, *, kafka_native: bool = False) -> int:
+    """Legacy spool sizing horizon or the KN public row bound, not listing age."""
+    step = _bar_interval_ms(interval)
+    return _MAX_DURABLE_BAR_ROWS if kafka_native else max(1, _BOOTSTRAP_HISTORY_LOOKBACK_MS // step)
 
 
 def _source_provider(source: StableSourceBinding) -> str:
@@ -156,6 +170,17 @@ def _latest_source_closed_boundary_ms(
         observed_ms,
         provider=_source_provider(source),
     )
+
+
+def native_recovery_bar_bindings(pairs: tuple) -> tuple:
+    """Return Rust-native BARs eligible only for bounded gap recovery.
+
+    This is deliberately distinct from recurring REST polling. A native lane
+    remains the normal final-BAR authority; the edge consults provider history
+    only after its durable tail proves an unresolved gap beyond the grace.
+    """
+
+    return tuple(pair for pair in pairs if pair[1].mode == "RUST_NATIVE")
 
 
 def recurring_rest_bar_bindings(pairs: tuple) -> tuple:
@@ -200,12 +225,21 @@ class StableBinanceBarEdge:
         final_settlement_max_reads: int = 10,
         final_settlement_min_age_seconds: float = 6.0,
         max_concurrent_requests: int = 32,
+        native_recovery_lookback_rows: int = _NATIVE_RECOVERY_LOOKBACK_ROWS,
+        native_recovery_grace_seconds: float = _NATIVE_RECOVERY_GRACE_SECONDS,
+        native_recovery_visibility_seconds: float = _NATIVE_RECOVERY_VISIBILITY_SECONDS,
         state_path: str | Path | None = None,
         canonical_cache_id: str | None = None,
         canonical_cache_path: str | Path | None = None,
+        bar_readback=None,
         repair_only: bool = False,
         clock=time.time,
         generation_clock_ns=time.time_ns,
+        provider_admission=None,
+        history_demand=None,
+        history_gate=None,
+        history_end_ms: int | None = None,
+        history_only: bool = False,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -229,6 +263,14 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR retry bounds are invalid")
         if not 1 <= max_concurrent_requests <= 64:
             raise ValueError("stable BAR request concurrency must be between 1 and 64")
+        if not 2 <= native_recovery_lookback_rows <= max_catchup_rows:
+            raise ValueError(
+                "stable native BAR recovery lookback must be between 2 and max catch-up rows"
+            )
+        if not 0.10 <= native_recovery_grace_seconds <= 30.0:
+            raise ValueError("stable native BAR recovery grace must be between 0.10 and 30 seconds")
+        if not 0.10 <= native_recovery_visibility_seconds <= 60.0:
+            raise ValueError("stable native BAR recovery visibility wait must be between 0.10 and 60 seconds")
         self.catalog = catalog
         self.acquisition = acquisition
         self.authority = authority
@@ -244,6 +286,9 @@ class StableBinanceBarEdge:
         self.final_settlement_min_age_seconds = final_settlement_min_age_seconds
         self.settlement_reads = 0
         self.max_concurrent_requests = max_concurrent_requests
+        self.native_recovery_lookback_rows = native_recovery_lookback_rows
+        self.native_recovery_grace_seconds = native_recovery_grace_seconds
+        self.native_recovery_visibility_seconds = native_recovery_visibility_seconds
         self.state_path = Path(state_path) if state_path is not None else None
         self.repair_only = repair_only
         if repair_only and (self.state_path is None or not self.state_path.is_file()):
@@ -265,6 +310,13 @@ class StableBinanceBarEdge:
             raise ValueError("stable BAR canonical cache identity is invalid")
         if self.canonical_cache_path is not None and self.canonical_cache_id is None:
             raise ValueError("stable BAR canonical cache path requires its identity")
+        # KN-3 market-cache readback (`kn_bar_readback`) replaces the SQLite
+        # cache path and derives the cache identity itself (below).
+        self.bar_readback = bar_readback
+        if bar_readback is not None and (
+            self.canonical_cache_path is not None or self.canonical_cache_id is not None
+        ):
+            raise ValueError("stable BAR market-cache readback replaces the SQLite cache identity")
         self.clock = clock
         self.generation_clock_ns = generation_clock_ns
         authority_revision = int(authority.get("revision", 0))
@@ -276,7 +328,37 @@ class StableBinanceBarEdge:
         self._retry_attempts: dict[str, int] = {}
         self._next_retry_at: dict[str, float] = {}
         self._last_retry_log: dict[str, float] = {}
+        self._native_recovery_next_at: dict[str, float] = {}
+        self._native_gap_first_seen_at: dict[str, float] = {}
+        self._native_recovery_pending: dict[str, frozenset[int]] = {}
+        self._native_recovery_verified_open: dict[str, int] = {}
+        self._native_recovery_visible_after: dict[str, float] = {}
         self._history_bootstrapped = False
+        # KN-4 D47-1: per-product READY generations seen by the edge, and the
+        # serving progress of published history (kn3 readback only).
+        self._product_generations: dict[str, int | None] = {}
+        # KN-4 D47-2: venue calls behind the Rust provider admission (None keeps
+        # the direct clients). BATCH for history/recovery, REALTIME for live bars.
+        self.provider_admission = provider_admission
+        self._admitted_clients: dict[tuple[str, str], object] = {}
+        # KN-4 D47-3: history depth by demand (binding id -> rows; None keeps
+        # the global bound), a downstream backpressure gate checked before each
+        # binding's history, and truthful short venue history.
+        self.history_demand = dict(history_demand) if history_demand is not None else None
+        self.history_gate = history_gate
+        self._history_short: dict[str, tuple[int, int]] = {}
+        self._history_gate_closed_at: float | None = None
+        # KN-4 D47-4: the history/live join. History holds bars closed before
+        # ``history_end_ms`` (the live log's start, e.g. the mirror start);
+        # ``history_only`` leaves every live bar to that log (no REST poll, no
+        # native recovery) so two live sources never overlap.
+        if history_end_ms is not None and history_end_ms <= 0:
+            raise ValueError("stable BAR history end must be a positive epoch millisecond")
+        self.history_end_ms = history_end_ms
+        self.history_only = bool(history_only)
+        self._serving_pending: dict[str, tuple[frozenset[int], float]] = {}
+        self._served: set[str] = set()
+        self._serve_overdue: set[str] = set()
         self._stopped = threading.Event()
 
         source_by_id = {item.binding_id: item for item in catalog.bindings}
@@ -312,6 +394,19 @@ class StableBinanceBarEdge:
         # Native websocket BARs stay owned by their Rust acquisition lane.
         self.bindings = recurring_rest_bar_bindings(self.history_bindings)
         self.okx_bindings = recurring_rest_bar_bindings(self.history_okx_bindings)
+        self.native_recovery_bindings = native_recovery_bar_bindings(self.history_bindings)
+        self.native_recovery_okx_bindings = native_recovery_bar_bindings(
+            self.history_okx_bindings
+        )
+        self._native_recovery_active = bool(
+            self.native_recovery_bindings or self.native_recovery_okx_bindings
+        )
+        self._native_recovery_next_at = {
+            source.binding_id: 0.0
+            for source, _acquisition in (
+                self.native_recovery_bindings + self.native_recovery_okx_bindings
+            )
+        }
         self._heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         # Keyed by binding id so a capture can ask what channel the core has this
         # binding registered under; see `_binance_binding`.
@@ -338,9 +433,13 @@ class StableBinanceBarEdge:
                 "stable crypto BAR edge does not bootstrap every configured BAR "
                 "binding: " + ",".join(sorted(expected_history - history_owned))
             )
+        if self.bar_readback is not None:
+            self.canonical_cache_id = self._observed_canonical_cache_id()
         validate_shared_authority_record(authority)
         self._history_bootstrap_active = bool(expected_history)
-        self._rest_fallback_active = bool(self.bindings or self.okx_bindings)
+        self._rest_fallback_active = bool(self.bindings or self.okx_bindings) and not self.history_only
+        if self.history_only:
+            self._native_recovery_active = False
         if self._history_bootstrap_active:
             self._restore_state()
             if self.repair_only:
@@ -565,7 +664,7 @@ class StableBinanceBarEdge:
         the normal real-provider pipeline on the next edge loop.
         """
 
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return {}
         sources = {
             source.binding_id: source
@@ -578,6 +677,8 @@ class StableBinanceBarEdge:
             expected_opens = frozenset(
                 last_open_ms - index * interval_ms
                 for index in range(self._bootstrap_rows_for(source))
+                if (getattr(self, "bar_readback", None) is None
+                    or last_open_ms - index * interval_ms > 0)
             )
             missing = len(expected_opens - self._durable_final_bar_opens(
                 source, expected_opens
@@ -723,8 +824,11 @@ class StableBinanceBarEdge:
             )
         self._assert_canonical_cache_identity()
         if advance_watermark:
+            # Publish progress: the live watermark may move on the Kafka ACK.
             self._last_open_ms[plan.source.binding_id] = max(plan.expected_opens)
             self._persist_state()
+            self._record_serving(plan.source.binding_id, plan.expected_opens,
+                                 published=bool(current.missing_envelopes))
         logger.info(
             "stable provider final BAR history ACK binding=%s venue=%s expected_rows=%s "
             "published_rows=%s existing_durable_rows=%s advance_watermark=%s",
@@ -770,6 +874,41 @@ class StableBinanceBarEdge:
             advance_watermark=True,
         )
 
+    def _admitted(self, venue: str, priority_name: str):
+        """The shared admitted venue client (one per venue and priority), or None."""
+
+        admission = getattr(self, "provider_admission", None)
+        if admission is None:
+            return None
+        key = (venue, priority_name)
+        client = self._admitted_clients.get(key)
+        if client is None:
+            from qdl.admission.contracts import AdmissionPriority
+
+            priority = AdmissionPriority(priority_name)
+            if venue == "BINANCE":
+                from qdl.adapters.binance.admitted_klines import AdmittedBinanceKlines
+
+                client = AdmittedBinanceKlines(admission, priority=priority)
+            else:
+                from qdl.adapters.okx.admitted_rest import AdmittedOkxRestClient
+
+                client = AdmittedOkxRestClient(admission, priority=priority)
+            self._admitted_clients[key] = client
+        return client
+
+    def _binance_kwargs(self, priority_name: str) -> dict:
+        fetcher = self._admitted("BINANCE", priority_name)
+        return {} if fetcher is None else {"fetcher": fetcher}
+
+    def _okx_kwargs(self, priority_name: str) -> dict:
+        client = self._admitted("OKX", priority_name)
+        if client is None:
+            return {}
+        from qdl.adapters.okx.history import OkxHistoricalClient
+
+        return {"history_client": OkxHistoricalClient(client)}
+
     def _fetch_history(
         self,
         source: StableSourceBinding,
@@ -777,7 +916,9 @@ class StableBinanceBarEdge:
         *,
         rows: int,
         observed_ms: int,
+        allow_short: bool = False,
     ) -> tuple[object, ...]:
+        short = {"allow_short": True} if allow_short else {}
         if acquisition.runtime == "BINANCE":
             return tuple(fetch_binance_history(
                 self._binance_binding(source),
@@ -785,6 +926,8 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=4,
                 test_provenance=False,
+                **self._binance_kwargs("BATCH"),
+                **short,
             ))
         if acquisition.runtime == "OKX":
             return tuple(asyncio.run(fetch_okx_history(
@@ -792,6 +935,8 @@ class StableBinanceBarEdge:
                 limit=rows,
                 now_ms=observed_ms,
                 test_provenance=False,
+                **self._okx_kwargs("BATCH"),
+                **short,
             )))
         raise ValueError("stable crypto BAR runtime is unsupported")
 
@@ -824,7 +969,9 @@ class StableBinanceBarEdge:
         # never couple it to the live loop's configured warmup size.
         maximum_rows = min(
             _MAX_DURABLE_BAR_ROWS,
-            durable_bar_history_capacity_rows(source.interval or ""),
+            durable_bar_history_capacity_rows(
+                source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
+            ),
         )
         if rows > maximum_rows:
             raise ValueError(
@@ -870,12 +1017,29 @@ class StableBinanceBarEdge:
         covered = self._durable_final_bar_opens(plan.source, plan.expected_opens)
         return len(plan.expected_opens - covered)
 
+    @property
+    def _durable_cache_configured(self) -> bool:
+        return (
+            self.canonical_cache_path is not None
+            or getattr(self, "bar_readback", None) is not None
+        )
+
+    def _observed_canonical_cache_id(self) -> str:
+        """The SQLite cache_id, or the KN-3 market-cache generation identity."""
+        readback = getattr(self, "bar_readback", None)
+        if readback is not None:
+            return readback.cache_identity(
+                source
+                for source, _acquisition in self.history_bindings + self.history_okx_bindings
+            )
+        return _canonical_cache_id(self.canonical_cache_path)
+
     def _assert_canonical_cache_identity(self) -> None:
         """Refuse to certify a bootstrap if its durable generation changed."""
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return
         assert self.canonical_cache_id is not None
-        if _canonical_cache_id(self.canonical_cache_path) != self.canonical_cache_id:
+        if self._observed_canonical_cache_id() != self.canonical_cache_id:
             raise RuntimeError("stable BAR canonical cache generation changed during bootstrap")
 
     def _rebase_if_canonical_cache_generation_changed(self) -> bool:
@@ -888,16 +1052,21 @@ class StableBinanceBarEdge:
         edge's watermarks, issue a new provider-session generation, and let the
         existing bounded provider-history bootstrap replenish the cache.
         """
-        if self.canonical_cache_path is None:
+        if not self._durable_cache_configured:
             return False
         assert self.canonical_cache_id is not None
-        observed_cache_id = _canonical_cache_id(self.canonical_cache_path)
+        observed_cache_id = self._observed_canonical_cache_id()
         if observed_cache_id == self.canonical_cache_id:
             return False
 
         previous_cache_id = self.canonical_cache_id
         self.canonical_cache_id = observed_cache_id
         self._last_open_ms.clear()
+        self._native_recovery_pending.clear()
+        self._native_recovery_verified_open.clear()
+        self._native_gap_first_seen_at.clear()
+        self._native_recovery_visible_after.clear()
+        self._native_recovery_next_at = {key: 0.0 for key in self._native_recovery_next_at}
         self._retry_attempts.clear()
         self._next_retry_at.clear()
         self._last_retry_log.clear()
@@ -926,9 +1095,14 @@ class StableBinanceBarEdge:
         captured durable event and fill only missing opens; reconciliation is a
         distinct, explicitly revisioned product.
         """
-        if not expected_opens or self.canonical_cache_path is None:
+        if not expected_opens or not self._durable_cache_configured:
             return frozenset()
         self._assert_canonical_cache_identity()
+        readback = getattr(self, "bar_readback", None)
+        if readback is not None:
+            covered = readback.durable_final_bar_opens(source, expected_opens)
+            self._assert_canonical_cache_identity()
+            return covered
         connection = None
         try:
             connection = sqlite3.connect(
@@ -1004,10 +1178,41 @@ class StableBinanceBarEdge:
         a long BAR bootstrap bounded and honest while keeping minute/hour
         warmups at the configured maximum.
         """
-        return min(
-            self.warmup_rows,
-            durable_bar_history_capacity_rows(source.interval or ""),
+        # KN discovers real listing/provider history through bounded pagination.
+        # The old three-year spool sizing horizon is not a provider capability.
+        capacity = durable_bar_history_capacity_rows(
+            source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
         )
+        rows = min(self.warmup_rows, capacity)
+        demand = getattr(self, "history_demand", None)
+        if demand is not None:
+            # The largest max_warmup_rows of a manifest requiring the product
+            # (the D15 rule); a product nobody demands keeps one bar, enough
+            # for the live watermark. 12,064 is a retention ceiling, not a fill.
+            rows = min(rows, max(1, int(demand.get(source.binding_id, 0))))
+        return rows
+
+    def _history_short_empty(self) -> set[str]:
+        return {binding for binding, (_requested, available) in
+                getattr(self, "_history_short", {}).items() if available == 0}
+
+    def _history_gate_open(self) -> bool:
+        """Downstream backpressure (KN-4 D47-3): history waits, live does not."""
+
+        gate = getattr(self, "history_gate", None)
+        if gate is None:
+            return True
+        admitted, detail = gate()
+        if not admitted:
+            if self._history_gate_closed_at is None:
+                self._history_gate_closed_at = self.clock()
+                logger.warning("stable BAR history paused by downstream backlog %s", detail)
+            return False
+        if self._history_gate_closed_at is not None:
+            logger.info("stable BAR history resumed after %.1fs",
+                        self.clock() - self._history_gate_closed_at)
+            self._history_gate_closed_at = None
+        return True
 
     def _settled_observed_ms(self) -> int:
         """Return the real observation clock for provider finality checks.
@@ -1085,50 +1290,161 @@ class StableBinanceBarEdge:
     def _retry_is_due(self, binding_id: str, *, now: float) -> bool:
         return getattr(self, "_next_retry_at", {}).get(binding_id, 0.0) <= now
 
-    def bootstrap_history(self) -> int:
+    # ------------------------------------------------------------------
+    # KN-4 D47-1: per-product rebase and serving progress (kn3 readback)
+
+    def _rebase_changed_products(self) -> tuple[str, ...]:
+        """A product whose READY generation changed loses only its own checkpoint.
+
+        The first READY (``None`` -> g) is the normal transition of a product
+        the edge is filling. A later change (rebuilt, or unpublished because
+        its log held nothing) re-verifies that one binding through the normal
+        bootstrap, which publishes only the opens the cache does not hold; no
+        other binding is touched.
+        """
+
+        readback = getattr(self, "bar_readback", None)
+        if readback is None:
+            return ()
+        sources = [source for source, _acquisition in self.history_bindings + self.history_okx_bindings]
+        current = readback.generation_identities(sources)
+        known = self._product_generations
+        rebased = []
+        for binding_id, generation in current.items():
+            previous = known.get(binding_id)
+            if previous is not None and generation != previous:
+                rebased.append(binding_id)
+                self._last_open_ms.pop(binding_id, None)
+                for store in (self._native_recovery_pending, self._native_recovery_verified_open,
+                              self._native_gap_first_seen_at, self._native_recovery_visible_after,
+                              self._retry_attempts, self._next_retry_at, self._serving_pending):
+                    store.pop(binding_id, None)
+                if binding_id in self._native_recovery_next_at:
+                    self._native_recovery_next_at[binding_id] = 0.0
+                self._served.discard(binding_id)
+                self._serve_overdue.discard(binding_id)
+            known[binding_id] = generation
+        if rebased:
+            self._history_bootstrapped = False
+            self._persist_state()
+            logger.warning("stable BAR market cache product generation changed; rebased only bindings=%s",
+                           ",".join(sorted(rebased)))
+        return tuple(rebased)
+
+    def _record_serving(self, binding_id: str, opens: frozenset[int], *, published: bool) -> None:
+        if getattr(self, "bar_readback", None) is None:
+            return
+        if published:
+            self._serving_pending[binding_id] = (opens, self.clock())
+            self._served.discard(binding_id)
+        else:  # every open was already read back durable
+            self._serving_pending.pop(binding_id, None)
+            self._served.add(binding_id)
+            self._serve_overdue.discard(binding_id)
+
+    def verify_serving(self) -> dict[str, int]:
+        """Promote published history to served once the cache reads it back.
+
+        A Kafka ACK proves publication only; the rows are served when the
+        projector has materialized them. At most ``_SERVE_VERIFY_PER_TURN``
+        bindings are read per call; a binding the cache cannot answer yet stays
+        pending, one past ``_SERVE_OVERDUE_SECONDS`` is reported overdue and is
+        not fetched again from the venue.
+        """
+
+        if getattr(self, "bar_readback", None) is None:
+            return {}
+        sources = {source.binding_id: source
+                   for source, _acquisition in self.history_bindings + self.history_okx_bindings}
+        now = self.clock()
+        for binding_id, (opens, published_at) in list(self._serving_pending.items())[:_SERVE_VERIFY_PER_TURN]:
+            try:
+                covered = self._durable_final_bar_opens(sources[binding_id], opens)
+            except KnBarReadbackError:
+                covered = frozenset()
+            if covered == opens:
+                self._serving_pending.pop(binding_id, None)
+                self._served.add(binding_id)
+                self._serve_overdue.discard(binding_id)
+            else:
+                # Rotate so every pending binding is checked in turn.
+                self._serving_pending.pop(binding_id)
+                self._serving_pending[binding_id] = (opens, published_at)
+                if now - published_at > _SERVE_OVERDUE_SECONDS:
+                    self._serve_overdue.add(binding_id)
+        return self.serving_status()
+
+    def serving_status(self) -> dict[str, int]:
+        return {"bindings": len(self._binding_ids), "published": len(self._last_open_ms),
+                "served": len(self._served), "pending": len(self._serving_pending),
+                "overdue": len(self._serve_overdue), "short": len(getattr(self, "_history_short", {})),
+                "history_failed": len(getattr(self, "_history_retry", {})),
+                "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
+
+    def bootstrap_history(self, *, max_bindings: int | None = None) -> int:
         if self.repair_only:
             raise RuntimeError("stable BAR repair cannot bootstrap as writer")
         self._rebase_if_canonical_cache_generation_changed()
+        self._rebase_changed_products()
         if not self._history_bootstrap_active:
             return 0
         if self._history_bootstrapped:
             return 0
         observed_ms = self._settled_observed_ms()
+        history_end_ms = getattr(self, "history_end_ms", None)
+        if history_end_ms is not None:
+            observed_ms = min(observed_ms, history_end_ms)
+        if max_bindings is not None and max_bindings < 1:
+            raise ValueError("history binding quantum must be positive")
         published = 0
-        for source, acquisition in self.history_bindings:
-            if source.binding_id in self._last_open_ms:
+        attempted = 0
+        kn_mode = getattr(self, "bar_readback", None) is not None
+        failures = getattr(self, "_history_retry", {})
+        self._history_retry = failures
+        for source, acquisition in self.history_bindings + self.history_okx_bindings:
+            if source.binding_id in self._last_open_ms or source.binding_id in self._history_short_empty():
                 continue
+            if kn_mode and not self._history_gate_open():
+                return published  # resumed on a later turn; live bars keep flowing
+            attempt, retry_at = failures.get(source.binding_id, (0, 0))
+            if kn_mode and self.clock() < retry_at:
+                continue
+            if max_bindings is not None and attempted >= max_bindings:
+                return published
+            attempted += 1
             bootstrap_rows = self._bootstrap_rows_for(source)
+            try:
+                values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
+                    observed_ms=observed_ms, allow_short=kn_mode)
+            except BarHistoryGapError as error:
+                if not kn_mode:
+                    raise
+                attempt += 1
+                failures[source.binding_id] = (attempt, self.clock() + min(2 ** min(attempt, 6), 30))
+                logger.error("stable BAR provider history refused binding=%s attempt=%s error=%s",
+                             source.binding_id, attempt, error)
+                continue
+            failures.pop(source.binding_id, None)
+            if len(values) < bootstrap_rows:
+                # The venue has no older bars (new listing / long interval):
+                # reported, never invented, never retried as an error.
+                self._history_short[source.binding_id] = (bootstrap_rows, len(values))
+                logger.warning("stable BAR provider history is short binding=%s requested=%s available=%s",
+                               source.binding_id, bootstrap_rows, len(values))
+                if not values:
+                    continue
             published += self._publish_history(
                 source,
                 acquisition,
-                self._fetch_history(
-                    source,
-                    acquisition,
-                    rows=bootstrap_rows,
-                    observed_ms=observed_ms,
-                ),
-                expected_rows=bootstrap_rows,
-            )
-        for source, acquisition in self.history_okx_bindings:
-            if source.binding_id in self._last_open_ms:
-                continue
-            bootstrap_rows = self._bootstrap_rows_for(source)
-            published += self._publish_history(
-                source,
-                acquisition,
-                self._fetch_history(
-                    source,
-                    acquisition,
-                    rows=bootstrap_rows,
-                    observed_ms=observed_ms,
-                ),
-                expected_rows=bootstrap_rows,
+                values,
+                expected_rows=len(values),
             )
         self._history_bootstrapped = (
-            set(self._last_open_ms) == set(self._binding_ids)
+            set(self._last_open_ms) | self._history_short_empty() == set(self._binding_ids)
         )
         if not self._history_bootstrapped:
+            if kn_mode and failures:
+                return published  # other bindings progressed; failed histories are not complete
             raise RuntimeError("stable BAR bootstrap did not checkpoint every binding")
         logger.info(
             "stable multi-venue BAR bootstrap complete bindings=%s rows=%s",
@@ -1192,6 +1508,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=4,
                 test_provenance=False,
+                **self._binance_kwargs("BATCH"),
             )
         else:
             values = asyncio.run(fetch_okx_history(
@@ -1199,6 +1516,7 @@ class StableBinanceBarEdge:
                 limit=pending_rows,
                 now_ms=observed_ms,
                 test_provenance=False,
+                **self._okx_kwargs("BATCH"),
             ))
 
         opens = tuple(self._open_time_ms(acquisition, item) for item in values)
@@ -1221,6 +1539,215 @@ class StableBinanceBarEdge:
             return False
         previous_open = self._last_open_ms.get(source.binding_id)
         return previous_open is None or previous_open < newest_closed_open
+
+    def _native_expected_opens(
+        self,
+        source: StableSourceBinding,
+        *,
+        observed_ms: int,
+    ) -> frozenset[int]:
+        """Return the small current final-BAR window used to detect a native hole."""
+
+        newest_open_ms = self._expected_closed_open_ms(
+            source, observed_ms=observed_ms
+        )
+        if newest_open_ms is None:
+            return frozenset()
+        interval_ms = _bar_interval_ms(source.interval or "")
+        verified = self._native_recovery_verified_open.get(source.binding_id)
+        if verified is None:
+            rows = self.native_recovery_lookback_rows
+        else:
+            rows = max(self.native_recovery_lookback_rows, (newest_open_ms - verified) // interval_ms)
+        maximum = min(self.max_catchup_rows, durable_bar_history_capacity_rows(
+            source.interval or "", kafka_native=getattr(self, "bar_readback", None) is not None
+        ))
+        if rows > maximum:
+            raise RuntimeError(
+                f"stable native BAR recovery exceeds bounded history binding={source.binding_id} "
+                f"required={rows} maximum={maximum}"
+            )
+        opens = frozenset(
+            newest_open_ms - index * interval_ms
+            for index in range(rows)
+        )
+        if any(value <= 0 for value in opens):
+            return frozenset()
+        return opens
+
+    def _next_native_recovery_check_at(
+        self,
+        source: StableSourceBinding,
+        *,
+        observed_ms: int,
+        now: float,
+    ) -> float:
+        interval_ms = _bar_interval_ms(source.interval or "")
+        boundary_ms = _latest_source_closed_boundary_ms(source, observed_ms)
+        return max(
+            now + 0.01,
+            (boundary_ms + interval_ms) / 1000 + self.settlement_delay_seconds,
+        )
+
+    def _prepare_native_history_repair(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        *,
+        expected_opens: frozenset[int],
+        observed_ms: int,
+    ) -> StableBarHistoryRepairPlan:
+        """Fetch exactly the observed native-gap window, never a wider tail."""
+
+        plan = self.prepare_history_repair(
+            source.binding_id,
+            rows=len(expected_opens),
+            observed_ms=observed_ms,
+        )
+        if plan.expected_opens != expected_opens:
+            raise RuntimeError(
+                "stable native BAR recovery provider window differs from the durable gap "
+                f"binding={source.binding_id}"
+            )
+        if plan.acquisition != acquisition:
+            raise RuntimeError("stable native BAR recovery acquisition differs from binding")
+        return plan
+
+    def run_native_recovery_cycle(self) -> int:
+        """Repair a proven native BAR hole without polling the healthy fast path."""
+
+        if self.repair_only or not getattr(self, "_native_recovery_active", False):
+            return 0
+        observed_ms = self._settled_observed_ms()
+        now = observed_ms / 1000
+        next_at = self._native_recovery_next_at
+        due = tuple(
+            (source, acquisition)
+            for source, acquisition in (
+                self.native_recovery_bindings + self.native_recovery_okx_bindings
+            )
+            if next_at.get(source.binding_id, 0.0) <= now
+        )
+        if not due:
+            return 0
+
+        candidates: list[tuple[StableSourceBinding, StableAcquisitionBinding, frozenset[int]]] = []
+        for source, acquisition in due:
+            expected_opens = self._native_recovery_pending.get(source.binding_id)
+            if expected_opens is None:
+                try:
+                    expected_opens = self._native_expected_opens(source, observed_ms=observed_ms)
+                except Exception as error:
+                    self._schedule_retry(source.binding_id, now=now, error=error)
+                    next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+                    continue
+            if not expected_opens:
+                next_at[source.binding_id] = self._next_native_recovery_check_at(
+                    source, observed_ms=observed_ms, now=now
+                )
+                continue
+            covered = self._durable_final_bar_opens(source, expected_opens)
+            if covered == expected_opens:
+                self._native_recovery_pending.pop(source.binding_id, None)
+                self._native_recovery_verified_open[source.binding_id] = max(expected_opens)
+                self._native_gap_first_seen_at.pop(source.binding_id, None)
+                self._native_recovery_visible_after.pop(source.binding_id, None)
+                self._clear_retry(source.binding_id)
+                newest = self._expected_closed_open_ms(source, observed_ms=observed_ms)
+                next_at[source.binding_id] = (
+                    now + 0.01 if newest is not None and max(expected_opens) < newest
+                    else self._next_native_recovery_check_at(source, observed_ms=observed_ms, now=now)
+                )
+                continue
+
+            # Retain the original hole across provider failures and wall-clock
+            # advances; a healthy newer suffix does not repair missing history.
+            self._native_recovery_pending[source.binding_id] = expected_opens
+            first_seen = self._native_gap_first_seen_at.setdefault(
+                source.binding_id, now
+            )
+            visible_after = self._native_recovery_visible_after.get(
+                source.binding_id, 0.0
+            )
+            retry_at = self._next_retry_at.get(source.binding_id, 0.0)
+            eligible_at = max(
+                first_seen + self.native_recovery_grace_seconds,
+                visible_after,
+                retry_at,
+            )
+            if now < eligible_at:
+                next_at[source.binding_id] = eligible_at
+                continue
+            candidates.append((source, acquisition, expected_opens))
+
+        if not candidates:
+            return 0
+
+        prepared: list[tuple[StableSourceBinding, StableAcquisitionBinding, StableBarHistoryRepairPlan]] = []
+        # Recovery is exceptional and provider-bound. Keep it below the
+        # normal edge polling concurrency so a multi-binding native outage
+        # cannot turn the repair loop into a provider rate-limit incident.
+        workers = min(
+            len(candidates),
+            self.max_concurrent_requests,
+            _NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS,
+        )
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="qdl-native-bar-repair",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    self._prepare_native_history_repair,
+                    source,
+                    acquisition,
+                    expected_opens=expected_opens,
+                    observed_ms=max(expected_opens) + _bar_interval_ms(source.interval or "")
+                    + max(1, int(self.settlement_delay_seconds * 1000) + 1),
+                ): (source, acquisition)
+                for source, acquisition, expected_opens in candidates
+            }
+            for future in as_completed(futures):
+                source, acquisition = futures[future]
+                try:
+                    prepared.append((source, acquisition, future.result()))
+                except Exception as error:
+                    self._schedule_retry(source.binding_id, now=now, error=error)
+                    next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+
+        published = 0
+        for source, _acquisition, plan in prepared:
+            try:
+                emitted = self.apply_history_repair(
+                    plan,
+                    expected_missing_rows=len(plan.missing_envelopes),
+                )
+            except Exception as error:
+                self._schedule_retry(source.binding_id, now=now, error=error)
+                next_at[source.binding_id] = self._next_retry_at[source.binding_id]
+                continue
+            published += emitted
+            self._clear_retry(source.binding_id)
+            if emitted:
+                # Kafka acknowledgement precedes canonical/projector visibility.
+                # Wait once before inspecting again so a healthy projector cannot
+                # induce duplicate provider recovery requests.
+                visible_at = self.clock() + self.native_recovery_visibility_seconds
+                self._native_recovery_visible_after[source.binding_id] = visible_at
+                next_at[source.binding_id] = visible_at
+                logger.warning(
+                    "stable native final BAR recovery ACK binding=%s venue=%s rows=%s",
+                    source.binding_id,
+                    plan.acquisition.runtime,
+                    emitted,
+                )
+            else:
+                self._native_gap_first_seen_at.pop(source.binding_id, None)
+                self._native_recovery_visible_after.pop(source.binding_id, None)
+                next_at[source.binding_id] = self._next_native_recovery_check_at(
+                    source, observed_ms=observed_ms, now=now
+                )
+        return published
 
     def _next_ready_at(self, now: float) -> float:
         """Wake for a due target retry or the next provider BAR boundary."""
@@ -1254,6 +1781,10 @@ class StableBinanceBarEdge:
                     (boundary_ms + interval_ms) / 1000
                     + self.settlement_delay_seconds
                 )
+        candidates.extend(
+            max(now, value)
+            for value in getattr(self, "_native_recovery_next_at", {}).values()
+        )
         return min(candidates) if candidates else now + 60.0
 
     def _fetch_latest(
@@ -1272,6 +1803,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=1,
                 test_provenance=False,
+                **self._binance_kwargs("REALTIME"),
                 confirmations=self.final_settlement_confirmations,
                 confirm_interval_seconds=self.final_settlement_interval_seconds,
                 max_reads=self.final_settlement_max_reads,
@@ -1285,6 +1817,7 @@ class StableBinanceBarEdge:
                 now_ms=observed_ms,
                 attempts=1,
                 test_provenance=False,
+                **self._okx_kwargs("REALTIME"),
             ))
         raise ValueError("stable crypto BAR runtime is unsupported")
 
@@ -1298,7 +1831,8 @@ class StableBinanceBarEdge:
         due = tuple(
             (source, acquisition)
             for source, acquisition in self.bindings + self.okx_bindings
-            if self._binding_is_due(source, observed_ms=observed_ms)
+            if self._live_history_ready(source.binding_id)
+            and self._binding_is_due(source, observed_ms=observed_ms)
             and self._retry_is_due(source.binding_id, now=now)
         )
         if not due:
@@ -1388,12 +1922,30 @@ class StableBinanceBarEdge:
         )
         return len(acknowledgements)
 
+    def _live_history_ready(self, binding_id: str) -> bool:
+        # Live progress and the bootstrap checkpoint share last_open_ms. Do not
+        # let a first live close falsely complete an unbootstrapped history.
+        return (getattr(self, "bar_readback", None) is None
+                or not getattr(self, "_history_bootstrap_active", False)
+                or binding_id in self._last_open_ms)
+
+    def _history_loop_delay(self, now: float) -> float | None:
+        if (getattr(self, "bar_readback", None) is None
+                or not getattr(self, "_history_bootstrap_active", False)
+                or getattr(self, "_history_bootstrapped", False)):
+            return None
+        retries = getattr(self, "_history_retry", {})
+        missing = set(self._binding_ids) - set(self._last_open_ms) - self._history_short_empty()
+        if not missing:
+            return None
+        return max(.1, min(max(0., retries.get(key, (0, now))[1] - now) for key in missing))
+
     def _loop_sleep_seconds(self, now: float) -> float:
-        if not self._rest_fallback_active:
-            return 60.0
-        # The configured 100ms first poll/retry cannot work when the outer
-        # scheduler imposes a larger arbitrary sleep floor.
-        return max(0.01, self._next_ready_at(now) - now)
+        delay = 60.0
+        if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
+            delay = max(0.01, self._next_ready_at(now) - now)
+        history_delay = self._history_loop_delay(now)
+        return delay if history_delay is None else min(delay, history_delay)
 
     def run_forever(self) -> None:
         if self.repair_only:
@@ -1415,17 +1967,28 @@ class StableBinanceBarEdge:
             # accommodation `_source_provider` already makes for them.
             heartbeat_path = getattr(self, "_heartbeat_path", None)
             if heartbeat_path is not None:
+                serving = self.serving_status() if getattr(self, "bar_readback", None) is not None else {}
                 write_heartbeat(heartbeat_path, role="stable_bar_edge",
-                                detail=f"bindings={len(self.history_bindings)}")
+                                detail=f"bindings={len(self.history_bindings)}"
+                                + "".join(f" {name}={value}" for name, value in serving.items()))
             try:
                 # Bootstrap is a bounded latest-closed history read.  It must
                 # run immediately after process start; `_next_ready_at()` is
                 # deliberately a recurring-poll scheduler and moves a settled
                 # boundary to the next interval.  Using it here would defer an
                 # empty checkpoint forever at every boundary.
-                self.bootstrap_history()
+                if getattr(self, "bar_readback", None) is not None:
+                    if self._rest_fallback_active:
+                        self.run_cycle()
+                    self.bootstrap_history(max_bindings=1)
+                else:
+                    self.bootstrap_history()
+                if getattr(self, "bar_readback", None) is not None:
+                    self.verify_serving()
                 if self._rest_fallback_active:
                     self.run_cycle()
+                if getattr(self, "_native_recovery_active", False):
+                    self.run_native_recovery_cycle()
                 failures = 0
             except Exception:
                 failures += 1
@@ -1442,11 +2005,22 @@ class StableBinanceBarEdge:
         self.publisher.close()
 
 
+class _ReadOnlyRepairPublisher:
+    """A proof-only publisher that makes accidental repair writes impossible."""
+
+    def publish_many(self, _values):
+        raise RuntimeError("read-only stable BAR repair probe cannot publish")
+
+    def close(self) -> None:
+        return None
+
+
 def build_from_environment(
     *,
     state_path: str | Path | None = None,
     client_id: str | None = None,
     repair_only: bool = False,
+    publisher: KafkaRawPublisher | _ReadOnlyRepairPublisher | None = None,
 ) -> StableBinanceBarEdge:
     """Build the shared edge or an isolated repair client from one runtime env."""
 
@@ -1456,15 +2030,62 @@ def build_from_environment(
     )
     runtime_dir = Path(os.environ["QDL_STABLE_RUNTIME_DIR"])
     authority = json.loads((runtime_dir / "authority.json").read_text(encoding="utf-8"))
-    cert_root = Path(os.environ["QDL_KAFKA_CERT_ROOT"])
-    publisher = KafkaRawPublisher(KafkaRawPublisherConfig(
-        bootstrap_servers=os.environ["QDL_KAFKA_BOOTSTRAP_SERVERS"],
-        client_id=client_id or os.environ["QDL_KAFKA_CLIENT_ID"],
-        topic=acquisition.raw_topic,
-        ca_path=cert_root / "ca.crt",
-        certificate_path=cert_root / "client.crt",
-        key_path=cert_root / "client.key",
-    ))
+    if publisher is None:
+        cert_root = Path(os.environ["QDL_KAFKA_CERT_ROOT"])
+        publisher = KafkaRawPublisher(KafkaRawPublisherConfig(
+            bootstrap_servers=os.environ["QDL_KAFKA_BOOTSTRAP_SERVERS"],
+            client_id=client_id or os.environ["QDL_KAFKA_CLIENT_ID"],
+            topic=acquisition.raw_topic,
+            ca_path=cert_root / "ca.crt",
+            certificate_path=cert_root / "client.crt",
+            key_path=cert_root / "client.key",
+        ))
+    # Durable BAR readback backend: the SQLite canonical cache (default) or
+    # the KN-3 market cache (`QDL_STABLE_BAR_READBACK=kn3`, until KN-5 cutover).
+    readback_backend = os.environ.get("QDL_STABLE_BAR_READBACK", "sqlite")
+    if readback_backend not in ("sqlite", "kn3"):
+        raise ValueError(f"stable BAR readback backend is unsupported: {readback_backend}")
+    bar_readback = None
+    if readback_backend == "kn3":
+        from qdl.runtime.kn_bar_readback import readback_from_environment
+
+        bar_readback = readback_from_environment(os.environ)
+    # KN-4 D47-2: venue calls behind the Rust provider admission when its
+    # private endpoint and secret are configured (off by default).
+    provider_admission = None
+    admission_url = os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_URL", "").strip()
+    if admission_url:
+        from qdl.admission import RustHttpProviderAdmission
+        from qdl.admission.edge import BlockingProviderAdmission
+
+        secret_file = os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_SECRET_FILE", "").strip()
+        if not secret_file:
+            raise ValueError("stable BAR provider admission needs its secret file")
+        secret = Path(secret_file).read_bytes().strip()
+        provider_admission = BlockingProviderAdmission(
+            lambda: RustHttpProviderAdmission(base_url=admission_url, secret=secret),
+            max_wait_s=float(os.environ.get("QDL_STABLE_BAR_PROVIDER_ADMISSION_MAX_WAIT_S", "30")),
+        )
+    # KN-4 D47-3: history depth by demand and downstream backpressure (KN mode).
+    history_demand = None
+    demand_bundle = os.environ.get("QDL_STABLE_BAR_DEMAND_BUNDLE", "").strip()
+    if demand_bundle:
+        from qdl.runtime.bar_history_demand import load_demanded_history_rows
+
+        history_demand = load_demanded_history_rows(demand_bundle)
+    history_end_ms = int(os.environ["QDL_STABLE_BAR_HISTORY_END_MS"]) if os.environ.get(
+        "QDL_STABLE_BAR_HISTORY_END_MS", "").strip() else None
+    history_only = os.environ.get("QDL_STABLE_BAR_HISTORY_ONLY", "0").strip() == "1"
+    history_gate = None
+    backpressure_bootstrap = os.environ.get("QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP", "").strip()
+    if backpressure_bootstrap:
+        from qdl.runtime.history_backpressure import Stage, kafka_backlog_from_environment
+
+        stages = []
+        for spec in os.environ["QDL_STABLE_BAR_BACKPRESSURE_STAGES"].split(","):
+            name, group, topic, limit = spec.split(":")
+            stages.append(Stage(name, group, topic, int(limit)))
+        history_gate = kafka_backlog_from_environment(os.environ, stages)
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(
@@ -1510,6 +2131,15 @@ def build_from_environment(
         max_concurrent_requests=int(
             os.environ.get("QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS", "32")
         ),
+        native_recovery_lookback_rows=int(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_LOOKBACK_ROWS", "3")
+        ),
+        native_recovery_grace_seconds=float(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_GRACE_SECONDS", "3.0")
+        ),
+        native_recovery_visibility_seconds=float(
+            os.environ.get("QDL_STABLE_NATIVE_BAR_RECOVERY_VISIBILITY_SECONDS", "10.0")
+        ),
         state_path=state_path or os.environ.get(
             "QDL_STABLE_BAR_STATE_PATH",
             str(
@@ -1522,9 +2152,30 @@ def build_from_environment(
                 / "stable-crypto-bar-edge.json"
             ),
         ),
-        canonical_cache_id=_canonical_cache_id(canonical_cache_path),
-        canonical_cache_path=canonical_cache_path,
+        canonical_cache_id=(
+            _canonical_cache_id(canonical_cache_path) if bar_readback is None else None
+        ),
+        canonical_cache_path=canonical_cache_path if bar_readback is None else None,
+        bar_readback=bar_readback,
+        provider_admission=provider_admission,
+        history_demand=history_demand,
+        history_gate=history_gate,
+        history_end_ms=history_end_ms,
+        history_only=history_only,
         repair_only=repair_only,
+    )
+
+
+def build_readonly_repair_probe_from_environment(
+    *,
+    state_path: str | Path | None = None,
+) -> StableBinanceBarEdge:
+    """Build a provider/cache inspection client with no Kafka write capability."""
+
+    return build_from_environment(
+        state_path=state_path,
+        repair_only=True,
+        publisher=_ReadOnlyRepairPublisher(),
     )
 
 

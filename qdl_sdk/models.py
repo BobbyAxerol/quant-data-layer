@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover - exercised by the Python 3.10 artifact 
         def __str__(self) -> str:
             return self.value
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from qdl.query.v2 import query_pb2
 
@@ -147,6 +147,27 @@ class WarmupSpecification(ClosedModel):
         return self
 
 
+class ProblemDiagnostics(ClosedModel):
+    """Quality as Query evaluated it for the refused request (KN-4 review):
+    the same non-secret metadata a served item carries, taken at the refusal,
+    so a failure is never diagnosed from a status read seconds later."""
+
+    evaluated_at_ns: int = Field(ge=0)
+    state: str = Field(max_length=64)
+    freshness_ms: int = Field(ge=0)
+    event_recency_state: str = Field(max_length=64)
+    provider_session_state: str = Field(max_length=64)
+    provider_session_liveness_ms: int | None = Field(default=None, ge=0)
+    execution_eligible: bool
+    gap_open: bool
+    complete: bool
+    reason_codes: list[str] = Field(default_factory=list, max_length=32)
+    source_id: str | None = None
+    watermark_offset: int | None = Field(default=None, ge=0)
+    observed_at_ns: int | None = Field(default=None, ge=0)
+    received_at_ns: int | None = Field(default=None, ge=0)
+
+
 class ProblemDetails(ClosedModel):
     type: str
     title: str
@@ -158,6 +179,15 @@ class ProblemDetails(ClosedModel):
     retry_after_ms: int | None = None
     instrument_uid: str | None = None
     quality_state: str | None = None
+    diagnostics: ProblemDiagnostics | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_problem(self, handler):
+        result = handler(self)
+        # Strict older SDKs accept the original problem schema, not a new null key.
+        if self.diagnostics is None:
+            result.pop("diagnostics", None)
+        return result
 
 
 class DecimalValue(ClosedModel):
@@ -650,9 +680,32 @@ class GapView(ClosedModel):
     detected_at_ns: int
 
 
+class GapProductCoverage(ClosedModel):
+    binding_id: str
+    instrument_uid: str
+    feed: Feed
+    interval: str | None
+    state: Literal["SCANNED", "EXCLUDED", "UNAVAILABLE"]
+    retained_rows: int | None
+    first_open_ns: int | None
+    last_open_ns: int | None
+    reason: str | None = None
+
+
+class GapScanCoverage(ClosedModel):
+    scope: Literal["RETAINED_WINDOW"]
+    scan_complete: bool
+    materialization_complete: bool
+    history_complete: None = None
+    leading_coverage: Literal["NOT_ASSESSED"]
+    trailing_coverage: Literal["NOT_ASSESSED"]
+    products: list[GapProductCoverage]
+
+
 class GapListResponse(ClosedModel):
     contract_schema: str = Field("qdl.data-quality.gaps.v2", alias="schema")
     items: list[GapView]
+    coverage: GapScanCoverage | None = None
 
 
 class SystemReadinessSummary(ClosedModel):
@@ -879,8 +932,10 @@ class StreamEvent:
     event: Any
 
     def __post_init__(self) -> None:
-        if self.logical_offset <= 0 or not self.resume_token:
-            raise ValueError("stream event requires positive offset and signed resume token")
+        # Kafka offset 0 is a valid canonical record (cursor v3 contract,
+        # KN-4 D33); continuity is the session's strictly-increasing check.
+        if self.logical_offset < 0 or not self.resume_token:
+            raise ValueError("stream event requires a non-negative offset and signed resume token")
 
 
 @dataclass(frozen=True)

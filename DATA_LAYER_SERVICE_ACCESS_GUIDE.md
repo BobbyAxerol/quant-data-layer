@@ -2,6 +2,27 @@
 
 This document provides technical details on how to integrate production services (like Alpha strategies or Paper trading engines) with the `data_layer` infrastructure.
 
+## Active KN Pair (2026-09-27)
+
+Actual TS data reader uses SDK2.0.5, binding/JWT revision10, on `executor_network`:
+`https://qdl-v2-query:8200`, `qdl-v2-stream-a:8210`, `qdl-v2-stream-b:8210`.
+Query aliases resolve only to the two KN Query replicas; Stream is native Rust.
+Retain mTLS/JWT credentials from the versioned consumer deployment, never embed
+secrets in source. Alpha manifest revisions14/14 must be matched by their JWT;
+no alpha is started automatically by this cutover. SDK2.0.5 supports cursor v3
+including offset0. SQLite readers/writers are stopped, not consumer targets.
+Runtime acceptance is recorded in `upgrade/evidence/releases/v2.2.0/certificate.json`;
+verify the GitHub tag/release for publication status. Async consumers must apply
+data before `await session.acknowledge_async(event)`. The synchronous API remains
+compatible but is not the hot asynchronous path. SDK2.0.5 serializes bounded,
+fsynced cursor commits off-loop and drains accepted writes at shutdown.
+
+Universe daily warmup uses `POST /v2/market-data/warmup:batch` with per-product
+limit and the SDK bounded iterator. The sealed255-member common universe is
+510 venue products, not510 execution streams; execution remains separately bound.
+Use declared `maxlen`, warmup once then final-BAR append/dedup. MARKET/limit
+pricing uses typed QUOTE/verified L2, not a stale last trade or signal candle.
+
 ## Standard
 
 V2-routed Binance/OKX consumers use the versioned manifest and `qdl_sdk`:
@@ -70,7 +91,7 @@ The ready five-liquid paper manifests expose:
 
 - Binance USD-M: funding, daily OI, long/short ratio, taker flow, native or
   continuous daily basis, mark/index and contract metadata.
-- OKX Swap: funding, current OI, mark/index and contract metadata. Unsupported
+- OKX Swap: funding, current OI, long/short ratio, taker flow, mark/index and contract metadata. Unsupported
   provider metrics remain typed `UNAVAILABLE`; no Binance value is substituted.
 
 Use these products for alpha/research features and diagnostics. They are never

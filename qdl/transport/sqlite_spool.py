@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import hashlib
 import json
 import shutil
@@ -39,6 +41,14 @@ FINAL_BAR_LOOKUP_INDEX_SQL = f"""
 CREATE INDEX IF NOT EXISTS {FINAL_BAR_LOOKUP_INDEX_NAME}
 ON events (stream, partition_key, {FINAL_BAR_CLOSE_TIME_EXPRESSION}, logical_offset)
 """
+
+
+class TailReadCancelled(RuntimeError):
+    """A cooperative, bounded diagnostic reader was cancelled."""
+
+
+class TailReadLimitExceeded(RuntimeError):
+    """One diagnostic tail page exceeded its declared input bound."""
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,14 @@ class SQLiteDurableSpool:
         self.config = config
         self._clock_ns = clock_ns
         self._lock = threading.RLock()
+        # Hot single-statement reads use their own connection and lock; see
+        # ``_hot_reader``. Lock order is always ``_lock`` then ``_hot_lock``.
+        self._hot_lock = threading.Lock()
+        self._hot_connection: sqlite3.Connection | None = None
+        self.append_timing = {
+            "calls": 0, "rows": 0, "wait_ns": 0, "hold_ns": 0,
+            "max_wait_ns": 0, "max_hold_ns": 0,
+        }
         self._retention_data_version: int | None = None
         self._dense_retained_partitions: set[tuple[str, str]] = set()
         config.path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,8 +301,8 @@ class SQLiteDurableSpool:
         ).fetchone()
         return row is not None
 
-    def _final_bar_lookup_index_present_locked(self) -> bool:
-        row = self._connection.execute(
+    def _final_bar_lookup_index_present_locked(self, connection=None) -> bool:
+        row = (connection or self._connection).execute(
             """
             SELECT 1 FROM sqlite_master
             WHERE type = 'index' AND name = ?
@@ -310,13 +328,13 @@ class SQLiteDurableSpool:
             raise
         return self._final_bar_lookup_index_present_locked()
 
-    def _final_bar_lookup_events_source_locked(self) -> str:
+    def _final_bar_lookup_events_source_locked(self, connection=None) -> str:
         # SQLite may prefer the primary-key tail scan until a full ANALYZE has
         # run, even when the exact expression index exists. The latter would
         # scan a live multi-thousand-row partition for each requested close.
         # Force the known-compatible index only when it is actually present;
         # legacy caches retain the existing unhinted query and tail fallback.
-        if self._final_bar_lookup_index_present_locked():
+        if self._final_bar_lookup_index_present_locked(connection):
             return f"events INDEXED BY {FINAL_BAR_LOOKUP_INDEX_NAME}"
         return "events"
 
@@ -524,7 +542,7 @@ class SQLiteDurableSpool:
             raise BackpressureRequired("event exceeds configured per-event bridge bound")
         total_input_bytes = sum(len(event.payload) for event in events)
 
-        with self._lock:
+        with self._timed_append_lock(len(events)):
             self._preflight_disk(total_input_bytes)
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -696,23 +714,32 @@ class SQLiteDurableSpool:
         if after and (after.stream != stream or after.partition_key != partition_key):
             raise ValueError("cursor does not belong to requested stream/partition")
         offset = after.offset if after else 0
-        with self._lock:
-            oldest = self._connection.execute(
-                "SELECT MIN(logical_offset) FROM events WHERE stream = ? AND partition_key = ?",
-                (stream, partition_key),
-            ).fetchone()[0]
-            if oldest is not None and offset < int(oldest) - 1:
-                raise CursorExpired(
-                    f"cursor {offset} predates oldest retained offset {int(oldest)}"
-                )
-            rows = self._connection.execute(
-                """
-                SELECT * FROM events
-                WHERE stream = ? AND partition_key = ? AND logical_offset > ?
-                ORDER BY logical_offset ASC LIMIT ?
-                """,
-                (stream, partition_key, offset, limit),
-            ).fetchall()
+        # Replay reads run on the hot connection in one read snapshot, so a
+        # subscription opening never waits on (or holds) the writer's lock.
+        # v2.1.1 stage 20 (2026-09-23): projector appends stalled 2-6 s while
+        # alpha streams opened and closed on the stream process.
+        with self._hot_lock:
+            connection = self._hot_reader_locked()
+            connection.execute("BEGIN")
+            try:
+                oldest = connection.execute(
+                    "SELECT MIN(logical_offset) FROM events WHERE stream = ? AND partition_key = ?",
+                    (stream, partition_key),
+                ).fetchone()[0]
+                if oldest is not None and offset < int(oldest) - 1:
+                    raise CursorExpired(
+                        f"cursor {offset} predates oldest retained offset {int(oldest)}"
+                    )
+                rows = connection.execute(
+                    """
+                    SELECT * FROM events
+                    WHERE stream = ? AND partition_key = ? AND logical_offset > ?
+                    ORDER BY logical_offset ASC LIMIT ?
+                    """,
+                    (stream, partition_key, offset, limit),
+                ).fetchall()
+            finally:
+                connection.execute("COMMIT")
         return [self._stored_event(row) for row in rows]
 
     def read_tail(
@@ -734,8 +761,8 @@ class SQLiteDurableSpool:
         max_tail_rows = max(10_000, self.config.max_partition_records)
         if limit <= 0 or limit > max_tail_rows:
             raise ValueError(f"limit must be between 1 and {max_tail_rows}")
-        with self._lock:
-            rows = self._connection.execute(
+        with self._hot_lock:
+            rows = self._hot_reader_locked().execute(
                 """
                 SELECT * FROM events
                 WHERE stream = ? AND partition_key = ?
@@ -744,6 +771,54 @@ class SQLiteDurableSpool:
                 (stream, partition_key, limit),
             ).fetchall()
         return [self._stored_event(row) for row in reversed(rows)]
+
+    @contextmanager
+    def _timed_append_lock(self, rows: int):
+        """Hold ``_lock`` for one append and record how long it waited and held.
+
+        Read by the stream ingest spans: a batch append's time splits into
+        waiting for this lock, holding it (SQLite work and fsync), and the
+        gateway's fan-out after it returns.
+        """
+
+        started = time.perf_counter_ns()
+        with self._lock:
+            acquired = time.perf_counter_ns()
+            try:
+                yield
+            finally:
+                held = time.perf_counter_ns() - acquired
+                waited = acquired - started
+                timing = self.append_timing
+                timing["calls"] += 1
+                timing["rows"] += rows
+                timing["wait_ns"] += waited
+                timing["hold_ns"] += held
+                timing["max_wait_ns"] = max(timing["max_wait_ns"], waited)
+                timing["max_hold_ns"] = max(timing["max_hold_ns"], held)
+
+    def _hot_reader_locked(self) -> sqlite3.Connection:
+        """A second, query-only connection for one-statement hot reads.
+
+        ``visit_tails`` holds ``_lock`` while its caller materializes one
+        physical tail - seconds for a 5,000-row BAR warmup. Measured on
+        2026-09-23 (v2.1.1 Phase-3 stage 5): every hot latest read on that
+        Query replica queued behind it for 2-5 s with its CPU un-throttled.
+        In WAL mode each statement here reads its own committed snapshot, so a
+        single-statement read needs neither the batch transaction nor its lock.
+        Callers hold ``_hot_lock``.
+        """
+
+        if self._hot_connection is None:
+            connection = sqlite3.connect(
+                str(self.config.path), timeout=30.0, isolation_level=None,
+                check_same_thread=False,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=30000")
+            connection.execute("PRAGMA query_only=ON")
+            self._hot_connection = connection
+        return self._hot_connection
 
     def read_tails(
         self,
@@ -768,6 +843,59 @@ class SQLiteDurableSpool:
 
         self.visit_tails(requests=requests, visit=collect)
         return {key: tuple(value) for key, value in grouped.items()}
+
+    def visit_tail_pages(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        limit: int,
+        page_rows: int,
+        max_page_payload_bytes: int,
+        visit: Callable[[tuple[StoredEvent, ...]], None],
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
+        """Visit one retained tail in small, bounded physical pages.
+
+        This is deliberately a diagnostic/read primitive rather than a replay
+        API.  It avoids ``fetchall`` for a whole retained partition so an
+        expensive inspector cannot retain every payload while it decodes a
+        catalog.  Rows are delivered newest first; callers that require market
+        chronology must establish it explicitly from their payload fields.
+        """
+
+        max_tail_rows = max(10_000, self.config.max_partition_records)
+        if limit <= 0 or limit > max_tail_rows:
+            raise ValueError(f"limit must be between 1 and {max_tail_rows}")
+        if page_rows < 1 or page_rows > limit:
+            raise ValueError("tail page rows must fit inside the requested limit")
+        if max_page_payload_bytes < self.config.max_event_bytes:
+            raise ValueError("tail page payload bound must fit one stored event")
+
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                SELECT * FROM events
+                WHERE stream = ? AND partition_key = ?
+                ORDER BY logical_offset DESC LIMIT ?
+                """,
+                (stream, partition_key, limit),
+            )
+            while True:
+                if cancelled is not None and cancelled():
+                    raise TailReadCancelled("bounded diagnostic tail read was cancelled")
+                rows = cursor.fetchmany(page_rows)
+                if not rows:
+                    return
+                page_payload_bytes = sum(len(row["payload"]) for row in rows)
+                if page_payload_bytes > max_page_payload_bytes:
+                    raise TailReadLimitExceeded(
+                        "bounded diagnostic tail page exceeds its payload limit"
+                    )
+                page = tuple(self._stored_event(row) for row in rows)
+                if cancelled is not None and cancelled():
+                    raise TailReadCancelled("bounded diagnostic tail read was cancelled")
+                visit(page)
 
     def visit_tails(
         self,
@@ -866,8 +994,10 @@ class SQLiteDurableSpool:
         stream: str,
         partition_key: str,
         window: FinalBarTailWindow,
+        connection=None,
     ) -> tuple[tuple[StoredEvent, ...], tuple[int, ...]] | None:
-        watermark = self._connection.execute(
+        connection = connection or self._connection
+        watermark = connection.execute(
             """
             SELECT close_time_ns FROM final_bar_watermarks
             WHERE stream = ? AND partition_key = ?
@@ -887,8 +1017,8 @@ class SQLiteDurableSpool:
             raise PayloadCorruption("final BAR watermark window is invalid")
         placeholders = ",".join("?" for _ in expected_closes)
         try:
-            events_source = self._final_bar_lookup_events_source_locked()
-            rows = self._connection.execute(
+            events_source = self._final_bar_lookup_events_source_locked(connection)
+            rows = connection.execute(
                 f"""
                 SELECT * FROM {events_source}
                 WHERE stream = ? AND partition_key = ?
@@ -907,6 +1037,33 @@ class SQLiteDurableSpool:
             tuple(self._stored_event(row) for row in rows),
             expected_closes,
         )
+
+    def read_final_bar_window(
+        self,
+        *,
+        stream: str,
+        partition_key: str,
+        window: FinalBarTailWindow,
+    ) -> tuple[tuple[StoredEvent, ...], tuple[int, ...]] | None:
+        """Exact newest final-BAR rows on the hot connection, or ``None``.
+
+        The same header-indexed lookup as ``visit_final_bar_windows``, for a
+        single latest read that must not wait behind a batch visit. The
+        watermark and its rows are read in one snapshot. Callers validate the
+        rows and fall back to ``read_tail`` when the window is missing or
+        ambiguous.
+        """
+
+        with self._hot_lock:
+            connection = self._hot_reader_locked()
+            connection.execute("BEGIN")
+            try:
+                return self._final_bar_window_rows_locked(
+                    stream=stream, partition_key=partition_key, window=window,
+                    connection=connection,
+                )
+            finally:
+                connection.execute("COMMIT")
 
     def _read_tail_rows_locked(
         self,
@@ -1006,7 +1163,7 @@ class SQLiteDurableSpool:
             raise ValueError("ttl_seconds must be positive")
         now_ns = self._clock_ns()
         with self._lock:
-            high = self.high_watermark(cursor.stream, cursor.partition_key)
+            high = self._high_watermark_locked(cursor.stream, cursor.partition_key)
             if cursor.offset > high:
                 raise ValueError("checkpoint is beyond the partition high watermark")
             current = self._connection.execute(
@@ -1048,8 +1205,8 @@ class SQLiteDurableSpool:
     def get_checkpoint(
         self, *, consumer_id: str, stream: str, partition_key: str
     ) -> Cursor | None:
-        with self._lock:
-            row = self._connection.execute(
+        with self._hot_lock:
+            row = self._hot_reader_locked().execute(
                 """
                 SELECT logical_offset FROM consumer_checkpoints
                 WHERE consumer_id = ? AND stream = ? AND partition_key = ?
@@ -1230,14 +1387,26 @@ class SQLiteDurableSpool:
         return [dict(row) for row in rows]
 
     def high_watermark(self, stream: str, partition_key: str) -> int:
-        with self._lock:
-            row = self._connection.execute(
+        """Committed high watermark, read on the hot connection."""
+
+        with self._hot_lock:
+            row = self._hot_reader_locked().execute(
                 """
                 SELECT next_offset FROM partitions
                 WHERE stream = ? AND partition_key = ?
                 """,
                 (stream, partition_key),
             ).fetchone()
+        return int(row["next_offset"]) - 1 if row else 0
+
+    def _high_watermark_locked(self, stream: str, partition_key: str) -> int:
+        row = self._connection.execute(
+            """
+            SELECT next_offset FROM partitions
+            WHERE stream = ? AND partition_key = ?
+            """,
+            (stream, partition_key),
+        ).fetchone()
         return int(row["next_offset"]) - 1 if row else 0
 
     def stats(self) -> SpoolStats:
@@ -1300,6 +1469,10 @@ class SQLiteDurableSpool:
             self._checkpoint_wal_passive_locked()
             self._connection.close()
             self._connection = None
+            with self._hot_lock:
+                if self._hot_connection is not None:
+                    self._hot_connection.close()
+                    self._hot_connection = None
 
     def integrity_check(self) -> bool:
         with self._lock:

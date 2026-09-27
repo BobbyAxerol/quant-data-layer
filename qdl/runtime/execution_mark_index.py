@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
+from google.protobuf.message import DecodeError
 
 from qdl.common.v1 import common_pb2
 from qdl.data_quality.binding_decision import (
@@ -291,6 +292,9 @@ class ExecutionMarkIndexLiveView:
             or gateway_epoch < 1
         ):
             raise ValueError("execution MARK/INDEX event identity/provenance is invalid")
+        # Every retained pair proves its Rust pairing lineage, whatever path
+        # later reads it (strict, quiet, or the KN cache view).
+        paired_mark_index_lineage(envelope)
         canonical = envelope.SerializeToString(deterministic=True)
         if stored is not None and (
             stored.event.event_id != bytes(envelope.event_id)
@@ -430,6 +434,7 @@ class ExecutionMarkIndexLiveView:
             )
         ):
             raise ValueError("execution MARK/INDEX quiet policy is invalid")
+        clock_given = now_ns is not None
         now_ns = time.time_ns() if now_ns is None else now_ns
         async with self._lock:
             invalid = self._invalid.get(instrument_uid)
@@ -496,6 +501,11 @@ class ExecutionMarkIndexLiveView:
             config_revision=record.config_revision,
             now_ns=now_ns,
         )
+        if not clock_given:
+            # Event and component ages are judged after the session read, like
+            # the session's own age (the reader samples its clock after it).
+            now_ns = max(now_ns, time.time_ns())
+            event_age_ms = max(0, (now_ns - freshness_anchor_ns) // 1_000_000)
         assert max_session_liveness_ms is not None
         decision = evaluate_binding_quality(BindingQualityInput(
             binding_id=f"execution-mark-index:{instrument_uid}",

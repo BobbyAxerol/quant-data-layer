@@ -1,3 +1,5 @@
+ARG QDL_DEPENDENCY_IMAGE=builder
+
 FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS builder
 
 ENV PYTHONUNBUFFERED=1
@@ -17,14 +19,25 @@ RUN python -m venv /opt/venv && \
       poetry install --no-root --only main --no-ansi && \
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1"
 
+# An explicit pinned image preserves locked dependencies withdrawn upstream.
+FROM ${QDL_DEPENDENCY_IMAGE} AS verified-dependencies
+ARG QDL_DEPENDENCY_IMAGE
+USER root
+COPY poetry.lock scripts/verify_runtime_dependencies.py /tmp/qdl-build/
+RUN /opt/venv/bin/python -B /tmp/qdl-build/verify_runtime_dependencies.py \
+    --lock /tmp/qdl-build/poetry.lock --image "${QDL_DEPENDENCY_IMAGE}" \
+    --output /tmp/qdl-build/dependency-receipt.json
+
 FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a AS runtime
 
+ARG QDL_DEPENDENCY_IMAGE
 ARG QDL_UID=10001
 ARG QDL_GID=10001
 ARG QDL_GIT_SHA=unknown
 ARG QDL_RELEASE=development
 
-LABEL org.opencontainers.image.title="Quant Data Layer" \
+LABEL io.qdl.dependency-image="${QDL_DEPENDENCY_IMAGE}" \
+      org.opencontainers.image.title="Quant Data Layer" \
       org.opencontainers.image.revision="${QDL_GIT_SHA}" \
       org.opencontainers.image.version="${QDL_RELEASE}" \
       org.opencontainers.image.source="https://github.com/BobbyAxerol/quant-data-layer"
@@ -48,7 +61,8 @@ RUN apt-get update && \
       --home-dir /home/qdl --shell /usr/sbin/nologin qdl && \
     install -d -o qdl -g qdl -m 0750 /home/qdl/.cache/matplotlib
 
-COPY --from=builder --chown=qdl:qdl /opt/venv /opt/venv
+COPY --from=verified-dependencies --chown=qdl:qdl /opt/venv /opt/venv
+COPY --from=verified-dependencies /tmp/qdl-build/dependency-receipt.json /opt/qdl/dependency-receipt.json
 
 COPY --chown=qdl:qdl . /app
 

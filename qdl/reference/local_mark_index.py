@@ -1,0 +1,173 @@
+"""Alpha MARK/INDEX reads served inside the Query process from its own spool.
+
+Alpha reads of the current MARK/INDEX first moved from venue REST to the stream
+gateway's live view (OKX REST exceeded the venue bucket at stage 50). At stage
+35 (2026-09-23) that added HTTP work to the single stream process that also
+writes and fans out, and a market burst then left the writer 46 s behind. This
+reader keeps the same verified view and the same private endpoint code, but
+runs them in-process on the Query replica: before each read the instrument's
+latest canonical record is offered from the local spool (exactly as
+``hydrate_from_spool`` does on a lease change), then the unchanged endpoint and
+``HttpExecutionMarkIndexReader`` conversion apply every identity, freshness and
+gap gate. No network hop, no stream-process load, no venue call.
+
+Execution (TS) reads keep the stream gateway's live view: it is fed before the
+spool append and carries the quiet-session evidence execution requires.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+import os
+
+import httpx
+from fastapi import FastAPI
+from google.protobuf.message import DecodeError
+
+from qdl.marketdata.v2 import market_data_pb2
+from qdl.reference.execution_live import HttpExecutionMarkIndexReader
+from qdl.runtime.execution_mark_index import (
+    ExecutionMarkIndexRead,
+    ExecutionMarkIndexLiveView,
+    install_execution_mark_index_read,
+)
+
+_LOCAL_EPOCH = 1
+# Upper bound of the request freshness the private endpoint accepts.
+_ALPHA_STALE_AFTER_MS = 300_000
+_LOCAL_URL = "http://localhost"
+
+
+class _LocalGateway:
+    """The Query replica is never a writer; its local view has one epoch."""
+
+    @staticmethod
+    def assert_active(epoch: int | None = None) -> int:
+        return _LOCAL_EPOCH
+
+
+class SpoolRefreshingMarkIndexView(ExecutionMarkIndexLiveView):
+    """The execution view, offered this replica's latest spooled record per read."""
+
+    def attach(self, *, spool, canonical_stream: str) -> "SpoolRefreshingMarkIndexView":
+        self._spool = spool
+        self._canonical_stream = canonical_stream
+        # Alpha reads are judged by the alpha's own declared freshness (the
+        # view bounds a read by min(request freshness, binding stale_after)).
+        # The binding's 2 s bound is the execution horizon; applied to alpha it
+        # pushed about 30 % of Binance reads (1 s mark cadence plus spool
+        # latency) back to venue REST. Execution reads never use this view.
+        self._bindings = {
+            uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
+            for uid, binding in self._bindings.items()
+        }
+        return self
+
+    async def read(self, *, instrument_uid: str, **kwargs):
+        binding = self._bindings.get(instrument_uid)
+        if binding is not None:
+            rows = await asyncio.to_thread(
+                self._spool.read_tail,
+                stream=self._canonical_stream,
+                partition_key=binding.partition_key,
+                limit=1,
+            )
+            if rows:
+                stored = rows[-1]
+                try:
+                    envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+                except DecodeError:
+                    envelope = None
+                if envelope is not None and envelope.WhichOneof("payload") == "mark_index_price":
+                    await self.remember(
+                        binding=binding, envelope=envelope, stored=stored,
+                        gateway_epoch=_LOCAL_EPOCH,
+                    )
+        return await super().read(instrument_uid=instrument_uid, **kwargs)
+
+
+class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
+    """The same view offered the market cache's latest record (KN-4 D31).
+
+    The Kafka-native Query backend has no spool: before each read it offers
+    the MARK_INDEX product's latest entry from the market cache (one READY
+    generation, read by ``KnMarketCacheQueryBackend``), then the unchanged
+    endpoint and conversion apply every identity, freshness and gap gate.
+    A product that is not ready offers nothing (the view answers unavailable).
+
+    Alpha reads relax the binding horizon exactly like the spool reader.
+    Execution reads keep the binding's own ``stale_after_ms`` and the quiet
+    evidence of the stream's view (the event's paired MARK/INDEX receipts,
+    the provider session files and the acquisition quiet policies): the Rust
+    Stream serves no private endpoint, and the cache holds the same
+    read-committed canonical record the Python stream view held.
+    """
+
+    def attach_cache(self, *, backend, relax_to_alpha: bool = True) -> "CacheRefreshingMarkIndexView":
+        self._backend = backend
+        if relax_to_alpha:
+            self._bindings = {
+                uid: replace(binding, stale_after_ms=max(binding.stale_after_ms, _ALPHA_STALE_AFTER_MS))
+                for uid, binding in self._bindings.items()
+            }
+        return self
+
+    async def read(self, *, instrument_uid: str, **kwargs):
+        binding = self._bindings.get(instrument_uid)
+        if binding is not None:
+            stored, state = await asyncio.to_thread(self._backend.latest_stored_event, binding)
+            reason = None if state == "OK" else f"MARKET_CACHE_{state}"
+            if stored is not None:
+                try:
+                    envelope = market_data_pb2.EventEnvelope.FromString(stored.event.payload)
+                except DecodeError:
+                    envelope = None
+                if envelope is None or envelope.WhichOneof("payload") != "mark_index_price":
+                    reason = "LINEAGE_INVALID"
+                else:
+                    try:
+                        await self.remember(
+                            binding=binding, envelope=envelope, stored=stored,
+                            gateway_epoch=_LOCAL_EPOCH,
+                        )
+                    except ValueError:
+                        reason = "LINEAGE_INVALID"
+            if reason is not None:
+                # D36: a cache, fencing or integrity failure (or a product
+                # without state) never lets a remembered price answer.
+                async with self._lock:
+                    self._records.pop(instrument_uid, None)
+                return ExecutionMarkIndexRead(None, reason)
+        return await ExecutionMarkIndexLiveView.read(self, instrument_uid=instrument_uid, **kwargs)
+
+
+def build_cache_alpha_mark_index_reader(*, catalog, backend) -> HttpExecutionMarkIndexReader:
+    view = CacheRefreshingMarkIndexView.from_catalog(catalog).attach_cache(backend=backend)
+    return reader_for_view(view)
+
+
+def build_cache_execution_mark_index_reader(
+    *, catalog, backend, acquisition, session_liveness_reader,
+) -> HttpExecutionMarkIndexReader:
+    """Execution MARK/INDEX from the market cache with execution bounds (D31)."""
+
+    view = CacheRefreshingMarkIndexView.from_catalog(
+        catalog, acquisition=acquisition, session_liveness_reader=session_liveness_reader,
+    ).attach_cache(backend=backend, relax_to_alpha=False)
+    return reader_for_view(view)
+
+
+def build_local_alpha_mark_index_reader(*, catalog, spool) -> HttpExecutionMarkIndexReader:
+    view = SpoolRefreshingMarkIndexView.from_catalog(catalog).attach(
+        spool=spool, canonical_stream=catalog.canonical_stream,
+    )
+    return reader_for_view(view)
+
+
+def reader_for_view(view: SpoolRefreshingMarkIndexView) -> HttpExecutionMarkIndexReader:
+    secret = os.urandom(32)
+    app = FastAPI()
+    install_execution_mark_index_read(app, gateway=_LocalGateway(), view=view, secret=secret)
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=_LOCAL_URL)
+    return HttpExecutionMarkIndexReader(urls=(_LOCAL_URL,), secret=secret, client=client)

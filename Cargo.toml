@@ -3,8 +3,10 @@ members = [
     "rust/qdl-contracts",
     "rust/qdl-core",
     "rust/qdl-kafka",
+    "rust/qdl-projector",
     "rust/qdl-provider-envelope",
     "rust/qdl-realtime-core",
+    "rust/qdl-stream-gateway",
     "rust/qdl-venue-core",
 ]
 resolver = "2"
@@ -15,6 +17,7 @@ license = "MIT"
 rust-version = "1.82"
 
 [workspace.dependencies]
+base64 = "=0.22.1"
 futures-util = "=0.3.31"
 hex = "=0.4.3"
 indexmap = "=2.7.1"

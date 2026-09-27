@@ -366,7 +366,15 @@ def fetch_ohlcv_chunked(
     - Retries each chunk with exponential backoff
     - Mandatory delay between chunks to respect rate limits
     """
-    from vnstock import Quote
+    try:
+        from vnstock import Quote
+    except ModuleNotFoundError as error:
+        if error.name != "vnstock":
+            raise
+        raise RuntimeError(
+            "VNSTOCK_UNAVAILABLE: VN-stock SDK is excluded from KN images; "
+            "use the retained V1 VN service"
+        ) from error
 
     chunk_days = chunk_days or PRELOAD_CHUNK_DAYS
     delay = delay or PRELOAD_DELAY

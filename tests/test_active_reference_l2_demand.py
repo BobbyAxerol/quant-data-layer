@@ -138,7 +138,7 @@ class ActiveReferenceL2DemandTests(unittest.TestCase):
 
     def test_manifest_declares_five_reference_perpetuals_and_continuous_l2(self):
         manifest = DemandManifest.load_many((MANIFEST_PATH,))
-        self.assertEqual(len(manifest.requirements), 33)
+        self.assertEqual(len(manifest.requirements), 36)
         reference = [
             item
             for item in manifest.requirements
@@ -150,7 +150,7 @@ class ActiveReferenceL2DemandTests(unittest.TestCase):
             for item in manifest.requirements
             if item.feed in {DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA}
         ]
-        self.assertEqual(len(reference), 13)
+        self.assertEqual(len(reference), 16)
         self.assertEqual(len(books), 20)
         self.assertEqual({item.consumer_id for item in manifest.requirements}, {CONSUMER_ID})
         self.assertEqual(
@@ -209,7 +209,7 @@ class ActiveReferenceL2DemandTests(unittest.TestCase):
                 trading_system_root=trading,
             ).compile()
 
-        self.assertEqual(len(inventory.requirements), 33)
+        self.assertEqual(len(inventory.requirements), 36)
         self.assertEqual(
             {item.source_kind for item in inventory.candidates},
             {"UNIVERSAL_DEMAND_V1"},
@@ -219,7 +219,7 @@ class ActiveReferenceL2DemandTests(unittest.TestCase):
         inventory = self._inventory()
         admission = admit_provider_metadata(inventory, _metadata_payloads())
         self.assertTrue(admission.passed)
-        self.assertEqual(len(admission.rows), 89)
+        self.assertEqual(len(admission.rows), 104)
         convergence = converge_active_demand(
             inventory,
             admission,

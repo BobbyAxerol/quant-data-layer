@@ -11,6 +11,19 @@ a calendar-month product needs its own capability and gap contract.
 
 from __future__ import annotations
 
+class BarHistoryGapError(RuntimeError):
+    """Provider returned a discontinuous closed history, not an IP/rate failure."""
+
+    def __init__(self, provider: str, symbol: str, interval: str, previous: int, current: int):
+        self.provider, self.symbol, self.interval = provider, symbol, interval
+        self.previous, self.current = previous, current
+        self.kind = ("OVERLAPPING_PROVIDER_WINDOWS"
+                     if current - previous < canonical_interval_ms(interval)
+                     else "MISSING_PROVIDER_WINDOW")
+        super().__init__(f"{provider} closed-bar history discontinuity kind={self.kind} "
+                         f"symbol={symbol} interval={interval} previous_ms={previous} current_ms={current}")
+
+
 _UNIT_MS = {
     "s": 1_000,
     "m": 60_000,

@@ -77,6 +77,12 @@ def _okx_swap(inst_id: str = "BTC-USDT-SWAP") -> dict[str, str]:
     }
 
 
+def _binance_spot_capture() -> dict:
+    """The committed verbatim Binance Spot exchangeInfo capture (no invented fields)."""
+    capture = Path(__file__).resolve().parents[1] / "config/v2/captures/binance-spot-exchangeinfo.filtered.json"
+    return json.loads(capture.read_text(encoding="utf-8"))
+
+
 class ActiveDemandInventoryTests(unittest.TestCase):
     def _fixture(self) -> tuple[Path, Path, Path, Path]:
         directory = tempfile.TemporaryDirectory()
@@ -355,16 +361,18 @@ class ActiveDemandInventoryTests(unittest.TestCase):
         self.assertTrue(continuous_report.passed)
         self.assertEqual(continuous_report.rows[0].native_symbol, "BTCUSDT_270326")
 
+        # OKX SWAP long/short became a real capability (c22f4d3); a spot
+        # market has no long/short ratio, so it stays unsupported.
         unavailable = self._requirement(
             feed=DemandFeed.LONG_SHORT_RATIO,
             interval="1d",
-            symbols=("BTC-USDT-SWAP",),
-            market="SWAP",
-            product_type="PERPETUAL",
+            symbols=("BTCUSDT",),
+            market="SPOT",
+            product_type="SPOT",
         )
         unavailable_report = admit_provider_metadata(
             self._inventory(unavailable),
-            {("OKX", "SWAP"): [_okx_swap()]},
+            {("BINANCE", "SPOT"): _binance_spot_capture()},
         )
         self.assertEqual(unavailable_report.rows[0].state, "UNSUPPORTED_CAPABILITY")
         self.assertEqual(unavailable_report.rows[0].capability, "NOT_EVALUATED")

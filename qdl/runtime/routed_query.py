@@ -153,6 +153,12 @@ class RoutedQueryBackend:
     def open_gaps(self) -> tuple[GapRecord, ...]:
         # Only materialised bindings can hold an open gap. A pass-through window
         # is validated at fetch time and never becomes a tracked gap.
+        return self.open_gaps_bounded()
+
+    def open_gaps_bounded(self, *, cancelled=None) -> tuple[GapRecord, ...]:
+        scanner = getattr(self.spool, "open_gaps_bounded", None)
+        if callable(scanner):
+            return scanner(cancelled=cancelled)
         return self.spool.open_gaps()
 
     def warmup_stats(self) -> dict[str, int]:

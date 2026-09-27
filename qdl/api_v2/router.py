@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import json
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from qdl.query.cold_work import await_in_thread, cold_yield
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
@@ -390,6 +393,14 @@ def _market_item(item) -> MarketDataView:
 
 
 def _warmup(result) -> WarmupResponse:
+    return _warmup_envelope(result).model_copy(
+        update={"data": [_market_item(item) for item in _cold_rows(result.history.items)]}
+    )
+
+
+def _warmup_envelope(result) -> WarmupResponse:
+    """The warmup response without its rows (``data`` is rendered per chunk)."""
+
     history = result.history
     return WarmupResponse(
         request_id=result.request_id,
@@ -399,8 +410,159 @@ def _warmup(result) -> WarmupResponse:
         watermark_offset=history.watermark_offset,
         coverage=history.coverage.value,
         count=len(history.items),
-        data=[_market_item(item) for item in history.items],
+        data=[],
     )
+
+
+async def _json_off_loop(build) -> JSONResponse:
+    """Build, dump and encode a large public response on a worker thread.
+
+    A 5,000-row BAR warmup is about 10 MB and seconds of Pydantic work. Done on
+    the event loop it stalls every other request on the replica: measured on
+    2026-09-23 (v2.1.1 Phase-3 stage 5), QUOTE snapshots reached 6.5 s while
+    ``query_v2_1`` sat at its 1.0 CPU cap during two cold warmups. The bytes
+    are exactly those of ``JSONResponse(content=model.model_dump(mode="json",
+    by_alias=True))``; only the thread that computes them changes.
+    """
+
+    # The render thread holds the caller's local lease until it returns, also
+    # when the request is cancelled (KN-4 D39): an abandoned render may not
+    # overlap the next admitted one.
+    return await await_in_thread(
+        _RENDER_EXECUTOR,
+        lambda: JSONResponse(content=build().model_dump(mode="json", by_alias=True)),
+    )
+
+
+_RENDER_CHUNK_ROWS = 250
+# Large responses render on two fixed threads, not on the loop's default
+# executor (up to cpu_count + 4 threads): each thread that renders a 10k-row
+# warmup grows its own malloc arena to the render's peak and keeps it, so the
+# number of render threads bounds the replica's retained memory (KN-4 D39,
+# measured). The local batch lease already admits one large render at a time.
+_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qdl-query-render")
+
+
+def _cold_rows(values):
+    for value in values:
+        cold_yield()
+        yield value
+
+
+def _render_warmup_chunked(model: WarmupResponse) -> bytes:
+    """Encode a warmup model in bounded pieces, byte-identical to ``JSONResponse``."""
+
+    rows = model.data
+    return _render_chunked(model, len(rows), lambda start, stop: _cold_rows(rows[start:stop]))
+
+
+def _render_warmup_result(result) -> bytes:
+    """Encode a warmup result directly, one chunk of public views at a time.
+
+    Only ``_RENDER_CHUNK_ROWS`` views exist at once: building every
+    ``MarketDataView`` first held ~11 KB per row (110 MB for 10,000 rows,
+    measured KN-4 D39) next to the rendered text. Bytes are identical to
+    ``_render_warmup_chunked(_warmup(result))``.
+    """
+
+    items = result.history.items
+    return _render_chunked(
+        _warmup_envelope(result),
+        len(items),
+        lambda start, stop: (_market_item(item) for item in _cold_rows(items[start:stop])),
+    )
+
+
+def _render_chunked(envelope: WarmupResponse, count: int, views) -> bytes:
+    """Encode a warmup in bounded pieces, byte-identical to ``JSONResponse``.
+
+    One ``model_dump`` and one ``json.dumps`` over 5,000 rows are two C-level
+    calls that each hold the GIL for most of a second, and no switch interval
+    can preempt them: on 2026-09-23 (v2.1.1 Phase-3 stage 5) every probe on
+    the rendering replica took ~1.4 s at once. Per-chunk calls hand the GIL
+    back between pieces. ``data`` is the model's last field, so the envelope
+    is rendered with an empty list and the rows are spliced into it. Each
+    piece is encoded to UTF-8 as it is made, so the text of the whole body
+    never exists next to its bytes.
+    """
+
+    def encode(value) -> bytes:
+        return json.dumps(
+            value, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
+        ).encode("utf-8")
+
+    suffix = b',"data":[]}'
+    head = encode(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
+    if not head.endswith(suffix):
+        raise RuntimeError("warmup response layout no longer ends with its data list")
+    parts = [head[: -len(suffix)], b',"data":[']
+    for start in range(0, count, _RENDER_CHUNK_ROWS):
+        chunk = encode([
+            view.model_dump(mode="json", by_alias=True)
+            for view in views(start, start + _RENDER_CHUNK_ROWS)
+        ])
+        if start:
+            parts.append(b",")
+        parts.append(chunk[1:-1])
+    parts.append(b"]}")
+    return b"".join(parts)
+
+
+async def _warmup_json_off_loop(build) -> Response:
+    """A warmup response rendered off the loop and in chunks (see above).
+
+    ``build`` returns the (cursor-bound) warmup result, not its model.
+    """
+
+    # The render thread holds the local lease until it returns, also when the
+    # request is cancelled (KN-4 K4-T06).
+    body = await await_in_thread(
+        _RENDER_EXECUTOR, lambda: _render_warmup_result(build()), cold=True
+    )
+    return Response(content=body, media_type="application/json")
+
+
+async def _single_warmup_response(request, access, service, requirement, purpose):
+    """One warmup, rendered inside the local lease exactly like ``warmup:batch``.
+
+    Holding the lease through rendering keeps at most one large response being
+    built per replica, so moving the work off the loop does not also remove its
+    memory bound.
+    """
+
+    async def render(batch_result):
+        (item,) = batch_result.results
+        if item.problem is not None:
+            raise QueryServiceError(
+                item.problem,
+                request_id=batch_result.request_id,
+                instrument_uid=requirement.instrument_uid,
+            )
+        # Cursor binding copies every item and reads the durable watermark, so
+        # it belongs off the loop with the rest of the response.
+        return await _warmup_json_off_loop(lambda: type(item.result)(
+            item.result.request_id,
+            _bind_history_cursor(request, access, requirement, item.result.history),
+        ))
+
+    complete = getattr(service, "warmup_batch_completed_async", None)
+    if callable(complete):
+        return await complete(
+            BatchRequirement(access.consumer_id, (requirement,), require_all=True),
+            purpose=purpose,
+            completion=render,
+        )
+    # Service doubles predating the completion hook keep the original path.
+    result = await service.warmup_async(
+        requirement,
+        purpose=purpose,
+        consumer_id=access.consumer_id,
+    )
+    result = type(result)(
+        result.request_id,
+        _bind_history_cursor(request, access, requirement, result.history),
+    )
+    return _warmup(result)
 
 
 def _warmup_batch_response(
@@ -445,6 +607,41 @@ def _warmup_batch_response(
         error_count=result.error_count,
         results=items,
     )
+
+
+def _render_warmup_batch(request, access, result, requirements) -> bytes:
+    """Render bounded row chunks per item, preserving the existing batch bytes."""
+    def encode(value):
+        return json.dumps(value, ensure_ascii=False, allow_nan=False,
+                          separators=(",", ":")).encode("utf-8")
+
+    bodies, item_models = [], []
+    for item, requirement in zip(result.results, requirements, strict=True):
+        cold_yield()
+        problem = None if item.problem is None else _problem(QueryServiceError(
+            item.problem, request_id=result.request_id, instrument_uid=item.instrument_uid))
+        item_model = BatchItemResponse(instrument_uid=item.instrument_uid,
+            status=item.status, data=None, problem=problem)
+        item_models.append(item_model)
+        metadata = item_model.model_dump(mode="json", by_alias=True)
+        data = b"null"
+        if item.result is not None:
+            bound = type(item.result)(item.result.request_id,
+                _bind_history_cursor(request, access, requirement, item.result.history))
+            data = _render_warmup_result(bound)
+        bodies.append(b"{" + b",".join(encode(key) + b":" + (data if key == "data" else encode(value))
+            for key, value in metadata.items()) + b"}")
+    envelope = BatchResponse(request_id=result.request_id, partial=result.partial,
+        success_count=result.success_count, error_count=result.error_count, results=item_models)
+    return b"{" + b",".join(encode(key) + b":" +
+        (b"[" + b",".join(bodies) + b"]" if key == "results" else encode(value))
+        for key, value in envelope.model_dump(mode="json", by_alias=True).items()) + b"}"
+
+
+async def _warmup_batch_json_off_loop(request, access, result, requirements) -> Response:
+    body = await await_in_thread(_RENDER_EXECUTOR,
+        lambda: _render_warmup_batch(request, access, result, requirements), cold=True)
+    return Response(content=body, media_type="application/json")
 
 
 def _reference_data(result) -> dict:
@@ -534,6 +731,7 @@ def _problem(error: QueryServiceError) -> ProblemDetails:
         retry_after_ms=error.problem.retry_after_ms,
         instrument_uid=error.instrument_uid,
         quality_state=error.quality_state,
+        diagnostics=error.diagnostics,
     )
 
 
@@ -681,10 +879,10 @@ async def snapshot(
     access.require_permission(DataPlanePermission.SNAPSHOT_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await asyncio.to_thread(
-        service.snapshot,
+    result = await service.snapshot_async(
         requirement,
         purpose=purpose,
+        consumer_id=access.consumer_id,
     )
     item = _bind_item_cursor(request, access, requirement, result.item)
     return SnapshotResponse(request_id=result.request_id, data=_market_item(item))
@@ -746,15 +944,7 @@ async def warmup(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await service.warmup_async(
-        requirement,
-        purpose=purpose,
-    )
-    result = type(result)(
-        result.request_id,
-        _bind_history_cursor(request, access, requirement, result.history),
-    )
-    return _warmup(result)
+    return await _single_warmup_response(request, access, service, requirement, purpose)
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
@@ -813,12 +1003,7 @@ async def history(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    result = await service.warmup_async(requirement, purpose=purpose)
-    result = type(result)(
-        result.request_id,
-        _bind_history_cursor(request, access, requirement, result.history),
-    )
-    return _warmup(result)
+    return await _single_warmup_response(request, access, service, requirement, purpose)
 
 
 @router.post("/market-data/warmup:batch", response_model=BatchResponse)
@@ -843,10 +1028,10 @@ async def warmup_batch(
     )
 
     async def render(result):
-        response = _warmup_batch_response(request, access, result, requirements)
         # Returning an already-rendered Response prevents FastAPI from doing a
-        # second Pydantic walk after the fully-local service lease is released.
-        return JSONResponse(content=response.model_dump(mode="json", by_alias=True))
+        # second Pydantic walk after the fully-local service lease is released;
+        # rendering off the loop keeps other requests on this replica moving.
+        return await _warmup_batch_json_off_loop(request, access, result, requirements)
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
@@ -948,7 +1133,12 @@ async def feed_status(
         "schema": "qdl.feed-status.v2",
         "instrument_uid": instrument_uid,
         "feed": feed.value,
-        "quality": asdict(await asyncio.to_thread(service.status, requirement)),
+        "quality": asdict(
+            await service.status_async(
+                requirement,
+                consumer_id=access.consumer_id,
+            )
+        ),
     }
 
 
@@ -971,7 +1161,7 @@ async def readiness(
         requirements,
         require_all=body.require_all,
     )
-    result = await asyncio.to_thread(service.readiness, batch, purpose=purpose)
+    result = await service.readiness_async(batch, purpose=purpose)
     items = []
     for item in result.results:
         problem = None
@@ -1006,19 +1196,32 @@ async def system_readiness(
     return await request.app.state.v2_runtime_readiness.public_summary()
 
 
-@router.get("/data-quality/gaps", response_model=GapListResponse)
+@router.get("/data-quality/gaps", response_model=GapListResponse, response_model_exclude_unset=True)
 async def data_quality_gaps(
+    response: Response,
+    include_coverage: bool = Query(False),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
 ):
     access.require_permission(DataPlanePermission.QUALITY_READ)
-    return {
-        "schema": "qdl.data-quality.gaps.v2",
-        "items": [
-            {**asdict(item), "feed": item.feed.value}
-            for item in service.open_gaps()
-        ],
-    }
+    result = await service.open_gaps_async()
+    coverage = getattr(result, "coverage_document", None)
+    document = coverage() if callable(coverage) else None
+    response.headers["X-QDL-Gap-Scope"] = "RETAINED_WINDOW"
+    if document is not None and result.unavailable and not include_coverage:
+        sample = ",".join(item["binding_id"] for item in result.unavailable[:8])
+        raise QueryServiceError(QueryProblem(CanonicalErrorCode.PARTIAL_RESULT,
+            f"retained scan has {len(result.unavailable)} unavailable product views: {sample}; "
+            "request include_coverage=true for exact coverage; history boundaries are not assessed",
+            True, retry_after_ms=1000), request_id=service.request_id())
+    body = {"schema": "qdl.data-quality.gaps.v2", "items": [
+        {**asdict(item), "feed": item.feed.value} for item in result]}
+    if include_coverage:
+        if document is None:
+            raise QueryServiceError(QueryProblem(CanonicalErrorCode.PARTIAL_RESULT,
+                "backend does not expose product coverage", False), request_id=service.request_id())
+        body["coverage"] = document
+    return body
 
 
 def create_v2_app(

@@ -177,8 +177,11 @@ class ConsumerManifestLoader:
         }:
             raise ValueError("consumer manifest spec contains unknown fields")
         requirements = spec.get("requirements")
-        if not isinstance(requirements, list) or not 1 <= len(requirements) <= 256:
-            raise ValueError("consumer manifest requires 1..256 requirements")
+        # Bounded, not a product quota: the D48 daily universe (up to 300
+        # symbols per venue) sits beside the execution products of one alpha
+        # identity; per-request limits stay in the manifest quotas.
+        if not isinstance(requirements, list) or not 1 <= len(requirements) <= 1024:
+            raise ValueError("consumer manifest requires 1..1024 requirements")
         permissions = spec.get("permissions")
         purposes = spec.get("purposes")
         quotas = spec.get("quotas")

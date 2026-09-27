@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from qdl.domain.instrument import InstrumentRecord, InstrumentRegistry
 from qdl.query.contracts import (
+    CanonicalErrorCode,
     CoverageStatus,
     DataRequirement,
     FeedType,
@@ -138,6 +139,10 @@ class MarketDataItem:
     supersedes_event_id: str | None = None
     received_at_ns: int | None = None
     resample_lineage: "ResampleLineage | None" = None
+    # Internal only, never rendered: identifies immutable row content (binding
+    # + canonical hash) so a renderer may reuse the validated static views of
+    # the same row (KN-4 D30). Quality, cursor and watermark never enter it.
+    render_key: str | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
@@ -235,6 +240,30 @@ class GapRecord:
             raise ValueError("gap detection time must be positive")
 
 
+class GapScanResult(tuple):
+    """Tuple-compatible retained-window scan plus explicit product coverage.
+
+    Completeness here means a servable view was inspected, NOT that listing-to-
+    now history is complete. Readiness/history remain the boundary authorities.
+    """
+
+    def __new__(cls, gaps, coverage):
+        obj = super().__new__(cls, gaps)
+        obj.coverage = tuple(coverage)
+        return obj
+
+    @property
+    def unavailable(self):
+        return tuple(c for c in self.coverage if c["state"] not in {"SCANNED", "EXCLUDED"})
+
+    def coverage_document(self):
+        return {"scope": "RETAINED_WINDOW", "scan_complete": True,
+                "materialization_complete": not self.unavailable,
+                "history_complete": None,
+                "leading_coverage": "NOT_ASSESSED", "trailing_coverage": "NOT_ASSESSED",
+                "products": list(self.coverage)}
+
+
 class MemoryMarketDataBackend:
     """Deterministic shadow/test backend; production adapters implement the protocol."""
 
@@ -271,6 +300,16 @@ class MemoryMarketDataBackend:
 
     def open_gaps(self) -> tuple[GapRecord, ...]:
         return tuple(sorted(self._gaps, key=lambda item: (item.detected_at_ns, item.gap_id)))
+
+    def open_gaps_bounded(self, *, cancelled=None) -> tuple[GapRecord, ...]:
+        if cancelled is not None and cancelled():
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.PARTIAL_RESULT,
+                "global gap diagnostic was cancelled",
+                True,
+                retry_after_ms=1_000,
+            ))
+        return self.open_gaps()
 
 
 @dataclass(frozen=True)

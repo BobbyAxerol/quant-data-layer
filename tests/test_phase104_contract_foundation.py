@@ -189,16 +189,18 @@ class Phase104ContractFoundationTests(unittest.TestCase):
             CapabilityAvailability.AVAILABLE,
         )
 
-        okx = okx_global_capabilities("SWAP")
-        self.assertIs(
-            okx.capability("long_short_ratio").availability,
-            CapabilityAvailability.UNAVAILABLE,
-        )
-        self.assertIs(
-            okx.capability("taker_flow").availability,
-            CapabilityAvailability.UNAVAILABLE,
-        )
-        self.assertIn("derived-only", okx.capability("basis").constraint or "")
+        for market in ("SWAP", "FUTURES"):
+            okx = okx_global_capabilities(market)
+            for feed in ("open_interest", "long_short_ratio", "taker_flow"):
+                capability = okx.require(feed)
+                self.assertTrue(capability.rest_history)
+                self.assertFalse(capability.live)
+            self.assertIn("derived-only", okx.capability("basis").constraint or "")
+        for market in ("SPOT", "OPTION", "EVENTS"):
+            okx = okx_global_capabilities(market)
+            for feed in ("long_short_ratio", "taker_flow"):
+                self.assertIs(okx.capability(feed).availability, CapabilityAvailability.UNAVAILABLE)
+                self.assertFalse(okx.capability(feed).rest_history)
 
         dnse = dnse_capabilities()
         self.assertIs(

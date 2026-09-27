@@ -13,6 +13,7 @@ from qdl.consumer import StableReleaseRoutePlan, requirement_key
 from qdl.query import FeedType, StalePolicy
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
+from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,12 +61,12 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in scope.products
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(scope.products), 299)
+        self.assertEqual(len(scope.products), 314 + UNIVERSE_TOTAL)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 234,
-                DeliveryClass.ON_DEMAND: 65,
+                DeliveryClass.DURABLE: 234 + UNIVERSE_TOTAL,
+                DeliveryClass.ON_DEMAND: 80,
             },
         )
 
@@ -101,13 +102,13 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             (product.consumer_id, requirement_key(product.requirement))
             for product in scope.products
         }
-        self.assertEqual(len(scope.products), 295)
+        self.assertEqual(len(scope.products), 310 + UNIVERSE_TOTAL)
         self.assertEqual(actual, expected)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 230,
-                DeliveryClass.ON_DEMAND: 65,
+                DeliveryClass.DURABLE: 230 + UNIVERSE_TOTAL,
+                DeliveryClass.ON_DEMAND: 80,
             },
         )
         self.assertEqual(

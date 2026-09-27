@@ -1,0 +1,28 @@
+[package]
+name = "qdl-projector"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Kafka-native V2 projector (KN-3): stage A canonical -> state topics in Kafka transactions, stage B state topics -> fenced market cache."
+
+[[bin]]
+name = "qdl-projector"
+path = "src/main.rs"
+
+[dependencies]
+prost.workspace = true
+qdl-contracts.workspace = true
+rdkafka.workspace = true
+redis.workspace = true
+ring.workspace = true
+serde_json.workspace = true
+
+[features]
+# Test-only cache fault hooks (KN-3 Astra R3); enabled for the crate's own tests.
+fault-injection = []
+
+[dev-dependencies]
+qdl-projector = { path = ".", features = ["fault-injection"] }
+base64.workspace = true
+tokio.workspace = true

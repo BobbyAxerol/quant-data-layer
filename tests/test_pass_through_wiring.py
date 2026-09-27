@@ -23,6 +23,9 @@ CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
 SCHEMA_DIGEST = "c" * 64
 
 
+# Never a catalog instrument: XRP was, until the D48 universe bound it.
+UNBOUND_BASE = "UNBOUNDFIXTURE"
+
 class PassThroughWiringTests(unittest.TestCase):
     """Declaring metadata must not open a data product on its own."""
 
@@ -45,13 +48,13 @@ class PassThroughWiringTests(unittest.TestCase):
             venue="BINANCE",
             market="USDM",
             product_type=ProductType("PERPETUAL"),
-            canonical_symbol="XRP-USDT",
+            canonical_symbol=f"{UNBOUND_BASE}-USDT",
         )
         spare["instrument_uid"] = identity.instrument_uid
         spare["instrument_id"] = identity.instrument_id
-        spare["canonical_symbol"] = "XRP-USDT"
-        spare["native_symbol"] = "XRPUSDT"
-        spare["base_asset"] = "XRP"
+        spare["canonical_symbol"] = f"{UNBOUND_BASE}-USDT"
+        spare["native_symbol"] = f"{UNBOUND_BASE}USDT"
+        spare["base_asset"] = UNBOUND_BASE
         payload["instruments"].append(spare)
         path = self.directory / "catalog.yaml"
         path.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -123,7 +126,7 @@ class PassThroughWiringTests(unittest.TestCase):
         self.assertIsInstance(service.backend, RoutedQueryBackend)
         registry = self.catalog.instrument_registry(include_unbound=True)
         self.assertEqual(
-            registry.get(self.unbound_uid).native_symbol, "XRPUSDT"
+            registry.get(self.unbound_uid).native_symbol, f"{UNBOUND_BASE}USDT"
         )
 
     def _authorize(self, policy, purpose: AccessPurpose):

@@ -84,7 +84,7 @@ class Phase24315ReferenceEntitlementMaterializationTests(unittest.TestCase):
         self.assertTrue(summary["release_route_changed"])
         self.assertEqual(summary["alpha_reference_counts"], {
             "alpha.binance.paper.stable": 35,
-            "alpha.okx.paper.stable": 20,
+            "alpha.okx.paper.stable": 35,
         })
 
         rerun = self.tool.build_documents(
@@ -109,6 +109,7 @@ class Phase24315ReferenceEntitlementMaterializationTests(unittest.TestCase):
             "alpha.okx.paper.stable": {
                 FeedType.CONTRACT_METADATA, FeedType.FUNDING_RATE,
                 FeedType.MARK_INDEX_PRICE, FeedType.OPEN_INTEREST,
+                FeedType.LONG_SHORT_RATIO, FeedType.TAKER_FLOW,
             },
         }
         for consumer_id, payload in self.manifests.items():

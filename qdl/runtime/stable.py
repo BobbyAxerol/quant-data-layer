@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 import logging
 import os
 import ssl
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -56,6 +58,21 @@ from qdl.runtime.stable_source import (
     build_stable_query_stack,
 )
 from qdl.reference.execution_live import HttpExecutionMarkIndexReader
+from qdl.reference.local_mark_index import (
+    build_cache_alpha_mark_index_reader,
+    build_cache_execution_mark_index_reader,
+)
+from qdl.runtime.kn_market_cache import reader_from_environment as kn_reader_from_environment
+from qdl.query.row_cache import ROW_CACHE_ENTRIES_ENV
+from qdl.runtime.kn_read_view import READ_VIEW_SECRET_FILE_ENV, install_kn_read_view
+from qdl.runtime.kn_query_backend import (
+    DEFAULT_ROW_CACHE_ENTRIES,
+    QUERY_BACKEND_ENV,
+    QUERY_BACKENDS,
+    KnCursorSettings,
+    KnCursorV3Issuer,
+    KnMarketCacheQueryBackend,
+)
 from qdl.security import (
     AuditChain,
     DataPlaneIdentityService,
@@ -572,12 +589,15 @@ def build_stable_handoff(
 def stable_readiness(
     config: StableRuntimeConfig,
     manifests: ConsumerManifestRegistry,
-    spool: SQLiteDurableSpool,
+    spool: SQLiteDurableSpool | None,
     *,
     quota: RedisMinuteQuota | None = None,
     extra_probes=(),
+    market_cache_backend=None,
 ) -> MeasuredRuntimeReadiness:
     async def cache():
+        if market_cache_backend is not None:
+            return await market_cache_readiness(market_cache_backend)
         summary = await asyncio.to_thread(spool.readiness_summary)
         return _ready(
             "query_cache",
@@ -616,6 +636,22 @@ def stable_readiness(
     )
 
 
+async def market_cache_readiness(backend) -> ComponentReadiness:
+    """KN-4 D32: the market cache is readable and every bound product's READY
+    coverage is reported (never a global flag). Query is ready when the cache
+    answers; a product without a READY generation answers DATA_NOT_READY on
+    its own reads."""
+
+    try:
+        ready, bound = await asyncio.to_thread(backend.readiness_summary)
+    except Exception as error:  # the cache is a dependency: typed NOT_READY
+        return ComponentReadiness(
+            "query_cache", ComponentState.NOT_READY,
+            detail=f"market cache unavailable: {type(error).__name__}", checked_at_ns=time.time_ns(),
+        )
+    return _ready("query_cache", detail=f"market cache readable ready_products={ready}/{bound}")
+
+
 def install_stable_health(app, readiness, manifest) -> None:
     @app.get("/health/live", include_in_schema=False)
     async def live():
@@ -642,23 +678,93 @@ def install_stable_health(app, readiness, manifest) -> None:
         }
 
 
+# A cold 2,500/5,000-row warmup keeps one or two threads CPU-bound for
+# seconds. At CPython's default 5 ms switch interval every GIL acquisition by
+# the event loop or a hot-read thread may wait that long, and a hot read needs
+# several: on 2026-09-23 (v2.1.1 Phase-3 stage 5, lock and throttling already
+# removed) QUOTE snapshots still reached p95 ~280 ms and p99 ~1.2 s inside the
+# cold window against a 9 ms median. 1 ms trades a little throughput for
+# bounded hot-read waits in this latency-first reader.
+QUERY_GIL_SWITCH_INTERVAL_SECONDS = 0.001
+# A 5,000-row warmup keeps its rows alive through the render, so the default
+# thresholds (700, 10, 10) ran ~526 collections per warmup including 3 full
+# sweeps of 75-217 ms, each holding the GIL (offline, one real partition,
+# 2026-09-23). (100_000, 50, 100) measured 2-3 collections, no full sweep,
+# at most 31 ms. Most objects are freed by reference counting either way.
+QUERY_GC_THRESHOLDS = (100_000, 50, 100)
+
+
+def configure_query_interpreter() -> None:
+    """Process-wide interpreter settings for a Query reader."""
+
+    sys.setswitchinterval(QUERY_GIL_SWITCH_INTERVAL_SECONDS)
+    gc.set_threshold(*QUERY_GC_THRESHOLDS)
+
+
+def freeze_query_startup_heap() -> None:
+    """Keep the start-up heap (catalog, manifests, identity) out of later sweeps."""
+
+    gc.collect()
+    gc.freeze()
+
+
 def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAPI:
+    configure_query_interpreter()
     config = config or StableRuntimeConfig.from_environment("query_v2")
     config.state_dir.mkdir(parents=True, exist_ok=True)
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
-    spool = build_stable_spool(config, catalog)
-    handoff = build_stable_handoff(config, spool)
-    execution_mark_index_reader = (
-        HttpExecutionMarkIndexReader(
-            config.execution_mark_index_urls,
-            config.internal_ingest_secret,
-            ssl_context=stable_client_ssl_context(config),
+    query_backend = os.environ.get(QUERY_BACKEND_ENV, "spool").strip() or "spool"
+    if query_backend not in QUERY_BACKENDS:
+        raise ValueError(f"{QUERY_BACKEND_ENV} must be one of {QUERY_BACKENDS}")
+    kn_backend = kn_issuer = kn_alpha_reader = None
+    if query_backend == "kn3":
+        # KN-4 D25: the Kafka-native market cache, no spool/handoff at all.
+        spool = handoff = None
+        reader = kn_reader_from_environment(os.environ)
+        settings = KnCursorSettings.from_environment(os.environ, environment=config.environment)
+        kn_backend = KnMarketCacheQueryBackend(
+            reader, catalog, schema_digest=config.schema_digest, topic_id=settings.topic_id,
+            session_liveness_root=str(config.session_liveness_dir),
+            row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
+            diagnostic_exclusions={b.binding_id: "ACQUISITION_DISABLED"
+                for b in StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog).bindings
+                if not b.enabled},
         )
-        if config.execution_mark_index_urls
-        else None
-    )
+        kn_issuer = KnCursorV3Issuer(settings, catalog)
+        kn_alpha_reader = lambda: build_cache_alpha_mark_index_reader(  # noqa: E731
+            catalog=catalog, backend=kn_backend,
+        )
+        if config.execution_mark_index_urls:
+            # D31: never reach a stream's private endpoint from this backend
+            # (a shadow Query must not call the production stream).
+            raise ValueError(
+                "QDL_STABLE_QUERY_BACKEND=kn3 serves execution MARK/INDEX from the market "
+                "cache; unset QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON"
+            )
+        execution_mark_index_reader = (
+            build_cache_execution_mark_index_reader(
+                catalog=catalog, backend=kn_backend,
+                acquisition=StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog),
+                session_liveness_reader=StableSessionLivenessReader(
+                    config.session_liveness_dir, clock_ns=time.time_ns),
+            )
+            if config.reference_data_enabled
+            else None
+        )
+    else:
+        spool = build_stable_spool(config, catalog)
+        handoff = build_stable_handoff(config, spool)
+        execution_mark_index_reader = (
+            HttpExecutionMarkIndexReader(
+                config.execution_mark_index_urls,
+                config.internal_ingest_secret,
+                ssl_context=stable_client_ssl_context(config),
+            )
+            if config.execution_mark_index_urls
+            else None
+        )
     service, _backend, issuer = build_stable_query_stack(
         spool=spool, catalog=catalog, schema_digest=config.schema_digest,
         handoff=handoff, cursor_ttl_seconds=config.cursor_ttl_seconds,
@@ -668,9 +774,11 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         provider_admission_secret=config.internal_ingest_secret,
         session_liveness_root=str(config.session_liveness_dir),
         execution_mark_index_reader=execution_mark_index_reader,
+        backend=kn_backend, issuer=kn_issuer,
+        alpha_mark_index_reader_factory=kn_alpha_reader,
     )
     readiness = stable_readiness(
-        config, manifests, spool, quota=identity.quota,
+        config, manifests, spool, quota=identity.quota, market_cache_backend=kn_backend,
         extra_probes=(CallableReadinessProbe("instrument_catalog", lambda: _ready(
             "instrument_catalog", detail=f"bindings={len(catalog.bindings)}",
             revision=str(catalog.catalog_revision),
@@ -683,6 +791,14 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         contract_version="2.0.0", authority="INTERNAL_STABLE",
     )
     app.state.runtime_manifest = config.public_manifest()
+    app.state.stable_query_backend = query_backend
+    read_view_secret_file = os.environ.get(READ_VIEW_SECRET_FILE_ENV, "").strip()
+    if kn_backend is not None and read_view_secret_file:
+        # D29: the native Stream's GetSnapshot/GetFeedStatus read view.
+        install_kn_read_view(
+            app, service=service, backend=kn_backend, issuer=kn_issuer,
+            secret=bytes.fromhex(Path(read_view_secret_file).read_text(encoding="utf-8").strip()),
+        )
     app.state.stable_spool = spool
     app.state.stable_audit = AuditChain(config.audit_path)
     app.state.execution_mark_index_reader = execution_mark_index_reader
@@ -692,9 +808,12 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     async def close_stable_query():
         if execution_mark_index_reader is not None:
             await execution_mark_index_reader.close()
-        await asyncio.to_thread(spool.close)
+        await service.close()
+        if spool is not None:
+            await asyncio.to_thread(spool.close)
         await asyncio.to_thread(identity.quota.close)
 
+    freeze_query_startup_heap()
     return app
 
 
@@ -759,7 +878,7 @@ def create_stable_stream_runtime(
         catalog,
         acquisition=acquisition,
         session_liveness_reader=StableSessionLivenessReader(
-            config.session_liveness_dir
+            config.session_liveness_dir, clock_ns=time.time_ns
         ),
     )
 
@@ -853,8 +972,13 @@ async def serve_stable_stream() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # The stream process both writes (ingest append) and fans out; the same
+    # GIL and GC settings as the Query reader keep a burst of subscription work
+    # from holding the writer's thread for a whole collection or switch period.
+    configure_query_interpreter()
     runtime = create_stable_stream_runtime()
     await runtime.start()
+    freeze_query_startup_heap()
     server = uvicorn.Server(uvicorn.Config(
         runtime.health_app, host="0.0.0.0", port=runtime.config.http_port,
         log_level="info", access_log=False, log_config=None,

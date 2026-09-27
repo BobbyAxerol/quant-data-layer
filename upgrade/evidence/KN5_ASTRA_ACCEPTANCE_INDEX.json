@@ -1,0 +1,853 @@
+{
+  "schema": "qdl.kn5.astra.acceptance-review.v1",
+  "status": "IMPLEMENTED_SHADOW_TESTED_PENDING_CLAUDE_REVIEW",
+  "production_certified": false,
+  "release_authorized": false,
+  "source_baseline": "718631d",
+  "source_head": "2dad966bf25cd527f72766718bfc4ba82f935af0",
+  "artifact_tuple": {
+    "query_source": "9e81171",
+    "query_image": "sha256:17a359779702e7b1ced2bd38acdf07267246b54db969f9bc25d6aec238599d06",
+    "native_projector_semantics": "20e5062",
+    "native_projector_formatting": "a95310a",
+    "history_edge": "822a150",
+    "final50_client": "21fda1d",
+    "sdk_cold_recovery_overlay": "2dad966",
+    "isolation": "kn5-astra-1643049; RUST_SHADOW; no production mutation"
+  },
+  "scope": {
+    "venues": [
+      "BINANCE_USDM",
+      "OKX_SWAP"
+    ],
+    "liquid_symbols": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "DOGE",
+      "BNB"
+    ],
+    "ts_execution_products": 60,
+    "universe_products": 510,
+    "universe_replica_checks": 1020,
+    "universe_interval": "1d",
+    "legacy_spot_vn_activated": false
+  },
+  "final50": {
+    "status": "PASS",
+    "failed_gates": [],
+    "requests": 15504,
+    "request_failures": 0,
+    "streams": 90,
+    "stream_errors": 0,
+    "bar_streams_receiving_final": 30,
+    "reconnect_restored": 12,
+    "startup_ms": 69387,
+    "startup_admission_retries": 119,
+    "slow_reader_non_executable_frames": 8,
+    "slow_reader_strict_recovery": 1
+  },
+  "hot_latency": [
+    {
+      "gate": "latency:BAR_LATEST:BINANCE",
+      "status": "PASS",
+      "count": 55,
+      "p50": 16.327,
+      "p95": 47.524,
+      "max": 52.223,
+      "target_p95": 1000,
+      "target_p99": 2000,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    },
+    {
+      "gate": "latency:BAR_LATEST:OKX",
+      "status": "PASS",
+      "count": 55,
+      "p50": 22.225,
+      "p95": 77.375,
+      "max": 250.206,
+      "target_p95": 1000,
+      "target_p99": 2000,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    },
+    {
+      "gate": "latency:L2_SNAPSHOT:BINANCE",
+      "status": "PASS",
+      "count": 54,
+      "p50": 28.683,
+      "p95": 79.125,
+      "max": 117.586,
+      "target_p95": 300,
+      "target_p99": 750,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    },
+    {
+      "gate": "latency:L2_SNAPSHOT:OKX",
+      "status": "PASS",
+      "count": 55,
+      "p50": 40.476,
+      "p95": 257.138,
+      "max": 439.968,
+      "target_p95": 300,
+      "target_p99": 750,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    },
+    {
+      "gate": "latency:MARK_INDEX_REFERENCE:BINANCE",
+      "status": "PASS",
+      "count": 4125,
+      "p50": 12.931,
+      "p95": 53.51,
+      "max": 397.568,
+      "target_p95": 250,
+      "target_p99": 500,
+      "p99": 149.794,
+      "unit": "ms",
+      "p99_withheld": false
+    },
+    {
+      "gate": "latency:MARK_INDEX_REFERENCE:OKX",
+      "status": "PASS",
+      "count": 4125,
+      "p50": 12.941,
+      "p95": 54.318,
+      "max": 365.009,
+      "target_p95": 250,
+      "target_p99": 500,
+      "p99": 141.716,
+      "unit": "ms",
+      "p99_withheld": false
+    },
+    {
+      "gate": "latency:QUOTE_SNAPSHOT:BINANCE",
+      "status": "PASS",
+      "count": 2750,
+      "p50": 11.443,
+      "p95": 51.341,
+      "max": 358.895,
+      "target_p95": 100,
+      "target_p99": 250,
+      "p99": 129.338,
+      "unit": "ms",
+      "p99_withheld": false
+    },
+    {
+      "gate": "latency:QUOTE_SNAPSHOT:OKX",
+      "status": "PASS",
+      "count": 2750,
+      "p50": 12.138,
+      "p95": 57.779,
+      "max": 479.179,
+      "target_p95": 100,
+      "target_p99": 250,
+      "p99": 149.327,
+      "unit": "ms",
+      "p99_withheld": false
+    },
+    {
+      "gate": "latency:TRADE_SNAPSHOT:BINANCE",
+      "status": "PASS",
+      "count": 55,
+      "p50": 10.05,
+      "p95": 56.619,
+      "max": 66.407,
+      "target_p95": 100,
+      "target_p99": 250,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    },
+    {
+      "gate": "latency:TRADE_SNAPSHOT:OKX",
+      "status": "PASS",
+      "count": 55,
+      "p50": 11.469,
+      "p95": 78.993,
+      "max": 229.195,
+      "target_p95": 100,
+      "target_p99": 250,
+      "p99": null,
+      "unit": "ms",
+      "p99_withheld": true
+    }
+  ],
+  "universe": {
+    "status": "PASS",
+    "self_attests_provider_provenance": false,
+    "provenance_note": "Runner validates source views, not provider attestations; use isolated mirror/history-edge provenance and retained logs. Not a production certificate.",
+    "runs": [
+      {
+        "consumer_id": "alpha.okx.paper.stable",
+        "status": "PASS",
+        "offered": 255,
+        "usable": 255,
+        "failed": 0,
+        "returned_rows": 104812,
+        "sdk_warmup_attempts": 51,
+        "sdk_admission_retries": 0,
+        "all_items_usable_ms": 126498.41118499171,
+        "response_body_bytes": 304267454,
+        "decode_ms": 2937.087958562188,
+        "replica": "query-1"
+      },
+      {
+        "consumer_id": "alpha.binance.paper.stable",
+        "status": "PASS",
+        "offered": 255,
+        "usable": 255,
+        "failed": 0,
+        "returned_rows": 108250,
+        "sdk_warmup_attempts": 51,
+        "sdk_admission_retries": 0,
+        "all_items_usable_ms": 129963.39189691935,
+        "response_body_bytes": 313734265,
+        "decode_ms": 3051.0567219462246,
+        "replica": "query-1"
+      },
+      {
+        "consumer_id": "alpha.okx.paper.stable",
+        "status": "PASS",
+        "offered": 255,
+        "usable": 255,
+        "failed": 0,
+        "returned_rows": 104812,
+        "sdk_warmup_attempts": 51,
+        "sdk_admission_retries": 0,
+        "all_items_usable_ms": 115681.39458307996,
+        "response_body_bytes": 304267454,
+        "decode_ms": 3092.481067054905,
+        "replica": "query-2"
+      },
+      {
+        "consumer_id": "alpha.binance.paper.stable",
+        "status": "PASS",
+        "offered": 255,
+        "usable": 255,
+        "failed": 0,
+        "returned_rows": 108250,
+        "sdk_warmup_attempts": 51,
+        "sdk_admission_retries": 0,
+        "all_items_usable_ms": 119922.66119504347,
+        "response_body_bytes": 313734265,
+        "decode_ms": 3103.65423373878,
+        "replica": "query-2"
+      }
+    ],
+    "deep_history": "2500/5000 initial runs had12/8 admission failures; exact failed subsets recovered12/12 and8/8; no false all-green rerun claim"
+  },
+  "cold_contention": {
+    "passes": 16,
+    "attempts": 24,
+    "retries": 8,
+    "rows_each": 5000,
+    "ms_min": 5322.738502989523,
+    "ms_max": 19417.321969987825
+  },
+  "ts_completed_cache": {
+    "writes": 149656,
+    "verified_keys": 305252,
+    "ack_ms": {
+      "n": 4096,
+      "p50": 0.8,
+      "p95": 3.4,
+      "p99": 7.9,
+      "max": 32.5
+    },
+    "verified_ms": {
+      "n": 4096,
+      "p50": 1.1,
+      "p95": 5.4,
+      "p99": 13.4,
+      "max": 39.8
+    },
+    "seconds": 600.0,
+    "warm_samples": 115,
+    "warm_all_ready": 115,
+    "test_client_cpu_cap": 2,
+    "production_ts_changed": false,
+    "steady_source_age": {
+      "BAR|steady": {
+        "slices": 10,
+        "views": 100,
+        "age_at_redis_verified_ms": {
+          "n": 100,
+          "p50": 1139,
+          "p95": 2126,
+          "p99": 3255,
+          "max": 3292
+        }
+      },
+      "BOOK_DELTA|steady": {
+        "slices": 10,
+        "views": 52823,
+        "age_at_redis_verified_ms": {
+          "n": 5120,
+          "p50": 424,
+          "p95": 746,
+          "p99": 985,
+          "max": 1384
+        }
+      },
+      "BOOK_SNAPSHOT|steady": {
+        "slices": 10,
+        "views": 190,
+        "age_at_redis_verified_ms": {
+          "n": 190,
+          "p50": 1138,
+          "p95": 1708,
+          "p99": 1934,
+          "max": 2121
+        }
+      },
+      "MARK_INDEX_PRICE|steady": {
+        "slices": 10,
+        "views": 5432,
+        "age_at_redis_verified_ms": {
+          "n": 5120,
+          "p50": 1021,
+          "p95": 1655,
+          "p99": 2099,
+          "max": 2813
+        }
+      },
+      "QUOTE|steady": {
+        "slices": 10,
+        "views": 133139,
+        "age_at_redis_verified_ms": {
+          "n": 5120,
+          "p50": 518,
+          "p95": 1167,
+          "p99": 2066,
+          "max": 3724
+        }
+      },
+      "TRADE|steady": {
+        "slices": 10,
+        "views": 64500,
+        "age_at_redis_verified_ms": {
+          "n": 4906,
+          "p50": 610,
+          "p95": 2863,
+          "p99": 6325,
+          "max": 34295
+        }
+      }
+    },
+    "earlier_transient": "ts-bounded.json retained:84/85 steady60/60, one58/60 QUOTE-age sample recovered. No controlled CPU causality proof."
+  },
+  "limits": [
+    "Shadow load is not paired production cutover, independent HA, or mainnet execution certification.",
+    "Quiet TRADE facts remain ineligible as prices when stale; Risk must recheck explicit QUOTE/L2 intent.",
+    "Full-retention RAM and final whole-stack CPU remain capacity projections plus measured component evidence, not a full-filled production stress certificate.",
+    "Five Binance deep3d provider gaps remain explicitly unavailable historical ranges, never generated or hidden.",
+    "No new single all-suite green run: failed modules corrected and rerun; report overlapping suite counts separately.",
+    "Cold history is multi-second; whole-universe completion is not per-symbol request latency."
+  ],
+  "evidence": [
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/source-verification.json",
+      "bytes": 966,
+      "sha256": "bbbbded3d3a9717da7cf20c3ca6610a1de943938d7eb1231dda3ece7534d71f5"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/source-final-affected-tmpfs.log",
+      "bytes": 553,
+      "sha256": "e2b8226eaa22cfee8442f1f844d2098ecd10a439312b86e33442e05a3945867b"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/source-environment-final.log",
+      "bytes": 22296,
+      "sha256": "fd5c2ecebd2c1df38ba0de54c1198e21dcb12c8d8eb8c394a60bcca26078be83"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/sdk-admission-recovery.log",
+      "bytes": 100,
+      "sha256": "801cbddaf510ce23753f65ea28b34990f84eb22d9f5b35638a1c130ac8cfdc23"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/reference-matrix.json",
+      "bytes": 20144,
+      "sha256": "516d8650adaa1fe44e69649e97050aedb54957a0675625b84f3fa568415bc86f"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/gaps-final-load.json",
+      "bytes": 708,
+      "sha256": "51e4163e2062b2ae85c3e6fec50881f25c2f1db209f37a5469cdf43c91cc226d"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/gaps-probe-summary.json",
+      "bytes": 714,
+      "sha256": "3327ad2ebf9006b7e52be9a6ccc1acf0291c8290a9eb41a766232ccc5da9aa89"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/ts-final.json",
+      "bytes": 68379,
+      "sha256": "c1151033145ccc207e8da646561311f514e26e0bbeaed13e71857a9c44d6ed03"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/ts-bounded.json",
+      "bytes": 10439,
+      "sha256": "0c502baf0739515408a68e3c699150e6ddbd0edf8458b326b0cdc07cc0b9bb14"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/ts-consumer-headroom.json",
+      "bytes": 12505,
+      "sha256": "b5d20e9d082b4ac82b9b9e9e39a6f52c5b8037f32107ef36dfa74758f9142007"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/ts-consumer-headroom.err",
+      "bytes": 1548,
+      "sha256": "3b036fe435ceb65017c560dba93953028a6320d63fdff80dc658b1b1144c7fdf"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/universe-480-recovery-final.json",
+      "bytes": 1491739,
+      "sha256": "72f111e7958d4269349de10ef2f209f207ac8d3bacda6f364f58e036da4a64d8"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/universe-2500-final.json",
+      "bytes": 1506706,
+      "sha256": "a4231c7819d7dc5f836774c95696f21e5e6cee0e0c4ba536499ef660e1565258"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/universe-2500-recovery-result.json",
+      "bytes": 21960,
+      "sha256": "8f7c211b5aa49435310d55fea3798742b2e3697e46e3344dbdce4ca6f2c3d787"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/universe-5000-final.json",
+      "bytes": 1586897,
+      "sha256": "39bb1780daad53ecfb042a6c8983f70604671b3d19740f74c53cba288a335203"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/universe-5000-recovery-result.json",
+      "bytes": 16008,
+      "sha256": "759421a970b1f6d76afad5ffa2c3b2f39dc7ee1e914fa9e58a82134b86756223"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cold-recovery-real.json",
+      "bytes": 1820,
+      "sha256": "5a95b68d35bf2a353d2e669e7b3149c51a5ef82a20a193cd37826c7fedf68d03"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cache-inventory.json",
+      "bytes": 3460,
+      "sha256": "4538c87600d1f2ecaea976db4071b798912968a8885d3e4017ed71f15a765b62"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/resource-summary.json",
+      "bytes": 6126,
+      "sha256": "7148e247b40988b467737355e584f00b1a3ac9cf0d7e639ea02c5976a2fafd1d"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/runtime-revisions.json",
+      "bytes": 541,
+      "sha256": "f93b34e2cc6ac1d4cdb3a704eaab2064fb762797d4a486dcc2e0f9215f9bed8f"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-owned-runtime.json",
+      "bytes": 647,
+      "sha256": "199f4e11c283d1bca495bf913c1589fbb7e47957b59ed4bc4db1668df943ec41"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-images.json",
+      "bytes": 2411,
+      "sha256": "ffc078517e6edb80629b9d638f3d4670b98fbe8dff78b1c4524360c374c23a44"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-files.json",
+      "bytes": 1093,
+      "sha256": "fba009c513314d959d71e770d3fb5e71ecfbe4a65e3bd609e4bf6caa18aa591c"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-buildcache.json",
+      "bytes": 9388,
+      "sha256": "db1451200c6dbda96b2a85676020b56567ee3bebcc9736ec1fda97d2ba0fbd3c"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-production-invariance.json",
+      "bytes": 14818,
+      "sha256": "6fdca0b2fb1397a5f756109431c0c7e67f65a9893cf1febac543a93f64d74d75"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/cleanup-disk-after.json",
+      "bytes": 333,
+      "sha256": "7d4311beeffed6d87572f840e0b283ec5702a191b082cd8a2686a00be017d0df"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/final-50-bounded/gates.json",
+      "bytes": 5088,
+      "sha256": "a749b6fa65e4675f67f32df8074d4e651239757229f14a96e0f18d2c2a3ff04e"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/final-50-bounded/receipt.json",
+      "bytes": 356373,
+      "sha256": "63726165aa4e7b477eca42d3d41dcfea841e69561cf939b3c7c88027fc2a44af"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/final-50-bounded/host.json",
+      "bytes": 249053,
+      "sha256": "88db655a1902b3e4c16d674b67d845d4dfb73c0e3eadba6c69b0375736d4a54c"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/final-50-astra/gates.json",
+      "bytes": 5157,
+      "sha256": "03b2f9f2358b00a1a1504ce57640525269ccf3acf298ebc0aab55ea62ee5ff5c"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/kn4-matrix-180141/receipt.json",
+      "bytes": 42188,
+      "sha256": "d77e30ca25dc0c4dc64d50bfeba16b843c9f4c98b7bd9c8d878981b00d4faf3d"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/evidence/stage-35-193127/gates.json",
+      "bytes": 4576,
+      "sha256": "aa4275308dcb3c5ca3a1f64ea80ef589622c57cac46febcdb6ff04b83e563131"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/bin/qdl-projector",
+      "bytes": 6590512,
+      "sha256": "7eb7ee5ef348eb58e085b3f08d48df27e96c24c2a0bfd53e3b3c921a5c9398dd"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/bin/qdl-stream-gateway",
+      "bytes": 13649824,
+      "sha256": "d4c8ed40cf4ef418c99c0bcbdb0a327e7a0118b87cd2234f02eab54bf8a75a2d"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/shadow-run/bin/qdl-realtime-core",
+      "bytes": 7344440,
+      "sha256": "5ea8ef7c77ee5fedffdb68e39d5de3afd41ddd9d15ea86ca1ea865556ed8f584"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/probe_cold_recovery.py",
+      "bytes": 1796,
+      "sha256": "7e9d01657323faea6dcbe1f58520802d71ebdc9ccbacbcc3d137504b66c2e9f8"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-astra-20260926/acceptance/final-resources.jsonl",
+      "bytes": 1445758,
+      "sha256": "7f039dcce231f2ed485b7e7ba83979cd9130d3801ffd3dfe0dade78b1fce373d"
+    }
+  ],
+  "source_change_counts": [
+    {
+      "path": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+      "added": 492,
+      "deleted": 0
+    },
+    {
+      "path": "config/v2/active-demand-source-registry.yaml",
+      "added": 9,
+      "deleted": 1
+    },
+    {
+      "path": "config/v2/kn-v220-candidate-budget.json",
+      "added": 50,
+      "deleted": 2
+    },
+    {
+      "path": "config/v2/stable-primary-consumer-routing.yaml",
+      "added": 1,
+      "deleted": 1
+    },
+    {
+      "path": "config/v2/stable-reference-l2-demand.yaml",
+      "added": 16,
+      "deleted": 3
+    },
+    {
+      "path": "config/v2/stable-v2-release-routing.yaml",
+      "added": 63,
+      "deleted": 3
+    },
+    {
+      "path": "config/v2/universes/crypto-top300-1d.ownership.json",
+      "added": 510,
+      "deleted": 0
+    },
+    {
+      "path": "consumers/stable/alpha-okx-paper.yaml",
+      "added": 196,
+      "deleted": 1
+    },
+    {
+      "path": "consumers/stable/reference-l2-stable.yaml",
+      "added": 196,
+      "deleted": 3
+    },
+    {
+      "path": "contracts/v2/kn-v220-contracts.md",
+      "added": 15,
+      "deleted": 0
+    },
+    {
+      "path": "qdl/adapters/binance/bar_edge.py",
+      "added": 4,
+      "deleted": 3
+    },
+    {
+      "path": "qdl/adapters/intervals.py",
+      "added": 10,
+      "deleted": 0
+    },
+    {
+      "path": "qdl/adapters/okx/bar_edge.py",
+      "added": 5,
+      "deleted": 6
+    },
+    {
+      "path": "qdl/api_v2/router.py",
+      "added": 36,
+      "deleted": 3
+    },
+    {
+      "path": "qdl/certification/reference_l2_acceptance.py",
+      "added": 2,
+      "deleted": 2
+    },
+    {
+      "path": "qdl/projection/kn_state_codec.py",
+      "added": 3,
+      "deleted": 1
+    },
+    {
+      "path": "qdl/query/service.py",
+      "added": 11,
+      "deleted": 14
+    },
+    {
+      "path": "qdl/runtime/kn_market_cache.py",
+      "added": 159,
+      "deleted": 6
+    },
+    {
+      "path": "qdl/runtime/kn_query_backend.py",
+      "added": 65,
+      "deleted": 21
+    },
+    {
+      "path": "qdl/runtime/stable_bar_edge.py",
+      "added": 38,
+      "deleted": 16
+    },
+    {
+      "path": "qdl_sdk/client.py",
+      "added": 54,
+      "deleted": 7
+    },
+    {
+      "path": "qdl_sdk/models.py",
+      "added": 9,
+      "deleted": 1
+    },
+    {
+      "path": "rust/qdl-projector/src/apply.lua",
+      "added": 46,
+      "deleted": 2
+    },
+    {
+      "path": "rust/qdl-projector/src/cache.rs",
+      "added": 14,
+      "deleted": 1
+    },
+    {
+      "path": "rust/qdl-projector/src/stage_b.rs",
+      "added": 13,
+      "deleted": 3
+    },
+    {
+      "path": "rust/qdl-projector/tests/cache_redis.rs",
+      "added": 96,
+      "deleted": 0
+    },
+    {
+      "path": "rust/qdl-projector/tests/cache_redis_memory.rs",
+      "added": 1,
+      "deleted": 0
+    },
+    {
+      "path": "scripts/benchmark_kn_ts_consumer.py",
+      "added": 366,
+      "deleted": 0
+    },
+    {
+      "path": "scripts/benchmark_kn_universe.py",
+      "added": 9,
+      "deleted": 4
+    },
+    {
+      "path": "scripts/kn5_review_evidence.py",
+      "added": 91,
+      "deleted": 0
+    },
+    {
+      "path": "scripts/kn_native_slice_probe.py",
+      "added": 3,
+      "deleted": 2
+    },
+    {
+      "path": "scripts/kn_universe_top300.py",
+      "added": 70,
+      "deleted": 22
+    },
+    {
+      "path": "scripts/phase24315_materialize_alpha_reference_entitlements.py",
+      "added": 53,
+      "deleted": 1
+    },
+    {
+      "path": "scripts/phase3_consumer_load_acceptance.py",
+      "added": 53,
+      "deleted": 4
+    },
+    {
+      "path": "tests/test_active_reference_l2_demand.py",
+      "added": 4,
+      "deleted": 4
+    },
+    {
+      "path": "tests/test_consumer_endpoint_benchmark.py",
+      "added": 1,
+      "deleted": 1
+    },
+    {
+      "path": "tests/test_fund_phase5_api.py",
+      "added": 25,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn5_review_evidence.py",
+      "added": 49,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_alpha_reference_access.py",
+      "added": 83,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_capacity_budget.py",
+      "added": 37,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_history_fill.py",
+      "added": 22,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_pre5_sdk.py",
+      "added": 82,
+      "deleted": 2
+    },
+    {
+      "path": "tests/test_kn_problem_compatibility.py",
+      "added": 57,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_query_backend.py",
+      "added": 160,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_ts_consumer_benchmark.py",
+      "added": 34,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_universe_benchmark.py",
+      "added": 24,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_kn_universe_top300.py",
+      "added": 79,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_okx_reference_completion.py",
+      "added": 7,
+      "deleted": 1
+    },
+    {
+      "path": "tests/test_phase105_consumer_acceptance.py",
+      "added": 4,
+      "deleted": 4
+    },
+    {
+      "path": "tests/test_phase105_identity_acceptance.py",
+      "added": 5,
+      "deleted": 5
+    },
+    {
+      "path": "tests/test_phase105_release_observations.py",
+      "added": 3,
+      "deleted": 3
+    },
+    {
+      "path": "tests/test_phase105_stable_release.py",
+      "added": 2,
+      "deleted": 2
+    },
+    {
+      "path": "tests/test_phase10_universal_warmup.py",
+      "added": 8,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_phase115c_bar_edge_schedule.py",
+      "added": 72,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_phase24315_reference_entitlement_materialization.py",
+      "added": 2,
+      "deleted": 1
+    },
+    {
+      "path": "tests/test_phase3_target_driver.py",
+      "added": 42,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_phase533_alpha_runtime_entitlements.py",
+      "added": 2,
+      "deleted": 2
+    },
+    {
+      "path": "tests/test_query_cold_work.py",
+      "added": 22,
+      "deleted": 0
+    },
+    {
+      "path": "tests/test_reference_l2_consumer_acceptance.py",
+      "added": 15,
+      "deleted": 2
+    },
+    {
+      "path": "tests/test_reference_l2_materializer.py",
+      "added": 3,
+      "deleted": 3
+    },
+    {
+      "path": "upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md",
+      "added": 42,
+      "deleted": 0
+    },
+    {
+      "path": "upgrade/evidence/KN5_ASTRA_PREDEPLOY_REVIEW.md",
+      "added": 165,
+      "deleted": 0
+    }
+  ]
+}

@@ -13,10 +13,14 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
+from types import SimpleNamespace
 
 import yaml
 
 from qdl.consumer import ConsumerManifestLoader, requirement_key
+from qdl.demand.resolver import DemandManifest
+from qdl.runtime.reference_l2_materializer import _manifest_requirement
+from qdl.runtime.stable_catalog import StableSourceCatalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,8 +61,10 @@ def _is_managed_reference(item: Mapping[str, Any]) -> bool:
 
 def _source_uids(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     values = []
+    # Execution instruments carry TRADE; the D48 daily universe adds BAR-only
+    # instruments that get no reference products.
     for item in manifest["spec"]["requirements"]:
-        if str(item.get("feed")) in {"TRADE", "BAR"}:
+        if str(item.get("feed")) == "TRADE":
             uid = str(item["instrument_uid"])
             if uid not in values:
                 values.append(uid)
@@ -142,6 +148,47 @@ def _materialize_route(
     return result, changed
 
 
+def extend_reference_from_demand(reference_manifest, demand, catalog):
+    """Compile explicit reference demand using already admitted catalog identities.
+
+    Additive only: preserve L2, dated contracts and unrelated entitlements. No
+    provider calls or acquisition changes are needed for REST reference reads.
+    """
+    result = deepcopy(reference_manifest)
+    rows = result["spec"]["requirements"]
+    by_key = {(r["instrument_uid"], r["feed"], r.get("interval"),
+               r["source_policy_id"]): r for r in rows}
+    for requirement in demand.requirements:
+        if requirement.feed.value not in _REFERENCE_FEEDS | {"MARK_PRICE", "INDEX_PRICE"}:
+            continue
+        selector = requirement.universe
+        if selector.kind.value != "EXPLICIT":
+            raise ValueError("reference entitlement refresh requires explicit demand")
+        for symbol in selector.native_symbols:
+            matches = [i for i in catalog.instruments
+                       if (i.identity.venue, i.identity.market, i.native_symbol,
+                           i.identity.product_type.value) ==
+                       (selector.venue, selector.market, symbol, selector.product_type)]
+            if len(matches) != 1:
+                raise ValueError(f"reference identity is missing or ambiguous: {selector.venue}/{symbol}")
+            instrument = matches[0]
+            row = _manifest_requirement(
+                row=SimpleNamespace(instrument_uid=instrument.instrument_uid,
+                                    venue=selector.venue, market=selector.market),
+                requirement=requirement, instrument=instrument,
+            )
+            key = (row["instrument_uid"], row["feed"], row.get("interval"), row["source_policy_id"])
+            if key not in by_key:
+                rows.append(row)
+                by_key[key] = row
+            elif by_key[key] != row:
+                raise ValueError(f"reference refresh conflicts with an existing entitlement: {key}")
+    if rows != reference_manifest["spec"]["requirements"]:
+        result["metadata"]["revision"] += 1
+    ConsumerManifestLoader.from_mapping(result)
+    return result
+
+
 def build_documents(
     *,
     reference_manifest: Mapping[str, Any],
@@ -199,17 +246,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reference-manifest", type=Path, default=ROOT / "consumers/stable/reference-l2-stable.yaml")
     parser.add_argument("--release-route", type=Path, default=ROOT / "config/v2/stable-v2-release-routing.yaml")
     parser.add_argument("--primary-route", type=Path, default=ROOT / "config/v2/stable-primary-consumer-routing.yaml")
+    parser.add_argument("--extend-from-demand", type=Path, help="Add explicit REST entitlements from admitted catalog identities")
+    parser.add_argument("--catalog", type=Path, default=ROOT / "config/v2/stable-source-bindings.yaml")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     paths = {consumer_id: ROOT / "consumers/stable" / name for consumer_id, name in _TARGETS.items()}
+    reference = _load(args.reference_manifest)
+    if args.extend_from_demand:
+        reference = extend_reference_from_demand(reference, DemandManifest.load_many((args.extend_from_demand,)), StableSourceCatalog.load(args.catalog))
     manifests, route, primary, summary = build_documents(
-        reference_manifest=_load(args.reference_manifest),
+        reference_manifest=reference,
         alpha_manifests={consumer_id: _load(path) for consumer_id, path in paths.items()},
         release_route=_load(args.release_route),
         primary_route=_load(args.primary_route),
     )
     changed_files: list[str] = []
     if args.apply:
+        if args.extend_from_demand and _write_if_changed(args.reference_manifest, reference):
+            changed_files.append(str(args.reference_manifest))
         for consumer_id, path in paths.items():
             if _write_if_changed(path, manifests[consumer_id]):
                 changed_files.append(str(path))

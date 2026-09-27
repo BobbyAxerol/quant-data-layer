@@ -1,0 +1,108 @@
+{
+  "schema": "qdl.provider_admission.policy.v1",
+  "revision": 1,
+  "lanes": [
+    {
+      "lane": {
+        "provider": "BINANCE",
+        "market": "USDM",
+        "endpoint_family": "KLINES"
+      },
+      "policy": {
+        "token_capacity": 60,
+        "refill_tokens": 10,
+        "refill_interval_ns": 1000000000,
+        "max_inflight": 4,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    },
+    {
+      "lane": {
+        "provider": "BINANCE",
+        "market": "SPOT",
+        "endpoint_family": "KLINES"
+      },
+      "policy": {
+        "token_capacity": 150,
+        "refill_tokens": 25,
+        "refill_interval_ns": 1000000000,
+        "max_inflight": 4,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    },
+    {
+      "lane": {
+        "provider": "OKX",
+        "market": "SWAP",
+        "endpoint_family": "HISTORY_CANDLES"
+      },
+      "policy": {
+        "token_capacity": 5,
+        "refill_tokens": 5,
+        "refill_interval_ns": 2000000000,
+        "max_inflight": 2,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    },
+    {
+      "lane": {
+        "provider": "OKX",
+        "market": "SWAP",
+        "endpoint_family": "CANDLES"
+      },
+      "policy": {
+        "token_capacity": 5,
+        "refill_tokens": 5,
+        "refill_interval_ns": 2000000000,
+        "max_inflight": 2,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    },
+    {
+      "lane": {
+        "provider": "OKX",
+        "market": "SPOT",
+        "endpoint_family": "HISTORY_CANDLES"
+      },
+      "policy": {
+        "token_capacity": 5,
+        "refill_tokens": 5,
+        "refill_interval_ns": 2000000000,
+        "max_inflight": 2,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    },
+    {
+      "lane": {
+        "provider": "OKX",
+        "market": "SPOT",
+        "endpoint_family": "CANDLES"
+      },
+      "policy": {
+        "token_capacity": 5,
+        "refill_tokens": 5,
+        "refill_interval_ns": 2000000000,
+        "max_inflight": 2,
+        "reserved_realtime_inflight": 1,
+        "max_lease_ns": 30000000000,
+        "default_cooldown_ns": 60000000000,
+        "idle_ttl_ns": 600000000000
+      }
+    }
+  ]
+}

@@ -152,7 +152,7 @@ class BarHistoryAdapterTests(unittest.TestCase):
         self.assertEqual({item["bar_origin"] for item in payloads}, {"BACKFILLED"})
         self.assertTrue(all(not item.test_provenance for item in values))
 
-        with self.assertRaisesRegex(RuntimeError, "time gap"):
+        with self.assertRaisesRegex(RuntimeError, "discontinuity kind=MISSING_PROVIDER_WINDOW"):
             fetch_binance_history(
                 _binance_binding(),
                 limit=2,
@@ -493,6 +493,188 @@ class StableBarBootstrapTests(unittest.TestCase):
             clock=lambda: 180.0,
         )
         return spool, edge
+
+    @staticmethod
+    def _native_okx_target(edge):
+        source, acquisition = next(
+            pair for pair in edge.history_okx_bindings
+            if pair[0].instrument.native_symbol == "BTC-USDT-SWAP"
+            and pair[0].interval == "1m"
+        )
+        edge.native_recovery_bindings = ()
+        edge.native_recovery_okx_bindings = ((source, acquisition),)
+        edge._native_recovery_active = True
+        edge._native_recovery_next_at = {source.binding_id: 0.0}
+        return source, acquisition
+
+    @staticmethod
+    def _okx_history_envelopes(*opens: int):
+        class Envelope:
+            def __init__(self, open_ms: int) -> None:
+                self.raw_frame_bytes = json.dumps({
+                    "data": [[str(open_ms), "1", "1", "1", "1", "1", "1", "1", "1"]]
+                }).encode()
+
+        return tuple(Envelope(value) for value in opens)
+
+    def test_native_recovery_does_not_poll_a_contiguous_fast_path(self):
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("contiguous native BARs must not be republished")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-native-recovery-clean-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, _acquisition = self._native_okx_target(edge)
+                edge.clock = lambda: 300.2
+                for open_ms in (120_000, 180_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=open_ms)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                    new_callable=AsyncMock,
+                ) as fetch_history:
+                    self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                fetch_history.assert_not_awaited()
+                self.assertGreater(
+                    edge._native_recovery_next_at[source.binding_id], 300.2
+                )
+            finally:
+                spool.close()
+
+    def test_native_recovery_repairs_exact_internal_gap_after_grace_once(self):
+        class Publisher:
+            def __init__(self) -> None:
+                self.batches = []
+
+            def publish_many(self, values):
+                batch = tuple(values)
+                self.batches.append(batch)
+                return tuple(range(len(batch)))
+
+        with tempfile.TemporaryDirectory(prefix="qdl-native-recovery-gap-") as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _acquisition = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                edge.native_recovery_grace_seconds = 3.0
+                edge.native_recovery_visibility_seconds = 10.0
+                for open_ms in (120_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=open_ms)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                    new_callable=AsyncMock,
+                    return_value=self._okx_history_envelopes(120_000, 180_000, 240_000),
+                ) as fetch_history:
+                    self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                    fetch_history.assert_not_awaited()
+                    clock[0] = 303.3
+                    self.assertEqual(edge.run_native_recovery_cycle(), 1)
+                    self.assertEqual(fetch_history.await_count, 1)
+                    clock[0] = 304.0
+                    self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                    self.assertEqual(fetch_history.await_count, 1)
+                self.assertEqual(len(publisher.batches), 1)
+                self.assertEqual(
+                    [json.loads(item.raw_frame_bytes)["data"][0][0] for item in publisher.batches[0]],
+                    ["180000"],
+                )
+                self.assertGreater(
+                    edge._native_recovery_next_at[source.binding_id], 304.0
+                )
+            finally:
+                spool.close()
+
+    def test_native_recovery_rejects_a_provider_window_that_does_not_match_gap(self):
+        class Publisher:
+            def publish_many(self, _values):
+                raise AssertionError("mismatched provider window must not publish")
+
+        with tempfile.TemporaryDirectory(prefix="qdl-native-recovery-mismatch-") as directory:
+            spool, edge = self._cached_edge(directory, Publisher())
+            try:
+                source, _acquisition = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                for open_ms in (120_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=open_ms)
+                with patch(
+                    "qdl.runtime.stable_bar_edge.fetch_okx_history",
+                    new_callable=AsyncMock,
+                    return_value=self._okx_history_envelopes(60_000, 120_000, 180_000),
+                ) as fetch_history:
+                    self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                    clock[0] = 303.3
+                    self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                    self.assertEqual(fetch_history.await_count, 1)
+                self.assertGreater(
+                    edge._native_recovery_next_at[source.binding_id], 303.3
+                )
+            finally:
+                spool.close()
+
+    def test_native_recovery_keeps_detected_hole_after_three_bar_window_moves(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                self.batches.append(tuple(values))
+                return tuple(range(len(self.batches[-1])))
+
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _ = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                for value in (120_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 600.2
+                for value in (420_000, 480_000, 540_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                with patch('qdl.runtime.stable_bar_edge.fetch_okx_history',
+                           new_callable=AsyncMock,
+                           return_value=self._okx_history_envelopes(120_000, 180_000, 240_000)):
+                    self.assertEqual(edge.run_native_recovery_cycle(), 1)
+                self.assertEqual(json.loads(publisher.batches[0][0].raw_frame_bytes)['data'][0][0], '180000')
+            finally:
+                spool.close()
+
+    def test_native_recovery_catches_outage_longer_than_lookback(self):
+        class Publisher:
+            def __init__(self):
+                self.batches = []
+
+            def publish_many(self, values):
+                self.batches.append(tuple(values))
+                return tuple(range(len(self.batches[-1])))
+
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher()
+            spool, edge = self._cached_edge(directory, publisher)
+            try:
+                source, _ = self._native_okx_target(edge)
+                clock = [300.2]
+                edge.clock = lambda: clock[0]
+                for value in (120_000, 180_000, 240_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 600.2
+                for value in (420_000, 480_000, 540_000):
+                    self._cached_final_bar(spool, source, open_ms=value)
+                self.assertEqual(edge.run_native_recovery_cycle(), 0)
+                clock[0] = 603.3
+                with patch('qdl.runtime.stable_bar_edge.fetch_okx_history',
+                           new_callable=AsyncMock,
+                           return_value=self._okx_history_envelopes(300_000, 360_000, 420_000, 480_000, 540_000)):
+                    self.assertEqual(edge.run_native_recovery_cycle(), 2)
+                self.assertEqual([json.loads(v.raw_frame_bytes)['data'][0][0] for v in publisher.batches[0]], ['300000', '360000'])
+            finally:
+                spool.close()
 
     def test_cache_overlap_keeps_durable_final_and_publishes_only_missing_history(self):
         class Envelope:
