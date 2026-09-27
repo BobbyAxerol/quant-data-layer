@@ -60478,7 +60478,7 @@ Status: IN_PROGRESS; EXECUTION_ACCEPTANCE_NOT_FULL remains unchanged.
 Read-only180s probe captured5543canonical records and3228Query reads on both
 replicas/real live+sandbox identities. BTC/OKX MARK had10rejections: all10 had a
 newer same-session/generation canonical pair observed before the request started.
-Across the three inspected OKX products,40TRADE stale views also had newer
+Across the three inspected Binance/OKX products,40TRADE stale views also had newer
 canonical data before request start. This proves downstream lag for those samples,
 not the exact stage responsible; no blanket quiet-market conclusion is valid.
 The raw topic returned ACL29; no alternative credential or ACL bypass attempted.
@@ -60547,3 +60547,40 @@ not a38% whole-system improvement. Harness evidence and commands indexed at
 burst-recovery-20260927/adapter-capacity-checkpoint.json. Disposable clients removed;
 no new image. Six anonymous-volume candidates retained without exact ownership,
 not broadly deleted. Active/rollback images unchanged. No push/merge/release.
+
+Lineage reporting correction: the three traced UIDs include Binance BTC,
+OKX BTC and OKX BNB, not three OKX products. UID/native venue mapping checked
+against captured authenticated instrument templates. BTC/OKX10/10MARK finding
+is unchanged;40TRADE lag findings span Binance and OKX. No evidence rewritten.
+
+Isolated native transport causal experiment: four arms verified6000/6000 captured
+records, default fetch500/backoff1000 versus bounded20/10ms. Median transport
+152.1->131.5ms; offset submission+final commit103.1->102.7ms; final commit alone
+under1ms. It does not reproduce production361ms/744ms tail, omits Redis and RF3,
+and does not justify a production tuning change. Evidence fetch-causal/summary.json;
+opt-in instrumented scratch harness preserved outside Git with its orchestration.
+Broker/client/network/executable removed. Disk used197753720832->197721161728bytes
+includes concurrent host writes, not attributed entirely to cleanup. No images
+built, no cap changes, active runtime images/start times unchanged.
+
+Targeted MARK10-product/two-replica fast matrix ran read-only with live TS identity.
+All20reference cells have successful reads. One BinanceBTC reference was cancelled
+at21.6ms by the six-second observer window, not a full service timeout; retain
+this failed/censored receipt. Correct probe admission: observation end stops new
+requests, admitted RPCs retain2.5s timeout; mark responses completing after window.
+At most one RPC extends a window by2.5s. No quality/production policy changed.
+First client attempt could not create evidence due UID permissions, before reads;
+replacement client mounted only selected identity read-only and ran as container
+root on read-only FS. Existing reference response times mostly8-10ms median.
+
+MARK fast matrix result:20/20product x replica cells returned successful execution
+reference items. Initial209reference requests:208OK plus1observer-window cancel;
+retain it. Targeted BinanceBTC follow-up after timeout-boundary fix:12/12OK,
+6per replica, median8.95/9.80ms,max11.04/11.16ms. Other cells median7.85-10.00ms,
+max21.42ms;11samples/cell, no per-cell p99. These are warm HTTP+SDK call durations
+(the adjacent generic call establishes TLS), not TS Redis-commit latency. Generic
+snapshot separately refused2BNB/OKX views; no gate or source timestamp changed.
+Evidence mark-reference-matrix/summary.json and btc-followup.jsonl; original
+receipts preserved. Observer helper unit6PASS. Both clients auto-removed, no new
+image or production mutation. Actual TS runtime inspect: CPU/memory limits0
+(uncapped);2->4CPU budget increase applies only to isolated worker tests.

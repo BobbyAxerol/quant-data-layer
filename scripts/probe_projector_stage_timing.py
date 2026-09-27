@@ -12,6 +12,12 @@ import time
 from scripts.probe_exact_market_lineage import Evidence
 
 
+def admitted_query_timeout(remaining_seconds):
+    # Stop admitting at the observation boundary, but do not shorten an RPC's
+    # normal timeout and misclassify window cancellation as service failure.
+    return 2.5 if remaining_seconds > 0 else None
+
+
 def reference_metadata(response):
     results = []
     for item in response.get("results", []):
@@ -86,11 +92,14 @@ async def query_probe(args, evidence, deadline):
             for replica, transport, client in clients:
                 for path in ("generic_snapshot", "ts_reference_batch"):
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    request_timeout = admitted_query_timeout(remaining)
+                    if request_timeout is None:
                         return
-                    row = dict(pair_id=pair_id, replica=replica, path=path, request_started_at_ns=time.time_ns())
+                    row = dict(pair_id=pair_id, replica=replica, path=path,
+                               request_started_at_ns=time.time_ns(), request_timeout_seconds=request_timeout,
+                               observation_remaining_seconds=remaining)
                     try:
-                        async with asyncio.timeout(min(remaining, 2.5)):
+                        async with asyncio.timeout(request_timeout):
                             if path == "generic_snapshot":
                                 await client.snapshot(req)
                             else:
@@ -98,7 +107,8 @@ async def query_probe(args, evidence, deadline):
                         row["status"] = "TYPED_RESPONSE"
                     except Exception as error:
                         row.update(status="REFUSED", code=getattr(error, "code", type(error).__name__), diagnostics=getattr(error, "diagnostics", None))
-                    evidence.put("query", **row, response_at_ns=time.time_ns(), exact_view=transport.last)
+                    evidence.put("query", **row, response_at_ns=time.time_ns(), exact_view=transport.last,
+                                 completed_after_observation_window=time.monotonic() > deadline)
             await asyncio.sleep(.5)
     finally:
         for _, _, client in clients:

@@ -5,6 +5,13 @@ from scripts.probe_projector_stage_timing import classify_stage, counter_rate, r
 
 
 class StageTimingTests(unittest.TestCase):
+    def test_window_end_does_not_shorten_admitted_rpc_timeout(self):
+        from scripts.probe_projector_stage_timing import admitted_query_timeout
+        self.assertEqual(admitted_query_timeout(0.021), 2.5)
+        self.assertEqual(admitted_query_timeout(180), 2.5)
+        self.assertIsNone(admitted_query_timeout(0))
+        self.assertIsNone(admitted_query_timeout(-1))
+
     def test_reference_preserves_problem_components_without_price_or_secrets(self):
         import json
         response = {"partial": True, "results": [{"status": "ERROR", "problem": {"code": "DATA_STALE"}},
