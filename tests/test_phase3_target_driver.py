@@ -411,3 +411,20 @@ class SlowReaderReplayTests(unittest.TestCase):
                 _DRIVER._target_project_frame(StreamEvent(11, "signed-test-only", raw),
                     template=view, requirement=requirement, draining=True,
                     now_ns=NOW + 5_000_000_000)
+
+
+class FinalProbeIsolationTests(unittest.TestCase):
+    def test_running_probe_blocks_final(self):
+        with patch.object(_DRIVER.subprocess, "check_output", return_value="kn5-universe-preflight\n"):
+            with self.assertRaisesRegex(ValueError, "kn5-universe-preflight"):
+                _DRIVER.assert_no_disposable_probes()
+
+    def test_no_competing_probe(self):
+        with patch.object(_DRIVER.subprocess, "check_output", return_value="") as call:
+            _DRIVER.assert_no_disposable_probes()
+            self.assertIn("label=qdl.phase3.disposable-load=true", call.call_args.args[0])
+
+    def test_inspection_error_is_not_empty(self):
+        with patch.object(_DRIVER.subprocess, "check_output", side_effect=OSError("unavailable")):
+            with self.assertRaises(OSError):
+                _DRIVER.assert_no_disposable_probes()

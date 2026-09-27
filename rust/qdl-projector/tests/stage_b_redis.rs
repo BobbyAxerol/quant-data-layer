@@ -295,18 +295,43 @@ fn late_venue_history_never_moves_the_latest_bar_back_and_live_is_kept() {
     push(&log, BARS, bar_frame(&bars, live_21.clone(), 2));
     let mut offset = 3;
     for open in 10..20u64 {
-        push(&log, BARS, bar_frame(&bars, bar(open, BarLifecycle::Final, 0, 100 + open as u32), offset));
+        push(
+            &log,
+            BARS,
+            bar_frame(
+                &bars,
+                bar(open, BarLifecycle::Final, 0, 100 + open as u32),
+                offset,
+            ),
+        );
         offset += 1;
     }
-    push(&log, BARS, bar_frame(&bars, bar(20, BarLifecycle::Final, 0, 999), offset));
+    push(
+        &log,
+        BARS,
+        bar_frame(&bars, bar(20, BarLifecycle::Final, 0, 999), offset),
+    );
     let environment = environment("late-history");
     let mut stage = stage(&log, &environment);
     drain(&mut stage);
-    assert_eq!(meta(&mut stage, &bars, "last").as_deref(), Some((21 * MIN).to_string().as_str()));
-    assert_eq!(meta(&mut stage, &bars, "last_final").as_deref(), Some((21 * MIN).to_string().as_str()));
-    assert_eq!(meta(&mut stage, &bars, "first").as_deref(), Some((10 * MIN).to_string().as_str()));
+    assert_eq!(
+        meta(&mut stage, &bars, "last").as_deref(),
+        Some((21 * MIN).to_string().as_str())
+    );
+    assert_eq!(
+        meta(&mut stage, &bars, "last_final").as_deref(),
+        Some((21 * MIN).to_string().as_str())
+    );
+    assert_eq!(
+        meta(&mut stage, &bars, "first").as_deref(),
+        Some((10 * MIN).to_string().as_str())
+    );
     assert_eq!(read_bar(&mut stage, &bars, 21), Some(live_21));
-    assert_eq!(read_bar(&mut stage, &bars, 20), Some(live_20), "the live bar is kept, never last-write-wins");
+    assert_eq!(
+        read_bar(&mut stage, &bars, 20),
+        Some(live_20),
+        "the live bar is kept, never last-write-wins"
+    );
     assert_eq!(meta(&mut stage, &bars, "conflicts").as_deref(), Some("1"));
     assert_eq!(meta(&mut stage, &bars, "rows").as_deref(), Some("12"));
 }

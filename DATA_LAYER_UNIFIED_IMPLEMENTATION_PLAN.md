@@ -59484,3 +59484,60 @@ transport-latency evidence; execution eligibility is reported separately. See
 including27800 catalog mismatch records preserved in Kafka; no zero-loss claim.
 Commit/build BAR-only immutable patch, preserving the same runtime/checkpoint,
 then fast read matrix before final load. No change to Query/Stream/provider quotas.
+
+Post-roll preflight: workload5 matrix88/88 and exact workload50 matrix132/132
+PASS, including the four prior warmup failures. Correct denominator: the first
+matrix was stage5, not stage50; `final-full-fast-matrix` is the132-read gate.
+Readback now verifies all three previously missing OKX1m opens1790486880000.
+BAR image643fed84df5a (source1b496d7) active; healthcheck revealed an inherited
+path defect: env/test point to unwritable removed `/var/lib/qdl-stable` mount.
+Repair only BAR heartbeat env/test to `/var/lib/qdl-kn/heartbeat/bar-edge.json`,
+inside its existing RW state mount. No new image, no weakening age180s. Exact
+before-health Compose retained. Bootstrap restart also revalidates provider-short
+histories (bounded re-fetch, no duplicate publish); do not label that recovery
+zero-cost. Existing checkpoint remains backward compatible. No state resets.
+
+Remote closure started: feature pushed through1b496d7; draft PR21 targets dev,
+not main. CI36301551122: SDK310 PASS; contract job stopped on formatting of two
+Rust test blocks; unit build cannot fetch locked vnai2.4.8/vnstock4.0.2 upstream.
+These are actual release blockers, not failed market contracts. Apply rustfmt
+only to the named test source; supply CI with the already verified immutable
+dependency artifact via authenticated registry, preserving poetry.lock and VN
+behavior. Do not bypass dependency verification/audit or mark CI green manually.
+No runtime code change is implied by either packaging correction.
+Coverage-aware diagnostic200:702 SCANNED,6disabled,4VN UNAVAILABLE, no retained
+internal gaps. Plain endpoint409 remains truthful because VN is V1-only; never
+call it full-catalog history complete. Reference70/70 PASS. Final50 load and
+universe480 production readback running; test-only clients removed by --rm.
+Retirement must also disable the legacy spool rebuild boot unit with exact unit
+backup: otherwise a host reboot could re-enable old writers/delete old spool.
+Native Docker restart plus tested Kafka-state rebuild remains the active path;
+rollback restores the old unit only with the old reader/writer packet.
+
+Final-production50 FAILED, retained verbatim: steady Binance QUOTE latency gate
+and TS59/60 for two heartbeat samples (BNBQUOTE last-batch age2.091s); zero
+request errors/stream errors, no order action/OOM. Whole interval416s native
+stack5.044CPU includes concurrent universe probe; rollback1.342CPU, TS0.436CPU.
+Operator orchestration error: universe480 preflight was still running with the
+same two alpha identities when final load began. It added unbudgeted cold load
+and20 RATE_LIMITED item results to universe (1000/1020 usable, not full PASS).
+Do not call this a capacity certificate or silently omit those attempts.
+Correction to initial diagnosis: actual TS env AND binary show QUOTE probe1s
+(max session2000ms /2000), not2s. No TS cadence/health patch is justified or made.
+Both preflight and acceptance must be serialized. Add final-run assertion that
+no labelled disposable probe is active; regression proves a competing client
+blocks before launch and Docker inspection failure is not treated as empty.
+Retest only failed universe target separately, then one replacement50 run with
+its existing four cold jobs/burst/reconnect unchanged. Do not reduce workload or
+relax thresholds. The all-scope successful reads remain inherited.
+Remote registry push returned permission_denied (token lacks write:packages),
+no dependency image published. Removed temporary registry auth config. Owner
+asked to extend token scope outside chat; continue runtime work meanwhile.
+
+Harness isolation + workload/packet regression54/54 PASS; Rust workspace fmt
+check PASS using the existing1.82 builder, no binary logic change. Remote native
+Kafka/Redis integration job PASS on1b496d7, SDK310 PASS. Contract job formatting
+failure now fixed locally; remote unit build still blocked only at withdrawn VN
+packages (no test cases ran in that job). No skipping those gates. Final probe
+clients have exited; failed universe items are retried in their own bounded
+20-product run, with previous failures kept. Only then a replacement final load.

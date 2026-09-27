@@ -918,7 +918,10 @@ mod tests {
         assert_eq!(outcome.defer_reason, Some(AdmissionDeferReason::Cooldown));
         assert_eq!(
             state
-                .admit(request("history:BTC-USDT-SWAP", AdmissionPriority::Batch), 101)
+                .admit(
+                    request("history:BTC-USDT-SWAP", AdmissionPriority::Batch),
+                    101
+                )
                 .unwrap()
                 .defer_reason,
             Some(AdmissionDeferReason::Cooldown)

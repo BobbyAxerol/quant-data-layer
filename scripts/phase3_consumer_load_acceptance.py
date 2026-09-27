@@ -3177,6 +3177,16 @@ def _host_planner():
     return module
 
 
+def assert_no_disposable_probes() -> None:
+    """Final load owns its workload identities; extra probes invalidate accounting."""
+    active = subprocess.check_output([
+        "docker", "ps", "--filter", "label=qdl.phase3.disposable-load=true",
+        "--format", "{{.Names}}",
+    ], text=True, timeout=20).splitlines()
+    if active:
+        raise ValueError("final acceptance requires stopped disposable probes: " + ",".join(active))
+
+
 def run_target_host(args: argparse.Namespace) -> int:
     planner = _host_planner()
     TARGET_STAGE_SECONDS = planner.TARGET_STAGE_SECONDS
@@ -3195,6 +3205,8 @@ def run_target_host(args: argparse.Namespace) -> int:
     if args.duration_seconds != duration:
         raise ValueError(f"target stage {args.sessions} runs exactly {duration} s from the frozen budget")
     final = not matrix and args.sessions == 50
+    if final:
+        assert_no_disposable_probes()
     workers = 1 if matrix else target_worker_count(args.sessions)
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
