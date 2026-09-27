@@ -43,7 +43,8 @@ HARD_STOP; the packet never alters it.
 
 Boundary: never alters, deletes or re-partitions any topic, never touches
 ``md.canonical.v2`` beyond granting READ/DESCRIBE on it, never removes ACLs,
-never resets offsets, never uses ``kafka-configs.sh``. Topics and ACLs are
+never resets offsets, never uses ``kafka-configs.sh`` to mutate configuration; the exact two-topic
+``--describe`` command distinguishes topic overrides from inherited defaults. Topics and ACLs are
 named explicitly (no positional indices; the phaseb bootstrap list drifted
 that way). Key material is never read: the production runner only mounts the
 certificate directory read-only into the admin container and passes the
@@ -505,6 +506,26 @@ def parse_topic_describe(text: str) -> dict[str, dict[str, Any]]:
     return topics
 
 
+def parse_topic_overrides(text: str, topic: str) -> dict[str, str]:
+    """Describe-topics includes inherited broker values; only this view is overrides."""
+    lines = text.splitlines()
+    header = f"Dynamic configs for topic {topic} are:"
+    if not any(line.strip() == header for line in lines):
+        raise RuntimeError(f"unrecognized dynamic config header for {topic}")
+    configs = {}
+    for line in lines:
+        if not line.strip() or line.strip() == header:
+            continue
+        match = re.fullmatch(r"\s+(\S+?)=(.*?) sensitive=(?:true|false) synonyms=\{(.*)\}", line)
+        if not match or "DYNAMIC_TOPIC_CONFIG:" not in match.group(3):
+            raise RuntimeError(f"unrecognized topic override for {topic}")
+        name, value = match.group(1), match.group(2)
+        if name in configs:
+            raise RuntimeError(f"duplicate topic override: {name}")
+        configs[name] = value
+    return configs
+
+
 def parse_acl_listing(text: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     resource = None
@@ -598,7 +619,10 @@ class _Session:
         command = list(command)
         is_describe = command[:3] == ["kafka-topics.sh", "--describe", "--topic"] and \
             len(command) == 4 and command[3] in STATE_TOPICS
-        if command not in (_READ_TOPICS, _READ_ACLS) and not is_describe:
+        is_configs = len(command) == 6 and command[:4] == [
+            "kafka-configs.sh", "--entity-type", "topics", "--entity-name"
+        ] and command[4] in STATE_TOPICS and command[5] == "--describe"
+        if command not in (_READ_TOPICS, _READ_ACLS) and not is_describe and not is_configs:
             raise Refused(f"read command not in allowlist: {command}")
         result = self.runner.run(command)
         self.log.append(_record(command, result, "read"))
@@ -630,6 +654,13 @@ def _observe(session: _Session, plan: Mapping[str, Any]) -> dict[str, Any]:
         actual = described.get(topic["name"])
         if actual is None:
             raise RuntimeError(f"describe output for {topic['name']} not parseable")
+        effective = actual["configs"]
+        actual["configs"] = parse_topic_overrides(session.read([
+            "kafka-configs.sh", "--entity-type", "topics", "--entity-name", topic["name"], "--describe",
+        ]).stdout, topic["name"])
+        actual["inherited_effective_configs"] = {
+            key: value for key, value in effective.items() if key not in actual["configs"]
+        }
         topics[topic["name"]] = {"exists": True, "actual": actual,
                                  "mismatches": topic_mismatches(topic, actual)}
     acls = acl_diff(plan, parse_acl_listing(session.read(_READ_ACLS).stdout))

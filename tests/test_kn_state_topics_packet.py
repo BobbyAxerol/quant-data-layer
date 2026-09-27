@@ -96,6 +96,12 @@ class FakeBroker:
             lines += [f"\tTopic: {args[2]}\tPartition: {p}\tLeader: 1\tReplicas: {replicas}\tIsr: {replicas}"
                       "\tElr: \tLastKnownElr: " for p in range(topic["partitions"])]
             return CommandResult(0, "\n".join(lines) + "\n", "")
+        if tool == "kafka-configs.sh" and args[:3] == ["--entity-type", "topics", "--entity-name"] and args[-1] == "--describe":
+            topic = self.topics[args[3]]
+            lines = [f"Dynamic configs for topic {args[3]} are:"]
+            lines += [f"  {k}={v} sensitive=false synonyms={{DYNAMIC_TOPIC_CONFIG:{k}={v}}}"
+                      for k, v in topic["configs"].items()]
+            return CommandResult(0, "\n".join(lines) + "\n", "")
         if tool == "kafka-topics.sh" and args[:3] == ["--create", "--if-not-exists", "--topic"]:
             name = args[3]
             if name not in self.topics:
@@ -696,3 +702,43 @@ class IsolatedBrokerIntegrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InheritedTopicConfigTests(unittest.TestCase):
+    def test_dynamic_overrides_are_not_broker_defaults(self):
+        text = ("Dynamic configs for topic md.latest.v2 are:\n"
+                "  cleanup.policy=compact sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:cleanup.policy=compact, DEFAULT_CONFIG:log.cleanup.policy=delete}\n")
+        assert packet.parse_topic_overrides(text, "md.latest.v2") == {"cleanup.policy": "compact"}
+
+    def test_unknown_config_output_fails_closed(self):
+        for text in ("", "Dynamic configs for topic md.bars.v2 are:",
+                     "Dynamic configs for topic md.latest.v2 are:\n  unexpected format"):
+            with self.assertRaises(RuntimeError):
+                packet.parse_topic_overrides(text, "md.latest.v2")
+
+    def test_real_unplanned_override_still_fails(self):
+        plan = build_plan(principal=PRINCIPAL, target=ISO, replication_override=(1, 1))
+        broker = FakeBroker()
+        _, token = seal(plan)
+        assert apply(plan, broker, confirmation=token)["status"] == "PASS"
+        broker.topics["md.latest.v2"]["configs"]["retention.ms"] = "86400000"
+        assert verify(plan, broker)["status"] == "FAIL"
+
+
+class InheritedBrokerRegressionTests(unittest.TestCase):
+    def test_inherited_effective_retention_is_not_topic_drift(self):
+        class BrokerWithInheritedRetention(FakeBroker):
+            def run(self, command):
+                result = super().run(command)
+                if list(command[:2]) == ["kafka-topics.sh", "--describe"]:
+                    return CommandResult(result.returncode, result.stdout.replace(
+                        "Configs: ", "Configs: retention.ms=86400000,"), result.stderr)
+                return result
+        plan = build_plan(principal=PRINCIPAL, target=ISO, replication_override=(1, 1))
+        broker = BrokerWithInheritedRetention()
+        _, token = seal(plan)
+        result = apply(plan, broker, confirmation=token)
+        assert result["status"] == "PASS", result
+        observed = result["verify"]["topics"]["md.latest.v2"]["actual"]
+        assert observed["inherited_effective_configs"] == {"retention.ms": "86400000"}
+        assert "retention.ms" not in observed["configs"]

@@ -59300,3 +59300,23 @@ not a Python bypass. This rolls with the declared core image/config packet.
 First read-only resource watcher completed before authorization; start a fresh
 watch with TS MARK/INDEX refuse guard (10/min), host idle guard (5% for60s),
 RAM floor2GiB and native OOM stop before activation.
+
+Runtime checkpoint: additive trust applied successfully to brokers1/2/3 without
+restart; old admin connection and all six ISR3 partitions verified after each.
+State topics/projector ACL apply performed9 exact mutations. Initial verification
+FAIL is a verifier defect: kafka-topics describe reports inherited broker
+retention.ms=86400000 as if it were an extra topic override. Independent
+kafka-configs describe confirms it is not a topic override. Fix verifier to
+compare exact dynamic topic config, record inherited values separately; no
+retention setting is changed/relaxed. Native Stream read-only ACL applied;
+market_cache started healthy, restart0/OOMfalse; no consumer handoff/projector
+activation until corrected topic verifier passes.
+
+Topic verifier correction:32 tests executed,31PASS/1 isolated-broker integration
+skip (no disposable broker), plus actual production read-only verify PASS with
+0 mutations, receipt8b09d37edb5c3d1e7b2c7d8615c3c7168012b694f788173defa3fc944dcffd32.
+The original FAIL receipt31a36759 is retained. Exact inherited-retention and
+real-extra-override regressions both pass. Existing mutation allowlist still
+forbids kafka-configs mutations. Native projector activation now permitted;
+producer/core, Query/Stream, TS and old SQLite writers remain unchanged at this
+checkpoint. Candidate service names are product-role names, not phase artifacts.
