@@ -414,3 +414,64 @@ class AsyncSessionTests(unittest.IsolatedAsyncioTestCase):
                 await close
         self.assertFalse(prematurely_done, "cancelled close must drain accepted acknowledgement")
         self.assertIsNone(session._events)
+
+
+class ProcessShutdownTests(unittest.TestCase):
+    def test_global_task_cancellation_drains_admitted_disk_operations(self):
+        script = r"""
+import asyncio, json, pathlib, sys, threading, time
+from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore
+path, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
+store = FileCursorStore(path)
+entered = threading.Event()
+original = store._write
+completed = threading.Event()
+def slow_write(items):
+    entered.set()
+    time.sleep(0.15)
+    if mode == "error":
+        completed.set()
+        raise OSError("test-only disk failure")
+    original(items)
+    completed.set()
+def slow_read(key):
+    entered.set()
+    time.sleep(0.15)
+    completed.set()
+    return None
+store._write = slow_write
+if mode == "read":
+    store.load = slow_read
+async def main():
+    if mode == "read":
+        asyncio.create_task(store.aload("a"))
+    else:
+        asyncio.create_task(store.asave("a", CursorCheckpoint("test-only", 1)))
+        if mode == "queued":
+            asyncio.create_task(store.asave("b", CursorCheckpoint("test-only", 2)))
+    if mode == "early":
+        await asyncio.sleep(0)
+        return
+    while not entered.is_set():
+        await asyncio.sleep(0.001)
+asyncio.run(main())
+assert completed.is_set()
+assert store.metrics["pending"] == 0, store.metrics
+if mode in ("write", "queued", "early"):
+    items = json.loads(path.read_text())["items"]
+    assert items["a"]["offset"] == 1
+    if mode == "queued":
+        assert items["b"]["offset"] == 2
+elif mode == "error":
+    assert store.metrics["acknowledged"] == 0
+    assert store.metrics["errors"] == 1
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            for mode in ("write", "queued", "error", "read", "early"):
+                with self.subTest(mode=mode):
+                    result = subprocess.run(
+                        [sys.executable, "-c", script, str(Path(directory) / mode), mode],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotIn("Task exception was never retrieved", result.stderr)

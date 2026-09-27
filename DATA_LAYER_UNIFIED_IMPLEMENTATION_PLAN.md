@@ -59910,3 +59910,27 @@ venues, journal its own main architecture plan. Do not claim existing alpha
 image contains SDK2.0.5 or reuse TS certification as an alpha deployment claim.
 Final release still requires full CI, unified artifact receipt, approved remote
 integration/release and final scoped BuildKit/branch hygiene. Goal remains ACTIVE.
+
+Shutdown completion audit,2026-09-27: bounded isolated subprocess reproduced an
+SDK defect: asyncio.run cancels the private writer during a200ms disk write;
+thread finishes but batch futures remain unresolved and process exceeds3s. Child
+was killed, no runtime/state touched. Same cursor scope: protect accepted worker
+I/O and completion notification against global task cancellation, including reads.
+Add subprocess shutdown regression and retain fsync/error semantics; targeted
+suite before rebuilding any artifact. Existing runtime acceptance stays tied to
+956045d and is not silently relabeled as this new candidate.
+
+Shutdown closure source result:60/60 unittest PASS in80.193s in existing
+Data Layer f7351c3b image with read-only source/network none/1CPU1GiB. Includes
+22cursor tests (new subprocess matrix:write/queued/error/read/early shutdown),
+26stream tests,4wheel tests,8release tests. The first TS-image run had6 failures
+due to missing pandas (50passed); Data Layer image has no pytest, so corrected
+the runner to standard unittest without installing anything. Both failed
+invocations are environment mistakes, not passing evidence. All clients --rm.
+CI956045d ran2428 tests,47skip,one failure: wheel test still pinned2.0.4. Updated
+expected2.0.5; packaging test4/4PASS separately, included in60/60 above. Do not
+merge old red CI. New wheel a1a3af7d12188a70154a948f5bfa707135c1d674848e8dc892403eb2d2b14a88
+(source digest9ddc401d25b44296b303443653346f9029e163b70efe0dac96be15c2404c8cef)
+is an unpublished source candidate, not yet installed in TS/alpha. No runtime
+changed; active TSf4c9b14d and rollback4dba0ac1 retained. Alpha174test result is
+for previous wheel2d0cb3fa; must refresh/test its final artifact before commit.

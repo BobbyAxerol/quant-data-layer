@@ -132,7 +132,9 @@ class FileCursorStore:
             if self._closed:
                 raise RuntimeError("cursor store is closed")
             async with self._io_lock:
-                return await _await_durable(asyncio.to_thread(self.load, key))
+                return await _await_durable(
+                    asyncio.get_running_loop().run_in_executor(None, self.load, key)
+                )
 
     async def asave(self, key: str, checkpoint: CursorCheckpoint) -> None:
         await self._submit(key, checkpoint, replace=False)
@@ -181,8 +183,27 @@ class FileCursorStore:
                     batch.append(self._queue.get_nowait())
                 started = time.monotonic()
                 try:
-                    async with self._io_lock:
-                        errors = await asyncio.to_thread(self._commit_batch, batch)
+                    # The private worker must deliver results even when loop shutdown
+                    # cancels every Task. Executor Futures are not cancelled by that sweep.
+                    while True:
+                        try:
+                            await self._io_lock.acquire()
+                            break
+                        except asyncio.CancelledError:
+                            continue
+                    try:
+                        operation = asyncio.get_running_loop().run_in_executor(
+                            None, self._commit_batch, batch
+                        )
+                        while True:
+                            try:
+                                errors = await asyncio.shield(operation)
+                                break
+                            except asyncio.CancelledError:
+                                if operation.cancelled():
+                                    raise RuntimeError("cursor executor cancelled before durable completion")
+                    finally:
+                        self._io_lock.release()
                 except Exception as error:
                     errors = [error] * len(batch)
                 elapsed = time.monotonic() - started
