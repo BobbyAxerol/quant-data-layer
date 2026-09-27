@@ -60047,3 +60047,32 @@ mount/runtime changes. CI36314203205 currently3PASS/unit running; no publication
 yet. Documentation consistency check verifies all exact image/packet references
 against private runtime files and immutable certificate. No new runtime test or
 image required because this change only corrects operational documentation.
+
+Scoped release cleanup packet (2026-09-27, before action): remove only superseded
+unreferenced images f4c9b14d058b (old SDK candidate),643fed84df5a (Python rc3),
+d5e5412dfc3f (Python rc2). Keep active TS7e7e2d02, immediate rollback5b66c2cd,
+active DL Pythonf7351c3b/Rust7fe34806, all container-referenced images and other
+projects unchanged. Recheck all container references immediately before removal;
+no force, no volume/network/container prune, no BuildKit broad prune. Record
+pre/post disk and unchanged running-container start/restart/image state outside
+Git, then append exact result here. CI final documentation commit remains running.
+
+Image cleanup executed:3/3 removed without force;disk used198,829,408,256 ->
+197,726,879,744bytes; all running image/start/restart tuples unchanged. Evidence
+release-scoped-image-cleanup.json. Additional BuildKit cleanup is restricted to
+48 currently reclaimable, non-shared, non-mutable cache IDs whose descriptions
+identify QDL/SDK build steps. Each prune uses exact ID filter, never whole-host
+prune; unrelated/in-use/shared cache remains. Verify active/rollback images and
+runtime unchanged afterward; record the actual count rather than assume every
+parent entry can be removed while children retain references.
+
+BuildKit cleanup result:9 scoped records removed,0 unexpected IDs, all runtime
+image/start/restart tuples unchanged. The first exact-filter spelling id== was
+rejected by this Buildx version before any deletion; corrected to id= and kept
+the failure in evidence. Remaining parent/shared/in-use records were not forced.
+Disk used198,264,659,968->197,405,405,184bytes during cache cleanup; this live
+host also writes market data, so filesystem deltas are observations, not exact
+sums of logical cache sizes. Evidence release-scoped-buildcache-cleanup.json.
+Active and explicit rollback artifacts retained; no volume/container/network
+or unrelated TS/Portal cache cleanup. Final source still awaits remote CI and
+release integration; no additional runtime test or source implementation change.
