@@ -60124,3 +60124,71 @@ immediate reader rollback5b66c2cd retained with same KN config. Old10SQLite role
 stopped; state retained, not assumed replayable beyond Kafka retention. V1/VN,
 otherTSroles,alpha execution and order path unchanged. This final documentation
 receipt will follow dev->main without altering the published tag or artifact hashes.
+
+### Post-release TRADE Burst Recovery And Live Consumer Readiness (2026-09-27)
+
+Status: IN_PROGRESS; owner approved narrow TRADE recovery throughput and
+MARK_INDEX rejection correction, isolated stress measurement, then live binding
+readiness. Guide: Kafka-native architecture review sections 18.12-18.13 and
+KN cursor v3 contracts. No new architecture or full-catalogue rerun.
+
+Baseline: v2.2.0 Query f7351c3b / Rust 7fe34806 / TS reader 7e7e2d02;
+TS manifest10, alpha manifests14; auth environment paper. Observed 13:00-13:05UTC
+TRADE replay/overflow recurrence; later TS Binance BNB/DOGE MARK_INDEX
+SOURCE_UNAVAILABLE. Earlier bounded acceptance is historical, not burst proof.
+Owner plan edits elsewhere must be preserved.
+
+Scope: exact rejected-view diagnosis, bounded consumption/replay correctness,
+shared Binance/OKX five-symbol regression, isolated real-capture stress with
+throughput/queue/recovery/latency/resource evidence. Do not increase buffers,
+relax freshness, drop durable trades, enable orders, reset state or broad-prune.
+Record exact role/image rollback packet before runtime replacement. Live
+identities stay inactive until affected acceptance passes; environment/cursor
+fencing cannot be bypassed by renaming paper.
+
+Exit: regress apply/ACK failure, cancellation, reconnect/replay and MARK_INDEX
+stale/disconnect/generation; isolated stress preserves identity/order and drains
+bounded queues after burst; measure actual consumer readiness and request latency
+separately from event-to-cache age. In-scope failures remain open. Cleanup only
+new disposable resources; preserve active and named rollback artifacts.
+
+
+Source correction checkpoint: MARK/INDEX private reader collapsed COMPONENT_STALE
+and SESSION_LIVENESS into SOURCE_UNAVAILABLE. Preserve bounded cause, classify
+these as DATA_STALE through existing query mapping; actual disconnect/fence/gap
+remain fail-closed.47 targeted live-view/latency/lineage tests PASS(network none).
+Read-only actual-cache diagnostic:12 reads each of10 MARK/INDEX products,0rejects
+in this short window; this does NOT prove the earlier transient is eliminated.
+The first diagnostic used InstrumentIdentity.native_symbol and stopped; corrected
+to InstrumentRecord.native_symbol. Initial runtime image had no pytest; tests used
+the existing TS test-capable image, no packages installed into runtime.
+
+TS source removes serialization/revalidation round-trip for its internal dual
+market/execution projection, preserving external raw validation. Polling MARK
+keeps failure health blocked but retries transient typed failures on its existing
+cadence rather than escalating stream backoff; no stale cache rewrite.252 TS
+consumer/bridge/projector/health regressions PASS including five symbols/two venues,
+ACK failure and paired projection parity. Source-only; no runtime promotion yet.
+
+Isolated capture: md.canonical.v2 read_committed manual assign, auto commit/store
+both false, no consumer-group join or offset mutation. Capture5543real TRADE rows
+covers10products; SHA078fa7602f5d2b5077e9401ef3811ddda602adc6eda57958ebe36e12ce107599.
+Typed templates fetched with existing TS identity,10products. Files private outside
+Git at ~/.local/state/qdl-v2/burst-recovery-20260927. Test-clock replay preserves
+provider bytes/timestamps and is not a live freshness certificate.
+
+Same 1CPU client/0.5CPU isolated Redis: legacy2668.9event/s vs paired3067.8event/s,
+ordered execution payload digest identical e9c3a62e3a69aba1cf0232438c3294fceaf60f042b9fb0a947d94073e049c244.
+Open-loop paired2000event/s,20test-only capture repetitions:110860offered/received,
+0overflow,queue peak1batch(of16),55.431s,CPU38.845s,producer max lateness19.28ms.
+This isolates projection+Redis pubsub, NOT gRPC/replay/ACK end-to-end. Do not infer
+production burst closure or live identity activation from this component test.
+Runtime stays v2.2.0; live mapping and full stream recovery stress remain open.
+
+Cleanup checkpoint: isolated ts-burst-redis stopped/removed; disposable clients
+used --rm. Docker inventory confirms no burst test containers remain. No images
+built, no cache/image prune and no shared volume cleanup. Post-check disk free
+112754847744 bytes; no pre-clean measurement, so no reclaimed-byte claim.
+Query1/2, Stream1/2 and market_data_service retain original image/start times,
+restart0/OOMfalse. Live mapping inactive. Full gRPC/replay/ACK recovery stress
+and affected runtime acceptance remain implementation work, not certified debt.
