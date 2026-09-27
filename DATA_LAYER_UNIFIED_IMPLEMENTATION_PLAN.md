@@ -59320,3 +59320,24 @@ real-extra-override regressions both pass. Existing mutation allowlist still
 forbids kafka-configs mutations. Native projector activation now permitted;
 producer/core, Query/Stream, TS and old SQLite writers remain unchanged at this
 checkpoint. Candidate service names are product-role names, not phase artifacts.
+
+Native startup caught a second provisioning gap hidden by plaintext shadow:
+Stage B's manually assigned `kn-projector-v3-b-data` reader requests coordinator
+metadata despite never joining/committing its group. Rebuild/cleaner use IDs
+under `kn-projector-v3-` as documented in kafka_state.rs/cleaner.rs. Main A/B
+groups and transactional writes already progress, but startup reports one
+GroupAuthorizationFailed per replica. Add only group DESCRIBE for the exact
+data-reader ID and own projector prefix; do not grant group READ/commit to
+manual readers or canonical WRITE. Update sealed plan/regression, idempotent
+apply then verify before accepting native recovery. No offset reset.
+
+Projector metadata ACL correction:33 tests,32PASS/1 isolated broker skip;
+actual idempotent apply PASS with exactly2 DESCRIBE additions, receipt
+9446f4e9588c320f2f741164a74423987a05e1778d00fa83ab6af96c34dc7d92.
+One new native projector restarted intentionally for recovery/auth verification;
+no old service restart or offset mutation. Retained-canonical catch-up continues.
+Before BAR bootstrap, found the shadow backpressure caller did not forward TLS:
+its factory defaults plaintext, which cannot read production broker metadata.
+Wire the existing publisher cert-root into that read-only client, with regression
+for TLS propagation/missing identity and blocked history on unreadable backlog.
+Only BAR Python artifact needs rebuilding; no provider/domain gate relaxation.

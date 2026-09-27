@@ -44,6 +44,8 @@ EXACT_ACLS = {
     ("TOPIC", "md.canonical.v2", "LITERAL", "DESCRIBE"),
     ("GROUP", "kn-projector-v3-a", "LITERAL", "READ"),
     ("GROUP", "kn-projector-v3-b", "LITERAL", "READ"),
+    ("GROUP", "kn-projector-v3-b-data", "LITERAL", "DESCRIBE"),
+    ("GROUP", "kn-projector-v3-", "PREFIXED", "DESCRIBE"),
     ("TOPIC", "md.latest.v2", "LITERAL", "WRITE"),
     ("TOPIC", "md.latest.v2", "LITERAL", "DESCRIBE"),
     ("TOPIC", "md.latest.v2", "LITERAL", "READ"),
@@ -159,10 +161,19 @@ class PlanTests(unittest.TestCase):
         plan = _plan()
         tuples = {(r["resource_type"], r["resource_name"], r["pattern_type"], r["operation"]) for r in plan["acls"]}
         self.assertEqual(tuples, EXACT_ACLS)
-        self.assertEqual(len(plan["acls"]), 13)
+        self.assertEqual(len(plan["acls"]), 15)
         for row in plan["acls"]:
             self.assertEqual((row["principal"], row["host"], row["permission"]), (PRINCIPAL, "*", "ALLOW"))
             self.assertNotIn(row["operation"], ("ALL", "ALTER", "DELETE", "CREATE", "ALTER_CONFIGS"))
+
+    def test_manual_reader_prefix_cannot_join_or_read_foreign_groups(self):
+        for field, value in (("operation", "READ"), ("resource_name", "foreign-")):
+            plan = _plan()
+            row = next(r for r in plan["acls"] if r["resource_type"] == "GROUP"
+                       and r["pattern_type"] == "PREFIXED")
+            row[field] = value
+            with self.assertRaises(Refused):
+                validate_plan(plan)
 
     def test_topics_come_from_the_budget(self):
         budget = json.loads(packet.BUDGET.read_text())["retention"]["state_topics"]
@@ -188,7 +199,7 @@ class PlanTests(unittest.TestCase):
 
     def test_commands_are_explicit_and_exact(self):
         commands = plan_commands(_plan())
-        self.assertEqual(len(commands), 9)
+        self.assertEqual(len(commands), 11)
         self.assertEqual(commands[0][:5], ["kafka-topics.sh", "--create", "--if-not-exists", "--topic", "md.bars.v2"])
         self.assertIn(["kafka-acls.sh", "--add", "--allow-principal", PRINCIPAL, "--operation", "Describe",
                        "--operation", "Read", "--topic", "md.canonical.v2",
@@ -401,8 +412,8 @@ class ApplyVerifyTests(unittest.TestCase):
         broker = FakeBroker()
         first = apply(plan, broker, seal(plan)[1])
         self.assertEqual(first["status"], "PASS", first.get("error"))
-        self.assertEqual(first["mutations"], 9)
-        self.assertEqual(len(broker.mutations()), 9)
+        self.assertEqual(first["mutations"], 11)
+        self.assertEqual(len(broker.mutations()), 11)
         self.assertEqual({a["action"] for a in first["actions"]}, {"created", "added"})
         broker.calls.clear()
         second = apply(plan, broker, seal(plan)[1])
@@ -412,7 +423,7 @@ class ApplyVerifyTests(unittest.TestCase):
         self.assertEqual({a["action"] for a in second["actions"]}, {"exists_exact", "already_present"})
         checked = verify(plan, broker)
         self.assertEqual(checked["status"], "PASS")
-        self.assertEqual(checked["verify"]["acls"]["present"], 13)
+        self.assertEqual(checked["verify"]["acls"]["present"], 15)
 
     def test_partial_state_only_adds_what_is_missing(self):
         plan = _plan()
@@ -420,13 +431,13 @@ class ApplyVerifyTests(unittest.TestCase):
         broker.acls = [r for r in broker.acls if r["resource_type"] != "GROUP"]
         result = apply(plan, broker, seal(plan)[1])
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["mutations"], 2)
+        self.assertEqual(result["mutations"], 4)
         self.assertTrue(all("--group" in c for c in broker.mutations()))
 
     def test_verify_before_apply_reports_everything_missing(self):
         result = verify(_plan(), FakeBroker())
         self.assertEqual(result["status"], "FAIL")
-        self.assertEqual(len(result["verify"]["acls"]["missing"]), 13)
+        self.assertEqual(len(result["verify"]["acls"]["missing"]), 15)
         self.assertFalse(result["verify"]["topics"]["md.latest.v2"]["exists"])
         self.assertEqual(result["mutations"], 0)
 
@@ -631,7 +642,7 @@ class IsolatedBrokerIntegrationTest(unittest.TestCase):
         self.assertEqual({a["action"] for a in second["actions"]}, {"exists_exact", "already_present"})
         checked = verify(plan, runner)
         self.assertEqual(checked["status"], "PASS")
-        self.assertEqual(checked["verify"]["acls"]["present"], 13)
+        self.assertEqual(checked["verify"]["acls"]["present"], 15)
         evidence.update(first={"status": first["status"], "mutations": first["mutations"],
                                "actions": [a["action"] for a in first["actions"]]},
                         second={"status": second["status"], "mutations": second["mutations"]},

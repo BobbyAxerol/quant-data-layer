@@ -10,6 +10,8 @@ source of the topic specs) and grant the projector principal exactly::
     TOPIC md.canonical.v2          LITERAL  READ, DESCRIBE
     GROUP <stage-a group>          LITERAL  READ
     GROUP <stage-b group>          LITERAL  READ
+    GROUP <stage-b group>-data     LITERAL  DESCRIBE
+    GROUP <projector id prefix>    PREFIXED DESCRIBE (manual rebuild/cleaner readers)
     TOPIC md.latest.v2, md.bars.v2 LITERAL  WRITE, DESCRIBE, READ
     TRANSACTIONAL_ID <prefix>      PREFIXED WRITE, DESCRIBE
     CLUSTER kafka-cluster          LITERAL  IDEMPOTENT_WRITE
@@ -192,6 +194,10 @@ def expected_acls(principal: str, stage_a_group: str, stage_b_group: str,
         ("TOPIC", CANONICAL_TOPIC, "LITERAL", ("READ", "DESCRIBE")),
         ("GROUP", stage_a_group, "LITERAL", ("READ",)),
         ("GROUP", stage_b_group, "LITERAL", ("READ",)),
+        # Manual-assignment readers never join/commit, but librdkafka still
+        # requests coordinator metadata for their configured group.id.
+        ("GROUP", stage_b_group + "-data", "LITERAL", ("DESCRIBE",)),
+        ("GROUP", transactional_prefix, "PREFIXED", ("DESCRIBE",)),
         *[("TOPIC", topic, "LITERAL", ("WRITE", "DESCRIBE", "READ")) for topic in STATE_TOPICS],
         ("TRANSACTIONAL_ID", transactional_prefix, "PREFIXED", ("WRITE", "DESCRIBE")),
         ("CLUSTER", CLUSTER_RESOURCE, "LITERAL", ("IDEMPOTENT_WRITE",)),
@@ -298,7 +304,10 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
                 and row["operation"] not in ("READ", "DESCRIBE"):
             raise Refused(f"only READ/DESCRIBE on {row['resource_name']}")
         if row.get("pattern_type") == "PREFIXED" and row["resource_type"] != "TRANSACTIONAL_ID":
-            raise Refused("only the transactional id may be a prefixed ACL")
+            if not (row["resource_type"] == "GROUP"
+                    and row["resource_name"] == plan["transactional_prefix"]
+                    and row["operation"] == "DESCRIBE"):
+                raise Refused("only own manual-reader GROUP DESCRIBE may supplement the transactional prefix")
     want = expected_acls(principal, plan["stage_a_group"], plan["stage_b_group"],
                          plan["transactional_prefix"])
     if list(plan.get("acls") or []) != want:
