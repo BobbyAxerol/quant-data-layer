@@ -327,10 +327,10 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         # identity fence so a future generator collision cannot look harmless.
         self.assertEqual(len(generated["paths"]), 11)
         schemas = generated["components"]["schemas"]
-        # 69 = 68 + ``ProblemDiagnostics`` (KN-4 review: the quality a refusal
-        # was decided on), an optional ProblemDetails field.
-        self.assertEqual(len(schemas), 69)
-        self.assertIn("ProblemDiagnostics", schemas)
+        # KN adds refusal diagnostics and explicit retained-window coverage.
+        self.assertEqual(len(schemas), 71)
+        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage"):
+            self.assertIn(name, schemas)
         self.assertNotIn("StalePolicy", schemas)
         self.assertIn("qdl__query__contracts__StalePolicy", schemas)
         self.assertIn("qdl_sdk__models__StalePolicy", schemas)

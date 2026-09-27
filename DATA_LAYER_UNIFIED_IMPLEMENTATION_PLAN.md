@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 shadow evidence carried into KN-5; KN-5 PRODUCTION_ACCEPTANCE_PASS / PACKAGING_IN_PROGRESS (2026-09-27).**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 shadow evidence carried into KN-5; KN-5 FINAL_LOAD_PASS / POST_ROLL_RECOVERY_REVIEW / CI_PENDING (2026-09-27).**
 KN-2 current verdict and owner decisions: [Astra review R2](#kn2-astra-review-r2).
 Historical findings: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
@@ -53283,7 +53283,7 @@ Do not start the next phase merely because the executor's tests passed.
 | [KN-2](#kn-plan-phase-2) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Five reproduced correctness/boundedness defects on `d8929d1`; focused closure inside KN-2, no new phase |
 | [KN-3](#kn-plan-phase-3) | ASTRA_REVIEW_PASS / CLOSED (isolated-flow scope, `f0380a4`) | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | IN_PROGRESS | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
-| [KN-5](#kn-plan-phase-5) | PRODUCTION_ACCEPTANCE_PASS / PACKAGING_IN_PROGRESS | Astra (owner handoff) | Owner | Actual 50+TS60, paired rollback/return and old-writer retirement passed; clean artifact/CI/publication pending |
+| [KN-5](#kn-plan-phase-5) | FINAL_LOAD_PASS / POST_ROLL_RECOVERY_REVIEW / CI_PENDING | Astra (owner handoff) | Owner | Actual 50+TS60 load and paired rollback/return passed; post-packaging recovery, clean CI and publication remain open |
 
 **Common invariants and approved scope:**
 - Follow [decisions/exclusions](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-decisions-and-scope),
@@ -58426,7 +58426,7 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status: PRODUCTION_KN_ACCEPTANCE_PASS / RELEASE_PACKAGING_IN_PROGRESS (2026-09-27).**
+**Status: FINAL_LOAD_PASS / POST_ROLL_RECOVERY_REVIEW / CI_PENDING (2026-09-27).**
 Actual TS now uses KN Query/native Stream with SDK2.0.4 and unchanged binding10.
 Paired old-V2 rollback/return PASS; production final50 PASS (15,504 requests,
 90 streams, TS32/32 samples60/60). Whole-stack average4.582vCPU measured across
@@ -59697,3 +59697,51 @@ Current production native Stream1/2 unchanged7fe34806; new Query/BARf7351c3b,
 TS4dba0ac1 still uses SDK2.0.4. V1, Kafka offsets/topology, state and order paths
 unchanged by packaging roll. Release remains pending full CI and post-roll
 consumer recovery classification, not claimed certified from process health.
+
+Read-only diagnosis packet:10s aggregate fsync/fdatasync syscall timing on the
+existing market_data_service main PID, no payload/path/secret tracing, no signal
+to the application and no config change. strace itself may add small observation
+overhead, so this is cause diagnosis, not a clean latency benchmark. Needed to
+test the source finding that synchronous FileCursorStore acknowledgement fsyncs
+the shared cursor file and directory from the consumer asyncio event loop.
+
+Remote full suite on679dc77 completed2407 cases,5fail/47skip. All five are
+now identified: Docker verified-stage string, two retired L2 counts, reference
+book count24->20 after the same retirement, and OpenAPI schema count69->71
+after explicit GapProductCoverage/GapScanCoverage addition. Snapshot-vs-generated
+equality already passes; do not remove schemas to satisfy the historical count.
+Correct the remaining two assertions with explicit schema/retired-identity checks.
+
+Read-only TS profile10s:1,259fsync calls blocked4.176849s (mean3.317ms),
+no syscall errors. Source FileCursorStore.save rewrites the full cursor JSON,
+fsyncs file and directory synchronously from StreamSession.acknowledge on the
+asyncio consumer loop. This proves a blocking hot-path contribution; it does not
+by itself prove the entire backpressure incident. No cursor durability weakened,
+no TS source/runtime mutation made. Evidence ts-cursor-fsync-profile.txt; strace
+detached at deadline, measured window is diagnostic not a release latency sample.
+
+Local normal full suite completed2407tests in2459.707s:2355pass,5fail,47skip.
+All five failures are the exact stale assertions also seen in remote CI, not
+additional runtime defects. Their corrected cases are run together below; do
+not relabel the failed full-run log as green.47skips remain explicitly reported;
+40isolated-Redis Query/BAR checks separately exercise the dependency-bound cases.
+No new image build is needed for assertion/docs/workflow-only corrections.
+
+Current KN-5 closure is NOT complete: prior final50 PASS remains valid for its
+bounded window, but recurring native stream backpressure and actual consumer
+recovery after packaging roll require closure, alongside green CI and remote
+release. Native latest TS heartbeat60/60 is not substituted for that evidence.
+The measured synchronous cursor persistence is the next narrow reader/SDK
+boundary to correct without weakening durable acknowledgement or execution
+eligibility. Do not change order/Risk strategy logic or reopen VN migration.
+
+All five corrected failed cases rerun together:5/5PASS on current source; full
+remote CI is required on the resulting commit before any merge/tag. Disposable
+unit/Redis/matrix clients removed, no qdl-kn5 test container left. Images16removed
+already recorded24.50->21.44GB accounting; BuildKit cache intentionally retained
+while KN-5 recovery/release remains open, not described as final cleanup complete.
+Host filesystem now196,916,957,184 used /113,977,679,872 available bytes; this is
+a timestamped observation, not bytes reclaimed attributable to cache deletion.
+Canonical checkout remains /home/bobby/data_layer, feature branch only, no extra
+Data Layer worktree. Owner's two earlier plan edits preserved unstaged. Published
+main/dev v2.1.0 unchanged; no v2.2.0 tag or claim of full release certification.

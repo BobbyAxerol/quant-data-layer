@@ -66,7 +66,10 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
 
     def test_scope_is_exact_v2_only_reference_and_book_product_set(self):
         self.assertEqual(len(self.scope.references), 70)
-        self.assertEqual(len(self.scope.books), 24)
+        self.assertEqual(len(self.scope.books), 20)
+        retired = {"f1228887-3053-5b61-9aea-11d3833f8a62",
+                   "9e24d8dd-e74b-5f9b-a770-2556bbc89d37"}
+        self.assertTrue(retired.isdisjoint(str(item.instrument_uid) for item in self.scope.books))
         self.assertEqual(
             {item.consumer_id for item in self.scope.references + self.scope.books},
             {REFERENCE_L2_CONSUMER_ID},
