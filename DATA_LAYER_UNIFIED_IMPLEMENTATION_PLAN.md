@@ -59833,3 +59833,80 @@ artifact is verified; do not certify the first candidate as final silently.
 Shutdown correction regression:54/54PASS in the isolated existing runtime image;
 new cancelled-close checks cover both session transport and admitted disk reads.
 No runtime change from this follow-up yet; SDK2.0.5 remains unpublished candidate.
+
+Observed first cursor candidate aa9f737a (not final shutdown artifact): SDK205 fast
+matrix PASS132/132; actual TS300.002s external cache observer has60groups/0errors,
+30/30heartbeats60/60READY, fallback0/V2error0. Native stream1 over32metric windows:
+overflow+0,replayed+0,opened+0,delivered+90,893; queue peak156,893bytes/end0,
+RSS322,473,984 constant. Stream2 RSS127,524,864 constant, no restarts/OOM/closures.
+Worst per-binding external Redis GET p99=1.486ms, not event age or full SDK latency.
+Evidence sdk205-acceptance/*.json. Separate10s main-thread strace after acceptance
+has0fsync/fdatasync calls, vs1,259/4.176849s before; this proves removal of that
+blocking path, not an independently measured event-loop-lag percentile.
+
+Final shutdown-corrected candidate: SDK956045d / TS2286f58,
+wheel2d0cb3fa49fb9879a4b6417d492e10150255cf7e97c94b85eceafc0660aa01db,
+image sha256:f4c9b14d058b16cdaa2e1f6bc80d6551474da4b0fa0df39392ae1c960212dc82.
+Packaged208/208 TS+SDK tests PASS; existing base4dba0ac1 unchanged. Apply same
+market_data-only image packet, preserve env/mounts/rev10; rollback4dba0ac1 config.
+No other TS/DL role affected. Before final steady acceptance, bounded controlled
+reconnect may terminate only this reader's established TCP to native Stream8210
+in its own network namespace, one shot; preserve network/routes/Query/Redis and
+all other sockets. Record prior socket target, injection time, typed disconnect,
+cursor recovery and exact resulting runtime. No stream service restart or order
+mutation. Reconnect experiment is separate from steady300s performance window.
+Previous59/60 episodes and observer results retained, not erased by a retry.
+
+CI059c4ae full PASS; latest956045d run36309153900 in progress. Superseded5af9a21
+run36308932662 cancellation requested202 to avoid duplicate CI work. No dev/main
+merge/tag yet. No disposed test container left; both tiny build contexts only
+contain4 nonsecret source/artifact files, to remove once final build verified.
+
+Final readerf4c9b14d running after market_data-only replacement,208/208 packaged
+regressions. Controlled TCP disconnect at09:29:05UTC removed only reader connection
+to stream1:8210; ss emitted an ancillary RTNETLINK warning, but subsequent socket
+inspection proved old connection absent and new connection to stream2:8210.
+TS typed heartbeat became50/60 with exactly10 BAR SESSION_RESET routes, then60/60
+after the next final BAR/heartbeat publication. Scope failure was observable and
+fail-closed, not called uninterrupted60/60. Recovery receipt records seven sampled
+states50/50/50/50/50/50/60 and target socket; no config/service restart for injection.
+Final steady300s observation uses f4c9b14d, separate sdk205-final-acceptance path.
+
+Scoped cleanup removed superseded unreferenced aa9f737a reader image and two exact
+four-file SDK build contexts; activef4c9b14d, rollback4dba0ac1 and DL artifacts remain.
+Filesystem used197,929,615,360->197,928,341,504bytes (concurrent writes apply; not
+claimed exact reclaimed-image size). sdk205-cleanup.json records inventory/result.
+No volume/network/state deletion. All --rm unit/lock clients removed. BuildKit
+cleanup remains deferred to release; no broad prune.
+
+Consumer audit found execution_alpha's existing async feed/L2 wrappers still call
+the synchronous SDK acknowledgement API (orchestration/data_layer_v2.py1430/1512/
+2058). No alpha is activated by this goal. Before claiming hot-alpha SDK convergence,
+wire the shared read/ack facade to the additive async API with compatibility tests;
+source-only, no strategy/order mutation or alpha runtime activation. This is the
+same cursor boundary, not a new phase or a reason to rerun server299-product C2.
+Record its source/test work in ALPHA_RUNTIME_MIGRATION_ARCHITECTURE.md as well.
+
+Final SDK reader f4c9b14d steady acceptance09:31:14-09:36:27UTC completed:
+external Redis observation300.060s,60groups,0errors;30/30TS heartbeats60/60READY,
+no fallback/V2 errors. Stream2 (automatic failover target) delivered104,458 events,
+overflow/replay/opened deltas0, no closures; queue peak472,379bytes/end0,
+RSS134,262,784->135,122,944 (bounded short-window change, not a multi-day leak
+certificate). Stream1 idle:queue0,RSS322,514,944->322,519,040. No restart/OOM.
+Worst per-binding Redis GET p99=0.964ms; event-to-readable distributions remain
+separate in cache.json and include quiet event age (not new-event latency).
+Matched evidence sdk205-final-acceptance/{receipt,summary,cache,heartbeat}.json.
+CI956045d:contract/native-integration/Python3.10 PASS, unit-tests still running.
+No v2.2.0 publication yet. Current checkout feature956045d plus these evidence/docs;
+SDK/TS source committed as956045d/2286f58, runtime Query/BARf7351c3b,Rust7fe34806,
+TSf4c9b14d, TSmanifest10; legacy10roles remain stopped, VN/V1 unchanged.
+
+Alpha audit additionally confirms runtime/pyproject.toml and Dockerfile.numba
+still pin SDK2.0.1, despite newer shadow SDK evidence. Source branch
+fix/kn5-alpha-read-completion is clean; no alpha runtime service was activated.
+Next same-scope closure: update official shared alpha SDK artifact/pin and async
+read/ack facade (preserve sync compatibility), run targeted source tests on both
+venues, journal its own main architecture plan. Do not claim existing alpha
+image contains SDK2.0.5 or reuse TS certification as an alpha deployment claim.
+Final release still requires full CI, unified artifact receipt, approved remote
+integration/release and final scoped BuildKit/branch hygiene. Goal remains ACTIVE.

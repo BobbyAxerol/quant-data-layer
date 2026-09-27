@@ -2912,6 +2912,22 @@ soak hoặc multi-host DR. **Stop:** không mở alpha execution hoặc TS upgra
 **Debt:** in-scope failure block exit; single-host/declared retention/deferred venues
 được ghi là external limits, không giả đã giải quyết bằng rename status.
 
+#### SDK Cursor Persistence Closure (2026-09-27)
+
+Async stream consumers use SDK2.0.5 `await session.acknowledge_async(event)`
+**after** applying the corresponding batch to their own cache/state. The file
+store bounds admitted operations to64 and serializes fsynced atomic writes off
+the event loop; pending updates may share a transaction without a debounce
+sleep. Duplicate retries still fsync. Acknowledgement is not completed before
+durability, and reconnect/snapshot generation changes are fenced against it.
+Cancellation/shutdown drains admitted I/O and closes the session transport;
+file, rename and directory-fsync errors never become successful acknowledgements.
+The synchronous acknowledgement API remains for compatibility, not the preferred
+async high-throughput path. This SDK patch does not change feed freshness, quota,
+Kafka/cache authority or execution eligibility. Runtime evidence must identify
+the exact wheel hash as well as its version; unpublished candidate artifacts are
+not interchangeable just because both say2.0.5.
+
 <a id="kn-rollout-and-cleanup"></a>
 ### 18.13 Packet runtime, rollback và cleanup chuẩn hóa
 
