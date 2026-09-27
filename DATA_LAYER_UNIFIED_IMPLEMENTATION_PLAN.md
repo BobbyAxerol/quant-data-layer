@@ -60192,3 +60192,107 @@ built, no cache/image prune and no shared volume cleanup. Post-check disk free
 Query1/2, Stream1/2 and market_data_service retain original image/start times,
 restart0/OOMfalse. Live mapping inactive. Full gRPC/replay/ACK recovery stress
 and affected runtime acceptance remain implementation work, not certified debt.
+
+Continuation: owner approved end-to-end recovery and runtime acceptance plus a
+30-minute read-only observer subagent. Narrow packet: Query KN1/KN2 overlay
+ade5035 on f7351c3b, TS market_data overlay75df1c4 on7e7e2d02; build/tests first,
+record full resulting digests before rolling. Preserve configs/mounts/TLS,
+Rust/Kafka/cache/V1/alpha/order path. Rollback exactly the replaced role images.
+No live mapping until recovery and actual reader acceptance pass. Client fault
+tests own isolated Redis/cursors; never pause shared production consumers.
+
+Runtime packet frozen before action: private burst-recovery-20260927/packet
+query-candidate/rollback.compose.json and ts-candidate/rollback.compose.json.
+Only image fields change: query_kn_1/query_kn_2
+sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685 ->
+sha256:3dd54bfd8b9de0b143d317798ab9c63cebc502d01fe3cf6f513032d6484b5b11;
+market_data (container market_data_service)
+sha256:7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea ->
+sha256:1d86d3e820795a50b2539b09a6d35b102efd461e7bd7dec1801730a5daffdc46.
+Exact patched-file parents equal deployed files byte-for-byte. Packaged TS
+252 tests PASS; first run had5 fixture mount path failures, corrected mounts.
+Query normal import path passes and patched module SHA matches source. Direct
+execution_live import exposes existing package cycle; normal query entry imports
+query first. Initial FROM sha256 syntax could not resolve in BuildKit; corrected
+to existing local tag and verified resolved digest. No dependency/network changes.
+Roll Query1 then healthy, Query2 then healthy; then TS market_data only. Stop and
+rollback affected role on startup error or persistent new unhealthy regression.
+Retain same revision10/SDK2.0.5/config/network/mounts; no live activation yet.
+
+Runtime continuation evidence (2026-09-27): Query KN1/KN2 rolled sequentially
+15:23UTC, TS market_data15:24UTC, same mounts/config/revision10/SDK2.0.5. No
+other role recreated. Candidate images3dd54bfd/1d86d3e8 remain active; rollback
+f7351c3b/7e7e2d02 retained. New source scripts accept_market_trade_recovery.py
+and measure_v2_binding_reads.py in TS provide repeatable no-order measurements.
+
+Fullchain client uses actual Rust gRPC, TS facade/projection, isolated Redis and
+SDK fsynced ACK. An independent stream starting at the same signed cursor is
+compared through the final durable ACK; matching physical offset gaps are legal.
+Initial20additionalstreams exceeded TS identity50stream quota (production40),
+so OKX was refused; all5Binance prefixes matched. Fixed harness to one venue,
+10additionalstreams, not quota relaxation. First OKX run was invalidated by my
+premature stop of test-only Redis; errors kept in recovery-okx-interrupted.json.
+Rerun OKX PASS5/5,8s inducedclient loss, recovered8.126-10.893s including pause;
+Binance harder30s pause PASS5/5, recovered30.362-30.778s, exact12336records through
+ACK,0cursorerrors. At-least-once reconnect may replay unapplied/unacknowledged
+prefix; not an exactly-once broker-event publication certificate. Actual market
+rate during these runs is not an accelerated2000/s end-to-end capacity proof.
+Seven harness regressions PASS missing/changed/extra/empty-prefix and percentile
+labelling. No production Kafka/Redis/cursor writes from fault clients.
+
+Separate external read-only TS Redis observer300.027s:160169notifications,
+60feed/product groups,0cache missing/identity/watermark/future-time errors.
+Request->typed usable SDK matrix120reads across2Queryreplicas:116usable,
+4TRADEexecutioneligibility refusals retained, no MARK/QUOTE/L2/BAR refusals.
+Per-feed n20(orTRADE16) is insufficient forp99. TargetedTRADE follow-up20reads,
+18usable/2refused: exact rejected quality LIVE/sessionLIVE/gapfalse/complete,
+eventSTALE at3126/3400ms vs3000ms. Do not call quiet last-trade execution usable.
+Evidence at burst-recovery-20260927/{fullchain,cache-observer.json,observer-30m}.
+
+Live activation boundary checked in code, not assumed from identity names:
+current TS manifest execution_dependency=PAPER_ONLY, environment=paper;
+Query stable.py:529 and Rust auth.rs:302 enforce one configured auth environment.
+KN cache LPK/cursor also includes environment. Live credentials cannot simply
+be renamed/reused or accepted by relaxing environment verification. Existing
+mainnet market bytes and tested TS60 do not certify a new live auth realm.
+Live mapping remains inactive pending coherent identity/realm/cursor binding;
+no widened authorization or automatic order enablement was performed.
+
+Closure preparation:259 focused TS tests PASS, Ruff changed scripts/tests PASS.
+Disposed only ts-burst-cache, ts_burst_recovery_test network and --rm clients;
+removed temporary client credential envs, test-only cursor directories and two
+build contexts after hashing. Retained all market capture/receipt evidence.
+Pruned exactly4 unshared source.local BuildKit records from the two15:20builds:
+exxu40ud2r41aynmldcnw69lg,s1w22i9qi9uqketb116vdgvf6,
+7xpedbd4elu2wq3lcernqwfm7,zfpet5gsafuvnqid1udyldlvm(~180kB reported).
+Filesystem available112067633152->112331137024bytes; other host writes/retention
+continue, so this delta is not attributed solely to cleanup. Both new images
+are active, original two are exact rollbacks; no test-only image left from this
+slice, no broad prune or old production-state removal. DataLayer has one checkout;
+TS existing Portal/upgrade worktrees preserved, none newly created.
+
+Final bounded observation:1800s,2026-09-27T15:20:28Z..15:50:28Z,61samples;
+after TS rollout52samples,51READY including startup,48/48post-startupREADY60/60.
+One startup sample not-ready,0fallback/0v2errors after startup. Stream717401live
+and4675replayed events (includes isolatedclients),0newoverflow/reader/decode/
+duplicate errors,queueend0.35quota refusals belonged to first oversized test;
+no production TS session degradation there. No unplanned restart/OOM.
+MARK reference refresh rejection counter0 on new TSreader. Execution readiness
+is separate: final telemetry50/60execution-ready vs60/60session-ready, not a
+claim every TRADE last price is usable. Known fiveBinance3d history source
+refusals remain outside this correction; no fabricated bars or broadened cert.
+
+Resource mean DataLayer4.47665vCPU excluding TS/V1,TS0.72865vCPU; observed DL
+mean within5core but not a new maximum-capacity certificate. TS cgroup peak186MiB;
+no cap changes. Ingestor throttled-period fraction6.82%/8.16%, not percent CPU lost.
+StableRedis dockerlogs timed out; bounded direct read of configured json-file
+log confirms file0bytes. Health/cgroup accessible; do not claim unseen log proof.
+Acceptance-index SHA398fb34a889f10b0e8710fbc51cbf2e119e79039393558d9fb4aabcc96be43f3.
+
+Recorded status: BOUNDED_READER_RECOVERY_RUNTIME_ACCEPTED / LIVE_MAPPING_INACTIVE.
+No full accelerated gRPC burst capacity claim;2000/s was projection+Redis only.
+Overall live-consumer task remains IN_PROGRESS due unimplemented coherent live
+identity/realm mapping, not a request to loosen gates or repeat full C2. Current
+TS paper/no-order reader can use the accepted correction. Published release
+remainsv2.2.0; these immutable overlays are not a newly published stable tag.
+No push/merge, no alpha/order activation. Main plans preserve owner edits.
