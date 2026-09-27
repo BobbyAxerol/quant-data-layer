@@ -15,6 +15,7 @@ commits a group; no venue call.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 
@@ -55,6 +56,22 @@ class KafkaStageBacklog:
             return False, {"error": f"{type(error).__name__}: {error}"[:200]}
         over = {stage.name: backlog[stage.name] for stage in self.stages if backlog[stage.name] > stage.limit_records}
         return not over, {"backlog": backlog, "over": over}
+
+
+def kafka_backlog_from_environment(environ: Mapping[str, str], stages: Sequence[Stage]) -> KafkaStageBacklog:
+    """Production metadata reads share the BAR publisher's mTLS identity."""
+    root = environ.get("QDL_KAFKA_CERT_ROOT", "").strip()
+    if not root:
+        raise ValueError("history backpressure requires the Kafka TLS cert root")
+    security = {"security.protocol": "ssl"}
+    for option, filename in (("ssl.ca.location", "ca.crt"),
+                             ("ssl.certificate.location", "client.crt"),
+                             ("ssl.key.location", "client.key")):
+        path = Path(root) / filename
+        if not path.is_file():
+            raise ValueError(f"history backpressure TLS file unavailable: {path}")
+        security[option] = str(path)
+    return kafka_backlog_from_config(environ["QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP"], stages, security)
 
 
 def kafka_backlog_from_config(bootstrap: str, stages: Sequence[Stage],

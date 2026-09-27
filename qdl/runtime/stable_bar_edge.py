@@ -2051,13 +2051,13 @@ def build_from_environment(
     history_gate = None
     backpressure_bootstrap = os.environ.get("QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP", "").strip()
     if backpressure_bootstrap:
-        from qdl.runtime.history_backpressure import Stage, kafka_backlog_from_config
+        from qdl.runtime.history_backpressure import Stage, kafka_backlog_from_environment
 
         stages = []
         for spec in os.environ["QDL_STABLE_BAR_BACKPRESSURE_STAGES"].split(","):
             name, group, topic, limit = spec.split(":")
             stages.append(Stage(name, group, topic, int(limit)))
-        history_gate = kafka_backlog_from_config(backpressure_bootstrap, stages)
+        history_gate = kafka_backlog_from_environment(os.environ, stages)
     canonical_cache_path = Path(os.environ.get(
         "QDL_STABLE_CANONICAL_CACHE_PATH",
         str(

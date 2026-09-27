@@ -37,6 +37,32 @@ class DemandTests(unittest.TestCase):
 
 
 class BackpressureTests(unittest.TestCase):
+    def test_production_backpressure_uses_the_existing_publisher_tls_identity(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from qdl.runtime.history_backpressure import kafka_backlog_from_environment
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename in ("ca.crt", "client.crt", "client.key"):
+                (root / filename).write_text("TEST_ONLY")
+            env = {"QDL_KAFKA_CERT_ROOT": directory,
+                   "QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP": "broker:9092"}
+            stages = [Stage("core", "g", "raw", 100)]
+            with patch("qdl.runtime.history_backpressure.kafka_backlog_from_config") as factory:
+                self.assertIs(kafka_backlog_from_environment(env, stages), factory.return_value)
+                factory.assert_called_once_with("broker:9092", stages, {
+                    "security.protocol": "ssl", "ssl.ca.location": str(root / "ca.crt"),
+                    "ssl.certificate.location": str(root / "client.crt"),
+                    "ssl.key.location": str(root / "client.key")})
+                factory.reset_mock()
+                (root / "client.key").unlink()
+                with self.assertRaisesRegex(ValueError, "TLS file unavailable"):
+                    kafka_backlog_from_environment(env, stages)
+                with self.assertRaisesRegex(ValueError, "TLS cert root"):
+                    kafka_backlog_from_environment({}, stages)
+                factory.assert_not_called()
+
     def test_backlog_counts_unconsumed_records_and_the_gate_closes_over_a_limit(self):
         self.assertEqual(stage_backlog({0: 5, 1: 10}, {0: 8, 1: 10, 2: 4}), 3 + 0 + 4)
         committed = {"core": {0: 100}, "a": {0: 0}}

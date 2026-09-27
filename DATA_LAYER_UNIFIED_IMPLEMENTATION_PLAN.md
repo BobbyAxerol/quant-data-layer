@@ -59341,3 +59341,12 @@ its factory defaults plaintext, which cannot read production broker metadata.
 Wire the existing publisher cert-root into that read-only client, with regression
 for TLS propagation/missing identity and blocked history on unreadable backlog.
 Only BAR Python artifact needs rebuilding; no provider/domain gate relaxation.
+
+BAR TLS/readback suite:40 executed,38PASS/2 test-only broker/Redis skips.
+Actual production TLS connects, and the backpressure probe correctly refuses
+history with GROUP_AUTHORIZATION_FAILED: existing phase8-producer cannot inspect
+new groups. Add only DESCRIBE on the exact core/A/B/metadata group names and
+canonical/bars topic metadata; no group READ/join/commit grant. Probe must then
+report the real backlog and remain closed during retained replay. Producer
+identity/private keys unchanged. This is the same declared least-privilege
+production packet, not a data reset or provider bypass.
