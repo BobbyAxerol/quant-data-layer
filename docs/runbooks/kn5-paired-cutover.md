@@ -1,6 +1,7 @@
 # KN-5 Paired Cutover And Rollback
 
-Status: PREDEPLOY PREPARATION, NOT EXECUTED. Governing plan:
+Status: PAIRED HANDOFF / ROLLBACK-RETURN / PRODUCTION LOAD PASS (2026-09-27).
+Old writer/read roles stopped; publication and dependency-clean artifact pending. Governing plan:
 [KN-5](../../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-predeploy-gap-closure).
 No additional phase. This runbook is not a deployment authorization.
 
@@ -90,6 +91,29 @@ No additional phase. This runbook is not a deployment authorization.
    approved remote feature->dev CI->main release, publish immutable2.2.0 and
    clean exact disposable images/worktrees. Keep one named rollback set only.
 
-The old architecture is NOT retired by this document. Actual paired deployment,
-post-cutover CPU and rollback-return are outstanding execution gates, not tests
-that can be signed off on source or allocator measurements alone.
+## Executed Packet
+
+Runtime state: `/home/bobby/.local/state/qdl-v2/releases/v2.2.0-02cd827`.
+Evidence: `/home/bobby/.local/state/qdl-v2/kn5-close-20260927`.
+TS query alias `qdl-v2-query:8200` and stream pair `qdl-v2-stream-a/b:8210`
+on `executor_network` now resolve only to KN roles. Actual market-data reader
+SDK2.0.4; binding/JWT10 unchanged. Rollback/return and final50 passed.
+
+Ten old roles are STOPPED (not removed): `projector_v2`, `_2`..`_6`,
+`query_v2_1/2`, `stream_v2_active/passive`. The old
+`qdl-v2-stable-boot-recovery.service` is DISABLED; do not run its spool rebuild
+against the native architecture. Exact unit, Compose and inspect backup live at
+`legacy-retirement-backup` inside the runtime packet. Native Docker restart and
+Kafka-state cache rebuild own recovery. Old SQLite/Redis/offsets were not deleted.
+
+Before old-path rollback, verify retained canonical offsets are still readable;
+expired retention requires an explicit history rebuild and is not instant rollback.
+Start exact old role images with the additive union catalog from the packet,
+catch up, stop the TS reader before reversing aliases, then use the exact old
+TS image/config. Do not attach two generations to the same aliases concurrently.
+Restore the old boot unit only with old-architecture ownership, never by default.
+
+The initial dependency-preserving build option above is NOT permission to use a
+quarantined package. Owner approved excluding vnstock/vnai from new KN images;
+DNSE/Vietnam remain served by unchanged V1 until a separate migration. No GHCR
+token change is required. New release packaging must build from the clean lock.

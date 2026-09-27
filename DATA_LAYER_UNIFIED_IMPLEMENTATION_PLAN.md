@@ -58426,14 +58426,16 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status: IN_PROGRESS / PRODUCTION_PACKET_AND_HANDOFF (2026-09-27).**
-K5.1/K5.2 source and isolated acceptance have run (final-50-bounded, TS60 Redis
-write/readback, universe and diagnostic evidence below). They are not production
-handoff: full-cap budget, coherent release artifact and K5.3-K5.6 remain open.
-Production still uses the old spool architecture at this checkpoint. Owner now
-authorizes remaining KN-5 production packet, full-stack measurement, paired
-handoff/rollback-return, final acceptance and retirement/release only after PASS.
-Claude review is not an additional prerequisite imposed by the agent.
+**Status: PRODUCTION_KN_ACCEPTANCE_PASS / RELEASE_PACKAGING_IN_PROGRESS (2026-09-27).**
+Actual TS now uses KN Query/native Stream with SDK2.0.4 and unchanged binding10.
+Paired old-V2 rollback/return PASS; production final50 PASS (15,504 requests,
+90 streams, TS32/32 samples60/60). Whole-stack average4.582vCPU measured across
+446s, old-path overhead1.337 reported separately. Ten old SQLite reader/writer
+roles stopped and legacy boot-rebuild disabled; state/offsets/images retained.
+Post-retirement TS9/9 samples60/60. This is runtime acceptance, NOT release
+publication: PyPI quarantine requires the owner-approved VN SDK exclusion,
+clean artifact/affected smoke and green remote CI before merge/tag.
+Details: [actual handoff journal](#kn5-production-handoff-20260927).
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
 **Guide index:** [18.12 work items and K5-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),
@@ -58442,10 +58444,10 @@ publish an immutable stable release and clean safely, without another phase trai
 [18.14 Astra handoff](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-review-handoff).
 
 **To do:**
-- [ ] K5.1 freeze candidate artifacts, route pair, exact runtime/rollback packet and workload.
-- [ ] K5.2 50 logical alpha + real TS demand, burst/recovery and full-stack resource proof.
-- [ ] K5.3 paired Query/Stream canary handoff, bounded consumer reconnect and no order path change.
-- [ ] K5.4 fast/protocol preflight then one final 300s no-order acceptance; rollback/return drill.
+- [x] K5.1 freeze measured candidate/runtime/rollback/workload; final dependency-clean artifact tracked below.
+- [x] K5.2 50 logical alpha + actual TS60, burst/recovery and whole-stack resource measurement.
+- [x] K5.3 actual paired Query/Stream handoff and rollback-return; no order path change.
+- [x] K5.4 final replacement300s PASS after serialized preflight; failed first attempt retained.
 - [ ] K5.5 Astra release review, remote feature->dev CI->main, immutable provenance/affected smoke.
 - [ ] K5.6 old writer/projector/tick-spool retirement, ADR/runbooks, cleanup and v2.2.0 publication.
 **Completed:** K5.2 isolated final-50 load PASS (15,504 requests, 90 streams),
@@ -59541,3 +59543,61 @@ failure now fixed locally; remote unit build still blocked only at withdrawn VN
 packages (no test cases ran in that job). No skipping those gates. Final probe
 clients have exited; failed universe items are retried in their own bounded
 20-product run, with previous failures kept. Only then a replacement final load.
+
+
+KN-5 production acceptance, 2026-09-27 07:20UTC: replacement final50 PASS,
+15,504 offered/completed requests,90 streams,0 read/stream errors,12/12 reconnect,
+30/30 final-BAR streams,0 missed polls/leaked tasks/order actions. Actual TS32/32
+samples60/60, fallback0, v2_error0; one STREAM_ENDED recovered within existing gate.
+Final-resource window446.163s: whole KN stack4.582vCPU (includes all3brokers,
+provider Redis/producers/core/BAR/native projection/cache/query/stream), old
+rollback path1.337vCPU, TS0.427vCPU separately. No restart delta/OOM. This is
+the declared50-logical-alpha workload, not arbitrary unbounded50-client demand.
+Exact prior universe20 failed-product recovery PASS20/20; original failures kept.
+Evidence root kn5-close-20260927/final-production50-replacement and
+replacement-resources.jsonl. Hot steady QUOTE p99 Binance46.529/OKX33.301ms;
+MARK/INDEX39.685/38.111ms; smaller TRADE/BAR/L2 cohorts report max, not p99.
+
+Retirement packet now eligible from actual paired rollback-return and final
+acceptance: stop only projector_v2, projector_v2_2..6, query_v2_1/2,
+stream_v2_active/passive in qdl_v2_stable_candidate; first archive exact inspect,
+legacy-compatible Compose and boot unit, then disable only legacy spool boot
+recovery. Preserve all images/volumes/SQLite/Redis/Kafka offsets and V1/TS/order
+path. Rollback starts exact retained old roles with union catalog, restores
+paired network/TS reader packet, then restores boot unit only for old ownership.
+No old writer may restart automatically outside this rollback. Verify native
+TS60 and unchanged unaffected restart counts after stop. No release tag yet.
+
+Packaging correction: PyPI project pages now confirm vnstock AND vnai are
+QUARANTINED (2026-09-24), not merely missing old wheels. Sources:
+https://pypi.org/project/vnstock/ and https://pypi.org/project/vnai/.
+Do not bypass security quarantine through retained dependency OCI/registry.
+No new quarantined package installed or published. Owner's token is fine-grained;
+GHCR's classic-PAT/Actions-token requirement was misdiagnosed as a missing scope.
+Withdraw that token-change request. Ask owner whether to omit the unused VN-stock
+SDK from new KN artifacts while leaving running DNSE/V1 unchanged; no silent
+provider capability removal. CIffe7d2e: contract/SDK/native-integration PASS;
+unit build still blocked by quarantine, therefore publication is NOT certified.
+
+Owner approved removing the quarantined VN-stock SDK from new KN artifacts;
+DNSE/Vietnam remain on unchanged running V1 until a separate VN migration.
+Implement packaging-only dependency removal plus explicit missing-SDK failure
+before poller thread/history work, regression no provider/cache/state writes,
+Poetry regenerated lock preserving unrelated versions, clean dependency build,
+full Python source suite and remote CI. Do not import quarantined code to test
+its availability; do not reuse old /opt/venv for the new artifact. Public V1
+running container is NOT recreated. Changed Python artifact requires affected
+native reader/BAR packaging smoke before publication, not synthetic C2 PASS.
+
+Retirement executed:10 exact legacy roles stopped, old boot-rebuild unit disabled;
+post-retirement90s TS9/9 samples60/60, fallback0, no native restart/OOM. No data
+or volume deletion. Production rollback offsets require readable-retention check
+before restarting; old consumers are no longer silently writing or accumulating CPU.
+Dependency boundary tests11/11 PASS; Poetry2.3.4 lock/check PASS. Nineteen unused
+VN SDK/chart transitive packages removed, all remaining versions unchanged.
+`packaging` is now explicit because the existing dependency verifier uses it.
+Missing VN SDK errors before starting a thread or returning empty history; no
+fake provider fallback. Initial test attempts had scratch UID/read-only log mount
+errors before test execution; corrected disposable mounts, no runtime affected.
+Clean-build candidate from this source, then full suite/CI and affected read-plane
+packaging smoke. Measured latency above remains evidence of pre-packaging images.

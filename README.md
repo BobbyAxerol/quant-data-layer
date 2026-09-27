@@ -17,6 +17,50 @@ It currently serves:
 - Redis Pub/Sub streams for live consumers.
 - REST endpoints for warmup, recovery, diagnostics, and health checks.
 
+## KN Production Status (2026-09-27)
+
+The **new Kafka-native read path is serving Trading System**, with SDK2.0.4.
+Production final load passed: 50 logical alpha sessions, 15,504 requests,
+90 streams, 12 reconnects, actual TS60 READY in32/32 samples; no order actions.
+Ten old SQLite projector/query/stream roles are stopped, with state and exact
+rollback artifacts retained. Published tag remains **v2.1.0** until remote CI,
+dependency-clean packaging and release publication complete. Do not confuse
+this accepted runtime candidate with a published v2.2.0 artifact.
+
+```text
+Binance/OKX -> Rust ingestors + bounded BAR REST edge -> raw Kafka
+  -> Rust canonical core (identity, ordering, L2, quality) -> canonical Kafka
+  -> Rust projector Stage A -> compacted latest/bar Kafka state
+  -> Rust projector Stage B -> bounded Redis market cache -> Python V2 Query
+canonical Kafka -> native Rust Stream (snapshot / replay / subscribe / status)
+V2 Query + native Stream -> SDK -> TS market-cache / alpha bounded buffer
+```
+
+SQLite is not in this active read path. Cache loss rebuilds from Kafka state;
+consumer manifests, component freshness and execution eligibility remain strict.
+DNSE/VN stays V1; the quarantined vnstock/vnai SDK is excluded from new KN images.
+
+Actual consumer-call-to-validated-result latency, **milliseconds**, steady load:
+
+| Read | Binance p50 / p95 / p99 | OKX p50 / p95 / p99 |
+|---|---:|---:|
+| QUOTE (2,750 samples/venue) | 9.72 / 24.38 / 46.53 | 9.91 / 21.59 / 33.30 |
+| MARK/INDEX (4,125/venue) | 11.07 / 23.26 / 39.69 | 11.18 / 22.52 / 38.11 |
+| TRADE (55/venue; p99 unavailable) | 9.79 / 23.78 / - | 13.23 / 29.51 / - |
+| L2 snapshot (54/55; p99 unavailable) | 25.76 / 44.75 / - | 28.92 / 44.53 / - |
+| Final BAR latest (55/venue; p99 unavailable) | 15.31 / 29.55 / - | 18.58 / 36.15 / - |
+
+Cold history under this load: 2,500 rows3,189-5,144ms; 5,000 rows4,838-6,956ms
+(four reads, not a percentile). Full serving stack averaged4.582vCPU including
+brokers/provider Redis; old rollback overhead1.337 and TS0.427 measured separately.
+This does not certify arbitrary50 consumers, infinite history or multi-host HA.
+Retained-window diagnostic:702 scanned,6 disabled,4 VN unavailable; not full
+listing-history completeness. Provider-discontinuous Binance3d windows remain
+explicitly unavailable to strict full-history reads, never interpolated.
+
+See [current journal](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-production-handoff-20260927)
+and [cutover/rollback runbook](./docs/runbooks/kn5-paired-cutover.md).
+
 ## Quick Links
 
 - [Integration guide](./DATA_LAYER_SERVICE_ACCESS_GUIDE.md)
@@ -78,7 +122,7 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 - **Alpha strategy example** — moving-average crossover strategy included as a reference implementation
 - 🐳 **Docker-first** — full Docker Compose stack with networking, volumes, and log management
 
-## V2 Stable Architecture
+## Historical V2.1.0 Architecture (Retained Rollback)
 
 ```text
  Binance USD-M WS/REST                 OKX Swap WS/REST
