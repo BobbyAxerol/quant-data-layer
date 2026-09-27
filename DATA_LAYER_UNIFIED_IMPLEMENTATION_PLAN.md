@@ -58582,6 +58582,63 @@ Python build path typo failed before build and was corrected; clean dependency
 resolution then failed on the two upstream404 packages, retained in separate
 logs. The dependency-image option will be used explicitly for final packaging;
 this is verified installed content, not a fabricated upstream wheel artifact.
+Final packaging02cd827: Python and Rust images built, non-root10001. Local
+base digest resolution tried the registry and failed (unpublished local base);
+resolved using an OCI layout exported from that exact image with every blob
+hash checked, supplied as a named build context. No base retag/substitution.
+Packaged Python64/64PASS,0skip on disposable Redis without host source mounts;
+native12 binary linkages PASS, both KN roles fail closed on missing config;
+Query/BAR imports and dependency receipt PASS. SDK from02cd827 reproduces the
+same216f3109... wheel. No runtime latency/performance result is invented here.
+Cleanup next: remove intermediate Rust81d4912 image after checking no container
+reference, exact owned native-builder cache IDs, both disposable build contexts
+and duplicate OCI export. Keep final Python/Rust02cd827, verified dependency
+base17a35977 and every existing production/rollback image/state. No broad prune.
+
+**Checkpoint: PACKAGED_AND_AFFECTED_TESTS_PASS / RUNTIME_GATES_OPEN.**
+[Machine-readable receipt](upgrade/evidence/KN5_PREDEPLOY_GAP_CLOSURE.json).
+Source commits81d4912 +02cd827; BobbyAxerol identity; not pushed or merged.
+Final candidate images (both source02cd827, not deployed/released):
+- Python `qdl-v2-python:2.2.0-rc1-02cd827`, digest
+  `sha256:9ed25f9e5d7632e0814e4f577072a8aea2b6ceb0d53c036a3c617e2f8da55a3f`.
+- Rust `qdl-v2-rust:2.2.0-rc1-02cd827`, digest
+  `sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f`.
+- SDK2.0.4 wheel216f3109...; same-tree deterministic build and standalone smoke.
+
+| Gap | Honest closure state |
+|---|---|
+| 1 old production architecture | NOT RETIRED; cannot certify replacement before deployment. Paired handoff and old-writer stop remain K5.3/K5.6. |
+| 2 expired research L2 | Source retired exactly4; catalog11/712; TS/alpha unchanged; idempotency/ownership regressions pass. |
+| 3 diagnostic/history | Missing generation and retained bounds fixed/tested; five authentic provider3d overlap windows remain unavailable for strict full history, not fabricated/repaired. |
+| 4 whole budget | Full-cap padded allocator plus staging PASS; maxmemory8e9/container9GiB proposed. Full native replay and whole-stack CPU still need same-window quota Redis measurement. |
+| 5 artifact/handoff | Immutable same-SHA Python/Rust/SDK packaging PASS; exact current22-role rollback snapshot and offline topic packet prepared. Dedicated-principal trust activation, actual paired rollback-return and remote CI/publication not executed. |
+| 6 tracker | Reconciled with existing 50+TS evidence and current remaining gates; no new phase. |
+
+Production inventory compared before/after:22/22 same container/image/start/restart/
+OOM/CPU/RAM configuration; no runtime impact. One canonical checkout only at
+`/home/bobby/data_layer`, `feat/consumer-endpoint-benchmark`; main/dev unchanged
+`e6955f33...`, published tagv2.1.0. Owner's two unrelated plan hunks still unstaged.
+
+Cleanup receipt `kn5-close-20260927/cleanup.json`:0 owned test containers/networks;
+intermediate Rust81d4912 image removed; exact native-builder cache handles removed
+(~1.946GB reported). Default filtered prune initially reclaimed0; adding `--all`
+with SAME explicit IDs removed shared builder references, not image/volume data.
+Both build contexts and duplicate OCI archive/layout removed. Filesystem used
+192,535,576,576 ->189,615,525,888 B (net2,920,050,688 B reduction; concurrent host
+writes mean this is filesystem delta, not exact Docker attribution). Final2.2.0-rc1
+candidates and verified dependency base retained explicitly; active/rollback sets
+untouched. No broad prune, volume removal, production SQL/Redis/Kafka mutation.
+
+Next existing KN-5 action: finalize exact production trust/config/role packet,
+start candidate without spool import, measure whole serving stack incl. quota
+Redis, fast readiness/coverage -> paired handoff/rollback-return -> one300s
+no-order acceptance -> stop legacy writers -> approved CI/release workflow.
+Not CERTIFIED_PENDING_PUBLICATION yet: runtime gates genuinely remain open.
+Read-only handoff check: `docker exec market_data_service python -B ...`
+reports SDK2.0.3, not candidate2.0.4. Native cursor offset0 compatibility must
+be included in the existing paired consumer handoff; do not assume building a
+wheel updates TS. No consumer image/config was changed. Remote CI also needs
+the pinned dependency OCI/registry artifact; local packaging PASS is not CI PASS.
 
 <a id="kn5-astra-correctness-handoff"></a>
 #### KN-5 Astra Implementation / Claude Review (2026-09-26)

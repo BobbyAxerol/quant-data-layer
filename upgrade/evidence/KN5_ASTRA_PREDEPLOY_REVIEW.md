@@ -1,5 +1,11 @@
 # KN-5 Astra Corrections / Claude Review Receipt
 
+> Superseded current status (2026-09-27):
+> [predeploy gap closure](../../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-predeploy-gap-closure)
+> and [candidate receipt](KN5_PREDEPLOY_GAP_CLOSURE.json).
+> This file preserves the earlier shadow measurements and review history;
+> Claude review is no longer an additional owner-imposed release prerequisite.
+
 Status: **IMPLEMENTED_SHADOW_TESTED_PENDING_CLAUDE_REVIEW. NOT DEPLOYED. NOT A RELEASE CERTIFICATE.**
 > **Current review: see [post-patch authentic acceptance](#post-patch-acceptance).**
 > The source-only and old-shadow report below is preserved as history, not the

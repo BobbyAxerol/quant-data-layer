@@ -10,12 +10,21 @@ No additional phase. This runbook is not a deployment authorization.
   `qdl-projector` and `qdl-stream-gateway` INSIDE the Rust image, not host mounts.
   Build standalone SDK from the same tree. Record image IDs, labels, wheel hash,
   source commit and affected test receipts. Do not retag an old binary as new.
+- Runtime TS was read-only checked at SDK2.0.3. Candidate SDK2.0.4 adds offset0
+  cursor support: include the market-data consumer SDK artifact/update in the
+  handoff packet, or prove that exact deployed client against the KN cursor
+  boundary before routing. A built wheel does not update a running consumer.
+  No TS executor/risk/portfolio or strategy behavior change is included.
 - If locked upstream packages are unavailable, `Dockerfile` accepts
   `QDL_DEPENDENCY_IMAGE=<name>@sha256:<digest>`. It verifies active main-lock
   versions and installed RECORD hashes before copying only `/opt/venv`; the
   receipt is embedded at `/opt/qdl/dependency-receipt.json`. No source from the
   dependency image is reused. Keep that immutable dependency artifact available
   for reproducibility; do not silently update VN packages or use a mutable tag.
+  A local unpublished digest can be supplied with Buildx named context
+  `<name>@sha256:<digest>=oci-layout://<export-dir>@sha256:<digest>` after
+  verifying its exported OCI blobs. Remote CI needs that same OCI artifact or
+  an approved registry copy; a local daemon tag is not a remote build input.
 - Candidate source: catalog11/712 bindings, acquisition19, promotion scope10,
   release routing27, alpha manifests14/14, TS10, research6. Compile gateway
   bundle with `scripts/kn_gateway_bundle.py`; verify routing hashes using the

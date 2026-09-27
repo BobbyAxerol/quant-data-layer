@@ -1,0 +1,171 @@
+{
+  "schema": "qdl.kn5.predeploy-closure.v1",
+  "date_utc": "2026-09-27",
+  "status": "PACKAGED_AND_AFFECTED_TESTS_PASS_RUNTIME_GATES_OPEN",
+  "source_sha": "02cd8276d65d263944001ee8b3c88a916e1264cb",
+  "production_mutation": false,
+  "release_certified": false,
+  "pushed": false,
+  "images": {
+    "python": {
+      "reference": "qdl-v2-python:2.2.0-rc1-02cd827",
+      "image_digest": "sha256:9ed25f9e5d7632e0814e4f577072a8aea2b6ceb0d53c036a3c617e2f8da55a3f",
+      "labels": {
+        "io.qdl.dependency-image": "qdl-v2-python@sha256:17a359779702e7b1ced2bd38acdf07267246b54db969f9bc25d6aec238599d06",
+        "org.opencontainers.image.revision": "02cd8276d65d263944001ee8b3c88a916e1264cb",
+        "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+        "org.opencontainers.image.title": "Quant Data Layer",
+        "org.opencontainers.image.version": "2.2.0-rc1"
+      },
+      "user": "qdl:qdl",
+      "size_bytes": 206139102
+    },
+    "rust": {
+      "reference": "qdl-v2-rust:2.2.0-rc1-02cd827",
+      "image_digest": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "labels": {
+        "org.opencontainers.image.revision": "02cd8276d65d263944001ee8b3c88a916e1264cb",
+        "org.opencontainers.image.title": "Quant Data Layer Rust runtime",
+        "org.opencontainers.image.version": "2.2.0-rc1"
+      },
+      "user": "10001:10001",
+      "size_bytes": 59723613
+    }
+  },
+  "sdk_wheel_sha256": "216f3109c2ac5926f796d4bd1748440db8d337e63a5b2a81514e4e273a2c9b34",
+  "candidate_revisions": {
+    "catalog": 11,
+    "catalog_bindings": 712,
+    "acquisition": 19,
+    "promotion_scope": 10,
+    "release_routing": 27,
+    "alpha_binance": 14,
+    "alpha_okx": 14,
+    "trading_system": 10,
+    "reference_research": 6
+  },
+  "findings": [
+    {
+      "id": 1,
+      "status": "PRODUCTION_CUTOVER_NOT_EXECUTED",
+      "detail": "Old six SQLite projectors still running; retirement requires paired accepted handoff."
+    },
+    {
+      "id": 2,
+      "status": "SOURCE_AND_REGRESSION_PASS",
+      "detail": "Exactly four expired research L2 bindings retired; no TS/alpha retirement, metadata preserved."
+    },
+    {
+      "id": 3,
+      "status": "DIAGNOSTIC_FIXED_PROVIDER_HISTORY_NOT_CERTIFIED",
+      "detail": "Missing generation is explicit; retained window never implies edge coverage. Five real Binance 3d windows overlap at provider and remain fail-closed."
+    },
+    {
+      "id": 4,
+      "status": "FULL_CAP_ALLOCATOR_PASS_FULL_STACK_CPU_INCOMPLETE",
+      "detail": "7,769,216 layout rows plus staging fit measured 8e9 maxmemory/9GiB; not native full-replay proof. 3.852 measured cores excludes unrecorded coordination Redis."
+    },
+    {
+      "id": 5,
+      "status": "LOCAL_IMMUTABLE_PACKAGING_PASS_HANDOFF_RELEASE_OPEN",
+      "detail": "Rust/Python/SDK from same source; no registry publication/remote CI, paired production rollback-return or final runtime acceptance yet."
+    },
+    {
+      "id": 6,
+      "status": "TRACKER_RECONCILED",
+      "detail": "Existing 50+TS acceptance retained; current remaining gates explicit, no added phase."
+    }
+  ],
+  "packaged_python_tests": {
+    "run": 64,
+    "passed": 64,
+    "failed": 0,
+    "skipped": 0,
+    "source_host_mount": false,
+    "redis": "disposable isolated real Redis"
+  },
+  "native_packaging": {
+    "binary_linkages": 12,
+    "nonroot_uid": 10001,
+    "missing_config_fail_closed_roles": 2,
+    "native_domain_logic_changed": false
+  },
+  "new_latency_benchmark": false,
+  "evidence": [
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/candidate-builds.json",
+      "sha256": "9b77748e92fb7f42194a824fede17c75a2a94c41066f66ac56dfbfa24f6720b7"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/candidate-images.json",
+      "sha256": "66b2eaf981998b100b1e7da4d316244346e20d9a9b4a68d6a83cf53fac6175ef"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/candidate-bundle.json",
+      "sha256": "3fa2403743224a85e3f3769872d50478505bcc9461f15c6e0141b3c4431743c7"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/binance-3d-provider.json",
+      "sha256": "5536986382d8250ae2336892629eb8d051491087ddac4ad35086695d248664de"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/full-capacity.json",
+      "sha256": "ea682b78580480303e4582da70237aa2e7cfd770810e26cf735722ffca8b9a70"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/serving-cpu-accounting.json",
+      "sha256": "bb6894392cf50143541b846b3ffb10efd33ca18d0e360e0c189ab96586d8c3a9"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/production-rollback-manifest.json",
+      "sha256": "4534fa3ac24bdbd2f700f4a9e1a4f089e7b495ac69b5c738bbc5d8bb2e783c88"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/state-topics-packet.json",
+      "sha256": "35715bdf793e645b78f9f0bc901af9de2e6deb5fa2de3a0cdd15f1b0ec8b9473"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/native-smoke.json",
+      "sha256": "81a761850909bf987546a80ac129f2410285ba6182b9327624efd465b2965ee7"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/native-linkage.log",
+      "sha256": "20d3d9e726915ae8a45fc1635113ef3d2a79590027400d85b02ca39f7a94131a"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/packaged-python-tests.log",
+      "sha256": "8fc96d1b581728f1821fd5aff5f37f8b73e01793a36f8f2c833bde117fcff36a"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/python-import-smoke.log",
+      "sha256": "c67019dba623ac22e5d56b894c9f77a5a00d00f9d788652615de55871f147762"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/sdk-smoke.log",
+      "sha256": "b3fc1f19531b8456771062928235f3f6a3d5240c415cf22bd8310d67dce1aeea"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/cleanup.json",
+      "sha256": "4488da83d06ceaa8195003e2fbb8152ddbd5878571d8413641b235d75da9624f"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/runtime-unchanged.json",
+      "sha256": "fa71c7e39c1e3a946c6978fd236a88c23a404e055317376dc1fed37e68b9cd56"
+    },
+    {
+      "path": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/sdk/qdl_sdk-2.0.4.release.json",
+      "sha256": "30f3c72993da8c374e0f80656249ce8bb255f434c529161050629ce82a4a61d1"
+    }
+  ],
+  "production_ts_sdk": "2.0.3",
+  "candidate_sdk": "2.0.4",
+  "remaining_handoff_checks": [
+    "dedicated projector identity trust activation",
+    "producer maps for added 500 daily BAR bindings",
+    "whole-stack same-window resource measurement incl coordination Redis",
+    "paired Query/Stream and SDK offset0 handoff",
+    "rollback-return and final no-order acceptance",
+    "old SQLite writer retirement",
+    "remote CI and registry publication"
+  ]
+}
