@@ -60521,3 +60521,29 @@ gates. Reference item errors stay visible with require_all=False as in TS;
 status must beOK, and no retry or quiet-price exemption is introduced.
 Guide clarifies the two contracts.8focused unitPASS (3path+5timing), existing
 Query image with source mounted read-only/network none. No runtime rollout.
+
+#### Actual adapter capacity checkpoint - no sustained capacity pass
+
+Native driver fixture corrected require_final_bars=false to match actual TS
+TRADE signed digest;2Rust tests/release buildPASS. TS actual-facade harness and
+focused regressions169PASS. Core production conversion is no longer replaced by
+a lookalike test loop. Exact offset/provider-byte oracle, final Redis and durable
+cursor checks retained. No buffer increase, no production changes.
+
+Steady4000/s:55050/55430applied in34.276s, CPU34.239s; bounded replay backlog
+exhausted after overflow. Steady5000/s:54939/55430applied in33.459s, CPU33.581s;
+not certified. Captured low1000/high5000/low1000 burst33.253s plus2sclient loss
+and10sslow reader:55430/55430ordered identities PASS, Redis/ACK10/10; caught up
+7.126s after producer finish,4overflows/13148replayed then queue0. This is bounded
+burst/drain evidence, not sustained5000 or production Kafka ingest capacity.
+Per-reader saturation attribution remains limited; do not infer isolated queue
+telemetry from aggregate overflow. Original provider clocks unchanged/test clock
+explicit. Corrected profile harness self-time0.425s/10.90s; serial consumer CPU
+remains the sustained bottleneck. Execution status remains NOT_FULL.
+
+TS serialization patch5970299 eliminates redundant legacy deep-copy;9unitPASS
+and identical-operation microbenchmark measured38.44% less CPU for that function,
+not a38% whole-system improvement. Harness evidence and commands indexed at
+burst-recovery-20260927/adapter-capacity-checkpoint.json. Disposable clients removed;
+no new image. Six anonymous-volume candidates retained without exact ownership,
+not broadly deleted. Active/rollback images unchanged. No push/merge/release.

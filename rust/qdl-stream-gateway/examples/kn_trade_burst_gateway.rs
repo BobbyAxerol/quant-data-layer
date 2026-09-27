@@ -183,7 +183,7 @@ fn requirement(uid: &str, template: &Value) -> query::DataRequirement {
         recovery_policy: query::RecoveryPolicy::SnapshotAndReplay as i32,
         revision_policy: query::BarRevisionPolicy::Latest as i32,
         require_full_coverage: true,
-        require_final_bars: true,
+        require_final_bars: false,
         event_recency_policy: query::StalePolicy::Observe as i32,
         max_freshness_ms: template["requirement"]["max_freshness_ms"]
             .as_u64()
@@ -583,7 +583,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod scheduling_tests {
-    use super::scheduled_seconds;
+    use super::{requirement, scheduled_seconds};
+
+    #[test]
+    fn trade_requirement_matches_production_facade_cursor_binding() {
+        let template = serde_json::json!({"requirement": {
+            "source_policy_id": "crypto_primary_v2",
+            "max_freshness_ms": 3000,
+            "max_session_liveness_ms": 45000
+        }});
+        let request = requirement("11111111-1111-5111-8111-111111111111", &template);
+        assert!(!request.require_final_bars);
+        assert!(request.require_full_coverage);
+        let actual = qdl_contracts::requirement::ValidatedRequirement::from_proto(&request)
+            .expect("valid production TRADE requirement");
+        let mut mismatched = request.clone();
+        mismatched.require_final_bars = true;
+        let old = qdl_contracts::requirement::ValidatedRequirement::from_proto(&mismatched)
+            .expect("old fixture remains syntactically valid");
+        assert_ne!(actual.delivery.digest(), old.delivery.digest());
+    }
     #[test]
     fn constant_and_burst_are_bounded_monotonic_schedules() {
         assert_eq!(scheduled_seconds(10000, 10000, 5000, 5000), 2.0);
