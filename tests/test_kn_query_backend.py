@@ -395,6 +395,29 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         self.assertEqual(item.payload, spool.items[-1].payload)
         self.assertEqual(parse_placeholder(item.cursor), (TOPIC_ID, 3, 4_321))
 
+    def test_binance_3d_suffix_does_not_certify_the_uncaptured_older_prefix(self):
+        from qdl.query import CoverageStatus
+        from qdl.query.contracts import evaluate_requirement
+
+        pk, real_bar = next((pk, raw) for pk, raw in golden_records(bar=True)
+                            if pk.endswith("binance-usdm-dogeusdt-bar-3d-primary-v2"))
+        binding = binding_of(self.catalog, pk, real_bar)
+        rows = [derived_bar(real_bar, -shift) for shift in range(3)]
+        self.now_ns = (open_ms_of(real_bar) + canonical_interval_ms("3d")) * 1_000_000 + 5_000_000_000
+        self.put_bars(binding, rows)
+        backend = self.backend()
+        recent = backend.history(requirement(binding, 3))
+        self.assertEqual(len(recent.items), 3)
+        self.assertEqual(recent.coverage, CoverageStatus.FULL)
+        full_request = requirement(binding, 10000)
+        incomplete = backend.history(full_request)
+        self.assertEqual(len(incomplete.items), 3)
+        self.assertEqual(incomplete.coverage, CoverageStatus.PARTIAL)
+        problem = evaluate_requirement(full_request, coverage=incomplete.coverage,
+                                       entitled=True, available=True, fresh=True,
+                                       authoritative=True, gap_open=False)
+        self.assertEqual(problem.code, CanonicalErrorCode.PARTIAL_RESULT)
+
     def test_a_time_range_reads_exactly_its_opens(self):
         payloads = self.history_rows(300)
         self.put_bars(self.bar_binding, payloads, offsets=[10 + index for index in range(300)], mark=400)

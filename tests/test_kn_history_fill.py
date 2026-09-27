@@ -31,6 +31,55 @@ def _bundle():
     return {"catalog": {"bindings": bindings}, "manifests": manifests}
 
 
+class BinanceNativeThreeDayTests(unittest.TestCase):
+    """Synthetic OHLCV with provider-observed timestamps; never provider replay."""
+
+    def test_recent_exact_window_and_overlap_never_become_truncated_success(self):
+        from dataclasses import replace
+        import json
+        from unittest.mock import patch
+        from qdl.adapters.binance.bar_edge import fetch_closed_bar_history_raw_envelopes
+        from qdl.adapters.intervals import BarHistoryGapError
+
+        duration = 259200000
+        for symbol, previous, current in (
+            ("BTCUSDT", 1569110400000, 1569283200000),
+            ("ETHUSDT", 1691971200000, 1692144000000),
+            ("BNBUSDT", 1691971200000, 1692144000000),
+            ("SOLUSDT", 1692057600000, 1692144000000),
+            ("DOGEUSDT", 1692057600000, 1692144000000),
+        ):
+            binding = replace(ShortProviderHistoryTests()._binding(),
+                              native_symbol=symbol, interval="3d")
+            rows = [ShortProviderHistoryTests._row(t) for t in
+                    (previous - duration, previous, current, current + duration)]
+            for row in rows:
+                row[6] = row[0] + duration - 1
+            saved = [list(row) for row in rows]
+            calls = []
+
+            def fetch(_symbol, *, limit, end_time, **kwargs):
+                calls.append((limit, end_time))
+                return {"data": [row for row in rows if row[0] <= end_time][-limit:]}
+
+            kwargs = dict(now_ms=current + 3 * duration, attempts=1,
+                          fetcher=fetch, test_provenance=True)
+            with self.subTest(symbol=symbol, window="recent"):
+                values = fetch_closed_bar_history_raw_envelopes(binding, limit=2, **kwargs)
+                self.assertEqual([json.loads(v.raw_frame_bytes)["row"] for v in values], rows[-2:])
+            for page_size, limit, allow_short in ((1000, 4, False), (2, 4, False), (1000, 10, True)):
+                with self.subTest(symbol=symbol, page_size=page_size, allow_short=allow_short):
+                    with patch("qdl.adapters.binance.bar_edge._HISTORY_PAGE_ROWS", page_size):
+                        with self.assertRaises(BarHistoryGapError) as caught:
+                            fetch_closed_bar_history_raw_envelopes(
+                                binding, limit=limit, allow_short=allow_short, **kwargs)
+                    self.assertEqual(caught.exception.kind, "OVERLAPPING_PROVIDER_WINDOWS")
+                    self.assertEqual((caught.exception.previous, caught.exception.current),
+                                     (previous, current))
+            self.assertEqual(rows, saved)
+            self.assertLessEqual(len(calls), 6)
+
+
 class DemandTests(unittest.TestCase):
     def test_the_largest_demand_of_a_requiring_manifest_per_bar_binding(self):
         self.assertEqual(demanded_history_rows(_bundle()), {"b-1m": 10000, "b-1h": 500, "b-nobody": 0})
@@ -230,6 +279,59 @@ class EdgeFillTests(unittest.TestCase):
         edge._fetch_history = fetch
         edge._publish_history = publish
         return edge
+
+    def test_overlap_rechecks_daily_without_completing_or_starving_other_history(self):
+        from qdl.adapters.intervals import BarHistoryGapError
+        edge = self._edge(demand=None, gate=None)
+        original = edge._fetch_history
+        calls = []
+
+        def refused(source, acquisition, **kwargs):
+            if source.binding_id == "a":
+                calls.append(source.binding_id)
+                raise BarHistoryGapError("Binance", "TEST_ONLY", "3d",
+                                         1691971200000, 1692144000000)
+            return original(source, acquisition, **kwargs)
+
+        edge._fetch_history = refused
+        edge.bootstrap_history()
+        self.assertEqual(edge._history_retry, {"a": (1, 86401.0)})
+        self.assertNotIn("a", edge._last_open_ms)
+        self.assertNotIn("a", edge._history_short)
+        self.assertFalse(edge._history_bootstrapped)
+        self.assertEqual(self.published, [("b", 7)])
+        edge._rest_fallback_active = False
+        self.assertEqual(edge._loop_sleep_seconds(1), 60)
+        for now in (31, 61, 3601, 86400):
+            edge.clock = lambda: now
+            edge.bootstrap_history()
+        self.assertEqual(calls, ["a"])
+        edge.clock = lambda: 86401.0
+        edge.bootstrap_history()
+        self.assertEqual(calls, ["a", "a"])
+        self.assertEqual(edge._history_retry, {"a": (2, 172801.0)})
+        edge.clock = lambda: 172801.0
+        edge._fetch_history = original
+        edge.bootstrap_history()
+        self.assertEqual(edge._history_retry, {})
+        self.assertTrue(edge._history_bootstrapped)
+
+    def test_missing_window_keeps_bounded_transient_retry_and_legacy_raises(self):
+        from qdl.adapters.intervals import BarHistoryGapError
+        error = BarHistoryGapError("Binance", "TEST_ONLY", "1m", 60000, 180000)
+        self.assertEqual([error.retry_delay_seconds(n) for n in (1, 2, 5, 1000)],
+                         [2, 4, 30, 30])
+        edge = self._edge(demand=None, gate=None)
+
+        def refused(*args, **kwargs):
+            raise error
+
+        edge._fetch_history = refused
+        edge.bootstrap_history(max_bindings=1)
+        self.assertEqual(edge._history_retry, {"a": (1, 3.0)})
+        edge.bar_readback = None
+        with self.assertRaises(BarHistoryGapError):
+            edge.bootstrap_history(max_bindings=1)
 
     def test_depth_by_demand_and_short_or_empty_history_are_reported(self):
         edge = self._edge(demand={"a": 5000, "b": 10_000, "c": 0}, gate=None)

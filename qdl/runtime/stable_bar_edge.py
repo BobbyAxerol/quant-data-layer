@@ -14,6 +14,7 @@ from pathlib import Path
 
 from qdl.adapters.intervals import (
     BarHistoryGapError,
+    BarHistoryOverlapError,
     canonical_interval_ms,
     is_valid_bar_open_ms,
     latest_closed_boundary_ms,
@@ -347,6 +348,8 @@ class StableBinanceBarEdge:
         self.history_demand = dict(history_demand) if history_demand is not None else None
         self.history_gate = history_gate
         self._history_short: dict[str, tuple[int, int]] = {}
+        self._history_suspended: dict[str, dict] = {}
+        self._history_suffix_pending: dict[str, BarHistoryOverlapError] = {}
         self._history_gate_closed_at: float | None = None
         # KN-4 D47-4: the history/live join. History holds bars closed before
         # ``history_end_ms`` (the live log's start, e.g. the mirror start);
@@ -487,6 +490,7 @@ class StableBinanceBarEdge:
             "connection_generation": self.connection_generation,
             "last_open_ms": {
                 key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
+                if key not in getattr(self, "_history_suspended", {})
             },
         }
 
@@ -825,7 +829,9 @@ class StableBinanceBarEdge:
         self._assert_canonical_cache_identity()
         if advance_watermark:
             # Publish progress: the live watermark may move on the Kafka ACK.
-            self._last_open_ms[plan.source.binding_id] = max(plan.expected_opens)
+            self._last_open_ms[plan.source.binding_id] = max(
+                max(plan.expected_opens), self._last_open_ms.get(plan.source.binding_id, 0)
+            )
             self._persist_state()
             self._record_serving(plan.source.binding_id, plan.expected_opens,
                                  published=bool(current.missing_envelopes))
@@ -1062,6 +1068,8 @@ class StableBinanceBarEdge:
         previous_cache_id = self.canonical_cache_id
         self.canonical_cache_id = observed_cache_id
         self._last_open_ms.clear()
+        for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
+            getattr(self, name, {}).clear()
         self._native_recovery_pending.clear()
         self._native_recovery_verified_open.clear()
         self._native_gap_first_seen_at.clear()
@@ -1315,6 +1323,8 @@ class StableBinanceBarEdge:
             if previous is not None and generation != previous:
                 rebased.append(binding_id)
                 self._last_open_ms.pop(binding_id, None)
+                for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
+                    getattr(self, name, {}).pop(binding_id, None)
                 for store in (self._native_recovery_pending, self._native_recovery_verified_open,
                               self._native_gap_first_seen_at, self._native_recovery_visible_after,
                               self._retry_attempts, self._next_retry_at, self._serving_pending):
@@ -1379,6 +1389,7 @@ class StableBinanceBarEdge:
                 "served": len(self._served), "pending": len(self._serving_pending),
                 "overdue": len(self._serve_overdue), "short": len(getattr(self, "_history_short", {})),
                 "history_failed": len(getattr(self, "_history_retry", {})),
+                "history_suspended": len(getattr(self, "_history_suspended", {})),
                 "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
 
     def bootstrap_history(self, *, max_bindings: int | None = None) -> int:
@@ -1401,8 +1412,13 @@ class StableBinanceBarEdge:
         kn_mode = getattr(self, "bar_readback", None) is not None
         failures = getattr(self, "_history_retry", {})
         self._history_retry = failures
+        suspended = getattr(self, "_history_suspended", {})
+        self._history_suspended = suspended
+        pending = getattr(self, "_history_suffix_pending", {})
+        self._history_suffix_pending = pending
         for source, acquisition in self.history_bindings + self.history_okx_bindings:
-            if source.binding_id in self._last_open_ms or source.binding_id in self._history_short_empty():
+            if ((source.binding_id in self._last_open_ms and source.binding_id not in suspended)
+                    or source.binding_id in self._history_short_empty()):
                 continue
             if kn_mode and not self._history_gate_open():
                 return published  # resumed on a later turn; live bars keep flowing
@@ -1414,15 +1430,53 @@ class StableBinanceBarEdge:
             attempted += 1
             bootstrap_rows = self._bootstrap_rows_for(source)
             try:
+                if source.binding_id in pending:
+                    raise pending[source.binding_id]
                 values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
                     observed_ms=observed_ms, allow_short=kn_mode)
             except BarHistoryGapError as error:
                 if not kn_mode:
                     raise
                 attempt += 1
-                failures[source.binding_id] = (attempt, self.clock() + min(2 ** min(attempt, 6), 30))
-                logger.error("stable BAR provider history refused binding=%s attempt=%s error=%s",
-                             source.binding_id, attempt, error)
+                retry_delay = error.retry_delay_seconds(attempt)
+                failures[source.binding_id] = (attempt, self.clock() + retry_delay)
+                logger.error("stable BAR provider history refused binding=%s attempt=%s retry_in_seconds=%s error=%s",
+                             source.binding_id, attempt, retry_delay, error)
+                if isinstance(error, BarHistoryOverlapError):
+                    values = error.recent_envelopes
+                    opens = tuple(self._open_time_ms(acquisition, item) for item in values)
+                    # Keep failed deep coverage separate from a live watermark.
+                    # The legacy checkpoint excludes suspended bindings, so a
+                    # restart rechecks them rather than claiming full bootstrap.
+                    suspended[source.binding_id] = {
+                        "status": error.older_prefix_status, "requested_rows": error.requested_rows,
+                        "previous_ms": error.previous, "current_ms": error.current,
+                        "recent_from_ms": min(opens), "recent_rows": len(values),
+                    }
+                    # Retain only the outcome, not traceback frames from each
+                    # failed sink retry (which would accumulate indefinitely).
+                    pending[source.binding_id] = BarHistoryOverlapError(
+                        error.provider, error.symbol, error.interval, error.previous, error.current,
+                        requested_rows=error.requested_rows, recent_envelopes=values,
+                    )
+                    try:
+                        published += self._publish_history(
+                            source, acquisition, values, expected_rows=len(values),
+                        )
+                    except Exception:
+                        # Retry publication of these same bytes, not provider
+                        # pagination, when the durable sink temporarily fails.
+                        failures[source.binding_id] = (attempt, self.clock() + 30)
+                        raise
+                    pending.pop(source.binding_id, None)
+                    logger.warning("stable BAR recent suffix materialized binding=%s rows=%s "
+                                   "first_open_ms=%s older_prefix=%s requested_rows=%s",
+                                   source.binding_id, len(values), min(opens),
+                                   error.older_prefix_status, error.requested_rows)
+                continue
+            if source.binding_id in suspended and not values:
+                failures[source.binding_id] = (attempt + 1, self.clock() + 86_400)
+                logger.error("stable BAR suspended history recheck empty binding=%s", source.binding_id)
                 continue
             failures.pop(source.binding_id, None)
             if len(values) < bootstrap_rows:
@@ -1439,8 +1493,11 @@ class StableBinanceBarEdge:
                 values,
                 expected_rows=len(values),
             )
+            if source.binding_id in suspended:
+                suspended.pop(source.binding_id)
+                self._persist_state()
         self._history_bootstrapped = (
-            set(self._last_open_ms) | self._history_short_empty() == set(self._binding_ids)
+            (set(self._last_open_ms) - set(suspended)) | self._history_short_empty() == set(self._binding_ids)
         )
         if not self._history_bootstrapped:
             if kn_mode and failures:
@@ -1935,7 +1992,8 @@ class StableBinanceBarEdge:
                 or getattr(self, "_history_bootstrapped", False)):
             return None
         retries = getattr(self, "_history_retry", {})
-        missing = set(self._binding_ids) - set(self._last_open_ms) - self._history_short_empty()
+        complete = set(self._last_open_ms) - set(getattr(self, "_history_suspended", {}))
+        missing = set(self._binding_ids) - complete - self._history_short_empty()
         if not missing:
             return None
         return max(.1, min(max(0., retries.get(key, (0, now))[1] - now) for key in missing))

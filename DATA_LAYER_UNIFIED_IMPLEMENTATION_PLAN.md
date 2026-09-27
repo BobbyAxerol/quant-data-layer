@@ -60349,3 +60349,42 @@ wrong key/realm/consumer/revision, unknown mappings, preserved quotas/purposes,
 no implicit other-consumer promotion, and FORBIDDEN alpha authority preservation.
 Ruff targeted security/compiler/tests PASS with --isolated (repository Poetry
 requires-python caret is rejected by installed Ruff TOML parser otherwise).
+
+#### Native history and full transport measurement checkpoint
+
+Native Binance3d overlap confirmed by admitted real provider calls across five
+symbols, original response bytes/hashes retained in native3d-audit-20260927T163746Z.
+Implemented typed validated recent suffix outcome: Query larger requested windows
+remain PARTIAL, edge may materialize only independently verified recent final bars.
+No rewriting timestamps, no silently successful short history. Old overlap retries
+are daily, sink retry reuses bounded captured suffix, final-bar watermark remains
+separate from failed deep-history coverage. Tests114PASS/2explicit skips; isolated
+Redis41/41PASS. Receipt native3d-suffix-20260927T170112Z/handoff.json records commands,
+source hashes and cleanup. Five further real provider reads preserve original bytes.
+
+Full capture transport acceptance now includes native Rust gRPC with ephemeral
+mTLS, production SDK validation and fsynced cursor ACK, TS projection and isolated
+Redis. At2000event/s:110860/110860 across10products in55.710s,0duplicates/reconnects/
+cursorerrors, exact per-product canonical digest order and finalACK; no OOM.
+This is capture replay under explicit projection-time clock, not current-price
+eligibility nor a Kafka-ingestion capacity test. Constant original provider bytes
+are reused20times with test-only monotonic log offsets. No production market writes.
+
+4000event/s debug attempt FAILED, followed once by optimized release comparison:
+release offered110860 in27.714s,max producerlateness5.24ms,hub sampledlag17,
+3overflows,client31251received/30991applied before harness stopped on reconnect
+superseding an unACKed batch. No OOM/decode/reader/cursorerrors. End queue0 after
+abort is NOT recovery success. Do not certify4000fullchain or edit away failure.
+Changing test to discard/replay unACKed batch was rejected by automatic review;
+no such edit executed. Existing fail evidence is retained. User-requested4000
+capacity question therefore remains negative for this current single consumer.
+
+New identity manifests prepared, NOT active: TS60 and alpha375 each for sandbox
+and live. CA private key never persisted, independent workload TLS/JWT keys,
+additive client trust copies only. Scope: existing Query1/2 and Stream1/2; image/
+config rollback recorded before action. No broker ACL, canonical realm, Kafka,
+cache, V1, TSorder or alpha mutation. BAR-edge rollout follows Query coverageguard,
+normal verified five-symbol3d bootstrap writes only; no offset reset/state deletion.
+After suffix publication, do not rollback Query's PARTIAL guard: auth rollback can
+restore old paper config on the fixed image. Old query image remains emergency
+rollback with the pre-existing3d coverage limitation explicitly not certified.

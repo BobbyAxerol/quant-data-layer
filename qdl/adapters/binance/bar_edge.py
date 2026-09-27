@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
-from qdl.adapters.intervals import BarHistoryGapError, canonical_interval_ms, latest_closed_boundary_ms
+from qdl.adapters.intervals import (
+    BarHistoryGapError, BarHistoryOverlapError, canonical_interval_ms,
+    is_valid_bar_open_ms, latest_closed_boundary_ms,
+)
 from qdl.provider.v1 import raw_provider_pb2
 from qdl.raw.capture import capture_exact_frame
 
@@ -236,6 +239,43 @@ def fetch_closed_bar_history_raw_envelopes(
             observed_ms=observed_ms,
             interval_ms=interval_ms,
         )
+        if len(closed) > page_limit or any(int(row[0]) > page_end_ms for row in closed):
+            raise RuntimeError("Binance closed-bar history page exceeds requested end boundary")
+        for row in closed:
+            open_time = int(row[0])
+            previous = selected_by_open.get(open_time)
+            if previous is not None and previous != row:
+                raise RuntimeError("Binance history pages conflict for one open time")
+            selected_by_open[open_time] = row
+        selected = tuple(selected_by_open[key] for key in sorted(selected_by_open))
+        # Walk newest first: only the suffix after the newest discontinuity can
+        # be certified, including when that discontinuity crosses REST pages.
+        for index in range(len(selected) - 1, 0, -1):
+            previous, current = int(selected[index - 1][0]), int(selected[index][0])
+            if current - previous == interval_ms:
+                continue
+            error = BarHistoryGapError("Binance", binding.native_symbol, binding.interval,
+                                       previous, current)
+            suffix = selected[index:]
+            latest_open = latest_closed_boundary_ms(
+                binding.interval, observed_ms, provider="BINANCE"
+            ) - interval_ms
+            if (error.kind == "OVERLAPPING_PROVIDER_WINDOWS" and binding.interval == "3d"
+                    and int(suffix[-1][0]) == latest_open
+                    and all(is_valid_bar_open_ms(binding.interval, int(row[0]), provider="BINANCE")
+                            for row in suffix)):
+                received_at_ns = time.time_ns()
+                envelopes = tuple(_capture_row(
+                    binding, row, origin="BACKFILLED", received_at_ns=received_at_ns + offset,
+                    test_provenance=test_provenance,
+                ) for offset, row in enumerate(suffix))
+                raise BarHistoryOverlapError(
+                    "Binance", binding.native_symbol, binding.interval, previous, current,
+                    requested_rows=limit, recent_envelopes=envelopes,
+                )
+            raise error
+        if any(int(row[6]) > page_end_ms for row in closed):
+            raise RuntimeError("Binance closed-bar history page exceeds requested end boundary")
         exhausted = False
         if len(closed) != page_limit:
             if not (allow_short and len(closed) < page_limit and _provider_exhausted_before(
@@ -247,18 +287,6 @@ def fetch_closed_bar_history_raw_envelopes(
                     f"requested={page_limit} observed={len(closed)}"
                 )
             exhausted = True
-        if any(int(row[6]) > page_end_ms for row in closed):
-            raise RuntimeError(
-                "Binance closed-bar history page exceeds requested end boundary"
-            )
-        for row in closed:
-            open_time = int(row[0])
-            previous = selected_by_open.get(open_time)
-            if previous is not None and previous != row:
-                raise RuntimeError(
-                    "Binance history pages conflict for one open time"
-                )
-            selected_by_open[open_time] = row
         if exhausted or not closed:
             break
         earliest_open_ms = min(int(row[0]) for row in closed)
