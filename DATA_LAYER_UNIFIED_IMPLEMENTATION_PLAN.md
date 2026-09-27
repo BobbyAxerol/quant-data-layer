@@ -60584,3 +60584,30 @@ Evidence mark-reference-matrix/summary.json and btc-followup.jsonl; original
 receipts preserved. Observer helper unit6PASS. Both clients auto-removed, no new
 image or production mutation. Actual TS runtime inspect: CPU/memory limits0
 (uncapped);2->4CPU budget increase applies only to isolated worker tests.
+
+#### Final capacity checkpoint - execution acceptance remains NOT_FULL
+
+TS source-only checkpoint fa9a597 adds opt-in fixed product-family workers inside
+one market_data_service, no new service topology. Default1 unchanged; worker crash
+resume deliberately refuses committed cursors until atomic whole-family state/
+watermark and nonregressing replay are implemented. This is unfinished scope,
+not an approval blocker and not production-ready. Combined309unitPASS4.42s.
+
+Four-worker fresh-start replay of authentic capture:4000/s and5000/s both applied
+55430/55430 ordered identities with Redis and durableACK parity. Worst route p99
+scheduled-offer-to-Redis1220.793ms at4k and4068.205ms at5k; finalACK drain461.032ms
+and3240.890ms respectively.5k had2RATE_LIMITED recoveries. These short receipts do
+not certify sustained60s capacity, crash recovery, or5000/sKafka ingress/fanout.
+Evidence workers-4000-fresh-r10 and workers-5000-fresh-r10 under existing burst root.
+Profile worker0 completed; pydantic conversion, SDK validation, async scheduling
+and Redis serialization remain distributed costs. No notification coalescing,
+buffer expansion, freshness relaxation or production rollout used to forcePASS.
+
+All disposable clients/Redis/gateway containers removed; Redis testdata tmpfs,
+no new images built. Active/rollback retained, no broadprune. Publishedv2.2.0
+main8299838 unchanged. CanonicalDL fix/live-consumer-burst-recovery and canonicalTS
+fix/data-layer-r10-consumer-handoff; owner source edits preserved. No newworktree,
+push/merge/tag. RuntimeQuery0ed57643/Stream65918a65/TS1d86d3e8 unchanged; consumer
+runtime remains paperidentity, additive live/sandbox readidentities are not an
+execution-capacity certificate. Next required work remains monotonic atomic resume,
+then sustained4k/5k and bounded actualconsumer acceptance, not another phase.
