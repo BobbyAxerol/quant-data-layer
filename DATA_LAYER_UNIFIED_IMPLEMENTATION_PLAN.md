@@ -58565,6 +58565,24 @@ follows; canonical Rust/Python packaging verification is still pending.
 Tool: apply_patch failed before writing (sandbox mountinfo); workspace rule 32
 permits exact-match replacements, followed by diff inspection.
 
+Packaging follow-up: clean Python build cannot resolve locked vnstock4.0.2 and
+vnai2.4.8; exact PyPI version JSON endpoints return404. Existing tested Python
+image17a359779702 contains those exact locked versions. Implement an explicit
+digest-pinned dependency-image build option, verifying installed main-lock
+versions and RECORD hashes before copying its venv. No lockfile/venue upgrade,
+no arbitrary unpinned base; normal clean builder remains the default. Verify
+the packaged image and standalone SDK, then freeze coherent candidate images.
+Dependency verifier:5/5 regressions PASS (pin, version, tamper, missing hashes,
+platform markers); actual immutable dependency image passes7507 RECORD file
+hashes against main-lock versions (lock6295d2b2..., installed-files0c03aa43...).
+SDK2.0.4 standalone no-source import/old-gap/additive-coverage tests PASS; wheel
+216f3109c2ac5926f796d4bd1748440db8d337e63a5b2a81514e4e273a2c9b34.
+Rust81d4912 canonical image built successfully, including both KN native roles.
+Python build path typo failed before build and was corrected; clean dependency
+resolution then failed on the two upstream404 packages, retained in separate
+logs. The dependency-image option will be used explicitly for final packaging;
+this is verified installed content, not a fabricated upstream wheel artifact.
+
 <a id="kn5-astra-correctness-handoff"></a>
 #### KN-5 Astra Implementation / Claude Review (2026-09-26)
 

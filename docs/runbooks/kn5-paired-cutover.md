@@ -10,6 +10,12 @@ No additional phase. This runbook is not a deployment authorization.
   `qdl-projector` and `qdl-stream-gateway` INSIDE the Rust image, not host mounts.
   Build standalone SDK from the same tree. Record image IDs, labels, wheel hash,
   source commit and affected test receipts. Do not retag an old binary as new.
+- If locked upstream packages are unavailable, `Dockerfile` accepts
+  `QDL_DEPENDENCY_IMAGE=<name>@sha256:<digest>`. It verifies active main-lock
+  versions and installed RECORD hashes before copying only `/opt/venv`; the
+  receipt is embedded at `/opt/qdl/dependency-receipt.json`. No source from the
+  dependency image is reused. Keep that immutable dependency artifact available
+  for reproducibility; do not silently update VN packages or use a mutable tag.
 - Candidate source: catalog11/712 bindings, acquisition19, promotion scope10,
   release routing27, alpha manifests14/14, TS10, research6. Compile gateway
   bundle with `scripts/kn_gateway_bundle.py`; verify routing hashes using the
@@ -24,7 +30,11 @@ No additional phase. This runbook is not a deployment authorization.
 
 - Reuse the three canonical brokers, native producers, quota/provider Redis and
   TLS network. Provision only `md.latest.v2` / `md.bars.v2` plus exact KN ACLs
-  with `scripts/kn_state_topics_packet.py` review/verify/apply. Preserve canonical
+  with `scripts/kn_state_topics_packet.py` review/verify/apply. Use the previously
+  approved dedicated `User:kn-projector`, not `phase8-consumer`. Its client CA
+  must be added alongside existing trust before activation; exact broker trust
+  paths/reload or roll and old-client continuity must be in the runtime packet.
+  The offline topic/ACL packet does not itself install that identity. Preserve canonical
   partition plan/offsets. Verify segment and retention policies, RF3/minISR2.
 - Add one dedicated market cache (`noeviction`, listpack128/2048, no AOF/save),
   candidate maxmemory8,000,000,000 B / container9GiB. This is a measured padded
