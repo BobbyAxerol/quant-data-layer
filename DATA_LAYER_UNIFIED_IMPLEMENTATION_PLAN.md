@@ -59934,3 +59934,45 @@ merge old red CI. New wheel a1a3af7d12188a70154a948f5bfa707135c1d674848e8dc89240
 is an unpublished source candidate, not yet installed in TS/alpha. No runtime
 changed; active TSf4c9b14d and rollback4dba0ac1 retained. Alpha174test result is
 for previous wheel2d0cb3fa; must refresh/test its final artifact before commit.
+
+Artifact convergence follow-up: alpha49587c3 source-only174/174PASS with installed
+a1a3af7d wheel; Ruff PASS. TS c77d2a8 installed-wheel consumer/bridge/projector/
+slice-health219/219PASS. No alpha activation or strategy/order mutation. DL3ccb8ee
+pushed; CI36311629772 is running (old956045d fails only stale2.0.4 assertion).
+Build exactly one market-data reader from retained4dba0ac1 base, TS c77d2a8,
+SDK3ccb8ee/a1a3af7d, four-file private build context. Existing f4c9b14d remains
+active until packaged verification; do not relabel previous runtime receipt.
+
+Packaged candidate tradingsystem-market-data:v1.2.5-c77d2a8-sdk2.0.5 digest
+sha256:5b66c2cd68459cda3c0273256e7cf1ad9c5a0560875e57b88559056d35b6213e
+passes241/241 consumer/bridge/projector/health/cursor tests, no SDK/source adapter
+overlay. First mount placed tests at/ts-tests, so5path-relative fixture reads
+failed(236pass); rerun at/app/tests passed, no implementation changes for that.
+Approved image-only market_data_service roll: fromf4c9b14d to5b66c2cd, identical
+project trading_system/env/mounts/revision10/network. Exact rollback copied from
+ts-sdk205-final.compose.json. Only service market_data with --no-deps; no other
+TS/DL role, order path, DB, alpha or source authority mutation. Observe300s actual
+TS60/cache/stream metrics after readiness, inherit SDK fast132/132 and unaffected
+server/load evidence because this patch changes only accepted shutdown I/O.
+
+Final shutdown artifact5b66c2cd actual acceptance10:17:12-10:22:25UTC:
+300.004837s external TS Redis observer,60groups/0errors;30/30TS heartbeats60/60
+READY, fallback0/V2errors0. ActiveStream1 delivered110,453, overflow/replay/opened
+deltas0, closures0, queue peak111,642bytes/end0, RSS318,246,912 constant. Passive
+Stream2 queue0/RSS131,661,824 constant. No restart/OOM. Worst supported per-binding
+Redis GET p99=0.884ms (not full event-to-consumer latency); low-sample products
+retain null p99, never converted from max.12s read-only strace overlapped window:
+765fsync calls,0on main thread,0errors, syscall p50=3.488ms,p99=6.648ms,max8.339ms;
+not a complete checkpoint transaction or independently measured loop-lag percentile.
+Evidence sdk205-shutdown-acceptance/{receipt,summary,cache,heartbeat,cursor-fsync-summary}.json.
+
+Cleanup removed exact four-file build context only, filesystem used
+198,442,356,736->198,442,180,608bytes; no image/volume/state deletion in this slice.
+Disposable test/observer clients removed via --rm; immediate rollbackf4c9b14d
+and earlier4dba0ac1 retained until final release inventory. SDK3ccb8ee, TSc77d2a8,
+alpha49587c3 all pushed to feature branches; no dev/main merge or v2.2.0 tag yet.
+CI36311629772: contract/native/Python3.10 PASS, unit-tests still running.
+Source alpha is tested, not activated. Runtime exact TS5b66c2cd/manifest10,
+DL Query/BARf7351c3b and Rust7fe34806 unchanged, old10roles remain stopped.
+Remaining closure: full CI, certificate/release artifact reconciliation and remote
+release flow, final scoped cleanup; do not call goal complete before publication.
