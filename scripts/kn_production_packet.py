@@ -90,6 +90,47 @@ def service_from_inspect(item: dict) -> dict:
     return service
 
 
+def validate_revision_boundary(cores: dict, ingestors: dict, environments: dict,
+                               catalog: dict, acquisition: dict) -> dict:
+    """Validate effective mounted JSON for every replica, not path assumptions."""
+    required_roles = {"rust_core", "rust_core_2", "rust_core_3"}
+    if set(cores) != required_roles or set(environments) != required_roles:
+        raise ValueError("all three effective core replicas are required")
+    revision = catalog["catalog_revision"]
+    catalog_ids = {item["binding_id"] for item in catalog["bindings"]}
+    acquisition_ids = {item["binding_id"] for item in acquisition["bindings"]}
+    if catalog_ids != acquisition_ids:
+        raise ValueError("catalogue and acquisition binding sets differ")
+    maps = []
+    admission_keys = {"QDL_PROVIDER_ADMISSION_" + suffix for suffix in (
+        "ENABLED", "LISTEN_ADDR", "POLICY_PATH", "POLICY_SHA256", "REDIS_PREFIX",
+        "REDIS_URL", "SECRET")}
+    for role, core in cores.items():
+        bindings = core["core"]["bindings"]
+        if not bindings or any(b["instrument_catalog_revision"] != revision for b in bindings):
+            raise ValueError(f"{role}: producer/core catalogue revision mismatch")
+        maps.append({(b["provider"], b.get("physical_native_symbol") or b["native_symbol"],
+                      b.get("physical_native_channel") or b["native_channel"])
+                     for b in bindings})
+        env = environments[role]
+        if env.get("QDL_PROVIDER_ADMISSION_ENABLED") not in ("1", "true", "TRUE"):
+            raise ValueError(f"{role}: provider admission is disabled")
+        if any(not env.get(key) for key in admission_keys):
+            raise ValueError(f"{role}: incomplete provider admission configuration")
+    if any(mapping != maps[0] for mapping in maps[1:]):
+        raise ValueError("core replica subscription maps differ")
+    if set(ingestors) != {"ingestor_binance_usdm", "ingestor_okx_swap"}:
+        raise ValueError("both effective ingestors are required")
+    for role, ingestor in ingestors.items():
+        for b in ingestor["bindings"]:
+            if b["instrument_catalog_revision"] != revision:
+                raise ValueError(f"{role}: producer/core catalogue revision mismatch")
+            if (b["provider"], b["native_symbol"], b["native_channel"]) not in maps[0]:
+                raise ValueError(f"{role}: subscription missing from core map")
+    return {"catalog_revision": revision, "cores": len(cores),
+            "ingestors": len(ingestors), "binding_count": len(catalog_ids)}
+
+
 def compose_literal(value):
     """Docker inspect is already expanded; Compose must not expand it again."""
     if isinstance(value, str):

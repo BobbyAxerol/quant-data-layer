@@ -59350,3 +59350,98 @@ canonical/bars topic metadata; no group READ/join/commit grant. Probe must then
 report the real backlog and remain closed during retained replay. Producer
 identity/private keys unchanged. This is the same declared least-privilege
 production packet, not a data reset or provider bypass.
+
+Runtime activation packet update: BAR backpressure now uses the actual core
+input `md.raw.realtime.v2` (not the older unused md.raw.stable.v1 topic).
+Retained canonical projector lag is now58 / state-bars9; no offset reset.
+Metadata-only ACL additions6 recorded in bar-backpressure-acls.json. Replica1/2
+native projector status errors={} after the intentional rolling recovery check.
+Python89eeb99 built in54.2s as sha256:d5e5412dfc3fa726913f81436b50893aaf063e8b443940280a55bba83e0f6b9c;
+only TLS backpressure changed versus accepted source, Rust remains7fe348060734.
+Prepared producer packet SHA86dfca5c68ac3322437b02558c374e54682e42f98854950970aec4b4992b6295,
+exact rollback77edf5fc54951467ef717437c556346d8a83cd71bcfbb8bdf1f620956151fb96.
+Next apply sequentially rust_core/2/3, native ingestors, BAR; preserve group/fence,
+Kafka state and private mounts, enables existing Rust provider-admission lane.
+History thresholds reuse tested shadow core20k / A50k / B50k, not unbounded.
+Start two native Query/Stream on private ports only; no TS handoff yet.
+
+Rollout incident,05:17:51-05:19:34UTC: first core with catalog11 beside old
+catalog9 ingestors quarantined input (progress canonical0/quarantines>0).
+Stopped the sequential rollout and restored rust_core to exact rollback image/
+config immediately; no Query/Stream/TS routing change. Root contract is strict
+raw.instrument_catalog_revision == binding.instrument_catalog_revision in Rust.
+Packet incorrectly allowed mixed producer/core revisions; this is an operator
+packet defect, not provider failure. Do not disable revision checks. Preserve
+quarantine evidence, audit the bounded interval and restore source continuity
+before certification. A producer catalog handoff must pause the three raw
+producers, drain the old raw group, stop three core workers, then activate the
+new core configs and producer configs as one bounded revision boundary, with
+normal data writes only and no reset. Rollback uses the same drain/revision order.
+Not a PASS or uninterrupted service claim; consumer fail-closed window must be
+reported. Full consumer handoff has NOT happened.
+
+Additional packet defects found and corrected in the same handoff: core2/3
+still mounted distinct historical core-002/003 files (not the shared directory
+assumed by the replacement), and lacked admission Redis URL/prefix/listen env.
+Both now use candidate files with all695 catalog11 bindings and complete
+shared admission settings. Startup retries before correction are NOT a zero-
+restart PASS. Core1/2/3 now publish canonical again. The guard stopped only new
+KN roles when TS MARK/INDEX failed40/min; native cache rebuilt from state topics
+without any offset reset/flush. Capture the incident, do not omit failed runs.
+
+Compatibility discovery: old SQLite projectors reject new universe canonical
+records outside catalog9 and stop the entire partition. This means keeping
+old writer image alone does not provide a functional rollback after catalog
+expansion. BAR history has been paused immediately. Before proceeding, prepare
+an additive legacy-reader catalogue union (old retained identities + candidate
+catalogue) for the6 old projector/2 old stream/2 old query roles, preserving their
+exact images, state/offsets, TLS, manifests and consumer entitlements. New-only
+products are NOT granted to old consumers. This temporary compatibility config
+keeps rollback usable until KN acceptance; it is retired with the old writers,
+not promoted as the new architecture. Exact original rollback captured first.
+No state deletion or skipping canonical offsets to bypass the poison record.
+
+Resume checkpoint 05:58UTC: all native roles are running; BAR history remains
+paused. Native hot matrix100/100 PASS on real canonical data after ingestor
+resnapshot (two replicas, two venues, five symbols, five hot feeds). Legacy
+projectors now accept the catalogue/acquisition union but are still catching up;
+the TS old path has degraded to3/60 with reconnect/request quota exhaustion.
+This is an incident, not a healthy rollback certificate. SDK2.0.4-only TS reader
+artifact4dba0ac1bb82 passed125/125 tests, source pin e4940dd in Trading System.
+Proceed with the already journalled paired TS reader handoff, preserving exact
+env/mounts and binding10. Stop reader before swapping four executor_network
+aliases, then recreate only market_data. Capture exact reverse network map and
+old image06e99200 first. Native and old names must never overlap on that network.
+No release/retirement until actual TS60 and rollback-return have passed.
+
+Paired handoff applied06:01UTC: TS reader now image4dba0ac1bb82, SDK2.0.4,
+binding/JWT10/env/mounts unchanged. Four network aliases moved without overlap;
+network state is persisted in both candidate and rollback-compatible Compose.
+TS recovered to60/60 by06:03 after the existing minute request quota expired;
+no quota was reset or relaxed. Actual heartbeat observation is running, distinct
+from final all-endpoint acceptance. Legacy projector lag readback24-82/partition
+confirms catch-up (not yet a rollback-return drill).
+A proposed extra producer DESCRIBE ACL on legacy stable-projector-v1 was rejected
+before execution by tool review; no ACL changed. Abandon this optional addition,
+retain the approved core/A/B history backpressure. Do not bypass the rejection.
+Next source-only packet regression rejects mismatched producer/core catalogue,
+missing admission env and mismatched catalogue/acquisition sets before a future
+rollout; inspect actual mounted files, not assumed shared paths. Audit quarantine
+read-only through existing admin identity, without offset reset or republishing
+old ticks into the active execution feed.
+
+06:13UTC paired handoff/rollback-return PASS: old V2 and KN each reached60/60
+and stayed READY for30s after fresh startup; no fallback. Actual KN heartbeat
+observation300s:29/29 samples60/60, fallback0, errors0. Evidence paired-handoff-
+apply.json, paired-rollback-return.json, ts-native-observation.json. This is
+read-plane handoff evidence, not final all-endpoint/load acceptance.
+Whole-stack sample306.94s (BAR paused) uses3.793 core INCLUDING Kafka3/Redis/
+producer/core/cache/projector/readers; legacy rollback overhead1.310 core and
+TS0.432 reported separately. It is not the final with-BAR/load envelope.
+BAR history resumed only after rollback returned healthy; existing core/A/B
+backpressure unchanged. No spool scan or import. Producer preflight16/16 unit
+checks PASS; actual3core/2ingestor mounted mappings/catalog11/712 pass. The
+preflight uses physical MARK/INDEX component identity, not logical product ID.
+Quarantine audit first pass PARTIAL27808 records (transaction control offsets
+must be accounted for); rerun uses read_committed EOF/positions to prove the
+bounded scan completed. Do not claim zero loss or replay stale ticks into live.

@@ -98,3 +98,58 @@ class ComposeLiteralTests(unittest.TestCase):
         assert result["healthcheck"] == ["test $$F = $${EXPECTED}"]
         assert result["environment"]["KEY"] == "private$$F"
         assert result["cpus"] == 0.5
+
+
+class RevisionBoundaryTests(unittest.TestCase):
+    def fixture(self):
+        import copy
+        binding = {"provider": "VENUE", "native_symbol": "PAIR", "native_channel": "trade",
+                   "instrument_catalog_revision": 11}
+        cores = {role: {"core": {"bindings": [copy.deepcopy(binding)]}}
+                 for role in ("rust_core", "rust_core_2", "rust_core_3")}
+        env = {"QDL_PROVIDER_ADMISSION_" + key: "1" for key in (
+            "ENABLED", "LISTEN_ADDR", "POLICY_PATH", "POLICY_SHA256", "REDIS_PREFIX", "REDIS_URL", "SECRET")}
+        ingestors = {role: {"bindings": [copy.deepcopy(binding)]}
+                     for role in ("ingestor_binance_usdm", "ingestor_okx_swap")}
+        return [cores, ingestors, {r: dict(env) for r in cores},
+                {"catalog_revision": 11, "bindings": [{"binding_id": "b"}]},
+                {"bindings": [{"binding_id": "b"}]}]
+
+    def test_effective_all_replicas(self):
+        self.assertEqual(packet.validate_revision_boundary(*self.fixture())["cores"], 3)
+
+    def test_distinct_legacy_mount_rejected(self):
+        args = self.fixture(); args[0]["rust_core_2"]["core"]["bindings"][0]["instrument_catalog_revision"] = 9
+        with self.assertRaisesRegex(ValueError, "rust_core_2"):
+            packet.validate_revision_boundary(*args)
+
+    def test_missing_admission_env_rejected(self):
+        args = self.fixture(); del args[2]["rust_core_3"]["QDL_PROVIDER_ADMISSION_REDIS_PREFIX"]
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            packet.validate_revision_boundary(*args)
+
+    def test_mixed_ingestor_revision_rejected(self):
+        args = self.fixture(); args[1]["ingestor_okx_swap"]["bindings"][0]["instrument_catalog_revision"] = 9
+        with self.assertRaisesRegex(ValueError, "revision mismatch"):
+            packet.validate_revision_boundary(*args)
+
+    def test_catalogue_only_roll_rejected(self):
+        args = self.fixture(); args[4]["bindings"] = []
+        with self.assertRaisesRegex(ValueError, "binding sets"):
+            packet.validate_revision_boundary(*args)
+
+    def test_missing_replica_and_subscription_rejected(self):
+        args = self.fixture(); del args[0]["rust_core_3"]
+        with self.assertRaisesRegex(ValueError, "three"):
+            packet.validate_revision_boundary(*args)
+        args = self.fixture(); args[1]["ingestor_binance_usdm"]["bindings"][0]["native_channel"] = "unmapped"
+        with self.assertRaisesRegex(ValueError, "missing from core"):
+            packet.validate_revision_boundary(*args)
+
+    def test_physical_component_identity_is_not_logical_mark_index_identity(self):
+        args = self.fixture()
+        for core in args[0].values():
+            b = core["core"]["bindings"][0]
+            b.update(native_symbol="LOGICAL-SWAP", native_channel="mark_index",
+                     physical_native_symbol="PAIR", physical_native_channel="trade")
+        self.assertEqual(packet.validate_revision_boundary(*args)["cores"], 3)
