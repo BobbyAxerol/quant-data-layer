@@ -60471,3 +60471,28 @@ Initial builder attempts failed toolchain PATH, then wrong Cargo cache layout;
 correct existing registry mount is qdl-cargo-home:/usr/local/cargo/registry.
 No production rollout or test capacity claim from these source/build results.
 SDK stream/cursor unittest26PASS; combined affected unit count39PASS.
+
+#### Exact lineage checkpoint - canonical ahead of rejected views
+
+Status: IN_PROGRESS; EXECUTION_ACCEPTANCE_NOT_FULL remains unchanged.
+Read-only180s probe captured5543canonical records and3228Query reads on both
+replicas/real live+sandbox identities. BTC/OKX MARK had10rejections: all10 had a
+newer same-session/generation canonical pair observed before the request started.
+Across the three inspected OKX products,40TRADE stale views also had newer
+canonical data before request start. This proves downstream lag for those samples,
+not the exact stage responsible; no blanket quiet-market conclusion is valid.
+The raw topic returned ACL29; no alternative credential or ACL bypass attempted.
+Remaining samples cannot establish provider silence. Canonical inline capture
+lineage supports the positive source-arrival findings. Query caches parsed rows
+by full canonical bytes, not price-only hash; native projector timing remains
+under investigation. No freshness threshold or runtime setting changed.
+
+Evidence: consumer-realms/evidence/exact-market-lineage-window.jsonl under the
+20260927 burst-recovery evidence root; SHA256
+2100d05eef95a8152ef9de5c23f11c56b11586a8291d80fdd0527835a660f99b.
+Probe unit6PASS (python3 -m unittest tests.test_probe_exact_market_lineage -v).
+Tests cover exact original identity, pre-request ordering, generation mismatch,
+incomplete capture, secret exclusion and bounded exclusive evidence files.
+Production observation180s:13/13sessionREADY samples; not a burst certificate.
+No production mutation; disposable probe clients removed; no image build or
+broad cleanup. Published release remainsv2.2.0; candidate branch unchanged.
