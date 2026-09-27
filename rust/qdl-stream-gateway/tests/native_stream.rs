@@ -453,6 +453,7 @@ fn keypair() -> Keys {
 
 fn jwt_config(keys: &[(&str, &Keys)]) -> JwtConfig {
     JwtConfig {
+        environments_by_key_id: BTreeMap::new(),
         environment: "paper".into(),
         issuer: "https://identity.test".into(),
         audience: "qdl-v2-stable".into(),

@@ -2996,3 +2996,25 @@ fault tests và một final acceptance; không bỏ tests hoặc nới SLA cho k
 Trạng thái thực thi ban đầu của cả năm phase là NOT STARTED. Source ở thời điểm soạn:
 `74337e71ce8ce7611ca424d33f7a0ab29535733a`; facts runtime trong mục 0-17 là lịch sử,
 không có health/latency certification mới từ việc soạn guide.
+
+### Post-release consumer realms (owner approved 2026-09-27)
+
+`paper`, `sandbox`, and `live` are workload authorization realms, not different
+copies of public mainnet market data. The existing `paper` cache/product/cursor
+namespace is retained as the physical market-data realm for compatibility;
+it does not certify an execution account mode. Every additional identity has a
+separate TLS client identity and JWT signing key. Explicit key-to-realm and
+key-to-subject maps must cover the entire keyring. A token cannot select its own
+realm independently of its pinned key. Consumer ID, manifest revision, venue/feed
+entitlements, purposes, quotas and consumer-bound signed cursor remain enforced.
+Old single-realm configuration keeps its existing rejection behavior.
+
+No extra network authorization hop or service is introduced. Query loads a sealed
+configuration on startup; Rust Stream atomically reloads its authority and revokes
+an admitted stream if its key realm changes. Configuration is public-key material
+only; all private material stays in protected runtime directories outside Git.
+`compile_consumer_realms.py` maps only the three approved TS/Binance-alpha/OKX-alpha
+scopes. TS PAPER_ONLY becomes ALLOWED for its explicitly approved sandbox/live
+read identity. Alpha FORBIDDEN direct execution dependency stays FORBIDDEN: alpha
+uses data to construct intent, while TS Risk remains the admission authority.
+Read activation never enables orders, changes broker mode, or starts an alpha.

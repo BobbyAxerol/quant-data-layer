@@ -61,6 +61,7 @@ pub struct JwtConfig {
     pub algorithms: Vec<Algorithm>,
     pub max_lifetime_seconds: i64,
     pub subjects_by_key_id: BTreeMap<String, String>,
+    pub environments_by_key_id: BTreeMap<String, String>,
 }
 
 const OID_RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
@@ -131,6 +132,31 @@ pub fn public_key_from_pem(pem: &str) -> Result<(Algorithm, DecodingKey), String
 }
 
 impl JwtConfig {
+    /// Explicit key realms share public market storage, never consumer identity.
+    /// Missing mapping retains the single-realm compatibility behavior.
+    pub fn with_key_environments_json(mut self, raw: &str) -> Result<Self, String> {
+        let mapping: Option<BTreeMap<String, String>> =
+            serde_json::from_str(raw).map_err(|error| error.to_string())?;
+        if let Some(mapping) = mapping {
+            if mapping.keys().ne(self.keys.keys())
+                || mapping
+                    .values()
+                    .any(|value| !matches!(value.as_str(), "paper" | "sandbox" | "live"))
+            {
+                return Err("JWT key-realm bindings must cover exactly the keyring".into());
+            }
+            self.environments_by_key_id = mapping;
+        }
+        Ok(self)
+    }
+
+    pub fn key_environment(&self, key_id: &str) -> &str {
+        self.environments_by_key_id
+            .get(key_id)
+            .map(String::as_str)
+            .unwrap_or(&self.environment)
+    }
+
     /// Same inputs as `DataPlaneSecurityConfig.from_environment`: a kid ->
     /// PEM public key map and a kid -> subject map that must cover it.
     pub fn from_json(
@@ -182,6 +208,7 @@ impl JwtConfig {
             algorithms,
             max_lifetime_seconds,
             subjects_by_key_id: subjects,
+            environments_by_key_id: BTreeMap::new(),
         })
     }
 }
@@ -299,7 +326,7 @@ pub fn verify_token(config: &JwtConfig, token: &str, now: f64) -> Result<Princip
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| claims["environment"].to_string());
-    if environment != config.environment {
+    if environment != config.key_environment(&key_id) {
         return Err("workload token environment mismatch".into());
     }
     let roles: BTreeSet<String> = claims["roles"]
@@ -565,6 +592,7 @@ mod tests {
 
     fn config(decoding: DecodingKey) -> JwtConfig {
         JwtConfig {
+            environments_by_key_id: BTreeMap::new(),
             environment: "paper".into(),
             issuer: "https://identity.test".into(),
             audience: "qdl-v2-stable".into(),
@@ -587,6 +615,33 @@ mod tests {
             "iat": now, "exp": now + 300, "jti": "j1", "environment": "paper",
             "roles": ["stream_consumer"], "consumer_manifest_revision": 3
         })
+    }
+
+    #[test]
+    fn pinned_key_realms_do_not_cross_paper_sandbox_live() {
+        for realm in ["paper", "sandbox", "live"] {
+            let (encoding, decoding) = keypair();
+            let config = config(decoding)
+                .with_key_environments_json(&serde_json::json!({"k1": realm}).to_string())
+                .unwrap();
+            let now = now_seconds().floor() as i64;
+            for claimed in ["paper", "sandbox", "live"] {
+                let mut value = claims(now);
+                value["environment"] = claimed.into();
+                let result = verify_token(&config, &token(&encoding, "k1", value), now as f64);
+                assert_eq!(result.is_ok(), realm == claimed);
+            }
+        }
+    }
+
+    #[test]
+    fn key_realm_mapping_requires_exact_keys_and_known_realms() {
+        for raw in ["{}", r#"{"other":"live"}"#, r#"{"k1":"*"}"#, "[]"] {
+            let (_, decoding) = keypair();
+            assert!(config(decoding).with_key_environments_json(raw).is_err());
+        }
+        let (_, decoding) = keypair();
+        assert!(config(decoding).with_key_environments_json("null").is_ok());
     }
 
     #[test]

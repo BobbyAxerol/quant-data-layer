@@ -101,7 +101,8 @@ pub fn reauthorize(
     purpose: &str,
     entitlement: &Entitlement,
 ) -> Result<(), AccessError> {
-    if !authority.jwt.keys.contains_key(&principal.key_id)
+    if authority.jwt.key_environment(&principal.key_id) != principal.environment
+        || !authority.jwt.keys.contains_key(&principal.key_id)
         || authority.jwt.subjects_by_key_id.get(&principal.key_id) != Some(&principal.subject)
     {
         return Err(AccessError::Unauthenticated(

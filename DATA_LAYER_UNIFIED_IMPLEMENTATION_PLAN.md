@@ -60296,3 +60296,56 @@ identity/realm mapping, not a request to loosen gates or repeat full C2. Current
 TS paper/no-order reader can use the accepted correction. Published release
 remainsv2.2.0; these immutable overlays are not a newly published stable tag.
 No push/merge, no alpha/order activation. Main plans preserve owner edits.
+
+#### Approved continuation: native burst and live read identities
+
+Status: IN_PROGRESS. Owner requests full gRPC burst/recovery through 4000 events/s
+and actual live mapping, not component-only throughput or renamed paper keys.
+Continue under KN guide 18.12-18.13; preserve provider bytes, freshness, ACK-after-
+apply, realm/cursor fences, existing paper access and all order services.
+Tests: isolated captured-provider native gRPC -> SDK -> projection -> Redis ->
+durable ACK, offered/completed accounting, bounded queue/RAM, disconnect/replay,
+slow consumer isolation and drain. Report capacity only at measured rates.
+Live credentials require explicit consumer entitlement, independent identity,
+realm-bound auth/cursors and no-order reads. Journal exact runtime image/config
+and per-role rollback before activation; do not reset shared market history.
+Inspect known Binance 3d native historical window rejection without fabricated
+repair. Source fixes require targeted regressions; no unrelated catalogue rerun.
+Cleanup only this continuation's isolated resources; retain active/rollback images.
+
+Live-realm source edit was rejected by the automatic approval reviewer before
+execution: widening authentication needs explicit key/consumer/realm proof.
+No authentication file or runtime was changed. A narrow clarification was sent
+for per-key paper/live realm binding, unchanged subject/revision/consumer checks,
+shared public-market storage realm and consumer-bound cursor. Do not bypass this
+rejection. Continue unaffected isolated burst and native history investigation.
+
+Owner explicitly approved narrow key-to-realm authentication packet and added
+sandbox mode. Implement exact pinned key realms paper/sandbox/live, with existing
+subject/consumer/revision and mTLS checks; common public-market storage namespace
+and consumer-bound cursor remain unchanged. No per-request network auth lookup,
+new service, order rights or silent credential reuse. Regress wrong realm/key/
+consumer/revision, old paper compatibility and cross-consumer cursor refusal.
+
+Source checkpoint: explicit JWT key realms implemented for paper/sandbox/live in
+Python Query and Rust Stream; legacy single-realm config remains strict. Realm
+rotation participates in Stream reauthorization. Public data LPK and signed
+cursor storage realm remain unchanged; token subject/consumer/revision and cursor
+consumer checks remain required. No new service or per-request network lookup.
+Focused Python auth/compiler suite23PASS. Rust worker reports30unit+33native RPC
+PASS (artifact receipt pending integration). Compiler scope restricted to exactly
+TS/Binance-alpha/OKX-alpha approved IDs; FORBIDDEN alpha direct execution dependency
+is preserved, not promoted. Initial compiler rejected FORBIDDEN alpha; fixed with
+explicit approved-ID/policy map rather than a permissive generic promotion.
+A Python3.10 invocation of KN backend tests failed import StrEnum; runtime is
+Python3.12. Query integration tests require disposable Redis, skip without it;
+skips are not acceptance. No live identity/config activated at this checkpoint.
+
+Auth slice verification: Python3.12 runtime image unittest auth/contract/async
+cursor suite45PASS. Compiler now excludes deferred VN policy explicitly; TS
+sandbox/live each60crypto requirements, alpha Binance/OKX each375. Six draft
+manifests compiled outside Git, not active. Unit matrix covers paper/sandbox/live,
+wrong key/realm/consumer/revision, unknown mappings, preserved quotas/purposes,
+no implicit other-consumer promotion, and FORBIDDEN alpha authority preservation.
+Ruff targeted security/compiler/tests PASS with --isolated (repository Poetry
+requires-python caret is rejected by installed Ruff TOML parser otherwise).

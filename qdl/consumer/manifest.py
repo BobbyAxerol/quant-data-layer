@@ -102,6 +102,8 @@ class ConsumerManifest:
             raise ValueError("consumer manifest contains an unknown data-plane permission")
         if self.execution_dependency not in {"FORBIDDEN", "PAPER_ONLY", "ALLOWED"}:
             raise ValueError("consumer execution dependency policy is invalid")
+        if self.environment in {"sandbox", "live"} and self.execution_dependency == "PAPER_ONLY":
+            raise ValueError("sandbox/live consumer cannot declare PAPER_ONLY execution dependency")
         if not self.requirements:
             raise ValueError("consumer manifest requires at least one data requirement")
         if self.rollback_contract not in {"V1", "V2"}:
