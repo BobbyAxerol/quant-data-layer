@@ -58426,13 +58426,14 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status: IN_PROGRESS / PREDEPLOY_GAP_CLOSURE (2026-09-27).**
+**Status: IN_PROGRESS / PRODUCTION_PACKET_AND_HANDOFF (2026-09-27).**
 K5.1/K5.2 source and isolated acceptance have run (final-50-bounded, TS60 Redis
 write/readback, universe and diagnostic evidence below). They are not production
 handoff: full-cap budget, coherent release artifact and K5.3-K5.6 remain open.
-Production still uses the old spool architecture. No deploy or release in the
-current predeploy correction task. Owner requested direct implementation and
-review; Claude review is no longer an extra prerequisite imposed by the agent.
+Production still uses the old spool architecture at this checkpoint. Owner now
+authorizes remaining KN-5 production packet, full-stack measurement, paired
+handoff/rollback-return, final acceptance and retirement/release only after PASS.
+Claude review is not an additional prerequisite imposed by the agent.
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
 **Guide index:** [18.12 work items and K5-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),
@@ -59211,3 +59212,91 @@ diff must pass `git diff --cached --check`; the pre-existing whitespace hunk is
 excluded, not silently repaired. Added-line counts are in the commit diff.
 Next implementation step belongs to Claude at KN-1 when the owner gives the
 start instruction; Astra has not pre-approved implementation.
+
+
+<a id="kn5-production-handoff-20260927"></a>
+#### KN-5 Production Packet And Handoff (2026-09-27)
+
+Status: IN_PROGRESS, runtime authorization supersedes the prior predeploy-only
+boundary, not the acceptance gates. Goal: replace the SQLite serving path with
+Kafka-native state materialization and publish 2.2.0 only on measured acceptance.
+Guide: [18.12](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),
+[18.13](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-rollout-and-cleanup);
+runbook: [paired cutover](docs/runbooks/kn5-paired-cutover.md).
+
+Approved scope: dedicated additive Kafka client trust/least-privilege ACL and two
+state topics; one bounded market cache; two native projectors; paired Query/Stream
+and compatible market_data_service read-plane SDK/config; bounded producer/BAR
+map and history bootstrap for declared demand. No new venue, alpha execution,
+order/risk/portfolio changes, Kafka reset, Redis flush, SQLite deletion or volume
+deletion. No production spool scan/import. Exact resource and identity packet
+is recorded before each activation, preserving old trust and current users.
+
+Candidate artifacts are already packaged from 02cd827: Python image
+9ed25f9e5d76, Rust 7fe348060734, SDK2.0.4 wheel 216f3109c2ac. Whole-cache cap
+8,000,000,000B/9GiB comes from the recorded full-cap allocator test, not an
+unbounded increase. Host initial available RAM ~18GiB; no admission of concurrent
+full-cache tests on top of production. Measure all serving roles including
+provider/quota Redis, brokers and producer/core, with rollback overhead reported
+separately. Watcher starts before new runtime is started.
+
+Tests/exit: exact fast binding/history/diagnostic coverage on both replicas;
+paired handoff, channel reconnect and cursor resnapshot; rollback to old V2 and
+return (new-only demand remains BLOCKED on rollback); one final 300s real-data
+no-order acceptance after preflight passes; TS Redis ACK/readback and alpha
+call-to-usable milliseconds with denominators; no OOM/restart/loss, bounded lag,
+steady whole serving stack <=5 cores. Existing unaffected evidence is inherited.
+
+Rollback: preserve per-role image/config/mount snapshots in
+~/.local/state/qdl-v2/kn5-close-20260927/production-rollback-manifest.json; retain
+old writers/state until acceptance and compute rollback horizon from retained
+broker offsets. V1 only for expressly allowed routes, never substitute stale
+TRADE/unsupported BAR/L2. Only PASS permits old writer stop, remote feature->dev
+CI->main release and scoped image/build-cache cleanup. Owner's two unrelated
+plan hunks remain untouched and uncommitted. No runtime mutation yet at journal
+creation; all subsequent operations/results append here.
+
+Packet preparation: three stdlib unit regressions PASS; Compose validation PASS.
+Host and runtime Python intentionally lack pytest; those attempts collected no
+tests. Packet tests were changed to unittest (no production dependency install).
+Runtime material created as root:10001 mode0640 in
+~/.local/state/qdl-v2/releases/v2.2.0-02cd827, no existing files overwritten.
+New services: market_cache (1CPU/9GiB), market_projector_1/2 (0.75CPU/512MiB),
+query_kn_1/2 (1.5CPU/1536MiB), stream_kn_1/2 (0.75CPU/512MiB). Limits are ceilings
+with headroom, not performance claims. New private consumer network separates
+legacy DNS; Stream read-view uses qdl-v2-query (native-only on its networks).
+No SQLite mount: only the session-liveness subdirectory is read-only mounted.
+
+Additive Kafka trust packet: dedicated kn-projector and kn-stream client leaves
+under a new client-only CA; copy existing truststore to a new file, import just
+the additional CA, dynamically set listener.name.ssl.ssl.truststore.location
+on broker1/2/3 sequentially. Keep original truststore, old CA, keystores, secrets
+and connections. Apache Kafka broker-config docs explicitly permit dynamic
+truststore replacement without restart (https://kafka.apache.org/41/configuration/broker-configs/).
+Rollback removes only that listener dynamic override (baseline has none); stop
+new native clients first. Do not rotate peer CA or restart a broker.
+State topics/ACLs apply via existing sealed packet; native Stream separately
+gets canonical READ/DESCRIBE and group kn-stream-production- DESCRIBE only.
+No group offset reset or authority promotion. Native bootstrap is read_committed
+on existing canonical plus normal writes to its two new state topics.
+
+Owner explicitly approved the additive three-broker trust packet in response to
+the tool-review stop, including exact dynamic key and rollback. Proceed within
+KN-5; no further scope expansion. Prior attempt was rejected before execution:
+0 broker changes. Client leaves and copied truststore were prepared offline,
+both client chains verify; copied JKS contains exactly old CA + KN client CA.
+Packet regressions9/9 PASS; a Docker create/inspect/remove proof verifies that
+Compose preserves literal dollar characters in healthchecks/env (an actual
+packaging defect caught before rollout). Rollback config parity6/6 PASS against
+live image/env/command/entrypoint/caps/healthcheck/mounts. Three Compose files
+validate; no candidate service started yet.
+Compiled runtime: catalog11/712, acquisition19, core695 mappings; two native
+ingestor configs; existing authority revision1 and writer groups retained,
+artifact attestation now names Rust7fe348060734. Query and BAR have no full
+SQLite state mount. Universe additions are REST BAR1d, not execution streams.
+Production rust_core currently has provider admission disabled: prepared config
+enables the existing Rust boundary with shared bounded BAR/reference policy,
+not a Python bypass. This rolls with the declared core image/config packet.
+First read-only resource watcher completed before authorization; start a fresh
+watch with TS MARK/INDEX refuse guard (10/min), host idle guard (5% for60s),
+RAM floor2GiB and native OOM stop before activation.
