@@ -60388,3 +60388,55 @@ normal verified five-symbol3d bootstrap writes only; no offset reset/state delet
 After suffix publication, do not rollback Query's PARTIAL guard: auth rollback can
 restore old paper config on the fixed image. Old query image remains emergency
 rollback with the pre-existing3d coverage limitation explicitly not certified.
+
+#### Three-realm reader packet (2026-09-27)
+
+Owner approval covers paper/sandbox/live read authentication, not order activation.
+Prepared consumer-realms/reader-candidate.compose.json and reader-rollback.compose.json
+outside Git. Query candidate sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959;
+Stream candidate sha256:65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a.
+Both source fba8863. Roll exactly query_kn_1/2 and stream_kn_1/2 sequentially.
+Rollback Query to 3dd54bfd, Stream to 7fe34806 using prior mounts/config.
+Trust changes are additive private copies, not writes to shared stable_tls.
+No Kafka, cache, TS, alpha or order changes. BAR writer remains unchanged here.
+First packaged unit invocation: six auth tests passed; two compiler tests could
+not import development scripts. Rerun with read-only compiler/manifest fixtures;
+do not count missing-fixture errors as successful packaged acceptance.
+
+#### Three-realm runtime acceptance and cleanup
+
+Status: AUTH_REALM_MAPPING_ACTIVE / EXECUTION_ACCEPTANCE_NOT_FULL. Packaged realm
+suite8/8PASS after mounting development-only compiler fixtures. Sequential rolling
+completed at17:18:07UTC for exactly two Query and two Stream roles. Query health
+healthy; Stream has no Docker healthcheck, verified through real RPC and metrics.
+All four restart_count0/OOMfalse; no other service recreated. TS remains paper
+identity and V2_PRIMARY, heartbeat60/60sessionREADY,50/60executionREADY,0fallback/
+blocked/error at17:20:51UTC. No alpha started and no order rights activated.
+
+First auth probe:288typed responses,36negative refusals, but12stream ACK failures
+were a harness/SDK packaging mismatch: reader image bundles pre-async-ACK SDK.
+No production change required; mounted committed consumer SDK2.0.5 read-only in
+the replacement client. Keep first receipt. Replacement:12/12stream receive+ACK,
+36/36wrong realm/revision/consumer refused,287/288typed responses. One OKX BTC
+MARK_INDEX_PRICE on Query2 refused SOURCE_NON_AUTHORITATIVE at SDK eligibility
+validation; four quiet TRADE typed views not execution eligible.283/288usable.
+Do not claim full execution acceptance or retry seeking a green observation.
+Candidate auth is active; public data quality rules remain unchanged.
+
+Usable snapshot call-to-validated-result latency (48requests/feed, not p99):
+QUOTE median8.27/max22.02ms; MARK median8.36/max12.98ms (47eligible);
+BOOK_SNAPSHOT21.14/46.08ms; BOOK_DELTA10.35/67.84ms; BAR13.88/24.68ms;
+TRADE8.44/156.75ms (44eligible). These are request latency, not venue event age
+or TS Redis commit latency. Evidence:consumer-realms/evidence/acceptance-sdk205.json
+SHA256a3240aaf1b3dd79efbcd8bdfd794481d0eb564b60748ddb2e23420884ab8718d;
+activation-receipt.json records all exact digests/config/negative cases.
+
+Cleanup: acceptance clients auto-removed. Removed only two unmounted build
+contexts13,893,772bytes; filesystem used198417211392->198403395584bytes. Recorded
+image inventory; retained active Query0ed57643/Stream65918a65 and rollback
+Query3dd54bfd/Stream7fe34806. No broad image/cache prune, no volumes or identities
+deleted. Four-reader start times unchanged during cleanup. Canonical remains
+/home/bobby/data_layer on fix/live-consumer-burst-recovery; release remainsv2.2.0,
+not a newly published stable tag. No push/merge. BAR suffix source fba8863 is not
+yet deployed to BAR writer.4000/s fullchain remains FAILED as recorded above;
+2000/s exact captured transport/Redis/durableACK passed.

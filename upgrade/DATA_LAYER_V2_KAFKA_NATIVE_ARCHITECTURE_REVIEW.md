@@ -3018,3 +3018,28 @@ scopes. TS PAPER_ONLY becomes ALLOWED for its explicitly approved sandbox/live
 read identity. Alpha FORBIDDEN direct execution dependency stays FORBIDDEN: alpha
 uses data to construct intent, while TS Risk remains the admission authority.
 Read activation never enables orders, changes broker mode, or starts an alpha.
+
+#### Three-realm operation and consumer handoff
+
+Adding an approved reader is configuration materialization, not a new service or
+per-symbol image. Compile the versioned manifest with compile_consumer_realms.py,
+provision a separate TLS identity and JWT key, and include the public key/subject/
+realm and manifest in the reader packet. Current Query startup requires a bounded
+reader reload/recreate for configuration changes; do not promise zero reload.
+No code/image rebuild is needed merely for another binding within supported
+contracts. New feed implementations still require source tests and release.
+
+Consumer identity, sealed binding, manifest revision and credential must change
+together. TS settings use DATA_LAYER_V2_JWT_KEY_ID, JWT_SUBJECT, JWT_ENVIRONMENT,
+JWT_MANIFEST_REVISION and JWT_PRIVATE_KEY_FILE (all prefixed DATA_LAYER_V2_), plus
+TLS_CA_FILE/TLS_CERT_FILE/TLS_KEY_FILE and CONSUMER_BINDING_FILE. Use the real
+configuration field names in each consumer; do not rename a paper key to live.
+Keep separate cursor/audit paths by consumer ID and preserve source-policy gates.
+The runtime packet under consumer-realms contains private credentials outside Git;
+mount only the selected consumer identity, never the whole identity directory.
+
+The realm labels workload permission only: sandbox/live still read the same
+public mainnet market products. They do not select demo exchange books, change
+account mode, establish broker execution parity, or permit order submission.
+Current TS process remains on its existing paper read identity until a consumer
+config handoff; the additional server mappings are active and tested no-order.
