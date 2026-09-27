@@ -58426,7 +58426,7 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status: RUNTIME_CERTIFIED / SOURCE_CI_PASS / PUBLICATION_PENDING (2026-09-27).**
+**Status: CLOSED / V2.2.0 PUBLISHED / KN PRODUCTION-AUTHORITATIVE (2026-09-27).**
 Actual TS uses KN Query/native Stream with SDK2.0.5 and unchanged binding10.
 Final telemetry-aware reader7e7e2d02:300s/29of29TS60READY, no fallback/error;
 82,522events with no new overflow/replay/reconnect, queues drained, noOOM/restart.
@@ -58435,8 +58435,11 @@ Paired old-V2 rollback/return PASS; production final50 PASS(15,504requests,
 Ten old SQLite roles stopped, state retained; VN/V1 unchanged. Source3ccb8ee
 remote CI36311629772 all four jobs PASS. Runtime certificate, per-binding latency
 report and release notes are in [v2.2.0 evidence](upgrade/evidence/releases/v2.2.0/RELEASE_NOTES.md).
-Not yet published: final evidence commit, dev/main CI/integration, tag/release and
-scoped artifact cleanup remain. No new runtime repair or architecture phase.
+Published at 2026-09-27T12:17:01Z: [GitHub v2.2.0](https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.0),
+tag9fd8a8a, PR21->dev and PR22->main; both release CI runs PASS4/4.
+Publication workflow36318455759 PASS; all5 downloaded assets verified. Three
+superseded images and9exact cache records removed; active/rollback retained.
+No new runtime repair or architecture phase.
 Details: [actual handoff journal](#kn5-production-handoff-20260927).
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
@@ -58450,8 +58453,8 @@ publish an immutable stable release and clean safely, without another phase trai
 - [x] K5.2 50 logical alpha + actual TS60, burst/recovery and whole-stack resource measurement.
 - [x] K5.3 actual paired Query/Stream handoff and rollback-return; no order path change.
 - [x] K5.4 final replacement300s PASS after serialized preflight; failed first attempt retained.
-- [ ] K5.5 Astra release review, remote feature->dev CI->main, immutable provenance/affected smoke.
-- [ ] K5.6 old writer/projector/tick-spool retirement, ADR/runbooks, cleanup and v2.2.0 publication.
+- [x] K5.5 Astra release review, remote feature->dev CI->main, immutable provenance/affected smoke.
+- [x] K5.6 old writer/projector/tick-spool retirement, ADR/runbooks, cleanup and v2.2.0 publication.
 **Completed:** K5.2 isolated final-50 load PASS (15,504 requests, 90 streams),
 TS60 actual isolated Redis write/readback, universe 480-depth 1,020/1,020 reads;
 source/test fixes and exact limitations are in the acceptance journal below.
@@ -58459,7 +58462,7 @@ source/test fixes and exact limitations are in the acceptance journal below.
 PASS; full-cap allocator evidence is separately test-only. K5-T03/T04 paired
 handoff/rollback-return and controlled disconnect PASS; inherited native recovery
 and contract evidence retained. K5-T06 final TS300s/cache/stream/loop/cursor receipt
-PASS. K5-T07 final remote publication and cleanup remain. Latency report preserves
+PASS. K5-T07 remote publication, artifact hash verification and scoped cleanup PASS. Latency report preserves
 sample counts, missing percentiles and source-age versus request-time semantics. Whole-serving-stack steady-state CPU <=5.0 vCPU; no silent loss,
 false eligibility, unbounded lag/memory/disk or unexplained restart.
 **Exit gate:** KN-1..KN-4 and KN-5 review pass, actual target load/cutover/rollback
@@ -60076,3 +60079,48 @@ sums of logical cache sizes. Evidence release-scoped-buildcache-cleanup.json.
 Active and explicit rollback artifacts retained; no volume/container/network
 or unrelated TS/Portal cache cleanup. Final source still awaits remote CI and
 release integration; no additional runtime test or source implementation change.
+
+Remote release integration receipt (2026-09-27): CI36314967701 on d9d853f
+PASS4/4 (unit,contract,native,SDK3.10). PR21 merged by BobbyAxerol into dev at
+1e70de4f065f88fdc5205024ef34552e7e4c168b. Local canonical checkout switched
+to synchronized dev only after ancestry/tree checks; owner plan bytes preserved.
+Release PR22 dev->main opened with exact same tree; wait its required checks
+before merge/tag. Feature-dev merge receipt stored outside Git. No runtime
+mutation or repeated C2. Publication remains pending; retain named rollback.
+
+Merged feature cleanup: ancestry verified d9d853f is contained in origin/dev;
+remove only local/remote feat/consumer-endpoint-benchmark after PR21 merged.
+Canonical dev remains; no secondary Data Layer worktree exists. All owner
+uncommitted plan hunks and the pending release journal remain preserved.
+
+### KN-5 Final Published Release Receipt (2026-09-27)
+
+Release v2.2.0 published12:17:01UTC from annotated tag9fd8a8ab551a8b9d0fc2ce871d5ac66f1f16108a.
+PR21(feature->dev1e70de4) and PR22(dev->main9fd8a8a) merged by BobbyAxerol after
+CI36314967701,36316378830,36316324986 all4/4PASS. Publish workflow36318455759
+PASS. Downloaded all5release assets; certificate SHA262f0123901501f7b8cdea669684b350c5dac96c97c8002551143a48deeef59d,
+endpoint-report SHAd87e7f70650d954cb31051627e9c85b93d1d7372ad7b1753f1ec9018487f2eec,
+SDK wheel SHAa1a3af7d12188a70154a948f5bfa707135c1d674848e8dc892403eb2d2b14a88.
+Evidence github-release-publication.json and dev-main-merge.json under existing
+kn5-close-20260927 root. Tag source, wheel and running image/config provenance
+verified; no runtime rebuild/restart for Git merge SHA changes.
+
+Cursor/persistence regression60PASS, packaged consumer245PASS, alpha174PASS;
+fast two-replica132/132PASS; actual TS60 final300s29/29READY,zero fallback,
+82,522stream events,0overflow/reconnect,queue ends0,0newOOM/restarts. Cursor
+29,995ACK/7,805commits/0errors; loop wake p50/p95/max1.08/2.51/4.96ms(29samples,
+no p99). QUOTE request p99 BN46.53/OKX33.30ms; MARK/INDEX39.69/38.11ms.
+These are validated SDK-call timings from inherited final50 workload, not source
+event age; TS Redis GET worst measured p99.905ms is cache read only. Full route
+denominators/source-age statistics remain in endpoint-report.50logicalclients
+15,504requests0errors,90streams;whole stack4.669vCPU. Cold2500/5000history still
+3.2-7seconds; no claim every50-alpha mix or multi-day/multi-hostHA was certified.
+
+Cleanup3unreferencedimages+9exactBuildKitrecords,0unexpectedremoved IDs; running
+container tuples unchanged. Data Layer has one canonical checkout, no extra
+worktree; merged feature branch removed local/remote after ancestry verification.
+Runtime remains Query/BARf7351c3b,Rust7fe34806,TSreader7e7e2d02/SDK2.0.5/revision10;
+immediate reader rollback5b66c2cd retained with same KN config. Old10SQLite roles
+stopped; state retained, not assumed replayable beyond Kafka retention. V1/VN,
+otherTSroles,alpha execution and order path unchanged. This final documentation
+receipt will follow dev->main without altering the published tag or artifact hashes.
