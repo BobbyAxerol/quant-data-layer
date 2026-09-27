@@ -74,9 +74,16 @@ async def run(args):
                             execution_eligible=quality.execution_eligible,
                             event_recency_state=quality.event_recency_state,
                             provider_session_state=quality.provider_session_state,
-                            gap_open=quality.gap_open, complete=quality.complete)
+                            gap_open=quality.gap_open, complete=quality.complete,
+                            sampled_at_ns=time.time_ns(),
+                            observed_at_ns=response.data.observed_at_ns,
+                            received_at_ns=response.data.received_at_ns,
+                            watermark_offset=response.data.watermark_offset,
+                            quality=quality.model_dump(mode="json"),
+                            source=response.data.source.model_dump(mode="json"),
+                            contract=response.data.contract.model_dump(mode="json"))
                     except Exception as error:
-                        row.update(status="REFUSED", code=getattr(error, "code", type(error).__name__), detail=str(error)[:180])
+                        row.update(status="REFUSED", code=getattr(error, "code", type(error).__name__), detail=str(error)[:180], diagnostics=getattr(error, "diagnostics", None))
                     row["call_to_result_ms"] = (time.perf_counter() - start) * 1000
                     reads.append(row)
                     await asyncio.sleep(.1)

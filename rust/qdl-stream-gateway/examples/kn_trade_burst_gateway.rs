@@ -44,6 +44,20 @@ use std::{
 const CONSUMER: &str = "test.capture.trade-burst";
 const SUBJECT: &str = "spiffe://test/capture-trade-burst";
 const STREAM: &str = "test.capture.canonical";
+fn scheduled_seconds(index: u64, total: u64, rate: u64, low_rate: u64) -> f64 {
+    let quarter = total / 4;
+    let middle_end = total - quarter;
+    if index <= quarter {
+        index as f64 / low_rate as f64
+    } else if index <= middle_end {
+        quarter as f64 / low_rate as f64 + (index - quarter) as f64 / rate as f64
+    } else {
+        quarter as f64 / low_rate as f64
+            + (middle_end - quarter) as f64 / rate as f64
+            + (index - middle_end) as f64 / low_rate as f64
+    }
+}
+
 fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -191,8 +205,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = PathBuf::from(&args[3]);
     let rate: u64 = args[4].parse()?;
     let repeat: u64 = args[5].parse()?;
-    if !(100..=4000).contains(&rate) || !(1..=30).contains(&repeat) {
-        return Err("bounded rate=100..4000 repeat=1..30 required".into());
+    if !(100..=5000).contains(&rate) || !(1..=120).contains(&repeat) {
+        return Err("bounded rate=100..5000 repeat=1..120 required".into());
+    }
+    let low_rate: u64 = std::env::var("QDL_TEST_BURST_LOW_RATE")
+        .ok()
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(rate);
+    if !(100..=rate).contains(&low_rate) {
+        return Err("bounded burst low rate=100..offered rate required".into());
     }
     if directory.join("start").exists() || directory.join("ready.json").exists() {
         return Err("fresh private directory required".into());
@@ -248,7 +270,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if schedule.is_empty() || products.len() > 10 {
         return Err("expected 1..10 nonempty products".into());
     }
-    if schedule.len() as u64 * repeat > rate * 120 {
+    if scheduled_seconds(
+        schedule.len() as u64 * repeat,
+        schedule.len() as u64 * repeat,
+        rate,
+        low_rate,
+    ) > 120.0
+    {
         return Err("offer window exceeds 120 seconds".into());
     }
     let capture = Arc::new(Capture { products });
@@ -454,7 +482,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &directory.join("ready.json"),
         &json!({"target":format!("127.0.0.1:{port}"), "tls":tls_packet,
         "test_only":true,"consumer_id":CONSUMER,"purpose":"INTERNAL_EXECUTION","token":jwt,"routes":routes,"cursors":cursors,"total_per_uid":totals,
-        "offered_rate":rate,"repeat":repeat,"capture_clock":"max(received_at_ns,source_event_time_ns)+1000000",
+        "offered_rate":rate,"burst_low_rate":low_rate,"repeat":repeat,"capture_clock":"max(received_at_ns,source_event_time_ns)+1000000",
         "scope":"test-only capture-backed real gRPC; no Kafka durability or live eligibility"}),
     )?;
     let stopping = state.clone();
@@ -470,12 +498,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let began = Instant::now();
         let total = schedule.len() as u64 * repeat;
+        let started_at_ns = now_ns();
+        private_json(
+            &output.join("offer-start.json"),
+            &json!({
+                "started_at_ns":started_at_ns,"total":total,"rate":rate,"burst_low_rate":low_rate,
+                "clock":"test scheduled injection wall clock; not original provider time"
+            }),
+        )
+        .map_err(|e| e.to_string())?;
         let mut max_late = 0f64;
         let mut max_lag = 0u64;
         let mut queue_peak = 0usize;
         for index in 0..total {
             if index % 16 == 0 {
-                let due = Duration::from_secs_f64(index as f64 / rate as f64);
+                let due = Duration::from_secs_f64(scheduled_seconds(index, total, rate, low_rate));
                 tokio::time::sleep(due.saturating_sub(began.elapsed())).await;
                 max_late = max_late.max(began.elapsed().saturating_sub(due).as_secs_f64() * 1000.0);
             }
@@ -501,7 +538,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 queue_peak = queue_peak.max(publishing.budget.used());
             }
         }
-        private_json(&output.join("producer.json"), &json!({"offered":total,"offered_rate":rate,
+        private_json(&output.join("producer.json"), &json!({"offered":total,"offered_rate":rate,"burst_low_rate":low_rate,"started_at_ns":started_at_ns,
             "offer_seconds":began.elapsed().as_secs_f64(),"producer_schedule_late_max_ms":max_late,
             "hub_lag_peak_sampled_records":max_lag,"queue_peak_sampled_bytes":queue_peak,
             "pass":false,"note":"producer receipt only; TS apply/durable ACK and drain decide acceptance"})).map_err(|e| e.to_string())?;
@@ -542,4 +579,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     reader.join().map_err(|_| "reader panicked")?;
     result?;
     Ok(())
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::scheduled_seconds;
+    #[test]
+    fn constant_and_burst_are_bounded_monotonic_schedules() {
+        assert_eq!(scheduled_seconds(10000, 10000, 5000, 5000), 2.0);
+        assert_eq!(scheduled_seconds(2500, 10000, 5000, 1000), 2.5);
+        assert_eq!(scheduled_seconds(7500, 10000, 5000, 1000), 3.5);
+        assert_eq!(scheduled_seconds(10000, 10000, 5000, 1000), 6.0);
+        for index in 1..=10003 {
+            assert!(
+                scheduled_seconds(index, 10003, 5000, 1000)
+                    > scheduled_seconds(index - 1, 10003, 5000, 1000)
+            );
+        }
+    }
 }

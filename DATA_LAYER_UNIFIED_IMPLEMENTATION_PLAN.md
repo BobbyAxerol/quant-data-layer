@@ -60440,3 +60440,34 @@ deleted. Four-reader start times unchanged during cleanup. Canonical remains
 not a newly published stable tag. No push/merge. BAR suffix source fba8863 is not
 yet deployed to BAR writer.4000/s fullchain remains FAILED as recorded above;
 2000/s exact captured transport/Redis/durableACK passed.
+
+#### Approved exact-quality and production-adapter capacity closure
+
+Status: IN_PROGRESS. Owner excludes Binance 3d from this closure (no data deletion
+or binding disable). Guide KN18.12-18.13 and post-release realms apply. Preserve
+provider timestamps, raw payload provenance, quality gates, ACK-after-apply and
+all order services. Capture the exact rejected view and match trade/component
+source evidence, not a subsequent successful read. Use the actual TS production
+adapter batching/recovery path in isolated 4000/5000 total-event/s tests; profile
+before optimizing, no larger buffers to conceal backlog. Test steady/burst/drain,
+disconnect/replay, slow-reader isolation, exact ordering/idempotency/cursor state,
+and latency through consumer Redis. Quiet stale TRADE must remain non-executable.
+Full requires explicit positive fresh-data, expected negative quality, lineage,
+capacity and recovery evidence; no certificate for unmeasured fan-out or Kafka
+ingest capacity. No new phase/topology, no alpha/order activation. Record exact
+per-role runtime packet/rollback before any required deploy. Cleanup only owned
+test resources; preserve active/rollback artifacts and owner working-tree edits.
+
+Exact-quality slice checkpoint: SDK validation now attaches the rejected typed
+view quality/source/contract/timestamps/watermark to existing ContinuityError
+without changing its code or policy. Payload and signed cursor are excluded.
+Acceptance tool keeps exact quality also for successful non-executable views.
+Projection/quality unittest13PASS includes immutable error evidence and preserved
+stale/disconnect/gap behavior. Runtime image lacks pytest; use existing unittest
+runner, no package installation. Isolated driver now supports bounded5000/s,
+repeat120 with scheduled offer<=120s and explicit low/high/low profile; original
+provider bytes remain unchanged. New scheduling unit1PASS and release buildPASS.
+Initial builder attempts failed toolchain PATH, then wrong Cargo cache layout;
+correct existing registry mount is qdl-cargo-home:/usr/local/cargo/registry.
+No production rollout or test capacity claim from these source/build results.
+SDK stream/cursor unittest26PASS; combined affected unit count39PASS.
