@@ -3,7 +3,7 @@
   "frozen_at": "2026-09-23",
   "refrozen": "2026-09-23 after Astra KN-1 review F5: the BAR cache row is sized contract-complete; the earlier 275 B compact row omitted coordinates, quality and provenance",
   "source": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn-plan-phase-1 (K1.4); guide upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-resources-and-latency",
-  "note": "Latency, workload and TS gates remain frozen by the inherited v2.1.1 hash. Resource sizing is historical or extrapolated as labelled; D48 invalidates the old whole-cache fit. The current resource decision is NOT_FROZEN in whole_cache_d48, pending expanded-cache measurements. No threshold is edited to turn a miss into a pass.",
+  "note": "Historical planning and allocator sections retain their original scope/status. Final deployed resource acceptance is in production_acceptance and the v2.2.0 certificate. Inherited latency/workload thresholds are unchanged; no threshold was relaxed to pass.",
   "inherits": {
     "path": "config/v2/v211-target-acceptance-budget.json",
     "sha256": "473ea6b12f0d56278c3830ca6484e9129c4e9646de0021e3505395debf01baa8",
@@ -255,5 +255,16 @@
       "no provider history was invented or served",
       "Reserve headroom for latest values, client output buffers, allocator growth; monitor peak/RSS, no unbounded payload growth guarantee."
     ]
+  },
+  "production_acceptance": {
+    "status": "MEASURED_BOUNDED_PRODUCTION_WORKLOAD",
+    "certificate": "upgrade/evidence/releases/v2.2.0/certificate.json",
+    "whole_stack_mean_vcpu": 4.668720898130555,
+    "matched_window_seconds": 374.414891175,
+    "whole_stack_gate_vcpu": 5.0,
+    "cache_maxmemory_bytes": 8000000000,
+    "cache_container_limit_bytes": 9663676416,
+    "sample_scope": "50 logical alpha workload plus actual TS60; synthetic full-cap allocator test is separate",
+    "resource_evidence_sha256": "bddbed2898452de60a876014c6303fa607f89e4242347eea0ddb6d51ef804e15"
   }
 }

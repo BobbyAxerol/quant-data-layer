@@ -19,13 +19,14 @@ It currently serves:
 
 ## KN Production Status (2026-09-27)
 
-The **new Kafka-native read path is serving Trading System**, with SDK2.0.4.
+The **new Kafka-native read path is serving Trading System**, with SDK2.0.5.
 Production final load passed: 50 logical alpha sessions, 15,504 requests,
 90 streams, 12 reconnects, actual TS60 READY in32/32 samples; no order actions.
 Ten old SQLite projector/query/stream roles are stopped, with state and exact
-rollback artifacts retained. Published tag remains **v2.1.0** until remote CI,
-dependency-clean packaging and release publication complete. Do not confuse
-this accepted runtime candidate with a published v2.2.0 artifact.
+rollback artifacts retained. The v2.2.0 runtime certificate is below; publication
+is established by green remote CI, the main-line tag and GitHub release, not
+by a healthy container alone. SDK cursor persistence is bounded and off-loop,
+with durable acknowledgement after successful fsync.
 
 ```text
 Binance/OKX -> Rust ingestors + bounded BAR REST edge -> raw Kafka
@@ -68,8 +69,8 @@ and [cutover/rollback runbook](./docs/runbooks/kn5-paired-cutover.md).
 - [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 - [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 - [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
-- [V2.1.0 release notes](./upgrade/evidence/releases/v2.1.0/RELEASE_NOTES.md)
-- [V2.1.0 machine-readable certificate](./upgrade/evidence/releases/v2.1.0/certificate.json)
+- [V2.2.0 release notes](./upgrade/evidence/releases/v2.2.0/RELEASE_NOTES.md)
+- [V2.2.0 runtime certificate](./upgrade/evidence/releases/v2.2.0/certificate.json)
 - [Contributing guide](./CONTRIBUTING.md)
 - [Security policy](./SECURITY.md)
 - [Code of conduct](./CODE_OF_CONDUCT.md)

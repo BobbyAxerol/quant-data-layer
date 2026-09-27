@@ -4,14 +4,18 @@ This document provides technical details on how to integrate production services
 
 ## Active KN Pair (2026-09-27)
 
-Actual TS data reader uses SDK2.0.4, binding/JWT revision10, on `executor_network`:
+Actual TS data reader uses SDK2.0.5, binding/JWT revision10, on `executor_network`:
 `https://qdl-v2-query:8200`, `qdl-v2-stream-a:8210`, `qdl-v2-stream-b:8210`.
 Query aliases resolve only to the two KN Query replicas; Stream is native Rust.
 Retain mTLS/JWT credentials from the versioned consumer deployment, never embed
 secrets in source. Alpha manifest revisions14/14 must be matched by their JWT;
-no alpha is started automatically by this cutover. SDK2.0.4 supports cursor v3
+no alpha is started automatically by this cutover. SDK2.0.5 supports cursor v3
 including offset0. SQLite readers/writers are stopped, not consumer targets.
-Published release remains v2.1.0 until the KN packaging/CI gate completes.
+Runtime acceptance is recorded in `upgrade/evidence/releases/v2.2.0/certificate.json`;
+verify the GitHub tag/release for publication status. Async consumers must apply
+data before `await session.acknowledge_async(event)`. The synchronous API remains
+compatible but is not the hot asynchronous path. SDK2.0.5 serializes bounded,
+fsynced cursor commits off-loop and drains accepted writes at shutdown.
 
 Universe daily warmup uses `POST /v2/market-data/warmup:batch` with per-product
 limit and the SDK bounded iterator. The sealed255-member common universe is

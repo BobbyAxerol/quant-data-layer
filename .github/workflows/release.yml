@@ -25,6 +25,7 @@ jobs:
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           python3 - <<'PY'
+          import hashlib
           import json
           import os
           from pathlib import Path
@@ -33,11 +34,32 @@ jobs:
           if not re.fullmatch(r'v2\.\d+\.\d+', tag):
               raise SystemExit('Expected a stable v2 semantic-version tag')
           root = Path('upgrade/evidence/releases') / tag
-          if json.loads((root / 'certificate.json').read_text())['status'] != 'PASS':
+          certificate = json.loads((root / 'certificate.json').read_text())
+          if certificate['status'] != 'PASS':
               raise SystemExit('Release certificate is not PASS')
+          if hashlib.sha256((root / 'endpoint-report.json').read_bytes()).hexdigest() != certificate['endpoint_report_sha256']:
+              raise SystemExit('Endpoint report differs from certified evidence')
           if not (root / 'RELEASE_NOTES.md').is_file():
               raise SystemExit('Release notes are missing')
           PY
+      - name: Build and verify certified SDK artifact
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/build_qdl_sdk_release.py --output-dir "$RUNNER_TEMP/qdl-sdk"
+          python3 - <<'PYCODE'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          certificate = json.loads((Path('upgrade/evidence/releases') / os.environ['RELEASE_TAG'] / 'certificate.json').read_text())
+          root = Path(os.environ['RUNNER_TEMP']) / 'qdl-sdk'
+          wheels = list(root.glob('*.whl'))
+          if len(wheels) != 1:
+              raise SystemExit('Expected exactly one SDK wheel')
+          if hashlib.sha256(wheels[0].read_bytes()).hexdigest() != certificate['sdk']['wheel_sha256']:
+              raise SystemExit('Tagged SDK differs from certified consumer artifact')
+          PYCODE
       - name: Publish immutable tag and public evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,4 +69,8 @@ jobs:
           gh release create "$RELEASE_TAG" --verify-tag \
             --title "Quant Data Layer $RELEASE_TAG" \
             --notes-file "$evidence/RELEASE_NOTES.md" \
-            "$evidence/certificate.json"
+            "$evidence/certificate.json" \
+            "$evidence/endpoint-report.json" \
+            "$RUNNER_TEMP/qdl-sdk/"*.whl \
+            "$RUNNER_TEMP/qdl-sdk/"*.release.json \
+            "$RUNNER_TEMP/qdl-sdk/"*.cdx.json

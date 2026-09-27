@@ -58426,15 +58426,17 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status: FINAL_LOAD_PASS / POST_ROLL_RECOVERY_REVIEW / CI_PENDING (2026-09-27).**
-Actual TS now uses KN Query/native Stream with SDK2.0.4 and unchanged binding10.
-Paired old-V2 rollback/return PASS; production final50 PASS (15,504 requests,
-90 streams, TS32/32 samples60/60). Whole-stack average4.582vCPU measured across
-446s, old-path overhead1.337 reported separately. Ten old SQLite reader/writer
-roles stopped and legacy boot-rebuild disabled; state/offsets/images retained.
-Post-retirement TS9/9 samples60/60. This is runtime acceptance, NOT release
-publication: PyPI quarantine requires the owner-approved VN SDK exclusion,
-clean artifact/affected smoke and green remote CI before merge/tag.
+**Status: RUNTIME_CERTIFIED / SOURCE_CI_PASS / PUBLICATION_PENDING (2026-09-27).**
+Actual TS uses KN Query/native Stream with SDK2.0.5 and unchanged binding10.
+Final telemetry-aware reader7e7e2d02:300s/29of29TS60READY, no fallback/error;
+82,522events with no new overflow/replay/reconnect, queues drained, noOOM/restart.
+Paired old-V2 rollback/return PASS; production final50 PASS(15,504requests,
+90streams). Matched whole-serving-stack average4.669vCPU over374.415s.
+Ten old SQLite roles stopped, state retained; VN/V1 unchanged. Source3ccb8ee
+remote CI36311629772 all four jobs PASS. Runtime certificate, per-binding latency
+report and release notes are in [v2.2.0 evidence](upgrade/evidence/releases/v2.2.0/RELEASE_NOTES.md).
+Not yet published: final evidence commit, dev/main CI/integration, tag/release and
+scoped artifact cleanup remain. No new runtime repair or architecture phase.
 Details: [actual handoff journal](#kn5-production-handoff-20260927).
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
@@ -58453,17 +58455,20 @@ publish an immutable stable release and clean safely, without another phase trai
 **Completed:** K5.2 isolated final-50 load PASS (15,504 requests, 90 streams),
 TS60 actual isolated Redis write/readback, universe 480-depth 1,020/1,020 reads;
 source/test fixes and exact limitations are in the acceptance journal below.
-**Verification:** K5-T01 partially covered by isolated load; K5-T02 full-cap and
-whole-stack accounting being closed. K5-T03..T07 production handoff/release open; report all four owner latency quantities
-for the full inventory, per-route typed failures and offered/completed/timeout
-denominators. Whole-serving-stack steady-state CPU <=5.0 vCPU; no silent loss,
+**Verification:** K5-T01/T02 actual production workload and full-stack accounting
+PASS; full-cap allocator evidence is separately test-only. K5-T03/T04 paired
+handoff/rollback-return and controlled disconnect PASS; inherited native recovery
+and contract evidence retained. K5-T06 final TS300s/cache/stream/loop/cursor receipt
+PASS. K5-T07 final remote publication and cleanup remain. Latency report preserves
+sample counts, missing percentiles and source-age versus request-time semantics. Whole-serving-stack steady-state CPU <=5.0 vCPU; no silent loss,
 false eligibility, unbounded lag/memory/disk or unexplained restart.
 **Exit gate:** KN-1..KN-4 and KN-5 review pass, actual target load/cutover/rollback
 proof, coherent source/image/config receipt, old data path off, cleanup documented
 and release published under approved remote workflow. If publication permission
 is pending, state CERTIFIED_PENDING_PUBLICATION, not RELEASED.
-**Technical debt / decisions:** six predeploy findings are tracked below; do not
-claim full closure while they or production handoff remain open. Single-host
+**Technical debt / decisions:** the six predeploy findings and cursor/consumer
+corrections are closed by the linked runtime receipts. Do not claim release
+closure until remote publication and final cleanup are verified. Single-host
 failure-domain limits, governed retention and deferred venues are explicit limits,
 not evidence of global production HA. Do not introduce a mandatory 72h wait.
 **Runtime / rollback:** exact old V2 image/config/state for V2-only products;
@@ -59976,3 +59981,58 @@ Source alpha is tested, not activated. Runtime exact TS5b66c2cd/manifest10,
 DL Query/BARf7351c3b and Rust7fe34806 unchanged, old10roles remain stopped.
 Remaining closure: full CI, certificate/release artifact reconciliation and remote
 release flow, final scoped cleanup; do not call goal complete before publication.
+
+Final requirements audit: goal explicitly asks matched event-loop delay and cursor
+persistence counters; syscall trace alone is not event-loop lag. Add bounded
+telemetry to existing TS market_plane health publication only: monotonic wakeup
+delay measured after scheduled sleep (exclude metrics Redis call time), numeric
+cursor counters from public SDK store metrics, no tokens/paths/prices. First
+sample has no timing observation. No new task/service, no feed/freshness/order
+behavior changes; cadence existing metrics interval. Tests inject timing and
+failure/cancellation, then image-only same reader packet with exact rollback.
+No broad C2 rerun; one matched TS60 observation for final artifact and counters.
+
+Telemetry packaged245/245PASS on TSimage7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea
+(source a9a92e5, same SDK3ccb8ee/a1a3af7d). Roll only market_data_service from
+5b66c2cd to7e7e2d with same env/mount/revision10; exact ts-release-reader-rollback
+packet retains5b66c2cd. Only telemetry changes versus accepted image; observe
+300s TS60 with existing health-key GET for loop delay/cursor counters, alongside
+cache and stream timeline. No change to other services or execution path.
+
+Final reader telemetry acceptance10:35:48-10:40:58UTC passed on7e7e2d02:
+300.000849s actual cache observer,60groups/0errors,29/29TS60READY; no fallback.
+29 unique10s timer samples: wake delay p50=1.077808ms,p95=2.511421ms,max=4.961793ms,
+p99 unavailable. Cursor delta29,995ACK/7,805commits/0errors;mean batch15.085426ms,
+pending sampled max17/end0,peak since start28 of64. Max batch406.205ms is since
+startup, not a claimed in-window percentile. Stream82,522events,0new overflow/
+replay/open/close, queue max167,390bytes/end0;bothRSSconstant,noOOM/restart.
+External cache GET worst supported route p99=0.905ms, separate from source age.
+No profiler overlapped this final window. Evidence sdk205-release-acceptance.
+
+Prepare v2.2.0 runtime certificate/endpoint report/release notes from immutable
+evidence above and inherited final50/reference/universe/coverage/rollback.
+Certificate PASS is bounded runtime acceptance, not assertion CI already green;
+publication stays gated by remote CI and dev/main release integration. Reconcile
+README/access guide SDK2.0.5 and final resource decision while retaining historical
+budget measurements. Do not change runtime/config/provider thresholds or rerun
+299product acceptance. No alpha execution or VN/V1 migration.
+
+Release packaging closure: publish the same SDK2.0.5 wheel/manifest/SBOM and
+endpoint report with GitHub v2.2.0 certificate. Existing release workflow builds
+SDK deterministically from tagged source using stdlib, verifies wheel hash equals
+certificate before gh release create. No package registry permission workaround,
+no vnstock/vnai fetch, no image rebuild or runtime mutation. Tag still requires
+main ancestry and runtime PASS, and operator flow still requires green CI.
+
+Release metadata checks:9/9 budget/contract tests PASS,15 evidence hashes and
+endpoint-report hash verified, both TS/alpha wheel hashes equal certificate.
+Rust02cd827->HEAD differs only in formatting under cfg(test)/integration tests;
+no production Rust implementation changed. Python4fe7e92->HEAD qdl/app/config/
+consumers has no committed runtime diff; current budget annotation only records
+measured acceptance and is not a runtime quota change. Packaging rehearsal builds
+exact a1a3af7d wheel, rejects wrong hash, verifies publication shell syntax.
+First rehearsal selector assumed every Actions step had a name; corrected to
+get(name), no workflow runtime failure. All disposable clients removed; exact
+5-file build context removed, disk used198,717,460,480->198,717,259,776bytes.
+CI36311629772 all4jobs PASS on source3ccb8ee. Final evidence/workflow commit needs
+its own remote checks before merge; no tag/publication done at this checkpoint.
