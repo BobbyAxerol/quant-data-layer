@@ -728,6 +728,9 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
             reader, catalog, schema_digest=config.schema_digest, topic_id=settings.topic_id,
             session_liveness_root=str(config.session_liveness_dir),
             row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
+            diagnostic_exclusions={b.binding_id: "ACQUISITION_DISABLED"
+                for b in StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog).bindings
+                if not b.enabled},
         )
         kn_issuer = KnCursorV3Issuer(settings, catalog)
         kn_alpha_reader = lambda: build_cache_alpha_mark_index_reader(  # noqa: E731

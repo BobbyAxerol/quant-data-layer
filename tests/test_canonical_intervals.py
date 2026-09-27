@@ -250,7 +250,7 @@ class OkxIntervalGenericHistoryTests(unittest.TestCase):
                 _binding("15m"), limit=3, now_ms=boundary + 5,
                 history_client=Client(),
             ))
-        self.assertIn("time gap", str(caught.exception))
+        self.assertIn("discontinuity kind=MISSING_PROVIDER_WINDOW", str(caught.exception))
 
     def test_binding_rejects_an_interval_okx_does_not_expose(self):
         with self.assertRaises(ValueError):

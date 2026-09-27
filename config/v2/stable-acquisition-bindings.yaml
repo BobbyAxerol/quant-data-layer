@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 18
+revision: 19
 topics:
   raw: md.raw.realtime.v2
   canonical: md.canonical.v2
@@ -709,34 +709,6 @@ bindings:
   websocket_url: null
   business_websocket_url: null
   market_websocket_url: null
-- binding_id: binance-usdm-btcusdt-260925-book_delta
-  mode: RUST_NATIVE
-  runtime: BINANCE
-  provider_kind: binance_usdm_book
-  native_channel: btcusdt_260925@depth@100ms
-  sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/public/ws
-  business_websocket_url: null
-  l2:
-    provider_protocol: BINANCE_DIFF_DEPTH
-    depth_per_side: 100
-    rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
-    snapshot_refresh_seconds: 30
-  market_websocket_url: wss://fstream.binance.com/market/ws
-- binding_id: binance-usdm-btcusdt-260925-book_snapshot
-  mode: RUST_NATIVE
-  runtime: BINANCE
-  provider_kind: binance_usdm_book
-  native_channel: btcusdt_260925@depth@100ms
-  sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/public/ws
-  business_websocket_url: null
-  l2:
-    provider_protocol: BINANCE_DIFF_DEPTH
-    depth_per_side: 100
-    rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
-    snapshot_refresh_seconds: 30
-  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-btcusdt-261225-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE
@@ -1375,34 +1347,6 @@ bindings:
   websocket_url: null
   business_websocket_url: null
   market_websocket_url: null
-- binding_id: binance-usdm-ethusdt-260925-book_delta
-  mode: RUST_NATIVE
-  runtime: BINANCE
-  provider_kind: binance_usdm_book
-  native_channel: ethusdt_260925@depth@100ms
-  sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/public/ws
-  business_websocket_url: null
-  l2:
-    provider_protocol: BINANCE_DIFF_DEPTH
-    depth_per_side: 100
-    rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
-    snapshot_refresh_seconds: 30
-  market_websocket_url: wss://fstream.binance.com/market/ws
-- binding_id: binance-usdm-ethusdt-260925-book_snapshot
-  mode: RUST_NATIVE
-  runtime: BINANCE
-  provider_kind: binance_usdm_book
-  native_channel: ethusdt_260925@depth@100ms
-  sequence_policy: CONTIGUOUS
-  websocket_url: wss://fstream.binance.com/public/ws
-  business_websocket_url: null
-  l2:
-    provider_protocol: BINANCE_DIFF_DEPTH
-    depth_per_side: 100
-    rest_snapshot_url: https://fapi.binance.com/fapi/v1/depth
-    snapshot_refresh_seconds: 30
-  market_websocket_url: wss://fstream.binance.com/market/ws
 - binding_id: binance-usdm-ethusdt-261225-book_delta
   mode: RUST_NATIVE
   runtime: BINANCE

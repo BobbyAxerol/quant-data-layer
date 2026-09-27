@@ -17,7 +17,10 @@ class BarHistoryGapError(RuntimeError):
     def __init__(self, provider: str, symbol: str, interval: str, previous: int, current: int):
         self.provider, self.symbol, self.interval = provider, symbol, interval
         self.previous, self.current = previous, current
-        super().__init__(f"{provider} closed-bar history contains a time gap "
+        self.kind = ("OVERLAPPING_PROVIDER_WINDOWS"
+                     if current - previous < canonical_interval_ms(interval)
+                     else "MISSING_PROVIDER_WINDOW")
+        super().__init__(f"{provider} closed-bar history discontinuity kind={self.kind} "
                          f"symbol={symbol} interval={interval} previous_ms={previous} current_ms={current}")
 
 

@@ -201,7 +201,7 @@
     ]
   },
   "whole_cache_d48": {
-    "status": "NOT_FROZEN_REQUIRES_WHOLE_CACHE_MEASUREMENT",
+    "status": "FROZEN_ALLOCATOR_ENVELOPE_RUNTIME_ACCEPTANCE_PENDING",
     "scope": "Execution/VN baseline PLUS 500 additional D48 daily BAR products, not universe alone. Source-only arithmetic; no runtime limit change.",
     "served_rows_per_d48_product": 10000,
     "retained_headroom_per_product": 2064,
@@ -222,7 +222,38 @@
       "state-topic revision/tombstone disk growth",
       "shadow plus old/new runtime overlap"
     ],
-    "decision": "Keep the promised 10,000 served rows. Measure actual universe + execution cache, staging and RSS before choosing maxmemory/container caps in K5.3. Do not claim 1.13 GB is whole-cache capacity; a smaller retention requires matching manifest/contract approval. No silent truncation.",
+    "decision": "Keep 10,000 served rows. The kn5_full_capacity_allocator block supersedes this older extrapolation for the candidate memory envelope; production changes only in K5.3. Native replay, output buffers under actual load and post-cutover full-stack CPU remain separate gates. No silent truncation.",
     "warmup_certification": "Coverage depends on listing/provider history. 10,000 is a supported limit, not invented 10,000 historical days for newly listed instruments."
+  },
+  "kn5_full_capacity_allocator": {
+    "status": "MEASURED_TEST_ONLY_ALLOCATOR_ENVELOPE",
+    "evidence": "/home/bobby/.local/state/qdl-v2/kn5-close-20260927/full-capacity.json",
+    "sha256": "ea682b78580480303e4582da70237aa2e7cfd770810e26cf735722ffca8b9a70",
+    "method": "synthetic layout fill using padded real canonical row size upper bounds",
+    "market_data_certificate": false,
+    "full_cap_rows": 7769216,
+    "products": 644,
+    "rows_per_product": 12064,
+    "conservative_scope": "All 644 catalog BAR products including disabled legacy at 12,064 each; exceeds demanded rows. 4 staging/retired product copies for 2 Stage-B owners.",
+    "steady_used_bytes": 6970460232,
+    "with_staging_used_bytes": 7013770760,
+    "with_staging_rss_bytes": 6757109760,
+    "evicted_keys": 0,
+    "padded_value_bytes_by_venue": {
+      "BINANCE": 819,
+      "OKX": 799
+    },
+    "candidate_maxmemory_bytes": 8000000000,
+    "candidate_container_memory_bytes": 9663676416,
+    "headroom_below_maxmemory_bytes": 986229240,
+    "headroom_above_maxmemory_bytes": 1663676416,
+    "previous_7gb_result": "TYPED_NOEVICTION_REFUSAL_DURING_STAGING_NOT_CONTAINER_OOM",
+    "production_mutation": false,
+    "limitations": [
+      "allocator/layout capacity only, not native Kafka replay or market correctness",
+      "future canonical payloads over the measured padded bound require resizing",
+      "no provider history was invented or served",
+      "Reserve headroom for latest values, client output buffers, allocator growth; monitor peak/RSS, no unbounded payload growth guarantee."
+    ]
   }
 }

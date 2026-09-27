@@ -1,5 +1,5 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 9
+revision: 10
 binding_ids:
 - binance-usdm-0gusdt-bar-1d
 - binance-usdm-1000bonkusdt-bar-1d
@@ -74,8 +74,6 @@ binding_ids:
 - binance-usdm-brettusdt-bar-1d
 - binance-usdm-brevusdt-bar-1d
 - binance-usdm-bsbusdt-bar-1d
-- binance-usdm-btcusdt-260925-book_delta
-- binance-usdm-btcusdt-260925-book_snapshot
 - binance-usdm-btcusdt-261225-book_delta
 - binance-usdm-btcusdt-261225-book_snapshot
 - binance-usdm-btcusdt-bar-12h
@@ -142,8 +140,6 @@ binding_ids:
 - binance-usdm-espusdt-bar-1d
 - binance-usdm-etcusdt-bar-1d
 - binance-usdm-ethfiusdt-bar-1d
-- binance-usdm-ethusdt-260925-book_delta
-- binance-usdm-ethusdt-260925-book_snapshot
 - binance-usdm-ethusdt-261225-book_delta
 - binance-usdm-ethusdt-261225-book_snapshot
 - binance-usdm-ethusdt-bar-12h

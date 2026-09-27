@@ -1196,19 +1196,32 @@ async def system_readiness(
     return await request.app.state.v2_runtime_readiness.public_summary()
 
 
-@router.get("/data-quality/gaps", response_model=GapListResponse)
+@router.get("/data-quality/gaps", response_model=GapListResponse, response_model_exclude_unset=True)
 async def data_quality_gaps(
+    response: Response,
+    include_coverage: bool = Query(False),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
 ):
     access.require_permission(DataPlanePermission.QUALITY_READ)
-    return {
-        "schema": "qdl.data-quality.gaps.v2",
-        "items": [
-            {**asdict(item), "feed": item.feed.value}
-            for item in await service.open_gaps_async()
-        ],
-    }
+    result = await service.open_gaps_async()
+    coverage = getattr(result, "coverage_document", None)
+    document = coverage() if callable(coverage) else None
+    response.headers["X-QDL-Gap-Scope"] = "RETAINED_WINDOW"
+    if document is not None and result.unavailable and not include_coverage:
+        sample = ",".join(item["binding_id"] for item in result.unavailable[:8])
+        raise QueryServiceError(QueryProblem(CanonicalErrorCode.PARTIAL_RESULT,
+            f"retained scan has {len(result.unavailable)} unavailable product views: {sample}; "
+            "request include_coverage=true for exact coverage; history boundaries are not assessed",
+            True, retry_after_ms=1000), request_id=service.request_id())
+    body = {"schema": "qdl.data-quality.gaps.v2", "items": [
+        {**asdict(item), "feed": item.feed.value} for item in result]}
+    if include_coverage:
+        if document is None:
+            raise QueryServiceError(QueryProblem(CanonicalErrorCode.PARTIAL_RESULT,
+                "backend does not expose product coverage", False), request_id=service.request_id())
+        body["coverage"] = document
+    return body
 
 
 def create_v2_app(

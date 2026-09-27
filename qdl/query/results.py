@@ -240,6 +240,30 @@ class GapRecord:
             raise ValueError("gap detection time must be positive")
 
 
+class GapScanResult(tuple):
+    """Tuple-compatible retained-window scan plus explicit product coverage.
+
+    Completeness here means a servable view was inspected, NOT that listing-to-
+    now history is complete. Readiness/history remain the boundary authorities.
+    """
+
+    def __new__(cls, gaps, coverage):
+        obj = super().__new__(cls, gaps)
+        obj.coverage = tuple(coverage)
+        return obj
+
+    @property
+    def unavailable(self):
+        return tuple(c for c in self.coverage if c["state"] not in {"SCANNED", "EXCLUDED"})
+
+    def coverage_document(self):
+        return {"scope": "RETAINED_WINDOW", "scan_complete": True,
+                "materialization_complete": not self.unavailable,
+                "history_complete": None,
+                "leading_coverage": "NOT_ASSESSED", "trailing_coverage": "NOT_ASSESSED",
+                "products": list(self.coverage)}
+
+
 class MemoryMarketDataBackend:
     """Deterministic shadow/test backend; production adapters implement the protocol."""
 

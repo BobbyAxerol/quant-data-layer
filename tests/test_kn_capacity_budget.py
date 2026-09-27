@@ -31,7 +31,18 @@ class WholeCacheBudgetTests(unittest.TestCase):
         self.assertEqual(steady + base["warm_rebuild_peak_delta_measured_bytes"], whole["peak_bytes_at_cap_extrapolated"])
         self.assertGreater(whole["peak_bytes_at_cap_extrapolated"], base["maxmemory_bytes"])
         self.assertFalse(whole["existing_cap_fits_full_retention"])
-        self.assertEqual(whole["status"], "NOT_FROZEN_REQUIRES_WHOLE_CACHE_MEASUREMENT")
+        self.assertEqual(whole["status"], "FROZEN_ALLOCATOR_ENVELOPE_RUNTIME_ACCEPTANCE_PENDING")
+
+    def test_full_allocator_cap_keeps_staging_and_runtime_limits_explicit(self):
+        budget = json.loads((ROOT / "config/v2/kn-v220-candidate-budget.json").read_text())
+        measured = budget["kn5_full_capacity_allocator"]
+        self.assertGreaterEqual(measured["full_cap_rows"], budget["whole_cache_d48"]["total_rows_at_cap"])
+        self.assertEqual(measured["evicted_keys"], 0)
+        self.assertFalse(measured["market_data_certificate"])
+        self.assertFalse(measured["production_mutation"])
+        self.assertLess(measured["with_staging_used_bytes"], measured["candidate_maxmemory_bytes"])
+        self.assertGreater(measured["candidate_container_memory_bytes"], measured["candidate_maxmemory_bytes"])
+        self.assertGreater(measured["headroom_below_maxmemory_bytes"], 900_000_000)
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,7 +49,7 @@ from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
-from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
 from qdl.query.row_cache import BoundedRowCache
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
 from qdl.runtime.kn_bar_readback import binding_product_key
@@ -149,7 +149,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         gap_scan_max_expected_bars: int = STABLE_GAP_DIAGNOSTIC_MAX_EXPECTED_BARS,
         gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
         row_cache_entries: int = DEFAULT_ROW_CACHE_ENTRIES,
+        diagnostic_exclusions: Mapping[str, str] | None = None,
     ) -> None:
+        self._diagnostic_exclusions = dict(diagnostic_exclusions or {})
+        unknown = self._diagnostic_exclusions.keys() - {b.binding_id for b in catalog.bindings}
+        if unknown:
+            raise ValueError("diagnostic exclusions must reference catalog bindings")
         super().__init__(
             None,  # no spool: every read below goes to the market cache
             catalog,
@@ -421,6 +426,45 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
 
     # ------------------------------------------------------------ diagnostics
 
+    def open_gaps_bounded(self, *, cancelled=None):
+        stop = cancelled or (lambda: False)
+        deadline = self._monotonic_ns() + self._gap_scan_max_work_ns
+        detected = self._clock_ns()
+        gaps, coverage = [], []
+
+        def budget():
+            if stop() or self._monotonic_ns() >= deadline:
+                raise _GapDiagnosticIncomplete("retained-window diagnostic cancelled or deadline exceeded")
+
+        def append(gap):
+            budget()
+            if len(gaps) >= self._gap_scan_max_results:
+                raise _GapDiagnosticIncomplete("retained-window diagnostic result bound exceeded")
+            gaps.append(gap)
+
+        try:
+            for binding in self.catalog.bindings:
+                budget()
+                row = {"binding_id": binding.binding_id, "instrument_uid": binding.instrument.instrument_uid,
+                       "feed": binding.feed.value, "interval": binding.interval,
+                       "state": "SCANNED", "retained_rows": None,
+                       "first_open_ns": None, "last_open_ns": None}
+                if binding.binding_id in self._diagnostic_exclusions:
+                    row.update(state="EXCLUDED", reason=self._diagnostic_exclusions[binding.binding_id])
+                else:
+                    try:
+                        self._scan_binding_gaps_bounded(binding, detected_at_ns=detected,
+                            append_gap=append, check_budget=budget, cancelled=stop, coverage=row)
+                    except QueryBackendError as error:
+                        if error.problem.code is not CanonicalErrorCode.DATA_NOT_READY:
+                            raise
+                        row.update(state="UNAVAILABLE", reason=error.problem.detail)
+                coverage.append(row)
+        except _GapDiagnosticIncomplete as error:
+            raise QueryBackendError(QueryProblem(CanonicalErrorCode.PARTIAL_RESULT,
+                str(error), True, retry_after_ms=1000)) from error
+        return GapScanResult(sorted(gaps, key=lambda g: (g.detected_at_ns, g.gap_id)), coverage)
+
     def _scan_binding_gaps_bounded(
         self,
         binding: StableSourceBinding,
@@ -429,6 +473,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         append_gap: Callable[[GapRecord], None],
         check_budget: Callable[[], None],
         cancelled: Callable[[], bool],
+        coverage: dict | None = None,
     ) -> None:
         """One product's retained window, inside the existing global budget."""
 
@@ -442,6 +487,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                     self.product_key(binding), canonical_interval_ms(binding.interval or ""),
                     last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW, check_budget=check_budget,
                 )
+                if not spans:
+                    raise _not_ready(f"empty retained BAR view: {binding.binding_id}")
+                if coverage is not None:
+                    step = canonical_interval_ms(binding.interval or "")
+                    coverage.update(retained_rows=sum((end-first)//step+1 for first,end in spans),
+                        first_open_ns=spans[0][0]*1_000_000, last_open_ns=spans[-1][1]*1_000_000)
                 if boundary.topic_id != self.topic_id:
                     raise _not_ready("diagnostic source topic generation mismatch")
                 for _opened_ms, sequence in flags:
@@ -462,8 +513,8 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 indexed = True
             except KnDiagnosticIndexMissing:
                 pass  # old projector: exact verified scan, never an empty success
-            except KnCacheNotReady:
-                return
+            except KnCacheNotReady as error:
+                raise _not_ready(str(error)) from error
             except KnCacheIntegrityError as error:
                 raise QueryBackendError(QueryProblem(
                     CanonicalErrorCode.INTERNAL_ERROR, f"diagnostic integrity: {error}", False,
@@ -479,12 +530,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                     last=STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW if binding.feed is FeedType.BAR else 1,
                     check_budget=check_budget,
                 )
-            except QueryBackendError as error:
-                if error.problem.code is CanonicalErrorCode.DATA_NOT_READY:
-                    return
+            except QueryBackendError:
                 raise
-            if view is None:
-                return
+            if view is None or not view.rows:
+                raise _not_ready(f"empty retained view: {binding.binding_id}")
+            if coverage is not None:
+                coverage["retained_rows"] = len(view.rows)
             for row in view.rows:
                 check_budget()
                 envelope = market_data_pb2.EventEnvelope.FromString(row.canonical)
@@ -499,6 +550,8 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             return
         step = _interval_ns(binding.interval or "")
         first_open, last_open = min(observed_opens), max(observed_opens)
+        if coverage is not None:
+            coverage.update(first_open_ns=first_open, last_open_ns=last_open)
         if binding.continuous_calendar:
             if ((last_open - first_open) // step) + 1 > self._gap_scan_max_expected_bars:
                 raise _GapDiagnosticIncomplete(

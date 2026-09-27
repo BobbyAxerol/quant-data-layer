@@ -1,6 +1,6 @@
 schema: qdl.v2.stable-source-bindings.v1
 canonical_stream: md.canonical.v2
-catalog_revision: 10
+catalog_revision: 11
 source_policy_revision: 1
 authority_revision: 1
 instruments:
@@ -12523,40 +12523,6 @@ bindings:
     require_final_bar: true
     continuous_calendar: true
   v1_compatibility: BINANCE_BAR_GENERIC
-- binding_id: binance-usdm-btcusdt-260925-book_delta
-  instrument_uid: f1228887-3053-5b61-9aea-11d3833f8a62
-  feed: BOOK_DELTA
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-btcusdt-260925-book-primary-v2
-    source_role: PRIMARY
-    source_policy_id: crypto_liquid_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 60000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: binance-usdm-btcusdt-260925-book_snapshot
-  instrument_uid: f1228887-3053-5b61-9aea-11d3833f8a62
-  feed: BOOK_SNAPSHOT
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-btcusdt-260925-book-primary-v2
-    source_role: PRIMARY
-    source_policy_id: crypto_liquid_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 60000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
 - binding_id: binance-usdm-btcusdt-261225-book_delta
   instrument_uid: a1bf2602-781a-56be-9922-52d1fbf327e5
   feed: BOOK_DELTA
@@ -13683,40 +13649,6 @@ bindings:
     require_final_bar: true
     continuous_calendar: true
   v1_compatibility: BINANCE_BAR_GENERIC
-- binding_id: binance-usdm-ethusdt-260925-book_delta
-  instrument_uid: 9e24d8dd-e74b-5f9b-a770-2556bbc89d37
-  feed: BOOK_DELTA
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-ethusdt-260925-book-primary-v2
-    source_role: PRIMARY
-    source_policy_id: crypto_liquid_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 60000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
-- binding_id: binance-usdm-ethusdt-260925-book_snapshot
-  instrument_uid: 9e24d8dd-e74b-5f9b-a770-2556bbc89d37
-  feed: BOOK_SNAPSHOT
-  interval: null
-  source:
-    provider: BINANCE_DIRECT
-    source_id: binance-usdm-ethusdt-260925-book-primary-v2
-    source_role: PRIMARY
-    source_policy_id: crypto_liquid_v2
-    authoritative: true
-    adapter_version: binance-usdm/2.0.0
-    normalizer_version: qdl-rust-core/2.0.0
-  quality:
-    stale_after_ms: 60000
-    require_final_bar: false
-    continuous_calendar: true
-  v1_compatibility: NONE
 - binding_id: binance-usdm-ethusdt-261225-book_delta
   instrument_uid: bc0775be-e02e-5ad4-a0fd-1fff10a4451c
   feed: BOOK_DELTA

@@ -791,6 +791,16 @@
       "GapListResponse": {
         "additionalProperties": false,
         "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GapScanCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/GapView"
@@ -819,6 +829,147 @@
         ],
         "title": "GapPolicy",
         "type": "string"
+      },
+      "GapProductCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "feed": {
+            "$ref": "#/components/schemas/FeedType"
+          },
+          "first_open_ns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Open Ns"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval"
+          },
+          "last_open_ns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Open Ns"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retained_rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained Rows"
+          },
+          "state": {
+            "enum": [
+              "SCANNED",
+              "EXCLUDED",
+              "UNAVAILABLE"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "instrument_uid",
+          "feed",
+          "interval",
+          "state",
+          "retained_rows",
+          "first_open_ns",
+          "last_open_ns"
+        ],
+        "title": "GapProductCoverage",
+        "type": "object"
+      },
+      "GapScanCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "history_complete": {
+            "title": "History Complete",
+            "type": "null"
+          },
+          "leading_coverage": {
+            "const": "NOT_ASSESSED",
+            "title": "Leading Coverage",
+            "type": "string"
+          },
+          "materialization_complete": {
+            "title": "Materialization Complete",
+            "type": "boolean"
+          },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/GapProductCoverage"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "scan_complete": {
+            "title": "Scan Complete",
+            "type": "boolean"
+          },
+          "scope": {
+            "const": "RETAINED_WINDOW",
+            "title": "Scope",
+            "type": "string"
+          },
+          "trailing_coverage": {
+            "const": "NOT_ASSESSED",
+            "title": "Trailing Coverage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "scan_complete",
+          "materialization_complete",
+          "leading_coverage",
+          "trailing_coverage",
+          "products"
+        ],
+        "title": "GapScanCoverage",
+        "type": "object"
       },
       "GapView": {
         "additionalProperties": false,
@@ -3089,6 +3240,18 @@
     "/v2/data-quality/gaps": {
       "get": {
         "operationId": "data_quality_gaps_v2_data_quality_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_coverage",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Coverage",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3099,6 +3262,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

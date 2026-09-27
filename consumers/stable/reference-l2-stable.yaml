@@ -5,7 +5,7 @@ metadata:
   owner: data-platform
   subject: spiffe://qdl/paper/reference-l2-stable
   environment: paper
-  revision: 5
+  revision: 6
 spec:
   sdk_major: 2
   rollback_contract: V2
@@ -247,32 +247,6 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
-  - instrument_uid: 9e24d8dd-e74b-5f9b-a770-2556bbc89d37
-    feed: BOOK_DELTA
-    consumer_grade: RESEARCH
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 60000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
-  - instrument_uid: 9e24d8dd-e74b-5f9b-a770-2556bbc89d37
-    feed: BOOK_SNAPSHOT
-    consumer_grade: RESEARCH
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 60000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
   - instrument_uid: a1bf2602-781a-56be-9922-52d1fbf327e5
     feed: BOOK_DELTA
     consumer_grade: RESEARCH
@@ -896,32 +870,6 @@ spec:
     stale_policy: BLOCK
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
-    bar_revision_policy: LATEST
-  - instrument_uid: f1228887-3053-5b61-9aea-11d3833f8a62
-    feed: BOOK_DELTA
-    consumer_grade: RESEARCH
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 60000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
-    bar_revision_policy: LATEST
-  - instrument_uid: f1228887-3053-5b61-9aea-11d3833f8a62
-    feed: BOOK_SNAPSHOT
-    consumer_grade: RESEARCH
-    source_policy_id: crypto_liquid_v2
-    interval: null
-    warmup_limit: 0
-    max_freshness_ms: 60000
-    require_full_coverage: true
-    require_final_bars: false
-    stale_policy: BLOCK
-    gap_policy: BLOCK
-    recovery: SNAPSHOT_AND_REPLAY
     bar_revision_policy: LATEST
   - instrument_uid: f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3
     feed: CONTRACT_METADATA

@@ -259,6 +259,33 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(gaps[0]["source_id"], "OKX_DIRECT")
         self.assertEqual(self.client.get("/v2/system/readiness").json()["authority"], "V1")
 
+    def test_gap_coverage_is_opt_in_and_missing_generation_never_empty_success(self):
+        from qdl.query.results import GapScanResult
+        from qdl_sdk.models import GapListResponse
+        row = {"binding_id": "test-bar", "instrument_uid": self.binance.instrument_uid,
+               "feed": "BAR", "interval": "1m", "state": "UNAVAILABLE",
+               "retained_rows": None, "first_open_ns": None, "last_open_ns": None,
+               "reason": "NO_GENERATION"}
+
+        async def scan():
+            return GapScanResult((), [row])
+
+        with patch.object(self.service, "open_gaps_async", new=scan):
+            strict = self.client.get("/v2/data-quality/gaps")
+            self.assertEqual(strict.status_code, 409, strict.text)
+            self.assertEqual(strict.json()["code"], "PARTIAL_RESULT")
+            report = self.client.get("/v2/data-quality/gaps?include_coverage=true")
+            self.assertEqual(report.status_code, 200, report.text)
+            view = GapListResponse.model_validate(report.json())
+            self.assertFalse(view.coverage.materialization_complete)
+            self.assertIsNone(view.coverage.history_complete)
+            self.assertEqual(view.coverage.products[0].state, "UNAVAILABLE")
+            row["state"] = "SCANNED"
+            legacy = self.client.get("/v2/data-quality/gaps")
+            self.assertEqual(legacy.status_code, 200, legacy.text)
+            self.assertNotIn("coverage", legacy.json())
+            self.assertEqual(legacy.headers["X-QDL-Gap-Scope"], "RETAINED_WINDOW")
+
     def test_gap_diagnostic_preserves_typed_incomplete_result(self):
         async def incomplete_scan():
             raise QueryServiceError(

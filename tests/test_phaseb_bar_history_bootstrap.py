@@ -152,7 +152,7 @@ class BarHistoryAdapterTests(unittest.TestCase):
         self.assertEqual({item["bar_origin"] for item in payloads}, {"BACKFILLED"})
         self.assertTrue(all(not item.test_provenance for item in values))
 
-        with self.assertRaisesRegex(RuntimeError, "time gap"):
+        with self.assertRaisesRegex(RuntimeError, "discontinuity kind=MISSING_PROVIDER_WINDOW"):
             fetch_binance_history(
                 _binance_binding(),
                 limit=2,

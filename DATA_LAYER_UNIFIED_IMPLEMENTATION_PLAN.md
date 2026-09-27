@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 IN_PROGRESS; KN-5 NOT STARTED.**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 shadow evidence carried into KN-5; KN-5 IN_PROGRESS / PREDEPLOY_GAP_CLOSURE (2026-09-27).**
 KN-2 current verdict and owner decisions: [Astra review R2](#kn2-astra-review-r2).
 Historical findings: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
@@ -53283,7 +53283,7 @@ Do not start the next phase merely because the executor's tests passed.
 | [KN-2](#kn-plan-phase-2) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Five reproduced correctness/boundedness defects on `d8929d1`; focused closure inside KN-2, no new phase |
 | [KN-3](#kn-plan-phase-3) | ASTRA_REVIEW_PASS / CLOSED (isolated-flow scope, `f0380a4`) | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | IN_PROGRESS | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
-| [KN-5](#kn-plan-phase-5) | PENDING_KN1_KN4_REVIEW | Claude Opus 5.5 | Astra | 50+TS acceptance, paired cutover, provenance, cleanup and release |
+| [KN-5](#kn-plan-phase-5) | IN_PROGRESS / PREDEPLOY_GAP_CLOSURE | Astra (owner handoff) | Owner | Isolated 50+TS load complete; paired production cutover, provenance and publication still pending |
 
 **Common invariants and approved scope:**
 - Follow [decisions/exclusions](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-decisions-and-scope),
@@ -58426,11 +58426,13 @@ not silently edited. Contributor BobbyAxerol; remote CI not run (no push).
 <a id="kn-plan-phase-5"></a>
 ### KN-5 - Target Load, Paired Cutover, Retirement And V2.2.0 Release
 
-**Status:** IN_PROGRESS - K5.1 freeze (2026-09-26), KN-4 review still pending;
-no runtime mutation, deploy or release. Source/config slices below are
-`tested locally`; the universe matrix, 50-alpha + TS-60 load, cutover,
-acceptance and release are not started. Stop conditions: any production
-mutation needs the owner's exact packet; no C2; no rerun of KN-1..KN-4 evidence.
+**Status: IN_PROGRESS / PREDEPLOY_GAP_CLOSURE (2026-09-27).**
+K5.1/K5.2 source and isolated acceptance have run (final-50-bounded, TS60 Redis
+write/readback, universe and diagnostic evidence below). They are not production
+handoff: full-cap budget, coherent release artifact and K5.3-K5.6 remain open.
+Production still uses the old spool architecture. No deploy or release in the
+current predeploy correction task. Owner requested direct implementation and
+review; Claude review is no longer an extra prerequisite imposed by the agent.
 **Goal:** prove and deploy the target read plane, retire the old bottleneck,
 publish an immutable stable release and clean safely, without another phase train.
 **Guide index:** [18.12 work items and K5-T01..T07](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5),
@@ -58445,8 +58447,11 @@ publish an immutable stable release and clean safely, without another phase trai
 - [ ] K5.4 fast/protocol preflight then one final 300s no-order acceptance; rollback/return drill.
 - [ ] K5.5 Astra release review, remote feature->dev CI->main, immutable provenance/affected smoke.
 - [ ] K5.6 old writer/projector/tick-spool retirement, ADR/runbooks, cleanup and v2.2.0 publication.
-**Completed:** none in this documentation update.
-**Verification:** K5-T01..T07 not run; report all four owner latency quantities
+**Completed:** K5.2 isolated final-50 load PASS (15,504 requests, 90 streams),
+TS60 actual isolated Redis write/readback, universe 480-depth 1,020/1,020 reads;
+source/test fixes and exact limitations are in the acceptance journal below.
+**Verification:** K5-T01 partially covered by isolated load; K5-T02 full-cap and
+whole-stack accounting being closed. K5-T03..T07 production handoff/release open; report all four owner latency quantities
 for the full inventory, per-route typed failures and offered/completed/timeout
 denominators. Whole-serving-stack steady-state CPU <=5.0 vCPU; no silent loss,
 false eligibility, unbounded lag/memory/disk or unexplained restart.
@@ -58454,7 +58459,8 @@ false eligibility, unbounded lag/memory/disk or unexplained restart.
 proof, coherent source/image/config receipt, old data path off, cleanup documented
 and release published under approved remote workflow. If publication permission
 is pending, state CERTIFIED_PENDING_PUBLICATION, not RELEASED.
-**Technical debt / decisions:** no in-scope implementation gap remains. Single-host
+**Technical debt / decisions:** six predeploy findings are tracked below; do not
+claim full closure while they or production handoff remain open. Single-host
 failure-domain limits, governed retention and deferred venues are explicit limits,
 not evidence of global production HA. Do not introduce a mandatory 72h wait.
 **Runtime / rollback:** exact old V2 image/config/state for V2-only products;
@@ -58463,14 +58469,101 @@ TS recreate, if needed, is only market_data_service read-config handoff using it
 correct current image/mounts, never TS core/risk/executor upgrade.
 **Cleanup:** active plus named rollback/candidate only; archive expiry, image-digest
 inventory, scoped BuildKit cleanup and merged-branch/worktree safety verification.
-**Astra review:** NOT REQUESTED; source/runtime/provenance, full capacity/readiness,
-release compatibility, restore/rollback and artifact hygiene.
+**Astra review:** ACTIVE as implementer/reviewer by owner request; remaining
+production handoff and artifact gates are explicit, not an extra Claude review requirement.
 **Next permitted step:** return to separately approved TS/alpha work after release;
 no automatic execution or new architecture expansion.
 
 #### KN-5 Execution Journal
 - 2026-09-23: owner-approved plan recorded; implementation/tests/runtime NONE.
 - Append tested-slice receipts, release review and publication/cleanup outcome here.
+
+<a id="kn5-predeploy-gap-closure"></a>
+#### KN-5 Predeploy Gap Closure (2026-09-27, Astra)
+
+Status: IN_PROGRESS. Owner requests closure of six predeploy findings, not a
+new phase. Guide: KN-5 sections 18.12/18.13; baseline b80e01b. Preserve the two
+owner plan hunks. Scope: expiry-safe research demand retirement; explicit gap
+coverage/missing-generation reporting; whole-cache capacity and full-stack CPU
+accounting; coherent artifact/handoff/rollback packet; truthful tracker status.
+Tests: deterministic contracts and isolated Redis first; bounded authentic
+provider checks for five 3d history discontinuities; test-only capacity fill
+must never be represented as provider data or production load evidence.
+No production deployment, retirement, offset reset, cache deletion, TS/order
+mutation, remote push/merge or publication in this predeploy task. Runtime
+replacement and paired production rollback-return cannot be certified before
+deployment. Preserve existing acceptance and rerun only affected gates.
+Rollback: source revert until deployment; cleanup exact owned test resources,
+retain production and named rollback artifacts. Record exact remaining runtime
+gates instead of declaring source preparation to be a completed cutover.
+
+**Tested source slice:** expired research L2 retirement selects exactly four
+BTC/ETH 260925 snapshot/delta bindings at 2026-09-27; metadata retained, no
+replacement ticker inferred, alpha/TS entitlements unchanged. Source catalog
+11 (712 bindings), acquisition 19, promotion scope 10, research manifest 6.
+Regressions cover inclusive expiry, idempotency, preserved unrelated BAR/metadata,
+and refusal to retire alpha/execution demand. Host apply initially stopped on
+missing protobuf dependency before any write; applied in the existing candidate
+image with network disabled, never against runtime mounts.
+
+KN diagnostic now carries one coverage row per binding, explicit exclusions
+from disabled acquisition, missing-generation/empty-view status and retained
+first/last opens. Default HTTP fails PARTIAL_RESULT for missing demanded views;
+include_coverage=true returns explicit materialization completeness. No history
+completeness is inferred outside retained windows. Old successful response body
+is unchanged; optional coverage is opt-in, OpenAPI/SDK updated together.
+Affected suite: 52 tests PASS (real disposable Redis + API/contract behavior),
+no skips, no runtime mutation. Existing SDK compatibility/contract tests follow.
+
+Contract/SDK/universe/reference entitlement suite: 32/32 PASS. Five bounded
+Binance GETs (one each BTC/ETH/BNB/DOGE/SOL) reproduce overlapping fixed-duration
+3d windows at the historical coordinates, HTTP200, 62-193ms. These are NOT
+missing bars that may be fabricated; source classifies OVERLAPPING_PROVIDER_WINDOWS
+separately from MISSING_PROVIDER_WINDOW and remains fail-closed. Authentic receipt:
+`~/.local/state/qdl-v2/kn5-close-20260927/binance-3d-provider.json`.
+
+Capacity probe uses TEST_ONLY padded real row sizes, Redis's exact 112-row
+listpack/index layout, all 644 BAR products at 12,064 rows (including disabled
+legacy products conservatively) plus four staged/retired product copies. This
+is allocator capacity, not canonical/native replay or market-data certification.
+First isolated cap 7,000,000,000 B reaches typed Redis OutOfMemoryError during
+staging, not container OOM-kill. Retry only this allocator test at maxmemory
+8,000,000,000 B / container 9GiB to measure required headroom. Production limits
+remain unchanged. Full replay/cutover acceptance is not inferred from this test.
+
+**Measured cap result:** 7,769,216 TEST_ONLY layout rows across 644 BAR products,
+plus four staging/retired product copies; 80.492s. Steady 6,970,460,232 B,
+with staging 7,013,770,760 B; RSS 6,757,109,760 B; evicted0, OOMfalse, restart0.
+Candidate maxmemory 8,000,000,000 B/container9GiB now has ~986MB allocator
+headroom plus 1.66GB cgroup margin, NOT an immediate production RAM change.
+Dedicated test Redis/client/network removed after measurement; no volume used.
+
+Whole-stack simultaneous cgroup receipt recomputes 597.492s of the existing
+50-load run: shared Kafka/ingestors/cores plus native KN serving roles = 3.852
+mean cores. Stable quota/provider Redis was missing from that recorder, so the
+full-stack gate remains INCOMPLETE, not PASS. No false use of read-plane1.294
+as whole-stack CPU. Receipt `kn5-close-20260927/serving-cpu-accounting.json`.
+
+Packaging finding: canonical Rust Dockerfile omitted native KN projector and
+stream binaries; add both to the standard image with revision/version labels
+and bounded build jobs. Actual immutable build/smoke is still required before
+source packaging is called ready. Source history/contract/budget suite85/85PASS.
+Additional expiry/budget/provision-packet suite35 run:34PASS/1SKIP (isolated broker opt-in).
+Retirement also refreshes release routing catalog revision/hash atomically; no
+consumer policy/entitlement drift may be hidden behind an old catalog hash.
+
+Release handoff runbook: [paired cutover](docs/runbooks/kn5-paired-cutover.md).
+New 500 daily products need producer/acquisition maps plus real bootstrap before
+read routing; they cannot be activated by a reader manifest alone. Old V2/V1
+rollback does not imply coverage of those added products. Exact current runtime
+image/mount snapshot and immutable candidate artifacts are recorded externally;
+no deploy is authorized by the predeploy runbook. Source-only routing now27.
+Catalog/materializer/gateway bundle/alpha reference tests16/16PASS; additional
+classification/CPU accounting regressions6/6PASS. Tests are affected suites,
+not a claim of an entirely new provider/C2 certification. Source freeze commit
+follows; canonical Rust/Python packaging verification is still pending.
+Tool: apply_patch failed before writing (sandbox mountinfo); workspace rule 32
+permits exact-match replacements, followed by diff inspection.
 
 <a id="kn5-astra-correctness-handoff"></a>
 #### KN-5 Astra Implementation / Claude Review (2026-09-26)

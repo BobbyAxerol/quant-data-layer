@@ -680,9 +680,32 @@ class GapView(ClosedModel):
     detected_at_ns: int
 
 
+class GapProductCoverage(ClosedModel):
+    binding_id: str
+    instrument_uid: str
+    feed: Feed
+    interval: str | None
+    state: Literal["SCANNED", "EXCLUDED", "UNAVAILABLE"]
+    retained_rows: int | None
+    first_open_ns: int | None
+    last_open_ns: int | None
+    reason: str | None = None
+
+
+class GapScanCoverage(ClosedModel):
+    scope: Literal["RETAINED_WINDOW"]
+    scan_complete: bool
+    materialization_complete: bool
+    history_complete: None = None
+    leading_coverage: Literal["NOT_ASSESSED"]
+    trailing_coverage: Literal["NOT_ASSESSED"]
+    products: list[GapProductCoverage]
+
+
 class GapListResponse(ClosedModel):
     contract_schema: str = Field("qdl.data-quality.gaps.v2", alias="schema")
     items: list[GapView]
+    coverage: GapScanCoverage | None = None
 
 
 class SystemReadinessSummary(ClosedModel):

@@ -2871,6 +2871,21 @@ KN-1..KN-4 Astra PASS, fast preflight hiện hành xanh và runtime packet đầ
 | K5.5 Review/provenance | Astra release review, feature->dev CI->main release flow, immutable artifact attestation | Runtime tree/image/config certified traceable; affected smoke khi artifact đổi |
 | K5.6 Retire/release | Old writer/projector/tick-spool off, ADR/runbook/update guides, cleanup, publish v2.2.0 | One active architecture + named bounded rollback, release notes/capacity envelope |
 
+**Predeploy correction, 2026-09-27 (same KN-5 scope):** retire expired
+research book bindings from source/acquisition/promotion/manifest together,
+preserving historical metadata and never inferring a successor contract.
+`/v2/data-quality/gaps` scans **retained windows**, not listing-to-now history.
+KN reports missing demanded generations as `PARTIAL_RESULT`; optional
+`include_coverage=true` exposes per-binding SCANNED/UNAVAILABLE/EXCLUDED,
+retained bounds and explicit unassessed leading/trailing coverage. Disabled
+acquisition is named, not silently counted as ready. A completed diagnostic
+scan is not a full-history certificate. History request coverage/readiness and
+provider discontinuity evidence remain mandatory. No fabricated repair bars.
+Full-cap cache sizing must include both execution and universe, diagnostic
+indexes, concurrent rebuild staging, buffers and RSS; test-only allocator
+fill is not market-data or full-stack live acceptance. Runtime retirement and
+paired rollback-return are performed only in K5.3/K5.6, not closed by docs.
+
 **Tests bắt buộc:**
 - K5-T01: 50-client offered/admitted/completed/error/timeout/in-flight accounting,
   TS route-by-route readiness/eligibility; không lấy client throttle làm zero miss.

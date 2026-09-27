@@ -211,6 +211,29 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                 self.prefix + "b:" + suffix, self.prefix + "bd:" + suffix,
                 self.prefix + "bs:" + suffix, binding.interval)
 
+    def test_coverage_reports_missing_generation_retained_window_and_exclusions(self):
+        backend = self.backend()
+        report = backend.open_gaps_bounded()
+        self.assertEqual(len(report.unavailable), len(self.catalog.bindings))
+        self.assertEqual(tuple(report), ())
+        self.assertFalse(report.coverage_document()["materialization_complete"])
+        rows = self.history_rows(4)
+        self.put_bars(self.bar_binding, rows)
+        self.put_diagnostic_index(self.bar_binding, rows)
+        report = backend.open_gaps_bounded()
+        item = next(c for c in report.coverage if c["binding_id"] == self.bar_binding.binding_id)
+        self.assertEqual(item["state"], "SCANNED")
+        self.assertEqual(item["retained_rows"], 4)
+        self.assertEqual(item["first_open_ns"], min(open_ms_of(r) for r in rows)*1_000_000)
+        self.assertEqual(report.coverage_document()["trailing_coverage"], "NOT_ASSESSED")
+        self.assertIsNone(report.coverage_document()["history_complete"])
+        excluded = self.backend(diagnostic_exclusions={self.bar_binding.binding_id: "ACQUISITION_DISABLED"})
+        item = next(c for c in excluded.open_gaps_bounded().coverage
+                    if c["binding_id"] == self.bar_binding.binding_id)
+        self.assertEqual(item["state"], "EXCLUDED")
+        with self.assertRaisesRegex(ValueError, "catalog bindings"):
+            self.backend(diagnostic_exclusions={"not-a-binding": "disabled"})
+
     def test_materialized_summary_matches_oracle_floor_and_missing_index(self):
         rows = self.history_rows(350)
         rows.pop(140)
