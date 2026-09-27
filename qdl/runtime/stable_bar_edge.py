@@ -1381,7 +1381,7 @@ class StableBinanceBarEdge:
                 "history_failed": len(getattr(self, "_history_retry", {})),
                 "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
 
-    def bootstrap_history(self) -> int:
+    def bootstrap_history(self, *, max_bindings: int | None = None) -> int:
         if self.repair_only:
             raise RuntimeError("stable BAR repair cannot bootstrap as writer")
         self._rebase_if_canonical_cache_generation_changed()
@@ -1394,7 +1394,10 @@ class StableBinanceBarEdge:
         history_end_ms = getattr(self, "history_end_ms", None)
         if history_end_ms is not None:
             observed_ms = min(observed_ms, history_end_ms)
+        if max_bindings is not None and max_bindings < 1:
+            raise ValueError("history binding quantum must be positive")
         published = 0
+        attempted = 0
         kn_mode = getattr(self, "bar_readback", None) is not None
         failures = getattr(self, "_history_retry", {})
         self._history_retry = failures
@@ -1406,6 +1409,9 @@ class StableBinanceBarEdge:
             attempt, retry_at = failures.get(source.binding_id, (0, 0))
             if kn_mode and self.clock() < retry_at:
                 continue
+            if max_bindings is not None and attempted >= max_bindings:
+                return published
+            attempted += 1
             bootstrap_rows = self._bootstrap_rows_for(source)
             try:
                 values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
@@ -1825,7 +1831,8 @@ class StableBinanceBarEdge:
         due = tuple(
             (source, acquisition)
             for source, acquisition in self.bindings + self.okx_bindings
-            if self._binding_is_due(source, observed_ms=observed_ms)
+            if self._live_history_ready(source.binding_id)
+            and self._binding_is_due(source, observed_ms=observed_ms)
             and self._retry_is_due(source.binding_id, now=now)
         )
         if not due:
@@ -1915,14 +1922,30 @@ class StableBinanceBarEdge:
         )
         return len(acknowledgements)
 
+    def _live_history_ready(self, binding_id: str) -> bool:
+        # Live progress and the bootstrap checkpoint share last_open_ms. Do not
+        # let a first live close falsely complete an unbootstrapped history.
+        return (getattr(self, "bar_readback", None) is None
+                or not getattr(self, "_history_bootstrap_active", False)
+                or binding_id in self._last_open_ms)
+
+    def _history_loop_delay(self, now: float) -> float | None:
+        if (getattr(self, "bar_readback", None) is None
+                or not getattr(self, "_history_bootstrap_active", False)
+                or getattr(self, "_history_bootstrapped", False)):
+            return None
+        retries = getattr(self, "_history_retry", {})
+        missing = set(self._binding_ids) - set(self._last_open_ms) - self._history_short_empty()
+        if not missing:
+            return None
+        return max(.1, min(max(0., retries.get(key, (0, now))[1] - now) for key in missing))
+
     def _loop_sleep_seconds(self, now: float) -> float:
-        if not self._rest_fallback_active and not getattr(
-            self, "_native_recovery_active", False
-        ):
-            return 60.0
-        # The configured 100ms first poll/retry cannot work when the outer
-        # scheduler imposes a larger arbitrary sleep floor.
-        return max(0.01, self._next_ready_at(now) - now)
+        delay = 60.0
+        if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
+            delay = max(0.01, self._next_ready_at(now) - now)
+        history_delay = self._history_loop_delay(now)
+        return delay if history_delay is None else min(delay, history_delay)
 
     def run_forever(self) -> None:
         if self.repair_only:
@@ -1954,7 +1977,12 @@ class StableBinanceBarEdge:
                 # deliberately a recurring-poll scheduler and moves a settled
                 # boundary to the next interval.  Using it here would defer an
                 # empty checkpoint forever at every boundary.
-                self.bootstrap_history()
+                if getattr(self, "bar_readback", None) is not None:
+                    if self._rest_fallback_active:
+                        self.run_cycle()
+                    self.bootstrap_history(max_bindings=1)
+                else:
+                    self.bootstrap_history()
                 if getattr(self, "bar_readback", None) is not None:
                     self.verify_serving()
                 if self._rest_fallback_active:

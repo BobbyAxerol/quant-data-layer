@@ -59445,3 +59445,42 @@ preflight uses physical MARK/INDEX component identity, not logical product ID.
 Quarantine audit first pass PARTIAL27808 records (transaction control offsets
 must be accounted for); rerun uses read_committed EOF/positions to prove the
 bounded scan completed. Do not claim zero loss or replay stale ticks into live.
+
+Measurement scope addition within K5-T06: read-only external TS market-cache
+observer subscribes only to events.market.v2.* on existing projected-market
+Redis, verifies SET value via GET after publication, and reports event/close->
+cache-readable milliseconds separately from Redis GET time. This is actual
+availability after the server's SET, not the callback-entry proxy and not
+claimed to be TS pipeline ACK time. Bounded client0.5CPU/256MiB,300s, sampled
+per identity, no writes/flush/new Redis/DB/orders. Reuse existing identity/env
+without logging credentials; --rm cleanup. Add timestamp/key/percentile tests.
+
+Fast paired matrix132 reads:128PASS/4FAIL, only Binance BNB BAR5m/15m warmup
+on both replicas (DATA_STALE). Root cause at stable_bar_edge.run_forever:
+bootstrap_history walks640 bindings synchronously before run_cycle, starving
+live REST-owned Binance bars while universe cold history is loading. Shadow
+history_only+mirror hid this production scheduling interaction. Fix narrowly:
+KN writer processes at most one history binding per loop, services already-
+bootstrapped live bindings between turns, and wakes pending history without a
+60s sleep. Never let a live last-open mark an unbootstrapped history complete.
+No thread/state sharing, no provider quotas/SLA changes, no new service. Tests:
+quantum/resume, empty/short/history gap, live priority, cold binding barrier and
+legacy schedule unchanged. Build/roll BAR edge only after affected suite PASS;
+rollback d5e5412d with same checkpoint/mounts. Query/Stream/core/TS untouched.
+A single history fetch retains its existing bounded provider timeout/page/row
+limits; no claim of zero cold-start delay. Final acceptance waits for bootstrap.
+
+BAR cooperative bootstrap regression:71 executed,70PASS/1 isolated-broker skip
+(116.713s). Test container --rm removed. The first harness invocation omitted
+/tmp tmpfs; stopped that exact disposable client, then reran with bounded tmpfs;
+not a runtime OOM. Packet/watch/cache-observer tests19/19 PASS. Source unchanged
+outside BAR scheduling and read-only acceptance instrumentation. Runtime bootstrap
+has now reached recurring live BAR cycles; the patch prevents starvation on future
+cold starts rather than claiming the initial stall never happened.
+Actual TS Redis observer300s:60 product groups,0 readback errors; cache GET worst
+product p99 1.829ms. Event-age samples include quiet/republished values and are NOT
+transport-latency evidence; execution eligibility is reported separately. See
+`ts-cache-availability.json`. Quarantine bounded audit COMPLETE27808 records,
+including27800 catalog mismatch records preserved in Kafka; no zero-loss claim.
+Commit/build BAR-only immutable patch, preserving the same runtime/checkpoint,
+then fast read matrix before final load. No change to Query/Stream/provider quotas.

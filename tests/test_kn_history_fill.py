@@ -268,6 +268,31 @@ class EdgeFillTests(unittest.TestCase):
         self.assertTrue(edge._history_bootstrapped)
 
 
+    def test_history_quantum_yields_and_resumes_without_skipping_short_history(self):
+        edge = self._edge(demand=None, gate=None)
+        self.assertEqual(edge.bootstrap_history(max_bindings=1), 10000)
+        self.assertFalse(edge._history_bootstrapped)
+        self.assertEqual([x[0] for x in self.fetched], ["a"])
+        self.assertEqual(edge.bootstrap_history(max_bindings=1), 7)
+        self.assertFalse(edge._history_bootstrapped)
+        self.assertEqual(edge.bootstrap_history(max_bindings=1), 0)
+        self.assertTrue(edge._history_bootstrapped)
+        self.assertEqual([x[0] for x in self.fetched], ["a", "b", "c"])
+
+    def test_live_watermark_cannot_complete_cold_history_and_sleep_is_bounded(self):
+        edge = self._edge(demand=None, gate=None)
+        edge._rest_fallback_active = False
+        self.assertFalse(edge._live_history_ready("a"))
+        self.assertEqual(edge._loop_sleep_seconds(1), .1)
+        edge.bootstrap_history(max_bindings=1)
+        self.assertTrue(edge._live_history_ready("a"))
+        self.assertFalse(edge._live_history_ready("b"))
+        edge._history_retry = {"b": (1, 8), "c": (1, 9)}
+        self.assertEqual(edge._loop_sleep_seconds(1), 7)
+        with self.assertRaises(ValueError):
+            edge.bootstrap_history(max_bindings=0)
+
+
 class HistoryLiveJoinTests(EdgeFillTests):
     """KN-4 D47-4: history ends where the live log starts; a history-only
     edge leaves every live bar to that log."""
