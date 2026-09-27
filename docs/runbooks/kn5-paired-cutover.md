@@ -1,7 +1,7 @@
 # KN-5 Paired Cutover And Rollback
 
 Status: PAIRED HANDOFF / ROLLBACK-RETURN / PRODUCTION LOAD PASS (2026-09-27).
-Old writer/read roles stopped; runtime/clean artifacts accepted, publication pending. Governing plan:
+Old writer/read roles stopped; v2.2.0 published2026-09-27, workflow36318455759 PASS. Governing plan:
 [KN-5](../../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-predeploy-gap-closure).
 No additional phase. This runbook is not a deployment authorization.
 
