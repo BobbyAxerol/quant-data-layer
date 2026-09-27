@@ -1,7 +1,7 @@
 # KN-5 Paired Cutover And Rollback
 
 Status: PAIRED HANDOFF / ROLLBACK-RETURN / PRODUCTION LOAD PASS (2026-09-27).
-Old writer/read roles stopped; publication and dependency-clean artifact pending. Governing plan:
+Old writer/read roles stopped; runtime/clean artifacts accepted, publication pending. Governing plan:
 [KN-5](../../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#kn5-predeploy-gap-closure).
 No additional phase. This runbook is not a deployment authorization.
 
@@ -11,10 +11,10 @@ No additional phase. This runbook is not a deployment authorization.
   `qdl-projector` and `qdl-stream-gateway` INSIDE the Rust image, not host mounts.
   Build standalone SDK from the same tree. Record image IDs, labels, wheel hash,
   source commit and affected test receipts. Do not retag an old binary as new.
-- Runtime TS was read-only checked at SDK2.0.3. Candidate SDK2.0.4 adds offset0
-  cursor support: include the market-data consumer SDK artifact/update in the
-  handoff packet, or prove that exact deployed client against the KN cursor
-  boundary before routing. A built wheel does not update a running consumer.
+- SDK2.0.5 is installed in the accepted TS reader. It includes offset0 cursor
+  support and bounded off-loop durable ACK. Verify the exact wheel hash against
+  the release certificate before deployment; a version string alone does not
+  identify an unpublished candidate. A built wheel does not update a consumer.
   No TS executor/risk/portfolio or strategy behavior change is included.
 - If locked upstream packages are unavailable, `Dockerfile` accepts
   `QDL_DEPENDENCY_IMAGE=<name>@sha256:<digest>`. It verifies active main-lock
@@ -54,7 +54,7 @@ No additional phase. This runbook is not a deployment authorization.
   consumer groups. Two native Stream replicas and existing two Python Query
   roles use ONE versioned bundle/topic identity/cursor-key/route generation.
   Query selects `QDL_STABLE_QUERY_BACKEND=kn3`; it must not mount/read SQLite.
-- Production catalog9/216 is not candidate11/712. New daily-universe BARs need
+- The retired catalog9/216 is not the active KN catalog11/712. New daily-universe BARs need
   producer/acquisition registration and real BAR bootstrap through the existing
   edge/core, not just an entitlement change. Compile/diff native maps and sealed
   BAR checkpoint migration before deciding the exact producer-config roll list.
@@ -64,8 +64,10 @@ No additional phase. This runbook is not a deployment authorization.
   unavailable for strict full history; never interpolate or relabel it FULL.
 - Start watcher BEFORE candidate setup. Include all three brokers, all native
   producers, edge, native projectors, Query/Stream, market cache AND existing
-  quota/provider Redis in same-window CPU/memory/lag measurements. Current
-  composed receipt is missing that Redis and is NOT full-stack PASS.
+  quota/provider Redis in same-window CPU/memory/lag measurements. The early
+  composed receipt omitted that Redis and remains incomplete. The final production
+  resource receipt includes it: 4.668721 vCPU over 374.414891 seconds; do not
+  substitute the early receipt for this matched full-stack measurement.
 
 ## Handoff And Exit
 
@@ -97,7 +99,21 @@ Runtime state: `/home/bobby/.local/state/qdl-v2/releases/v2.2.0-02cd827`.
 Evidence: `/home/bobby/.local/state/qdl-v2/kn5-close-20260927`.
 TS query alias `qdl-v2-query:8200` and stream pair `qdl-v2-stream-a/b:8210`
 on `executor_network` now resolve only to KN roles. Actual market-data reader
-SDK2.0.4; binding/JWT10 unchanged. Rollback/return and final50 passed.
+SDK2.0.5; binding/JWT10 unchanged. Rollback/return and final50 passed.
+
+The authoritative TS reader packet is `ts-release-reader.compose.json` (image
+`sha256:7e7e2d026a9f301db0c32237063b4f518a6503e986e6206ad9a7e1a79b01ceea`).
+Its immediate image-only rollback is `ts-release-reader-rollback.compose.json`
+(`sha256:5b66c2cd68459cda3c0273256e7cf1ad9c5a0560875e57b88559056d35b6213e`),
+with the same KN targets, environment, mounts and revision10. Historical
+`ts-candidate.compose.json` and `ts-sdk205-*.compose.json` are archived trial
+packets, NOT deployment defaults. Do not replay them for a routine restart.
+The two current packets are private mode0600 outside Git.
+
+Final reader acceptance: 300.000849s,29/29 samples60/60 READY, zero fallback,
+82,522 streamed events, zero overflow/reconnect and final queue zero. See
+[certificate](../../upgrade/evidence/releases/v2.2.0/certificate.json) and
+[endpoint report](../../upgrade/evidence/releases/v2.2.0/endpoint-report.json).
 
 Ten old roles are STOPPED (not removed): `projector_v2`, `_2`..`_6`,
 `query_v2_1/2`, `stream_v2_active/passive`. The old

@@ -60036,3 +60036,14 @@ get(name), no workflow runtime failure. All disposable clients removed; exact
 5-file build context removed, disk used198,717,460,480->198,717,259,776bytes.
 CI36311629772 all4jobs PASS on source3ccb8ee. Final evidence/workflow commit needs
 its own remote checks before merge; no tag/publication done at this checkpoint.
+
+Release operational-pointer audit (2026-09-27): runbook still described SDK2.0.4
+and the early incomplete CPU receipt. Corrected to actual SDK2.0.5 reader7e7e2d,
+immediate rollback5b66c2cd, catalog11/712 and matched whole-stack4.668721vCPU.
+Explicitly marked ts-release-reader.compose.json as authoritative; historical
+ts-candidate/sdk205 packet names are not deployment defaults. Private packets
+read-only inspected: current and rollback image match certificate; no file/env/
+mount/runtime changes. CI36314203205 currently3PASS/unit running; no publication
+yet. Documentation consistency check verifies all exact image/packet references
+against private runtime files and immutable certificate. No new runtime test or
+image required because this change only corrects operational documentation.
