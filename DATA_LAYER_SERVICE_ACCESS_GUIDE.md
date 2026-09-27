@@ -99,6 +99,22 @@ execution or risk authority except a separately declared fresh
 `MARK_INDEX_PRICE` read. A new alpha must add its own manifest requirement
 before calling a reference metric; it must not reuse another alpha's identity.
 
+### Execution MARK/INDEX Read Contract
+
+Trading System's `latest_execution_feed(..., MARK_INDEX_PRICE)` uses
+`POST /v2/market-data/reference:batch` with EXECUTION grade, one complete row,
+`limit=page_size=max_pages=1`, and the identity's signed freshness/session policy.
+The Kafka-native backend reads its verified market cache; this is not venue REST.
+Component/session evidence may admit unchanged values only within the signed
+component cadence. Disconnect, gap, generation/config mismatch or expired
+component evidence remains blocked. Original source timestamps are preserved.
+
+Generic `snapshot(MARK_INDEX_PRICE)` is a different read contract. Its event-age
+rejection does not establish a failure of the component-aware execution reference
+path. Tests must name the endpoint they actually exercised and retain both
+outcomes; never silently substitute one to turn a failing gate green. TRADE
+session liveness likewise never makes an old last-trade price execution-eligible.
+
 ## 1. Connection Architecture
 
 Production services should **never** connect directly to external exchanges (Binance, DNSE, etc.) if they are running within the `bobby_network`. Instead, they must use the `data_layer` as a unified gateway.

@@ -11,6 +11,7 @@ from qdl_sdk import DataRequirement, Feed, Grade, StalePolicy, StreamEvent
 from qdl_sdk.client import AsyncDataLayerClient
 from qdl_sdk.credentials import RotatingJwtCredentialProvider
 from qdl_sdk.errors import DataLayerError
+from qdl_sdk.reference import ReferenceRequirement, ReferenceProduct
 from qdl_sdk.models import GapPolicy, RecoveryPolicy, BarRevisionPolicy
 from qdl_sdk.tls import WorkloadTlsConfig
 from qdl_sdk.transport import RestQueryTransport, GrpcStreamTransport
@@ -30,10 +31,30 @@ def requirement(row):
         bar_revision_policy=BarRevisionPolicy(row.get("bar_revision_policy", "LATEST")))
 
 
+def execution_reference(requirement):
+    if requirement.feed is not Feed.MARK_INDEX_PRICE or requirement.consumer_grade is not Grade.EXECUTION:
+        raise ValueError("execution MARK_INDEX_PRICE requirement required")
+    return ReferenceRequirement(
+        instrument_uid=requirement.instrument_uid, product=ReferenceProduct.MARK_INDEX_PRICE,
+        consumer_grade=Grade.EXECUTION, source_policy_id=requirement.source_policy_id,
+        limit=1, page_size=1, max_pages=1, require_full_coverage=True,
+        max_freshness_ms=requirement.max_freshness_ms,
+        event_recency_policy=requirement.event_recency_policy,
+        max_session_liveness_ms=requirement.max_session_liveness_ms,
+    )
+
+
+async def read_execution_reference(client, requirement):
+    # Same one-item path as TS; item errors remain visible, never exempted.
+    response = await client.reference_batch((execution_reference(requirement),), require_all=False)
+    from scripts.probe_projector_stage_timing import reference_metadata
+    return reference_metadata(response.model_dump(mode="json"))
+
+
 async def run(args):
     packet = Path(args.packet)
     policy = json.loads((packet / "reader-public/jwt-config.json").read_text())
-    reads, negatives, streams = [], [], []
+    reads, negatives, streams, reference_reads = [], [], [], []
     for path in sorted((packet / "manifests-crypto").glob("*.yaml")):
         payload = yaml.safe_load(path.read_text())
         meta, declared = payload["metadata"], payload["spec"]["requirements"]
@@ -86,6 +107,20 @@ async def run(args):
                         row.update(status="REFUSED", code=getattr(error, "code", type(error).__name__), detail=str(error)[:180], diagnostics=getattr(error, "diagnostics", None))
                     row["call_to_result_ms"] = (time.perf_counter() - start) * 1000
                     reads.append(row)
+                    if req.feed is Feed.MARK_INDEX_PRICE and req.consumer_grade is Grade.EXECUTION:
+                        reference_row = dict(consumer_id=cid, realm=realm, replica=replica,
+                            instrument_uid=req.instrument_uid, endpoint="reference:batch")
+                        reference_start = time.perf_counter()
+                        try:
+                            evidence = await read_execution_reference(client, req)
+                            reference_row.update(status="TYPED_RESPONSE", evidence=evidence,
+                                item_ok=len(evidence["results"]) == 1 and evidence["results"][0]["status"] == "OK")
+                        except Exception as error:
+                            reference_row.update(status="REFUSED", item_ok=False,
+                                code=getattr(error, "code", type(error).__name__),
+                                diagnostics=getattr(error, "diagnostics", None))
+                        reference_row["call_to_result_ms"] = (time.perf_counter() - reference_start) * 1000
+                        reference_reads.append(reference_row)
                     await asyncio.sleep(.1)
                 probe = requirement(next(r for r in selected if r["feed"] == "TRADE"))
                 for name, kwargs, consumer in (
@@ -119,15 +154,16 @@ async def run(args):
     failures = [r for r in reads if r["status"] != "TYPED_RESPONSE"]
     usable = [r for r in reads if r.get("execution_eligible") is True]
     report = dict(schema="qdl.consumer-realm-acceptance.v1", order_actions=0,
-        snapshots=reads, negatives=negatives, streams=streams,
+        snapshots=reads, negatives=negatives, streams=streams, execution_references=reference_reads,
+        execution_reference_gate=bool(reference_reads) and all(r["item_ok"] for r in reference_reads),
         typed_response_gate=bool(reads) and not failures,
         execution_usable_count=len(usable), total_reads=len(reads),
         negative_gate=bool(negatives) and all(r["refused"] for r in negatives),
         stream_gate=len(streams) == 12 and all(r["status"] == "STREAM_ACK_PASS" for r in streams))
     report["all_reads_execution_eligible"] = bool(reads) and len(usable) == len(reads)
     Path(args.output).write_text(json.dumps(report, indent=2))
-    print(json.dumps({k:v for k,v in report.items() if k not in {"snapshots", "negatives", "streams"}}))
-    return report["typed_response_gate"] and report["negative_gate"] and report["stream_gate"]
+    print(json.dumps({k:v for k,v in report.items() if k not in {"snapshots", "negatives", "streams", "execution_references"}}))
+    return report["typed_response_gate"] and report["negative_gate"] and report["stream_gate"] and report["execution_reference_gate"]
 
 
 if __name__ == "__main__":

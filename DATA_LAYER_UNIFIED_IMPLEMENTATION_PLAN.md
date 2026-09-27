@@ -60496,3 +60496,28 @@ incomplete capture, secret exclusion and bounded exclusive evidence files.
 Production observation180s:13/13sessionREADY samples; not a burst certificate.
 No production mutation; disposable probe clients removed; no image build or
 broad cleanup. Published release remainsv2.2.0; candidate branch unchanged.
+
+#### MARK endpoint semantics and native state timing checkpoint
+
+Status IN_PROGRESS, not FULL. Read-only exact-hash canonical-to-Redis observer
+interval553samples: median361.184ms,p95589.722ms,max743.927ms. These are observer
+intervals, not broker commit timestamps. State-topic ACL29 prevents attributing
+A commit versus state visibility versus B apply; no bypass or tuning performed.
+TS-shaped MARK reference:batch658/658itemOK. Adjacent generic snapshot2/658refused
+at2251/2275ms while reference accepted the same watermark with signed component
+cadence/session evidence. The earlier generic SDK SOURCE_NON_AUTHORITATIVE must
+not be reported as rejection of the TS reference path or loss of source authority.
+Keep strict generic snapshot behavior and independently report both paths.
+Acceptance/guide correction scope: explicitly exercise execution reference batch
+with the same manifest requirements; retain generic refusal evidence, no silent
+replacement of a required endpoint or weakening freshness. Add focused tests.
+Timing probe5unitPASS; evidence projector-stage-timing-window.jsonl SHA256
+2635ff41265720c8e3156299f915b3b9f9fe3f5105bd2fad6bb6646745156dbe.
+Runtime unchanged; scoped client removed, no build or broad cleanup.
+
+Acceptance now records an additional execution reference path for each declared
+EXECUTION MARK requirement, preserving generic snapshot results and all existing
+gates. Reference item errors stay visible with require_all=False as in TS;
+status must beOK, and no retry or quiet-price exemption is introduced.
+Guide clarifies the two contracts.8focused unitPASS (3path+5timing), existing
+Query image with source mounted read-only/network none. No runtime rollout.
