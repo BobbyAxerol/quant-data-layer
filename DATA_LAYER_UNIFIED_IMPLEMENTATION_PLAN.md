@@ -59601,3 +59601,25 @@ fake provider fallback. Initial test attempts had scratch UID/read-only log moun
 errors before test execution; corrected disposable mounts, no runtime affected.
 Clean-build candidate from this source, then full suite/CI and affected read-plane
 packaging smoke. Measured latency above remains evidence of pre-packaging images.
+
+Clean Python artifact built from4fe7e92 in68.2s: imagef7351c3bda08, no vnstock/
+vnai/vnstock-ezchart installed, no inherited /opt/venv. Full suite revealed an
+outdated catalogue assertion requiring active products for the two deliberately
+retired2026-09-25 futures. Correct only this test to assert the exact retired
+metadata/expiry and absence of live bindings; other orphan instruments still
+fail. Do not restore expired order books to satisfy a test. Packet generator's
+Python digest must use the clean artifact, never the quarantined-dependency base.
+Quiet suite first run was stopped by operator137 for diagnosis (NOT OOM); verbose
+trace shows YAML parsing, not runtime deadlock. Preserve logs and await all cases.
+
+Production load-window resource accounting refined to the actual client run,
+374.415s of matched cgroup samples:4.669vCPU native stack (previous4.582 was
+446s including setup margins). Both denominators retained. Legacy canonical
+rollback group is inactive, offsets captured; md.canonical.v2 retention6h,
+retention.bytes=-1. A rollback after roughly13:24UTC is NOT presumed valid;
+compare earliest readable offsets against saved per-partition offsets first.
+Metadata CLI initially used empty packet admin directory; corrected to existing
+approved read-only admin cert mount. No ACL or broker config changed.
+19 catalogue-retirement/packet tests PASS; known retired metadata is preserved,
+no expired binding re-enabled. Three other remote jobs now green; full unit suite
+continues. Actual source and operational notes remain on one feature checkout.

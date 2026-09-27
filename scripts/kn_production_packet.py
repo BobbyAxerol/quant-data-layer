@@ -16,7 +16,7 @@ import secrets
 import subprocess
 
 PROJECT = "qdl_v2_stable_candidate"
-PYTHON_IMAGE = "sha256:9ed25f9e5d7632e0814e4f577072a8aea2b6ceb0d53c036a3c617e2f8da55a3f"
+PYTHON_IMAGE = "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685"
 RUST_IMAGE = "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f"
 REDIS_IMAGE = "redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8"
 
