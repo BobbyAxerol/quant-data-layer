@@ -146,6 +146,18 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml
           run --rm test_runner python -m unittest discover -s tests
 
+      - name: Run KN Query and BAR readback against isolated Redis
+        run: |
+          docker run --rm -d --name kn-python-redis --network none \
+            --memory 128m --cpus 0.5 \
+            redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8 \
+            redis-server --save "" --appendonly no
+          trap 'docker stop -t 5 kn-python-redis' EXIT
+          docker run --rm --network container:kn-python-redis \
+            -e QDL_KN_TEST_REDIS=redis://127.0.0.1:6379/0 \
+            "${QDL_CI_IMAGE}" python -m unittest -v \
+            tests.test_kn_query_backend tests.test_kn_bar_readback
+
       - name: Run V2 contract, SDK and shadow-consumer gates
         run: >-
           docker compose -f docker-compose.yml -f docker-compose.ci.yml

@@ -220,7 +220,13 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             if item.feed.value.startswith("BOOK_")
         }
         self.assertEqual(materialized_l2, current_l2)
-        self.assertEqual(len(materialized_l2), 36)
+        self.assertEqual(len(materialized_l2), 32)
+        retired_symbols = {"BTCUSDT_260925", "ETHUSDT_260925"}
+        self.assertFalse(any(
+            item.feed.value.startswith("BOOK_")
+            and item.instrument.native_symbol in retired_symbols
+            for item in self.loaded_catalog.bindings
+        ))
 
     def test_five_liquid_mark_index_is_promoted_as_shared_physical_inputs(self) -> None:
         """Execution mark/index demand reaches the shared Rust physical plane."""

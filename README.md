@@ -51,8 +51,9 @@ Actual consumer-call-to-validated-result latency, **milliseconds**, steady load:
 | Final BAR latest (55/venue; p99 unavailable) | 15.31 / 29.55 / - | 18.58 / 36.15 / - |
 
 Cold history under this load: 2,500 rows3,189-5,144ms; 5,000 rows4,838-6,956ms
-(four reads, not a percentile). Full serving stack averaged4.582vCPU including
-brokers/provider Redis; old rollback overhead1.337 and TS0.427 measured separately.
+(four reads, not a percentile). Full serving stack averaged4.669vCPU over the matched374.415-second load window,
+including brokers/provider Redis. A wider446-second window measured4.582vCPU;
+old rollback overhead1.337 and TS0.427 were measured separately.
 This does not certify arbitrary50 consumers, infinite history or multi-host HA.
 Retained-window diagnostic:702 scanned,6 disabled,4 VN unavailable; not full
 listing-history completeness. Provider-discontinuous Binance3d windows remain
@@ -109,11 +110,11 @@ Open pull requests into `dev`; merge `dev` into `main` only through a release pu
 
 - **V2 stable data plane** — manifest-authorized, mTLS/JWT V2 query and signed-cursor stream for Binance USD-M and OKX Swap
 - **Rust canonical core** — provider-neutral identity, decimal/unit normalization, event idempotency, sequencing, gap/resync and L2 book state
-- **Durable projection** — Kafka-compatible raw/canonical event planes with bounded SQLite/Redis projection, replay and typed freshness/quality state
+- **Durable projection** — Kafka raw/canonical and compacted state topics, native Rust projector, bounded rebuildable Redis market cache, replay and typed freshness/quality state
 - **Execution-grade context** — final BAR, TRADE, QUOTE, top-100 BOOK_SNAPSHOT/BOOK_DELTA and strict MARK_INDEX_PRICE for declared consumer demand
 - **Reference data** — bounded provider wrappers for funding, OI, long/short, taker flow, mark/index, contract metadata and native/continuous basis
 - **Real-time streaming** — WebSocket multiplexer for Binance (spot & futures trade + kline) and DNSE (VN stock live quotes)
-- **Automatic failover** — DNSE as primary VN source, vnstock REST poller as secondary fallback
+- **VN compatibility** — unchanged V1 deployment only; the new KN image excludes quarantined vnstock/vnai and does not certify that fallback
 - **Redis Pub/Sub distribution** — single upstream connection shared across many downstream consumers
 - **Historical warmup (VN)** — Parquet-backed preload service for 1-minute OHLCV candle warmup
 - **Binance derivatives REST wrappers** — OHLCV, funding, open interest, long/short ratios, taker ratio, depth, and basis bundle endpoints

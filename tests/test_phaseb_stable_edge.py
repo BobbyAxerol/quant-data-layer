@@ -373,7 +373,8 @@ class StableCatalogContractTests(unittest.TestCase):
         # The fixed non-crypto capability plane has 10 rows. Each of the five
         # liquid Binance USD-M and five OKX Swap instruments contributes TRADE,
         # QUOTE and every provider-native BAR interval. C3.6 adds the declared
-        # 18 physical L2 books as 36 snapshot/delta logical bindings. The same
+        # 18 physical books; two expired2026-09-25 books are retired by KN-5.
+        # The remaining16 have32 snapshot/delta logical bindings. The same
         # ten crypto instruments each have one official mark/index binding;
         # keep that inventory explicit so a count change cannot hide a missing
         # execution reference route or an unrelated catalog expansion.
@@ -396,7 +397,10 @@ class StableCatalogContractTests(unittest.TestCase):
             item for item in catalog.bindings
             if item.feed.value == "MARK_INDEX_PRICE"
         ]
-        self.assertEqual(len(l2_bindings), 36)
+        self.assertEqual(len(l2_bindings), 32)
+        self.assertTrue({"BTCUSDT_260925", "ETHUSDT_260925"}.isdisjoint(
+            item.instrument.native_symbol for item in l2_bindings
+        ))
         self.assertEqual(len(mark_index_bindings), 10)
         self.assertEqual(
             len(catalog.bindings),

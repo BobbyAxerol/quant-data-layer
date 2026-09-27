@@ -53246,7 +53246,7 @@ No source, config or runtime change; no build, push, merge or release.
 
 ### KN Program Status And Operating Contract
 
-**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 shadow evidence carried into KN-5; KN-5 IN_PROGRESS / PREDEPLOY_GAP_CLOSURE (2026-09-27).**
+**Program status: KN-1 ASTRA_REVIEW_PASS / CLOSED at foundation scope; KN-2 ASTRA_REVIEW_PASS / CLOSED at native Stream isolated-shadow scope (2026-09-24); KN-3 ASTRA_REVIEW_PASS / CLOSED at isolated-flow scope (2026-09-25, `f0380a4`); KN-4 shadow evidence carried into KN-5; KN-5 PRODUCTION_ACCEPTANCE_PASS / PACKAGING_IN_PROGRESS (2026-09-27).**
 KN-2 current verdict and owner decisions: [Astra review R2](#kn2-astra-review-r2).
 Historical findings: [Astra review R1](#kn2-astra-review-r1).
 Latest verdict and owner resource direction: [Astra final review R3](#kn1-astra-review-r3).
@@ -53283,7 +53283,7 @@ Do not start the next phase merely because the executor's tests passed.
 | [KN-2](#kn-plan-phase-2) | REVIEW_CHANGES_REQUIRED | Claude Opus 5.5 | Astra | Five reproduced correctness/boundedness defects on `d8929d1`; focused closure inside KN-2, no new phase |
 | [KN-3](#kn-plan-phase-3) | ASTRA_REVIEW_PASS / CLOSED (isolated-flow scope, `f0380a4`) | Claude Opus 5.5 | Astra | Native projection, bounded history, migration and rebuild proof |
 | [KN-4](#kn-plan-phase-4) | IN_PROGRESS | Claude Opus 5.5 | Astra | Full actual Query/SDK read-plane matrix and shadow load |
-| [KN-5](#kn-plan-phase-5) | IN_PROGRESS / PREDEPLOY_GAP_CLOSURE | Astra (owner handoff) | Owner | Isolated 50+TS load complete; paired production cutover, provenance and publication still pending |
+| [KN-5](#kn-plan-phase-5) | PRODUCTION_ACCEPTANCE_PASS / PACKAGING_IN_PROGRESS | Astra (owner handoff) | Owner | Actual 50+TS60, paired rollback/return and old-writer retirement passed; clean artifact/CI/publication pending |
 
 **Common invariants and approved scope:**
 - Follow [decisions/exclusions](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-decisions-and-scope),
@@ -59623,3 +59623,77 @@ approved read-only admin cert mount. No ACL or broker config changed.
 19 catalogue-retirement/packet tests PASS; known retired metadata is preserved,
 no expired binding re-enabled. Three other remote jobs now green; full unit suite
 continues. Actual source and operational notes remain on one feature checkout.
+
+Scoped artifact cleanup now planned from cleanup-inventory.json: remove only
+unreferenced qdl test/obsolete candidate image IDs, rechecking all containers
+before each removal. Exclude all active + exact rollback images; temporarily
+retain the published v2.1.0 image and Rust builder until green release CI.
+No container/volume/network/source deletion, no broad prune. Fresh KN artifact
+remains retained. Build cache cleanup waits until verification no longer needs it.
+The isolated inventory test PASS21.9s without diagnostic stack dumper; verbose
+full-suite diagnostic attempt139 is retained, not called PASS. Rerun the normal
+suite without injected dump timers and with corrected retired-metadata assertion.
+
+Fresh-artifact affected tests:60 discovered,31PASS/29missing-Redis skips in the
+no-network run. Closed those integration skips on a dedicated disposable Redis:
+40/40 query/readback tests PASS15.356s, including generation/fence/gap, cursor0,
+MARK/INDEX lineage and exact Lua/cache layout. Redis+client removed by --rm/stop;
+no shared keys touched. Wire this exact test into CI unit image on isolated
+Redis; the native integration job previously exercised Rust only, despite a
+Python docstring implying otherwise. This closes test wiring, not a new gate.
+Cleanup removed16 unreferenced image IDs: Docker image accounting24.50->21.44GB;
+BuildKit11.23GB remains until builds finish, no disk-free claim from shared-layer
+accounting. Published v2.1.0 image and Rust builder explicitly retained until
+release CI; active/rollback rows untouched. See cleanup-images-result.json.
+
+Clean-artifact rollout packet (owner blanket KN-5 approval, no new scope): image
+sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685
+from4fe7e92. Recreate query_kn_1 then query_kn_2, wait healthy individually;
+then only binance_bar_edge. Keep exact environment, mounts, TLS, aliases,
+groups, quotas and source data. Rust/cache/brokers/TS/V1/order path unchanged.
+Rollback Queryd5e5412d and BAR643fed84 with copied exact Compose. Source runtime
+code unchanged except missing-VN dependency diagnostic; remaining52 locked
+versions identical. Native Redis40/40 + boundary11/11 + entrypoint imports pass;
+final50 is inherited for unchanged core/read semantics, affected packaging smoke
+must validate both replicas + actual TS60 after roll. Full suite/CI still required
+before publish. No new300s C2 just for label/dependency exclusion.
+
+Clean-artifact real fast matrix PASS132/132, both Query replicas, no orders.
+Post-packaging TS observation kept raw:9samples, several59/60 during BOOK_DELTA
+SESSION_RESET, then60/60; NOT an all-ready PASS. Observer draft mistakenly
+required heartbeat age<15s while actual TS publication cadence is30s; discard
+that invented condition, preserve raw samples and assess real disconnections.
+Stream logs show resource-exhausted closures with growing per-subscription queue;
+inspect cause before final release, never waive it using earlier final50 PASS.
+Full suite also caught an obsolete Docker-stage string assertion: runtime venv
+now comes from verified-dependencies (default builder), not directly builder.
+Update test to require the verifier/default/receipt and non-root copy, not weaken
+the image check or change runtime logic.
+
+Release Docker regression3/3 PASS after test-only stage correction. Actual TS
+next6/6 samples60/60, fallback0, errors0, after the captured reconnect interval.
+No policy loosened; source heartbeat cadence30s confirms draft15s age test was
+invalid. Native Stream overflow counters89 then stable across90s, but the earlier
+backpressure/replay episode is retained and must be classified for release.
+README corrects active projection to Kafka-state/Redis (not SQLite), states
+VN-stock exclusion and exact whole-stack load-window denominator4.669vCPU.
+
+Full-suite second obsolete assertion expected36 L2 bindings before approved
+expiry retirement. Current32 are exact; add a negative check for BTC/ETH260925
+so the correction cannot reactivate the four expired book requirements.
+Stream counter timeline shows backpressure existed before clean-dependency
+rollout (overflow6 at06:24,43 at07:54); packaging is not established root cause.
+No stream/core/TS patch or quota relaxation has been made on that inference.
+
+Affected dependency/release/L2 regression7/7 PASS20.190s. Same retired-count
+assertion found in stable-edge baseline: corrected36->32 plus explicit retired
+native-symbol exclusion; no runtime catalogue mutation.
+
+Stable-edge catalogue + packet + dependency tests16/16 PASS2.093s. Full suite
+continues once (no repeated C2); three observed failures so far are stale test
+assertions above, each reproduced and corrected with explicit negative coverage.
+CI now includes the real isolated-Redis Python tests; no mandatory gate removed.
+Current production native Stream1/2 unchanged7fe34806; new Query/BARf7351c3b,
+TS4dba0ac1 still uses SDK2.0.4. V1, Kafka offsets/topology, state and order paths
+unchanged by packaging roll. Release remains pending full CI and post-roll
+consumer recovery classification, not claimed certified from process health.
