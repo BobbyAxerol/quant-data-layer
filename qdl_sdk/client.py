@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Protocol
 
 from pydantic import ValidationError
 
-from qdl_sdk.cursor import CursorCheckpoint, CursorStore, MemoryCursorStore
+from qdl_sdk.cursor import CursorCheckpoint, CursorStore, MemoryCursorStore, _await_durable
 from qdl_sdk.errors import ContinuityError, CursorExpiredError, DataLayerError
 from qdl_sdk.models import (
     BatchResponse,
@@ -271,6 +272,13 @@ def _validate_feed_status_payload(
     return response
 
 
+async def _load_cursor(store: CursorStore, key: str) -> CursorCheckpoint | None:
+    asynchronous = getattr(store, "aload", None)
+    if asynchronous is not None:
+        return await asynchronous(key)
+    return store.load(key)
+
+
 class WarmupStreamSession:
     def __init__(
         self,
@@ -304,6 +312,8 @@ class WarmupStreamSession:
         self._telemetry = telemetry
         self.state_restored = state_restored
         self._checkpoint_generation_started = state_restored
+        self._ack_lock = asyncio.Lock()
+        self._observed: OrderedDict[str, int] = OrderedDict()
         self._closed = False
 
     def __aiter__(self):
@@ -316,13 +326,15 @@ class WarmupStreamSession:
             event = await self._events.__anext__()
         except CursorExpiredError:
             await self._close_events()
-            self.warmup = await self._fresh_snapshot()
-            self._last_seen_offset = self.warmup.watermark_offset
-            self._checkpoint_generation_started = False
-            self._events = self._subscribe(
-                self.warmup.stream_cursor
-            )
-            self._reconnect_attempts = 0
+            async with self._ack_lock:
+                self.warmup = await self._fresh_snapshot()
+                self._last_seen_offset = self.warmup.watermark_offset
+                self._checkpoint_generation_started = False
+                self._events = self._subscribe(
+                    self.warmup.stream_cursor
+                )
+                self._reconnect_attempts = 0
+                self._observed.clear()
             return ControlEvent(
                 "SNAPSHOT_REPLACED",
                 "cursor retention expired; local state must be rebuilt from the attached snapshot",
@@ -334,18 +346,20 @@ class WarmupStreamSession:
                 raise
             self._reconnect_attempts += 1
             await asyncio.sleep(min(0.1 * 2 ** (self._reconnect_attempts - 1), 2.0))
-            checkpoint = (
-                self._cursor_store.load(self._cursor_key)
-                if self._checkpoint_generation_started
-                else None
-            )
-            if checkpoint is None:
-                token = self.warmup.stream_cursor
-                self._last_seen_offset = self.warmup.watermark_offset
-            else:
-                token = checkpoint.token
-                self._last_seen_offset = checkpoint.offset
-            self._events = self._subscribe(token)
+            async with self._ack_lock:
+                checkpoint = (
+                    await _load_cursor(self._cursor_store, self._cursor_key)
+                    if self._checkpoint_generation_started
+                    else None
+                )
+                if checkpoint is None:
+                    token = self.warmup.stream_cursor
+                    self._last_seen_offset = self.warmup.watermark_offset
+                else:
+                    token = checkpoint.token
+                    self._last_seen_offset = checkpoint.offset
+                self._events = self._subscribe(token)
+                self._observed.clear()
             return ControlEvent(
                 "RECONNECTED",
                 "stream transport reconnected from the last confirmed cursor",
@@ -362,10 +376,37 @@ class WarmupStreamSession:
         # Gaps in physical offsets therefore represent filtered records, not
         # a loss of matching data; server replay/gap checks remain authority.
         self._last_seen_offset = event.logical_offset
+        self._observed[event.resume_token] = event.logical_offset
+        while len(self._observed) > self._max_buffer_events:
+            self._observed.popitem(last=False)
         self._reconnect_attempts = 0
         return event
 
+    async def acknowledge_async(self, event: StreamEvent) -> None:
+        """Acknowledge after application, without blocking the consumer event loop."""
+        async with self._ack_lock:
+            if self._closed:
+                raise RuntimeError("stream session is closed")
+            if self._observed.get(event.resume_token) != event.logical_offset:
+                raise ValueError("cannot acknowledge an unobserved or superseded event")
+            # Complete both disk I/O and session bookkeeping before releasing the
+            # generation fence, including when the caller is repeatedly cancelled.
+            await _await_durable(self._commit_acknowledgement(event))
+
+    async def _commit_acknowledgement(self, event: StreamEvent) -> None:
+        checkpoint = CursorCheckpoint(event.resume_token, event.logical_offset)
+        method = "save" if self._checkpoint_generation_started else "replace"
+        asynchronous = getattr(self._cursor_store, "a" + method, None)
+        if asynchronous is not None:
+            await asynchronous(self._cursor_key, checkpoint)
+        else:
+            getattr(self._cursor_store, method)(self._cursor_key, checkpoint)
+        self._checkpoint_generation_started = True
+        self._record_acknowledgement(event)
+
     def acknowledge(self, event: StreamEvent) -> None:
+        if self._closed or self._ack_lock.locked():
+            raise RuntimeError("session is closed or an asynchronous acknowledgement is active")
         if event.logical_offset > self._last_seen_offset:
             raise ValueError("cannot acknowledge an event that was not observed")
         checkpoint = CursorCheckpoint(event.resume_token, event.logical_offset)
@@ -374,6 +415,9 @@ class WarmupStreamSession:
         else:
             self._cursor_store.replace(self._cursor_key, checkpoint)
             self._checkpoint_generation_started = True
+        self._record_acknowledgement(event)
+
+    def _record_acknowledgement(self, event: StreamEvent) -> None:
         if self._telemetry is not None:
             self._telemetry.record(
                 consumer_id=self.consumer_id,
@@ -386,7 +430,8 @@ class WarmupStreamSession:
         if self._closed:
             return
         self._closed = True
-        await self._close_events()
+        async with self._ack_lock:
+            await self._close_events()
 
     async def _close_events(self) -> None:
         events = self._events
@@ -878,7 +923,7 @@ class AsyncDataLayerClient:
         an expired cursor follows the existing bounded resnapshot path.
         """
         cursor_key = self._cursor_key(requirement)
-        checkpoint = self.cursor_store.load(cursor_key)
+        checkpoint = await _load_cursor(self.cursor_store, cursor_key)
         if initial_warmup is not None:
             if requirement.feed is not Feed.BAR:
                 raise ValueError("initial_warmup reuse is for BAR history, not a fresh execution price")
@@ -959,6 +1004,9 @@ class AsyncDataLayerClient:
             await session.aclose()
 
     async def close(self) -> None:
+        close_store = getattr(self.cursor_store, "aclose", None)
+        if close_store is not None:
+            await close_store()
         await self.stream_transport.close()
         await self.query_transport.close()
 

@@ -59745,3 +59745,58 @@ a timestamped observation, not bytes reclaimed attributable to cache deletion.
 Canonical checkout remains /home/bobby/data_layer, feature branch only, no extra
 Data Layer worktree. Owner's two earlier plan edits preserved unstaged. Published
 main/dev v2.1.0 unchanged; no v2.2.0 tag or claim of full release certification.
+
+<a id="kn5-cursor-persistence-closure"></a>
+#### KN-5 Cursor Persistence And Final Release Closure
+
+Status: IMPLEMENTING under owner active release goal (2026-09-27). Guide18.12/
+18.13 remains authority; no new phase. Scope: SDK2.0.5 additive async durable
+acknowledgement, bounded single-writer FileCursorStore, TS market-data reader
+only, affected runtime/acceptance and approved remote release flow. Preserve
+VN/V1, order/Risk/strategy/DB, manifest revision and all freshness/stream caps.
+One store admits at most64 operations, batches already queued acknowledgements
+without an artificial sleep, serializes file transactions and retains atomic
+replace + file/directory fsync. Callers complete only after durability. Snapshot
+reset/reconnect and async acknowledgement share a session lock; cancellation
+after admission drains its operation before releasing ownership. Shutdown drains
+accepted work, rejects new work; errors propagate and never advance an ack flag.
+Sync API stays compatible. Disk reads during reconnect also leave the event loop.
+
+Required tests: event-loop progress on blocked fsync; exact queue/concurrency
+bounds; same-key monotonicity, duplicate retry, generation replacement; multi-key
+no lost update; cancellation before/after admission and repeated cancellation;
+close during write; file/directory fsync and rename failures; actual subprocess
+crash/restart with old-or-new atomic checkpoint and duplicate-safe replay. TS
+consumer tests must prove cache commit precedes awaited durable ack, reconnect
+fencing still holds, and both venues retain current feed policy.
+After source gates: immutable SDK/TS-reader image, roll only market_data_service
+with exact current4dba0ac1 image/config rollback; Data Layer Python/Rust images
+need not change for SDK-only runtime behavior. Fast two-replica matrix then300s
+actual TS60/cache observation with matched stream metrics, cursor I/O, resources
+and controlled disconnect recovery. Inherit unaffected universe/reference/load
+evidence. No merge/tag until CI and runtime closure prove the release.
+
+Cursor implementation slice (2026-09-27): FileCursorStore now has a bounded
+64-operation admission queue and one serialized off-loop writer; ready writes
+share an atomic fsynced transaction, no debounce timer. Equal-value retries still
+fsync because rename success followed by directory-fsync failure is not a durable
+ack. Session async acknowledgement is fenced against reconnect/resnapshot and
+rejects superseded event tokens; repeated cancellation drains accepted I/O and
+session bookkeeping. Existing synchronous API remains available.
+
+Verification: isolated existing f7351c3b image, source read-only, network none,
+1CPU/768MiB, disposable --rm client. New persistence/session tests19 plus existing
+SDK stream suite26:45/45PASS. Includes real subprocess exit before/after rename,
+slow disk loop progress, multi-key batching, bounded admission, file/directory
+fsync/rename errors, cancellation/shutdown, generation and reconnect fencing.
+Two first-run test-fixture typos (CursorExpiredError constructor, ControlEvent
+code name) were corrected; their failed logs are not counted as passing runs.
+SDK version moves to2.0.5 for the additive API. TS adapter/wheel/image still needs
+wiring and runtime acceptance; no live consumer is claimed fixed yet. No runtime
+mutation, image build, or shared data write in this slice. Disposable client
+removed automatically; no new image/cache created. Existing active and rollback
+retention remains as above until final release closure. apply_patch remains
+unavailable (bubblewrap mountinfo); exact scripted edits used and diff inspected.
+
+Final SDK slice regression with version2.0.5:52/52PASS in15.147s (19 new,26
+existing stream/SDK,7 stable-release checks), no skips. Source-only evidence.
