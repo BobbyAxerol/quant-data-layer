@@ -23,6 +23,30 @@ class BarHistoryGapError(RuntimeError):
         super().__init__(f"{provider} closed-bar history discontinuity kind={self.kind} "
                          f"symbol={symbol} interval={interval} previous_ms={previous} current_ms={current}")
 
+    def retry_delay_seconds(self, attempt: int) -> int:
+        # Overlapping native windows cannot be repaired by fetching a missing
+        # bar. Recheck for provider corrections daily, retaining failed coverage.
+        if self.kind == "OVERLAPPING_PROVIDER_WINDOWS":
+            return 86_400
+        return min(2 ** min(attempt, 6), 30)
+
+
+class BarHistoryOverlapError(BarHistoryGapError):
+    """Incomplete requested history with an independently validated recent suffix.
+
+    Only history materialization may use these envelopes. Request fetchers still
+    raise: this is never a successful short response or proof of a listing floor.
+    """
+
+    def __init__(self, provider: str, symbol: str, interval: str, previous: int,
+                 current: int, *, requested_rows: int, recent_envelopes: tuple):
+        super().__init__(provider, symbol, interval, previous, current)
+        if self.kind != "OVERLAPPING_PROVIDER_WINDOWS" or not recent_envelopes:
+            raise ValueError("history overlap outcome requires a nonempty recent suffix")
+        self.requested_rows = requested_rows
+        self.recent_envelopes = recent_envelopes
+        self.older_prefix_status = "UNCERTIFIED_PROVIDER_OVERLAP"
+
 
 _UNIT_MS = {
     "s": 1_000,

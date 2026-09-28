@@ -208,7 +208,8 @@ class HttpExecutionMarkIndexReader:
             request,
             capability,
             code,
-            "execution MARK/INDEX live view did not return a current active record",
+            "execution MARK/INDEX live view did not return a current active record: "
+            + ",".join(dict.fromkeys(errors)),
         )
 
     def stats(self) -> dict[str, int]:
@@ -236,8 +237,13 @@ class HttpExecutionMarkIndexReader:
         except (ValueError, AttributeError):
             return "UNAVAILABLE"
         normalized = str(detail).upper()
-        if normalized.endswith(":STALE"):
-            return "STALE"
+        # Component cadence and session age are freshness failures, not an
+        # absent provider. Preserve the bounded reason for consumer diagnosis.
+        reason = normalized.rsplit(":", 1)[-1]
+        if reason in {"STALE", "COMPONENT_STALE", "SESSION_LIVENESS"}:
+            return reason
+        if reason in {"SESSION_STATE", "QUIET_POLICY_UNAVAILABLE", "LINEAGE_INVALID"}:
+            return reason
         if normalized.endswith(":GAP_OR_RESYNC"):
             return "GAPPED"
         if normalized.endswith(":IDENTITY_MISMATCH"):
@@ -250,7 +256,7 @@ class HttpExecutionMarkIndexReader:
 
     @staticmethod
     def _failure_code(errors: list[str]) -> str:
-        if "STALE" in errors:
+        if any(reason in {"STALE", "COMPONENT_STALE", "SESSION_LIVENESS"} for reason in errors):
             return "LIVE_VIEW_STALE"
         if "GAPPED" in errors:
             return "LIVE_VIEW_GAPPED"

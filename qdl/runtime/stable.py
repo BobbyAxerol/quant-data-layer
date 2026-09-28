@@ -526,7 +526,12 @@ def stable_grpc_server_credentials(
 
 def load_stable_manifests(config: StableRuntimeConfig) -> ConsumerManifestRegistry:
     manifests = tuple(ConsumerManifestLoader.load(path) for path in config.manifest_paths)
-    if any(item.environment != config.environment for item in manifests):
+    # Public market storage/cursors keep their realm. Consumer realms require
+    # explicit, separately pinned JWT key/subject bindings.
+    raw_realms = os.environ.get("QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON")
+    realms = (DataPlaneSecurityConfig.from_environment().consumer_environments
+              if raw_realms else frozenset({config.environment}))
+    if any(item.environment not in realms for item in manifests):
         raise ValueError("stable consumer manifest environment mismatch")
     return ConsumerManifestRegistry(manifests)
 

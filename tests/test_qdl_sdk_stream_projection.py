@@ -187,6 +187,53 @@ def template(feed: Feed) -> MarketDataView:
     )
 
 
+class ExactQueryRefusalTests(unittest.TestCase):
+    def test_rejection_keeps_original_quality_not_later_view(self):
+        for feed in (Feed.TRADE, Feed.QUOTE, Feed.MARK_INDEX_PRICE, Feed.BOOK_DELTA):
+            with self.subTest(feed=feed):
+                view = template(feed)
+                view.quality.execution_eligible = False
+                view.quality.flags = ["component:index:stale", "generation:7"]
+                view.received_at_ns = NOW + 1000
+                view.cursor = "signed-private-cursor-not-for-logs"
+                requirement = DataRequirement(instrument_uid=view.instrument_uid,
+                    feed=feed, consumer_grade=Grade.EXECUTION,
+                    source_policy_id="crypto_primary_v2", max_freshness_ms=2000)
+                with self.assertRaises(ContinuityError) as caught:
+                    _validate_query_payload(requirement,
+                        {"request_id": "exact", "data": view}, warmup=False)
+                evidence = caught.exception.diagnostics
+                self.assertEqual(caught.exception.code, "SOURCE_NON_AUTHORITATIVE")
+                self.assertEqual(evidence["quality"], view.quality.model_dump(mode="json"))
+                self.assertEqual(evidence["watermark_offset"], 10)
+                self.assertEqual(evidence["received_at_ns"], NOW + 1000)
+                self.assertNotIn("cursor", evidence)
+                self.assertNotIn("payload", evidence)
+                view.quality.flags.clear()
+                view.quality.execution_eligible = True
+                self.assertFalse(evidence["quality"]["execution_eligible"])
+                self.assertEqual(len(evidence["quality"]["flags"]), 2)
+
+    def test_stale_disconnected_and_gap_diagnostics_keep_error_codes(self):
+        cases = (
+            ({"freshness_ms": 3001}, "DATA_STALE"),
+            ({"provider_session_state": "DISCONNECTED"}, "DATA_STALE"),
+            ({"gap_open": True}, "OPEN_SEQUENCE_GAP"),
+        )
+        for changes, code in cases:
+            view = template(Feed.TRADE)
+            view.quality = view.quality.model_copy(update=changes)
+            requirement = DataRequirement(instrument_uid=view.instrument_uid,
+                feed=Feed.TRADE, consumer_grade=Grade.EXECUTION,
+                source_policy_id="crypto_primary_v2", max_freshness_ms=2000)
+            with self.assertRaises(ContinuityError) as caught:
+                _validate_query_payload(requirement,
+                    {"request_id": "negative", "data": view}, warmup=False)
+            self.assertEqual(caught.exception.code, code)
+            self.assertEqual(caught.exception.diagnostics["quality"],
+                             view.quality.model_dump(mode="json"))
+
+
 def envelope(feed: Feed) -> market_data_pb2.EventEnvelope:
     result = market_data_pb2.EventEnvelope(
         schema_name="qdl.marketdata.v2.EventEnvelope",

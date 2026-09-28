@@ -128,6 +128,24 @@ def _allows_quiet_execution_continuity(requirement: DataRequirement, quality) ->
     )
 
 
+def _view_refusal(row, code: str, detail: str) -> ContinuityError:
+    """Retain the rejected typed view, excluding payload and signed cursor."""
+    return ContinuityError(code, detail, diagnostics={
+        "origin": "sdk_query_validation",
+        "instrument_uid": row.instrument_uid,
+        "instrument_id": row.instrument_id,
+        "feed": row.feed.value,
+        "interval": row.interval,
+        "observed_at_ns": row.observed_at_ns,
+        "received_at_ns": row.received_at_ns,
+        "watermark_offset": row.watermark_offset,
+        "revision": row.revision,
+        "quality": row.quality.model_dump(mode="json"),
+        "source": row.source.model_dump(mode="json"),
+        "contract": row.contract.model_dump(mode="json"),
+    })
+
+
 def _validate_query_payload(
     requirement: DataRequirement, payload: dict | WarmupResponse | SnapshotResponse, *, warmup: bool
 ) -> SnapshotResponse | WarmupResponse:
@@ -165,18 +183,18 @@ def _validate_query_payload(
     for index, row in enumerate(rows):
         is_tail = index == len(rows) - 1
         if row.instrument_uid != requirement.instrument_uid:
-            raise ContinuityError("CONFLICT", "query response instrument does not match requirement")
+            raise _view_refusal(row, "CONFLICT", "query response instrument does not match requirement")
         if row.feed.value != requirement.feed.value:
-            raise ContinuityError("CONFLICT", "query response feed does not match requirement")
+            raise _view_refusal(row, "CONFLICT", "query response feed does not match requirement")
         if requirement.interval is not None and row.interval != requirement.interval:
-            raise ContinuityError("CONFLICT", "query response interval does not match requirement")
+            raise _view_refusal(row, "CONFLICT", "query response interval does not match requirement")
         quality = row.quality
         if requirement.feed is Feed.BOOK_DELTA and (
             not row.payload.sequence_verified or row.payload.book_generation < 1
         ):
-            raise ContinuityError("OPEN_SEQUENCE_GAP", "book delta sequence is not verified")
+            raise _view_refusal(row, "OPEN_SEQUENCE_GAP", "book delta sequence is not verified")
         if quality.policy_id != requirement.source_policy_id:
-            raise ContinuityError(
+            raise _view_refusal(row,
                 "CONFLICT", "query response source policy does not match requirement"
             )
         state = quality.state.upper()
@@ -188,12 +206,12 @@ def _validate_query_payload(
             and freshness_ms > requirement.max_freshness_ms
             and requirement.effective_event_recency_policy.value in {"BLOCK", "PAUSE"}
         ):
-            raise ContinuityError("DATA_STALE", "query response exceeds freshness policy")
+            raise _view_refusal(row, "DATA_STALE", "query response exceeds freshness policy")
         if (
             is_tail
             and quality.provider_session_state in {"STALE", "DISCONNECTED", "UNKNOWN"}
         ):
-            raise ContinuityError(
+            raise _view_refusal(row,
                 "DATA_STALE", "query response provider session is not live"
             )
         if is_tail and requirement.max_session_liveness_ms is not None and (
@@ -202,33 +220,33 @@ def _validate_query_payload(
             or quality.provider_session_liveness_ms
             > requirement.max_session_liveness_ms
         ):
-            raise ContinuityError(
+            raise _view_refusal(row,
                 "DATA_STALE", "query response provider session exceeds its policy"
             )
         if quality.gap_open and requirement.gap_policy.value in {"BLOCK", "PAUSE"}:
-            raise ContinuityError("OPEN_SEQUENCE_GAP", "query response has an open gap")
+            raise _view_refusal(row, "OPEN_SEQUENCE_GAP", "query response has an open gap")
         if is_tail and state in {
             "STALE", "OFFLINE", "UNAVAILABLE"
         } and requirement.stale_policy.value in {
             "BLOCK", "PAUSE",
         }:
-            raise ContinuityError("DATA_STALE", f"query response quality state is {state}")
+            raise _view_refusal(row, "DATA_STALE", f"query response quality state is {state}")
         if (
             is_tail
             and requirement.consumer_grade is Grade.EXECUTION
             and not quality.execution_eligible
             and not _allows_quiet_execution_continuity(requirement, quality)
         ):
-            raise ContinuityError(
+            raise _view_refusal(row,
                 "SOURCE_NON_AUTHORITATIVE",
                 "execution-grade response is not execution eligible",
             )
         if requirement.require_full_coverage and not quality.complete:
-            raise ContinuityError("PARTIAL_RESULT", "query response quality is incomplete")
+            raise _view_refusal(row, "PARTIAL_RESULT", "query response quality is incomplete")
         if requirement.feed is Feed.BAR and requirement.require_final_bars:
             lifecycle = str(getattr(row.payload, "lifecycle", "")).upper()
             if lifecycle not in {"FINAL", "REVISED"}:
-                raise ContinuityError("DATA_NOT_READY", "bar response is not final")
+                raise _view_refusal(row, "DATA_NOT_READY", "bar response is not final")
     if requirement.feed is Feed.BAR:
         opens = [int(row.payload.open_time_ns) for row in rows]
         if opens != sorted(set(opens)):
