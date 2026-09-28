@@ -60839,3 +60839,68 @@ no claim of full admission recertification. Report separately, do not widen
 production cooldown or hide the test. Disposable Redis will be removed.
 No runtime mutation yet. Source patch does not make historical prices executable;
 Query/SDK still evaluate original event age and source/session fences.
+
+Runtime packet ready: source166cda1; immutable core image sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79
+Verified packaged binary SHA256 85b56bbb49fb46aac163744246993cd4f9504d807efd7ab02856e22fbfa125e5.
+Roll three cores sequentially using bnb-l2-recovery-20260928/candidate.compose.json,
+then same-image OKX ingestor once after rebalance; rollback.compose.json has
+verified current image/environment/command/CPU/RAM for all four roles.
+All other services untouched. Owner explicitly approved this exact packet.
+
+
+### 2026-09-28 BNB L2 repair deployed; scoped acceptance result
+
+Status: `BNB_L2_FREEZE_RECOVERY_PASS`. Aggregate execution remains
+`EXECUTION_ACCEPTANCE_NOT_FULL`; no release/push/merge. Source166cda1.
+Only rust_core/2/3 rolled sequentially04:24:54..04:25:46UTC to
+sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79.
+OKX ingestor recreated04:26:41 at unchanged7fe34806 aftercorecatchup; real WS
+snapshot generation66792 sequence17413544732 movedBNB AWAITING_SNAPSHOT->READY.
+Sameconfig/TLS/resourcequotas and persistent generation; no offsets/reset/flush.
+Query0ed57643,Stream65918a65,TS1037c56a,V1,alpha/order paths untouched.
+Rollback3cores:7fe34806 with exact rollback.compose.json. OKXimage unchanged.
+
+Affected source tests:145Rustpass/1ignored,40Query/cache/SDKpass usingdisposable
+Redis,clippyPASS. Oldguard counterfactual failsnewregression asintended. Optional
+unchanged ignoredadmission test has1msTTL wall-clock failure, notedabove, not
+included inL2passclaim. No admission policy change. Build initially used raw
+imageID inFROM (Docker treatedasregistryname); corrected toverifiedlocaltag,
+packagedbinaryhash checkedbeforedeploy. Counterfactualcache cleaned before
+finaltests/build; no stale overlay binary deployed.
+
+Real TS observer300.008s:151samples/11distinctheartbeats,60/60session-ready
+throughout,execution-ready49..50,zeroobservedwatermark/checksum violations,
+cursorerrors0,ACKdelta30815/commitdelta17394. Telemetry complete146/151samples;
+5samples44..52s had3/4reporters while allworkerheartbeatsREADY. Do notdescribe
+thisascompletecounters at everyinstant. Everyrolledcontainer running,restart0,
+OOMfalse. Thiswindow observedconsumer recovery; no forceddisconnect/stressrerun.
+
+100actualSDKreads perfeed perQueryreplica fromTScontainer (400total):
+| BNB OKX read | Replica1 p50/p99 ms | Replica2 p50/p99 ms | Eligibility |
+| --- | --- | --- | --- |
+| BOOK_SNAPSHOT |21.55/35.19|19.64/41.44|200/200 eligible|
+| BOOK_DELTA |8.65/16.66|9.24/16.72|195/200 eligible|
+All400responses parsed successfully, sequenceverified/complete/no gap;
+184same-watermark cross-replica metadata comparisons,0mismatch. Watermarks
+advanced274768916->274779564(snapshot),274768985->274779637(delta),generation66792.
+Requesttimer coversSDKcall->validatedreturn, notTSRediscommit. Sourceeventage
+p99snapshot2879/2908ms; delta2679/2701ms. Five delta views at04:31:06..08 exceeded
+2000ms freshness (2014..2905ms), correctly LIVE-session/STALE-event/ineligible.
+Core2 contemporaneous raw-age max1686.9ms and commit max941.4ms are supporting
+aggregate lag evidence, not exactperviewcausal attribution. Thisisnot recurrence
+of97-minute frozenbook and notquiet-market proof. DoNOTclaim allreads executable
+or widen2s. Tail-latency localization remains beforeunqualifiedexecutionFULL.
+
+Cleanup: testRedis/container/network removed; allprobe/build/testclients exited;
+ownedbuildcontext7,344,642bytes andoldguardoverlay139,747bytes removed. Exact
+BuildKit cache-idprune reclaimed0 (active-image sharedcache retained); no broad
+prune orvolumesremoved. Filesystem usedbefore=206071111680,
+after=205677232128bytes (concurrentactivity,notreclaimed-sizeclaim).
+Activecoref2040ac9 andnamedrollback7fe34806 kept; latter also powersingestors/
+projectors. Existingbuilder/sharedtarget cache notbroad-pruned; package-scoped
+counterfactual clean removed751.4MiBbeforefinalbuild. No temporaryworktreecreated.
+CanonicalDL /home/bobby/data_layer,fix/live-consumer-burst-recovery; stablev2.2.0
+main8299838unchanged. TS canonical/featureworktrees unchanged; ownerplanhunks
+andTScompose/symbols edits preserved.
+Receipt: `/home/bobby/.local/state/qdl-v2/bnb-l2-recovery-20260928/receipt.json`
+SHA256:e8f3e24bab7bb7d7bda33b78e311847a2644a1cb92999a18873bc7f1950853fa. No allcatalogue/evidence rerun; exactremaining findings areexplicit.
