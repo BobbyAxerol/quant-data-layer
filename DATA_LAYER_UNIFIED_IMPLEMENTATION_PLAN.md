@@ -60611,3 +60611,49 @@ push/merge/tag. RuntimeQuery0ed57643/Stream65918a65/TS1d86d3e8 unchanged; consum
 runtime remains paperidentity, additive live/sandbox readidentities are not an
 execution-capacity certificate. Next required work remains monotonic atomic resume,
 then sustained4k/5k and bounded actualconsumer acceptance, not another phase.
+
+2026-09-28 approved narrow consumer runtime packet, READY_TO_APPLY.
+TS4e04c96 image sha256:08e0c9072f7c72d4c2ee5752018d25eff421be5166b0b5a931636528028487a8;
+base/rollback sha256:1d86d3e820795a50b2539b09a6d35b102efd461e7bd7dec1801730a5daffdc46.
+Only trading_system/market_data (container market_data_service). Preserve networks,
+allcurrentenv except MARKET_DATA_FIXED_WORKERS=4, mounts,TLS,identitypaperrev10;
+noother TS/DataLayer/alpha/order/Kafka/Redisflush/SQLite mutation. Stop oldconsumer,
+backup andretainlegacycursor; copy preflightedownership into separatefixed-workers-v1
+cursor namespace. FreshQuerybootstrap validatesexistingexecutionwatermark, never
+blindresume legacycursor. V2routes60,workerallocation24/12/12/12,82VNlegacyretained.
+Candidatepackaging342PASS46.04s (actualinstalledSDK,notSDKsourcemount).
+Packet/evidence: burst-recovery-20260927/atomic-rollout-4e04c96.
+Currentbaseline59/60 withOKXBNB BOOK_SNAPSHOT DATA_STALE; BOOK_DELTA last-event
+age~2494s/sessionLIVE/eligiblefalse. Separatefindingretained,notTRADElatencyclaim.
+After rollout observe300s health/cache/logs/cursor/workertelemetry; failclosed.
+Rollback recreateonlymarket_data usingrollback.compose.json,legacycursor remains.
+PublishedDLv2.2.0 unchanged, noFulluntilconsumeracceptance.
+
+2026-09-28 closure checkpoint: IMPLEMENTED / ISOLATED_TESTED, RUNTIME_PENDING,
+EXECUTION_ACCEPTANCE_NOT_FULL (no production-certification claim).
+TS source4e04c96; image08e0c9072f7c72d4c2ee5752018d25eff421be5166b0b5a931636528028487a8.
+Final TLS5k aggregate10TRADEroutes304865exact, maxroutep99678.120ms, finalACK
+354.252ms afteroffer; client2.475avgcores/362.64MiBpeak/noCPUthrottle.
+4k243892exact,p99431.449ms,ACK222.782ms; client1.991cores/341.61MiB.
+Finalsame-source burst1000/5000/1000 plus2sdisconnect/10sslowreader:110860exact,
+1reconnect,allRedis+ACKhashesmatch,p991950.866ms,finalACK37.279ms; zeroorders.
+These are scheduledfixtureoffer-to-actualconsumerRedis latencies, notprovider
+eventage/liveeligibility,not5000perconsumerorfullKafkaingest/fanoutcertification.
+Index: ~/.local/state/qdl-v2/burst-recovery-20260927/atomic-rollout-4e04c96/acceptance-index.json.
+Production stop was REJECTED by automatic approval review beforeexecution: exact
+market_data_service outage/recreate impact needs explicit confirmation. Async
+question sent withdigest,4workers,cursorbootstrap,briefoutage and1d86d3e rollback.
+Noindirectworkaround. ConfirmedoldserviceRUNNING,1d86d3e,restart0; no300sactual
+consumeracceptance orliveidentityactivation performed. Existing BNB/OKXsnapshot
+stale remainsseparatebaselinefinding; noFullreleaseclaim.
+Cleanup: allcapture gateway/client/Rediscontainers auto-removed; exact disposable
+ts-atomic-recovery-redis andts-atomic-recovery-20260928 removed. Zero ts-atomic/
+qdl-atomic containers remain. Removed21testprivatekeys+238662Bbuildcontext;
+retainedcandidate08e0c907 andactive/rollback1d86d3e forpendingpacket, publicTLS
+certs/receipts/captures. No broadprune,sharedvolume/networkcleanup orworktree
+delete. BuildKitcleanup deferred untilruntimeoutcome toavoidsharedcache removal.
+Hostusedbytes before202716180480,after203296567296 (backgroundgrowth; doNOTclaim
+netreclaimedspace). DLruntimeQuery0ed57643/Stream65918a65 unchanged; published
+v2.2.0 main8299838. CanonicalDLbranchfix/live-consumer-burst-recovery fb58ae6;
+canonicalTSbranchfix/data-layer-r10-consumer-handoff4e04c96; otheractiveTSfeature
+worktrees untouched. No push/merge/release. Ownercompose/symbols/planhunks retained.
