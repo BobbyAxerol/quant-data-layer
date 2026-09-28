@@ -60904,3 +60904,17 @@ main8299838unchanged. TS canonical/featureworktrees unchanged; ownerplanhunks
 andTScompose/symbols edits preserved.
 Receipt: `/home/bobby/.local/state/qdl-v2/bnb-l2-recovery-20260928/receipt.json`
 SHA256:e8f3e24bab7bb7d7bda33b78e311847a2644a1cb92999a18873bc7f1950853fa. No allcatalogue/evidence rerun; exactremaining findings areexplicit.
+
+### 2026-09-28 Approved Source Synchronization To Dev
+
+Status: IN_PROGRESS. Owner approved pushing tested patch branches and PRs to dev
+only. Main, v2.2.0, runtime images, manifests and order paths remain unchanged.
+Gate: reviewed CI triggers (no dev deployment), preserve owner changes, green CI
+before merge, then fast-forward canonical dev and remove only verified merged
+feature branches. TS local dev's ten commits are already ancestors of its consumer
+branch; no duplicate cherry-pick is needed. Existing test evidence is inherited;
+this source synchronization does not grant execution FULL or a new certificate.
+Rollback: reviewed source revert, not runtime mutation or history rewrite.
+Cleanup excludes images, state and unrelated active feature worktrees.
+Guide: workspace AGENTS.md Git/Canonical Runtime rules and preceding rollout
+receipt; existing BNB delta freshness limits remain explicit.
