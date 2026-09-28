@@ -60784,3 +60784,58 @@ unchanged; Query 0ed57643 and Stream 65918a65 unchanged. Owner compose/symbols
 and unrelated plan edits preserved. Final receipt outside Git:
 `/home/bobby/.local/state/qdl-v2/burst-recovery-20260927/atomic-rollout-4e04c96/runtime-0a5400a/acceptance-receipt.json`
 SHA256: 60b99f03dc80179ed39ed28551bc3be44df5479dc95232728c5b807c02efc028.
+
+
+### 2026-09-28 BNB OKX L2 recovery correction
+
+Status: IN_PROGRESS. Owner requests narrow diagnosis and repair, not catalogue retest.
+Guide: Kafka-native architecture review K4-T05 (snapshot/delta/resync) and K5
+runtime safety. Trace bounded raw -> canonical -> cache metadata first; fix
+the owning shared Rust boundary without changing checksum/sequence/generation
+or freshness. Test reproduced failure, recovery/duplicate/gap and symbol
+isolation, then two Query replicas and TS consumer. No forged freshness,
+offset reset, Redis flush, unrelated rollout, alpha or order activation.
+Record role/digest/config and rollback before any required deployment. Retain
+active image as rollback; clean task resources only. FULL requires verified
+fresh book, not session heartbeat. apply_patch helper is broken; Rule32 exact
+append fallback used, owner changes preserved.
+
+
+BNB localization and approved runtime packet checkpoint:
+- Core identity, manual Kafka assign, no group join/commit: live raw12s =125BNB
+  books of9898records, generation66791, partition4. Historical9s around freeze
+  contains90 contiguous BNBframes. Last accepted17411513614 -> nextraw17411513655
+  withprev17411513614. Canonical12s =7018records, zeroBNBbook but221otherBNB.
+- Core1 processing age rose20.6s ->53.7s at01:50UTC; quarantine3->343 then
+  awaiting-snapshot1697 persisted after backlog returned below1s. Source guard
+  resyncs on30s processing age, before applying otherwise contiguousdelta.
+  Exact BNB quarantine attribution not captured (readACL denied; no bypass).
+- Correctness repair: lossless processing with original timestamps; local queue
+  age is not provider continuity failure. Real sequence/gap/generation rejection
+  stays. Reader freshness still rejects old records. No heartbeat-as-price.
+- Owner approved exact rollout3cores, then onlyOKXingestor reconnect. Keepall
+  config/TLS/offsets/cache and servicequotas unchanged. Rollbackthreecores to
+  sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f.
+  OKXingestor stayssameimage; reconnect getsrealWSsnapshot afterlastrebalance.
+  This briefly affectsallOKXfeedsonthatservice, notonlyBNB. NoQuery/Stream/TS,
+  Kafkaadmin, identity, Redis, V1 ororder mutations. Candidate digest follows
+  completedtests/build. Existingcompose at releases/v2.2.0-02cd827/
+  producer-candidate.compose.json; exactcurrentruntime inspected beforeapply.
+
+
+Source test checkpoint (before deployment): lossless L2 replay patch plus four
+new dual-venue regressions in rust/qdl-realtime-core/src/lib.rs. Old guard restored
+in an outside-Git overlay makes the new contiguous replay regression FAIL;
+correct source passes. Cargo cache initially retained the overlay single-package
+binary; package-scoped offline clean then broad rebuild removed ambiguity.
+Final affected Rust lib/bin gates:145passed,0failed,1ignored (provider admission
+Redis integration, unchanged). Clippy realtime-core all-targets -Dwarnings PASS.
+Reader/cache/SDK with disposable Redis:40passed,0skip (initial run without Redis
+was11pass/29skip and is not counted as complete evidence).
+An optional run of the unchanged ignored provider-admission test FAILED at
+provider_admission.rs:706: it uses50,000ns cooldown rounded to1ms Redis TTL;
+second network round trip can expire it. No admission code/policy changed and
+no claim of full admission recertification. Report separately, do not widen
+production cooldown or hide the test. Disposable Redis will be removed.
+No runtime mutation yet. Source patch does not make historical prices executable;
+Query/SDK still evaluate original event age and source/session fences.
