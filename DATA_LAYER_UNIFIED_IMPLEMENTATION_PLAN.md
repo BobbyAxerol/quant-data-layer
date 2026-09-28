@@ -60657,3 +60657,130 @@ netreclaimedspace). DLruntimeQuery0ed57643/Stream65918a65 unchanged; published
 v2.2.0 main8299838. CanonicalDLbranchfix/live-consumer-burst-recovery fb58ae6;
 canonicalTSbranchfix/data-layer-r10-consumer-handoff4e04c96; otheractiveTSfeature
 worktrees untouched. No push/merge/release. Ownercompose/symbols/planhunks retained.
+
+2026-09-28 read-only BNB/OKX L2 investigation (sidecar, no source/runtime change).
+Scope only BNB-USDT-SWAP UIDf2e37e2b-1386-5a32-9b79-0fd39ec7a5a3;
+actual TS paperidentity/manifestrev10, existingSDK RestQueryTransport inside
+market_data_service image1d86d3e at probe time, credential/TLS read in-process,
+no secret output/cursor writes/stream/order/C2. Query0ed57643,Stream65918 unchanged.
+TwoQueryreplicas, status+snapshot forBOOK_SNAPSHOT andBOOK_DELTA (8reads):
+Snapshot bothSTALE,eventSTALE,sessionNOT_APPLICABLE,complete=true,gap=false,
+eligible=false,LAST_EVENT_STALE. Offset274362767; source_event1790560208308000000,
+received1790560208558479471. At request1790566026583565907 freshness5818360ms;
+Query2 subsequentfreshness5818413ms. Both snapshot reads correctly DATA_STALE.
+Delta bothLIVE/eventSTALE/sessionLIVE,eligible=false,complete=true,gap=false;
+watermark274362869,source_event1790560208908000000,received1790560208957310113,
+generation66791,sequence_verified=true,native_sequence_end17411513614,
+snapshot_sequence17402419892. Sessionage7..999ms; eventage5817779..5817831ms.
+Both exactsameview contractcatalog11/config19/authority1; authoritative=true,
+sourceidokx-swap-bnb-usdt-swap-book-primary-v2. Snapshotcalls8.29/10.84ms,
+delta8.96/8.77ms; statusfirstcold88.55ms/others8.29..14.13ms. Tinybounded
+sample only, notp99/acceptance. Age97min is real olddata, notrequestlatency.
+OneapprovedpublicOKX read viaexistingOkxRestClient.get('/api/v5/market/books',
+instIdBNB-USDT-SWAP,sz100,bucketmarket,attempts1,timeout3s) fromQuery1:
+start1790566065461403848/end1790566065585639096;124.235mscall;
+providerts1790566065552,33.639msageatreceive,seqId17412847137,100levels/side,
+bid769.2/ask769.3. This positively disproves providerquiet interpretation for
+current stale book. Strictsnapshot rejection is correct, mustnotwiden60s gate
+or relabel stale bookeligible fromsessionheartbeat.
+Source review: Rust materializedsnapshot generated only onverifiedDeltaApplied/
+Keepalive via due_l2_materialized_snapshot; core canrequestresync; OKX ingestor
+book_session_bootstrap usesInitialSnapshotAndGapResync (notperiodicRESTanchor).
+ConfiguredBNBbooks exists,depth100,snapshot_refresh_seconds30. This alone does
+NOT prove whichpipeline stagefroze. Boundedcorelogs show aggregate growing
+REJECTED_AWAITING_SNAPSHOT but noBNBspecificstatechange inselected120m logs;
+oneidentifiedsequencegap belongedtoBINANCEBTCquarterly, NOTBNB. DoNOTattribute
+aggregatecountertoBNB. No raw/canonical-topic capture inthisboundedinvestigation:
+latestQuerymaterialization is old, but root betweenproviderWSingest/core/resync/
+projector remains unlocalized. Nextnarrowstep: traceonlyBNBraw/canonical/head
+andresyncownership; donotchangeSDKsnapshotsemantics orconsumerworkers tohideit.
+Investigationdone, BNB executionreadinessUNRESOLVED, notFULL. No testresources
+created; cleanupnotneeded, active/rollback/artifactsunchanged bysidecar. Main
+separately reportsTSrollout693d866 duringinvestigation; probeabove predatesit.
+
+Sidecar runtime provenance correction: final dockerinspect still observed actual
+market_data_service sha256:1d86d3e820795a50b2539b09a6d35b102efd461e7bd7dec1801730a5daffdc46
+running/restart0. Main message mentioned693d866 candidate; sidecar didnotverify
+thatimageactive and doesnotassertsuccessfulrollout. No mutation bysidecar.
+
+2026-09-28 bounded read-only BNB localization follow-up, DONE_WITH_UNLOCALIZED_LAYER.
+Within5min scope: inspected exactBNBbooks runtime configs acrosscore.json/core-002/
+core-003, allhaveUIDf2e37e2b/nativebooks/depth100/materializedsnapshot1000ms,
+providerrefresh30s; ingestorbindingpresent. Bounded130m/tail20000percore logs
+contain noBNBstatechange. Observedsequencegap isBinanceBTCquarterly, explicitly
+NOTBNB evidence. Ingestor running/restart0, boundedstdout logs empty, json-file
+rotation3x50MB; absenceoflog isnotabsenceofrawframes. Projector1/2 boundedstatus
+haserrors{}, stageAinputs=outputs, stageBlatestappliedincreasing; theseaggregate
+numbers donotruleoutproduct-specificfailure. No raw/canonical BNBrecord captured
+inthiswindow, no existing authorized reader wasestablished for exacttopictrace;
+no credentialescalation/ACLchange/groupjoin/offsetcommit performed.
+Source review: core due_l2_materialized_snapshot publishes onlyverifiedDeltaApplied/
+Keepalive. OKXingestorInitialSnapshotAndGapResync disablesperiodicRESTanchor;
+core request_resync islocaladapterstate. This suggestscheckingfeedbackfromcore
+resynctoOKXsubscription, but doesNOTproveBNBcurrentlyresyncing. DoNOTdeclare
+corethecause fromaggregateREJECTED_AWAITING_SNAPSHOT. Correct narrowbranching:
+freshBNBraw+noBNBcanonical ->core/continuity/resync; freshBNBcanonical+oldlatest ->
+projector/materialization; noBNBraw despitefreshprovider ->ingestorsubscription.
+Exactmissing evidence: boundedBNBrawseq/time/session+canonicalseq/offset+latest
+onmatchinginterval, thenownerforrequiredresync. No source/runtimechanges, no
+furtherproviderrequests (previoussinglepublicread alreadyprovesfreshvenuebook),
+noresourcescreated/cleanupneeded, noFullclaim. 60routeclosure stillblockedby
+BNBbookmaterialization; doNOTwidenfreshness orrestartunrelatedservices.
+
+
+### 2026-09-28 Final consumer-only rollout and 300-second receipt
+
+Status: `CONSUMER_RECOVERY_PASS_OBSERVED_300S`; aggregate
+`EXECUTION_ACCEPTANCE_NOT_FULL`. No new release, push or merge.
+
+Approved scope completed: only market_data_service replaced at 03:45:20 UTC
+with TS source 0a5400a, image sha256:1037c56a48d65156bb64136db78325678e4940b51bc12dbee050162cf9549217.
+Four fixed workers; existing config/mounts and paper identity revision 10 kept.
+Rollback image 1d86d3e and legacy cursor backup retained. No live-realm
+activation, alpha/order action, Data Layer rollout, reset or flush performed.
+Two earlier candidate attempts were rolled back, not counted as successful:
+08e0c907 exposed stale Query refresh versus newer stream watermark; 693d866
+exposed QUOTE replay versus TRADE/BOOK-only health handling. Source corrections
+10701df and 0a5400a retain strict source/generation/freshness fencing, make
+verified older refresh a no-op, and keep replay health separate from execution
+eligibility. Actual final-image affected suite: 197 passed in 10.75 seconds.
+
+Final observer exited 0 after 302 seconds; data window 300.009 seconds,
+151 samples / 11 distinct service heartbeats. All heartbeat observations:
+59/60 session-ready, four worker telemetry epochs present, no fallback.
+Execution-ready counter was 48-49, NOT 59-60: session readiness must not be
+reported as executable-price availability. No observed watermark regression or
+execution checksum violation; cursor errors 0, ACK delta 26,897 and commit
+delta 13,749. These sampled invariants do not certify every historical write.
+CPU average 0.720 core, peak cgroup memory 434.24 MiB, throttle delta 0;
+runtime running, restart 0, OOM false. Local Redis MGET p50 1.403 ms/p99 5.350 ms
+is NOT Data Layer endpoint latency or event-to-Redis commit latency. No new
+forced disconnect or stress run in this window; inherit separately documented
+4k/5k captured-event stress and disconnect/recovery evidence, not live freshness.
+
+Remaining true defect: OKX BNB BOOK_SNAPSHOT repeatedly DATA_STALE; both Query
+replicas serve matching book roughly 97 minutes old at diagnostic time, while
+one provider read returned a 33.639 ms-old book. BOOK_DELTA session LIVE also
+does not make that old book executable. Provider quiet is disproved. Exact
+fault layer between raw ingest, core/resync and materialization is not yet
+localized. Do not widen freshness, restart blindly or declare overall FULL.
+Next narrow task is matching BNB raw/canonical/cache evidence and repairing
+that specific path; no reason to repeat all previously certified products.
+Candidate consumer remains active because this pre-existing book rejection
+persists correctly, while the consumer recovery integration fixes passed.
+
+Cleanup completed within this task: disposable Redis/client containers and
+network removed, two superseded candidate images 08e0c907/693d866 removed,
+owned build contexts removed, exact two owned BuildKit IDs pruned (117 kB and
+44.77 kB). Retain active 1037c56a plus explicit rollback 1d86d3e. No broad prune,
+volume deletion, worktree removal or unrelated service change. Filesystem used
+205,413,998,592 bytes before cleanup; 204,792,332,288 after (concurrent filesystem
+activity means the whole difference is not attributable to this cleanup).
+
+Canonical TS /home/bobby/trading_system on fix/data-layer-r10-consumer-handoff;
+canonical DL /home/bobby/data_layer on fix/live-consumer-burst-recovery. Existing
+other-feature TS worktrees remain unchanged. Published DL v2.2.0/main8299838
+unchanged; Query 0ed57643 and Stream 65918a65 unchanged. Owner compose/symbols
+and unrelated plan edits preserved. Final receipt outside Git:
+`/home/bobby/.local/state/qdl-v2/burst-recovery-20260927/atomic-rollout-4e04c96/runtime-0a5400a/acceptance-receipt.json`
+SHA256: 60b99f03dc80179ed39ed28551bc3be44df5479dc95232728c5b807c02efc028.
