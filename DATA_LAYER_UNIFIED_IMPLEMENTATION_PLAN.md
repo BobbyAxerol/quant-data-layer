@@ -60928,3 +60928,34 @@ changes, corrected using existing builder and host UID 1001.
 TS eb6e3af pushed; API token returns 404 for ExecutorBroker (access pending).
 Three inherited TS commit subjects violate governance; do not bypass that gate
 or rewrite published history. Main and release remain untouched.
+
+### 2026-09-28 Dev Integration Receipt (No Release Or Runtime Change)
+
+Data Layer source synchronization: COMPLETE. PR #24 merged through GitHub into
+dev as a3d1b40d35ee1ea134997d28ed32cf1bec3360dd after CI run 36381804332
+passed contract-tests, kn-native-integration, sdk-python310 and unit-tests.
+Full Python discovery: 2472 cases, 48 explicit skips, zero failures (1978.665s);
+isolated Redis follow-up: 41 cases passed. Remaining API/operations/migration/
+load/replay/security/SBOM job steps passed. No new production certification.
+Canonical /home/bobby/data_layer is now dev, tracking origin/dev. Both local
+and remote fix/live-consumer-burst-recovery were deleted only after verified
+ancestry and source-tree equality. No extra Data Layer worktree exists.
+Owner's two plan hunks preserved byte-for-byte (diff SHA256
+1b86a683b2677ecc05eb3300a275157e1487bfac3f0e559dedb1369cbf2a1306).
+Main remains 8299838 and published v2.2.0 unchanged. Runtime remains core
+f2040ac9, Query 0ed57643, Stream 65918a65, ingestor/KN projector 7fe34806,
+BAR edge f7351c3b; TS market_data_service 1037c56a. No manifest/realm/order
+activation. Existing rollback images retained; no image build or prune.
+Git-ref cleanup only, no worktree directories or runtime data removed. Host
+filesystem used after cleanup: 208473567232 bytes; no disk-reclamation claim.
+Disposable lint/test containers auto-removed. Superseded CI 36381448087 canceled;
+its partial evidence did not replace the required successful current run.
+Receipts outside Git: /home/bobby/.local/state/source-sync-20260928/
+(data-layer-merge.json, data-layer-ci-summary.json, owner patch backup).
+This post-merge commit records operations only; no executable source changes.
+
+Cross-repo status: TS PR #17 is pushed, local 1420 unit tests and changed-file
+Ruff pass, but hosted Actions fail before checkout without job logs. Owner was
+asked for UI annotation; fine-grained PAT Checks limitation was corrected in
+TS plan. TS is not merged, and its active feature/upgrade worktrees remain.
+Do not call the combined two-repository synchronization complete yet.
