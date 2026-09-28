@@ -60918,3 +60918,13 @@ Rollback: reviewed source revert, not runtime mutation or history rewrite.
 Cleanup excludes images, state and unrelated active feature worktrees.
 Guide: workspace AGENTS.md Git/Canonical Runtime rules and preceding rollout
 receipt; existing BNB delta freshness limits remain explicit.
+
+Source-sync CI update: PR #24 opened after push 59917e9. Contract CI failed at
+Rust formatting, before clippy/tests. Applied Rust 1.82 formatter to the affected
+realtime-core file; cargo fmt --all -- --check PASS in existing bounded builder,
+network disabled. Formatter containers removed automatically; no image built,
+no runtime changed. Initial slim-toolchain/UID attempts failed without source
+changes, corrected using existing builder and host UID 1001.
+TS eb6e3af pushed; API token returns 404 for ExecutorBroker (access pending).
+Three inherited TS commit subjects violate governance; do not bypass that gate
+or rewrite published history. Main and release remain untouched.

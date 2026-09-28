@@ -2599,7 +2599,10 @@ mod tests {
                 "b": [["60000", bid_quantity]], "a": [["60001", "1"]]})
         };
         let frame = raw_with_receipt(
-            binding, &serde_json::to_vec(&payload).unwrap(), generation, received_at_ns,
+            binding,
+            &serde_json::to_vec(&payload).unwrap(),
+            generation,
+            received_at_ns,
         );
         if snapshot && binding.venue == "BINANCE" {
             with_transport(frame, TransportProtocol::Http)
@@ -2623,12 +2626,12 @@ mod tests {
             ];
             for (offset, frame) in frames.into_iter().enumerate() {
                 let original_receipt = frame.received_at_ns;
-                let expected = timely.process_at_transport_offset(
-                    frame.clone(), original_receipt, offset as u64,
-                ).unwrap();
-                let actual = delayed.process_at_transport_offset(
-                    frame.clone(), now, offset as u64,
-                ).unwrap();
+                let expected = timely
+                    .process_at_transport_offset(frame.clone(), original_receipt, offset as u64)
+                    .unwrap();
+                let actual = delayed
+                    .process_at_transport_offset(frame.clone(), now, offset as u64)
+                    .unwrap();
                 assert!(actual.quarantines.is_empty(), "{}", binding.venue);
                 assert_eq!(actual.canonical.len(), expected.canonical.len());
                 for (record, expected) in actual.canonical.iter().zip(&expected.canonical) {
@@ -2641,11 +2644,21 @@ mod tests {
                     assert_eq!(event.source_event_time_ns, original_receipt);
                 }
                 if offset == 1 || offset == 2 {
-                    assert!(!actual.canonical.is_empty(), "delayed deltas cannot be skipped");
+                    assert!(
+                        !actual.canonical.is_empty(),
+                        "delayed deltas cannot be skipped"
+                    );
                 }
                 if offset == 2 {
-                    assert!(delayed.l2_adapters[&binding.key()].core().view().unwrap().bids.is_empty());
-                    let duplicate = delayed.process_at_transport_offset(frame, now, offset as u64).unwrap();
+                    assert!(delayed.l2_adapters[&binding.key()]
+                        .core()
+                        .view()
+                        .unwrap()
+                        .bids
+                        .is_empty());
+                    let duplicate = delayed
+                        .process_at_transport_offset(frame, now, offset as u64)
+                        .unwrap();
                     assert!(duplicate.canonical.is_empty());
                     assert_eq!(duplicate.duplicates, 1);
                 }
@@ -2669,15 +2682,21 @@ mod tests {
             ] {
                 assert!(core.process(frame, now).unwrap().quarantines.is_empty());
             }
-            let gap = core.process(delayed_book_frame(
-                &binding, false, 110, 109, 7, receipt, "3",
-            ), now).unwrap();
+            let gap = core
+                .process(
+                    delayed_book_frame(&binding, false, 110, 109, 7, receipt, "3"),
+                    now,
+                )
+                .unwrap();
             assert!(gap.canonical.is_empty());
             assert_eq!(gap.quarantines.len(), 1);
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
-            let after = core.process(delayed_book_frame(
-                &binding, false, 111, 110, 7, now, "4",
-            ), now).unwrap();
+            let after = core
+                .process(
+                    delayed_book_frame(&binding, false, 111, 110, 7, now, "4"),
+                    now,
+                )
+                .unwrap();
             assert!(after.canonical.is_empty());
             for frame in [
                 delayed_book_frame(&binding, true, 200, 0, 8, now, "5"),
@@ -2685,7 +2704,14 @@ mod tests {
             ] {
                 assert!(core.process(frame, now).unwrap().quarantines.is_empty());
             }
-            assert_eq!(core.l2_adapters[&binding.key()].core().view().unwrap().last_sequence, 201);
+            assert_eq!(
+                core.l2_adapters[&binding.key()]
+                    .core()
+                    .view()
+                    .unwrap()
+                    .last_sequence,
+                201
+            );
         }
     }
 
@@ -2701,15 +2727,21 @@ mod tests {
             ] {
                 core.process(frame, now).unwrap();
             }
-            let invalid = core.process(delayed_book_frame(
-                &binding, false, 102, 101, 7, receipt, "-1",
-            ), now).unwrap();
+            let invalid = core
+                .process(
+                    delayed_book_frame(&binding, false, 102, 101, 7, receipt, "-1"),
+                    now,
+                )
+                .unwrap();
             assert!(invalid.canonical.is_empty());
             assert_eq!(invalid.quarantines.len(), 1);
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
-            let fresh = core.process(delayed_book_frame(
-                &binding, false, 103, 102, 7, now, "3",
-            ), now).unwrap();
+            let fresh = core
+                .process(
+                    delayed_book_frame(&binding, false, 103, 102, 7, now, "3"),
+                    now,
+                )
+                .unwrap();
             assert!(fresh.canonical.is_empty());
         }
     }
@@ -2726,18 +2758,27 @@ mod tests {
             ] {
                 core.process(frame, now).unwrap();
             }
-            let unanchored = core.process(delayed_book_frame(
-                &binding, false, 201, 200, 8, receipt, "3",
-            ), now).unwrap();
+            let unanchored = core
+                .process(
+                    delayed_book_frame(&binding, false, 201, 200, 8, receipt, "3"),
+                    now,
+                )
+                .unwrap();
             assert!(unanchored.canonical.is_empty());
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
-            let anchor = core.process(delayed_book_frame(
-                &binding, true, 200, 0, 8, receipt, "4",
-            ), now).unwrap();
+            let anchor = core
+                .process(
+                    delayed_book_frame(&binding, true, 200, 0, 8, receipt, "4"),
+                    now,
+                )
+                .unwrap();
             assert!(!anchor.canonical.is_empty());
-            let old = core.process(delayed_book_frame(
-                &binding, true, 300, 0, 7, now, "99",
-            ), now).unwrap();
+            let old = core
+                .process(
+                    delayed_book_frame(&binding, true, 300, 0, 7, now, "99"),
+                    now,
+                )
+                .unwrap();
             assert!(old.canonical.is_empty());
             assert_eq!(old.filtered_outcome, Some("IGNORED_STALE_GENERATION"));
             let view = core.l2_adapters[&binding.key()].core().view().unwrap();
