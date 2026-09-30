@@ -61654,3 +61654,79 @@ fairness requires verification/correction, not an assumption from idle recovery.
 Do not rerun unrelated catalogue or passed TS domain tests. DLR-02/03/06 remain
 open overall. Canonical feature remains fix/okx-inverse-sandbox-readiness;
 stable main8299838/v2.2.0; no push/merge/release or production recreation.
+
+### Feedback Fairness And Committed-Only Proof - Before Edit (2026-09-30)
+Previous continuation made progress:92e82aa and real recovery run3, no active
+process left. Same R3 scope: remove biased priority from the two BOOK socket
+selects so sustained control backlog cannot deterministically starve market
+read/publish/timer work. Use Tokio fair polling, no extra queue or delay policy.
+Add explicit ignored-by-default real-Kafka test for new-live group, aborted
+hint exclusion, checkpoint/resume and cancelled receive. Invocation must require
+qdl-readiness-kafka isolated hostname and task topic; never production config.
+Run this explicitly in the existing isolated packet and record actual result;
+ignored default is not a PASS. Then bounded malformed control-pressure input
+(test-only provenance) with real acquisition verifies non-BOOK continuity and
+ongoing BOOK processing. No gate or provider quota is relaxed.
+
+Control proof run4 failed before acquisition: test waited for Kafka consumer
+position() to become numeric without receiving a message; this is not a valid
+startup barrier. Correct test to fresh-marker handshake with15s bound and drain
+only generated handshake markers. Historical/aborted payload assertions remain
+strict. No passing claim for run4. Its broker/test resources and keys cleaned.
+
+Control run5: real Kafka committed-only/new-live/resume/cancel test PASS1/1.
+Pressure40,000 malformed TEST_ONLY hints acknowledged40,000 in10,784.60ms;
+isolated Binance ingestor OOM at256MiB (exit137), so overall run FAIL before
+cold restart. No production mutation. Suspect unbounded async commit requests:
+current listener calls checkpoint_hint for EVERY rejected control record.
+Fix control-only checkpoint coalescing to at most1 submission/s per listener;
+this is a delivery-hint offset cadence, NOT a market-data ack/freshness/retry
+policy. Last locally stored offset still advances on consumed hints. Lost hint
+checkpoint remains safe through session fencing and bounded reissue. Confirm
+with virtual-time scheduling regression and identical isolated pressure, plus
+memory sampling. Do not claim OOM root cause proven until counterfactual evidence.
+Do not increase ingestor RAM to hide control-plane queue growth.
+
+Run6 after bounded control checkpoint: same40,000 TEST_ONLY hints,40,000 ACK,
+0 publish error,10,159.68ms offered window. No OOM/restart. Peak cgroup memory
+Binance17,678,336B (16.86MiB), OKX16,011,264B (15.27MiB), core21,942,272B;
+core progressed4,326 raw records across the pressure/stability window, all six
+sessions made transport progress with unchanged identities. This before/after
+supports async checkpoint flooding as the run5 memory defect; no RAM increase.
+Regression resync6/6 PASS including40k calls coalesced to1 submission/s.
+
+Run6 raw receipt FALSE is retained: harness incorrectly demanded a reconnect
+from BOTH venues. Cold core actually recovered4/4 READY: Binance received two
+real periodic REST bootstraps (BOOTSTRAP_APPLIED with concrete snapshot_sequence,
+then DELTA_APPLIED), OKX one feedback reconnect and two real SNAPSHOT_APPLIED.
+All six sessions LIVE; non-BOOK identities unchanged. Core recovery +5s stable
+window8,131.68ms. Evidence reviewed without another lucky retry; review.json
+explicitly certifies isolated pressure/autonomous recovery only, not end consumer
+or concurrent-owner movement or raw4k/5k capacity. Original receipt/logs unchanged.
+Run5 committed-only/resume/cancel proof inherited unchanged (library source adds
+test only). No synthetic market event was published; noise was explicitly
+malformed TEST_ONLY control input, rejected by the ingestor.
+
+Evidence: execution-readiness-20260930/recovery-real-r5/control-test.log and
+recovery-real-r6/{receipt.json,review.json,qdl-readiness-core.log,*-state.json}.
+Exact isolated containers/network/private keys cleaned, no production changes.
+Candidate source still opt-in; no runtime feedback activation or release claim.
+
+Fairness/checkpoint slice clippy(lib + ingestor + test targets) -D warnings PASS.
+All task containers absent after run6; no pending process. Coherent commit
+includes only shared ingestor correction, actual Kafka regression and journal;
+owner's two pre-existing plan hunks remain unstaged.
+
+### Bounded Raw Capture Packet - Before Read (2026-09-30)
+R4 input will be captured committed production raw provider envelopes, preserving
+key/payload/headers/source partition+offset+timestamp, never rewriting event age
+or making synthetic frames pass as market data. One temporary read-only client,
+existing phase8-consumer TLS mount read-only, approved qdl-c40-handoff- audit
+namespace, explicit assign/no group join/no auto offset store/no commit; no
+producer or admin API. Read md.raw.stable.v1 only, freeze highwater bounds,
+max100k records/partition,384MiB payload and180s wall deadline,4MiB/s pacing;
+client cap0.5CPU/256MiB, no production config/service change. Capture outsideGit
+with bounded compressed file + checksum and per-feed counts. Remove client on
+exit. This is source data for isolated replay, not a live freshness certificate.
+No broker/offset reset, no provider calls and no spool read. If permission/capture
+fails, retain exact error, do not silently change principal/ACL or invent input.

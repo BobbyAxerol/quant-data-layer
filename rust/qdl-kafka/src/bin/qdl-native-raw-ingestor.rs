@@ -1329,6 +1329,7 @@ struct BookResyncListener {
     source: KafkaEventSource,
     retry_after: Instant,
     failures: u32,
+    next_checkpoint: Instant,
     published_anchors: HashMap<String, (String, u64, i64)>,
 }
 
@@ -1351,6 +1352,7 @@ fn book_resync_listener(
             source,
             retry_after: Instant::now(),
             failures: 0,
+            next_checkpoint: Instant::now(),
             published_anchors: HashMap::new(),
         })
     })
@@ -1441,6 +1443,17 @@ fn snapshot_satisfies_resync(
         })
 }
 
+// Hints are reissued and session-fenced, not market-data acknowledgements.
+// Coalesce offset submissions so a quarantine flood cannot queue one broker
+// commit request per rejected frame in librdkafka.
+fn claim_hint_checkpoint(next: &mut Instant, now: Instant) -> bool {
+    if now < *next {
+        return false;
+    }
+    *next = now + Duration::from_secs(1);
+    true
+}
+
 async fn book_resync_requested(
     listener: &mut Option<BookResyncListener>,
     config: &IngestorConfig,
@@ -1470,6 +1483,9 @@ async fn book_resync_requested(
         && !snapshot_satisfies_resync(&record, &listener.published_anchors);
     // A crash before reconnect is recovered by the core's bounded reissue.
     // Checkpoint failure may replay this hint, but not across a new WS session.
+    if !claim_hint_checkpoint(&mut listener.next_checkpoint, Instant::now()) {
+        return Ok(requested);
+    }
     if let Err(error) = listener.source.checkpoint_hint() {
         listener.failures = listener.failures.saturating_add(1);
         listener.retry_after =
@@ -1702,8 +1718,8 @@ async fn run_binance_connection(
                         socket.next(),
                     );
                     tokio::pin!(read);
+                    // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
-                        biased;
                         requested = book_resync_requested(&mut resync_listener, &config, &bindings, &session_id, generation) => {
                             if requested? {
                                 eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
@@ -2196,8 +2212,8 @@ async fn run_okx_service(
                         reader.next(),
                     );
                     tokio::pin!(read);
+                    // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
-                        biased;
                         requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
                             if requested? {
                                 eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
@@ -3513,6 +3529,20 @@ mod resync_tests {
         let mut other = raw;
         other.subscription_id.push('x');
         assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn book_resync_checkpoint_flood_is_coalesced() {
+        let mut next = Instant::now();
+        assert!(claim_hint_checkpoint(&mut next, Instant::now()));
+        for _ in 0..40_000 {
+            assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
+        }
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(claim_hint_checkpoint(&mut next, Instant::now()));
+        assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
     }
 
     #[tokio::test(start_paused = true)]
