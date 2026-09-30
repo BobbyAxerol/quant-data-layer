@@ -1329,6 +1329,7 @@ struct BookResyncListener {
     source: KafkaEventSource,
     retry_after: Instant,
     failures: u32,
+    published_anchors: HashMap<String, (String, u64, i64)>,
 }
 
 fn book_resync_listener(
@@ -1350,6 +1351,7 @@ fn book_resync_listener(
             source,
             retry_after: Instant::now(),
             failures: 0,
+            published_anchors: HashMap::new(),
         })
     })
 }
@@ -1420,6 +1422,25 @@ fn matches_book_resync(
         && raw.raw_frame_sha256 == Sha256::digest(&raw.raw_frame_bytes).as_slice()
 }
 
+// A request based on a pre-anchor delta is already being repaired. Reconnecting
+// here would throw away the just-published REST bootstrap on every generation.
+fn snapshot_satisfies_resync(
+    record: &DurableRecord,
+    anchors: &HashMap<String, (String, u64, i64)>,
+) -> bool {
+    let Ok(request) = QuarantineRecord::decode(record.payload.as_slice()) else {
+        return false;
+    };
+    let Some(raw) = request.raw else { return false };
+    anchors
+        .get(&raw.subscription_id)
+        .is_some_and(|(session, generation, receipt)| {
+            session == &raw.source_session_id
+                && *generation == raw.connection_generation
+                && *receipt >= raw.received_at_ns
+        })
+}
+
 async fn book_resync_requested(
     listener: &mut Option<BookResyncListener>,
     config: &IngestorConfig,
@@ -1445,7 +1466,8 @@ async fn book_resync_requested(
             return Ok(false);
         }
     };
-    let requested = matches_book_resync(&record, config, bindings, session, generation, now_ns()?);
+    let requested = matches_book_resync(&record, config, bindings, session, generation, now_ns()?)
+        && !snapshot_satisfies_resync(&record, &listener.published_anchors);
     // A crash before reconnect is recovered by the core's bounded reissue.
     // Checkpoint failure may replay this hint, but not across a new WS session.
     if let Err(error) = listener.source.checkpoint_hint() {
@@ -1630,6 +1652,12 @@ async fn run_binance_connection(
                     .await
                     .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
                     {
+                        let anchor_key = frame.binding.subscription_id.clone();
+                        let anchor = (
+                            frame.session_id.clone(),
+                            frame.generation,
+                            frame.received_at_ns,
+                        );
                         if !publish_pending_frame(
                             frame,
                             &mut PendingPublishWindow {
@@ -1647,6 +1675,9 @@ async fn run_binance_connection(
                         {
                             exhausted = true;
                             break;
+                        }
+                        if let Some(listener) = resync_listener.as_mut() {
+                            listener.published_anchors.insert(anchor_key, anchor);
                         }
                     }
                 }
@@ -1713,6 +1744,8 @@ async fn run_binance_connection(
                             .await
                             .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
                             {
+                                let anchor_key = frame.binding.subscription_id.clone();
+                                let anchor = (frame.session_id.clone(), frame.generation, frame.received_at_ns);
                                 if !publish_pending_frame(
                                     frame,
                                     &mut PendingPublishWindow {
@@ -1730,6 +1763,9 @@ async fn run_binance_connection(
                                 {
                                     exhausted = true;
                                     break;
+                                }
+                                if let Some(listener) = resync_listener.as_mut() {
+                                    listener.published_anchors.insert(anchor_key, anchor);
                                 }
                             }
                             failures = 0;
@@ -3448,6 +3484,35 @@ mod resync_tests {
                 raw.received_at_ns + 1
             ));
         }
+    }
+
+    #[test]
+    fn book_resync_late_bootstrap_hint_does_not_reconnect_fresh_anchor() {
+        let (_, _, raw) = fixture(false);
+        let record = request(raw.clone());
+        let mut anchors = HashMap::new();
+        assert!(!snapshot_satisfies_resync(&record, &anchors));
+        anchors.insert(
+            raw.subscription_id.clone(),
+            (
+                raw.source_session_id.clone(),
+                raw.connection_generation,
+                raw.received_at_ns + 1,
+            ),
+        );
+        assert!(snapshot_satisfies_resync(&record, &anchors));
+        let mut current = raw.clone();
+        current.received_at_ns += 2;
+        assert!(!snapshot_satisfies_resync(&request(current), &anchors));
+        let mut other = raw.clone();
+        other.connection_generation += 1;
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+        let mut other = raw.clone();
+        other.source_session_id.push('x');
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+        let mut other = raw;
+        other.subscription_id.push('x');
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
     }
 
     #[tokio::test(start_paused = true)]

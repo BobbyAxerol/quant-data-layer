@@ -61579,3 +61579,78 @@ Clippy rerun after the checkpoint-hint change PASS; earlier pure identity/L2
 unit results are inherited unchanged. The new Kafka offset submission behavior
 requires isolated broker integration before runtime enablement. Source compiles
 for both changed binaries (debug build); no immutable release image built yet.
+
+### Isolated Recovery Packet (2026-09-30, Before Start)
+Previous goal turn classified PROGRESS:62d50f8 batch correction and355f3d3
+opt-in L2 feedback, targeted tests recorded; no running test handle to resume.
+Next packet ONLY creates task-owned qdl-readiness-* containers/network: one
+Kafka broker (existing9516fb image,1CPU/1536MiB, ephemeral log), one Rust core
+(1CPU/384MiB), one ingestor per venue (0.5CPU/256MiB each), bounded client
+(0.5CPU/256MiB). Core/ingestors use existing Rust base7fe348 with candidate
+binaries mounted read-only; this is an isolated test, NOT immutable release.
+Fresh disposable TLS, no production secrets/mounts/network, no host ports.
+Kafka topics/groups/authority are task-local. Native acquisition uses approved
+public provider URLs for existing BTC/BNB books plus TRADE/QUOTE sentinels;
+no private/broker order API. Read-only production JSON is copied then narrowed
+into task-local config, never modified in place. Stop/restart only isolated
+core to reproduce cold state with committed offsets; observe real resnapshot
+and non-BOOK lane continuity. Abort at bounded180s per scenario or provider
+rate-limit. Capture bounded logs/results then remove exact task containers,
+network and temporary keys; keep evidence and build cache until phase exit.
+No use of old kn4 namespaces or production volume, no Kafka/Redis resets.
+Resource baseline:31,379MiB host RAM,14,825MiB available; root74GiB free.
+
+Isolated run1 failed before application startup: broker readiness failed.
+Harness generated private TLS as hostUID1001 but Kafka runsUID1000; private
+directory/file permissions prevented access. No recovery/capacity result.
+The auto-removed broker also lost its exit log; corrected harness retains
+owned test containers until logs/state are archived, then removes them.
+Run2 changes only task-local broker TLS ownership to1000, restores host ownership
+for scoped key cleanup afterwards. First receipt retained at recovery-real/.
+No source/runtime change, no production restart. Test network removed.
+
+Run2 exposed a real defect in NEW opt-in feedback: Binance requested recovery
+from a pre-REST-anchor delta, then acted on that hint after publishing a fresh
+REST snapshot. Ten reconnects in about13s; TRADE/QUOTE sessions stayed unchanged.
+OKX recovered, but the harness's single READY observation falsely printed PASS.
+That receipt is retained INVALIDATED, not acceptance. No production enablement.
+Fix: remember successful queued authentic Binance snapshot receipt per binding/
+session/generation; ignore only hints whose original frame is covered by that
+anchor. Newer requests and wrong-session anchors cannot be suppressed. Actual
+core validation still decides readiness; failed publish follows existing retry/
+fencing. No timestamp rewrite or silent data drop. Add race regression. Harness
+now requires stable LIVE session generations and READY for a bounded window,
+plus no cross-feed reconnect. Run1 TLS ownership mismatch remains an identified
+setup defect; missing first broker exit log prevents a stronger causal claim.
+
+### Recovery Anchor Race - Isolated Result (2026-09-30)
+Source regression `cargo test --offline --locked -p qdl-kafka --bin
+qdl-native-raw-ingestor resync`:5 PASS,21 filtered; clippy same binary
+-D warnings PASS. Candidate debug binary rebuilt; no new Docker image.
+Isolated real-provider run3 PASS for BTC/BNB books on Binance USD-M and OKX Swap:
+all4 core views READY, all6 acquisition sessions LIVE and stable for5s;
+cold-core restart preserving test Kafka offsets caused exactly one BOOK reconnect
+per venue (generation1->2), while TRADE/QUOTE retained generation1/session.
+Observed cold recovery + stability window8447.64ms, NOT request-to-usable latency
+or a production SLA certificate. State rechecked after another5s; no reconnect
+loop. All4 test containers OOMfalse/restarts0. Kafka startup included benign
+TOPIC_ALREADY_EXISTS races for __transaction_state; no application panic/error.
+Run2's transient-READY false PASS remains invalidated, not overwritten.
+
+Evidence outside Git: execution-readiness-20260930/recovery-real-r3/receipt.json,
+SHA25648d064eec940517bc851310845eb70ffcb17070c7aabba47cc93772fc65f6414.
+Task orchestration recovery_probe.py and source/binary hashes retained there.
+Exact task containers/network and temporary private keys removed; label inventory
+now0 containers/0 networks. No volume/image broad prune; active build cache kept
+for unfinished phase. Production images/config/ACL and TS remain unchanged.
+apply_patch helper still fails with mountinfo error; exact append used per rule32.
+
+This closes the reproduced pre-anchor reconnect race, NOT all R3/R4 gates.
+Remaining before enablement: control-lane fairness under quarantine pressure,
+committed-only/aborted hint delivery and owner-move proof; captured-provider
+4k/5k total-ingress catch-up profiling; affected role packet and final consumer
+acceptance. Current biased socket select puts feedback first, so pressure
+fairness requires verification/correction, not an assumption from idle recovery.
+Do not rerun unrelated catalogue or passed TS domain tests. DLR-02/03/06 remain
+open overall. Canonical feature remains fix/okx-inverse-sandbox-readiness;
+stable main8299838/v2.2.0; no push/merge/release or production recreation.
