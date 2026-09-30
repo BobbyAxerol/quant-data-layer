@@ -61730,3 +61730,52 @@ with bounded compressed file + checksum and per-feed counts. Remove client on
 exit. This is source data for isolated replay, not a live freshness certificate.
 No broker/offset reset, no provider calls and no spool read. If permission/capture
 fails, retain exact error, do not silently change principal/ACL or invent input.
+
+Capture setup correction: first audit read used retired md.raw.stable.v1 and
+returned0 records (retention low==high), not useful replay evidence. Rechecked
+actual mounted core/ingestor JSON: all active raw paths are md.raw.realtime.v2.
+This was a harness topic-selection error, NOT production routing duplication.
+Preserve empty receipt; repeat bounded read on exact active topic with the same
+read-only safeguards, require nonzero rows and explicitly report partial bounds.
+No ACL/principal change. Production offsets/runtime untouched.
+Optimized core/ingestor binaries building from fbbe34e (2CPU/3GiB,offline locked)
+for actual replay measurements; debug recovery numbers are not capacity claims.
+
+Active raw capture with phase8-consumer was denied TOPIC_AUTHORIZATION_FAILED;
+no records read, no ACL changed. Scope-correct identity is phase8-core (the
+active raw reader). Explicit capture packet amendment: mount only existing
+core TLS read-only and use separate qdl-v2-production-core-r1-readiness-capture-
+20260930 group under the already defined core audit prefix. Same assign-only,
+no subscription/join/offset store/commit, no producer/admin API. No use of active
+core group and no ACL grant. Keep both failed receipts. If existing permission
+also denies this exact reader, do not grant privileges as an implicit fallback.
+
+### Optimized Artifacts And Replay Input Ready (2026-09-30)
+Core-reader identity capture succeeded with existing ACL, no permission changes:
+600,000 committed raw records (100k/partition,6 partitions),400,331,336 payload
+bytes, frozen bounds completely read in95.42s. Providers: Binance283,825,
+OKX316,175;150 provider/symbol/channel combinations. Includes154,830 TRADE,
+177,743 QUOTE,124,391 BOOK and real MARK/INDEX/BAR frames. Compressed capture
+SHA256d23a735a2942c847d3b601e889b2771447302c34e51ea55a4048487b9be03d06;
+payload sequence SHA256bc7338e806b817c8f95f58f06e2fcdaef2b91d91b8a185b03e4dea55d7432cb2.
+Path execution-readiness-20260930/evidence/raw-realtime-core-capture.jsonl.gz;
+receipt alongside records bounds/feed counts. No group join/offset commit or
+production writes. The two earlier empty/denied receipts remain explicitly
+non-evidence. Do not confuse captured historical event age with transport latency
+when replaying; original bytes/timestamps must remain intact.
+
+Optimized build from source fbbe34e completed in4m08s, offline/locked,2CPU/3GiB;
+not an immutable Docker release image yet. SHA256:
+- core:6788cdd21f12dca96c4af3e4ec4ccf76036bfa57a8a6a0215be51498e7e160aa
+- ingestor:f7d2fd17f4ac8ddacd82d3f2e34c07af7c5da293fbcb44a97e20251bdcd5e2b8
+Private target retained only for current phase. No test/capture/build container
+or isolated task network remains (name/label inventory empty). No active/rollback
+image pruned and no new runtime image built. Production core caps confirmed
+1/1/0.5CPU,256MiB each,OOMfalse/restart0; unchanged, not a capacity certificate.
+Canonical stays /home/bobby/data_layer on fix/okx-inverse-sandbox-readiness;
+main8299838/v2.2.0 and all active role digests remain as R1 inventory. No new
+worktree, push, merge, TS lifecycle or production recreation.
+
+R4 replay measurements, concurrent owner movement, affected rollout/final
+consumer acceptance and release/retirement are still pending. R3 pressure and
+cold recovery evidence above is scoped, not a claim that the whole phase closed.
