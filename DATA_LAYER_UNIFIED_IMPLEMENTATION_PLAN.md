@@ -61217,3 +61217,33 @@ market-inverse-rollout.json under the dependency evidence root. Stable published
 release remains v2.2.0; no push/merge/release. Active images also serve rollback
 with restored public configs. No disposable image created; broad cleanup deferred
 while rollback artifacts are needed. E03 remains9/24, not certified by feed reads.
+
+#### Inverse L2 Execution Cadence Correction (2026-09-30)
+
+Scope remains TS P18.3E approved dependency repair, not a new phase. Actual
+candidate Redis/Risk six samples: MARKET/LIMIT6PASS, L2_LIMIT1PASS/5STALE under
+unchanged5s intent gate; snapshot age4.109->14.133s, cache call2.69..9.42ms.
+Prepared inverse native map omitted materialized_snapshot_interval_ms, falling
+back to provider30s. Candidate TS snapshot read cadence also30s. Neither is a
+provider support failure. Reuse existing1s execution-L2 materialization policy;
+keep provider refresh30s, original event time, native sequence/generation and
+Kafka-native path. Do not substitute BOOK_DELTA for a complete snapshot.
+
+Fix shared catalog compiler to derive hot cadence from execution-grade physical
+book demand; both aliases must agree, including mixed consumer grades and
+lexical dedup order. Research-only books unchanged. Test inverse/linear,
+snapshot/delta alias equality, grade dedup and no unrelated acquisition changes.
+No reader image rebuild required: config-only core3 cadence correction, exact
+native-symbol/source match and backup, same Rust image; rollback only changed
+core JSON. TS candidate market polling to1s is a separate existing-role config
+change, journalled in TS plan, unchanged quality thresholds/identity/manifest.
+No other consumer, Kafka offsets, Redis state, topology, V1 or order mutation.
+First compile/test, then compare narrow runtime diff; exact inverse reader/Risk
+observation after rolling affected roles. Inherited catalogue evidence remains.
+Owner's two existing plan hunks remain unstaged; no push/merge/release yet.
+
+Verification:19 unittest methods PASS for inverse demand/catalog/shared L2
+materialization/core refresh, existing Query image with RO source, networknone,
+2CPU/1GiB. First invocation used a nonexistent test_execution_l2 module; correct
+module test_execution_l2_materialization rerun above. Execution-grade dedup and
+mixed alias tests pass; provider30s unchanged. No image build needed for config.
