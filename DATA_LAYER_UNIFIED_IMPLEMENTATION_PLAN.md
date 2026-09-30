@@ -61032,3 +61032,33 @@ active demanded feeds from bindings, so inverse BAR is not implicitly required.
 Disposable test clients auto-removed, no image built or runtime changed for this
 slice. Existing active and rollback images retained; no broad cleanup. Owner plan
 hunks remain outside this commit. Inverse activation and authentic E03 still open.
+
+#### Additive inverse demand and authentic metadata compile
+
+Added config/v2/okx-inverse-sandbox-demand.yaml, four exact execution dependencies
+for trading-system.sandbox.stable: QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT,
+BOOK_DELTA. This is acquisition demand, not activated entitlement. QUOTE acquisition
+uses existing schema defaults; its strict consumer policy remains manifest-owned.
+First test run rejected two unsupported QUOTE demand keys; removed those keys,
+not the validation. Existing paper/live demand files remain unchanged.
+
+Tests:29PASS/0FAIL across test_okx_inverse_sandbox_demand,
+test_phase1_instrument_domain, test_production_catalog and
+test_phasec36_liquid_crypto_features. New regression checks additive preservation,
+four-feed sandbox ownership, inverse currencies, native books contiguous sequence
+and exact BTC-USD index mapping. No certification claim for mock provider fixtures.
+
+Existing container OKX client succeeded with one-attempt public instruments GET;
+host403 is not evidence of unsupported inverse. Authentic capture SHA256:
+82517a7c7f54f80673476046de2a74e21854a83b455905d5175aa68083ffa666.
+Capture/receipt stored outside Git under TS p183e-20260930-dependencies. Offline
+compile against that capture PASS: UID8482b54b-6d9d-5aad-abe8-e22447d183a1,
+baseBTC/quoteUSD/settleBTC, multiplier100USD, tick0.1, quantity step0.1.
+Acquisition SHA2560b88d3e92cf48e8874d18ab955883433ac0a2981d2a444ebe6a31f9d7b95072d.
+Two compile attempts hit capture file0600 permission before parsing; final client
+uses the host file-owner UID1001, read-only mount, network none, no added capability.
+All clients --rm; no new image, container, network or volume retained.
+
+Remaining: additive runtime catalog/acquisition and sandbox revision/binding packet,
+consumer policy/auth regressions, per-role diff/rollback and real inverse readback.
+No runtime QDL mutation, order, reset, release, push or merge in this slice.
