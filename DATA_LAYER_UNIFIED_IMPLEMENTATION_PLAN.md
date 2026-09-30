@@ -61779,3 +61779,90 @@ worktree, push, merge, TS lifecycle or production recreation.
 R4 replay measurements, concurrent owner movement, affected rollout/final
 consumer acceptance and release/retirement are still pending. R3 pressure and
 cold recovery evidence above is scoped, not a claim that the whole phase closed.
+
+### R4 First Replay Packet (2026-09-30, Before Start)
+Previous turn PROGRESS (fbbe34e/e807447, tested recovery and authentic capture).
+No live handle to resume. Reuse the same task-only broker/TLS orchestration,
+optimized fbbe34e core, three isolated owners with distinct transactional IDs,
+same shared group, caps matching production1/1/0.5CPU and256MiB. RF1 test broker
+cap1CPU/2GiB, ephemeral1GiB Kafka log; this is NOT RF3/HA or production performance
+certification. No production mounts/secrets/network; copy public runtime JSON
+then change only shadow authority/topic/transaction names. Retain native provider
+bytes, keys, source partition/offset headers and original timestamps. Replay
+warmup20k@2k/s,120k@4k/s,150k@5k/s,40k@1k/s followed by bounded180s drain.
+One1CPU/256MiB client records offered/delivered rates and observer reads group
+committed offsets/highwaters once per second without committing. No market-data
+fabrication or event-time rewrite. Bound entire packet to10min and cleanup.
+Measure collect/normalize/commit, offered vs actual, lag slopes/catch-up, CPU/memory,
+output counts/rejections. Missing initial L2 snapshot in a historical capture
+must be reported, not passed as a complete execution-book workload. R3 authentic
+bootstrap proof is separate. No C2 until attribution/affected tests are clean.
+
+R4 run1 supplied330k/330k records, actual4,001/s and5,001/s across30s windows;
+no producer failure, cores peak36/42/31MiB, no scope fencing rejection. However
+observer exited on transient NOT_COORDINATOR during new broker startup, recorded
+zero lag samples. Do NOT certify catch-up from this run. Correct harness startup
+barrier before load and bounded coordinator-error recovery(15s), fail promptly
+if observer later fails; record send-to-durable-offset lag age using separate
+replay wallclock, without touching original market timestamps. Save quarantine
+reason/subscription and final stopped counters before task teardown. Replacement
+run2 is required only for invalidated measurement, no source/runtime change.
+Historical book boundary/expired MARK components remain explicitly non-live
+inputs; raw processing throughput is not an execution eligibility certificate.
+
+R4 RF1 run2 profile completed:330,000 delivered ==330,000 summed committed
+processed counters; final drain500ms observer resolution,0 producer/observer
+error, no OOM/restart or scope fencing rejection. 4k window lag peak680 records,
+oldest uncommitted max169.43ms (30 samples);5k peak2666,oldest max834.76ms
+(29 samples); recovery1k ended40 lag then drained. These are sampled maxima,
+NOT p99 and NOT consumer usable latency. Startup max2453ms is separate. Three
+core peaks41.12/35.89/30.54MiB. Five SequenceGap quarantine records concern dated
+Binance BTC/ETH261225 books in the truncated historical capture; no raw-level
+proof of a fresh production defect. Full reason/subscription evidence retained;
+missing bootstrap/component-expiry in historical input is not live eligibility.
+
+Do not promote from RF1: original incident commit cost came from production
+RF3/minISR2. Next affected replay keeps same capture/CPU/binary but uses three
+isolated brokers, RF3/minISR2, SSL inter-broker, durable files under new task-only
+throughput-rf3-r1/data-{1,2,3}. Existing broker image, fresh TLS SANs for test
+hosts only; cap1CPU/1536MiB each,256MiB Java heap. No production mount/network.
+Core caps unchanged. Topic/transaction/group replication3, data topic minISR2.
+Temporary logs bounded by the330k input; remove only these task-created broker
+data directories after evidence and stopped containers, not any shared volume.
+This remains same-host rehearsal, not independent failure domains/production HA.
+Observer/clock corrections inherited. No new source or repeat of unit/domain gates.
+
+R3 owner-move packet prepared (run after RF3 namespace is cleaned, not concurrent):
+reuse authentic BTC/BNB Binance/OKX recovery harness with optimized same binary,
+initial one core then add a second owner under same test group/distinct transaction
+ID; observe second owner reach READY for at least one assigned book, then stop
+only first test core and require survivor READY for all4 books with stable live
+sessions. Preserve test group offsets, no manual ingestor restart. Non-BOOK lane
+sessions must remain identical. Existing4-book cold/retry/pressure evidence is
+inherited; this covers the missing cooperative-rebalance/owner-move behavior.
+No production Kafka/consumer mutation. Bound each readiness wait90s and cleanup.
+
+RF3/minISR2 run1:330,000/330,000 delivered and summed committed processed;
+0 scope rejection, no OOM/restart, bounded drain1000ms sampling resolution.
+4k window oldest-uncommitted maximum2714.76ms includes remaining startup backlog;
+5k maximum2381.02ms,peak6663 lag/end4789; recovery1k end80 then drains.
+Do NOT claim all execution freshness at5k. Five identical dated-book capture
+quarantines now carry original raw hash/receipt/generation for attribution.
+Receipt SHA256864b9b8f2dca65c7ea076174164da48c38d34159a9f32fc7d5d02e16cf591dfc.
+
+Authentic cooperative owner move PASS: second core reached READY on newly owned
+Binance BTC; after first test owner stopped, survivor restored all4 Binance/OKX
+BTC/BNB books without manual ingestor restart in7830.93ms INCLUDING5s stability
+window. Both BOOK lanes advanced1->3 for join and leave recovery; all TRADE/QUOTE
+sessions stayed generation1/same identity. Evidence owner-move-r1/receipt.json.
+This closes the scoped concurrent-owner behavior in R3; no full consumer claim.
+Task containers/network/private keys removed. No production mutation.
+
+Profiling correction before quota decision: RF3 test broker caps1/1/1CPU were
+below actual production1.25/1.75/1.75CPU; normalize and commit delay cannot yet
+be blamed solely on core quota. One matched-cap run uses current broker caps
+and memory1.5/2/1.5GiB, same256MiB heap/durable isolated storage/RF3. Core caps
+stay1/1/0.5CPU,256MiB; explicitly enable candidate book_resync_quarantine to
+include its hot-loop/transaction overhead. No production quota change or RAM
+increase. This is affected performance profiling, not rerunning passed domain
+or299-product gates. Exact same capture and observer reused.
