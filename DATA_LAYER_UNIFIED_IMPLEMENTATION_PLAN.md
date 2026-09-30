@@ -61284,3 +61284,207 @@ Native collector remains6a91aa52, rollback6cb0eb49. E03 remains9/24; E04/E09
 open. Next: freeze missing inverse lifecycle through SDK/service authority,
 with fresh signed census, BEFORE money window and exact owned reduce-only exit.
 No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains active.
+
+<a id="dl-execution-readiness-convergence-20260930"></a>
+## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
+
+**Status: AUDITED / PLAN_RECORDED / IMPLEMENTATION_NOT_STARTED.**
+**Owner request:** stop TS E work, investigate whether repeated failures are wrong
+runtime/provenance or genuine Data Layer defects, repair the remaining related
+defects in one phase, deploy affected immutable images and retire obsolete test/
+legacy artifacts. No repeat of passed, unaffected certifications. This is NOT
+permission to mark E03/E09 complete or open another architecture program.
+
+### Goal And Governing Sources
+Keep Kafka-native serving as the sole V2 path and make the existing execution
+bindings recover predictably within their declared policy under the measured
+workload. Preserve fail-closed behavior for genuinely quiet trades, stale prices,
+gaps and generation changes. Finish with an exact role/image/config/manifest
+receipt, affected consumer acceptance, scoped cleanup and a TS handback.
+
+Read workspace/project AGENTS first, this section, then:
+- [KN detailed guide, KN-5](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5):
+  K5-T02 hot partition/catch-up, K5-T04 paired handoff, K5.5 provenance, K5.6 retirement.
+- The 2026-09-28 BNB L2 recovery correction/receipt in this plan
+  (source166cda1, receipt SHA e8f3e24bab7bb7d7bda33b78e311847a2644a1cb92999a18873bc7f1950853fa).
+- Additive sandbox inverse extension and "Inverse Cadence Real Readback Result"
+  immediately preceding this section (same-venue contracts and real Risk readback).
+- TS upgrade Unified Plan, "E07 Upstream Burst Attribution And Autonomous
+  Recovery (2026-09-30)" at TS source313770a. This is evidence input, not a
+  permission to edit TS order/Risk/alpha behavior.
+
+### Audited Runtime And Identity, Not Assumed Runtime
+2026-09-30 inventory: one Data Layer Git checkout/worktree:
+`/home/bobby/data_layer`, `fix/okx-inverse-sandbox-readiness@8559d64`.
+Local dev7ee4af0; main8299838 / published v2.2.0. Local refs were inspected;
+remote has NOT been fetched/CI-verified in this audit.
+Two pre-existing owner plan hunks are deliberately preserved, not included in
+this phase's commit.
+
+| Current role set | Active image prefix | Provenance / behavior |
+| --- | --- | --- |
+| Query KN1/2 | 0ed57643ae40 | fba8863, Kafka-native cache reader |
+| Stream KN1/2 | 65918a656dcb | fba8863, native streaming |
+| Rust core1/2/3 | f2040ac9e938 | 166cda1, includes backlog/continuity fix |
+| Native Binance/OKX ingestors; KN market projectors1/2 | 7fe348060734 | 02cd827, not the retired SQLite projectors |
+| BAR edge | f7351c3bda08 | 4fe7e92, retain unless affected |
+| V1 fallback | dbfb57844977 | v1.2.4-2b0dcf7, intentionally retained |
+
+All current KN/core/ingestor/projector roles inspected have restart0/OOMfalse;
+this is inventory, NOT execution acceptance. Kafka lifetime restart counters are
+not a new incident. Runtime root is outside Git:
+`~/.local/state/qdl-v2/releases/v2.2.0-02cd827`, with additive configuration
+and realm-public mounts. Its directory name alone does NOT identify current config.
+
+Legacy query_v2_1/2, stream_v2_active/passive and SIX projector_v2* containers
+are EXITED, not concurrent serving processes. Do not claim two active V2 data
+architectures. V1 is intentional fallback, not a duplicate KN writer.
+Two TS consumers are running: shared market_data_service (paper/revision10,
+image1037c56a) and ts-p183 market_data (sandbox/revision2, image3b4ee780).
+Both target https://qdl-v2-query:8200 and qdl-v2-stream-a/b:8210. The aliases
+belong to active KN replicas; shared Query alias is intentional multi-replica DNS.
+Neither consumer should be stopped/deleted as "duplicate Data Layer".
+
+Different per-role images are not themselves a defect. Freeze exact full digests
+and relevant file hashes in the external packet; do not rebuild unrelated roles
+merely to make image names identical. New sandbox inventory is64 requirements
+(60 inherited +4 inverse), not permission to expand all consumer manifests.
+
+### Findings Ledger And Inherited Evidence
+| ID | Finding / state | Required action in this phase |
+| --- | --- | --- |
+| DLR-01 | FIXED/DEPLOYED: processing backlog used to invalidate otherwise contiguous L2, freezing OKX BNB. Rust166cda1 + real resnapshot fixed frozen-book behavior. Snapshot200/200 eligible; delta195/200, NOT all-price FULL. | Inherit145Rust/40reader tests and frozen-book proof. Test only changed replay/recovery behavior; retain residual tail SLA as DLR-02. |
+| DLR-02 | OPEN: hot raw partition/core backlog makes real Binance TRADE/BOOK too old. TS reads matched old Query data, while public Binance had newer trades. Core2 raw-age mean22.99s/max34.51s versus other cores~0.2s; later recovered to0.408s naturally. | Attribute exact affected product/raw partition -> core -> canonical -> cache -> consumer and correct limiting work, batching or fair scheduling. No assertion that CPU alone is causal. |
+| DLR-03 | OPEN: cold-core L2 recovery needed manual OKX ingestor reconnect after rollout. Current evidence is bounded manual recovery, not autonomous restart/rebalance qualification. | Prove or complete bounded resnapshot through existing ingestor/core ownership, real provider snapshot, same generation/sequence fences. No periodic fake snapshot or timer-based re-dating. |
+| DLR-04 | FIXED/SCOPED: inverse missing acquisition/entitlement/native identity and hot-cadence alias mapping. Source0b90e8b/b394a36/1615eb2/7e28f02, real inverse+linear Risk30/30. | Preserve additive source/runtime bindings. Recheck affected readiness after any rollout, not replay all product/domain certification. |
+| DLR-05 | TS-OWNED/FIXED, not a Data Layer patch: expired price keys plus ahead execution watermark caused bootstrap/replay loop. TS56dae41 market-only rollout3b4ee780,171source+171packaged PASS. | Inherit tests; consume actual candidate recovery evidence. Do not widen Data Layer scope or change TS adapter again without a reproduced new defect. |
+| DLR-06 | OPEN provenance/retirement: post-v2.2.0 fixes/config additions run as a documented mixed-role release set; ten obsolete stopped V2 service containers remain. | Reconcile role/config/certificates, affected packaging, release procedure and exact cleanup manifest. |
+| DLR-07 | Known test-only issue: ignored provider-admission Redis test used50,000ns cooldown rounded to1ms TTL, racing a network trip. Admission runtime was unchanged. | If retained as a required affected gate, fix deterministic test timing only; never change provider cooldown to satisfy test. Otherwise explicitly inherit unaffected admission scope, do not count ignored test as PASS. |
+
+Potential batching defect needing reproduction, not yet a proven incident cause:
+qdl-realtime-core's collection loop resets batch_wait_ms per record; with
+batch_size256/wait25ms, sustained spaced arrivals can keep a batch open well
+beyond25ms. Inspect intended contract and reproduce actual elapsed batch age
+before editing. A larger batch without an absolute deadline/fairness analysis
+could worsen latency. This is part of DLR-02, not another phase.
+
+Explicit exclusions: Binance3d history (owner excluded), DNSE/VN V1 migration,
+new symbols/products, strategy logic/order paths, TS E03 partial-fill matching,
+Portal, Kafka topology/offset reset, Redis flush/SQLite deletion, whole-catalogue
+299-product recertification and unrelated warmup/reference redesign.
+Existing MARK/INDEX rejection diagnostics/realm-key fixes are inherited. If a new
+MARK/INDEX failure appears, capture the exact rejected view and localize it;
+do not call it a fresh defect merely from a generic error label.
+
+### Single Execution Sequence And Stop Boundaries
+These are work steps INSIDE this one phase, not independently added phases.
+
+1. Freeze runtime and fault matrix before edits.
+   Save full role digests, config hashes/revisions, aliases, identities, quotas,
+   active subscriptions, per-role rollback and current workload. Reuse the
+   observed 2026-09-30 fault window; capture only missing bounded attribution.
+   Measure received/raw/canonical/served timestamps plus partition offsets and
+   consumer completed apply. Preserve event timestamps and record sampling clock.
+   Freeze declared freshness/latency/resource/recovery budgets from current
+   bindings and KN budget. An unspecified or unmeasured budget is UNVERIFIED,
+   not permission to invent a passing threshold.
+
+2. Repair shared owning boundaries only.
+   Reproduce DLR-02 using captured provider bytes and existing pipeline components
+   in a disposable namespace; isolate batch collection, normalization, commit and
+   downstream consumption costs. Check absolute flush deadlines, transaction
+   amortization, partition skew and bounded in-flight work. Prefer existing
+   shared Rust implementation; no Python bypass, dropped trades, new symbol
+   workers, new broker or invented control service.
+   DLR-03 must recover a cold/lost book owner through the existing acquisition
+   mechanisms with deduplicated bounded requests and fresh authentic snapshots.
+   Preserve checksums, real gap handling, leader/epoch fencing and idempotency.
+   If quota limits remain dominant AFTER code/config optimization, change only
+   measured affected role caps with before/after throughput and memory headroom;
+   no blanket doubling and no buffers that hide growing backlog.
+   Stop source changes when reproduced failures and targeted regressions pass.
+
+3. One affected candidate build and bounded runtime packet.
+   Build one immutable image per changed artifact family; reuse it across that
+   family's affected roles. Config-only fixes do not demand rebuilds. Compare
+   effective environment/mounts semantically, not raw Env-list order.
+   Packet must name roles, full before/after digests, config paths/hashes,
+   expected reconnect duration, state invariants and exact rollback commands.
+   Start with the actual fault owner. If shared core binary changes, name all
+   three core roles. Include ingestor(s) ONLY where the implemented recovery or
+   startup dependency requires them. Query/Stream/projectors/BAR/V1 stay unchanged
+   unless attribution proves an affected dependency and packet states why.
+   No shared TS recreation or alpha/order activation in this phase.
+
+4. Targeted matrix, then ONE final consumer acceptance.
+   Run the tests below first. No C2 loop to discover bugs. Once they pass, one
+   bounded300s affected no-order consumer acceptance on both Query replicas with
+   current identities. Observe existing TS sandbox, preserving shared TS as
+   noninterference guard; no strategy/order writes. If this final run fails,
+   save exact typed view/offsets, name failed predicate and stop promotion.
+   Fix that predicate, inherit unaffected results; explicitly document any
+   replacement run rather than silently retrying until green.
+
+5. Certify the affected delta, retire and hand back TS.
+   Link retained certificates + new affected evidence to the deployed release
+   set. Follow feature -> dev CI -> main/tag through approved release procedure;
+   do not publish a tag solely because runtime is healthy. Freeze release version
+   at this step rather than assume existing v2.2.0 covers new inverse scope.
+   After acceptance, remove explicitly inventoried retired containers/test images
+   and unused task build cache. Keep V1 and the named immediately preceding KN
+   rollback set with config/TLS/state references. Never delete market history,
+   runtime directories, volumes or owner source as cleanup.
+   Finish with exact TS prerequisites ready/not-ready and resume E only after
+   owner's separate instruction; no automatic broker orders.
+
+### Targeted Tests And Evidence Gates
+| Gate | Cases / evidence | Pass condition and what is NOT claimed |
+| --- | --- | --- |
+| R1 runtime routing | Both Query aliases, streamA/B, shared paper and candidate sandbox identity/revision; active writer count; source/config hashes | No obsolete serving alias/second writer; correct entitlement and provenance. Inventory is not latency proof. |
+| R2 batch/replay correctness | Fast burst, continuously spaced input, idle flush, shutdown/cancel, failed/ambiguous commit, replay/duplicates, two busy partitions plus quiet partition; record-before/after ordering | Bounded absolute batch age; no unexplained loss/duplication/early ACK; transaction and per-partition order preserved. Test only affected reducer/batch modules. |
+| R3 L2 recovery | Binance/OKX, current BTC/DOGE failures + OKX BNB/inverse inherited boundary; core restart/owner move, snapshot delayed/duplicate, valid sequence jumps, genuine gap, stale epoch, repeated resync | Real snapshot restores verified state within frozen budget; no permanent awaiting-snapshot; failed quality remains blocked. Inherit unchanged full10book contracts. |
+| R4 throughput/catch-up | Capture-based isolated replay at4k/5k TOTAL ingress/s, sustained window, burst/drain, hot partition skew, slow consumer and restart | Report offered/admitted/committed/applied counts, bytes, per-partition lag and recovery; no indefinitely growing queue at claimed load. Distinguish total ingress from per-consumer fanout. No production load flood. |
+| R5 serving and exact rejection | Affected TRADE/QUOTE/BOOK plus unchanged MARK/INDEX sentinel; both replicas; freshness/session/gap/generation/hash; quiet trade negative | Every rejection attributed to that exact view. Quiet last trade can correctly be ineligible; pipeline delay cannot be excused as quiet. No event-age SLA widening. |
+| R6 actual consumer |300s on existing sandbox bindings64 including inverse; shared paper60 is guard, not silently replaced; no-order | Auth/manifest/cursor/generation correct; replay converges; no stale execution accepted, no silent missing demanded route. Separate session availability from price eligibility. |
+| R7 packaging/rollback | Changed binaries in immutable image, exact role config, affected rollout/return | New runtime maps to tested code; rollback state/cursors are compatible. No whole-catalogue rerun for unchanged packaging. |
+
+All latency in milliseconds with sample count and rejection denominator:
+SDK/alpha request start BEFORE local queue -> validated usable return;
+provider-event -> consumer completed Redis apply (not callback or stored quality);
+recovery time after burst/disconnect; separate queue/service/commit contributions.
+Keep failures in distributions/accounting; distinguish attempted/successful/usable.
+n<100: observed min/max/range, no p99. Do not extrapolate observed short recovery
+to indefinite5k/s or50-alpha capacity. Collect full-stack CPU/RSS/throttling/lag/
+I/O with per-role headroom, not a read-plane-only CPU number.
+The knownTS150+ consumer regressions, E04 matrix, already certified reference,
+BAR/universe and identity negative suites are inherited unless actually changed.
+
+### Cleanup, Rollback And Closure
+Pre/post disk measurements plus exact image/container list; never claim concurrent
+disk growth/shrink is cleanup savings. Remove only unreferenced task artifacts.
+Old service candidates eligible AFTER new acceptance: query_v2_1/2,
+stream_v2_active/passive, projector_v2 and projector_v2_2..6 (all stopped).
+Verify mounts, labels and retained rollback reproducibility before removal.
+Do not remove init jobs, Kafka, Redis, V1, TS shared/candidate, Portal, alpha
+resources, volumes or stopped operational evidence containers by wildcard.
+A rollback set can have different images by role; "one rollback" does not mean
+one image can run unrelated binaries. The base7fe348 image is active in ingestors
+and KN projectors, so it is NOT garbage even though newer core image exists.
+Restore only affected role/image/config; no offset reset/cache flush. If rollback
+would violate an advanced cursor/config fence, fail closed and use the pretested
+compatible rollback path, never force an older schema onto new state.
+
+**Exit:** R1-R7 applicable gates pass with inherited evidence explicitly mapped;
+no open DLR-02/03 execution/recovery defect; no falsely certified ignored tests;
+new release-set receipt and exact cleanup complete. If an acceptance/resource
+limit remains, report it as a failed requirement, not relabel it technical debt.
+**Stop:** do not proceed to TS lifecycle/E09 or broaden scope when this exit is
+unmet. Report fixed/open lists, runtime map, per-binding latency and cleanup.
+
+Audit receipt: ~/.local/state/qdl-v2/execution-readiness-audit-20260930/runtime-inventory.json
+SHA256 9ab4d3d1814f203e88dd25f848dea4a962bc11b400dd52637f9033a721fb13fd.
+Actual DNS from ts-p183 market process resolves Query to172.18.0.12/25
+(KN1/2), StreamA/B to172.18.0.26/27 (KN1/2), matching Docker addresses.
+No legacy V2 endpoint resolved in this audit. No gate rerun, image build,
+runtime mutation or cleanup performed. No TS goal resumed. Planning only;
+phase exit requires subsequent implementation/evidence, not this audit commit.
