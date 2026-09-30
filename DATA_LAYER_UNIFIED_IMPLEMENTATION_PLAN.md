@@ -61288,7 +61288,7 @@ No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains activ
 <a id="dl-execution-readiness-convergence-20260930"></a>
 ## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
 
-**Status: IN_PROGRESS / SOURCE_REPRODUCTION / RUNTIME_UNCHANGED.**
+**Status: IN_PROGRESS / AFFECTED_SOURCE_AND_ISOLATED_REPLAY_VERIFIED / CANDIDATE_PREPARED / RUNTIME_UNCHANGED.**
 **Owner request:** stop TS E work, investigate whether repeated failures are wrong
 runtime/provenance or genuine Data Layer defects, repair the remaining related
 defects in one phase, deploy affected immutable images and retire obsolete test/
@@ -61897,3 +61897,49 @@ history or claim its anchor equals deployed binary. No new authority promotion.
 All task containers/networks/private keys/RF3 test data directories removed.
 No production change, push/merge/release or resource-cap change. Final affected
 consumer acceptance and retirement still required.
+
+### Candidate Packaging And Minimum Feedback Wiring (2026-09-30)
+Immutable candidate build uses committed Dockerfile.qdl-rust-runtime, source
+0e00c817289ce32ea767cea002c859814349fc72, qdl-v2-rust:2.2.1-0e00c81.
+Git archive excludes both owner plan edits. Single Cargo build job; no new
+production resource caps. This is a candidate label, not a published release.
+
+Prepared packet helper is outside Git under execution-readiness-20260930; it
+uses existing kn_production_packet service_from_inspect/external_compose helpers.
+Only three cores and two native ingestors may change image/config. Preserve all
+other fields, bindings, authority revision, mounts, TLS, quotas and offsets;
+versioned new JSON avoids overwriting current config. Rollback uses actual
+core f2040ac9... and ingestor7fe348... digests, not stale Compose labels.
+
+Read-only Kafka ACL inspection: md.quarantine.stable.v1 currently grants only
+phase8-core WRITE/DESCRIBE. Recovery requires phase8-producer READ/DESCRIBE on
+that exact existing topic and READ on dedicated qdl-v2-book-resync- group prefix.
+Snapshot exact ACLs before applying; rollback removes only newly added entries
+after stopping recovery clients. No new topic, raw/canonical group changes,
+manual offset reset, history/cache mutation or authority promotion.
+
+At this checkpoint: no runtime or ACL changes; isolated test containers absent.
+Host disk219GiB used/71GiB available, available RAM13428MiB during build.
+These are inventory, not claimed cleanup savings. Build context/cache retained
+until candidate attestation; release/old-container retirement remain pending.
+apply_patch sandbox failed again; exact-match fallback used under workspaceRule32.
+
+Candidate build PASS: sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023.
+Packaged core50908e23ccccd731441ff4400360b775e5ec4e5bbaf16f954e0a277b92997578;
+ingestor43358eeea2a57554e1a6d42285968409d279bc093f180d42f06dd41ea5fd71c5.
+Both ldd checks resolve; network-disabled disposable attestation container removed.
+Packaged hashes differ from separate optimized test build; source provenance is
+same, not a claim of byte-identical artifacts. Affected runtime acceptance remains.
+Prepared packet: releases/v2.2.1-0e00c81-recovery; candidate and rollback Compose
+config --quiet both PASS. No apply/recreate/ACL change. Certificate subject read
+confirms CN=phase8-producer; dedicated recovery group ACL query returns none.
+Attestation evidence candidate-image-attestation.json SHA256
+c9ef6963ab78717ca0f0fa10fef78ea8cc04a4715822c4967006ea74aa2628b1.
+
+Cleanup: removed only23,361,111 logical bytes of disposable Git archive context.
+Disk used235435982848 ->235409915904 bytes; concurrent activity means this delta
+is NOT measured cleanup savings. No images deleted; active/rollback/candidate and
+private build cache retained for active phase. Ten stopped legacy containers
+reconfirmed, none running/removed. Production role digests/config unchanged.
+Next: exact ACL delta, bounded five-role rollout, affected typed preflight and one
+300s actual consumer acceptance, then release/retirement. TS work stays paused.
