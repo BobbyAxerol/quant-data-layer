@@ -61148,3 +61148,72 @@ then hand off sandbox manifest revision to candidate TS market service only.
 Do not call prepared mappings real feed readiness or E03 money evidence. All packet
 artifacts are outside Git, no runtime file changed by this checkpoint. Tests used
 existing images; all --rm clients gone; no new images/cache or cleanup required.
+
+#### Approved dependency runtime application packet (2026-09-30)
+
+Authority: owner resumed the critical-path dependency repair plan. Apply only the
+prepared additive inverse market-read configuration; no broker order from this packet.
+Verified all ten current Compose services resolve the exact current image,
+environment, command and bind mounts (no drift). Reuse those existing Compose files,
+no image build or new service. Baseline projector1 restart count1, all other nine0,
+all OOMfalse; do not misreport the existing restart as caused by this packet.
+
+Exact role/image retention and rollback (same images, restore original config):
+- rust_core/rust_core_2/rust_core_3: f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79.
+- ingestor_okx_swap and market_projector_1/2: 7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f.
+- query_kn_1/2: 0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959.
+- stream_kn_1/2: 65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a.
+
+Before writes: compare each original hash to preparation receipt, validate public
+schema and store exact original bytes/mode/owner in protected rollback directory.
+Atomically replace catalog/acquisition, KN projector+stream bundles, sandbox manifest,
+and append four native mappings to each core/OKX config, preserving other fields.
+Only OKX ingestor config_revision follows the new acquisition revision; session
+checks use each envelope.config_revision, not a global assumed Binance revision.
+
+Roll sequentially: projectors, Query, Stream, cores, then OKX ingestor last so no
+new source publishes before all reducers/readers know it. Existing all60 routes
+retain requirements, but catalog-bound old cursors may expire and resnapshot as
+specified by v3; no relaxation or fabricated continuity. Sandbox revision1 tokens
+will fail after manifest2 activates until candidate market handoff. This is an
+expected bounded no-order interruption, not permission to use stale cached prices.
+Observe each role startup/restart/OOM and old feed progress; abort and restore
+config/image packet on sustained source/identity/offset corruption or failed startup.
+New inverse market writes use existing Kafka/native cache pipeline only. Never reset
+Kafka, cache, offsets, Redis, SQLite, V1 or touch Binance ingestor/BAR edge or broker
+mode. After reader convergence, change only ts-p183 market config/binding/JWT revision
+and selected inverse symbol, preserving its separate Redis/cursor namespace.
+
+Application still pending at this journal checkpoint. No inverse execution
+certification exists until actual Query/Stream -> candidate Redis/Risk readback.
+
+#### Inverse runtime application and actual readback result
+
+Applied the nine backed-up public configuration files and recreated exactly the
+approved ten roles on their existing immutable images; no image build, offset
+reset, cache deletion or topology change. Catalog12/716 bindings and sandbox
+manifest2/64 requirements are active. Old60 requirement bodies unchanged.
+Rollback files: p183e-20260930-dependencies/qdl-runtime-rollback-inverse-r2.
+Stream/core/OKX recreation receipt: qdl-role-rollout.json. Projector startup
+required rebalance before progress resumed; no claim of uninterrupted service.
+A Query2 verifier compared environment-list ordering and stopped; dictionary
+comparison confirmed equality, so Query2 was not recreated again.
+
+Actual SDK sandbox readback on both Query replicas:8/8 PASS, four inverse feeds,
+complete/no-gap/eligible. First QUOTE calls125.76/134.18ms include connection setup;
+MARK8.39/15.08ms, snapshot23.44/23.50ms, delta10.08/9.23ms. These are single-call
+samples, NOT percentiles or broad latency certification. MARK lineage is existing
+native execution live view, not substituted USDT data or direct REST fallback.
+Candidate TS market recreated alone with same5dd12956 image, sandbox revision2,
+new sealed digest and inverse symbol; shared TS market and order services unchanged.
+Actual Redis candidate observation:12/12 heartbeat READY over55.86seconds,22/22
+session-ready. Stored eligibility is not guaranteed eligibility at a later read.
+Read-only Risk MARKET/LIMIT check PASS; L2_LIMIT rejected43.445second snapshot
+against intent5second freshness. Investigate snapshot selection without relaxing
+Risk or claiming inverse order certification. No order submitted in this slice.
+
+Evidence: inverse-two-reader-readback.json, inverse-consumer-observation.json,
+market-inverse-rollout.json under the dependency evidence root. Stable published
+release remains v2.2.0; no push/merge/release. Active images also serve rollback
+with restored public configs. No disposable image created; broad cleanup deferred
+while rollback artifacts are needed. E03 remains9/24, not certified by feed reads.
