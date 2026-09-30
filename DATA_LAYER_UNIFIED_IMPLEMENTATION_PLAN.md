@@ -61062,3 +61062,54 @@ All clients --rm; no new image, container, network or volume retained.
 Remaining: additive runtime catalog/acquisition and sandbox revision/binding packet,
 consumer policy/auth regressions, per-role diff/rollback and real inverse readback.
 No runtime QDL mutation, order, reset, release, push or merge in this slice.
+
+#### Sandbox packet compiler scope (in progress)
+
+Implement a pure additive packet compiler using the existing catalog, acquisition,
+ConsumerManifestLoader and ConsumerRouteBinding contracts. Inputs are exact current
+public runtime artifacts plus bounded authentic metadata and reviewed inverse demand.
+Preserve all old binding/source IDs and policies; reject conflicting/duplicate scope,
+wrong realm, missing policy template, non-execution/fallback drift. New route policies
+inherit the corresponding same-venue/product template, not hand-written relaxed SLA.
+Seal a new configuration generation digest; never reuse the old certificate digest
+as proof that inverse passed. Output PREPARED_NOT_ACTIVATED only. Unit negatives and
+real mounted-config dry-run must precede any reader/core/ingestor packet apply.
+
+#### Sandbox compiler verification and mounted-config dry-run
+
+Implemented qdl/runtime/sandbox_extension.py and
+scripts/prepare_sandbox_read_extension.py. Both are offline control-plane code;
+no reader hot-path/image change. Packet preserves previous catalog/acquisition rows,
+source IDs,60 products and quota; adds only four inverse sandbox products. Explicit
+realm/subject/revision, same-venue template, exact coverage/collateral, fail-closed
+policy and duplicate-application checks reject invalid extensions. Configuration
+provenance uses a NEW digest with PREPARED_NOT_ACTIVATED_NOT_CERTIFIED status;
+it does not inherit an execution certificate for the new inverse product.
+
+Test commands in existing immutable images, source RO/network none:
+- unittest sandbox_extension + inverse_demand + instrument_domain +
+  production_catalog + phasec36_liquid_crypto_features + trading_consumer_scope:
+ 39PASS/0FAIL before the final subject/revision negative was added.
+- final test_sandbox_extension:6PASS/0FAIL (includes subject/revision negative).
+- test_consumer_key_realms + test_consumer_realm_execution_path:11PASS/0FAIL.
+- Ruff changed three files --isolated --no-cache:PASS. Default Ruff failed parsing
+  existing requires-python="^3.10" in pyproject; no unrelated config edit made.
+
+Four exact public mounted inputs copied to protected external qdl-inputs (no keys).
+prepare_sandbox_read_extension ran offline against real captured metadata and those
+inputs; all loaders PASS. Output qdl-prepared/inverse-r2:64 requirements, sandbox
+revision2, binding SHA81371d71e5e618d4331124e597e916aa5d13aeb40317a334717cb02b7e583b75.
+Full input/output file hashes in receipt.json. TS independently parsed the packet
+and retained the exact binding/hash using its SDK, source mounted read-only.
+No runtime file was replaced. Public runtime key/type census only; one inspection
+request that would have printed arbitrary scalar values was rejected by tools;
+replaced it with a keys/counts-only read, no secret output.
+
+Rollout preparation must also extend the KN gateway/projector bundle (not just
+Query YAML), and compile native core/OKX acquisition additions with existing
+performance overrides/authority/offsets retained. Existing OKX ingestor has99 physical
+entries; compiler must measure the new bounded connection split rather than raise
+connection quotas implicitly. No extra role/container may be created. Retirement,
+cache reset and whole-catalogue C2 are not part of this repair.
+All disposable test clients removed. No image built, no runtime restarted, no broker
+order, push, merge or release. TS E03/E04/E09 remain incomplete.
