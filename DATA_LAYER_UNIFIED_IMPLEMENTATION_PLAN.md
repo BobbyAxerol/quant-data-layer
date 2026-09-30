@@ -62110,3 +62110,40 @@ state, evidence, V1/TS/Portal or global BuildKit removal. Shared cache ownership
 not attributable, explicitly deferred; native rollbackf204 and active7fe retained.
 Remote fetch unchangeddev7ee4af0/main8299838. Next: push this feature/PRdev, CI,
 then approvedmain release path. No second C2 and no TS lifecycle work.
+
+### CI Release Blocker - Dependency Security (2026-09-30)
+Featuref460dee pushed, PR25->dev; CI36759351053. SDK Python3.10 PASS.
+Unit job110037625827 FAILED before tests in pip-audit:12PyJWT2.13.0 advisories
+(fixed2.14.0/2.15.0) +3urllib3 2.7.0 advisories(fixed2.8.0). Full bounded CI log
+outsideGit: execution-readiness-20260930/evidence/ci-unit-36759351053.log.
+Do not weaken audit or call this a Rust recovery failure. Official release docs:
+https://pyjwt.readthedocs.io/en/latest/changelog.html
+https://github.com/urllib3/urllib3/security/advisories
+Source-only release prerequisite: raise PyJWT floor2.15.1(service+SDK) and
+urllib3 floor2.8.0; targeted Poetry lock update onlythese2packages, inspect solver
+diff. Test negative/positive JWT realms/SDK and dependency audit, rebuild SDK2.0.6
+(unpublished, replace candidate hash explicitly), update release evidence.
+Running Rust/Query/Stream/TS remains unchanged by dependency source edits.
+Any additional Python runtime rollout must name affected roles/digest/rollback;
+current approval was fiveRustroles, not an implicit unrelated reader recreation.
+Do not publish clean whole-runtime security certification for old Python images.
+
+Additional approved cleanup completed5unusedoldqdl-v2images ba41/579d/ed1e/3897/eec6;
+retained3dd54bfd Query predecessor conservatively alongside currentreader and
+native rollback. Disk232370102272->232098627584bytes, all runningroles unchanged.
+Exact list at evidence/unused-image-cleanup.json; no TS/Portal/cache/volume removal.
+
+Security source slice: Poetry2.3.4(targeted update) changes ONLYpyjwt2.13.0->2.15.1
+andurllib3 2.7.0->2.8.0 pluslockcontenthash; no transitive dependency churn.
+Auth/realm/TLS/SDK/package targeted32/32PASS with bothpatcheddependencies in a
+disposableexistingreaderimage testcontainer. SDK2.0.6 unpublished candidatewheel
+replaced explicitly: old26eede97...7b2e superseded by
+d44fbf559c0c7eb52abf2a40091bcecc9e5ea025fed9c9b0bbbc6db6329395ad.
+Certificate overallstatus PENDING_SECURITY_PACKAGING; affectedRustdeltaPASS stays
+separate. CIoldrun: nativeintegration/contract/SDKPASS; dependency auditFAILED.
+TwoQuery securitypackaging rollout request sent separately; do not recreateuntil
+approved. No Rust/Stream/BAR/V1/TS change. Querypredecessor3dd retained conservatively.
+Tooling: hostvenv unavailable, no hostpackageinstall; disposablePoetrycontainer
+used canonical2.3.4 and hostUID1001. Initialwrongversion/UIDattempt stopped;
+noexec tmpfs failure corrected with exec onlyonisolatedtemp. Test/solvercontainers
+removed automatically. Partialemptyhostvenv removed, no other cachecleanup.

@@ -1,4 +1,5 @@
 {
+  "affected_runtime_delta_status": "PASS",
   "classification": "Bounded affected Data Layer execution-readiness repair; production no-order consumer acceptance, not broker execution certification",
   "cleanup": {
     "legacy-retirement-result.json": {
@@ -36,6 +37,22 @@
       "note": "Unprivileged attempt stopped on root-owned compiler file. Exact task-only cache removed after checking no container mounts; no shared BuildKit prune.",
       "removed_path": "execution-readiness-20260930/target",
       "runtime_mutation": false
+    },
+    "unused-image-cleanup.json": {
+      "disk_used_after": 232098627584,
+      "disk_used_before": 232370102272,
+      "removed_images": [
+        "sha256:ba41b1f279d42998ecb6abf6cae32e55ef6d275e59c37498077b774edb7f01b4",
+        "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+        "sha256:ed1ef88bb400bc262ffdec40589e210657757dc7f963c2f727cb86d4b8c4378a",
+        "sha256:389753b37c4f3935193acc739687c4a18c5b307f3ea6a427153f5689d31c9762",
+        "sha256:eec6388421845ef570cb3878145d0c5e0398fc44cc2a662805298295cfb0976a"
+      ],
+      "retained_query_predecessor": "sha256:3dd54bfd8b9de0b143d317798ab9c63cebc502d01fe3cf6f513032d6484b5b11",
+      "retention_reason": "Conservative existing Query predecessor retention; current repair does not change Query. Do not remove a potential named reader rollback while finishing release provenance.",
+      "running_roles_changed": [],
+      "timestamp_ns": 1790793275717377902,
+      "volume_or_shared_cache_changes": false
     }
   },
   "component_tree_identity": {
@@ -330,7 +347,7 @@
       "httpx>=0.28.0,<1.0.0",
       "protobuf>=6.31.1,<7.0.0",
       "pydantic>=2.0.0,<3.0.0",
-      "PyJWT[crypto]>=2.13.0,<3.0.0"
+      "PyJWT[crypto]>=2.15.1,<3.0.0"
     ],
     "generated_contract_digest": "2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624",
     "name": "qdl-sdk",
@@ -340,7 +357,21 @@
     "sdk_source_digest": "9930844e1522e138465900601d3f382631af22d8567623608e5f8dc5fee3790c",
     "version": "2.0.6",
     "wheel": "qdl_sdk-2.0.6-py3-none-any.whl",
-    "wheel_sha256": "26eede97407a42d8eaa15019cc31e0fe2c8a5545d82bdf7805cf1c9255cf7b2e"
+    "wheel_sha256": "d44fbf559c0c7eb52abf2a40091bcecc9e5ea025fed9c9b0bbbc6db6329395ad"
+  },
+  "security_packaging": {
+    "ci": "Required new run; old run36759351053 passedRust/contracts/nativeKafka/SDK but failedPythondependency audit.",
+    "query_rollout": "Separate bounded twoQuery packet requested, pending owner response.",
+    "runtime_deployed": false,
+    "scope": "No assertion that unchanged Python/V1/TS images have these dependency fixes.",
+    "source_floor": {
+      "PyJWT": "2.15.1",
+      "urllib3": "2.8.0"
+    },
+    "targeted_auth_sdk_tests": {
+      "fail": 0,
+      "pass": 32
+    }
   },
   "source_components": {
     "bar_edge": "4fe7e92",
@@ -350,7 +381,7 @@
     "rust_image_source": "0e00c817289ce32ea767cea002c859814349fc72",
     "sdk_packaging_commit": "556db7c"
   },
-  "status": "PASS",
+  "status": "PENDING_SECURITY_PACKAGING",
   "tests": {
     "sdk_packaging": {
       "fail": 0,
