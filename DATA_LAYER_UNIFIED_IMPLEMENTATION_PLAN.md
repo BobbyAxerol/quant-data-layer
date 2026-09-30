@@ -61247,3 +61247,40 @@ materialization/core refresh, existing Query image with RO source, networknone,
 2CPU/1GiB. First invocation used a nonexistent test_execution_l2 module; correct
 module test_execution_l2_materialization rerun above. Execution-grade dedup and
 mixed alias tests pass; provider30s unchanged. No image build needed for config.
+
+Cadence runtime check did NOT pass after rolling core3: all three samef2040ac9
+images running/restarts0; TS candidate only polling env changed, same5dd12956.
+60s exact inverse+linear cache-to-Risk matrix saw BOOK stale/missing while
+QUOTE/MARK continued. No broker entry. Config mismatch corrected, but snapshot
+rebootstrap still unresolved after core recreation; not a PASS from process-up.
+Next bounded recovery under approved inverse ingest scope: recreate only existing
+ingestor_okx_swap, same7fe34806 image/config/mounts, to obtain authentic WS
+snapshot; no offsets/cache reset. Record observed outcome, no assumption that
+reconnect proves general autonomous recovery. Keep core config backups and
+candidate market30s rollback. No whole-catalogue C2 or new image.
+
+#### Inverse Cadence Real Readback Result (2026-09-30)
+
+After same-image OKX ingestor reconnect, candidate Redis-to-Risk readback passed
+30/30 samples per product for BTC-USD-SWAP and BTC-USDT-SWAP across MARKET,
+LIMIT and L2_LIMIT (5s policy unchanged). Maximum book age2453/2893ms; maximum
+cache read plus three policy checks6.843/44.460ms respectively. These are60s
+bounded dependency observations, not endpoint p99 or E03 money evidence.
+Evidence root: /home/bobby/.local/state/trading-system/p183e-20260930-dependencies/
+inverse-hot-cadence/; receipt risk-after-resnapshot.json. Failed first readback
+risk-after.json retained. No broker entry occurred in this cadence slice.
+
+Correction to earlier provider-refresh shorthand: OKX uses initial WebSocket
+snapshot plus gap resync, not a periodic30s snapshot. The retained numeric
+snapshot_refresh_seconds does not change that policy. This cold-core rollout
+required paired same-image OKX ingestor reconnect; this proves bounded manual
+recovery, not autonomous core-restart recovery certification. No timestamps or
+quality gates were relaxed; no BOOK_DELTA substitution for a complete snapshot.
+Three QDL cores remain f2040ac9 with inverse hot cadence1000ms; OKX ingestor
+remains7fe34806; candidate market remains5dd12956 with snapshot polling1s.
+Config backups retained; no offsets/reset/flush/history deletion or order.
+No new images built for this cadence slice; disposable test clients removed.
+Native collector remains6a91aa52, rollback6cb0eb49. E03 remains9/24; E04/E09
+open. Next: freeze missing inverse lifecycle through SDK/service authority,
+with fresh signed census, BEFORE money window and exact owned reduce-only exit.
+No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains active.
