@@ -61288,7 +61288,7 @@ No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains activ
 <a id="dl-execution-readiness-convergence-20260930"></a>
 ## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
 
-**Status: IN_PROGRESS / RUNTIME_ROLLED / FINAL_ACCEPTANCE_REVIEWED / RELEASE_AND_RETIREMENT_PENDING.**
+**Status: IN_PROGRESS / RUST_RUNTIME_ACCEPTED / LEGACY_RETIRED / QUERY_SECURITY_PACKET_AND_RELEASE_PENDING.**
 **Owner request:** stop TS E work, investigate whether repeated failures are wrong
 runtime/provenance or genuine Data Layer defects, repair the remaining related
 defects in one phase, deploy affected immutable images and retire obsolete test/
@@ -61354,11 +61354,11 @@ merely to make image names identical. New sandbox inventory is64 requirements
 | ID | Finding / state | Required action in this phase |
 | --- | --- | --- |
 | DLR-01 | FIXED/DEPLOYED: processing backlog used to invalidate otherwise contiguous L2, freezing OKX BNB. Rust166cda1 + real resnapshot fixed frozen-book behavior. Snapshot200/200 eligible; delta195/200, NOT all-price FULL. | Inherit145Rust/40reader tests and frozen-book proof. Test only changed replay/recovery behavior; retain residual tail SLA as DLR-02. |
-| DLR-02 | OPEN: hot raw partition/core backlog makes real Binance TRADE/BOOK too old. TS reads matched old Query data, while public Binance had newer trades. Core2 raw-age mean22.99s/max34.51s versus other cores~0.2s; later recovered to0.408s naturally. | Attribute exact affected product/raw partition -> core -> canonical -> cache -> consumer and correct limiting work, batching or fair scheduling. No assertion that CPU alone is causal. |
-| DLR-03 | OPEN: cold-core L2 recovery needed manual OKX ingestor reconnect after rollout. Current evidence is bounded manual recovery, not autonomous restart/rebalance qualification. | Prove or complete bounded resnapshot through existing ingestor/core ownership, real provider snapshot, same generation/sequence fences. No periodic fake snapshot or timer-based re-dating. |
+| DLR-02 | FIXED/DEPLOYED/BOUNDED_ACCEPTANCE: absolute batching deadline; RF3 replay4k/5k windows caught up. Original fault: hot raw partition/core backlog makes real Binance TRADE/BOOK too old. TS reads matched old Query data, while public Binance had newer trades. Core2 raw-age mean22.99s/max34.51s versus other cores~0.2s; later recovered to0.408s naturally. | Attribute exact affected product/raw partition -> core -> canonical -> cache -> consumer and correct limiting work, batching or fair scheduling. No assertion that CPU alone is causal. |
+| DLR-03 | FIXED/DEPLOYED: existing quarantine feedback now restores four real-provider books after owner movement without manual ingestor restart (7830.93ms including5000ms stability). Original fault: cold-core L2 recovery needed manual OKX ingestor reconnect after rollout. | Prove or complete bounded resnapshot through existing ingestor/core ownership, real provider snapshot, same generation/sequence fences. No periodic fake snapshot or timer-based re-dating. |
 | DLR-04 | FIXED/SCOPED: inverse missing acquisition/entitlement/native identity and hot-cadence alias mapping. Source0b90e8b/b394a36/1615eb2/7e28f02, real inverse+linear Risk30/30. | Preserve additive source/runtime bindings. Recheck affected readiness after any rollout, not replay all product/domain certification. |
 | DLR-05 | TS-OWNED/FIXED, not a Data Layer patch: expired price keys plus ahead execution watermark caused bootstrap/replay loop. TS56dae41 market-only rollout3b4ee780,171source+171packaged PASS. | Inherit tests; consume actual candidate recovery evidence. Do not widen Data Layer scope or change TS adapter again without a reproduced new defect. |
-| DLR-06 | OPEN provenance/retirement: post-v2.2.0 fixes/config additions run as a documented mixed-role release set; ten obsolete stopped V2 service containers remain. | Reconcile role/config/certificates, affected packaging, release procedure and exact cleanup manifest. |
+| DLR-06 | PARTIAL: release-set evidence prepared, ten obsolete stopped V2 containers and eight unusedimages removed. Sourcee366f75 pushed/PR25; newQuerysecuritypacket and CI/main/tag remain. Mixed-role digests remain explicit, not a false single-image claim. | Reconcile role/config/certificates, affected packaging, release procedure and exact cleanup manifest. |
 | DLR-07 | Known test-only issue: ignored provider-admission Redis test used50,000ns cooldown rounded to1ms TTL, racing a network trip. Admission runtime was unchanged. | If retained as a required affected gate, fix deterministic test timing only; never change provider cooldown to satisfy test. Otherwise explicitly inherit unaffected admission scope, do not count ignored test as PASS. |
 
 Potential batching defect needing reproduction, not yet a proven incident cause:
@@ -61445,7 +61445,7 @@ These are work steps INSIDE this one phase, not independently added phases.
 | R3 L2 recovery | Binance/OKX, current BTC/DOGE failures + OKX BNB/inverse inherited boundary; core restart/owner move, snapshot delayed/duplicate, valid sequence jumps, genuine gap, stale epoch, repeated resync | Real snapshot restores verified state within frozen budget; no permanent awaiting-snapshot; failed quality remains blocked. Inherit unchanged full10book contracts. |
 | R4 throughput/catch-up | Capture-based isolated replay at4k/5k TOTAL ingress/s, sustained window, burst/drain, hot partition skew, slow consumer and restart | Report offered/admitted/committed/applied counts, bytes, per-partition lag and recovery; no indefinitely growing queue at claimed load. Distinguish total ingress from per-consumer fanout. No production load flood. |
 | R5 serving and exact rejection | Affected TRADE/QUOTE/BOOK plus unchanged MARK/INDEX sentinel; both replicas; freshness/session/gap/generation/hash; quiet trade negative | Every rejection attributed to that exact view. Quiet last trade can correctly be ineligible; pipeline delay cannot be excused as quiet. No event-age SLA widening. |
-| R6 actual consumer |300s on existing sandbox bindings64 including inverse; shared paper60 is guard, not silently replaced; no-order | Auth/manifest/cursor/generation correct; replay converges; no stale execution accepted, no silent missing demanded route. Separate session availability from price eligibility. |
+| R6 actual consumer |300s on existing sandbox22 active demand including inverse;64entitlement products independently checked by R5; shared paper60 is guard, not silently replaced; no-order | Auth/manifest/cursor/generation correct; replay converges; no stale execution accepted, no silent missing demanded route. Separate session availability from price eligibility. |
 | R7 packaging/rollback | Changed binaries in immutable image, exact role config, affected rollout/return | New runtime maps to tested code; rollback state/cursors are compatible. No whole-catalogue rerun for unchanged packaging. |
 
 All latency in milliseconds with sample count and rejection denominator:
@@ -62147,3 +62147,43 @@ Tooling: hostvenv unavailable, no hostpackageinstall; disposablePoetrycontainer
 used canonical2.3.4 and hostUID1001. Initialwrongversion/UIDattempt stopped;
 noexec tmpfs failure corrected with exec onlyonisolatedtemp. Test/solvercontainers
 removed automatically. Partialemptyhostvenv removed, no other cachecleanup.
+
+Security candidate prepared, NOT deployed: qdl-v2-python:2.2.1-e366f75,
+sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65.
+Built standardDockerfile from gitarchivee366f75(noownerhunks/privatefiles).
+Actualpackaged32auth/realm/TLS/SDKtestsPASS, networknone; solver/testcontainers
+removed. Packet v2.2.1-e366f75-query-security holds candidate/rollbackCompose
+validatedconfig--quiet; onlytwoQuery imagefielddiff, noenv/mount/TLS/configchange.
+Rollback0ed57643...eb959; packetpreparedpendingownerresponse, noQueryrecreate.
+CI36760348660 now passes dependency audit and is executingunit/native/contract
+jobs; do not claim finalgreen prematurely. OriginalRust5role packet remains
+completed; no repeat300s run. Candidateimageexplicitlyretainedforpendingpacket,
+notgarbage. NoadditionalTSwork,mainmerge,tagorpublicationyet.
+
+### Publication Checkpoint And Tracker Reconciliation (2026-09-30)
+Previous goal turn made implementation/rollout/evidence/cleanup progress; current
+continuation verified live CIrun36760348660, not a guessedwait. ThreejobsPASS:
+contract-tests, kn-native-integration and SDKPython3.10; unit-tests stillrunning
+at Run unit tests, dependency audit alreadyPASS. No new C2/marketorder action.
+Tracker now reflects DLR02/03 bounded fixes, DLR06 remainingpublication and
+actual22sandbox demand versus64sealedentitlements. Earlier incident descriptions
+remain historical; this correction does not reduce entitlement coverage.
+CandidateQuery imageb40b49c...4a65 packagedversions verified PyJWT2.15.1/urllib32.8.0
+and32packagedtestsPASS. Private packetprepared, noownerresponse recordedyet and
+noQueryrecreate. Need that packet outcome plus terminalCI before release closure.
+Canonical remains /home/bobby/data_layer, samefeature, onecheckout; dev/main and
+publishedv2.2.0 unchanged. All newtestcontainers auto-removed; candidate retained
+for the pendingpacket. Source/plan evidence commit only; no runtime mutation.
+
+### Blocked Audit - Query Runtime Approval (2026-09-30)
+The same separate twoQuery approval request remains unanswered across at least
+three consecutive goal continuations. Safe independent work is complete: dependency
+source fix,32source+32packagedtests, immutable image, exactcandidate/rollbackpacket,
+sourcepush and scopedcleanup. No additional runtime permission is inferred from
+automatic goalcontinuation. CIjob110041015650/run36760348660 independentlyremains
+in_progress at Run unit tests on latestAPIpoll; previousgreen run took24minutes
+for thatstep. Waiting is not classified as failure and no rerun/cancellation.
+Goal blocked on pendingquerypacket approval (not complete). CI can continue on
+GitHub while goal is blocked. On ownerresponse, repoll sameCIrun, apply onlytwo
+approvedQueryroles, affectedauth/64productreadback, then finalcertificate/publication.
+No newC2, sourcearchitecture, TSorderwork or broaderdeployment is authorized here.

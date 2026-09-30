@@ -360,7 +360,13 @@
     "wheel_sha256": "d44fbf559c0c7eb52abf2a40091bcecc9e5ea025fed9c9b0bbbc6db6329395ad"
   },
   "security_packaging": {
-    "ci": "Required new run; old run36759351053 passedRust/contracts/nativeKafka/SDK but failedPythondependency audit.",
+    "candidate_image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
+    "candidate_source": "e366f752914db8d1d43cb03a970b0278635ba88d",
+    "ci": "36760348660: dependency audit passed; contract/native-integration/SDK jobs passed, unit job not terminal at checkpoint",
+    "packaged_auth_sdk_tests": {
+      "fail": 0,
+      "pass": 32
+    },
     "query_rollout": "Separate bounded twoQuery packet requested, pending owner response.",
     "runtime_deployed": false,
     "scope": "No assertion that unchanged Python/V1/TS images have these dependency fixes.",
