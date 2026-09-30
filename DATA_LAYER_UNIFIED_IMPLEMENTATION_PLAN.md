@@ -62053,3 +62053,26 @@ Remaining release work: reviewed certificate/report with inherited gates and
 these measured limits, CI/integration->main publication, exact legacy retirement
 and build-cache inventory/cleanup. Keep native rollback coref204 and active
 projector/ingestor-base7fe, V1, and untouched Query/Stream images. No TS E work.
+
+### Release Packaging Convergence (2026-09-30)
+Current release workflow requires immutable SDK wheel SHA in certificate.
+Compared v2.2.0..HEAD: SDK client already has tested typed refusal diagnostics
+(_view_refusal, no payload/cursor leakage), but package/build VERSION remains
+2.0.5. Publishing different bytes under the same SDK artifact identity would be
+a provenance defect. Version-only correction to2.0.6 in SDK init/build script and
+two current-version test assertions; preserve historical evidence/runtime pins.
+No adapter policy/schema/auth changes, no TS or Query rebuild, no second C2.
+Test deterministic wheel/metadata/import and current release-version assertions;
+inherit existing behavioral diagnostics regressions. Certificate for v2.2.1
+will identify immutable per-role digests and link v2.2.0 evidence only for truly
+unchanged behavior. Runtime SDK2.0.5 copies are not silently relabelled2.0.6.
+
+Packaging result: two targeted unittest cases PASS in existing reader image
+0ed57643ae40 with source read-only, network none, bounded tmpfs, non-root;
+disposable qdl-release-sdk-check removed automatically. Deterministic wheel
+2.0.6 SHA256 26eede97407a42d8eaa15019cc31e0fe2c8a5545d82bdf7805cf1c9255cf7b2e.
+Generated contract digest unchanged2a25a601...624; SDK source digest9930844e...90c.
+No runtime SDK pin or running container changed. Public API remains2.0.0.
+apply_patch helper failed (mountinfo path is not absolute); exact-match fallback
+used perRule32 and four one-line version diffs inspected. Owner plan hunks stay
+unstaged. No push/merge/tag or image cleanup in this packaging slice.
