@@ -61527,3 +61527,55 @@ no catalogue/SDK/TS suites or C2 rerun. No claim of throughput/recovery pass.
 Test containers used --rm and are removed; no new image built. Task target/cache
 is retained only while this phase is active, to avoid repeated full compiles;
 final scoped cleanup remains after acceptance. Production role digests unchanged.
+
+### L2 Autonomous Recovery Wiring - Design Before Source (2026-09-30)
+DLR-03 will use the existing core -> transactional quarantine -> native ingestor
+boundary, not a new service/topic, shared-file authority, or periodic fake book.
+Core opt-in emits a versioned resnapshot marker only for its current non-ready
+L2 binding, rate-bounded by existing snapshot_refresh_seconds and original raw
+receipt time. The marker carries the original envelope and integrity evidence;
+it commits atomically with consumed raw offsets. Ingestor opt-in listens on the
+existing quarantine topic with a dedicated group per existing BOOK connection
+lane, not per symbol. Only an exact current provider/binding/config/authority/
+lease/session/generation match can reconnect that BOOK lane; other feeds stay up.
+Expired, duplicate, foreign or superseded markers cannot trigger reconnect.
+Reconnect obtains authentic provider WS/REST bootstrap using the existing flow.
+Control offsets are independent of canonical/raw groups. Activation requires
+explicit packet listing additive read/group ACL, two optional config fields and
+affected core/ingestor digests. No production ACL or config is changed by this
+source step. Default absent config preserves current behavior. Rollback disables
+feedback and restores only affected binaries/config/ACL. Rejection/failure remains
+fail-closed. Required tests: cold owner, gap, ready suppression, request retry,
+stale session/generation/identity/revision, expired/tampered marker, cancellation,
+then isolated real Kafka committed-only request delivery and real resnapshot.
+
+L2 feedback source result (NOT runtime recovery certification):13/13 affected
+qdl-realtime-core L2 tests PASS; qdl-kafka library20/20, native ingestor25/25,
+realtime binary10/10 PASS; clippy for the library and both changed binaries
+-D warnings PASS. New tests cover cold owner/retry/session fence, real gap
+rearming after a ready book, both-venue exact identity/fence/tamper/expiry
+rejection and disabled feedback. Initial compile caught a missing kafka_config
+lane argument in the new helper; corrected before test PASS. Counterfactual
+batch evidence retained separately. Unit fixtures are explicitly test evidence,
+not authentic provider certification. Existing protocol tests were rerun only
+for the changed core/ingestor binaries; no full-catalogue/C2/TS order tests.
+
+Control receiver uses read_committed/manual checkpoint and a dedicated group
+starting latest only when new; existing offsets resume. It handles receive/
+checkpoint errors with bounded1..30s backoff separately, rather than aborting
+all ingest lanes. New core/ingestor config defaults disabled. Production remains
+unchanged. Still required before enablement: isolated committed-only feedback,
+restart/rebalance resnapshot proof and feedback-vs-market-data fairness under
+quarantine pressure, capture replay throughput, exact role/ACL packet, final
+consumer acceptance. No FULL/production-ready claim from these source tests.
+
+Pre-commit source review found synchronous control-offset checkpoint could
+block the BOOK socket poll. Control hints now use explicitly named asynchronous
+checkpoint submission; this is NOT a durable market-data acknowledgement.
+Lost/duplicate hint checkpoints are harmless through bounded core reissue and
+exact session fencing. Existing market-data checkpoint stays synchronous and
+unchanged. No detached task, unbounded queue or worker-per-message added.
+Clippy rerun after the checkpoint-hint change PASS; earlier pure identity/L2
+unit results are inherited unchanged. The new Kafka offset submission behavior
+requires isolated broker integration before runtime enablement. Source compiles
+for both changed binaries (debug build); no immutable release image built yet.

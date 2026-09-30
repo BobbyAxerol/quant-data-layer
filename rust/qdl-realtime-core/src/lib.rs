@@ -13,7 +13,7 @@ use qdl_core::canonical::{
     TradeContext, TradeFixture,
 };
 use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
-use qdl_core::l2_book::{BookIdentity, BookOutcome};
+use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
@@ -394,6 +394,8 @@ struct MarkIndexPairState {
     index: Option<MarkIndexComponentState>,
 }
 
+pub const L2_RESNAPSHOT_REQUIRED_V1: &str = "L2_RESNAPSHOT_REQUIRED_V1";
+
 pub struct RealtimeCore {
     config: RealtimeCoreConfig,
     bindings: BTreeMap<String, CoreBinding>,
@@ -405,6 +407,7 @@ pub struct RealtimeCore {
     /// can be proved. Book frames never reach `ordering`, which is why this
     /// exists separately; see `process_l2`.
     l2_sessions: BTreeMap<String, String>,
+    l2_resnapshot_requests: BTreeMap<String, (String, u64, i64)>,
     ordering: OrderingTracker,
     seen_ids: HashSet<Vec<u8>>,
     seen_order: VecDeque<Vec<u8>>,
@@ -449,10 +452,78 @@ impl RealtimeCore {
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             l2_sessions: BTreeMap::new(),
+            l2_resnapshot_requests: BTreeMap::new(),
             ordering: OrderingTracker::new(4096),
             seen_ids: HashSet::new(),
             seen_order: VecDeque::new(),
         })
+    }
+
+    /// Called after processing a raw frame. The runtime commits this evidence
+    /// with that frame's offset; only its current acquisition lane may act on it.
+    pub fn l2_resnapshot_request(
+        &mut self,
+        raw: &RawProviderEnvelope,
+        processing_at_ns: i64,
+    ) -> Option<DurableRecord> {
+        let key = binding_key(
+            &raw.provider,
+            &raw.venue,
+            &raw.market,
+            &raw.product_type,
+            &raw.native_symbol,
+            &raw.native_channel,
+        );
+        let binding = self.bindings.get(&key)?;
+        let l2 = binding.l2.as_ref()?;
+        let adapter = self.l2_adapters.get(&key)?;
+        if raw.subscription_id != binding.source_id
+            || raw.instrument_catalog_revision != binding.instrument_catalog_revision
+            || self.l2_sessions.get(&key) != Some(&raw.source_session_id)
+            || adapter.core().generation() != raw.connection_generation
+        {
+            return None;
+        }
+        if adapter.core().status() == BookStatus::Ready {
+            self.l2_resnapshot_requests.remove(&key);
+            return None;
+        }
+        let retry_ns = i64::try_from(l2.snapshot_refresh_seconds)
+            .ok()?
+            .checked_mul(1_000_000_000)?;
+        if self
+            .l2_resnapshot_requests
+            .get(&key)
+            .is_some_and(|(session, generation, sent)| {
+                session == &raw.source_session_id
+                    && *generation == raw.connection_generation
+                    && raw.received_at_ns.saturating_sub(*sent) < retry_ns
+            })
+        {
+            return None;
+        }
+        self.l2_resnapshot_requests.insert(
+            key,
+            (
+                raw.source_session_id.clone(),
+                raw.connection_generation,
+                raw.received_at_ns,
+            ),
+        );
+        let mut record = self
+            .quarantine(
+                raw,
+                QuarantineReason::SequenceGap,
+                L2_RESNAPSHOT_REQUIRED_V1,
+                processing_at_ns,
+            )
+            .quarantines
+            .pop()?;
+        let mut id = Sha256::new();
+        id.update(&raw.capture_id);
+        id.update(L2_RESNAPSHOT_REQUIRED_V1.as_bytes());
+        record.event_id = id.finalize().to_vec();
+        Some(record)
     }
 
     pub fn process_bytes(
@@ -1681,6 +1752,7 @@ mod tests {
     use super::{
         CoreBinding, CoreError, L2Binding, L2ProviderProtocol, MarkIndexBinding,
         MarkIndexComponent, ProcessBatch, RealtimeCore, RealtimeCoreConfig,
+        L2_RESNAPSHOT_REQUIRED_V1,
     };
     use prost::Message;
     use qdl_contracts::qdl::common::v1::{QuantityUnit, SourceRole};
@@ -1689,6 +1761,7 @@ mod tests {
         CaptureBoundary, QuarantineReason, QuarantineRecord, RawProviderEnvelope,
         TransportCompression, TransportProtocol,
     };
+    use qdl_core::l2_book::BookStatus;
     use qdl_venue_core::ordering::SequencePolicy;
     use sha2::{Digest, Sha256};
 
@@ -2608,6 +2681,81 @@ mod tests {
             with_transport(frame, TransportProtocol::Http)
         } else {
             frame
+        }
+    }
+
+    #[test]
+    fn l2_resnapshot_cold_owner_retry_is_bounded_and_session_fenced() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let received = 1_786_352_400_000_000_000;
+            let mut delta = delayed_book_frame(&binding, false, 101, 100, 7, received, "1");
+            delta.subscription_id = binding.source_id.clone();
+            core.process(delta.clone(), received).unwrap();
+            let request = core.l2_resnapshot_request(&delta, received).unwrap();
+            let decoded = QuarantineRecord::decode(request.payload.as_slice()).unwrap();
+            assert_eq!(decoded.safe_summary, L2_RESNAPSHOT_REQUIRED_V1);
+            assert_eq!(decoded.raw.as_ref(), Some(&delta));
+            assert_ne!(request.event_id, delta.capture_id);
+            assert!(core.l2_resnapshot_request(&delta, received + 1).is_none());
+            delta.received_at_ns += 29_000_000_000;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+            delta.received_at_ns += 1_000_000_000;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_some());
+            delta.connection_generation -= 1;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+            delta.connection_generation += 1;
+            delta.source_session_id.push_str("-foreign");
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn l2_resnapshot_ready_book_suppresses_and_real_gap_rearms_request() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let received = 1_786_352_400_000_000_000;
+            let mut delta = delayed_book_frame(&binding, false, 101, 100, 7, received, "1");
+            delta.subscription_id = binding.source_id.clone();
+            core.process(delta.clone(), received).unwrap();
+            assert!(core.l2_resnapshot_request(&delta, received).is_some());
+            let mut snapshot =
+                delayed_book_frame(&binding, true, 100, 0, 7, received + 1_000_000, "1");
+            snapshot.subscription_id = binding.source_id.clone();
+            core.process(snapshot.clone(), snapshot.received_at_ns)
+                .unwrap();
+            delta.received_at_ns += 1_500_000;
+            core.process(delta.clone(), delta.received_at_ns).unwrap();
+            let mut good =
+                delayed_book_frame(&binding, false, 102, 101, 7, received + 2_000_000, "2");
+            good.subscription_id = binding.source_id.clone();
+            core.process(good.clone(), good.received_at_ns).unwrap();
+            assert_eq!(
+                core.l2_adapters[&binding.key()].core().status(),
+                BookStatus::Ready
+            );
+            assert!(core
+                .l2_resnapshot_request(&good, good.received_at_ns)
+                .is_none());
+            let mut gap =
+                delayed_book_frame(&binding, false, 110, 109, 7, received + 3_000_000, "3");
+            gap.subscription_id = binding.source_id.clone();
+            assert!(!core
+                .process(gap.clone(), gap.received_at_ns)
+                .unwrap()
+                .quarantines
+                .is_empty());
+            assert!(core
+                .l2_resnapshot_request(&gap, gap.received_at_ns)
+                .is_some());
         }
     }
 

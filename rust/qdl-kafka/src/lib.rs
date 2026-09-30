@@ -909,13 +909,30 @@ impl KafkaEventSource {
         config: &KafkaTransportConfig,
         topics: &[&str],
     ) -> Result<Self, KafkaTransportError> {
+        Self::with_offset_reset(config, topics, "earliest")
+    }
+
+    /// Control notifications are session-fenced and reissued while unresolved.
+    /// A new control group starts live; an existing group resumes its checkpoint.
+    pub fn new_live_control(
+        config: &KafkaTransportConfig,
+        topics: &[&str],
+    ) -> Result<Self, KafkaTransportError> {
+        Self::with_offset_reset(config, topics, "latest")
+    }
+
+    fn with_offset_reset(
+        config: &KafkaTransportConfig,
+        topics: &[&str],
+        reset: &str,
+    ) -> Result<Self, KafkaTransportError> {
         if topics.is_empty() || topics.iter().any(|topic| topic.trim().is_empty()) {
             return Err(KafkaTransportError::Configuration(
                 "at least one non-empty topic is required".into(),
             ));
         }
         let mut client = config.client_config()?;
-        config.configure_group_consumer(&mut client);
+        config.configure_group_consumer_with_offset_reset(&mut client, reset);
         let consumer: StreamConsumer = client.create()?;
         consumer.subscribe(topics)?;
         Ok(Self { consumer })
@@ -968,6 +985,13 @@ impl KafkaEventSource {
 
     pub fn checkpoint(&self) -> Result<(), KafkaTransportError> {
         self.consumer.commit_consumer_state(CommitMode::Sync)?;
+        Ok(())
+    }
+
+    /// Only for idempotent, periodically reissued control hints. Submission is
+    /// not a durable acknowledgement and must never acknowledge market data.
+    pub fn checkpoint_hint(&self) -> Result<(), KafkaTransportError> {
+        self.consumer.commit_consumer_state(CommitMode::Async)?;
         Ok(())
     }
 }

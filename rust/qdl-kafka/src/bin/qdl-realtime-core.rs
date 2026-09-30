@@ -35,6 +35,8 @@ struct RuntimeConfig {
     metrics_every_batches: u64,
     #[serde(default)]
     strict_subscription_scope: bool,
+    #[serde(default)]
+    book_resync_quarantine: bool,
 }
 
 impl RuntimeConfig {
@@ -382,7 +384,7 @@ async fn run_generation(
                 ))
                 .or_default()
                 .observe(age_ns);
-            let result = if !is_approved_subscription(&raw, &approved_subscriptions) {
+            let mut result = if !is_approved_subscription(&raw, &approved_subscriptions) {
                 if config.strict_subscription_scope {
                     scope_quarantines = scope_quarantines.saturating_add(1);
                     core.quarantine_raw(
@@ -424,6 +426,14 @@ async fn run_generation(
                     Err(error) => return Err(error.into()),
                 }
             };
+            if config.book_resync_quarantine
+                && is_approved_subscription(&raw, &approved_subscriptions)
+                && raw.authority_revision == config.authority.revision
+            {
+                if let Some(request) = core.l2_resnapshot_request(&raw, normalized_at_ns) {
+                    result.quarantines.push(request);
+                }
+            }
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
