@@ -61113,3 +61113,38 @@ connection quotas implicitly. No extra role/container may be created. Retirement
 cache reset and whole-catalogue C2 are not part of this repair.
 All disposable test clients removed. No image built, no runtime restarted, no broker
 order, push, merge or release. TS E03/E04/E09 remain incomplete.
+
+#### Native and KN config preparation checkpoint
+
+Used StableAcquisitionPlan.core_config/native_ingestor_configs with exactly the
+four new binding IDs, preserving current authority and excluding all old mappings
+from generated additions. Result native-additions.json SHA256:
+9ec45611f7323fe1ce1f2f263bd35f1b72ca46d3b014a56b902df9cebecde23d.
+Each core695 ->699 physical mappings; OKX ingestor99 ->103. These are entries,
+not a claim of103 connections; retain existing per-connection cap/lane splitting.
+All old source/subscription IDs disjoint from additions. No default compiler tuning
+is applied to existing roles: append the reviewed rows only, keep current headers.
+
+KN bundles rendered using scripts.kn_gateway_bundle.compile_bundle. Every old
+catalog binding compared exactly equal to generated counterpart. Projector catalog
+712 ->716, six manifests unchanged. Stream catalog712 ->716, twelve identities
+retained, only trading-system.sandbox.stable replaced with revision2/64 requirements.
+Projector new bundle hash6d5b1734594c929ccf8651b69796e58bf099785991ecee828422251950e25f36;
+Stream c5d964c4af7c876402e3f30b9fe0792828f5d1ae5259e67f9c4b0802ac4e1861.
+Raw file hashes and original bundle hashes: qdl-prepared/inverse-r2/kn-bundle-diff.json.
+Physical market realm remains paper; no paper/live workload entitlement change.
+
+Safety: raw protected config copy was rejected because it might include secrets.
+Did not bypass: inspected the documented non-secret authority schema, exported
+only allowlisted public authority/instrument fields plus original file hashes;
+separately validated gateway bundle schema/public manifest fields before export.
+No credentials, JWT keyring, private keys, password or runtime env were exported.
+
+Next application packet must bind the exact current image/env/mount/config hashes,
+retain rollback for three cores, one OKX ingestor, two KN projectors and four KN
+readers. No Binance ingestor/BAR edge/V1/Kafka/Redis configuration or offset reset.
+Reader catalog and KN bundles must converge before inverse source publication;
+then hand off sandbox manifest revision to candidate TS market service only.
+Do not call prepared mappings real feed readiness or E03 money evidence. All packet
+artifacts are outside Git, no runtime file changed by this checkpoint. Tests used
+existing images; all --rm clients gone; no new images/cache or cleanup required.
