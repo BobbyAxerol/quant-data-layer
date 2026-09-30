@@ -61288,7 +61288,7 @@ No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains activ
 <a id="dl-execution-readiness-convergence-20260930"></a>
 ## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
 
-**Status: IN_PROGRESS / AFFECTED_SOURCE_AND_ISOLATED_REPLAY_VERIFIED / CANDIDATE_PREPARED / RUNTIME_UNCHANGED.**
+**Status: IN_PROGRESS / RUNTIME_ROLLED / FINAL_ACCEPTANCE_REVIEWED / RELEASE_AND_RETIREMENT_PENDING.**
 **Owner request:** stop TS E work, investigate whether repeated failures are wrong
 runtime/provenance or genuine Data Layer defects, repair the remaining related
 defects in one phase, deploy affected immutable images and retire obsolete test/
@@ -61943,3 +61943,113 @@ private build cache retained for active phase. Ten stopped legacy containers
 reconfirmed, none running/removed. Production role digests/config unchanged.
 Next: exact ACL delta, bounded five-role rollout, affected typed preflight and one
 300s actual consumer acceptance, then release/retirement. TS work stays paused.
+
+### Five-Role Rollout And Consumer Scope Correction (2026-09-30)
+Owner explicitly confirmed Binance ingestor recreate after tool safety rejection;
+no bypass occurred. Exact feedback ACL applied: phase8-producer READ/DESCRIBE
+md.quarantine.stable.v1, READ PREFIXED qdl-v2-book-resync-. Before/after stored
+in feedback-acl-before.json / feedback-acl-apply.json. No offsets/topology changed.
+Rolled sequentially Binance17:44:24Z,OKX17:45:02Z,core3 17:45:37Z,core2 17:46:22Z,
+core1 17:46:54Z to658a9570...54023. Each showed startup and authentic book recovery.
+Post-roll inventory: all five running,restart0,OOMfalse; every inventoried role
+outside approved set retains exact image/start time. No Query/Stream/projector/
+BAR/V1/TS/alpha/order mutation. Compose orphan warning ignored; never remove-orphans.
+
+Important correction to R6 inventory: sandbox binding entitlement is64 products,
+but its existing configured active demand is22, not64: Binance BTCUSDT/DOGEUSDT,
+OKX BTC-USDT-SWAP/BTC-USD-SWAP. Fixed-worker heartbeat really aggregates22.
+Shared paper runs60. Thus inherited plan wording conflated entitlement with
+active subscriptions. Do not claim64 active sandbox routes or silently expand
+TS config. Preflight must read all64 entitlement products x2 replicas with real
+sandbox SDK identity; final observation separately reports actual paper60 and
+sandbox22, with product union/overlap explicitly checked (60linear+4inverse).
+Session READY is not execution-eligible: pre-roll sandbox22session/18execution.
+This preserves64-product coverage and actual consumer proof, not fictitious
+64-sandbox subscription evidence. No-order snapshot helper uses temporary
+cursor/audit directory and never ACKs production cursors or writes market/order
+state. Snapshot quality is captured before adapter eligibility validation; status
+read after a failure is separately labelled, not called the same rejected view.
+
+Affected preflight complete:128/128 snapshots returned typed views;126/128 pass
+execution conversion. Two exact rejected OKX trades: DOGE1358935530 ts1790790738429,
+BNB239907276 ts1790790741311. Bounded official history-trades(type2,after=query
+start timestamp,limit100) confirms each is the latest venue trade at its rejected
+request timestamp. Thus these are valid last-trade age rejections, not guessed
+quiet or missing canonical events. No relaxed3s policy. REST row quantity is not
+claimed identical to aggregated WS quantity; this attribution proves ID/time only.
+See trade-rejection-provider-attribution.json; official contract
+https://www.okx.com/docs-v5/en/#public-data-rest-api-get-trades-history.
+All QUOTE/MARK/BOOK/BAR preflight items usable on both replicas, no mapping error.
+Post-rebalance60s logs: progress on all3 cores, no retry/error or recurring
+ingestor resnapshot in that window. Not a long-soak claim.
+
+Proceed ONE final300s passive observation of existing paper60/sandbox22 consumers.
+Observer executes only Redis SCAN/MGET in each existing consumer environment;
+no SDK stream/ACK, market write, DB access, or order operation. Poll1s, capture
+heartbeat (30s publication), actual execution cache visibility, exact lineage
+generation/offset monotonicity, and host-visible resource samples. Repeated
+heartbeat polls are NOT independent heartbeats. Event-to-observed-Redis timing
+is a conservative upper bound with1s sampling, not exact Redis commit timestamp
+and not interchangeable with request-to-usable. Initial cache observations and
+unchanged rows are separated from newly observed watermarks. No fabricated
+consumer throughput or silent substitution of callback timing. Tests/import
+compatibility checked on both actual images before this final window.
+
+Observer correction inside SAME final window: paper uses EPHEMERAL_ONLY, sandbox
+CORE_ONLY. Initial helper correctly read both heartbeat keys but incorrectly
+looked for paper execution cache in core Redis (0rows). This is a measurement
+error, not a production fault or proof of missing prices. Added a market-Redis
+reader only for remaining original window; it sees50 paper execution keys while
+sandbox sees19. Full300s heartbeat/worker coverage retained; paper cache latency
+coverage is explicitly shorter and not fabricated as300s. No runtime source fix,
+consumer restart, second acceptance, or quality-gate change.
+
+### Final Window Review And Release Boundary (2026-09-30)
+ONE final observation completed302.25s host wall clock; both consumer observers
+cover300s/301samples. Eleven distinct heartbeats each: paper60/60 and sandbox22/22
+READY at every publication. Heartbeat cadence30s does NOT prove uninterrupted
+readiness between publications. Actual cache observations: sandbox19execution
+products/301samples; corrected paper50products/177samples over176s. Union54
+execution products +10BAR verified in R5 =64 entitlement products. Zero observed
+watermark regressions; no claim of per-event losslessness from polling snapshots.
+
+Do NOT report zero disconnects: at18:02:00-18:02:06Z OKX ingestor recorded4 native
+transport disconnects (not feedback requests), and consumers logged12paper +
+8sandbox SESSION_STATE refusals/reconnects. They subsequently resumed, retained
+worker health and advanced caches/cursors. No scope/auth/manifest/quota or
+Redis-write error appears in this bounded consumer log window. Underlying socket
+close cause is not recorded by current native log, so do not blame venue/host
+or call it a new proven code fault. This is observed fail-closed recovery, NOT
+a zero-interruption uptime claim. No second C2 was run to hide these events.
+
+Cursor telemetry progressed paperACK1516714->1552299,commits874550->894920,
+sandboxACK430067->443821,commits325125->336038; cursor errors0 on both. Paper
+write.market.error cumulative1010 stayed1010 between the two available telemetry
+samples; that is not a fabricated baseline for the entire300s. Pending at later
+sample paper0/sandbox2, no overflow loop in the window logs.
+
+Snapshot SDK request -> validated usable observed maxima (n10-12 per feed/venue,
+NOT p99): Binance/OKX QUOTE25.14/29.40ms; MARK26.64/18.84ms; TRADE15.09/15.12ms
+(OKX8/10usable,2proven quiet rejections); BOOK_SNAPSHOT45.98/49.03ms;
+BOOK_DELTA38.90/25.48ms; BAR20.69/37.83ms. Metadata resolve/startup is separate.
+Redis polling timing remains event-to-observed-cache AGE with1s sampling, not
+exact apply latency. MARK reference uses no advancing Kafka watermark in this
+consumer projection; do not fabricate a first-apply latency distribution from
+unchanged watermark. SDK MARK proof remains all22/22usable across both replicas.
+Whole Data Layer Compose project CPU25samples mean4.70066cores,max5.1211cores;
+no quota increase. Real core progress samples raw-age means~160-175ms, collection
+~25-28ms; the earlier23s hot-core fault window is not a matched-load benchmark.
+
+Evidence: execution-readiness-20260930/evidence/consumer-final-300s/ contains
+receipt, reviewed-summary, full bounded timestamped consumer/core/ingestor logs,
+resource observations and cursor telemetry. R5 includes exact rejected views and
+provider attribution. All five affected roles now use658a9570...54023, restart0/
+OOMfalse at inspected rollout checkpoint; all protected roles retain image/start
+time. No order/DB mutation or TS configuration change.
+
+Source remains /home/bobby/data_layer on fix/okx-inverse-sandbox-readiness.
+Remote fetched: dev7ee4af0/main8299838, published tagv2.2.0; no push/merge/tag yet.
+Remaining release work: reviewed certificate/report with inherited gates and
+these measured limits, CI/integration->main publication, exact legacy retirement
+and build-cache inventory/cleanup. Keep native rollback coref204 and active
+projector/ingestor-base7fe, V1, and untouched Query/Stream images. No TS E work.
