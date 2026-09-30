@@ -116,6 +116,47 @@ class OkxInstrumentTests(unittest.TestCase):
         self.assertEqual(record.attributes["ctVal"], "0.01")
         self.assertEqual(record.attributes["ctMult"], "10")
 
+    def test_inverse_contract_value_currency_is_not_underlying_asset(self):
+        for kind, native, family in (
+            ("SWAP", "BTC-USD-SWAP", "BTC-USD"),
+            ("FUTURES", "BTC-USD-261225", "BTC-USD"),
+        ):
+            with self.subTest(kind=kind):
+                record, alias = parse_public_instrument(
+                    {"instType": kind, "instId": native, "instFamily": family,
+                     "baseCcy": "", "quoteCcy": "", "ctType": "inverse",
+                     "ctValCcy": "USD", "settleCcy": "BTC", "ctVal": "100",
+                     "ctMult": "1", "tickSz": "0.1", "lotSz": "1",
+                     "expTime": "1798185600000" if kind == "FUTURES" else "",
+                     "state": "live"},
+                    metadata_revision=1, valid_from_ns=100,
+                )
+                self.assertEqual(record.base_asset, "BTC")
+                self.assertEqual(record.quote_asset, "USD")
+                self.assertEqual(record.settlement_asset, "BTC")
+                self.assertEqual(record.attributes["ctValCcy"], "USD")
+                self.assertEqual(record.attributes["ctType"], "inverse")
+                self.assertEqual(record.contract_multiplier.as_decimal(), CanonicalDecimal.from_text("100").as_decimal())
+                self.assertEqual(alias.native_symbol, native)
+
+    def test_dated_and_option_quote_currency_comes_from_family_not_expiry_or_side(self):
+        for kind, native, extra in (
+            ("FUTURES", "BTC-USDT-261225", {}),
+            ("OPTION", "BTC-USD-261225-50000-P", {"stk": "50000", "optType": "P"}),
+        ):
+            with self.subTest(kind=kind):
+                family = "BTC-USDT" if kind == "FUTURES" else "BTC-USD"
+                record, _ = parse_public_instrument(
+                    {"instType": kind, "instId": native, "instFamily": family,
+                     "ctValCcy": "BTC", "settleCcy": "USDT" if kind == "FUTURES" else "BTC",
+                     "ctVal": "0.01", "tickSz": "0.1", "lotSz": "1",
+                     "expTime": "1798185600000", **extra},
+                    metadata_revision=1, valid_from_ns=100,
+                )
+                self.assertEqual(record.base_asset, "BTC")
+                self.assertEqual(record.quote_asset, family.split("-")[1])
+                self.assertEqual(record.native_symbol, native)
+
     def test_option_preserves_registry_identity_and_required_fields(self):
         record, _ = parse_public_instrument(
             {

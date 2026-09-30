@@ -60959,3 +60959,76 @@ Ruff pass, but hosted Actions fail before checkout without job logs. Owner was
 asked for UI annotation; fine-grained PAT Checks limitation was corrected in
 TS plan. TS is not merged, and its active feature/upgrade worktrees remain.
 Do not call the combined two-repository synchronization complete yet.
+
+<a id="ts-p18e-okx-inverse-sandbox-readiness"></a>
+
+### TS P18.3E Additive OKX Inverse Sandbox Readiness (2026-09-30)
+
+Status: OWNER_APPROVED / IN_PROGRESS / NO_QDL_RUNTIME_CHANGE_YET.
+Owner resumed the TS closure plan at
+/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md
+anchor ts-v2-p18-3e-closure-plan-20260930. This is its dependency repair, not a
+new Data Layer phase or a rerun of KN certification. Follow the KN architecture
+review sections18.4/18.12/18.13 and Post-release consumer realms; TS native Risk
+and broker money acceptance remain TS-owned.
+
+Scope: exact OKX SWAP BTC-USD-SWAP execution read dependencies for
+trading-system.sandbox.stable. Derive the minimal QUOTE/MARK_INDEX_PRICE/L2
+snapshot+delta set from actual TS demand; add TRADE only if required. No BAR,
+universe, new service, alpha activation, live order, V1 or DNSE change.
+Preserve current60 TS products and all other consumer entitlements. Compile
+catalog/acquisition, sandbox manifest/JWT revision and sealed TS binding together;
+do not widen paper/live identity scope or reuse their credentials.
+
+Source finding: parse_public_instrument currently prioritizes ctValCcy as base
+asset when baseCcy is empty. For inverse BTC-USD-SWAP, USD is contract value
+currency, not underlying BTC. Correct derivative family/base identification and
+test exact units/settlement/multiplier/identity, preserving linear/spot and existing
+dated contracts. This parser is used by catalog/inventory compilation, not the
+Query hot path; no reader image rebuild follows automatically from this source
+change. Generated runtime metadata must be correct before any feed activation.
+
+Tests: focused OKX instrument/production catalog/realm/binding regressions,
+including wrong product/currency, stale/gap, no cross-realm entitlement promotion.
+Use actual bounded provider metadata with capture hash outside Git. After packet
+render, test exact inverse routes through both readers and real sandbox identity
+to candidate Redis/Risk, plus unchanged60-route entitlement smoke. No whole299
+C2 or5000/s rerun absent an affected shared hot-path change. Current certified
+scope is inherited, never extended to inverse without its own real evidence.
+
+Runtime decision boundary: prepare an additive immutable config packet and exact
+per-role diff first; reuse current binaries when supported. Only roles whose
+config actually changes may roll with existing mounts/state/offsets and per-role
+rollback. No Kafka reset, cache flush, SQLite deletion, topology or authority
+redesign. Keep Kafka-native materialization, never legacy spool. Disable inverse
+entry and reconcile owned exposure before removing its binding on rollback.
+
+Git: canonical /home/bobby/data_layer now fix/okx-inverse-sandbox-readiness from
+dev7ee4af0, no new worktree. Owner's existing plan edits (4insertions/1deletion)
+preserved separately; only this appended journal may be staged by this task.
+Original patch SHA9f915998b24e6c7f80a25de9e72c9fb2c6657e4293bb6e012069266f0b400696.
+No push/merge/tag authorized by preparation. Cleanup only owned disposable test
+resources; retain active and named rollback images and all runtime data.
+
+#### Metadata correction verification
+
+Before patch: 12 instrument test methods with four failing subcases demonstrate
+inverse USD incorrectly used as underlying and dated/option expiry/side used as
+quote currency. After patch, the existing immutable Query image0ed57643ae40 with
+read-only source mount, network none and bounded1GiB/2CPU ran:
+`python -m unittest tests.test_phase1_instrument_domain tests.test_production_catalog tests.test_phasec36_liquid_crypto_features -q`
+Result:27PASS/0FAIL. Fixtures are contract evidence, not broker certification.
+Underlying/quote come from instrument family; ctValCcy remains independently
+preserved, settlement BTC and contract multiplier100 remain exact. Native IDs
+and registry identity are unchanged. No Query hot-path or Rust change.
+
+One bounded public OKX metadata GET returned HTTP403 before capture; no authentic
+metadata receipt or inverse readiness is claimed. Runtime sandbox manifest was
+read successfully: revision1, max_streams50, existing policies unchanged. New
+inverse demand must be additive to sandbox only and compiled together with its
+sealed binding; do not clone additional scope into paper/live. TS bridge derives
+active demanded feeds from bindings, so inverse BAR is not implicitly required.
+
+Disposable test clients auto-removed, no image built or runtime changed for this
+slice. Existing active and rollback images retained; no broad cleanup. Owner plan
+hunks remain outside this commit. Inverse activation and authentic E03 still open.
