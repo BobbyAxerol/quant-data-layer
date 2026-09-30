@@ -61866,3 +61866,34 @@ stay1/1/0.5CPU,256MiB; explicitly enable candidate book_resync_quarantine to
 include its hot-loop/transaction overhead. No production quota change or RAM
 increase. This is affected performance profiling, not rerunning passed domain
 or299-product gates. Exact same capture and observer reused.
+
+### Matched RF3 Profile - Reviewed Result (2026-09-30)
+Exact production broker caps,RF3/minISR2,SSL replication,durable isolated storage,
+feedback enabled, core caps1/1/0.5CPU unchanged:330k delivered, all six committed
+end offsets equal producer end offsets. No producer/observer errors,OOM or
+container restart. Core2 did a supervised generation1->2 on initial group join
+(Invalid group generation in transaction, aborted/retried). Therefore summing
+ONLY terminal per-generation counters gives328720, not330000; that shortcut is
+invalid. Final committed-offset coverage proves drain; do not claim a matching
+lifetime counter or silently hide the supervised retry. First-generation1280
+contribution is inferred from coverage, not independently logged as a counter.
+
+Sampled maxima,NOT p99:4k/s window27 samples,peak2042 lag,oldest uncommitted750.96ms;
+5k/s29 samples,peak3251 lag,oldest1315.15ms;recovery1k39 samples,max703.04ms,
+then drain1500ms at1s observer cadence. Startup max4863.75ms separate. Core memory
+peaks32.43/49.84/44.24MiB. Bounded input/core throughput/catch-up is demonstrated,
+not request-to-consumer usable latency or live execution eligibility. Historical
+missing L2 anchors/expired MARK components and quarterly gap records stay named;
+feedback hints emitted during replay are not new provider-error counts.
+
+Same-source R3 owner movement restores four real books; R4 profile now supports
+preparing affected image/packet. Standard committed Dockerfile.qdl-rust-runtime
+only, one Rust image family for three cores+two native ingestors. Freeze source
+and compare packaged binary provenance before any runtime action. Other roles
+remain untouched. Existing authority revision1/candidate digest7fe348 is the
+original acceptance anchor, not current executable (core already runsf204);
+record actual runtime image hashes separately, do not silently rewrite authority
+history or claim its anchor equals deployed binary. No new authority promotion.
+All task containers/networks/private keys/RF3 test data directories removed.
+No production change, push/merge/release or resource-cap change. Final affected
+consumer acceptance and retirement still required.
