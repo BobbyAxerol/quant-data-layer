@@ -61288,7 +61288,7 @@ No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains activ
 <a id="dl-execution-readiness-convergence-20260930"></a>
 ## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
 
-**Status: AUDITED / PLAN_RECORDED / IMPLEMENTATION_NOT_STARTED.**
+**Status: IN_PROGRESS / SOURCE_REPRODUCTION / RUNTIME_UNCHANGED.**
 **Owner request:** stop TS E work, investigate whether repeated failures are wrong
 runtime/provenance or genuine Data Layer defects, repair the remaining related
 defects in one phase, deploy affected immutable images and retire obsolete test/
@@ -61488,3 +61488,42 @@ Actual DNS from ts-p183 market process resolves Query to172.18.0.12/25
 No legacy V2 endpoint resolved in this audit. No gate rerun, image build,
 runtime mutation or cleanup performed. No TS goal resumed. Planning only;
 phase exit requires subsequent implementation/evidence, not this audit commit.
+
+### Implementation Journal - Batch Deadline Reproduction (2026-09-30)
+Owner goal explicitly approved this one phase. R1 inventory and prior DLR-01/04/05
+evidence are inherited; no catalogue/TS order gate is repeated. First source slice:
+reproduce the rolling per-record timeout in qdl-realtime-core, then use one absolute
+batch deadline and retain bounded cancellation, ordered input and transactional ACK.
+Add bounded per-partition raw-age and collect/normalize/commit timing to distinguish
+queue from compute/transaction pressure. No claim that the timeout explains the
+entire previously observed 23s backlog: full batches may hit a separate throughput
+limit. Tests use virtual time on the actual receive helper; synthetic unit fixtures
+are not provider/capacity evidence. Builder uses existing image, bounded resources,
+no production network/mounts. L2 restart/resync remains open and is not fixed by a
+batch timeout. Runtime/config/freshness/provider quotas remain unchanged.
+apply_patch helper failed (bubblewrap mountinfo); exact-match edit fallback used
+under workspace rule32; owner plan hunks preserved.
+
+Batch counterfactual executed in qdl-rust-builder:r134-test551428d98db6,
+network none,2CPU/3GiB/2jobs, disposable container and task-private target dir.
+Extracted legacy25ms per-record algorithm:5cases,2PASS/3FAIL as expected
+(continuous arrivals, idle remaining budget, expired ready receive). Not a
+claim of whole-runtime baseline replay. Evidence: execution-readiness-20260930/
+evidence/batch-counterfactual.log. Candidate uses absolute deadline with explicit
+expired-before-poll guard; cancellation drops only uncommitted input, to be
+replayed from Kafka on restart (no ACK). Transaction code remains unchanged.
+DLR-03 source localization: RealtimeCore adapter.request_resync changes only the
+local state machine; native OKX ingestion has no downstream request listener.
+Thus initial-snapshot-only sockets cannot know a cold core needs a fresh anchor.
+No repeated provider timer or re-dated snapshot is an acceptable substitute.
+Feedback implementation and autonomous live recovery remain OPEN.
+
+Batch slice result:10/10 qdl-kafka binary unit tests PASS (5 new deadline cases),
+0fail/0ignored; clippy --offline --locked -p qdl-kafka --bin qdl-realtime-core
+-- -D warnings PASS. Rustfmt scoped to the changed binary; git diff --check
+for rust/qdl-kafka clean. No lockfile/dependency version change; test-util is
+dev-only. The5 prior binary tests were rerun because that executable changed;
+no catalogue/SDK/TS suites or C2 rerun. No claim of throughput/recovery pass.
+Test containers used --rm and are removed; no new image built. Task target/cache
+is retained only while this phase is active, to avoid repeated full compiles;
+final scoped cleanup remains after acceptance. Production role digests unchanged.
