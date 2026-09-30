@@ -1,5 +1,17 @@
 {
   "affected_runtime_delta_status": "PASS",
+  "ci": {
+    "jobs": [
+      "contract-tests",
+      "unit-tests",
+      "sdk-python310",
+      "kn-native-integration"
+    ],
+    "release_metadata_head_requires_checks": true,
+    "run_id": 36760348660,
+    "status": "PASS",
+    "tested_source_sha": "e366f752914db8d1d43cb03a970b0278635ba88d"
+  },
   "classification": "Bounded affected Data Layer execution-readiness repair; production no-order consumer acceptance, not broker execution certification",
   "cleanup": {
     "legacy-retirement-result.json": {
@@ -29,6 +41,13 @@
       "state": "EXACT_LEGACY_RETIREMENT_COMPLETE",
       "timestamp_ns": 1790792967199966546,
       "volumes_removed": false
+    },
+    "query-predecessor-cleanup.json": {
+      "disk_used_after": 219302334464,
+      "disk_used_before": 219302060032,
+      "reason": "Superseded unreferenced Query predecessor; exact active Query b40/rollback0ed now frozen by appliedpacket.",
+      "removed_image": "sha256:3dd54bfd8b9de0b143d317798ab9c63cebc502d01fe3cf6f513032d6484b5b11",
+      "state_or_container_mutation": false
     },
     "task-build-cache-cleanup.json": {
       "disk_used_after": 232285339648,
@@ -61,7 +80,7 @@
     "rust": "3f8bc79be7212377442218f231a95bc4e6d0bb73"
   },
   "date_utc": "2026-09-30",
-  "endpoint_report_sha256": "0f2ce92fd97b3df2b9c5520d1d20ee8b26bd11918824d0ffa5b8ac872ee90465",
+  "endpoint_report_sha256": "a7fa7ff9883a1a91f59315c3a5d1e3b08650e23c78a448f98fe92e16ed75b63b",
   "evidence_sha256": {
     "evidence/batch-result.json": "442a0d251e41abe3dc2bf2bbff6235cba80e2149df84a10f18f66386b7b1432c",
     "evidence/candidate-image-attestation.json": "c9ef6963ab78717ca0f0fa10fef78ea8cc04a4715822c4967006ea74aa2628b1",
@@ -69,6 +88,13 @@
     "evidence/consumer-final-300s/reviewed-summary.json": "2222f0945f9da6bb56e6c752e344aeed3bec0d5a9c302b2e3bad4ee37b5d898c",
     "evidence/l2-source-result.json": "09f7b61120342ef6bcee0c333e6790922519e4602ee28eb5f73126ad96e2f2a1",
     "evidence/legacy-retirement-result.json": "9ee640812502bdfa576b2ebf772b93e65237c7ba36a55216155781d53447cade",
+    "evidence/query-predecessor-cleanup.json": "787fd2d62d37371d077c7b8e515dad0314cc4a10011f4105d2e98583396eabb7",
+    "evidence/query-security-preflight.jsonl": "0e9e319a88bc735f02ab7944ee200e9b74b1ddcbebc26855e696a2e2a89b7454",
+    "evidence/query-security-reviewed.json": "74d4d8687b1559bf909dd3aa0239128d35f727b55e68f9950197d16ad2f9e1ea",
+    "evidence/query-security-sol-canonical.json": "9fb63a28225dec4960d89081f81cb68518cd47ea00fa558225c005840704254c",
+    "evidence/query-security-sol-followup.jsonl": "b53143b563572cd41849a9e5ed1cafe7b5ba33cc50eca44486add228f224fd09",
+    "evidence/query-security-sol-lineage-v2.jsonl": "7a83084af9a58699d1142ba7081ee38115dcf6eeb2debf6a67b6df19b61dc76e",
+    "evidence/query-security-trade-attribution.json": "af7444c5deef7fbd6b28368d17305b132c1ca702a3efb65aaa7d526ba27bd40a",
     "evidence/rollout-state.json": "4d77647f4e54009dc855fda665434eec9297dacf61b473ed791299ce9dd8101e",
     "evidence/task-build-cache-cleanup.json": "0183a57a4a984ffd97809c7925196c3a3a2c85f8c25242ab21b7b6ba39d153a7",
     "evidence/trade-rejection-provider-attribution.json": "b61671093444985c054a21309a7651a6d980a17b1526321d19ef8a3b756bbc56",
@@ -100,7 +126,8 @@
     "No exact per-event Redis commit timestamp distribution from polling.",
     "Current native socket disconnect reason not logged; four recovery incidents not mislabelled zero interruption.",
     "Inherited ignored Redis50000ns test timing race is not counted PASS; provider admission unchanged.",
-    "Sandbox64entitlements but22active demand, not64active subscriptions."
+    "Sandbox64entitlements but22active demand, not64active subscriptions.",
+    "Querysecurityreadback125/128usable:2quietlasttrade,1newtradepropagation. CanonicalCreateTime is not commitvisibility. Follow-up7/10usable retained separately; not always-eligible execution pricing."
   ],
   "publication_requires": "feature->dev CI->main ancestry and immutable release workflow; this file alone is not publication",
   "recovery": {
@@ -115,7 +142,9 @@
     "cores": "sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79",
     "ingestors": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
     "packet": "v2.2.1-0e00c81-recovery/rollback.compose.json",
-    "preserve": "original per-role config/TLS/state/group/offsets; disable feedback clients before removing only added feedback ACLs"
+    "preserve": "original per-role config/TLS/state/group/offsets; disable feedback clients before removing only added feedback ACLs",
+    "query": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+    "query_packet": "v2.2.1-e366f75-query-security/rollback.compose.json"
   },
   "runtime": [
     {
@@ -198,23 +227,23 @@
     {
       "before_image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
       "before_started_at": "2026-09-30T02:39:32.257181634Z",
-      "image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+      "image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
       "name": "/qdl_v2_stable_candidate-query_kn_2-1",
       "oom": false,
       "restarts": 0,
       "role": "query_kn_2",
-      "started_at": "2026-09-30T02:39:32.257181634Z",
+      "started_at": "2026-09-30T23:29:17.340927437Z",
       "status": "running"
     },
     {
       "before_image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
       "before_started_at": "2026-09-30T02:38:12.148941229Z",
-      "image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+      "image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
       "name": "/qdl_v2_stable_candidate-query_kn_1-1",
       "oom": false,
       "restarts": 0,
       "role": "query_kn_1",
-      "started_at": "2026-09-30T02:38:12.148941229Z",
+      "started_at": "2026-09-30T23:27:49.661572186Z",
       "status": "running"
     },
     {
@@ -362,13 +391,20 @@
   "security_packaging": {
     "candidate_image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
     "candidate_source": "e366f752914db8d1d43cb03a970b0278635ba88d",
-    "ci": "36760348660: dependency audit passed; contract/native-integration/SDK jobs passed, unit job not terminal at checkpoint",
+    "ci": "36760348660 all4jobsPASS on e366f752914db8d1d43cb03a970b0278635ba88d",
     "packaged_auth_sdk_tests": {
       "fail": 0,
       "pass": 32
     },
-    "query_rollout": "Separate bounded twoQuery packet requested, pending owner response.",
-    "runtime_deployed": false,
+    "query_rollout": "Owner approved; onlyquery_kn_1/2 recreated; originalconfig/TLS/state retained; bothhealthy,128typedreadback withstrictquality refusals.",
+    "readback": {
+      "attempted": 128,
+      "auth_manifest_errors": 0,
+      "refusal_analysis": "query-security-reviewed.json",
+      "refusals": 3,
+      "usable": 125
+    },
+    "runtime_deployed": true,
     "scope": "No assertion that unchanged Python/V1/TS images have these dependency fixes.",
     "source_floor": {
       "PyJWT": "2.15.1",
@@ -382,12 +418,13 @@
   "source_components": {
     "bar_edge": "4fe7e92",
     "native_market_projector": "02cd827",
+    "python_query": "e366f752914db8d1d43cb03a970b0278635ba88d",
     "query_stream": "fba8863",
     "rust_behavior_commit": "fbbe34e",
     "rust_image_source": "0e00c817289ce32ea767cea002c859814349fc72",
-    "sdk_packaging_commit": "556db7c"
+    "sdk_packaging_commit": "e366f752914db8d1d43cb03a970b0278635ba88d"
   },
-  "status": "PENDING_SECURITY_PACKAGING",
+  "status": "PASS",
   "tests": {
     "sdk_packaging": {
       "fail": 0,

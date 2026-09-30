@@ -17,13 +17,57 @@ It currently serves:
 - Redis Pub/Sub streams for live consumers.
 - REST endpoints for warmup, recovery, diagnostics, and health checks.
 
+## Execution Readiness Patch (2026-09-30)
+
+The v2.2.1 candidate release set is deployed and qualified for the affected
+Data Layer scope. Publication is established by the [release tag](https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.1), not this document alone.
+Rust now uses an absolute batch deadline and bounded, generation-fenced L2
+resnapshot feedback. The two Query readers include PyJWT2.15.1/urllib32.8.0
+security fixes. No Kafka offsets, cache contents, TS strategies or order path
+were reset or changed. The ten retired SQLite-path containers were removed;
+state and named rollback images are preserved.
+
+SDK2.0.6 is the new reproducible artifact; existing TS SDK pins were not changed.
+Final300s observation: paper60 and sandbox22 demanded routes were READY on11
+published heartbeats each. Four OKX disconnects recovered with fail-closed
+refusals. This is not a continuous-uptime or always-eligible-price guarantee.
+The sandbox manifest has64 entitlements, not64 active subscriptions.
+
+After the Query security rollout,64 products x2replicas returned128 typed views:
+125 usable,3 strict TRADE-age refusals. Two were provider-confirmed quiet last
+trades; OKXSOL had a newer trade propagating through the pipeline. It was not
+mislabelled quiet. Never use last-trade age or healthy session status alone as
+permission to execute; execution prices require the appropriate QUOTE/L2 and
+Risk policy. No freshness threshold was relaxed.
+
+Latest SDK snapshot request-to-validated-usable **observed maximum, milliseconds**
+(n8-12 usable samples/feed/venue, **not p99**, metadata resolution separate):
+
+| Feed | Binance | OKX |
+|---|---:|---:|
+| QUOTE | 31.78 | 13.69 |
+| MARK/INDEX | 49.49 | 20.64 |
+| TRADE | 29.22 | 18.73 |
+| BOOK_SNAPSHOT | 45.30 | 52.97 |
+| BOOK_DELTA | 37.17 | 12.32 |
+| BAR latest | 18.02 | 35.12 |
+
+Full-stack CPU in the original final window: mean4.70cores, sampled peak5.12,
+without cap increases. Redis polling measurements include up to1s observation
+delay, not exact commit latency. Bounded authentic RF3 replay covered4k/s and
+5k/s total ingress windows with catch-up, not indefinite5k/s per consumer.
+See [v2.2.1 certificate](./upgrade/evidence/releases/v2.2.1/certificate.json),
+[per-binding report](./upgrade/evidence/releases/v2.2.1/endpoint-report.json) and
+[repair journal](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#dl-execution-readiness-convergence-20260930).
+Unchanged history/batch/reference capacity below is inherited dated evidence.
+
 ## KN Production Status (2026-09-27)
 
 The **new Kafka-native read path is serving Trading System**, with SDK2.0.5.
 Production final load passed: 50 logical alpha sessions, 15,504 requests,
 90 streams, 12 reconnects, actual TS60 READY in32/32 samples; no order actions.
-Ten old SQLite projector/query/stream roles are stopped, with state and exact
-rollback artifacts retained. The v2.2.0 runtime certificate is below; publication
+At that dated benchmark, ten old SQLite projector/query/stream roles were stopped;
+they were retired on2026-09-30 with state and the current rollback set retained. The v2.2.0 runtime certificate is below; publication
 is established by green remote CI, the main-line tag and GitHub release, not
 by a healthy container alone. SDK cursor persistence is bounded and off-loop,
 with durable acknowledgement after successful fsync.
@@ -69,6 +113,7 @@ and [cutover/rollback runbook](./docs/runbooks/kn5-paired-cutover.md).
 - [Fund-grade implementation tracker](./DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md)
 - [Fund-grade architecture and migration guide](./upgrade/quant-data-layer-fund-grade-upgrade-architecture.md)
 - [OKX V5 market-data implementation guide](./upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md)
+- [V2.2.1 release notes](./upgrade/evidence/releases/v2.2.1/RELEASE_NOTES.md)
 - [V2.2.0 release notes](./upgrade/evidence/releases/v2.2.0/RELEASE_NOTES.md)
 - [V2.2.0 runtime certificate](./upgrade/evidence/releases/v2.2.0/certificate.json)
 - [Contributing guide](./CONTRIBUTING.md)
