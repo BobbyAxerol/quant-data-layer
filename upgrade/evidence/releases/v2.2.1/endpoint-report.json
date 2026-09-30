@@ -1,0 +1,3530 @@
+{
+  "aggregate": [
+    {
+      "attempted": 10,
+      "feed": "BAR",
+      "max_ms": 20.689978962764144,
+      "median_ms": 14.289901591837406,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "BOOK_DELTA",
+      "max_ms": 38.902620086446404,
+      "median_ms": 12.01496203429997,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "BOOK_SNAPSHOT",
+      "max_ms": 45.98168400116265,
+      "median_ms": 24.57058907020837,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "MARK_INDEX_PRICE",
+      "max_ms": 26.64185082539916,
+      "median_ms": 11.222365545108914,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "QUOTE",
+      "max_ms": 25.13775695115328,
+      "median_ms": 8.996241143904626,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "TRADE",
+      "max_ms": 15.094537055119872,
+      "median_ms": 11.27187698148191,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "BINANCE"
+    },
+    {
+      "attempted": 10,
+      "feed": "BAR",
+      "max_ms": 37.825681967660785,
+      "median_ms": 16.023776959627867,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 10,
+      "venue": "OKX"
+    },
+    {
+      "attempted": 12,
+      "feed": "BOOK_DELTA",
+      "max_ms": 25.4819979891181,
+      "median_ms": 11.148278019391,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 12,
+      "venue": "OKX"
+    },
+    {
+      "attempted": 12,
+      "feed": "BOOK_SNAPSHOT",
+      "max_ms": 49.03210490010679,
+      "median_ms": 29.848029487766325,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 12,
+      "venue": "OKX"
+    },
+    {
+      "attempted": 12,
+      "feed": "MARK_INDEX_PRICE",
+      "max_ms": 18.841461976990104,
+      "median_ms": 11.130759958177805,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 12,
+      "venue": "OKX"
+    },
+    {
+      "attempted": 12,
+      "feed": "QUOTE",
+      "max_ms": 29.4035489205271,
+      "median_ms": 9.26159752998501,
+      "p99_ms": null,
+      "rejected": 0,
+      "usable": 12,
+      "venue": "OKX"
+    },
+    {
+      "attempted": 10,
+      "feed": "TRADE",
+      "max_ms": 15.116487862542272,
+      "median_ms": 8.699479978531599,
+      "p99_ms": null,
+      "rejected": 2,
+      "usable": 8,
+      "venue": "OKX"
+    }
+  ],
+  "binding_replica_reads": [
+    {
+      "call_to_usable_ms": 9.432550054043531,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1006,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 1016,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743027694151,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_until_rejection_ms": 13.29477084800601,
+      "error_detail": "V2 view is not authoritative/execution eligible",
+      "error_type": "DataLayerClientError",
+      "feed": "TRADE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "STALE",
+        "execution_eligible": false,
+        "flags": [
+          "LAST_EVENT_STALE"
+        ],
+        "freshness_ms": 4872,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 594,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743269656636,
+      "usable": false,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.632400073111057,
+      "feed": "TRADE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1175,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 778,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743455875299,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 32.61132794432342,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 2047,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743640593288,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 11.053350986912847,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 925,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 596,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743824818437,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.592957984656096,
+      "feed": "BAR",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 23997,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790743986442863,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.14880896359682,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 970,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 938,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790744150562125,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.340166002511978,
+      "feed": "QUOTE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 826,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 156,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790744327388992,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_until_rejection_ms": 9.0782071929425,
+      "error_detail": "V2 view is not authoritative/execution eligible",
+      "error_type": "DataLayerClientError",
+      "feed": "TRADE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "STALE",
+        "execution_eligible": false,
+        "flags": [
+          "LAST_EVENT_STALE"
+        ],
+        "freshness_ms": 3203,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 781,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790744492385799,
+      "usable": false,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.794220983982086,
+      "feed": "BAR",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 24700,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790744669108568,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 39.10869196988642,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1667,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790744853625628,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.04276897199452,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 971,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 983,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745044178276,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 9.248552145436406,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1023,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 990,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745220104643,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.47613800317049,
+      "feed": "BAR",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 25390,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745379844391,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 7.445418043062091,
+      "feed": "TRADE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 752,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 831,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745543839467,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 31.195443822070956,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 855,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745719246171,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 6.966839078813791,
+      "feed": "TRADE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1080,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 91,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790745901753183,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.608781965449452,
+      "feed": "QUOTE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 929,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 897,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746077391322,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 10.437627090141177,
+      "feed": "TRADE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1397,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 472,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746236511521,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.521977113559842,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1000,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 71,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746397779565,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 22.46361505240202,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1700,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746556816839,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 17.52235391177237,
+      "feed": "BAR",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 26768,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746730656744,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 12.47055595740676,
+      "feed": "BAR",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 26933,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790746923033337,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.387136092409492,
+      "feed": "QUOTE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 899,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 791,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747086082253,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 7.449529133737087,
+      "feed": "QUOTE",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 1156,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 80,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747251003148,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 10.592007078230381,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1338,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 1344,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747425586630,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 11.758751003071666,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1361,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 477,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747586868085,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.148728059604764,
+      "feed": "TRADE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 791,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 873,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747749151703,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 15.685277059674263,
+      "feed": "BAR",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 27926,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790747912814468,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 10.37986297160387,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 824,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 977,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748079031094,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.495369926095009,
+      "feed": "QUOTE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 695,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 936,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748239861300,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 9.793825913220644,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 973,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 287,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748398868190,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 21.82639786042273,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1962,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748559189656,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.49989801645279,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 864,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 619,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748732380015,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.354529902338982,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 955,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 743,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790748891402342,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 12.783197918906808,
+      "feed": "TRADE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1027,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 999,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749051406269,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.87771381996572,
+      "feed": "QUOTE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 827,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 887,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749215466252,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 20.689978962764144,
+      "feed": "BAR",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 29395,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749380339606,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.722089929506183,
+      "feed": "QUOTE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 932,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 352,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749551583106,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.059505028650165,
+      "feed": "TRADE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1025,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 678,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749714830130,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 37.825681967660785,
+      "feed": "BAR",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 29896,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790749878426056,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 19.13041388615966,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1224,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750066857622,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 13.485180912539363,
+      "feed": "TRADE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 848,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 87,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750237013267,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 19.51807690784335,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 825,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750401190448,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 9.026678977534175,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1495,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 490,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750571908526,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 12.647439958527684,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 636,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 572,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750731502468,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 29.4035489205271,
+      "feed": "QUOTE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 767,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 684,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790750894860199,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 22.222691914066672,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 817,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 921,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751074775587,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 19.734301138669252,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 671,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 82,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751248545532,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 22.73307414725423,
+      "feed": "BAR",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 31437,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751419178875,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.593958156183362,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 516,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 1514,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751592484451,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.732191054150462,
+      "feed": "QUOTE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 539,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 527,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751758314303,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 29.506566002964973,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 824,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790751917579925,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.925353176891804,
+      "feed": "QUOTE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 601,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 757,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752099560499,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 20.131282974034548,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 977,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752259042112,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 22.64084992930293,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 834,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752430697219,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.380588075146079,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1005,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 178,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752604558934,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.436022913083434,
+      "feed": "BAR",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 32775,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752764455543,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 18.532793037593365,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 810,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 791,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790752928445979,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 25.13775695115328,
+      "feed": "QUOTE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 835,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 767,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790753097518313,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 15.020781895145774,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1081,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 124,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790753273164670,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 30.2232860121876,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1246,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790753438756747,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.689854992553592,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1067,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 468,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790753620645665,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 21.267744014039636,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 982,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 352,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 1,
+      "request_ns": 1790790753779909175,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 26.64185082539916,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 962,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 972,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790753960257887,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 6.83249905705452,
+      "feed": "TRADE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1422,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 363,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790754210517313,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 7.67448078840971,
+      "feed": "TRADE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1554,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 537,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790754386090066,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 49.03210490010679,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 978,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790754560145113,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.64993879199028,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 766,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 239,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790754760388213,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 16.73286920413375,
+      "feed": "BAR",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 34939,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790754925711222,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 25.4819979891181,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 648,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 619,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790755093112092,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.791004005819559,
+      "feed": "QUOTE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 796,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 58,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790755312117558,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 15.116487862542272,
+      "feed": "TRADE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1108,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 633,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790755472416843,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.248264022171497,
+      "feed": "BAR",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 35708,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790755666853978,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 21.758154965937138,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1667,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790755861138604,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 13.562961015850306,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 969,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 976,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756034380100,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 9.504857007414103,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 829,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 699,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756225344658,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 16.216858057305217,
+      "feed": "BAR",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 36398,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756385344524,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 15.094537055119872,
+      "feed": "TRADE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 638,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 87,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756552195119,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 36.52388113550842,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1384,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756742876279,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 10.590623831376433,
+      "feed": "TRADE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 900,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 1040,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790756931056182,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.724306942895055,
+      "feed": "QUOTE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 632,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 854,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757110013947,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 10.76050498522818,
+      "feed": "TRADE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 729,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 779,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757269254285,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 22.444518050178885,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 936,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 907,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757430568833,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 45.98168400116265,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1544,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757604616219,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 15.71027492173016,
+      "feed": "BAR",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 37843,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757802089535,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 16.36227685958147,
+      "feed": "BAR",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 38010,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790757996872183,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.234177017584443,
+      "feed": "QUOTE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 665,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 788,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758163814014,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 6.6195649560540915,
+      "feed": "QUOTE",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 909,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 63,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758322548810,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.710233081132174,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1423,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 421,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758497554507,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 12.387687107548118,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1109,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 483,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758662703035,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 7.669311016798019,
+      "feed": "TRADE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1110,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 1083,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758825645365,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 12.561257928609848,
+      "feed": "BAR",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 38994,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790758983844978,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.720309171825647,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 697,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 879,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759146850572,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.39476683177054,
+      "feed": "QUOTE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 828,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 922,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759307022698,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.087957976385951,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1005,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 274,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759465926895,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 24.05232796445489,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 628,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759624535114,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.963885182514787,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1348,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 608,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759799852940,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 10.508439037948847,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 846,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 652,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790759960463734,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 8.76655988395214,
+      "feed": "TRADE",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1232,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 189,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760121597270,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.067129110917449,
+      "feed": "QUOTE",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 584,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 896,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760280852949,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 13.06272903457284,
+      "feed": "BAR",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 40451,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760440454610,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 11.061954079195857,
+      "feed": "QUOTE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "STALE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE",
+          "LAST_EVENT_STALE"
+        ],
+        "freshness_ms": 2027,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 302,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760604103094,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.580578025430441,
+      "feed": "TRADE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1674,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 644,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760765785665,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 29.969539027661085,
+      "feed": "BAR",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 40949,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790760928804500,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 26.677563088014722,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1011,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761110140664,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 11.783248977735639,
+      "feed": "TRADE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 2163,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 161,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761288255026,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 27.30029192753136,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1365,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761450579537,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 11.852724011987448,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1547,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 551,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761629482009,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 14.14568698965013,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 877,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 457,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761792372795,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 11.103617027401924,
+      "feed": "QUOTE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 1211,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 653,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790761957361934,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 11.382484110072255,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 737,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 782,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762119044035,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 38.902620086446404,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 757,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 954,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762281271130,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 14.690130949020386,
+      "feed": "BAR",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": "1m",
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FIELD_MISSING"
+        ],
+        "freshness_ms": 42483,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762471131369,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 9.517096914350986,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1550,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 1556,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762636398745,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 10.928714880719781,
+      "feed": "QUOTE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 799,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 493,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762796410901,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 36.27476515248418,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 877,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790762957878889,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 15.377553878352046,
+      "feed": "QUOTE",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 867,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 759,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763145457454,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 21.88900299370289,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1564,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763311392632,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 30.189492972567677,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1289,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763484574654,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 11.243205051869154,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1068,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 41,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763666649124,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 14.331539161503315,
+      "feed": "BAR",
+      "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+      "interval": "1m",
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 43840,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763828499016,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 18.841461976990104,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 866,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 694,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790763993347465,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 8.428068133071065,
+      "feed": "QUOTE",
+      "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+      "interval": null,
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "DELIVERY_ON_CHANGE"
+        ],
+        "freshness_ms": 666,
+        "gap_open": false,
+        "policy_id": "crypto_primary_v2",
+        "provider_session_liveness_ms": 725,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790764162712608,
+      "usable": true,
+      "venue": "BINANCE"
+    },
+    {
+      "call_to_usable_ms": 10.502768913283944,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 637,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 9,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790764321750604,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 20.32172493636608,
+      "feed": "BOOK_SNAPSHOT",
+      "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 1287,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": null,
+        "provider_session_state": "NOT_APPLICABLE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790764482854366,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 12.290380895137787,
+      "feed": "MARK_INDEX_PRICE",
+      "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [
+          "FRESHNESS_BASIS_PROVIDER_CONFIRMATION"
+        ],
+        "freshness_ms": 1545,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 342,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790764654358161,
+      "usable": true,
+      "venue": "OKX"
+    },
+    {
+      "call_to_usable_ms": 21.418982883915305,
+      "feed": "BOOK_DELTA",
+      "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+      "interval": null,
+      "market": "SWAP",
+      "native_symbol": "BTC-USD-SWAP",
+      "quality": {
+        "complete": true,
+        "event_recency_state": "LIVE",
+        "execution_eligible": true,
+        "flags": [],
+        "freshness_ms": 626,
+        "gap_open": false,
+        "policy_id": "crypto_liquid_v2",
+        "provider_session_liveness_ms": 198,
+        "provider_session_state": "LIVE",
+        "state": "LIVE"
+      },
+      "replica": 2,
+      "request_ns": 1790790764817270687,
+      "usable": true,
+      "venue": "OKX"
+    }
+  ],
+  "consumer_age_semantics": "Redis first-observed updated watermark age includes up to 1000ms polling delay; not exact commit latency or proof every cached price remains eligible. MARK has no advancing consumer Kafka watermark; no inferred MARK apply latency.",
+  "consumer_observation": {
+    "consumers": {
+      "market_data_service.jsonl": {
+        "cache_rows_min_max": [
+          0,
+          0
+        ],
+        "elapsed_seconds": 299.995868966,
+        "health_states": {
+          "READY": 11
+        },
+        "latency": {},
+        "ready_demand_pairs": [
+          [
+            60,
+            60
+          ]
+        ],
+        "samples": 301,
+        "unique_heartbeats": 11,
+        "watermark_regressions": 0
+      },
+      "paper-market-redis-correction.jsonl": {
+        "cache_rows_min_max": [
+          50,
+          50
+        ],
+        "elapsed_seconds": 175.969257874,
+        "health_states": {
+          "READY": 7
+        },
+        "latency": {
+          "BINANCE/BOOK_DELTA": {
+            "max_ms": 1955.189208984375,
+            "median_ms": 439.9295654296875,
+            "min_ms": 112.52001953125,
+            "n": 878,
+            "p99_ms": 978.218505859375
+          },
+          "BINANCE/BOOK_SNAPSHOT": {
+            "max_ms": 3056.189208984375,
+            "median_ms": 2131.69091796875,
+            "min_ms": 917.06005859375,
+            "n": 29
+          },
+          "BINANCE/QUOTE": {
+            "max_ms": 1966.189208984375,
+            "median_ms": 437.37890625,
+            "min_ms": 143.78662109375,
+            "n": 879,
+            "p99_ms": 944.4404296875
+          },
+          "BINANCE/TRADE": {
+            "max_ms": 1985.189208984375,
+            "median_ms": 542.355712890625,
+            "min_ms": 117.52001953125,
+            "n": 877,
+            "p99_ms": 1416.106689453125
+          },
+          "OKX/BOOK_DELTA": {
+            "max_ms": 1990.189208984375,
+            "median_ms": 483.454345703125,
+            "min_ms": 182.6455078125,
+            "n": 880,
+            "p99_ms": 1086.169921875
+          },
+          "OKX/BOOK_SNAPSHOT": {
+            "max_ms": 2596.87060546875,
+            "median_ms": 1586.4324951171875,
+            "min_ms": 1283.31005859375,
+            "n": 30
+          },
+          "OKX/QUOTE": {
+            "max_ms": 2033.189208984375,
+            "median_ms": 445.235595703125,
+            "min_ms": 133.6728515625,
+            "n": 880,
+            "p99_ms": 1184.892578125
+          },
+          "OKX/TRADE": {
+            "max_ms": 3089.452880859375,
+            "median_ms": 701.189208984375,
+            "min_ms": 148.5126953125,
+            "n": 645,
+            "p99_ms": 1564.65283203125
+          }
+        },
+        "ready_demand_pairs": [
+          [
+            60,
+            60
+          ]
+        ],
+        "samples": 177,
+        "unique_heartbeats": 7,
+        "watermark_regressions": 0
+      },
+      "ts-p183-p183_market_data-1.jsonl": {
+        "cache_rows_min_max": [
+          19,
+          19
+        ],
+        "elapsed_seconds": 299.992929524,
+        "health_states": {
+          "READY": 11
+        },
+        "latency": {
+          "BINANCE/BOOK_DELTA": {
+            "max_ms": 1495.02685546875,
+            "median_ms": 466.0186767578125,
+            "min_ms": 144.98095703125,
+            "n": 600,
+            "p99_ms": 1030.436767578125
+          },
+          "BINANCE/BOOK_SNAPSHOT": {
+            "max_ms": 2951.7890625,
+            "median_ms": 1800.9296875,
+            "min_ms": 711.967041015625,
+            "n": 527,
+            "p99_ms": 2765.80322265625
+          },
+          "BINANCE/QUOTE": {
+            "max_ms": 2014.02685546875,
+            "median_ms": 437.7734375,
+            "min_ms": 129.71142578125,
+            "n": 599,
+            "p99_ms": 1156.8193359375
+          },
+          "BINANCE/TRADE": {
+            "max_ms": 2225.02685546875,
+            "median_ms": 568.7735595703125,
+            "min_ms": 160.640625,
+            "n": 586,
+            "p99_ms": 1393.80615234375
+          },
+          "OKX/BOOK_DELTA": {
+            "max_ms": 1218.0703125,
+            "median_ms": 416.096923828125,
+            "min_ms": 114.817626953125,
+            "n": 594,
+            "p99_ms": 1022.100830078125
+          },
+          "OKX/BOOK_SNAPSHOT": {
+            "max_ms": 2915.76123046875,
+            "median_ms": 1518.054931640625,
+            "min_ms": 516.70654296875,
+            "n": 543,
+            "p99_ms": 2520.393310546875
+          },
+          "OKX/QUOTE": {
+            "max_ms": 3565.9296875,
+            "median_ms": 485.6600341796875,
+            "min_ms": 137.4287109375,
+            "n": 590,
+            "p99_ms": 2566.28662109375
+          },
+          "OKX/TRADE": {
+            "max_ms": 2087.873046875,
+            "median_ms": 604.656494140625,
+            "min_ms": 143.4287109375,
+            "n": 265,
+            "p99_ms": 1502.228271484375
+          }
+        },
+        "ready_demand_pairs": [
+          [
+            22,
+            22
+          ]
+        ],
+        "samples": 301,
+        "unique_heartbeats": 11,
+        "watermark_regressions": 0
+      }
+    },
+    "notes": [
+      "paper heartbeat300s; market-cache observation176s after observer route correction",
+      "event-to-observed-Redis includes up to1s sampling delay; not exact commit timestamp",
+      "OKX real transport disconnects occurred; do not claim zero disconnects"
+    ],
+    "resource": {
+      "samples": 25,
+      "whole_project_cpu_max": 5.1211,
+      "whole_project_cpu_mean": 4.70066
+    },
+    "state": "REVIEWED_WITH_OBSERVED_RECOVERY",
+    "unique_execution_products": 54
+  },
+  "date_utc": "2026-09-30",
+  "interruption_accounting": {
+    "okx_transport_disconnects": 4,
+    "paper_session_refusals": 12,
+    "recovered": true,
+    "root_socket_close_reason": "not logged; no provider/host attribution claimed",
+    "sandbox_session_refusals": 8
+  },
+  "limitations": [
+    "No p99 for snapshot groups with fewer than100 samples.",
+    "Paper cache observed176s after Redis selection correction; heartbeat300s.",
+    "No 24/7 uptime, arbitrary50-alpha or indefinite5000/s certification.",
+    "Two OKX TRADE refusals attributed by exact public history ID/time; no stale price accepted.",
+    "Binance3d and VN/DNSE V2 explicitly excluded by owner."
+  ],
+  "measurement": "SDK snapshot request start to validated usable return; metadata resolution/startup separate",
+  "release": "v2.2.1",
+  "schema": "qdl.release.endpoint-delta.v1",
+  "scope": "64 entitlement products x two query replicas; actual paper60 and sandbox22 demand",
+  "unchanged_endpoints": {
+    "evidence": "../v2.2.0/endpoint-report.json",
+    "note": "Historical measurements only: warmup/batch/reference/diagnostics/other unchanged routes not rebenchmarked in this repair.",
+    "retested": false,
+    "sha256": "d87e7f70650d954cb31051627e9c85b93d1d7372ad7b1753f1ec9018487f2eec"
+  },
+  "units": "milliseconds"
+}

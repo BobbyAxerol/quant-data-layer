@@ -62076,3 +62076,37 @@ No runtime SDK pin or running container changed. Public API remains2.0.0.
 apply_patch helper failed (mountinfo path is not absolute); exact-match fallback
 used perRule32 and four one-line version diffs inspected. Owner plan hunks stay
 unstaged. No push/merge/tag or image cleanup in this packaging slice.
+
+### Release Delta Evidence And Retirement Plan (2026-09-30)
+Prepare v2.2.1 certificate/report/notes using exact evidence hashes, per-role
+runtime digests and SDK2.0.6; no fresh whole-catalogue/capacity claims. Acceptance
+scope is bounded recovery and correct rejection, not always-eligible prices.
+Retain observed OKX disconnects and paper cache observer correction explicitly.
+Old v2.2.0 report remains inherited historical evidence for unchanged endpoints.
+Release publication remains blocked on CI/approved integration ancestry; artifact
+status PASS applies to this affected delta, not TS E or broker execution.
+After artifact review remove only the ten inventoried stopped legacy containers
+by exact IDs (no force, no volume removal), then only unreferenced Data Layer
+obsolete images. Preserve active set and native rollbackf204/7fe. Do not touch
+TS/Portal artifacts. Archive private inspect metadata, disk pre/post and unchanged
+running-role start times. No shared/global BuildKit prune; only own build cache
+if attributable, otherwise report deferred cache rather than delete others.
+
+Release structural checks PASS:128 binding/replica rows,64products,126usable,
+2provider-attributed rejections, no p99 for small snapshot groups; endpoint SHA
+0f2ce92fd97b3df2b9c5520d1d20ee8b26bd11918824d0ffa5b8ac872ee90465.
+Certificate and release notes at upgrade/evidence/releases/v2.2.1/ explicitly
+retain observed reconnects, n/denominators, polling limits and inherited gates.
+Rust/Cargo/Dockerfile diff0e00c81..release-source is empty; do not rebuild Rust
+for journal/SDK metadata. Private packet now APPLIED_TARGETED_ACCEPTANCE_REVIEWED,
+publication still PENDING_CI.
+Cleanup complete for exact ten stopped legacy containers and their3unreferenced
+images37d7f518/56d331db/dd065fdf; no-v/no-force, all running image/start/restart
+identities unchanged. Private inspect retained0600. Disk235353243648->235294134272
+bytes; concurrent host traffic means not exact reclaimed amount. Task-only Cargo
+cache3,123,045,441logicalbytes removed (initial permission refusal, then bounded
+sudo after rechecking no mount). Disk235431378944->232285339648bytes. No volume,
+state, evidence, V1/TS/Portal or global BuildKit removal. Shared cache ownership
+not attributable, explicitly deferred; native rollbackf204 and active7fe retained.
+Remote fetch unchangeddev7ee4af0/main8299838. Next: push this feature/PRdev, CI,
+then approvedmain release path. No second C2 and no TS lifecycle work.
