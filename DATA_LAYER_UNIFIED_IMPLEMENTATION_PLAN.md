@@ -65260,3 +65260,47 @@ All offline clients used--rm; no new image/build/network/volume or runtime mutat
 No cleanup of active/rollback artifacts or unrelated worktrees; no disk savings
 claimed. No push/merge/release. DL baseline v2.2.1 runtime unchanged by this work;
 shared/candidate TS deployments remain distinct from source. Goal stays active.
+
+
+#### ED09 Atomic Latest-State Storage - Implementation
+
+Next slice adds bounded compare-and-store for verified same-generation BOOK/reference
+state using Redis Lua compare of exact marker/cache bytes. Preserve a bounded-per-
+binding ordering fence when the price key expires; no ACK/cursor fabrication.
+Validate all inputs before mutation; race retries share one monotonic deadline.
+Missing marker with an existing legacy key is not silently adopted. This primitive
+will not yet replace owner writes until generation adoption, invalidation and
+session-proof refresh are integrated. Test actual isolated Redis races/expiry and
+no-write conflicts; no production Redis, offsets, prices or services touched.
+
+
+ED09 same-generation atomic storage implemented and verified on actual disposable
+Redis7.2, TEST_ONLY market facts. Redis script compares both exact marker and cache
+bytes before writing. Per-binding marker keeps compact ordering/payload digest
+after the price key expires; duplicate or older responses do not renew TTL.
+Eight compare/retry attempts share one monotonic deadline; no unbounded retries.
+Existing unmarked legacy state requires explicit adoption, not silent replacement.
+
+Actual Redis19cases plus41related unit cases:60PASS/0FAIL/0SKIP,1.627s;
+execution-state-final.xml SHA256
+7ec7cab9fe599a4c78e6d52eea5bb6d9015066e87b9675b0d5d4d54d52097741.
+Cases include32concurrent writes, stream advancing between recovery read/CAS,
+commit with lost client ACK then retry, expired price with retained fence,
+component regression, unmarked/tampered/corrupt state, same-coordinate conflict,
+new-generation refusal and deadline before/after read. Payload parity checked
+against the existing projector; no broker/canonical/live latency claim.
+Ruff import ordering corrected, then clean.
+
+Not wired into normal writer/recovery yet: proof-only session refresh, newer
+hard-invalid view, explicit generation adoption, publish/ACK integration and
+old-cache migration remain implementation work in EDC-1. This storage primitive
+is not eligibility authority; callers must validate exact feed and deadline.
+Persistent fences are bounded by admitted bindings and require scoped retirement
+when bindings are retired; no global scan/delete or unbounded event journal.
+Do not deploy this partial path or call the full atomic recovery gate closed.
+
+Cleanup: removed only ts-edc1-ordering-redis (--rm,tmpfs,restart0/OOMfalse) and
+ts-edc1-ordering-net. All test clients--rm. No image/build cache/volume created.
+Disk available69472391168B before and69716434944B after; host activity also changes
+disk, so not claimed as attributable reclaimed bytes. Active/rollback unchanged.
+DL/TS runtime untouched, no push/merge/release or order transport. Goal active.
