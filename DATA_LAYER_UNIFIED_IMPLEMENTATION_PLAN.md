@@ -64605,3 +64605,52 @@ remains the next required step, followed by actual queued sender ED05. Do not ma
 ED04 or EDC fully closed from this unit boundary matrix alone.
 No image build/runtime/resource-cap changes; offline --rm clients removed, no
 new network/volume/BuildKit artifact. Existing active and named rollback retained.
+
+
+#### ED04 Native-PG Regression - In Progress
+
+Actual native build + isolated93-migration PG ordinary/trailing tests found a
+regression introduced in8b4f1a9: a second trailing-child validator still called
+from_payload(child) after child became a typed RiskOrderIntent. Ordinary4 cases
+passed; trailing12 failed before broker I/O. Fix this exact second call and rerun
+actual native trailing BUY/SELL x BBO/L2 x Binance ratio/OKX ratio+spread. Retain
+failed paper-native-pg.xml. No runtime mutation; no external provider evidence.
+
+
+ED05 trace (not yet fixed): NativePhysicalEgressBridge._submit queues original
+request with30s deadline; NativeExecutorAdapter.dispatch validates scope/digest,
+resolves prior attempts and delegates fresh items to BoundNativeBridge. Its
+_prepare/_physical_order do ID/metadata/ownership/permit work; compatibility port
+claims dispatch atomically then calls adapter. No typed execution market validator
+is present in this traversed executor/egress path. This is source boundary
+evidence, not evidence of an actual bad broker order. Implement the required
+post-queue pre-send validation while preserving recovery/query/cancel access,
+atomic permit/idempotency and bounded no-network-under-lock behavior. A validator
+only before enqueue would not close ED05. Native Rust scheduler/math stay intact.
+
+
+ED04 native-PG result: corrected typed child recheck at the second, under-lock
+matcher boundary. Actual native/Python/PG suite99PASS/0FAIL/0SKIP,42.155s;
+paper-native-pg-fixed.xml SHA256
+4c8dffd46a688e0cb32a48788c3e5db210cb8fc7a30274ea83eb2063bc66d24d.
+Initial34-test run22PASS/12FAIL retained (paper-native-pg.xml hash
+4c6c028c8b111c3495d1a35f896cb0d834014a953ff8f199e1b31360ced3af87).
+Hardened TrailingMarket integration fixture to actually remove nonrequested feeds;
+reran only12 affected BUY/SELL BBO/L2 trailing cases:12PASS/0skip,17.135s;
+paper-native-trailing-selected.xml hash
+ba8e49dd5097ea3dec35f20236bfc46ca39fa87a42b3a52bf8a830acb5d190dd.
+This covers native cold restart/atomic fill recovery, ordinary lock observations,
+selected read-set and matcher regressions on isolatedPG15.18 with93 migrations.
+Feeds synthetic TEST_ONLY, not authentic provider/broker acceptance. Native PyO3
+rebuilt offline in standard builder; hash
+b224133aab21d53017abc5b6d79ecc70614b88f84cf31c37b824b9298caaed60.
+Initial build invocation hit maturin entrypoint; corrected --entrypoint cargo,
+then compiled successfully1m36s. No image build. Four JUnit formatting warnings,
+no domain failures in green receipts. Ruff/diff check pass.
+Cleanup: removed ts-edc1-settlement-pg (restart0/OOMfalse), ts-edc1-paper-net and
+395284832B exact scratch paper-native-build; clients all --rm. Disk available
+64212647936B before /66877943808B after; host concurrent writes/deletions mean
+this delta is not solely attributed to our cleanup. Active/rollback images and
+all shared runtime state unchanged. No push/merge/release. ED04 source/native
+integration slice verified; EDC remains IN_PROGRESS, ED05 and provider/runtime
+acceptance are not closed by these tests.
