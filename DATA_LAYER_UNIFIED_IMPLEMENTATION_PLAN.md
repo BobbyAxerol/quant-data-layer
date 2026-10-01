@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **2026-10-01 REVIEW_HOLD / PLAN_APPROVAL_REQUIRED:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
-> One consolidated repair phase; latest core dependency review awaits owner approval.
+> **2026-10-01 IN_PROGRESS / OWNER_RESUMED_GOAL:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
+> One consolidated repair phase; owner resumed the full EDC-1 implementation goal.
 > Runtime change and release still require the reviewed changed-role packet.
 > The inherited runtime is KN Kafka-native with the hot-backup patch; historical
 > pre-KN status blocks below are not the current deployment inventory.
@@ -63501,10 +63501,10 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: REVIEW_HOLD / PLAN_APPROVAL_REQUIRED.** The latest owner
-request is audit and plan only. Earlier approved implementation receipts below
-are historical; preserve unfinished patches, but do not resume source changes or
-rollout before approval of this consolidated scope. See the checkpoint below.
+**Latest decision: IN_PROGRESS / OWNER_RESUMED_GOAL.** The owner resumed the full
+EDC-1 objective after the consolidated audit checkpoint. Implement the complete
+ledger; deployment/release still follows the reviewed changed-role packet.
+Earlier planning and implementation receipts remain historical evidence.
 
 **Historical implementation status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
 not a new architecture program or a reopening of KN-1 through KN-5. The owner
@@ -63982,6 +63982,28 @@ must re-use the existing DL quiet MARK/INDEX proof validator rather than invent
 another divergent interpretation in TS, then test consumer-time expiry.
 
 
+#### ED02 Shared Proof Validator - Implementation Started
+
+Next coherent slice reuses qdl/data_quality/execution_mark_index.py as one pure
+SDK-shared validator, retaining a compatibility import at its old Query path.
+No cadence constants/semantics change in that extraction. TS reference projection
+will evaluate the exact requested policy using a post-read clock; preserve labels,
+strict-event behavior and typed failure instead of regenerating LIVE from receipt
+age. Risk later rechecks the same proof at use; no eligibility closure until that
+path and its negative/deadline cases pass. SDK packaging/pin convergence remains
+mandatory before any deployment; source mount testing is not packaging proof.
+Source foundation TS618ecd0 and DL journal272a4f5 committed; not pushed/merged.
+
+
+EDC ED-T02 additional source defect reproduced: `_validate_price_feed` allowed
+MARK/INDEX/TRADE/TICKER as one union regardless of the requested MARK/INDEX/LAST
+reference, then accepted generic `price`. Six isolated native-policy regressions
+(two venues x three references) show wrong-feed substitution accepted. Fix within
+ED01/ED02 scope: bind allowed feed family to requested reference; never use a
+TRADE price as MARK/INDEX or MARK as LAST. Preserve legacy LAST/TICKER mapping;
+no broker/runtime mutation. Include these cases in the affected source suite.
+
+
 <a id="edc1-core-review-checkpoint"></a>
 ### EDC-1 Core Dependency Review And Consolidated Approval Checkpoint
 
@@ -64084,3 +64106,100 @@ owner/source changes preserved and excluded from this documentation commit.
 apply_patch failed due to sandbox helper; asserted replacement used per rule32.
 First fallback attempt found no `python`; reran with python3, no prior file change.
 No push/merge/deploy/release in this checkpoint.
+
+
+#### EDC-1 Resumed Goal / Shared Validator Packaging Repair
+
+Owner resumed the full EDC-1 objective after f0479de planning checkpoint. Previous
+turn progressed documentation/audit, not implementation closure. No blocker or
+completion claim. Continue all ED rows, starting from the preserved source patch.
+Cold import of qdl.data_quality.execution_mark_index fails because SDK models load
+qdl.query, whose eager service import returns to the partially initialized proof
+module. Keep one shared pure validator and defer only the existing Query service
+exports; retain every public name and test both cold import orders in subprocesses.
+No provider semantics/cadence or runtime change. Run Query compatibility and TS
+reference suites before committing. apply_patch sandbox remains broken; use
+asserted replacements under rule32. Evidence remains under edc1-20261001.
+
+
+EDC-1 next proof-use slice: validate preserved MARK/INDEX reference proof at Risk
+use, not only adapter receipt. Only server-projected explicit OBSERVE + exact
+internal-live lineage may use component/session semantics; other prices remain
+strict. Require paired observation, generation, matching metadata/policy and
+unchanged timestamp. Budget is min(declared session budget, existing Risk age
+budget), no symbol exception. Recheck even when original event is fresh; expired
+proof cannot hide behind fresh event. Millisecond callers use the conservative
+end of that clock bucket for ns proof evaluation; add explicit now_ns for precise
+callers and test both representations. No proof timestamp is rewritten. Tests
+exercise adapter -> cache projection/reader -> actual Risk function for both
+venues, valid quiet, delay, invalid lineage/generation/metadata, gap and expiry.
+No runtime/orders; ED02 is not closed until these and packaging tests pass.
+
+EDC packaging convergence: upgrade source still pins SDK2.0.5; a new shared
+validator import would break clean installs without source mounts. Package an
+unpublished SDK2.0.7 candidate with the existing reproducible builder, vendor the
+wheel/SBOM/hash receipt into upgrade, update only SDK lock/pin/reader build input,
+and append an explicit transition after the immutable P01/P18.3E captures. Never
+overwrite/re-publish a changed wheel as2.0.5/2.0.6. Run actual wheel-based TS tests,
+not source-PYTHONPATH evidence alone. No runtime SDK or external registry change.
+
+
+#### EDC-1 Reference Proof / Packaging Slice - Tested Locally, Not Deployed
+
+Reproduced actual Risk disagreement through adapter -> fake Redis projector ->
+reader -> Risk:18 cases,16FAIL/2PASS before patch. Valid quiet MARK/INDEX rejected
+as STALE; fresh events incorrectly accepted after session expiry or malformed
+lineage/generation/metadata/policy. Existing gap rejection already worked.
+Risk now validates the unchanged original proof at use with the shared SDK
+validator and the stricter declared-session/intent budget. Wrong MARK/INDEX/LAST
+feed substitution fixed. Explicit ns clocks and conservative ms bucket expiry
+are tested; scalar compatibility flags cannot conceal invalid nested proof.
+Strict TRADE and non-quiet reference remain strict, no freshness increase.
+
+Query service exports now load lazily to break the SDK cold-import cycle; all
+public exports/star import and four cold import orders pass. Query compatibility
++ proof suite59PASS,0FAIL/0SKIP (63.895s). Its final receipt write failed because
+container UID10001 could not write the host directory; exit1 was receipt I/O, not
+a failing test. Preserved terminal result as sdk-shared-proof-query-compatibility.json
+with the limitation, did not rerun tests to erase it. New test formatting fixed
+one E702. DL Ruff config could not parse pre-existing requires-python='^3.10';
+ran isolated E4/E7/E9/F excluding existing import-layout E402, PASS. No unrelated
+pyproject change. TS affected-file Ruff and git diff --check PASS.
+
+Tests used existing Docker images offline/read-only with tmpfs, no broker/secret/
+state mounts: python -m unittest (Query59; later cold-import/release11PASS), and
+pytest affected TS adapter/cache/Risk/native ordinary/custody/paper unit suites.
+TS first296PASS; boundary/quality additions371PASS; packaged wheel plus immutable
+baseline/transition checks380PASS,0FAIL/0ERROR/0SKIP. These are source/unit/native
+compatibility tests, NOT real-PG or production acceptance. Exact suites and failed
+red attempts retained under ~/.local/state/qdl-v2/edc1-20261001/evidence/:
+- risk-reference-use-red.xml sha2566a2b03a67d80237f31643ec60bfaf17665ab965aac2edce074b9cc78ce6794f7
+- risk-reference-native-green.xml sha2566d4ca1a0779c28f66d47838d62166251b506563375454157b072f5c4c82c45a7
+- packaged-sdk-risk-native-green.xml sha256f38cc949977259b3053cff041e3e448a01b58a2d01b73d111374b472749341d8
+Earlier tests retained:278PASS reference-clock/type suite; initial new-interface
+red TypeErrors were not behavior proof, strict-clock DID_NOT_RAISE and six
+wrong-feed negatives were. Earlier collection failure used nonexistent REJECT
+StalePolicy; corrected to actual BLOCK, not a runtime/provider failure.
+
+SDK2.0.7 is an UNPUBLISHED candidate, reproducibly built and vendored for clean
+TS installs, SHA256e50b9164d064d0a0e9256ea1bb5c8afe2bd32eb2a505d36165c94fec58d90b14.
+No changed2.0.5/2.0.6 artifact is published. Updated SDK-only TS pin/uv.lock/reader
+build input, reversible edc1-sdk-transition.json preserves original P00/P01/P18.3E
+captures byte-for-byte. Wheel-based test asserts actual .whl import and2.0.7.
+Earlier2.0.6 scratch wheel import was test-only and deleted with tmpfs; not release.
+Final image build, canonical TS integration and cross-role rollout remain pending.
+
+Additional confirmed downstream source gap: Rust paper_custody.rs:121-130 rejects
+MARK solely by observed_at_ms even when Python proof is valid; Python custody
+serializes that old timestamp into native mark. Do NOT change it to current time.
+Next work must propagate explicit original component/session proof into the pure
+native boundary and test shared contract/parity including expired/gapped proofs.
+This is ED01/ED08 in scope, not a new phase. Current tests do not certify that
+quiet account-position valuation path. Other pending ED03/ED04/ED05 obligations
+(intent read sets/locks, paper provenance and actual delayed sender) remain open,
+as do exact-provider attribution, real-PG/no-order matrix and final300s acceptance.
+
+No production mutations, builds of new Docker images, pushes, merges or release.
+All disposable clients used --rm and ended. Wheel is an intentional pinned source
+artifact, not runtime state. No new BuildKit cache; active and rollback images
+retained, no unrelated cleanup. Full EDC goal remains active/IN_PROGRESS.

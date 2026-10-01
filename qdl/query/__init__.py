@@ -58,18 +58,6 @@ from qdl.query.results import (
     QueryBackendError,
     SourceMetadata,
 )
-from qdl.query.service import (
-    BatchItemResult,
-    BatchQueryResult,
-    QueryResult,
-    QueryServiceError,
-    ReferenceBatchItemResult,
-    ReferenceBatchQueryResult,
-    ReadinessItemResult,
-    ReadinessResult,
-    V2QueryService,
-    WarmupResult,
-)
 from qdl.warmup.contracts import (
     IntervalSourcePolicy,
     WarmupSpecification,
@@ -132,3 +120,25 @@ __all__ = [
     "WarmupSpecification",
     "WarmupTimeRange",
 ]
+
+
+# SDK contracts also import this package; service loading must not create a cycle.
+_SERVICE_EXPORTS = frozenset({
+    "BatchItemResult", "BatchQueryResult", "QueryResult", "QueryServiceError",
+    "ReferenceBatchItemResult", "ReferenceBatchQueryResult", "ReadinessItemResult",
+    "ReadinessResult", "V2QueryService", "WarmupResult",
+})
+
+
+def __getattr__(name):
+    if name not in _SERVICE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    value = getattr(import_module("qdl.query.service"), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | _SERVICE_EXPORTS)
