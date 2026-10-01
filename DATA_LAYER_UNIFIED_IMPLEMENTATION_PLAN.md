@@ -62466,3 +62466,79 @@ Final disk201GiBused/90GiBavailable; decrease from203GiB is not attributed to
 212kB taskcleanup (normal Kafka retention also runs). Canonical branches:
 DL7d17c29 fix/execution-view-diagnostics; TS98acc61 consumerfix. No newworktree;
 four existingTSfeature/integrationworktrees untouched. Ownerdirtyhunks preserved.
+
+#### Approved Narrow Kafka Client Recovery - 2026-10-01
+
+Status IN_PROGRESS. Owner approves projector and raw-ingestor recovery only,
+with isolated fault verification before any affected binary rollout. Guide:
+upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md section18/K5-T05.
+No endpoint/schema/freshness/quota/CPU changes, no offset reset, no Redis flush,
+no TS/alpha/order mutations. Existing steady-state evidence is inherited only
+where unaffected; ISR alone is not application readiness.
+
+Freeze test budgets before runs: one Stage-A transaction gets one monotonic
+30s production deadline including queue/offset/commit retry, separate bounded
+abort30s and rewind10s; isolated tests use shorter equivalent budgets. Broker
+fault is10s, then at most120s to exact committed output/cache convergence;
+no lost/duplicate facts, regressed watermark or false fresh/readiness allowed.
+Measure outage, peak backlog and recovery separately. Persistent fault must
+fail closed within bounded operations, not extend deadlines per retry.
+Known source risks: unbounded QueueFull and repeated full commit timeouts are
+confirmed; neither is yet proven the sole cause of the historical incident.
+Trace InvalidOffset(-1001) by caller; no zero offset, ACK or silent skip.
+Use scoped real Kafka/Redis and captured provider data; synthetic fault seams
+are labelled tests, never provider acceptance. Keep active images and exact
+per-role rollback; no broad prune. Roll only affected projectors/ingestor after
+fault gates, verifying quorum/ISR, Stage A/B progress, cache and consumer
+before each next role. No new release or FULL claim until receipt closes gaps.
+apply_patch failed with mountinfo helper error; exact scripted edits verified.
+
+
+Recovery slice checkpoint: Stage-A source unit24PASS (including native one-slot
+QueueFull bounded30ms; observed suite0.31s). First real broker test start failed:
+tmpfs/default image config omitted process.roles. Explicit isolated KRaft config
+corrected; first test failure retained, not attributed to patch. No production
+mutation. Full integration result pending.
+Owner delegated sentinel choice after question: choose typed durable delivery
+without offset ONLY after librdkafka successful delivery. No fake cursor/ACK
+coordinate; strict append callers still reject missing offset. Raw ingestor does
+not consume that coordinate, downstream derives offset from actual Kafka record.
+No retry/re-publish of an already successful idempotent delivery, no new READ ACL,
+no hot-path read-back. Actual delivery errors/other negative offsets remain errors.
+Evidence source: https://github.com/confluentinc/librdkafka/wiki/FAQ (producer
+idempotence offset semantics); runtime fatal call path is PendingKafkaAppend.wait
+via raw_publish_future, not resync receive (which already catches errors).
+
+
+Tested recovery slice: real isolated broker paused10.062s during transaction.
+24authentic captured canonical payloads (unchanged timestamps) traversed transactional
+StageA and actualStageB/Redis:24products exact bytes, exact committed output count,
+restart preserved source coordinates. Receipt fault-r5:send_offsets deadline
+exhausted (Abortable), restarted/fenced client then recovered within9.046s of
+restore including readback/restart check, below frozen120s. This is captured-data
+cache recovery, NOT current execution freshness or high-rate stress/HA evidence.
+Harness corrections retained: first broker config failure; golden full_frames
+contains onlyone full example, so replay now derives frames fromall24real records;
+SourceCoordinate usesu32;5s sleep was not group-readiness, replaced by output progress
+withinoriginal120s budget. Failed runsr2/r3/r4 retained. No gate widened.
+Native librdkafka protocol fault injection reproduced DuplicateSequence success
+withmissingoffset(-1 in mock protocol;historical production-1001). Typedreceipt
+handles onlythese two sentinels AFTERsuccess; othernegative offsets/errors rejected.
+Strictcursor callers still failclosed. Five delivery testsPASS including producer
+permission failure andnative duplicate-sequence response; no newreadpermission.
+Rawingestor logs persisted-without-offset andcreatesnocursor; no re-publish.
+
+
+Source exit:86PASS,1unrelated TLS-control integration ignored. Breakdown25projector
+unit,5realKafka StageA (commit/abort/crash/fencing/rebalance plus lostcallerACK),
+3realKafka/Redis StageB,25Kafka library,27nativeingestor,1captured fault. Clippy
+--offline --locked -p qdl-projector -p qdl-kafka --lib --bins -- -D warnings PASS.
+Source receipt:kafka-client-recovery-20261001/source-tests.json. No fullcatalogue
+or C2 rerun. Existing ownerplan whitespace/hunks remain untouched; scoped source
+and stageddiff checks mustpass. Build one candidate by replacing only projector
+andnativeingestor binaries atopactive658a9570 image; all otherbinary hashes must
+matchbase. Rolling scope:market_projector_1,market_projector_2,ingestor_okx_swap,
+one atatime. Rollback projectors7fe348060734...,OKX658a9570c5fc...,sameeffective
+config/TLS/mounts/offsets. NoBinanceingestor/core/readers/TSchange inthispacket.
+Before nextrole:quorum/ISR, bothprojectors progress,cacheprobe,consumerheartbeat.
+This scopedoperation is owner-approved in latestKafka-client-recovery request.
