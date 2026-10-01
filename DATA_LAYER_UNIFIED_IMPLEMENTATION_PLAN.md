@@ -63199,3 +63199,32 @@ worktree. Stablev2.2.1 runtime image/config/manifest set and rollback retained a
 recorded above. No push/merge/deploy or new image/test resource in this turn.
 Owner's two plan hunks remain uncommitted. Status: SOURCE_TESTED,
 LIVE_ACCEPTANCE_BLOCKED, NOT production-certified or zero-downtime.
+
+
+### Owner-Approved TS Readiness Scope Extension - 2026-10-01
+
+Owner approved investigation and inclusion of the narrow TS readiness correction
+in the upcoming release plan. Supersedes the scope exclusion in Hot Backup Live
+Acceptance Decision Boundary; it does NOT mean the code/runtime prerequisite is
+fixed. Status PLANNED; backup source tested, live handoff/rollout still pending.
+Authoritative implementation/test/rollback checklist is TS Unified Plan anchor
+consumer-readiness-hot-backup-release at /home/bobby/trading_system/.
+
+Separate worker-report lifetime (existing bounded1s), per-route provider-session
+readiness and execution eligibility using a versioned complete route report and
+one shared evaluator. No TTL/freshness increase, no cached eligible-count reuse,
+no ignoring guard, no synthetic provider heartbeat. TS change restricted to
+market_data worker/health reporting and affected tests; no order/Risk policy,
+alpha activation, cursor/ownership migration or other upgrade-phase changes.
+
+Sequence: source/regression+real multiprocessing/isolated Redis; immutable TS
+packaging; narrow market_data rollout with exact rollback; real60-route300s
+observation. Then resume approved Data Layer paired restart, hot-backup failure
+and safe return, consumer-usable latency/resources, narrow Data Layer rollout.
+Reuse unaffected evidence; no full catalogue/C2 bug hunting. Both receipts and
+source/image/config provenance required before release/continuous-serving claim.
+
+This turn changes plans only. No runtime/build/test resource changes or cleanup
+needed; prior cleanup2.73GB remains recorded. Stablev2.2.1, active/rollback digests,
+config/manifest and single Data Layer worktree unchanged; owner plan hunks retained.
+No push/merge/tag. Full goal is not complete; owner resolved scope decision only.
