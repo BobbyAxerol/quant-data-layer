@@ -3111,8 +3111,9 @@ HA. Published release remainsv2.2.1; newsource/images await remote release workf
 write ONE consolidated repair phase before implementation. The authoritative
 scope, source findings, test cases, latency definitions, rollback and journal are
 [EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
-Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1. The owner goal continuation
-resumes [the consolidated TS core review](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-ts-core-final-review).
+Latest decision: PLAN_REVIEW_PENDING. Further implementation awaits owner review
+of the [final dependency closure plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-owner-review-freeze).
+Prior source receipts remain evidence, not deployment approval.
 Earlier source tests are not runtime certification.
 Deployment/release still requires the reviewed changed-role packet.
 It supplements the existing KN architecture, not another rearchitecture phase.

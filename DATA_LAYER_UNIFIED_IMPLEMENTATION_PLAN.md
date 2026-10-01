@@ -65774,3 +65774,128 @@ wire/verify other applicable native paper/package service owners without changin
 matcher semantics, deployed old state/queued-pin/SDK migration, synchronized ED06
 provider attribution, actual native-process/PG integration where affected and
 reviewed runtime/fast-matrix/final acceptance. No historical refusal relabelled.
+
+
+<a id="edc1-owner-review-freeze"></a>
+### EDC-1 Final Dependency Closure Plan - Owner Review Freeze
+
+**Status: PLAN_REVIEW_PENDING. Latest owner instruction: inspect and document
+first; further implementation/runtime changes await owner approval.** Supersedes
+preceding continuation/start entries, not their evidence. ONE existing EDC-1
+phase; no new architecture programme. Preserve uncommitted work, do not deploy it.
+
+Guide: [EDC detailed guide](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#execution-data-contract-closure-guide-20261001).
+Inherit ED01-ED10, ED-T01-ED-T15 and [consolidated review](#edc1-ts-core-final-review).
+TS authority is `/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md`
+and detailed guide anchor `p18e-critical-path-closure-20260930`.
+
+#### Baseline And Review Limits
+
+Source inspected: DL a9f317d, TS upgrade3484fcf plus pre-existing uncommitted
+ED09 changes in four source files. These are NOT tested by this review. Prior
+557-pass recovery receipt is inherited, not fresh runtime evidence. No provider
+measurements, latency benchmark or broker orders performed in this review.
+Docker listing confirms two KN projectors a696cfba6ab3, Query pair3af57ddf1764,
+Stream pair1f13408fe946, three cores/Binance ingest658a9570c5fc, OKX ingest
+0f6876e16e51 and BARf7351c3bda08. Shared TS market-data c1f713a8b13e differs
+from candidate3b4ee780f2d4; shared Risk/executor v1.2.0-9081397 differs from
+candidate Risk40d293d62b7d/sender43847d3191a0. Process-up is not acceptance.
+Re-read full digests/config revisions for the packet; retain existing v2.2.1
+release/rollback provenance, do not mistake source HEAD for deployed code.
+
+#### Dependency Matrix And Source Findings
+
+| Boundary | Required data / remaining proof |
+|---|---|
+| MARKET / ordinary LIMIT | Server policy QUOTE, derivative MARK where required, correct metadata/units. Stale optional TRADE must not veto an unrelated intent. |
+| Post-only / depth-sensitive orders | Verified full BOOK_SNAPSHOT plus required QUOTE/MARK; sequence/generation/gap/depth. Raw delta is not a full executable book. |
+| Conditional/OCO and spawned child | Declared LAST/MARK/INDEX, registration vs dispatch requirements, exact component clocks and metadata pin. No silent LAST-to-QUOTE substitution. |
+| Amend/replace/cancel | Replacement risk differs from pure cancellation; cancel must not require fresh price but retains authorization/idempotency. Test actual callers. |
+| Native paper/packages | Exact BBO/L2 model and every leg/collateral identity; no last-trade/OHLCV substitute for executable quote/depth or fabricated volume. |
+| Portfolio/custody/inverse | Position/leg dependencies, settlement currency, native metadata and mark/conversion. BTC-USD-SWAP cannot use USDT proxy. Private balances/fees remain broker/TS-owned. |
+| Alpha signal/research | Existing closed BAR, warmup/batch/reference contracts; affected compatibility smoke only. No new universe or Binance3d repair, no execution fallback to candles. |
+
+1. Native Risk/sender source has typed coalesced recovery, but it is not deployed.
+   `risk_engine/core/checker.py` still builds a plain reader/general context.
+   Identify deployed authority and integrate narrowly if it gates scoped orders.
+2. `paper_execution/native_execution.py::reader` allows injection but defaults to
+   plain reader; `client.py::_load_last_tick` constructs another plain reader.
+   Complete actual owner wiring/lifetime and recovery outside DB locks.
+3. `data_layer_bridge.py` still sends BOOK_DELTA to `project_execution_feeds`.
+   New `project_book_deltas` is uncommitted/unwired. Finish CAS, authenticated
+   generation anchor and ACK-after-apply; do not build another Python book engine.
+4. `portfolio/core/stats_engine.py::refresh_unrealized_data` reads generic p/price,
+   computes linear PnL and invokes circuit-breaker logic; `portfolio/main.py`
+   calls it. Source risk, NOT proof of live equity corruption. Determine actual
+   authority; prevent unsuitable market data driving scoped risk decisions.
+   Accounting redesign/history repair remains excluded; report unrelated findings.
+5. Inventory all active writers, old cache shapes and pending metadata pins.
+   Quiesce incompatible writers; prove adoption/drain/reseed without flush or
+   invented proof. A source-compatible reader alone does not migrate runtime.
+6. Historical TRADE refusals remain unattributed. Capture the exact new refused
+   view with concurrent provider/canonical/cache/apply witness. Quiet, provider
+   lag, pipeline lag and UNKNOWN differ; a later healthy read proves none of them.
+
+These are integration/coverage findings, not proof every path is production-active.
+
+#### Implementation Order After Approval
+
+A. Freeze caller/service/source/image, realm/identity/manifest, native product,
+feed/interval/maxlen, freshness/session/components, quota, cache and writer owner.
+Cover TS60 plus ALREADY DECLARED inverse/package/portfolio dependencies. Mark each
+row FIXED_SOURCE / OPEN_SOURCE / UNVERIFIED_RUNTIME / EXTERNAL_DATA_UNAVAILABLE.
+B. Close shared typed recovery and writer ownership, then all applicable callers.
+Use existing Query and private Kafka-native Stream backup only; same product/feed,
+entitlement and quality. No provider-direct Risk I/O or new service/topology.
+C. Correctness tests -> isolated actual Redis/PostgreSQL -> actual native process
+with broker send disabled -> bounded authentic read matrix. Inherit unchanged
+certificates; never run full C2 repeatedly to discover source bugs.
+D. Review consolidated results and exact changed-role packet. After approval,
+roll compatible readers/writers in order; check actual required-data readback
+before next role. One final300s scoped no-order window after prerequisites pass.
+E. Release only changed artifacts through feature -> dev -> main with CI and
+immutable provenance. TS-only fixes do not force a fictional Data Layer binary
+release. Data closure does not certify P18.3E money cases or enable live orders.
+
+#### Mandatory Tests And Exit
+
+- Both venues/five liquid symbols and existing inverse binding; missing required
+  vs optional feed, LAST/MARK/INDEX/component expiry, heartbeat loss and skew.
+- Disconnect/gap/fencing/reset, replay regression, same-sequence conflict,
+  cache expiry, concurrent writers, lost apply reply, crash before/after ACK.
+- Coalesced refresh, cross-product fairness, total deadline, cancellation/join,
+  quota isolation and no external I/O under DB locks. Native post-queue expiry,
+  metadata/config revision change, no double reserve/send after retries.
+- Separate worker-alive/session-ready/price-eligible. One irrelevant feed cannot
+  expire another feed's proof or veto an unrelated order.
+- Main -> backup -> main at consumer, stale backup, both paths unavailable,
+  safe return ordering. Shared Kafka/host redundancy is not independent HA.
+- Reuse throughput proof unless hot-path changes invalidate it; then use captured
+  provider data through the actual adapter to Redis for prior4000/5000 per second
+  AGGREGATE load, burst/recovery/slow-consumer isolation, not per-consumer claims.
+- Report ms by venue/feed/replica: request BEFORE queue -> validated usable,
+  matched provider event -> Redis apply ACK, Redis -> Risk use, recovery -> usable.
+  Include attempts/refusals/internal failures, N,p50/p95/p99/max; no p99 under100
+  samples and no callback-as-commit or successful-only latency reporting.
+- CPU/throttle/RSS/cap/I/O/backlog/recovery and host headroom; freeze existing
+  contract gates BEFORE running, never extend freshness/buffer to manufacture pass.
+
+Exit: every applicable dependency implemented/tested and bound to actual runtime;
+no unfinished in-scope integration or unexplained current internal refusal;
+state compatibility and rollback proven; source/SDK/manifest/image map complete;
+scoped acceptance clean. Legitimate absence of all valid sources remains explicit,
+not a promise that every order executes. Historical UNKNOWN remains historical.
+
+#### Packet, Rollback And Cleanup
+
+List exact changed service/digest/config, reader/writer order, old-state/cursor
+compatibility, rollback digest/config and non-destructive recovery procedure.
+Do not deploy unfinished native TS wholesale into shared legacy services. Stop
+on auth/realm mismatch, unknown writer, regressing state, rising lag or failed
+required-data readback. Keep active plus named rollback, remove only owned test
+artifacts after evidence; record disk pre/post and runtime restart checks.
+Never delete shared state or unmerged worktrees for tidiness.
+
+This review changes documentation only; existing unfinished code is preserved.
+No builds/tests/orders/runtime changes/cleanup or push/merge/release. Next step:
+OWNER REVIEW of this same phase, not automatic implementation continuation.
