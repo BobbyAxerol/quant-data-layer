@@ -20,6 +20,7 @@ from qdl.adapters.okx.instruments import parse_public_instrument
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus
 from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.execution_l2 import EXECUTION_L2_MATERIALIZATION_INTERVAL_MS
 from qdl.runtime.stable_deployment import (
     V2_REALTIME_RAW_TOPIC,
     StableAcquisitionPlan,
@@ -206,6 +207,8 @@ class ProductionDemandManifest:
             if current is not None and current.source_policy_id != item.source_policy_id:
                 raise ValueError("one feed requirement cannot use conflicting source policies")
             deduped.setdefault(key, item)
+            if current is not None and item.consumer_grade is ConsumerGrade.EXECUTION:
+                deduped[key] = replace(current, consumer_grade=ConsumerGrade.EXECUTION)
             consumers_by_key.setdefault(key, set()).add(item.consumer_id)
         # Consumer IDs are audit inputs but do not alter a canonical source binding.
         del consumers_by_key
@@ -428,6 +431,11 @@ class ProductionCatalogBuilder:
             (item.venue, item.market, item.native_symbol)
             for item in demand.demands if item.feed is not FeedType.BAR
         }
+        execution_books = {
+            (item.venue, item.market, item.native_symbol)
+            for item in demand.demands
+            if item.feed in _BOOK_FEEDS and item.consumer_grade is ConsumerGrade.EXECUTION
+        }
         for item in demand.demands:
             key = (item.venue, item.market, item.native_symbol)
             try:
@@ -443,7 +451,8 @@ class ProductionCatalogBuilder:
             binding_id = self._binding_id(item)
             bindings.append(self._source_binding(binding_id, item, record))
             acquisitions.append(self._acquisition(
-                binding_id, item, execution_symbol=key in execution_symbols
+                binding_id, item, execution_symbol=key in execution_symbols,
+                execution_book=key in execution_books
             ))
         source = {
             "schema": _SOURCE_SCHEMA,
@@ -699,7 +708,8 @@ class ProductionCatalogBuilder:
 
     @staticmethod
     def _acquisition(
-        binding_id: str, item: ProductionDemand, *, execution_symbol: bool = True
+        binding_id: str, item: ProductionDemand, *, execution_symbol: bool = True,
+        execution_book: bool = False
     ) -> dict[str, Any]:
         if item.venue == "BINANCE":
             # The provider kind and the stream endpoint both follow the market:
@@ -833,6 +843,8 @@ class ProductionCatalogBuilder:
                 # it is never polled as if it were a Binance diff-depth book.
                 "snapshot_refresh_seconds": 30,
             }
+            if execution_book:
+                result["l2"]["materialized_snapshot_interval_ms"] = EXECUTION_L2_MATERIALIZATION_INTERVAL_MS
         if item.feed is FeedType.MARK_INDEX_PRICE:
             try:
                 component_quiet_after_ms = _MARK_INDEX_COMPONENT_QUIET_AFTER_MS[

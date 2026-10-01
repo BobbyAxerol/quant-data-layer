@@ -1,0 +1,435 @@
+{
+  "affected_runtime_delta_status": "PASS",
+  "ci": {
+    "jobs": [
+      "contract-tests",
+      "unit-tests",
+      "sdk-python310",
+      "kn-native-integration"
+    ],
+    "release_metadata_head_requires_checks": true,
+    "run_id": 36760348660,
+    "status": "PASS",
+    "tested_source_sha": "e366f752914db8d1d43cb03a970b0278635ba88d"
+  },
+  "classification": "Bounded affected Data Layer execution-readiness repair; production no-order consumer acceptance, not broker execution certification",
+  "cleanup": {
+    "legacy-retirement-result.json": {
+      "build_cache": "Shared BuildKit cache not pruned; no per-task ownership identified.",
+      "disk_note": "Concurrent host changes mean difference is not claimed as exact reclaimed bytes.",
+      "disk_used_after": 235294134272,
+      "disk_used_before": 235353243648,
+      "removed_containers": [
+        "query_v2_1",
+        "query_v2_2",
+        "stream_v2_active",
+        "stream_v2_passive",
+        "projector_v2",
+        "projector_v2_2",
+        "projector_v2_3",
+        "projector_v2_4",
+        "projector_v2_5",
+        "projector_v2_6"
+      ],
+      "removed_images": [
+        "sha256:37d7f5182ea170f5cc35967aabba0d7f0c1b4b934c12aa25a51ac79664b181f9",
+        "sha256:56d331db87d9c5ab8bfa8690491d7e69dfbb1661d824073d32bf3750cebac5f1",
+        "sha256:dd065fdf8c439ce9034bca47817e1e88ce0a69bbdbd24a2d1f6b0d2f6f693951"
+      ],
+      "retained_images": [],
+      "running_roles_changed": [],
+      "state": "EXACT_LEGACY_RETIREMENT_COMPLETE",
+      "timestamp_ns": 1790792967199966546,
+      "volumes_removed": false
+    },
+    "query-predecessor-cleanup.json": {
+      "disk_used_after": 219302334464,
+      "disk_used_before": 219302060032,
+      "reason": "Superseded unreferenced Query predecessor; exact active Query b40/rollback0ed now frozen by appliedpacket.",
+      "removed_image": "sha256:3dd54bfd8b9de0b143d317798ab9c63cebc502d01fe3cf6f513032d6484b5b11",
+      "state_or_container_mutation": false
+    },
+    "task-build-cache-cleanup.json": {
+      "disk_used_after": 232285339648,
+      "disk_used_before": 235431378944,
+      "logical_bytes_at_privileged_retry": 3123045441,
+      "note": "Unprivileged attempt stopped on root-owned compiler file. Exact task-only cache removed after checking no container mounts; no shared BuildKit prune.",
+      "removed_path": "execution-readiness-20260930/target",
+      "runtime_mutation": false
+    },
+    "unused-image-cleanup.json": {
+      "disk_used_after": 232098627584,
+      "disk_used_before": 232370102272,
+      "removed_images": [
+        "sha256:ba41b1f279d42998ecb6abf6cae32e55ef6d275e59c37498077b774edb7f01b4",
+        "sha256:579d578e30814192ae5d20c4f29b653b5c5bc173cfaad73f86e9c192dcb6aa6c",
+        "sha256:ed1ef88bb400bc262ffdec40589e210657757dc7f963c2f727cb86d4b8c4378a",
+        "sha256:389753b37c4f3935193acc739687c4a18c5b307f3ea6a427153f5689d31c9762",
+        "sha256:eec6388421845ef570cb3878145d0c5e0398fc44cc2a662805298295cfb0976a"
+      ],
+      "retained_query_predecessor": "sha256:3dd54bfd8b9de0b143d317798ab9c63cebc502d01fe3cf6f513032d6484b5b11",
+      "retention_reason": "Conservative existing Query predecessor retention; current repair does not change Query. Do not remove a potential named reader rollback while finishing release provenance.",
+      "running_roles_changed": [],
+      "timestamp_ns": 1790793275717377902,
+      "volume_or_shared_cache_changes": false
+    }
+  },
+  "component_tree_identity": {
+    "Cargo.lock": "8a193f6da07f4742d03043beff2a34f1062ccfff",
+    "Dockerfile.qdl-rust-runtime": "96e1a310e40903792d68d9252285b99f18c7460a",
+    "rust": "3f8bc79be7212377442218f231a95bc4e6d0bb73"
+  },
+  "date_utc": "2026-09-30",
+  "endpoint_report_sha256": "a7fa7ff9883a1a91f59315c3a5d1e3b08650e23c78a448f98fe92e16ed75b63b",
+  "evidence_sha256": {
+    "evidence/batch-result.json": "442a0d251e41abe3dc2bf2bbff6235cba80e2149df84a10f18f66386b7b1432c",
+    "evidence/candidate-image-attestation.json": "c9ef6963ab78717ca0f0fa10fef78ea8cc04a4715822c4967006ea74aa2628b1",
+    "evidence/consumer-final-300s/receipt.json": "a87ce6c156915b453291566ab95ed5a96f45ed7a4daf8198198210236d467499",
+    "evidence/consumer-final-300s/reviewed-summary.json": "2222f0945f9da6bb56e6c752e344aeed3bec0d5a9c302b2e3bad4ee37b5d898c",
+    "evidence/l2-source-result.json": "09f7b61120342ef6bcee0c333e6790922519e4602ee28eb5f73126ad96e2f2a1",
+    "evidence/legacy-retirement-result.json": "9ee640812502bdfa576b2ebf772b93e65237c7ba36a55216155781d53447cade",
+    "evidence/query-predecessor-cleanup.json": "787fd2d62d37371d077c7b8e515dad0314cc4a10011f4105d2e98583396eabb7",
+    "evidence/query-security-preflight.jsonl": "0e9e319a88bc735f02ab7944ee200e9b74b1ddcbebc26855e696a2e2a89b7454",
+    "evidence/query-security-reviewed.json": "74d4d8687b1559bf909dd3aa0239128d35f727b55e68f9950197d16ad2f9e1ea",
+    "evidence/query-security-sol-canonical.json": "9fb63a28225dec4960d89081f81cb68518cd47ea00fa558225c005840704254c",
+    "evidence/query-security-sol-followup.jsonl": "b53143b563572cd41849a9e5ed1cafe7b5ba33cc50eca44486add228f224fd09",
+    "evidence/query-security-sol-lineage-v2.jsonl": "7a83084af9a58699d1142ba7081ee38115dcf6eeb2debf6a67b6df19b61dc76e",
+    "evidence/query-security-trade-attribution.json": "af7444c5deef7fbd6b28368d17305b132c1ca702a3efb65aaa7d526ba27bd40a",
+    "evidence/rollout-state.json": "4d77647f4e54009dc855fda665434eec9297dacf61b473ed791299ce9dd8101e",
+    "evidence/task-build-cache-cleanup.json": "0183a57a4a984ffd97809c7925196c3a3a2c85f8c25242ab21b7b6ba39d153a7",
+    "evidence/trade-rejection-provider-attribution.json": "b61671093444985c054a21309a7651a6d980a17b1526321d19ef8a3b756bbc56",
+    "evidence/typed-preflight-post-roll.jsonl": "e8187f085f12c073570b9d01868641a8239b4d90e74c5695d5f64464aeeebf68",
+    "owner-move-r1/receipt.json": "09a265f94fc38543a13afd49461643ac6e25909f74b5dd088d47d239fdac2326",
+    "throughput-rf3-matched-r1/receipt.json": "0c1165c87a79d6d53c6f8d5f23d4abf8094bb28b075faac53d505f6ebd8f9d57"
+  },
+  "gates": {
+    "R1": "PASS exact aliases/role digests and protected start times",
+    "R2": "PASS absolute batch deadline regressions; existing transaction ordering retained",
+    "R3": "PASS authentic four-book cold/rebalance recovery; real Kafka committed/resume/cancel; hostile hint pressure bounded",
+    "R4": "PASS bounded RF3 production-cap replay4k/s30s +5k/s30s +drain,330000 offsets accounted; not indefinite sustained/fanout claim",
+    "R5": "PASS128 typed reads:126eligible,2valid last-trade refusals matched provider history; all22MARK reads usable",
+    "R6": "PASS bounded fail-closed recovery; paper60/sandbox22 READY on11distinct heartbeats each; observed disconnects retained",
+    "R7": "PASS packaged binary attestation, candidate/rollback Compose validation, actual rollout. No live downgrade-return in this repair; unchanged state schema and prior KN paired rollback retained."
+  },
+  "inherited": {
+    "certificate_sha256": "262f0123901501f7b8cdea669684b350c5dac96c97c8002551143a48deeef59d",
+    "current_post_v220_readers": "fba8863 realm/diagnostic corrections and inverse entitlement tracked by this release-set map and R5; not old reader binary",
+    "release": "v2.2.0",
+    "scope": "Unchanged public schemas, KN read/storage architecture, history/reference catalogue and historical workload envelope only; does not override failures or describe current binary as v2.2.0."
+  },
+  "limits": [
+    "No p99 for snapshot groups with fewer than100 samples.",
+    "Paper cache observed176s after Redis selection correction; heartbeat300s.",
+    "No 24/7 uptime, arbitrary50-alpha or indefinite5000/s certification.",
+    "Two OKX TRADE refusals attributed by exact public history ID/time; no stale price accepted.",
+    "Binance3d and VN/DNSE V2 explicitly excluded by owner.",
+    "No exact per-event Redis commit timestamp distribution from polling.",
+    "Current native socket disconnect reason not logged; four recovery incidents not mislabelled zero interruption.",
+    "Inherited ignored Redis50000ns test timing race is not counted PASS; provider admission unchanged.",
+    "Sandbox64entitlements but22active demand, not64active subscriptions.",
+    "Querysecurityreadback125/128usable:2quietlasttrade,1newtradepropagation. CanonicalCreateTime is not commitvisibility. Follow-up7/10usable retained separately; not always-eligible execution pricing."
+  ],
+  "publication_requires": "feature->dev CI->main ancestry and immutable release workflow; this file alone is not publication",
+  "recovery": {
+    "market_cache_flush": false,
+    "new_topics": false,
+    "owner_move_ms_including_5000ms_stability": 7830.931890988722,
+    "production_offsets_reset": false,
+    "trade_or_order_mutation": false
+  },
+  "release": "v2.2.1",
+  "rollback": {
+    "cores": "sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79",
+    "ingestors": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+    "packet": "v2.2.1-0e00c81-recovery/rollback.compose.json",
+    "preserve": "original per-role config/TLS/state/group/offsets; disable feedback clients before removing only added feedback ACLs",
+    "query": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+    "query_packet": "v2.2.1-e366f75-query-security/rollback.compose.json"
+  },
+  "runtime": [
+    {
+      "before_image": "sha256:3b4ee780f2d41625feb2ee3337338e1f89717942822685e6caaf08206c309d72",
+      "before_started_at": "2026-09-30T14:39:42.813261759Z",
+      "image": "sha256:3b4ee780f2d41625feb2ee3337338e1f89717942822685e6caaf08206c309d72",
+      "name": "/ts-p183-p183_market_data-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "p183_market_data",
+      "started_at": "2026-09-30T14:39:42.813261759Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "before_started_at": "2026-09-30T05:00:36.758628771Z",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "/qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "ingestor_okx_swap",
+      "started_at": "2026-09-30T17:45:03.984169624Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79",
+      "before_started_at": "2026-09-30T04:56:09.10107135Z",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "/qdl_v2_stable_candidate-rust_core_3-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "rust_core_3",
+      "started_at": "2026-09-30T17:45:38.534537186Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79",
+      "before_started_at": "2026-09-30T04:55:59.964837196Z",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "/qdl_v2_stable_candidate-rust_core_2-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "rust_core_2",
+      "started_at": "2026-09-30T17:46:23.058376424Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79",
+      "before_started_at": "2026-09-30T04:55:50.317257108Z",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "/qdl_v2_stable_candidate-rust_core-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "rust_core",
+      "started_at": "2026-09-30T17:46:56.312111099Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a",
+      "before_started_at": "2026-09-30T02:41:30.438040199Z",
+      "image": "sha256:65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a",
+      "name": "/qdl_v2_stable_candidate-stream_kn_2-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "stream_kn_2",
+      "started_at": "2026-09-30T02:41:30.438040199Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a",
+      "before_started_at": "2026-09-30T02:41:27.075445103Z",
+      "image": "sha256:65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a",
+      "name": "/qdl_v2_stable_candidate-stream_kn_1-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "stream_kn_1",
+      "started_at": "2026-09-30T02:41:27.075445103Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+      "before_started_at": "2026-09-30T02:39:32.257181634Z",
+      "image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
+      "name": "/qdl_v2_stable_candidate-query_kn_2-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "query_kn_2",
+      "started_at": "2026-09-30T23:29:17.340927437Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959",
+      "before_started_at": "2026-09-30T02:38:12.148941229Z",
+      "image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
+      "name": "/qdl_v2_stable_candidate-query_kn_1-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "query_kn_1",
+      "started_at": "2026-09-30T23:27:49.661572186Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "before_started_at": "2026-09-30T02:37:27.760443157Z",
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "name": "/qdl_v2_stable_candidate-market_projector_2-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "market_projector_2",
+      "started_at": "2026-09-30T02:37:27.760443157Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "before_started_at": "2026-09-30T02:36:59.050411241Z",
+      "image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "name": "/qdl_v2_stable_candidate-market_projector_1-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "market_projector_1",
+      "started_at": "2026-09-30T02:36:59.050411241Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:1037c56a48d65156bb64136db78325678e4940b51bc12dbee050162cf9549217",
+      "before_started_at": "2026-09-30T12:53:58.890843635Z",
+      "image": "sha256:1037c56a48d65156bb64136db78325678e4940b51bc12dbee050162cf9549217",
+      "name": "/market_data_service",
+      "oom": false,
+      "restarts": 1,
+      "role": "market_data",
+      "started_at": "2026-09-30T12:53:58.890843635Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "before_started_at": "2026-09-27T07:57:13.649366033Z",
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "name": "/qdl_v2_stable_candidate-binance_bar_edge-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "binance_bar_edge",
+      "started_at": "2026-09-27T07:57:13.649366033Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f",
+      "before_started_at": "2026-09-27T05:38:27.027889454Z",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "/qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "ingestor_binance_usdm",
+      "started_at": "2026-09-30T17:44:26.540267501Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "before_started_at": "2026-09-27T05:29:58.000340326Z",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "name": "/qdl_v2_stable_candidate-market_cache-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "market_cache",
+      "started_at": "2026-09-27T05:29:58.000340326Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "before_started_at": "2026-09-17T06:46:05.30391214Z",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "/qdl_v2_stable_candidate-kafka3-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "kafka3",
+      "started_at": "2026-09-17T06:46:05.30391214Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "before_started_at": "2026-09-17T09:54:28.712963177Z",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "/qdl_v2_stable_candidate-kafka2-1",
+      "oom": false,
+      "restarts": 1,
+      "role": "kafka2",
+      "started_at": "2026-09-17T09:54:28.712963177Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "before_started_at": "2026-09-17T09:51:22.711409533Z",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "/qdl_v2_stable_candidate-kafka1-1",
+      "oom": false,
+      "restarts": 5,
+      "role": "kafka1",
+      "started_at": "2026-09-17T09:51:22.711409533Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "before_started_at": "2026-09-16T06:38:55.588316335Z",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "name": "/qdl_v2_stable_candidate-stable_redis-1",
+      "oom": false,
+      "restarts": 0,
+      "role": "stable_redis",
+      "started_at": "2026-09-16T06:38:55.588316335Z",
+      "status": "running"
+    },
+    {
+      "before_image": "sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65",
+      "before_started_at": "2026-09-15T04:31:56.058490893Z",
+      "image": "sha256:dbfb57844977513ae7ec0a4782e04da0213028a789753c6b991f26043b615d65",
+      "name": "/data_layer_service",
+      "oom": false,
+      "restarts": 0,
+      "role": "data_layer",
+      "started_at": "2026-09-15T04:31:56.058490893Z",
+      "status": "running"
+    }
+  ],
+  "schema": "qdl.release.affected-delta-certificate.v1",
+  "sdk": {
+    "contains_service_internals": false,
+    "dependencies": [
+      "grpcio>=1.70.0,<2.0.0",
+      "httpx>=0.28.0,<1.0.0",
+      "protobuf>=6.31.1,<7.0.0",
+      "pydantic>=2.0.0,<3.0.0",
+      "PyJWT[crypto]>=2.15.1,<3.0.0"
+    ],
+    "generated_contract_digest": "2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624",
+    "name": "qdl-sdk",
+    "python_requires": ">=3.10",
+    "reproducible_timestamp": "2020-01-01T00:00:00Z",
+    "schema": "qdl.sdk.release.v1",
+    "sdk_source_digest": "9930844e1522e138465900601d3f382631af22d8567623608e5f8dc5fee3790c",
+    "version": "2.0.6",
+    "wheel": "qdl_sdk-2.0.6-py3-none-any.whl",
+    "wheel_sha256": "d44fbf559c0c7eb52abf2a40091bcecc9e5ea025fed9c9b0bbbc6db6329395ad"
+  },
+  "security_packaging": {
+    "candidate_image": "sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65",
+    "candidate_source": "e366f752914db8d1d43cb03a970b0278635ba88d",
+    "ci": "36760348660 all4jobsPASS on e366f752914db8d1d43cb03a970b0278635ba88d",
+    "packaged_auth_sdk_tests": {
+      "fail": 0,
+      "pass": 32
+    },
+    "query_rollout": "Owner approved; onlyquery_kn_1/2 recreated; originalconfig/TLS/state retained; bothhealthy,128typedreadback withstrictquality refusals.",
+    "readback": {
+      "attempted": 128,
+      "auth_manifest_errors": 0,
+      "refusal_analysis": "query-security-reviewed.json",
+      "refusals": 3,
+      "usable": 125
+    },
+    "runtime_deployed": true,
+    "scope": "No assertion that unchanged Python/V1/TS images have these dependency fixes.",
+    "source_floor": {
+      "PyJWT": "2.15.1",
+      "urllib3": "2.8.0"
+    },
+    "targeted_auth_sdk_tests": {
+      "fail": 0,
+      "pass": 32
+    }
+  },
+  "source_components": {
+    "bar_edge": "4fe7e92",
+    "native_market_projector": "02cd827",
+    "python_query": "e366f752914db8d1d43cb03a970b0278635ba88d",
+    "query_stream": "fba8863",
+    "rust_behavior_commit": "fbbe34e",
+    "rust_image_source": "0e00c817289ce32ea767cea002c859814349fc72",
+    "sdk_packaging_commit": "e366f752914db8d1d43cb03a970b0278635ba88d"
+  },
+  "status": "PASS",
+  "tests": {
+    "sdk_packaging": {
+      "fail": 0,
+      "pass": 2,
+      "runtime_change": false
+    }
+  }
+}

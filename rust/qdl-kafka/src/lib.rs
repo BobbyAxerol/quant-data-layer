@@ -909,13 +909,30 @@ impl KafkaEventSource {
         config: &KafkaTransportConfig,
         topics: &[&str],
     ) -> Result<Self, KafkaTransportError> {
+        Self::with_offset_reset(config, topics, "earliest")
+    }
+
+    /// Control notifications are session-fenced and reissued while unresolved.
+    /// A new control group starts live; an existing group resumes its checkpoint.
+    pub fn new_live_control(
+        config: &KafkaTransportConfig,
+        topics: &[&str],
+    ) -> Result<Self, KafkaTransportError> {
+        Self::with_offset_reset(config, topics, "latest")
+    }
+
+    fn with_offset_reset(
+        config: &KafkaTransportConfig,
+        topics: &[&str],
+        reset: &str,
+    ) -> Result<Self, KafkaTransportError> {
         if topics.is_empty() || topics.iter().any(|topic| topic.trim().is_empty()) {
             return Err(KafkaTransportError::Configuration(
                 "at least one non-empty topic is required".into(),
             ));
         }
         let mut client = config.client_config()?;
-        config.configure_group_consumer(&mut client);
+        config.configure_group_consumer_with_offset_reset(&mut client, reset);
         let consumer: StreamConsumer = client.create()?;
         consumer.subscribe(topics)?;
         Ok(Self { consumer })
@@ -968,6 +985,13 @@ impl KafkaEventSource {
 
     pub fn checkpoint(&self) -> Result<(), KafkaTransportError> {
         self.consumer.commit_consumer_state(CommitMode::Sync)?;
+        Ok(())
+    }
+
+    /// Only for idempotent, periodically reissued control hints. Submission is
+    /// not a durable acknowledgement and must never acknowledge market data.
+    pub fn checkpoint_hint(&self) -> Result<(), KafkaTransportError> {
+        self.consumer.commit_consumer_state(CommitMode::Async)?;
         Ok(())
     }
 }
@@ -1178,5 +1202,143 @@ mod tests {
             config.validate(),
             Err(KafkaTransportError::Configuration(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod control_broker_tests {
+    use super::*;
+
+    async fn send(producer: &FutureProducer, topic: &str, payload: &str) {
+        producer
+            .send(
+                FutureRecord::to(topic)
+                    .partition(0)
+                    .key("test-control")
+                    .payload(payload)
+                    .headers(OwnedHeaders::new().insert(Header {
+                        key: EVENT_ID_HEADER,
+                        value: Some(payload.as_bytes()),
+                    })),
+                Timeout::After(Duration::from_secs(5)),
+            )
+            .await
+            .expect("isolated control delivery");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires explicitly provisioned isolated readiness Kafka and disposable TLS"]
+    async fn live_control_committed_only_resume_and_cancel() {
+        let bootstrap =
+            std::env::var("QDL_CONTROL_TEST_BOOTSTRAP").expect("explicit isolated broker");
+        assert_eq!(bootstrap, "qdl-readiness-kafka:9094");
+        let root = std::env::var("QDL_CONTROL_TEST_TLS").expect("disposable TLS root");
+        let topic = "readiness.control-test";
+        let config = KafkaTransportConfig {
+            bootstrap_servers: bootstrap,
+            client_id: "readiness-control-test".into(),
+            group_id: "readiness-control-test-group".into(),
+            request_timeout: Duration::from_secs(10),
+            tls: KafkaTlsConfig {
+                ca_location: format!("{root}/ca.crt"),
+                certificate_location: format!("{root}/client.crt"),
+                key_location: format!("{root}/client.key"),
+                key_password: None,
+            },
+        };
+        let mut producer_config = config.client_config().unwrap();
+        producer_config.set("transactional.id", "readiness-control-test-producer");
+        let producer: FutureProducer = producer_config.create().unwrap();
+        let timeout = Timeout::After(Duration::from_secs(10));
+        producer.init_transactions(timeout).unwrap();
+        producer.begin_transaction().unwrap();
+        send(&producer, topic, "old-before-subscribe").await;
+        producer.commit_transaction(timeout).unwrap();
+
+        let source = KafkaEventSource::new_live_control(&config, &[topic]).unwrap();
+        // position() may remain Invalid until the first delivered message. Prove
+        // startup with a bounded fresh-marker handshake instead of assuming it.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "live startup handshake timeout"
+            );
+            producer.begin_transaction().unwrap();
+            send(&producer, topic, "startup-handshake").await;
+            producer.commit_transaction(timeout).unwrap();
+            if let Ok(received) =
+                tokio::time::timeout(Duration::from_millis(250), source.next()).await
+            {
+                assert_eq!(
+                    received.unwrap().0.payload,
+                    b"startup-handshake",
+                    "new control group must skip pre-subscription history"
+                );
+                break;
+            }
+        }
+        // Drain only explicitly generated startup markers, never data under test.
+        while let Ok(received) =
+            tokio::time::timeout(Duration::from_millis(250), source.next()).await
+        {
+            assert_eq!(received.unwrap().0.payload, b"startup-handshake");
+        }
+        producer.begin_transaction().unwrap();
+        send(&producer, topic, "aborted-hint").await;
+        producer.abort_transaction(timeout).unwrap();
+        producer.begin_transaction().unwrap();
+        send(&producer, topic, "committed-hint").await;
+        producer.commit_transaction(timeout).unwrap();
+        let (record, cursor) = tokio::time::timeout(Duration::from_secs(10), source.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.payload, b"committed-hint");
+        source.checkpoint_hint().unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let committed = source.consumer.committed(timeout).unwrap();
+            if committed.elements().iter().any(|p| {
+                p.topic() == topic && p.offset() == Offset::Offset(cursor.offset as i64 + 1)
+            }) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "hint checkpoint not durable yet"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        drop(source);
+        // Published while the receiver is down: an existing group must resume,
+        // not apply latest reset a second time and skip this hint.
+        producer.begin_transaction().unwrap();
+        send(&producer, topic, "resume-hint").await;
+        producer.commit_transaction(timeout).unwrap();
+        let resumed = KafkaEventSource::new_live_control(&config, &[topic]).unwrap();
+        let (record, _) = tokio::time::timeout(Duration::from_secs(15), resumed.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.payload, b"resume-hint");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), resumed.next())
+                .await
+                .is_err()
+        );
+        producer.begin_transaction().unwrap();
+        send(&producer, topic, "after-cancelled-receive").await;
+        producer.commit_transaction(timeout).unwrap();
+        let (record, _) = tokio::time::timeout(Duration::from_secs(10), resumed.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.payload, b"after-cancelled-receive");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), resumed.next())
+                .await
+                .is_err()
+        );
     }
 }

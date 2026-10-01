@@ -41,3 +41,6 @@ path = "src/bin/qdl-phase91-canary-rehearsal.rs"
 [[bin]]
 name = "qdl-phase92-primary-rehearsal"
 path = "src/bin/qdl-phase92-primary-rehearsal.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

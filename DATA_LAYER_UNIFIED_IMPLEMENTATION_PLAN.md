@@ -60959,3 +60959,1287 @@ Ruff pass, but hosted Actions fail before checkout without job logs. Owner was
 asked for UI annotation; fine-grained PAT Checks limitation was corrected in
 TS plan. TS is not merged, and its active feature/upgrade worktrees remain.
 Do not call the combined two-repository synchronization complete yet.
+
+<a id="ts-p18e-okx-inverse-sandbox-readiness"></a>
+
+### TS P18.3E Additive OKX Inverse Sandbox Readiness (2026-09-30)
+
+Status: OWNER_APPROVED / IN_PROGRESS / NO_QDL_RUNTIME_CHANGE_YET.
+Owner resumed the TS closure plan at
+/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md
+anchor ts-v2-p18-3e-closure-plan-20260930. This is its dependency repair, not a
+new Data Layer phase or a rerun of KN certification. Follow the KN architecture
+review sections18.4/18.12/18.13 and Post-release consumer realms; TS native Risk
+and broker money acceptance remain TS-owned.
+
+Scope: exact OKX SWAP BTC-USD-SWAP execution read dependencies for
+trading-system.sandbox.stable. Derive the minimal QUOTE/MARK_INDEX_PRICE/L2
+snapshot+delta set from actual TS demand; add TRADE only if required. No BAR,
+universe, new service, alpha activation, live order, V1 or DNSE change.
+Preserve current60 TS products and all other consumer entitlements. Compile
+catalog/acquisition, sandbox manifest/JWT revision and sealed TS binding together;
+do not widen paper/live identity scope or reuse their credentials.
+
+Source finding: parse_public_instrument currently prioritizes ctValCcy as base
+asset when baseCcy is empty. For inverse BTC-USD-SWAP, USD is contract value
+currency, not underlying BTC. Correct derivative family/base identification and
+test exact units/settlement/multiplier/identity, preserving linear/spot and existing
+dated contracts. This parser is used by catalog/inventory compilation, not the
+Query hot path; no reader image rebuild follows automatically from this source
+change. Generated runtime metadata must be correct before any feed activation.
+
+Tests: focused OKX instrument/production catalog/realm/binding regressions,
+including wrong product/currency, stale/gap, no cross-realm entitlement promotion.
+Use actual bounded provider metadata with capture hash outside Git. After packet
+render, test exact inverse routes through both readers and real sandbox identity
+to candidate Redis/Risk, plus unchanged60-route entitlement smoke. No whole299
+C2 or5000/s rerun absent an affected shared hot-path change. Current certified
+scope is inherited, never extended to inverse without its own real evidence.
+
+Runtime decision boundary: prepare an additive immutable config packet and exact
+per-role diff first; reuse current binaries when supported. Only roles whose
+config actually changes may roll with existing mounts/state/offsets and per-role
+rollback. No Kafka reset, cache flush, SQLite deletion, topology or authority
+redesign. Keep Kafka-native materialization, never legacy spool. Disable inverse
+entry and reconcile owned exposure before removing its binding on rollback.
+
+Git: canonical /home/bobby/data_layer now fix/okx-inverse-sandbox-readiness from
+dev7ee4af0, no new worktree. Owner's existing plan edits (4insertions/1deletion)
+preserved separately; only this appended journal may be staged by this task.
+Original patch SHA9f915998b24e6c7f80a25de9e72c9fb2c6657e4293bb6e012069266f0b400696.
+No push/merge/tag authorized by preparation. Cleanup only owned disposable test
+resources; retain active and named rollback images and all runtime data.
+
+#### Metadata correction verification
+
+Before patch: 12 instrument test methods with four failing subcases demonstrate
+inverse USD incorrectly used as underlying and dated/option expiry/side used as
+quote currency. After patch, the existing immutable Query image0ed57643ae40 with
+read-only source mount, network none and bounded1GiB/2CPU ran:
+`python -m unittest tests.test_phase1_instrument_domain tests.test_production_catalog tests.test_phasec36_liquid_crypto_features -q`
+Result:27PASS/0FAIL. Fixtures are contract evidence, not broker certification.
+Underlying/quote come from instrument family; ctValCcy remains independently
+preserved, settlement BTC and contract multiplier100 remain exact. Native IDs
+and registry identity are unchanged. No Query hot-path or Rust change.
+
+One bounded public OKX metadata GET returned HTTP403 before capture; no authentic
+metadata receipt or inverse readiness is claimed. Runtime sandbox manifest was
+read successfully: revision1, max_streams50, existing policies unchanged. New
+inverse demand must be additive to sandbox only and compiled together with its
+sealed binding; do not clone additional scope into paper/live. TS bridge derives
+active demanded feeds from bindings, so inverse BAR is not implicitly required.
+
+Disposable test clients auto-removed, no image built or runtime changed for this
+slice. Existing active and rollback images retained; no broad cleanup. Owner plan
+hunks remain outside this commit. Inverse activation and authentic E03 still open.
+
+#### Additive inverse demand and authentic metadata compile
+
+Added config/v2/okx-inverse-sandbox-demand.yaml, four exact execution dependencies
+for trading-system.sandbox.stable: QUOTE, MARK_INDEX_PRICE, BOOK_SNAPSHOT,
+BOOK_DELTA. This is acquisition demand, not activated entitlement. QUOTE acquisition
+uses existing schema defaults; its strict consumer policy remains manifest-owned.
+First test run rejected two unsupported QUOTE demand keys; removed those keys,
+not the validation. Existing paper/live demand files remain unchanged.
+
+Tests:29PASS/0FAIL across test_okx_inverse_sandbox_demand,
+test_phase1_instrument_domain, test_production_catalog and
+test_phasec36_liquid_crypto_features. New regression checks additive preservation,
+four-feed sandbox ownership, inverse currencies, native books contiguous sequence
+and exact BTC-USD index mapping. No certification claim for mock provider fixtures.
+
+Existing container OKX client succeeded with one-attempt public instruments GET;
+host403 is not evidence of unsupported inverse. Authentic capture SHA256:
+82517a7c7f54f80673476046de2a74e21854a83b455905d5175aa68083ffa666.
+Capture/receipt stored outside Git under TS p183e-20260930-dependencies. Offline
+compile against that capture PASS: UID8482b54b-6d9d-5aad-abe8-e22447d183a1,
+baseBTC/quoteUSD/settleBTC, multiplier100USD, tick0.1, quantity step0.1.
+Acquisition SHA2560b88d3e92cf48e8874d18ab955883433ac0a2981d2a444ebe6a31f9d7b95072d.
+Two compile attempts hit capture file0600 permission before parsing; final client
+uses the host file-owner UID1001, read-only mount, network none, no added capability.
+All clients --rm; no new image, container, network or volume retained.
+
+Remaining: additive runtime catalog/acquisition and sandbox revision/binding packet,
+consumer policy/auth regressions, per-role diff/rollback and real inverse readback.
+No runtime QDL mutation, order, reset, release, push or merge in this slice.
+
+#### Sandbox packet compiler scope (in progress)
+
+Implement a pure additive packet compiler using the existing catalog, acquisition,
+ConsumerManifestLoader and ConsumerRouteBinding contracts. Inputs are exact current
+public runtime artifacts plus bounded authentic metadata and reviewed inverse demand.
+Preserve all old binding/source IDs and policies; reject conflicting/duplicate scope,
+wrong realm, missing policy template, non-execution/fallback drift. New route policies
+inherit the corresponding same-venue/product template, not hand-written relaxed SLA.
+Seal a new configuration generation digest; never reuse the old certificate digest
+as proof that inverse passed. Output PREPARED_NOT_ACTIVATED only. Unit negatives and
+real mounted-config dry-run must precede any reader/core/ingestor packet apply.
+
+#### Sandbox compiler verification and mounted-config dry-run
+
+Implemented qdl/runtime/sandbox_extension.py and
+scripts/prepare_sandbox_read_extension.py. Both are offline control-plane code;
+no reader hot-path/image change. Packet preserves previous catalog/acquisition rows,
+source IDs,60 products and quota; adds only four inverse sandbox products. Explicit
+realm/subject/revision, same-venue template, exact coverage/collateral, fail-closed
+policy and duplicate-application checks reject invalid extensions. Configuration
+provenance uses a NEW digest with PREPARED_NOT_ACTIVATED_NOT_CERTIFIED status;
+it does not inherit an execution certificate for the new inverse product.
+
+Test commands in existing immutable images, source RO/network none:
+- unittest sandbox_extension + inverse_demand + instrument_domain +
+  production_catalog + phasec36_liquid_crypto_features + trading_consumer_scope:
+ 39PASS/0FAIL before the final subject/revision negative was added.
+- final test_sandbox_extension:6PASS/0FAIL (includes subject/revision negative).
+- test_consumer_key_realms + test_consumer_realm_execution_path:11PASS/0FAIL.
+- Ruff changed three files --isolated --no-cache:PASS. Default Ruff failed parsing
+  existing requires-python="^3.10" in pyproject; no unrelated config edit made.
+
+Four exact public mounted inputs copied to protected external qdl-inputs (no keys).
+prepare_sandbox_read_extension ran offline against real captured metadata and those
+inputs; all loaders PASS. Output qdl-prepared/inverse-r2:64 requirements, sandbox
+revision2, binding SHA81371d71e5e618d4331124e597e916aa5d13aeb40317a334717cb02b7e583b75.
+Full input/output file hashes in receipt.json. TS independently parsed the packet
+and retained the exact binding/hash using its SDK, source mounted read-only.
+No runtime file was replaced. Public runtime key/type census only; one inspection
+request that would have printed arbitrary scalar values was rejected by tools;
+replaced it with a keys/counts-only read, no secret output.
+
+Rollout preparation must also extend the KN gateway/projector bundle (not just
+Query YAML), and compile native core/OKX acquisition additions with existing
+performance overrides/authority/offsets retained. Existing OKX ingestor has99 physical
+entries; compiler must measure the new bounded connection split rather than raise
+connection quotas implicitly. No extra role/container may be created. Retirement,
+cache reset and whole-catalogue C2 are not part of this repair.
+All disposable test clients removed. No image built, no runtime restarted, no broker
+order, push, merge or release. TS E03/E04/E09 remain incomplete.
+
+#### Native and KN config preparation checkpoint
+
+Used StableAcquisitionPlan.core_config/native_ingestor_configs with exactly the
+four new binding IDs, preserving current authority and excluding all old mappings
+from generated additions. Result native-additions.json SHA256:
+9ec45611f7323fe1ce1f2f263bd35f1b72ca46d3b014a56b902df9cebecde23d.
+Each core695 ->699 physical mappings; OKX ingestor99 ->103. These are entries,
+not a claim of103 connections; retain existing per-connection cap/lane splitting.
+All old source/subscription IDs disjoint from additions. No default compiler tuning
+is applied to existing roles: append the reviewed rows only, keep current headers.
+
+KN bundles rendered using scripts.kn_gateway_bundle.compile_bundle. Every old
+catalog binding compared exactly equal to generated counterpart. Projector catalog
+712 ->716, six manifests unchanged. Stream catalog712 ->716, twelve identities
+retained, only trading-system.sandbox.stable replaced with revision2/64 requirements.
+Projector new bundle hash6d5b1734594c929ccf8651b69796e58bf099785991ecee828422251950e25f36;
+Stream c5d964c4af7c876402e3f30b9fe0792828f5d1ae5259e67f9c4b0802ac4e1861.
+Raw file hashes and original bundle hashes: qdl-prepared/inverse-r2/kn-bundle-diff.json.
+Physical market realm remains paper; no paper/live workload entitlement change.
+
+Safety: raw protected config copy was rejected because it might include secrets.
+Did not bypass: inspected the documented non-secret authority schema, exported
+only allowlisted public authority/instrument fields plus original file hashes;
+separately validated gateway bundle schema/public manifest fields before export.
+No credentials, JWT keyring, private keys, password or runtime env were exported.
+
+Next application packet must bind the exact current image/env/mount/config hashes,
+retain rollback for three cores, one OKX ingestor, two KN projectors and four KN
+readers. No Binance ingestor/BAR edge/V1/Kafka/Redis configuration or offset reset.
+Reader catalog and KN bundles must converge before inverse source publication;
+then hand off sandbox manifest revision to candidate TS market service only.
+Do not call prepared mappings real feed readiness or E03 money evidence. All packet
+artifacts are outside Git, no runtime file changed by this checkpoint. Tests used
+existing images; all --rm clients gone; no new images/cache or cleanup required.
+
+#### Approved dependency runtime application packet (2026-09-30)
+
+Authority: owner resumed the critical-path dependency repair plan. Apply only the
+prepared additive inverse market-read configuration; no broker order from this packet.
+Verified all ten current Compose services resolve the exact current image,
+environment, command and bind mounts (no drift). Reuse those existing Compose files,
+no image build or new service. Baseline projector1 restart count1, all other nine0,
+all OOMfalse; do not misreport the existing restart as caused by this packet.
+
+Exact role/image retention and rollback (same images, restore original config):
+- rust_core/rust_core_2/rust_core_3: f2040ac9e9380d067e8bcb4c965b1d7ea39c181c08993b7dba1b096337f7ca79.
+- ingestor_okx_swap and market_projector_1/2: 7fe348060734e4f51824b02faed7020465bb8dc754ad5299cb88befba7f9f69f.
+- query_kn_1/2: 0ed57643ae40087fe7d35ec04a778b2c8847d520f02aa0394a87b71dcdbeb959.
+- stream_kn_1/2: 65918a656dcb92ab92b687a92195caa5642a185dfdc60c4bd3ebbc702609c09a.
+
+Before writes: compare each original hash to preparation receipt, validate public
+schema and store exact original bytes/mode/owner in protected rollback directory.
+Atomically replace catalog/acquisition, KN projector+stream bundles, sandbox manifest,
+and append four native mappings to each core/OKX config, preserving other fields.
+Only OKX ingestor config_revision follows the new acquisition revision; session
+checks use each envelope.config_revision, not a global assumed Binance revision.
+
+Roll sequentially: projectors, Query, Stream, cores, then OKX ingestor last so no
+new source publishes before all reducers/readers know it. Existing all60 routes
+retain requirements, but catalog-bound old cursors may expire and resnapshot as
+specified by v3; no relaxation or fabricated continuity. Sandbox revision1 tokens
+will fail after manifest2 activates until candidate market handoff. This is an
+expected bounded no-order interruption, not permission to use stale cached prices.
+Observe each role startup/restart/OOM and old feed progress; abort and restore
+config/image packet on sustained source/identity/offset corruption or failed startup.
+New inverse market writes use existing Kafka/native cache pipeline only. Never reset
+Kafka, cache, offsets, Redis, SQLite, V1 or touch Binance ingestor/BAR edge or broker
+mode. After reader convergence, change only ts-p183 market config/binding/JWT revision
+and selected inverse symbol, preserving its separate Redis/cursor namespace.
+
+Application still pending at this journal checkpoint. No inverse execution
+certification exists until actual Query/Stream -> candidate Redis/Risk readback.
+
+#### Inverse runtime application and actual readback result
+
+Applied the nine backed-up public configuration files and recreated exactly the
+approved ten roles on their existing immutable images; no image build, offset
+reset, cache deletion or topology change. Catalog12/716 bindings and sandbox
+manifest2/64 requirements are active. Old60 requirement bodies unchanged.
+Rollback files: p183e-20260930-dependencies/qdl-runtime-rollback-inverse-r2.
+Stream/core/OKX recreation receipt: qdl-role-rollout.json. Projector startup
+required rebalance before progress resumed; no claim of uninterrupted service.
+A Query2 verifier compared environment-list ordering and stopped; dictionary
+comparison confirmed equality, so Query2 was not recreated again.
+
+Actual SDK sandbox readback on both Query replicas:8/8 PASS, four inverse feeds,
+complete/no-gap/eligible. First QUOTE calls125.76/134.18ms include connection setup;
+MARK8.39/15.08ms, snapshot23.44/23.50ms, delta10.08/9.23ms. These are single-call
+samples, NOT percentiles or broad latency certification. MARK lineage is existing
+native execution live view, not substituted USDT data or direct REST fallback.
+Candidate TS market recreated alone with same5dd12956 image, sandbox revision2,
+new sealed digest and inverse symbol; shared TS market and order services unchanged.
+Actual Redis candidate observation:12/12 heartbeat READY over55.86seconds,22/22
+session-ready. Stored eligibility is not guaranteed eligibility at a later read.
+Read-only Risk MARKET/LIMIT check PASS; L2_LIMIT rejected43.445second snapshot
+against intent5second freshness. Investigate snapshot selection without relaxing
+Risk or claiming inverse order certification. No order submitted in this slice.
+
+Evidence: inverse-two-reader-readback.json, inverse-consumer-observation.json,
+market-inverse-rollout.json under the dependency evidence root. Stable published
+release remains v2.2.0; no push/merge/release. Active images also serve rollback
+with restored public configs. No disposable image created; broad cleanup deferred
+while rollback artifacts are needed. E03 remains9/24, not certified by feed reads.
+
+#### Inverse L2 Execution Cadence Correction (2026-09-30)
+
+Scope remains TS P18.3E approved dependency repair, not a new phase. Actual
+candidate Redis/Risk six samples: MARKET/LIMIT6PASS, L2_LIMIT1PASS/5STALE under
+unchanged5s intent gate; snapshot age4.109->14.133s, cache call2.69..9.42ms.
+Prepared inverse native map omitted materialized_snapshot_interval_ms, falling
+back to provider30s. Candidate TS snapshot read cadence also30s. Neither is a
+provider support failure. Reuse existing1s execution-L2 materialization policy;
+keep provider refresh30s, original event time, native sequence/generation and
+Kafka-native path. Do not substitute BOOK_DELTA for a complete snapshot.
+
+Fix shared catalog compiler to derive hot cadence from execution-grade physical
+book demand; both aliases must agree, including mixed consumer grades and
+lexical dedup order. Research-only books unchanged. Test inverse/linear,
+snapshot/delta alias equality, grade dedup and no unrelated acquisition changes.
+No reader image rebuild required: config-only core3 cadence correction, exact
+native-symbol/source match and backup, same Rust image; rollback only changed
+core JSON. TS candidate market polling to1s is a separate existing-role config
+change, journalled in TS plan, unchanged quality thresholds/identity/manifest.
+No other consumer, Kafka offsets, Redis state, topology, V1 or order mutation.
+First compile/test, then compare narrow runtime diff; exact inverse reader/Risk
+observation after rolling affected roles. Inherited catalogue evidence remains.
+Owner's two existing plan hunks remain unstaged; no push/merge/release yet.
+
+Verification:19 unittest methods PASS for inverse demand/catalog/shared L2
+materialization/core refresh, existing Query image with RO source, networknone,
+2CPU/1GiB. First invocation used a nonexistent test_execution_l2 module; correct
+module test_execution_l2_materialization rerun above. Execution-grade dedup and
+mixed alias tests pass; provider30s unchanged. No image build needed for config.
+
+Cadence runtime check did NOT pass after rolling core3: all three samef2040ac9
+images running/restarts0; TS candidate only polling env changed, same5dd12956.
+60s exact inverse+linear cache-to-Risk matrix saw BOOK stale/missing while
+QUOTE/MARK continued. No broker entry. Config mismatch corrected, but snapshot
+rebootstrap still unresolved after core recreation; not a PASS from process-up.
+Next bounded recovery under approved inverse ingest scope: recreate only existing
+ingestor_okx_swap, same7fe34806 image/config/mounts, to obtain authentic WS
+snapshot; no offsets/cache reset. Record observed outcome, no assumption that
+reconnect proves general autonomous recovery. Keep core config backups and
+candidate market30s rollback. No whole-catalogue C2 or new image.
+
+#### Inverse Cadence Real Readback Result (2026-09-30)
+
+After same-image OKX ingestor reconnect, candidate Redis-to-Risk readback passed
+30/30 samples per product for BTC-USD-SWAP and BTC-USDT-SWAP across MARKET,
+LIMIT and L2_LIMIT (5s policy unchanged). Maximum book age2453/2893ms; maximum
+cache read plus three policy checks6.843/44.460ms respectively. These are60s
+bounded dependency observations, not endpoint p99 or E03 money evidence.
+Evidence root: /home/bobby/.local/state/trading-system/p183e-20260930-dependencies/
+inverse-hot-cadence/; receipt risk-after-resnapshot.json. Failed first readback
+risk-after.json retained. No broker entry occurred in this cadence slice.
+
+Correction to earlier provider-refresh shorthand: OKX uses initial WebSocket
+snapshot plus gap resync, not a periodic30s snapshot. The retained numeric
+snapshot_refresh_seconds does not change that policy. This cold-core rollout
+required paired same-image OKX ingestor reconnect; this proves bounded manual
+recovery, not autonomous core-restart recovery certification. No timestamps or
+quality gates were relaxed; no BOOK_DELTA substitution for a complete snapshot.
+Three QDL cores remain f2040ac9 with inverse hot cadence1000ms; OKX ingestor
+remains7fe34806; candidate market remains5dd12956 with snapshot polling1s.
+Config backups retained; no offsets/reset/flush/history deletion or order.
+No new images built for this cadence slice; disposable test clients removed.
+Native collector remains6a91aa52, rollback6cb0eb49. E03 remains9/24; E04/E09
+open. Next: freeze missing inverse lifecycle through SDK/service authority,
+with fresh signed census, BEFORE money window and exact owned reduce-only exit.
+No push/merge/release; published Data Layer v2.2.0 unchanged. Goal remains active.
+
+<a id="dl-execution-readiness-convergence-20260930"></a>
+## Execution Readiness Convergence - One Bounded Repair Phase (2026-09-30)
+
+**Status: IMPLEMENTATION_AND_RUNTIME_ACCEPTED / RELEASE_ARTIFACTS_SEALED.**
+Publication is established by the immutable [v2.2.1 release](https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.1), green release workflow and external final-publication receipt; this static build-time status alone never asserts publication.
+**Owner request:** stop TS E work, investigate whether repeated failures are wrong
+runtime/provenance or genuine Data Layer defects, repair the remaining related
+defects in one phase, deploy affected immutable images and retire obsolete test/
+legacy artifacts. No repeat of passed, unaffected certifications. This is NOT
+permission to mark E03/E09 complete or open another architecture program.
+
+### Goal And Governing Sources
+Keep Kafka-native serving as the sole V2 path and make the existing execution
+bindings recover predictably within their declared policy under the measured
+workload. Preserve fail-closed behavior for genuinely quiet trades, stale prices,
+gaps and generation changes. Finish with an exact role/image/config/manifest
+receipt, affected consumer acceptance, scoped cleanup and a TS handback.
+
+Read workspace/project AGENTS first, this section, then:
+- [KN detailed guide, KN-5](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#kn-guide-phase-5):
+  K5-T02 hot partition/catch-up, K5-T04 paired handoff, K5.5 provenance, K5.6 retirement.
+- The 2026-09-28 BNB L2 recovery correction/receipt in this plan
+  (source166cda1, receipt SHA e8f3e24bab7bb7d7bda33b78e311847a2644a1cb92999a18873bc7f1950853fa).
+- Additive sandbox inverse extension and "Inverse Cadence Real Readback Result"
+  immediately preceding this section (same-venue contracts and real Risk readback).
+- TS upgrade Unified Plan, "E07 Upstream Burst Attribution And Autonomous
+  Recovery (2026-09-30)" at TS source313770a. This is evidence input, not a
+  permission to edit TS order/Risk/alpha behavior.
+
+### Audited Runtime And Identity, Not Assumed Runtime
+2026-09-30 inventory: one Data Layer Git checkout/worktree:
+`/home/bobby/data_layer`, `fix/okx-inverse-sandbox-readiness@8559d64`.
+Local dev7ee4af0; main8299838 / published v2.2.0. Local refs were inspected;
+remote has NOT been fetched/CI-verified in this audit.
+Two pre-existing owner plan hunks are deliberately preserved, not included in
+this phase's commit.
+
+| Current role set | Active image prefix | Provenance / behavior |
+| --- | --- | --- |
+| Query KN1/2 | 0ed57643ae40 | fba8863, Kafka-native cache reader |
+| Stream KN1/2 | 65918a656dcb | fba8863, native streaming |
+| Rust core1/2/3 | f2040ac9e938 | 166cda1, includes backlog/continuity fix |
+| Native Binance/OKX ingestors; KN market projectors1/2 | 7fe348060734 | 02cd827, not the retired SQLite projectors |
+| BAR edge | f7351c3bda08 | 4fe7e92, retain unless affected |
+| V1 fallback | dbfb57844977 | v1.2.4-2b0dcf7, intentionally retained |
+
+All current KN/core/ingestor/projector roles inspected have restart0/OOMfalse;
+this is inventory, NOT execution acceptance. Kafka lifetime restart counters are
+not a new incident. Runtime root is outside Git:
+`~/.local/state/qdl-v2/releases/v2.2.0-02cd827`, with additive configuration
+and realm-public mounts. Its directory name alone does NOT identify current config.
+
+Legacy query_v2_1/2, stream_v2_active/passive and SIX projector_v2* containers
+are EXITED, not concurrent serving processes. Do not claim two active V2 data
+architectures. V1 is intentional fallback, not a duplicate KN writer.
+Two TS consumers are running: shared market_data_service (paper/revision10,
+image1037c56a) and ts-p183 market_data (sandbox/revision2, image3b4ee780).
+Both target https://qdl-v2-query:8200 and qdl-v2-stream-a/b:8210. The aliases
+belong to active KN replicas; shared Query alias is intentional multi-replica DNS.
+Neither consumer should be stopped/deleted as "duplicate Data Layer".
+
+Different per-role images are not themselves a defect. Freeze exact full digests
+and relevant file hashes in the external packet; do not rebuild unrelated roles
+merely to make image names identical. New sandbox inventory is64 requirements
+(60 inherited +4 inverse), not permission to expand all consumer manifests.
+
+### Findings Ledger And Inherited Evidence
+| ID | Finding / state | Required action in this phase |
+| --- | --- | --- |
+| DLR-01 | FIXED/DEPLOYED: processing backlog used to invalidate otherwise contiguous L2, freezing OKX BNB. Rust166cda1 + real resnapshot fixed frozen-book behavior. Snapshot200/200 eligible; delta195/200, NOT all-price FULL. | Inherit145Rust/40reader tests and frozen-book proof. Test only changed replay/recovery behavior; retain residual tail SLA as DLR-02. |
+| DLR-02 | FIXED/DEPLOYED/BOUNDED_ACCEPTANCE: absolute batching deadline; RF3 replay4k/5k windows caught up. Original fault: hot raw partition/core backlog makes real Binance TRADE/BOOK too old. TS reads matched old Query data, while public Binance had newer trades. Core2 raw-age mean22.99s/max34.51s versus other cores~0.2s; later recovered to0.408s naturally. | Attribute exact affected product/raw partition -> core -> canonical -> cache -> consumer and correct limiting work, batching or fair scheduling. No assertion that CPU alone is causal. |
+| DLR-03 | FIXED/DEPLOYED: existing quarantine feedback now restores four real-provider books after owner movement without manual ingestor restart (7830.93ms including5000ms stability). Original fault: cold-core L2 recovery needed manual OKX ingestor reconnect after rollout. | Prove or complete bounded resnapshot through existing ingestor/core ownership, real provider snapshot, same generation/sequence fences. No periodic fake snapshot or timer-based re-dating. |
+| DLR-04 | FIXED/SCOPED: inverse missing acquisition/entitlement/native identity and hot-cadence alias mapping. Source0b90e8b/b394a36/1615eb2/7e28f02, real inverse+linear Risk30/30. | Preserve additive source/runtime bindings. Recheck affected readiness after any rollout, not replay all product/domain certification. |
+| DLR-05 | TS-OWNED/FIXED, not a Data Layer patch: expired price keys plus ahead execution watermark caused bootstrap/replay loop. TS56dae41 market-only rollout3b4ee780,171source+171packaged PASS. | Inherit tests; consume actual candidate recovery evidence. Do not widen Data Layer scope or change TS adapter again without a reproduced new defect. |
+| DLR-06 | RELEASE_SET_SEALED: twoQuerysecurityhandoff complete, ten legacycontainers and nineunusedimages retired. Explicitmixed-role digests/rollback and affectedcertificate recorded. Publication is proven by v2.2.1 tag/workflow plus externalfinalreceipt, not this build-time text. | Reconcile role/config/certificates, affected packaging, release procedure and exact cleanup manifest. |
+| DLR-07 | Known test-only issue: ignored provider-admission Redis test used50,000ns cooldown rounded to1ms TTL, racing a network trip. Admission runtime was unchanged. | If retained as a required affected gate, fix deterministic test timing only; never change provider cooldown to satisfy test. Otherwise explicitly inherit unaffected admission scope, do not count ignored test as PASS. |
+
+Potential batching defect needing reproduction, not yet a proven incident cause:
+qdl-realtime-core's collection loop resets batch_wait_ms per record; with
+batch_size256/wait25ms, sustained spaced arrivals can keep a batch open well
+beyond25ms. Inspect intended contract and reproduce actual elapsed batch age
+before editing. A larger batch without an absolute deadline/fairness analysis
+could worsen latency. This is part of DLR-02, not another phase.
+
+Explicit exclusions: Binance3d history (owner excluded), DNSE/VN V1 migration,
+new symbols/products, strategy logic/order paths, TS E03 partial-fill matching,
+Portal, Kafka topology/offset reset, Redis flush/SQLite deletion, whole-catalogue
+299-product recertification and unrelated warmup/reference redesign.
+Existing MARK/INDEX rejection diagnostics/realm-key fixes are inherited. If a new
+MARK/INDEX failure appears, capture the exact rejected view and localize it;
+do not call it a fresh defect merely from a generic error label.
+
+### Single Execution Sequence And Stop Boundaries
+These are work steps INSIDE this one phase, not independently added phases.
+
+1. Freeze runtime and fault matrix before edits.
+   Save full role digests, config hashes/revisions, aliases, identities, quotas,
+   active subscriptions, per-role rollback and current workload. Reuse the
+   observed 2026-09-30 fault window; capture only missing bounded attribution.
+   Measure received/raw/canonical/served timestamps plus partition offsets and
+   consumer completed apply. Preserve event timestamps and record sampling clock.
+   Freeze declared freshness/latency/resource/recovery budgets from current
+   bindings and KN budget. An unspecified or unmeasured budget is UNVERIFIED,
+   not permission to invent a passing threshold.
+
+2. Repair shared owning boundaries only.
+   Reproduce DLR-02 using captured provider bytes and existing pipeline components
+   in a disposable namespace; isolate batch collection, normalization, commit and
+   downstream consumption costs. Check absolute flush deadlines, transaction
+   amortization, partition skew and bounded in-flight work. Prefer existing
+   shared Rust implementation; no Python bypass, dropped trades, new symbol
+   workers, new broker or invented control service.
+   DLR-03 must recover a cold/lost book owner through the existing acquisition
+   mechanisms with deduplicated bounded requests and fresh authentic snapshots.
+   Preserve checksums, real gap handling, leader/epoch fencing and idempotency.
+   If quota limits remain dominant AFTER code/config optimization, change only
+   measured affected role caps with before/after throughput and memory headroom;
+   no blanket doubling and no buffers that hide growing backlog.
+   Stop source changes when reproduced failures and targeted regressions pass.
+
+3. One affected candidate build and bounded runtime packet.
+   Build one immutable image per changed artifact family; reuse it across that
+   family's affected roles. Config-only fixes do not demand rebuilds. Compare
+   effective environment/mounts semantically, not raw Env-list order.
+   Packet must name roles, full before/after digests, config paths/hashes,
+   expected reconnect duration, state invariants and exact rollback commands.
+   Start with the actual fault owner. If shared core binary changes, name all
+   three core roles. Include ingestor(s) ONLY where the implemented recovery or
+   startup dependency requires them. Query/Stream/projectors/BAR/V1 stay unchanged
+   unless attribution proves an affected dependency and packet states why.
+   No shared TS recreation or alpha/order activation in this phase.
+
+4. Targeted matrix, then ONE final consumer acceptance.
+   Run the tests below first. No C2 loop to discover bugs. Once they pass, one
+   bounded300s affected no-order consumer acceptance on both Query replicas with
+   current identities. Observe existing TS sandbox, preserving shared TS as
+   noninterference guard; no strategy/order writes. If this final run fails,
+   save exact typed view/offsets, name failed predicate and stop promotion.
+   Fix that predicate, inherit unaffected results; explicitly document any
+   replacement run rather than silently retrying until green.
+
+5. Certify the affected delta, retire and hand back TS.
+   Link retained certificates + new affected evidence to the deployed release
+   set. Follow feature -> dev CI -> main/tag through approved release procedure;
+   do not publish a tag solely because runtime is healthy. Freeze release version
+   at this step rather than assume existing v2.2.0 covers new inverse scope.
+   After acceptance, remove explicitly inventoried retired containers/test images
+   and unused task build cache. Keep V1 and the named immediately preceding KN
+   rollback set with config/TLS/state references. Never delete market history,
+   runtime directories, volumes or owner source as cleanup.
+   Finish with exact TS prerequisites ready/not-ready and resume E only after
+   owner's separate instruction; no automatic broker orders.
+
+### Targeted Tests And Evidence Gates
+| Gate | Cases / evidence | Pass condition and what is NOT claimed |
+| --- | --- | --- |
+| R1 runtime routing | Both Query aliases, streamA/B, shared paper and candidate sandbox identity/revision; active writer count; source/config hashes | No obsolete serving alias/second writer; correct entitlement and provenance. Inventory is not latency proof. |
+| R2 batch/replay correctness | Fast burst, continuously spaced input, idle flush, shutdown/cancel, failed/ambiguous commit, replay/duplicates, two busy partitions plus quiet partition; record-before/after ordering | Bounded absolute batch age; no unexplained loss/duplication/early ACK; transaction and per-partition order preserved. Test only affected reducer/batch modules. |
+| R3 L2 recovery | Binance/OKX, current BTC/DOGE failures + OKX BNB/inverse inherited boundary; core restart/owner move, snapshot delayed/duplicate, valid sequence jumps, genuine gap, stale epoch, repeated resync | Real snapshot restores verified state within frozen budget; no permanent awaiting-snapshot; failed quality remains blocked. Inherit unchanged full10book contracts. |
+| R4 throughput/catch-up | Capture-based isolated replay at4k/5k TOTAL ingress/s, sustained window, burst/drain, hot partition skew, slow consumer and restart | Report offered/admitted/committed/applied counts, bytes, per-partition lag and recovery; no indefinitely growing queue at claimed load. Distinguish total ingress from per-consumer fanout. No production load flood. |
+| R5 serving and exact rejection | Affected TRADE/QUOTE/BOOK plus unchanged MARK/INDEX sentinel; both replicas; freshness/session/gap/generation/hash; quiet trade negative | Every rejection attributed to that exact view. Quiet last trade can correctly be ineligible; pipeline delay cannot be excused as quiet. No event-age SLA widening. |
+| R6 actual consumer |300s on existing sandbox22 active demand including inverse;64entitlement products independently checked by R5; shared paper60 is guard, not silently replaced; no-order | Auth/manifest/cursor/generation correct; replay converges; no stale execution accepted, no silent missing demanded route. Separate session availability from price eligibility. |
+| R7 packaging/rollback | Changed binaries in immutable image, exact role config, affected rollout/return | New runtime maps to tested code; rollback state/cursors are compatible. No whole-catalogue rerun for unchanged packaging. |
+
+All latency in milliseconds with sample count and rejection denominator:
+SDK/alpha request start BEFORE local queue -> validated usable return;
+provider-event -> consumer completed Redis apply (not callback or stored quality);
+recovery time after burst/disconnect; separate queue/service/commit contributions.
+Keep failures in distributions/accounting; distinguish attempted/successful/usable.
+n<100: observed min/max/range, no p99. Do not extrapolate observed short recovery
+to indefinite5k/s or50-alpha capacity. Collect full-stack CPU/RSS/throttling/lag/
+I/O with per-role headroom, not a read-plane-only CPU number.
+The knownTS150+ consumer regressions, E04 matrix, already certified reference,
+BAR/universe and identity negative suites are inherited unless actually changed.
+
+### Cleanup, Rollback And Closure
+Pre/post disk measurements plus exact image/container list; never claim concurrent
+disk growth/shrink is cleanup savings. Remove only unreferenced task artifacts.
+Old service candidates eligible AFTER new acceptance: query_v2_1/2,
+stream_v2_active/passive, projector_v2 and projector_v2_2..6 (all stopped).
+Verify mounts, labels and retained rollback reproducibility before removal.
+Do not remove init jobs, Kafka, Redis, V1, TS shared/candidate, Portal, alpha
+resources, volumes or stopped operational evidence containers by wildcard.
+A rollback set can have different images by role; "one rollback" does not mean
+one image can run unrelated binaries. The base7fe348 image is active in ingestors
+and KN projectors, so it is NOT garbage even though newer core image exists.
+Restore only affected role/image/config; no offset reset/cache flush. If rollback
+would violate an advanced cursor/config fence, fail closed and use the pretested
+compatible rollback path, never force an older schema onto new state.
+
+**Exit:** R1-R7 applicable gates pass with inherited evidence explicitly mapped;
+no open DLR-02/03 execution/recovery defect; no falsely certified ignored tests;
+new release-set receipt and exact cleanup complete. If an acceptance/resource
+limit remains, report it as a failed requirement, not relabel it technical debt.
+**Stop:** do not proceed to TS lifecycle/E09 or broaden scope when this exit is
+unmet. Report fixed/open lists, runtime map, per-binding latency and cleanup.
+
+Audit receipt: ~/.local/state/qdl-v2/execution-readiness-audit-20260930/runtime-inventory.json
+SHA256 9ab4d3d1814f203e88dd25f848dea4a962bc11b400dd52637f9033a721fb13fd.
+Actual DNS from ts-p183 market process resolves Query to172.18.0.12/25
+(KN1/2), StreamA/B to172.18.0.26/27 (KN1/2), matching Docker addresses.
+No legacy V2 endpoint resolved in this audit. No gate rerun, image build,
+runtime mutation or cleanup performed. No TS goal resumed. Planning only;
+phase exit requires subsequent implementation/evidence, not this audit commit.
+
+### Implementation Journal - Batch Deadline Reproduction (2026-09-30)
+Owner goal explicitly approved this one phase. R1 inventory and prior DLR-01/04/05
+evidence are inherited; no catalogue/TS order gate is repeated. First source slice:
+reproduce the rolling per-record timeout in qdl-realtime-core, then use one absolute
+batch deadline and retain bounded cancellation, ordered input and transactional ACK.
+Add bounded per-partition raw-age and collect/normalize/commit timing to distinguish
+queue from compute/transaction pressure. No claim that the timeout explains the
+entire previously observed 23s backlog: full batches may hit a separate throughput
+limit. Tests use virtual time on the actual receive helper; synthetic unit fixtures
+are not provider/capacity evidence. Builder uses existing image, bounded resources,
+no production network/mounts. L2 restart/resync remains open and is not fixed by a
+batch timeout. Runtime/config/freshness/provider quotas remain unchanged.
+apply_patch helper failed (bubblewrap mountinfo); exact-match edit fallback used
+under workspace rule32; owner plan hunks preserved.
+
+Batch counterfactual executed in qdl-rust-builder:r134-test551428d98db6,
+network none,2CPU/3GiB/2jobs, disposable container and task-private target dir.
+Extracted legacy25ms per-record algorithm:5cases,2PASS/3FAIL as expected
+(continuous arrivals, idle remaining budget, expired ready receive). Not a
+claim of whole-runtime baseline replay. Evidence: execution-readiness-20260930/
+evidence/batch-counterfactual.log. Candidate uses absolute deadline with explicit
+expired-before-poll guard; cancellation drops only uncommitted input, to be
+replayed from Kafka on restart (no ACK). Transaction code remains unchanged.
+DLR-03 source localization: RealtimeCore adapter.request_resync changes only the
+local state machine; native OKX ingestion has no downstream request listener.
+Thus initial-snapshot-only sockets cannot know a cold core needs a fresh anchor.
+No repeated provider timer or re-dated snapshot is an acceptable substitute.
+Feedback implementation and autonomous live recovery remain OPEN.
+
+Batch slice result:10/10 qdl-kafka binary unit tests PASS (5 new deadline cases),
+0fail/0ignored; clippy --offline --locked -p qdl-kafka --bin qdl-realtime-core
+-- -D warnings PASS. Rustfmt scoped to the changed binary; git diff --check
+for rust/qdl-kafka clean. No lockfile/dependency version change; test-util is
+dev-only. The5 prior binary tests were rerun because that executable changed;
+no catalogue/SDK/TS suites or C2 rerun. No claim of throughput/recovery pass.
+Test containers used --rm and are removed; no new image built. Task target/cache
+is retained only while this phase is active, to avoid repeated full compiles;
+final scoped cleanup remains after acceptance. Production role digests unchanged.
+
+### L2 Autonomous Recovery Wiring - Design Before Source (2026-09-30)
+DLR-03 will use the existing core -> transactional quarantine -> native ingestor
+boundary, not a new service/topic, shared-file authority, or periodic fake book.
+Core opt-in emits a versioned resnapshot marker only for its current non-ready
+L2 binding, rate-bounded by existing snapshot_refresh_seconds and original raw
+receipt time. The marker carries the original envelope and integrity evidence;
+it commits atomically with consumed raw offsets. Ingestor opt-in listens on the
+existing quarantine topic with a dedicated group per existing BOOK connection
+lane, not per symbol. Only an exact current provider/binding/config/authority/
+lease/session/generation match can reconnect that BOOK lane; other feeds stay up.
+Expired, duplicate, foreign or superseded markers cannot trigger reconnect.
+Reconnect obtains authentic provider WS/REST bootstrap using the existing flow.
+Control offsets are independent of canonical/raw groups. Activation requires
+explicit packet listing additive read/group ACL, two optional config fields and
+affected core/ingestor digests. No production ACL or config is changed by this
+source step. Default absent config preserves current behavior. Rollback disables
+feedback and restores only affected binaries/config/ACL. Rejection/failure remains
+fail-closed. Required tests: cold owner, gap, ready suppression, request retry,
+stale session/generation/identity/revision, expired/tampered marker, cancellation,
+then isolated real Kafka committed-only request delivery and real resnapshot.
+
+L2 feedback source result (NOT runtime recovery certification):13/13 affected
+qdl-realtime-core L2 tests PASS; qdl-kafka library20/20, native ingestor25/25,
+realtime binary10/10 PASS; clippy for the library and both changed binaries
+-D warnings PASS. New tests cover cold owner/retry/session fence, real gap
+rearming after a ready book, both-venue exact identity/fence/tamper/expiry
+rejection and disabled feedback. Initial compile caught a missing kafka_config
+lane argument in the new helper; corrected before test PASS. Counterfactual
+batch evidence retained separately. Unit fixtures are explicitly test evidence,
+not authentic provider certification. Existing protocol tests were rerun only
+for the changed core/ingestor binaries; no full-catalogue/C2/TS order tests.
+
+Control receiver uses read_committed/manual checkpoint and a dedicated group
+starting latest only when new; existing offsets resume. It handles receive/
+checkpoint errors with bounded1..30s backoff separately, rather than aborting
+all ingest lanes. New core/ingestor config defaults disabled. Production remains
+unchanged. Still required before enablement: isolated committed-only feedback,
+restart/rebalance resnapshot proof and feedback-vs-market-data fairness under
+quarantine pressure, capture replay throughput, exact role/ACL packet, final
+consumer acceptance. No FULL/production-ready claim from these source tests.
+
+Pre-commit source review found synchronous control-offset checkpoint could
+block the BOOK socket poll. Control hints now use explicitly named asynchronous
+checkpoint submission; this is NOT a durable market-data acknowledgement.
+Lost/duplicate hint checkpoints are harmless through bounded core reissue and
+exact session fencing. Existing market-data checkpoint stays synchronous and
+unchanged. No detached task, unbounded queue or worker-per-message added.
+Clippy rerun after the checkpoint-hint change PASS; earlier pure identity/L2
+unit results are inherited unchanged. The new Kafka offset submission behavior
+requires isolated broker integration before runtime enablement. Source compiles
+for both changed binaries (debug build); no immutable release image built yet.
+
+### Isolated Recovery Packet (2026-09-30, Before Start)
+Previous goal turn classified PROGRESS:62d50f8 batch correction and355f3d3
+opt-in L2 feedback, targeted tests recorded; no running test handle to resume.
+Next packet ONLY creates task-owned qdl-readiness-* containers/network: one
+Kafka broker (existing9516fb image,1CPU/1536MiB, ephemeral log), one Rust core
+(1CPU/384MiB), one ingestor per venue (0.5CPU/256MiB each), bounded client
+(0.5CPU/256MiB). Core/ingestors use existing Rust base7fe348 with candidate
+binaries mounted read-only; this is an isolated test, NOT immutable release.
+Fresh disposable TLS, no production secrets/mounts/network, no host ports.
+Kafka topics/groups/authority are task-local. Native acquisition uses approved
+public provider URLs for existing BTC/BNB books plus TRADE/QUOTE sentinels;
+no private/broker order API. Read-only production JSON is copied then narrowed
+into task-local config, never modified in place. Stop/restart only isolated
+core to reproduce cold state with committed offsets; observe real resnapshot
+and non-BOOK lane continuity. Abort at bounded180s per scenario or provider
+rate-limit. Capture bounded logs/results then remove exact task containers,
+network and temporary keys; keep evidence and build cache until phase exit.
+No use of old kn4 namespaces or production volume, no Kafka/Redis resets.
+Resource baseline:31,379MiB host RAM,14,825MiB available; root74GiB free.
+
+Isolated run1 failed before application startup: broker readiness failed.
+Harness generated private TLS as hostUID1001 but Kafka runsUID1000; private
+directory/file permissions prevented access. No recovery/capacity result.
+The auto-removed broker also lost its exit log; corrected harness retains
+owned test containers until logs/state are archived, then removes them.
+Run2 changes only task-local broker TLS ownership to1000, restores host ownership
+for scoped key cleanup afterwards. First receipt retained at recovery-real/.
+No source/runtime change, no production restart. Test network removed.
+
+Run2 exposed a real defect in NEW opt-in feedback: Binance requested recovery
+from a pre-REST-anchor delta, then acted on that hint after publishing a fresh
+REST snapshot. Ten reconnects in about13s; TRADE/QUOTE sessions stayed unchanged.
+OKX recovered, but the harness's single READY observation falsely printed PASS.
+That receipt is retained INVALIDATED, not acceptance. No production enablement.
+Fix: remember successful queued authentic Binance snapshot receipt per binding/
+session/generation; ignore only hints whose original frame is covered by that
+anchor. Newer requests and wrong-session anchors cannot be suppressed. Actual
+core validation still decides readiness; failed publish follows existing retry/
+fencing. No timestamp rewrite or silent data drop. Add race regression. Harness
+now requires stable LIVE session generations and READY for a bounded window,
+plus no cross-feed reconnect. Run1 TLS ownership mismatch remains an identified
+setup defect; missing first broker exit log prevents a stronger causal claim.
+
+### Recovery Anchor Race - Isolated Result (2026-09-30)
+Source regression `cargo test --offline --locked -p qdl-kafka --bin
+qdl-native-raw-ingestor resync`:5 PASS,21 filtered; clippy same binary
+-D warnings PASS. Candidate debug binary rebuilt; no new Docker image.
+Isolated real-provider run3 PASS for BTC/BNB books on Binance USD-M and OKX Swap:
+all4 core views READY, all6 acquisition sessions LIVE and stable for5s;
+cold-core restart preserving test Kafka offsets caused exactly one BOOK reconnect
+per venue (generation1->2), while TRADE/QUOTE retained generation1/session.
+Observed cold recovery + stability window8447.64ms, NOT request-to-usable latency
+or a production SLA certificate. State rechecked after another5s; no reconnect
+loop. All4 test containers OOMfalse/restarts0. Kafka startup included benign
+TOPIC_ALREADY_EXISTS races for __transaction_state; no application panic/error.
+Run2's transient-READY false PASS remains invalidated, not overwritten.
+
+Evidence outside Git: execution-readiness-20260930/recovery-real-r3/receipt.json,
+SHA25648d064eec940517bc851310845eb70ffcb17070c7aabba47cc93772fc65f6414.
+Task orchestration recovery_probe.py and source/binary hashes retained there.
+Exact task containers/network and temporary private keys removed; label inventory
+now0 containers/0 networks. No volume/image broad prune; active build cache kept
+for unfinished phase. Production images/config/ACL and TS remain unchanged.
+apply_patch helper still fails with mountinfo error; exact append used per rule32.
+
+This closes the reproduced pre-anchor reconnect race, NOT all R3/R4 gates.
+Remaining before enablement: control-lane fairness under quarantine pressure,
+committed-only/aborted hint delivery and owner-move proof; captured-provider
+4k/5k total-ingress catch-up profiling; affected role packet and final consumer
+acceptance. Current biased socket select puts feedback first, so pressure
+fairness requires verification/correction, not an assumption from idle recovery.
+Do not rerun unrelated catalogue or passed TS domain tests. DLR-02/03/06 remain
+open overall. Canonical feature remains fix/okx-inverse-sandbox-readiness;
+stable main8299838/v2.2.0; no push/merge/release or production recreation.
+
+### Feedback Fairness And Committed-Only Proof - Before Edit (2026-09-30)
+Previous continuation made progress:92e82aa and real recovery run3, no active
+process left. Same R3 scope: remove biased priority from the two BOOK socket
+selects so sustained control backlog cannot deterministically starve market
+read/publish/timer work. Use Tokio fair polling, no extra queue or delay policy.
+Add explicit ignored-by-default real-Kafka test for new-live group, aborted
+hint exclusion, checkpoint/resume and cancelled receive. Invocation must require
+qdl-readiness-kafka isolated hostname and task topic; never production config.
+Run this explicitly in the existing isolated packet and record actual result;
+ignored default is not a PASS. Then bounded malformed control-pressure input
+(test-only provenance) with real acquisition verifies non-BOOK continuity and
+ongoing BOOK processing. No gate or provider quota is relaxed.
+
+Control proof run4 failed before acquisition: test waited for Kafka consumer
+position() to become numeric without receiving a message; this is not a valid
+startup barrier. Correct test to fresh-marker handshake with15s bound and drain
+only generated handshake markers. Historical/aborted payload assertions remain
+strict. No passing claim for run4. Its broker/test resources and keys cleaned.
+
+Control run5: real Kafka committed-only/new-live/resume/cancel test PASS1/1.
+Pressure40,000 malformed TEST_ONLY hints acknowledged40,000 in10,784.60ms;
+isolated Binance ingestor OOM at256MiB (exit137), so overall run FAIL before
+cold restart. No production mutation. Suspect unbounded async commit requests:
+current listener calls checkpoint_hint for EVERY rejected control record.
+Fix control-only checkpoint coalescing to at most1 submission/s per listener;
+this is a delivery-hint offset cadence, NOT a market-data ack/freshness/retry
+policy. Last locally stored offset still advances on consumed hints. Lost hint
+checkpoint remains safe through session fencing and bounded reissue. Confirm
+with virtual-time scheduling regression and identical isolated pressure, plus
+memory sampling. Do not claim OOM root cause proven until counterfactual evidence.
+Do not increase ingestor RAM to hide control-plane queue growth.
+
+Run6 after bounded control checkpoint: same40,000 TEST_ONLY hints,40,000 ACK,
+0 publish error,10,159.68ms offered window. No OOM/restart. Peak cgroup memory
+Binance17,678,336B (16.86MiB), OKX16,011,264B (15.27MiB), core21,942,272B;
+core progressed4,326 raw records across the pressure/stability window, all six
+sessions made transport progress with unchanged identities. This before/after
+supports async checkpoint flooding as the run5 memory defect; no RAM increase.
+Regression resync6/6 PASS including40k calls coalesced to1 submission/s.
+
+Run6 raw receipt FALSE is retained: harness incorrectly demanded a reconnect
+from BOTH venues. Cold core actually recovered4/4 READY: Binance received two
+real periodic REST bootstraps (BOOTSTRAP_APPLIED with concrete snapshot_sequence,
+then DELTA_APPLIED), OKX one feedback reconnect and two real SNAPSHOT_APPLIED.
+All six sessions LIVE; non-BOOK identities unchanged. Core recovery +5s stable
+window8,131.68ms. Evidence reviewed without another lucky retry; review.json
+explicitly certifies isolated pressure/autonomous recovery only, not end consumer
+or concurrent-owner movement or raw4k/5k capacity. Original receipt/logs unchanged.
+Run5 committed-only/resume/cancel proof inherited unchanged (library source adds
+test only). No synthetic market event was published; noise was explicitly
+malformed TEST_ONLY control input, rejected by the ingestor.
+
+Evidence: execution-readiness-20260930/recovery-real-r5/control-test.log and
+recovery-real-r6/{receipt.json,review.json,qdl-readiness-core.log,*-state.json}.
+Exact isolated containers/network/private keys cleaned, no production changes.
+Candidate source still opt-in; no runtime feedback activation or release claim.
+
+Fairness/checkpoint slice clippy(lib + ingestor + test targets) -D warnings PASS.
+All task containers absent after run6; no pending process. Coherent commit
+includes only shared ingestor correction, actual Kafka regression and journal;
+owner's two pre-existing plan hunks remain unstaged.
+
+### Bounded Raw Capture Packet - Before Read (2026-09-30)
+R4 input will be captured committed production raw provider envelopes, preserving
+key/payload/headers/source partition+offset+timestamp, never rewriting event age
+or making synthetic frames pass as market data. One temporary read-only client,
+existing phase8-consumer TLS mount read-only, approved qdl-c40-handoff- audit
+namespace, explicit assign/no group join/no auto offset store/no commit; no
+producer or admin API. Read md.raw.stable.v1 only, freeze highwater bounds,
+max100k records/partition,384MiB payload and180s wall deadline,4MiB/s pacing;
+client cap0.5CPU/256MiB, no production config/service change. Capture outsideGit
+with bounded compressed file + checksum and per-feed counts. Remove client on
+exit. This is source data for isolated replay, not a live freshness certificate.
+No broker/offset reset, no provider calls and no spool read. If permission/capture
+fails, retain exact error, do not silently change principal/ACL or invent input.
+
+Capture setup correction: first audit read used retired md.raw.stable.v1 and
+returned0 records (retention low==high), not useful replay evidence. Rechecked
+actual mounted core/ingestor JSON: all active raw paths are md.raw.realtime.v2.
+This was a harness topic-selection error, NOT production routing duplication.
+Preserve empty receipt; repeat bounded read on exact active topic with the same
+read-only safeguards, require nonzero rows and explicitly report partial bounds.
+No ACL/principal change. Production offsets/runtime untouched.
+Optimized core/ingestor binaries building from fbbe34e (2CPU/3GiB,offline locked)
+for actual replay measurements; debug recovery numbers are not capacity claims.
+
+Active raw capture with phase8-consumer was denied TOPIC_AUTHORIZATION_FAILED;
+no records read, no ACL changed. Scope-correct identity is phase8-core (the
+active raw reader). Explicit capture packet amendment: mount only existing
+core TLS read-only and use separate qdl-v2-production-core-r1-readiness-capture-
+20260930 group under the already defined core audit prefix. Same assign-only,
+no subscription/join/offset store/commit, no producer/admin API. No use of active
+core group and no ACL grant. Keep both failed receipts. If existing permission
+also denies this exact reader, do not grant privileges as an implicit fallback.
+
+### Optimized Artifacts And Replay Input Ready (2026-09-30)
+Core-reader identity capture succeeded with existing ACL, no permission changes:
+600,000 committed raw records (100k/partition,6 partitions),400,331,336 payload
+bytes, frozen bounds completely read in95.42s. Providers: Binance283,825,
+OKX316,175;150 provider/symbol/channel combinations. Includes154,830 TRADE,
+177,743 QUOTE,124,391 BOOK and real MARK/INDEX/BAR frames. Compressed capture
+SHA256d23a735a2942c847d3b601e889b2771447302c34e51ea55a4048487b9be03d06;
+payload sequence SHA256bc7338e806b817c8f95f58f06e2fcdaef2b91d91b8a185b03e4dea55d7432cb2.
+Path execution-readiness-20260930/evidence/raw-realtime-core-capture.jsonl.gz;
+receipt alongside records bounds/feed counts. No group join/offset commit or
+production writes. The two earlier empty/denied receipts remain explicitly
+non-evidence. Do not confuse captured historical event age with transport latency
+when replaying; original bytes/timestamps must remain intact.
+
+Optimized build from source fbbe34e completed in4m08s, offline/locked,2CPU/3GiB;
+not an immutable Docker release image yet. SHA256:
+- core:6788cdd21f12dca96c4af3e4ec4ccf76036bfa57a8a6a0215be51498e7e160aa
+- ingestor:f7d2fd17f4ac8ddacd82d3f2e34c07af7c5da293fbcb44a97e20251bdcd5e2b8
+Private target retained only for current phase. No test/capture/build container
+or isolated task network remains (name/label inventory empty). No active/rollback
+image pruned and no new runtime image built. Production core caps confirmed
+1/1/0.5CPU,256MiB each,OOMfalse/restart0; unchanged, not a capacity certificate.
+Canonical stays /home/bobby/data_layer on fix/okx-inverse-sandbox-readiness;
+main8299838/v2.2.0 and all active role digests remain as R1 inventory. No new
+worktree, push, merge, TS lifecycle or production recreation.
+
+R4 replay measurements, concurrent owner movement, affected rollout/final
+consumer acceptance and release/retirement are still pending. R3 pressure and
+cold recovery evidence above is scoped, not a claim that the whole phase closed.
+
+### R4 First Replay Packet (2026-09-30, Before Start)
+Previous turn PROGRESS (fbbe34e/e807447, tested recovery and authentic capture).
+No live handle to resume. Reuse the same task-only broker/TLS orchestration,
+optimized fbbe34e core, three isolated owners with distinct transactional IDs,
+same shared group, caps matching production1/1/0.5CPU and256MiB. RF1 test broker
+cap1CPU/2GiB, ephemeral1GiB Kafka log; this is NOT RF3/HA or production performance
+certification. No production mounts/secrets/network; copy public runtime JSON
+then change only shadow authority/topic/transaction names. Retain native provider
+bytes, keys, source partition/offset headers and original timestamps. Replay
+warmup20k@2k/s,120k@4k/s,150k@5k/s,40k@1k/s followed by bounded180s drain.
+One1CPU/256MiB client records offered/delivered rates and observer reads group
+committed offsets/highwaters once per second without committing. No market-data
+fabrication or event-time rewrite. Bound entire packet to10min and cleanup.
+Measure collect/normalize/commit, offered vs actual, lag slopes/catch-up, CPU/memory,
+output counts/rejections. Missing initial L2 snapshot in a historical capture
+must be reported, not passed as a complete execution-book workload. R3 authentic
+bootstrap proof is separate. No C2 until attribution/affected tests are clean.
+
+R4 run1 supplied330k/330k records, actual4,001/s and5,001/s across30s windows;
+no producer failure, cores peak36/42/31MiB, no scope fencing rejection. However
+observer exited on transient NOT_COORDINATOR during new broker startup, recorded
+zero lag samples. Do NOT certify catch-up from this run. Correct harness startup
+barrier before load and bounded coordinator-error recovery(15s), fail promptly
+if observer later fails; record send-to-durable-offset lag age using separate
+replay wallclock, without touching original market timestamps. Save quarantine
+reason/subscription and final stopped counters before task teardown. Replacement
+run2 is required only for invalidated measurement, no source/runtime change.
+Historical book boundary/expired MARK components remain explicitly non-live
+inputs; raw processing throughput is not an execution eligibility certificate.
+
+R4 RF1 run2 profile completed:330,000 delivered ==330,000 summed committed
+processed counters; final drain500ms observer resolution,0 producer/observer
+error, no OOM/restart or scope fencing rejection. 4k window lag peak680 records,
+oldest uncommitted max169.43ms (30 samples);5k peak2666,oldest max834.76ms
+(29 samples); recovery1k ended40 lag then drained. These are sampled maxima,
+NOT p99 and NOT consumer usable latency. Startup max2453ms is separate. Three
+core peaks41.12/35.89/30.54MiB. Five SequenceGap quarantine records concern dated
+Binance BTC/ETH261225 books in the truncated historical capture; no raw-level
+proof of a fresh production defect. Full reason/subscription evidence retained;
+missing bootstrap/component-expiry in historical input is not live eligibility.
+
+Do not promote from RF1: original incident commit cost came from production
+RF3/minISR2. Next affected replay keeps same capture/CPU/binary but uses three
+isolated brokers, RF3/minISR2, SSL inter-broker, durable files under new task-only
+throughput-rf3-r1/data-{1,2,3}. Existing broker image, fresh TLS SANs for test
+hosts only; cap1CPU/1536MiB each,256MiB Java heap. No production mount/network.
+Core caps unchanged. Topic/transaction/group replication3, data topic minISR2.
+Temporary logs bounded by the330k input; remove only these task-created broker
+data directories after evidence and stopped containers, not any shared volume.
+This remains same-host rehearsal, not independent failure domains/production HA.
+Observer/clock corrections inherited. No new source or repeat of unit/domain gates.
+
+R3 owner-move packet prepared (run after RF3 namespace is cleaned, not concurrent):
+reuse authentic BTC/BNB Binance/OKX recovery harness with optimized same binary,
+initial one core then add a second owner under same test group/distinct transaction
+ID; observe second owner reach READY for at least one assigned book, then stop
+only first test core and require survivor READY for all4 books with stable live
+sessions. Preserve test group offsets, no manual ingestor restart. Non-BOOK lane
+sessions must remain identical. Existing4-book cold/retry/pressure evidence is
+inherited; this covers the missing cooperative-rebalance/owner-move behavior.
+No production Kafka/consumer mutation. Bound each readiness wait90s and cleanup.
+
+RF3/minISR2 run1:330,000/330,000 delivered and summed committed processed;
+0 scope rejection, no OOM/restart, bounded drain1000ms sampling resolution.
+4k window oldest-uncommitted maximum2714.76ms includes remaining startup backlog;
+5k maximum2381.02ms,peak6663 lag/end4789; recovery1k end80 then drains.
+Do NOT claim all execution freshness at5k. Five identical dated-book capture
+quarantines now carry original raw hash/receipt/generation for attribution.
+Receipt SHA256864b9b8f2dca65c7ea076174164da48c38d34159a9f32fc7d5d02e16cf591dfc.
+
+Authentic cooperative owner move PASS: second core reached READY on newly owned
+Binance BTC; after first test owner stopped, survivor restored all4 Binance/OKX
+BTC/BNB books without manual ingestor restart in7830.93ms INCLUDING5s stability
+window. Both BOOK lanes advanced1->3 for join and leave recovery; all TRADE/QUOTE
+sessions stayed generation1/same identity. Evidence owner-move-r1/receipt.json.
+This closes the scoped concurrent-owner behavior in R3; no full consumer claim.
+Task containers/network/private keys removed. No production mutation.
+
+Profiling correction before quota decision: RF3 test broker caps1/1/1CPU were
+below actual production1.25/1.75/1.75CPU; normalize and commit delay cannot yet
+be blamed solely on core quota. One matched-cap run uses current broker caps
+and memory1.5/2/1.5GiB, same256MiB heap/durable isolated storage/RF3. Core caps
+stay1/1/0.5CPU,256MiB; explicitly enable candidate book_resync_quarantine to
+include its hot-loop/transaction overhead. No production quota change or RAM
+increase. This is affected performance profiling, not rerunning passed domain
+or299-product gates. Exact same capture and observer reused.
+
+### Matched RF3 Profile - Reviewed Result (2026-09-30)
+Exact production broker caps,RF3/minISR2,SSL replication,durable isolated storage,
+feedback enabled, core caps1/1/0.5CPU unchanged:330k delivered, all six committed
+end offsets equal producer end offsets. No producer/observer errors,OOM or
+container restart. Core2 did a supervised generation1->2 on initial group join
+(Invalid group generation in transaction, aborted/retried). Therefore summing
+ONLY terminal per-generation counters gives328720, not330000; that shortcut is
+invalid. Final committed-offset coverage proves drain; do not claim a matching
+lifetime counter or silently hide the supervised retry. First-generation1280
+contribution is inferred from coverage, not independently logged as a counter.
+
+Sampled maxima,NOT p99:4k/s window27 samples,peak2042 lag,oldest uncommitted750.96ms;
+5k/s29 samples,peak3251 lag,oldest1315.15ms;recovery1k39 samples,max703.04ms,
+then drain1500ms at1s observer cadence. Startup max4863.75ms separate. Core memory
+peaks32.43/49.84/44.24MiB. Bounded input/core throughput/catch-up is demonstrated,
+not request-to-consumer usable latency or live execution eligibility. Historical
+missing L2 anchors/expired MARK components and quarterly gap records stay named;
+feedback hints emitted during replay are not new provider-error counts.
+
+Same-source R3 owner movement restores four real books; R4 profile now supports
+preparing affected image/packet. Standard committed Dockerfile.qdl-rust-runtime
+only, one Rust image family for three cores+two native ingestors. Freeze source
+and compare packaged binary provenance before any runtime action. Other roles
+remain untouched. Existing authority revision1/candidate digest7fe348 is the
+original acceptance anchor, not current executable (core already runsf204);
+record actual runtime image hashes separately, do not silently rewrite authority
+history or claim its anchor equals deployed binary. No new authority promotion.
+All task containers/networks/private keys/RF3 test data directories removed.
+No production change, push/merge/release or resource-cap change. Final affected
+consumer acceptance and retirement still required.
+
+### Candidate Packaging And Minimum Feedback Wiring (2026-09-30)
+Immutable candidate build uses committed Dockerfile.qdl-rust-runtime, source
+0e00c817289ce32ea767cea002c859814349fc72, qdl-v2-rust:2.2.1-0e00c81.
+Git archive excludes both owner plan edits. Single Cargo build job; no new
+production resource caps. This is a candidate label, not a published release.
+
+Prepared packet helper is outside Git under execution-readiness-20260930; it
+uses existing kn_production_packet service_from_inspect/external_compose helpers.
+Only three cores and two native ingestors may change image/config. Preserve all
+other fields, bindings, authority revision, mounts, TLS, quotas and offsets;
+versioned new JSON avoids overwriting current config. Rollback uses actual
+core f2040ac9... and ingestor7fe348... digests, not stale Compose labels.
+
+Read-only Kafka ACL inspection: md.quarantine.stable.v1 currently grants only
+phase8-core WRITE/DESCRIBE. Recovery requires phase8-producer READ/DESCRIBE on
+that exact existing topic and READ on dedicated qdl-v2-book-resync- group prefix.
+Snapshot exact ACLs before applying; rollback removes only newly added entries
+after stopping recovery clients. No new topic, raw/canonical group changes,
+manual offset reset, history/cache mutation or authority promotion.
+
+At this checkpoint: no runtime or ACL changes; isolated test containers absent.
+Host disk219GiB used/71GiB available, available RAM13428MiB during build.
+These are inventory, not claimed cleanup savings. Build context/cache retained
+until candidate attestation; release/old-container retirement remain pending.
+apply_patch sandbox failed again; exact-match fallback used under workspaceRule32.
+
+Candidate build PASS: sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023.
+Packaged core50908e23ccccd731441ff4400360b775e5ec4e5bbaf16f954e0a277b92997578;
+ingestor43358eeea2a57554e1a6d42285968409d279bc093f180d42f06dd41ea5fd71c5.
+Both ldd checks resolve; network-disabled disposable attestation container removed.
+Packaged hashes differ from separate optimized test build; source provenance is
+same, not a claim of byte-identical artifacts. Affected runtime acceptance remains.
+Prepared packet: releases/v2.2.1-0e00c81-recovery; candidate and rollback Compose
+config --quiet both PASS. No apply/recreate/ACL change. Certificate subject read
+confirms CN=phase8-producer; dedicated recovery group ACL query returns none.
+Attestation evidence candidate-image-attestation.json SHA256
+c9ef6963ab78717ca0f0fa10fef78ea8cc04a4715822c4967006ea74aa2628b1.
+
+Cleanup: removed only23,361,111 logical bytes of disposable Git archive context.
+Disk used235435982848 ->235409915904 bytes; concurrent activity means this delta
+is NOT measured cleanup savings. No images deleted; active/rollback/candidate and
+private build cache retained for active phase. Ten stopped legacy containers
+reconfirmed, none running/removed. Production role digests/config unchanged.
+Next: exact ACL delta, bounded five-role rollout, affected typed preflight and one
+300s actual consumer acceptance, then release/retirement. TS work stays paused.
+
+### Five-Role Rollout And Consumer Scope Correction (2026-09-30)
+Owner explicitly confirmed Binance ingestor recreate after tool safety rejection;
+no bypass occurred. Exact feedback ACL applied: phase8-producer READ/DESCRIBE
+md.quarantine.stable.v1, READ PREFIXED qdl-v2-book-resync-. Before/after stored
+in feedback-acl-before.json / feedback-acl-apply.json. No offsets/topology changed.
+Rolled sequentially Binance17:44:24Z,OKX17:45:02Z,core3 17:45:37Z,core2 17:46:22Z,
+core1 17:46:54Z to658a9570...54023. Each showed startup and authentic book recovery.
+Post-roll inventory: all five running,restart0,OOMfalse; every inventoried role
+outside approved set retains exact image/start time. No Query/Stream/projector/
+BAR/V1/TS/alpha/order mutation. Compose orphan warning ignored; never remove-orphans.
+
+Important correction to R6 inventory: sandbox binding entitlement is64 products,
+but its existing configured active demand is22, not64: Binance BTCUSDT/DOGEUSDT,
+OKX BTC-USDT-SWAP/BTC-USD-SWAP. Fixed-worker heartbeat really aggregates22.
+Shared paper runs60. Thus inherited plan wording conflated entitlement with
+active subscriptions. Do not claim64 active sandbox routes or silently expand
+TS config. Preflight must read all64 entitlement products x2 replicas with real
+sandbox SDK identity; final observation separately reports actual paper60 and
+sandbox22, with product union/overlap explicitly checked (60linear+4inverse).
+Session READY is not execution-eligible: pre-roll sandbox22session/18execution.
+This preserves64-product coverage and actual consumer proof, not fictitious
+64-sandbox subscription evidence. No-order snapshot helper uses temporary
+cursor/audit directory and never ACKs production cursors or writes market/order
+state. Snapshot quality is captured before adapter eligibility validation; status
+read after a failure is separately labelled, not called the same rejected view.
+
+Affected preflight complete:128/128 snapshots returned typed views;126/128 pass
+execution conversion. Two exact rejected OKX trades: DOGE1358935530 ts1790790738429,
+BNB239907276 ts1790790741311. Bounded official history-trades(type2,after=query
+start timestamp,limit100) confirms each is the latest venue trade at its rejected
+request timestamp. Thus these are valid last-trade age rejections, not guessed
+quiet or missing canonical events. No relaxed3s policy. REST row quantity is not
+claimed identical to aggregated WS quantity; this attribution proves ID/time only.
+See trade-rejection-provider-attribution.json; official contract
+https://www.okx.com/docs-v5/en/#public-data-rest-api-get-trades-history.
+All QUOTE/MARK/BOOK/BAR preflight items usable on both replicas, no mapping error.
+Post-rebalance60s logs: progress on all3 cores, no retry/error or recurring
+ingestor resnapshot in that window. Not a long-soak claim.
+
+Proceed ONE final300s passive observation of existing paper60/sandbox22 consumers.
+Observer executes only Redis SCAN/MGET in each existing consumer environment;
+no SDK stream/ACK, market write, DB access, or order operation. Poll1s, capture
+heartbeat (30s publication), actual execution cache visibility, exact lineage
+generation/offset monotonicity, and host-visible resource samples. Repeated
+heartbeat polls are NOT independent heartbeats. Event-to-observed-Redis timing
+is a conservative upper bound with1s sampling, not exact Redis commit timestamp
+and not interchangeable with request-to-usable. Initial cache observations and
+unchanged rows are separated from newly observed watermarks. No fabricated
+consumer throughput or silent substitution of callback timing. Tests/import
+compatibility checked on both actual images before this final window.
+
+Observer correction inside SAME final window: paper uses EPHEMERAL_ONLY, sandbox
+CORE_ONLY. Initial helper correctly read both heartbeat keys but incorrectly
+looked for paper execution cache in core Redis (0rows). This is a measurement
+error, not a production fault or proof of missing prices. Added a market-Redis
+reader only for remaining original window; it sees50 paper execution keys while
+sandbox sees19. Full300s heartbeat/worker coverage retained; paper cache latency
+coverage is explicitly shorter and not fabricated as300s. No runtime source fix,
+consumer restart, second acceptance, or quality-gate change.
+
+### Final Window Review And Release Boundary (2026-09-30)
+ONE final observation completed302.25s host wall clock; both consumer observers
+cover300s/301samples. Eleven distinct heartbeats each: paper60/60 and sandbox22/22
+READY at every publication. Heartbeat cadence30s does NOT prove uninterrupted
+readiness between publications. Actual cache observations: sandbox19execution
+products/301samples; corrected paper50products/177samples over176s. Union54
+execution products +10BAR verified in R5 =64 entitlement products. Zero observed
+watermark regressions; no claim of per-event losslessness from polling snapshots.
+
+Do NOT report zero disconnects: at18:02:00-18:02:06Z OKX ingestor recorded4 native
+transport disconnects (not feedback requests), and consumers logged12paper +
+8sandbox SESSION_STATE refusals/reconnects. They subsequently resumed, retained
+worker health and advanced caches/cursors. No scope/auth/manifest/quota or
+Redis-write error appears in this bounded consumer log window. Underlying socket
+close cause is not recorded by current native log, so do not blame venue/host
+or call it a new proven code fault. This is observed fail-closed recovery, NOT
+a zero-interruption uptime claim. No second C2 was run to hide these events.
+
+Cursor telemetry progressed paperACK1516714->1552299,commits874550->894920,
+sandboxACK430067->443821,commits325125->336038; cursor errors0 on both. Paper
+write.market.error cumulative1010 stayed1010 between the two available telemetry
+samples; that is not a fabricated baseline for the entire300s. Pending at later
+sample paper0/sandbox2, no overflow loop in the window logs.
+
+Snapshot SDK request -> validated usable observed maxima (n10-12 per feed/venue,
+NOT p99): Binance/OKX QUOTE25.14/29.40ms; MARK26.64/18.84ms; TRADE15.09/15.12ms
+(OKX8/10usable,2proven quiet rejections); BOOK_SNAPSHOT45.98/49.03ms;
+BOOK_DELTA38.90/25.48ms; BAR20.69/37.83ms. Metadata resolve/startup is separate.
+Redis polling timing remains event-to-observed-cache AGE with1s sampling, not
+exact apply latency. MARK reference uses no advancing Kafka watermark in this
+consumer projection; do not fabricate a first-apply latency distribution from
+unchanged watermark. SDK MARK proof remains all22/22usable across both replicas.
+Whole Data Layer Compose project CPU25samples mean4.70066cores,max5.1211cores;
+no quota increase. Real core progress samples raw-age means~160-175ms, collection
+~25-28ms; the earlier23s hot-core fault window is not a matched-load benchmark.
+
+Evidence: execution-readiness-20260930/evidence/consumer-final-300s/ contains
+receipt, reviewed-summary, full bounded timestamped consumer/core/ingestor logs,
+resource observations and cursor telemetry. R5 includes exact rejected views and
+provider attribution. All five affected roles now use658a9570...54023, restart0/
+OOMfalse at inspected rollout checkpoint; all protected roles retain image/start
+time. No order/DB mutation or TS configuration change.
+
+Source remains /home/bobby/data_layer on fix/okx-inverse-sandbox-readiness.
+Remote fetched: dev7ee4af0/main8299838, published tagv2.2.0; no push/merge/tag yet.
+Remaining release work: reviewed certificate/report with inherited gates and
+these measured limits, CI/integration->main publication, exact legacy retirement
+and build-cache inventory/cleanup. Keep native rollback coref204 and active
+projector/ingestor-base7fe, V1, and untouched Query/Stream images. No TS E work.
+
+### Release Packaging Convergence (2026-09-30)
+Current release workflow requires immutable SDK wheel SHA in certificate.
+Compared v2.2.0..HEAD: SDK client already has tested typed refusal diagnostics
+(_view_refusal, no payload/cursor leakage), but package/build VERSION remains
+2.0.5. Publishing different bytes under the same SDK artifact identity would be
+a provenance defect. Version-only correction to2.0.6 in SDK init/build script and
+two current-version test assertions; preserve historical evidence/runtime pins.
+No adapter policy/schema/auth changes, no TS or Query rebuild, no second C2.
+Test deterministic wheel/metadata/import and current release-version assertions;
+inherit existing behavioral diagnostics regressions. Certificate for v2.2.1
+will identify immutable per-role digests and link v2.2.0 evidence only for truly
+unchanged behavior. Runtime SDK2.0.5 copies are not silently relabelled2.0.6.
+
+Packaging result: two targeted unittest cases PASS in existing reader image
+0ed57643ae40 with source read-only, network none, bounded tmpfs, non-root;
+disposable qdl-release-sdk-check removed automatically. Deterministic wheel
+2.0.6 SHA256 26eede97407a42d8eaa15019cc31e0fe2c8a5545d82bdf7805cf1c9255cf7b2e.
+Generated contract digest unchanged2a25a601...624; SDK source digest9930844e...90c.
+No runtime SDK pin or running container changed. Public API remains2.0.0.
+apply_patch helper failed (mountinfo path is not absolute); exact-match fallback
+used perRule32 and four one-line version diffs inspected. Owner plan hunks stay
+unstaged. No push/merge/tag or image cleanup in this packaging slice.
+
+### Release Delta Evidence And Retirement Plan (2026-09-30)
+Prepare v2.2.1 certificate/report/notes using exact evidence hashes, per-role
+runtime digests and SDK2.0.6; no fresh whole-catalogue/capacity claims. Acceptance
+scope is bounded recovery and correct rejection, not always-eligible prices.
+Retain observed OKX disconnects and paper cache observer correction explicitly.
+Old v2.2.0 report remains inherited historical evidence for unchanged endpoints.
+Release publication remains blocked on CI/approved integration ancestry; artifact
+status PASS applies to this affected delta, not TS E or broker execution.
+After artifact review remove only the ten inventoried stopped legacy containers
+by exact IDs (no force, no volume removal), then only unreferenced Data Layer
+obsolete images. Preserve active set and native rollbackf204/7fe. Do not touch
+TS/Portal artifacts. Archive private inspect metadata, disk pre/post and unchanged
+running-role start times. No shared/global BuildKit prune; only own build cache
+if attributable, otherwise report deferred cache rather than delete others.
+
+Release structural checks PASS:128 binding/replica rows,64products,126usable,
+2provider-attributed rejections, no p99 for small snapshot groups; endpoint SHA
+0f2ce92fd97b3df2b9c5520d1d20ee8b26bd11918824d0ffa5b8ac872ee90465.
+Certificate and release notes at upgrade/evidence/releases/v2.2.1/ explicitly
+retain observed reconnects, n/denominators, polling limits and inherited gates.
+Rust/Cargo/Dockerfile diff0e00c81..release-source is empty; do not rebuild Rust
+for journal/SDK metadata. Private packet now APPLIED_TARGETED_ACCEPTANCE_REVIEWED,
+publication still PENDING_CI.
+Cleanup complete for exact ten stopped legacy containers and their3unreferenced
+images37d7f518/56d331db/dd065fdf; no-v/no-force, all running image/start/restart
+identities unchanged. Private inspect retained0600. Disk235353243648->235294134272
+bytes; concurrent host traffic means not exact reclaimed amount. Task-only Cargo
+cache3,123,045,441logicalbytes removed (initial permission refusal, then bounded
+sudo after rechecking no mount). Disk235431378944->232285339648bytes. No volume,
+state, evidence, V1/TS/Portal or global BuildKit removal. Shared cache ownership
+not attributable, explicitly deferred; native rollbackf204 and active7fe retained.
+Remote fetch unchangeddev7ee4af0/main8299838. Next: push this feature/PRdev, CI,
+then approvedmain release path. No second C2 and no TS lifecycle work.
+
+### CI Release Blocker - Dependency Security (2026-09-30)
+Featuref460dee pushed, PR25->dev; CI36759351053. SDK Python3.10 PASS.
+Unit job110037625827 FAILED before tests in pip-audit:12PyJWT2.13.0 advisories
+(fixed2.14.0/2.15.0) +3urllib3 2.7.0 advisories(fixed2.8.0). Full bounded CI log
+outsideGit: execution-readiness-20260930/evidence/ci-unit-36759351053.log.
+Do not weaken audit or call this a Rust recovery failure. Official release docs:
+https://pyjwt.readthedocs.io/en/latest/changelog.html
+https://github.com/urllib3/urllib3/security/advisories
+Source-only release prerequisite: raise PyJWT floor2.15.1(service+SDK) and
+urllib3 floor2.8.0; targeted Poetry lock update onlythese2packages, inspect solver
+diff. Test negative/positive JWT realms/SDK and dependency audit, rebuild SDK2.0.6
+(unpublished, replace candidate hash explicitly), update release evidence.
+Running Rust/Query/Stream/TS remains unchanged by dependency source edits.
+Any additional Python runtime rollout must name affected roles/digest/rollback;
+current approval was fiveRustroles, not an implicit unrelated reader recreation.
+Do not publish clean whole-runtime security certification for old Python images.
+
+Additional approved cleanup completed5unusedoldqdl-v2images ba41/579d/ed1e/3897/eec6;
+retained3dd54bfd Query predecessor conservatively alongside currentreader and
+native rollback. Disk232370102272->232098627584bytes, all runningroles unchanged.
+Exact list at evidence/unused-image-cleanup.json; no TS/Portal/cache/volume removal.
+
+Security source slice: Poetry2.3.4(targeted update) changes ONLYpyjwt2.13.0->2.15.1
+andurllib3 2.7.0->2.8.0 pluslockcontenthash; no transitive dependency churn.
+Auth/realm/TLS/SDK/package targeted32/32PASS with bothpatcheddependencies in a
+disposableexistingreaderimage testcontainer. SDK2.0.6 unpublished candidatewheel
+replaced explicitly: old26eede97...7b2e superseded by
+d44fbf559c0c7eb52abf2a40091bcecc9e5ea025fed9c9b0bbbc6db6329395ad.
+Certificate overallstatus PENDING_SECURITY_PACKAGING; affectedRustdeltaPASS stays
+separate. CIoldrun: nativeintegration/contract/SDKPASS; dependency auditFAILED.
+TwoQuery securitypackaging rollout request sent separately; do not recreateuntil
+approved. No Rust/Stream/BAR/V1/TS change. Querypredecessor3dd retained conservatively.
+Tooling: hostvenv unavailable, no hostpackageinstall; disposablePoetrycontainer
+used canonical2.3.4 and hostUID1001. Initialwrongversion/UIDattempt stopped;
+noexec tmpfs failure corrected with exec onlyonisolatedtemp. Test/solvercontainers
+removed automatically. Partialemptyhostvenv removed, no other cachecleanup.
+
+Security candidate prepared, NOT deployed: qdl-v2-python:2.2.1-e366f75,
+sha256:b40b49c361c7474691ef2d68eba8bcb4a22045cb2d010e2c73a8c0c68cc04a65.
+Built standardDockerfile from gitarchivee366f75(noownerhunks/privatefiles).
+Actualpackaged32auth/realm/TLS/SDKtestsPASS, networknone; solver/testcontainers
+removed. Packet v2.2.1-e366f75-query-security holds candidate/rollbackCompose
+validatedconfig--quiet; onlytwoQuery imagefielddiff, noenv/mount/TLS/configchange.
+Rollback0ed57643...eb959; packetpreparedpendingownerresponse, noQueryrecreate.
+CI36760348660 now passes dependency audit and is executingunit/native/contract
+jobs; do not claim finalgreen prematurely. OriginalRust5role packet remains
+completed; no repeat300s run. Candidateimageexplicitlyretainedforpendingpacket,
+notgarbage. NoadditionalTSwork,mainmerge,tagorpublicationyet.
+
+### Publication Checkpoint And Tracker Reconciliation (2026-09-30)
+Previous goal turn made implementation/rollout/evidence/cleanup progress; current
+continuation verified live CIrun36760348660, not a guessedwait. ThreejobsPASS:
+contract-tests, kn-native-integration and SDKPython3.10; unit-tests stillrunning
+at Run unit tests, dependency audit alreadyPASS. No new C2/marketorder action.
+Tracker now reflects DLR02/03 bounded fixes, DLR06 remainingpublication and
+actual22sandbox demand versus64sealedentitlements. Earlier incident descriptions
+remain historical; this correction does not reduce entitlement coverage.
+CandidateQuery imageb40b49c...4a65 packagedversions verified PyJWT2.15.1/urllib32.8.0
+and32packagedtestsPASS. Private packetprepared, noownerresponse recordedyet and
+noQueryrecreate. Need that packet outcome plus terminalCI before release closure.
+Canonical remains /home/bobby/data_layer, samefeature, onecheckout; dev/main and
+publishedv2.2.0 unchanged. All newtestcontainers auto-removed; candidate retained
+for the pendingpacket. Source/plan evidence commit only; no runtime mutation.
+
+### Blocked Audit - Query Runtime Approval (2026-09-30)
+The same separate twoQuery approval request remains unanswered across at least
+three consecutive goal continuations. Safe independent work is complete: dependency
+source fix,32source+32packagedtests, immutable image, exactcandidate/rollbackpacket,
+sourcepush and scopedcleanup. No additional runtime permission is inferred from
+automatic goalcontinuation. CIjob110041015650/run36760348660 independentlyremains
+in_progress at Run unit tests on latestAPIpoll; previousgreen run took24minutes
+for thatstep. Waiting is not classified as failure and no rerun/cancellation.
+Goal blocked on pendingquerypacket approval (not complete). CI can continue on
+GitHub while goal is blocked. On ownerresponse, repoll sameCIrun, apply onlytwo
+approvedQueryroles, affectedauth/64productreadback, then finalcertificate/publication.
+No newC2, sourcearchitecture, TSorderwork or broaderdeployment is authorized here.
+
+### Approved Query Security Handoff (2026-09-30)
+Ownerexplicitapproval received; CI36760348660 all4jobsPASS. Query1rolled image
+b40b49c...4a65 andhealthy. Operationalmeasurementmistake: rawdictionarycomparison
+failed solelybecauseDockerreorderedvolumes; orchestration incorrectlycontinued
+tothealreadyapprovedQuery1recreate instead ofshortcircuiting. Noextra rolechanged.
+Immediatelystoppedfurtherroll, comparedmountsbytarget plusallothereffectivefields:
+PASS onlyQuery1imagechanged, Query2unchanged. Thisisnotconfigdrift. Next commands
+shortcircuitonfailedprecondition. BeforeQuery2freezeallrunningroles; retainolder
+rollout/checkpointinventories separately, do notlabel this newbaselinepreQuery1.
+RollonlyQuery2afterQuery1healthy, thenexisting64productx2preflight viaactualTS
+identity(noSDKstream/ACK/order). NoC2repeat, noquota/TLS/manifest/statechanges.
+
+### Query Readback Outcome And Final Release Metadata (2026-09-30)
+TwoQueryrolled/healthy,b40b49c...4a65; protectedroles unchanged sinceQuery1baseline.
+128typedviews/64productsx2,125usable,0auth/manifestfailures. AllMARK/QUOTE/BOOK/BAR
+usable. ThreeTRADEstrictage refusalsretained: BinanceSOL latestagg f/lrangeends
+atservedrawtradeID, OKXBNB exactproviderID/timestampmatches. OKXSOL NOTquiet:
+providernewtrade228.26msbeforequery,hostreceive27.40mslater,canonicalCreateTime
+154.26msbeforequery. CreateTime/normalized/publishedfields are NOT transaction
+commit/cacheapplytimestamp; do notpretend exactvisibilityrootcauseproven. Thisis
+finitepropagation/correctreject, notalways-freshlasttrade. Tenfollowupreads7usable,
+3age-refused thennewertradevisible; notsubstitutedfor125/128 oranotherC2.
+BoundedKafkaattribution usedexplicitassign/nocommit; twoinitialACLdenials logged,
+correctexistingreaderidentity/group workedwithoutACLmutationorconsumergroupjoin.
+Raw1316/canonical1170recordsread over4s historicalbounds, nooffsetcommit.
+
+CI36760348660 all4jobsPASS. FinalcertificatePASS isaffected-delta qualification,
+notcontinuousavailability, arbitrarycapacity or brokerexecution. Querysecurity
+readback appended to publicendpointreport, previous300sreceipt remainsunchanged.
+UpdateREADME withdatedlatestpatchscope/latency and retainolderload50benchmark as
+historical. Finalpublication remainsfeature->dev->mainreleasePR/tag/workflow;
+metadata-onlyhead mustpassCI, no newimage orC2 fordocumentation changes.
+Authoritativepublicationreceipt will be written outsideGit at
+execution-readiness-20260930/evidence/final-publication.json and linked to tag,
+main/dev/head, workflowrun and artifact hashes. Untilthen notpublished.
+
+### Sealed Release Handoff And Publication Authority (2026-09-30)
+All in-scope implementation and affectedruntime checks are recorded above; no
+wholecatalogue/C2repeat. UpdatedREADME latestmeasurements separateolderload50.
+Ninthobsoleteimage3dd removedafter exactQueryrollback0ed frozen; disk219302060032
+->219302334464bytes (concurrentwrites, notclaimedreclaim). Activeimages+named
+rollback retained; sharedBuildKit/basebuildercache notgloballypruned.
+Finalsourcefunctionalcommit e366f75 isCIgreen; subsequentartifact/README/plan
+changes aremetadataonly and must clear normalPRCI beforeintegration. Owner plan
+hunks remainunstaged; no owner source rewritten. The final operationalpublication
+receipt is externalstate, intentionallynot a recursive newrelease commit:
+~/.local/state/qdl-v2/execution-readiness-20260930/evidence/final-publication.json.
+It must contain actualPRmerges, main/dev/tagSHAs, terminalreleaseworkflowstatus,
+GitHubreleaseURL andasset checks. Its absence meanspublicationnotcomplete. This
+samephasecloses onlywhen thatreceipt and immutablev2.2.1tag provepublication;
+no futurephase or freshC2 isrequired. Releasecode and imagecomponents remain
+immutable; docs commits do notcause redundantimage rebuilds.
+TS E work isnotresumed automatically. Handoff permits using measuredbindings
+under unchangedpolicy; it does not grant brokerorder authority orcertify TS E09.
