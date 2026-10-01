@@ -63501,9 +63501,11 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1.**
-The owner resumed the full EDC-1 goal after the consolidated planning checkpoint.
-Continue this SAME phase; runtime deployment/release retains its review boundary.
+**Latest decision: PLAN_REVIEW_REQUIRED / NO_NEW_IMPLEMENTATION.**
+The latest owner request requires a consolidated dependency review and written
+plan before implementation approval. See [owner review checkpoint](#edc1-owner-review-checkpoint).
+Preserve existing patches/evidence; do not continue implementation or mutate runtime
+under an older approval. This remains ONE EDC-1 phase, not another upgrade program.
 See [current closure proposal](#edc1-final-core-closure-proposal).
 Earlier source/test receipts remain valid at their stated boundaries, not runtime
 certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
@@ -65081,3 +65083,134 @@ Atomic BOOK/reference recovery remains OPEN: compare actual per-component eviden
 not aggregate time/offset; stale Query must not overwrite newer owner state.
 The additive labels require eventual changed Query reader packaging in ED07;
 do not claim current runtime has them. SDK label map needs no schema/version bump.
+
+
+<a id="edc1-owner-review-checkpoint"></a>
+### EDC-1 Owner Review Checkpoint - TS Core And Execution Dependencies
+
+Status: PLAN_REVIEW_REQUIRED. This checkpoint supersedes prior instructions to
+continue implementation, not historical evidence. Owner must approve this plan
+before further source fixes. Deploy/release follows a separate reviewed result
+and exact changed-role packet. No new phase, service or architecture is proposed.
+Read this checkpoint with ED01..ED10, ED-T01..ED-T15 and the linked KN guide above.
+
+#### Rechecked Source And Evidence Boundary
+
+Read-only review used DL a243096 and authoritative TS upgrade 3c5a747 plus the
+existing uncommitted ordering predicate. Canonical TS is a separate deployment
+integration checkout; do not merge the whole unfinished native program into it.
+Prior source fixes are locally tested, NOT automatically present in runtime.
+No fresh live health/latency measurement was performed by this planning review.
+The pre-existing offline ordering test process completed 22 passing cases; it
+proves only a pure predicate, not Redis atomicity, recovery or execution safety.
+Preserve its two untracked TS files and implementation journals for later review;
+do not deploy or silently delete them. No new code edits in this planning pass.
+
+Concrete source inspected:
+- TS services/market_data/cache_projector.py::project_atomic and
+  project_execution_feeds: the former has atomic decisions; the latter builds
+  ordinary writes for typed execution feeds. BOOK/reference recovery must not
+  introduce a competing writer through the ordinary path.
+- TS services/risk_engine/data_layer_recovery.py::RiskDataLayerRecovery.recover:
+  current generic implementation covers Binance latest_trade and VN quote, with
+  a non-authoritative paper BAR fallback. This is NOT equivalent to exact-feed
+  Binance/OKX QUOTE, L2 or MARK/INDEX recovery. Do not alter VN in this phase.
+- TS services/physical_egress/market_guard.py::ExecutionDispatchGuard.valid_until:
+  current source validates metadata and required cache data after queueing, but
+  does not yet prove bounded exact-feed recovery through the deployed native path.
+- TS adapters/market_data/data_layer_v2.py::latest_execution_feed and
+  services/market_data/data_layer_bridge.py: reuse the existing typed facade and
+  owner projection, not a new provider caller in Risk or execution math.
+
+#### One Phase, Five Ordered Work Packages
+
+These are tasks inside EDC-1, NOT new phases or repeated approval ceremonies.
+
+1. Freeze the actual caller/dependency matrix. For shared TS and native candidate,
+   enumerate Gateway -> Risk -> custody/portfolio -> queued sender -> local child
+   and paper matcher. Record exact operation, native product, realm, metadata,
+   required feed, units, depth, expiry and deployment identity. Include existing
+   inverse and portfolio collateral requirements, not just the submitted symbol.
+   MARKET/LIMIT must not depend on fresh LAST unless server policy actually says
+   so; cancel/query must not need a new price. Research metrics and historical
+   BAR cannot accidentally gate execution. Preserve native-trigger versus local
+   child semantics. Output a finite manifest-derived matrix and owner map.
+
+2. Complete shared typed recovery and ordered apply. Query remains the public
+   recovery endpoint, with existing same-product Stream backup. Use one total
+   deadline, bounded concurrency and in-flight coalescing; no network under DB
+   locks. Route both normal owner updates and recovery through the SAME ordering
+   predicate and atomic apply boundary. BOOK uses verified generation/sequence;
+   reference uses original per-component clocks/capture/authority, never a made-up
+   Kafka offset. Explicitly validate generation adoption, invalidation and reset;
+   a predicate that merely blocks every new generation is not finished recovery.
+   An older query response cannot replace a newer stream view; a hard-invalid
+   newer view cannot be hidden by an older eligible cache value. Preserve price,
+   quality, watermark and ACK consistency across crash/replay and key expiry.
+
+3. Close TS admission/dispatch compatibility. Reuse locally tested required-feed,
+   paper provenance, metadata pin and proof-expiry corrections. Verify them on
+   the actual Rust queue/adapter/repository path, not only Python guard units.
+   Test metadata changes, queued expiry, batch children, cancel/amend and local
+   trigger children. Freeze rollout handling for old queued requests/digests:
+   drain/recover under their supported artifact; never silently re-sign or invent
+   metadata pins. Preserve accounting, reserves, idempotency and private lifecycle.
+   Shared legacy TS and native candidate need distinct compatibility receipts.
+
+4. Resolve attributable data failures and measure actual usability. Observe the
+   same five-symbol/two-venue required products on both replicas and TS/Risk.
+   Capture the exact refused view and simultaneous provider/canonical/cache IDs.
+   Quiet LAST, upstream delay, internal lag and UNKNOWN remain separate outcomes.
+   Fix only a reproduced internal defect; no symbol exception, timestamp renewal,
+   cross-venue substitute or freshness relaxation. Use one quota-budgeted probe.
+   Run affected deterministic/Redis/PG/native tests and fast matrix BEFORE the
+   single final 300s no-order window. No full catalogue/C2 rerun for bug discovery.
+
+5. Review, package and propose the smallest rollout. Reconcile every ED finding
+   against exact source/test/runtime status. Build only changed artifacts; pin
+   SDK, authority, realm, manifests and metadata revisions together. Prove reader
+   compatibility before writer adoption and rollback without reset. Report actual
+   usable data after each changed role, not only Docker health. Only after owner
+   review and approval perform rollout, affected acceptance, release and cleanup.
+   Do not resume TS P18.3E or activate alpha/orders automatically.
+
+#### Required Closure Evidence Beyond Local Pass Counts
+
+- Actual Redis: owner/recovery races, new generation, stale response, invalidation,
+  marker retained after key expiry, crash before ACK, duplicate and out-of-order.
+- Actual isolated PG/native path: no Query I/O while holding account locks;
+  expiry after queue/lock/commit wait; zero unauthorized sends or residual test
+  reservation/outbox liability. Existing unaffected money evidence is inherited.
+- Every operation uses only its required feeds, but ALL portfolio/collateral
+  dependencies remain enforced. Units/native identity must match inverse products.
+- Single-product recovery contention and independent-product progress, bounded
+  cancellation, timeout and return to primary. Backup shares Kafka/host: no HA claim.
+- Latency in ms: before-client-queue -> validated usable result; event -> actual
+  TS Redis apply; cache -> Risk use; outage -> usable recovery. Report attempted,
+  usable, legitimate refusal, internal failure and timeout counts separately.
+  Keep ED-T budgets frozen; p99 requires >=100 samples per reported group.
+- Local source pass does not close live attribution or runtime adoption. Every
+  applicable ED-T row must have PASS evidence or an explicit unsupported scope;
+  unfinished implementation cannot be renamed external debt.
+
+Exit: zero known avoidable internal denial and zero unsafe acceptance in the
+agreed required-intent matrix; no unexplained loss/regression, resource growth,
+ordering violation or authority mismatch. A naturally old LAST price may remain
+ineligible, but must not block an order whose approved policy uses QUOTE/L2.
+Do not promise all orders succeed or all TRADE routes always have fresh events.
+
+#### Runtime, Rollback And Cleanup Boundary
+
+No runtime changed here. The earlier recorded v2.2.1 deployment inventory is a
+baseline, not a fresh health certificate. Re-inspect exact image/config/mounts
+before any rollout. Query's new component labels, SDK/TS changes and native queue
+compatibility must be packaged explicitly; healthy unchanged roles stay untouched.
+Keep one named supported rollback set. If new state cannot be consumed by the
+old reader, stop promotion and fix compatibility; never reset state to roll back.
+
+After each test, remove only its clients/network/schema/keys; record ownership and
+zero-order cleanup. At phase closure inventory active/rollback images and build
+cache, record disk before/after, remove only unreferenced disposable artifacts.
+No broad prune, volume deletion or owner worktree cleanup. Existing owner plan
+hunks and unfinished TS source remain preserved. This planning pass created no
+image, container, network or volume and performed no cleanup or disk reclamation.
