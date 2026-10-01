@@ -65001,3 +65001,44 @@ metadata bindings in enqueue and sender environments and test old queued request
 do not manufacture a new pin for an already queued/claimed digest. Recover/drain
 old attempts under their supported original artifact. Actual Rust queued-path
 acceptance and typed exact-feed recovery still OPEN alongside ED06 attribution.
+
+
+#### ED09 Book Proof Preservation Before Typed Recovery
+
+Recovery inspection: project_atomic fences TRADE/QUOTE only. Existing
+project_execution_feeds for BOOK/MARK uses ordinary writes; do not wire a second
+Risk writer through it or call that atomic recovery. Complete the affected
+projection/recovery predicate before activation. Source also shows book reader
+borrows native_sequence/snapshot_sequence as generation and loses sequence0 through
+truthiness fallback. First reproduce and close this ED09 evidence fabrication:
+retain explicit generation only, preserve zero sequence, reject missing/unverified
+generation at Risk's required-book boundary. No invented reset proof, no mutation
+of public source timestamps, no new provider/service/topology. Test existing
+consumer/guard behavior; record fixture corrections rather than weaken integrity.
+
+
+ED09 book proof source correction verified locally: before8FAIL/9,
+book-proof-red.xml SHA256
+b33048edf6195a7c6646576e92da1afb2a81085a132df4066489f379c196ac9a.
+Cache reader now preserves only explicit book_generation/generation (never
+native/snapshot sequence), keeps explicit0 sequence, and preserves missing versus
+false proof for diagnostics. Required-book Risk validation rejects missing/zero/
+negative generation and missing sequence_verified. No optional L2 read introduced.
+First affected130tests129PASS/1FAIL: existing Risk positive fixture had neither
+generation nor sequence proof. Converted to three cases: explicit valid proof
+passes, missing generation and missing proof fail for their exact reasons.
+Final211PASS/0FAIL/0SKIP,3.601s; book-proof-final.xml SHA256
+cb8a3137659824bb8a9d411436664c29324c4610fd85952c091fc003130f439f.
+Includes actual cache projection/reader and RiskChecker unit path, native guard,
+paper tick and quality transport. All TEST_ONLY offline/in-memory; no new actual
+Redis/PG/native-process/provider claim. New test lint and diff checks pass.
+
+Recovery remains OPEN: ordinary BOOK/MARK projection writes cannot yet be reused
+by an independent recovery writer without ordering/authority proof. Do not pretend
+TRADE/QUOTE atomic machinery already covers offset-free reference or book resets.
+Next slice must supply the shared affected apply predicate and bounded recovery,
+then actual Redis race/replay tests before wiring native admission/sender. This
+is ED07/ED09 work within EDC-1, not a new phase or permission to expand scope.
+Runtime/source deployment remains unchanged; no image/build/network/volume created.
+Offline clients --rm removed; existing active/rollback artifacts retained, no
+prune/disk reclamation, no push/merge/release or broker orders. Goal stays active.
