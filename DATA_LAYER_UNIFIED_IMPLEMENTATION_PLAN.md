@@ -65389,3 +65389,44 @@ restart0/OOMfalse. All clients--rm; no image/build cache/volume created. Disk
 available70092484608B before,70051790848B after; host activity, no savings claim.
 Production/rollback artifacts unchanged, no order transport/push/merge/release.
 Goal active; no claim that local transition tests close the full EDC phase.
+
+
+#### ED09 Projector Integration Boundary - Implementation
+
+Add an explicit typed snapshot/reference method on the existing TS projector,
+using its current Redis route/authority and atomic state operations. Reuse Risk
+at-use validation; return actual applied/no-write decisions to the worker, not
+a fabricated ready result. Preserve old public writer methods until their caller
+transition and cache adoption are verified. Authoritative failure propagates;
+non-authoritative mirror failure is measured without overriding primary success.
+State changes publish only after the atomic write, on the existing execution
+channel. No extra Redis owner, service or production runtime change.
+
+
+ED09 existing projector integration method tested: project_execution_snapshot
+uses the configured Redis authority route, returns actual applied/no-write,
+reuses Risk at-use expiry validation before and after Redis read, and delegates
+explicit generation changes only with previous full view. BOOK_SNAPSHOT/reference
+only; authenticated snapshot marker required. Existing writer APIs and bridge
+callers remain unchanged until cache adoption/worker transition is complete.
+Atomic accepted state now publishes on the existing execution channel AFTER
+marker+price writes; duplicates/no-write do not publish.
+
+Final170PASS/0FAIL/0SKIP,3.265s, including56actual Redis cases plus existing
+projector/Redis route/batch drain/ACK/typed reference/cache unit cases.
+execution-projector-final.xml SHA256
+8535ca5d087cafcf90cbe046f0f6803c3844eb133161550ead21f6541be8e8ee.
+New cases: CORE_ONLY/EPHEMERAL_ONLY/SHADOW_WRITE real owner path, mirror failure
+with primary success, primary failure propagates without secondary write,
+subscriber receives committed bytes once, explicit reset, post-read book expiry.
+TEST_ONLY fixtures; no native process, broker or production health certificate.
+New module/tests lint clean; diff whitespace clean.
+
+Remaining before enabling caller: legacy unmarked cache adoption, snapshot facade
+state_refresh provenance, normal worker applied/noop health handling, BOOK_DELTA
+reset compatibility, bounded coalesced typed recovery then actual native/consumer
+acceptance. Do not route old worker writes alongside new ordering owners.
+Cleanup removed only ts-edc1-projector-redis/network; DB15size0, restart0/OOMfalse;
+all clients--rm. Disk available71206694912B before,71235538944B after (shared host
+activity; no attributable savings). No images/build/volumes created, no active or
+rollback removal, no runtime mutation/push/merge/release. Goal remains active.
