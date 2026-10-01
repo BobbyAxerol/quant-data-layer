@@ -65085,6 +65085,17 @@ The additive labels require eventual changed Query reader packaging in ED07;
 do not claim current runtime has them. SDK label map needs no schema/version bump.
 
 
+#### ED09 Typed Latest-State Ordering Predicate - Implementation
+
+Implement reusable pure ordering evidence for BOOK and paired reference before
+Redis CAS wiring. BOOK compares explicit verified generation/sequence, retains
+zero and rejects reused coordinates with altered payload. Paired reference compares
+each original event/receipt/capture, not aggregate clock or a fictional offset.
+Regressing any component is no-write; conflicting immutable capture is an error.
+Different product/metadata/authority contract is a typed fence, not automatic
+adoption. This slice is NOT atomic apply or rollout; test predicate before CAS.
+
+
 <a id="edc1-owner-review-checkpoint"></a>
 ### EDC-1 Owner Review Checkpoint - TS Core And Execution Dependencies
 
@@ -65214,17 +65225,6 @@ cache, record disk before/after, remove only unreferenced disposable artifacts.
 No broad prune, volume deletion or owner worktree cleanup. Existing owner plan
 hunks and unfinished TS source remain preserved. This planning pass created no
 image, container, network or volume and performed no cleanup or disk reclamation.
-
-
-#### ED09 Typed Latest-State Ordering Predicate - Implementation
-
-Implement reusable pure ordering evidence for BOOK and paired reference before
-Redis CAS wiring. BOOK compares explicit verified generation/sequence, retains
-zero and rejects reused coordinates with altered payload. Paired reference compares
-each original event/receipt/capture, not aggregate clock or a fictional offset.
-Regressing any component is no-write; conflicting immutable capture is an error.
-Different product/metadata/authority contract is a typed fence, not automatic
-adoption. This slice is NOT atomic apply or rollout; test predicate before CAS.
 
 
 #### EDC-1 Resumed - Ordering Boundary Review
@@ -65776,6 +65776,29 @@ provider attribution, actual native-process/PG integration where affected and
 reviewed runtime/fast-matrix/final acceptance. No historical refusal relabelled.
 
 
+#### ED09 Ordered Delta Ownership - Implementation Start
+
+Source audit: QDL BookDeltaPayload contains updates, not a full book. TS Risk
+MarketCacheReader requests BOOK_SNAPSHOT; BOOK_DELTA is a distinct latest-delta
+cache and session route. Preserve this boundary, do not reconstruct a second
+book in Python or retag deltas as executable snapshots. Harden Risk's book input
+to require snapshot semantics even if a manually supplied delta contains levels.
+
+Use existing ordered CAS for the delta latest-state cache, preserving source
+generation/sequence, original timestamps and exact feed key. A new generation
+needs the authenticated Query anchor, not a raw unanchored stream update. Same/
+older delta cannot rewrite TTL/publish or renew health. A same-coordinate Query
+observation may prove session only, without renewing cached price/event state.
+ACK remains after successful caller apply; restart obtains fresh Query boundary,
+not a claimed restored full book. Existing SDK resumes only TRADE/QUOTE state.
+
+Test actual Redis and facade/worker for both venues/five symbols: duplicate,
+older Query, reset/new generation, authority mismatch, gap/unverified, expired
+cache fence, lost reply/replay and failed apply before ACK. No runtime or Kafka
+mutation; no new service, public schema or provider threshold. Keep inherited
+evidence; source and isolated tests are not production certification.
+
+
 <a id="edc1-owner-review-freeze"></a>
 ### EDC-1 Final Dependency Closure Plan - Owner Review Freeze
 
@@ -65899,3 +65922,75 @@ Never delete shared state or unmerged worktrees for tidiness.
 This review changes documentation only; existing unfinished code is preserved.
 No builds/tests/orders/runtime changes/cleanup or push/merge/release. Next step:
 OWNER REVIEW of this same phase, not automatic implementation continuation.
+
+
+#### EDC-1 Goal Resumed - Ordered Delta Integration
+
+Owner goal continuation resumes implementation under the final dependency
+closure plan; latest status IN_PROGRESS. Previous owner-review hold is historical.
+First close the preserved ED09 delta patch: actual facade/worker/Redis ordered
+apply and generation anchoring, conservative session observation clock, ACK after
+apply, no use of partial delta as executable snapshot. Test both venues/five
+symbols and failed apply/replay/reset. Reuse existing test image with isolated
+Redis, no runtime/image/config/order changes. Next caller integration and runtime
+proof remain open; this slice cannot close EDC-1 or authorize release.
+
+
+#### ED09 Ordered Delta Integration - Tested Source Receipt
+
+BOOK_DELTA now uses existing ordered CAS in the actual V2 resume-mode worker,
+with at most64 items per batch and a shared finite apply deadline. Same/older
+sequence cannot refresh TTL or publish; a timed matching Query observation can
+prove session only. Initial seed/new generation requires a Query anchor; previous
+generation or clock regression cannot replace state. Restart obtains a fresh
+anchor; it does not claim to restore a full book from a last-delta record.
+
+Partial delta remains non-executable data. Risk and sender book policy require
+BOOK_SNAPSHOT even if a manually supplied delta contains levels. SDK canonical
+replay may carry an old verified delta to advance ordered state, but does not
+renew execution eligibility/session. Invalid gap/source/sequence fails closed.
+Query observation timing starts before the RPC/session open; elapsed time through
+apply is counted in health. Untimed reconnect controls do not grant fresh health;
+a timed Query anchor is requested. Negative session age is rejected.
+
+Actual isolated Redis tests across Binance/OKX x BTC/ETH/SOL/DOGE/BNB cover
+anchor/reset/regression, duplicate/older/expired cache, malformed batch/deadline,
+gap/authority/unverified/conflicting payload, lost apply reply and failed-apply
+ACK boundary. Forty cases use actual protobuf decoding through pinned SDK,
+facade, worker and Redis (TEST_ONLY provider-shaped events, not live capture).
+Ten additional reconnect cases use the real facade/control/session path.
+
+Final command: existing image p18-56dae41, pytest -q --tb=short -p no:cacheprovider
+on test_edc_book_delta_redis.py, test_edc_execution_state_redis.py,
+test_edc_typed_recovery_redis.py (integration) and test_edc_execution_ordering.py,
+test_data_layer_v2_bridge.py, test_data_layer_v2_consumer.py,
+test_execution_market_context.py, test_edc_dispatch_guard.py,
+test_edc_required_reads.py (unit). Result652PASS/0FAIL/0SKIP in10.612s;
+170new Redis delta cases, existing148Redis cases and334unit cases. Suites overlap
+previous receipts; do not sum them. Evidence:
+~/.local/state/qdl-v2/edc1-20261001/evidence/delta-final.xml
+SHA2566078e43408d92414dddd0ae9eb8022117662f18b39e75f35d046d153561049ca.
+New test and ordering helpers lint clean; TS diff whitespace check clean.
+
+Initial failed receipts retained: new test mistakenly reused a mock health
+registry, then omitted real registry constructor arguments; protobuf fixture
+needed the correct errors-module import and nonempty correlation ID; reconnect
+fixture needed ControlEvent.detail. Two prior gap tests used BOOK_DELTA as a full
+book: changed their gap input to snapshot, added separate delta-rejection tests.
+No gate/SLA was relaxed. Proposed1000-item delta cap was blocked by tool review;
+not applied. Kept64 and clamped delta request batch to64 without changing other
+feed batching. No runtime request/config was changed.
+
+Cleanup: exact ts-edc1-delta-redis and ts-edc1-delta-net removed; DB15zero keys,
+restart0/OOMfalse before stop; all clients --rm, no volumes/images/build output.
+Disk available73884532736B before /74440794112B after; host activity means this is
+not claimed attributable savings. Docker inventory85images/29active,25.18GB;
+BuildKit422entries/29active,16.53GB. No broad prune: shared active/rollback and
+unrelated images remain owned by their packets. No new disposable image exists.
+
+Runtime remains the baseline of the owner-review entry, no rollout/new latency/
+provider/order claim. Source packet must enable ordered resume mode and quiesce
+old unguarded writers before adoption; legacy mode is not certified by these tests.
+EDC-1 IN_PROGRESS: native paper/package owner wiring, actual native/PG proof,
+legacy Risk/portfolio authority, old state/queued metadata/SDK migration,
+synchronized provider attribution and reviewed runtime acceptance remain open.
