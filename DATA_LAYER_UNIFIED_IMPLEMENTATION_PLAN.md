@@ -63501,12 +63501,11 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: PLAN_REVIEW_PENDING / OWNER_APPROVAL_REQUIRED.**
-The latest owner request is audit and a written consolidated plan BEFORE further
-implementation. Follow [the execution closure review](#edc1-ts-core-final-review).
-Earlier implementation approvals/receipts are historical, not permission to
-continue code or runtime changes in this review. Existing source evidence is not
-runtime certification. This remains the SAME EDC-1 phase.
+**Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1.**
+The owner goal continuation resumes implementation of the consolidated
+[execution closure review](#edc1-ts-core-final-review). This remains the SAME
+EDC-1 phase. Earlier source evidence is not runtime certification; the reviewed
+changed-role packet remains the deployment/release boundary.
 See [current closure proposal](#edc1-final-core-closure-proposal).
 Earlier source/test receipts remain valid at their stated boundaries, not runtime
 certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
@@ -65697,3 +65696,81 @@ and rollback digest baseline above is inherited, not newly health-certified.
 
 **Next permitted step: owner review of this same EDC-1 plan. No implementation,
 rollout, push/merge, release or P18.3E execution continuation from this entry alone.**
+
+
+#### ED03/ED05 Exact-Feed Coalesced Recovery - Implementation Start
+
+Owner goal continuation resumes EDC-1 after the consolidated plan review; this
+is the current instruction, superseding the earlier PLAN_REVIEW_PENDING hold.
+Implement bounded recovery around the actual MarketCacheReader and existing
+atomic/ordered projector. Resolve only sealed V2 routes for the exact native
+identity/feed; no legacy latest_trade or paper OHLCV fallback for execution.
+Coalesce concurrent requests, bound distinct work and total duration, preserve
+caller cancellation ownership and revalidate authoritative Redis after apply.
+No network I/O under account locks; native at-use guard remains authoritative.
+Test both venues, QUOTE/TRADE/BOOK/MARK, missing/stale, identity, stricter caller
+budget, ordering races, deadlines and cancellation against actual isolated Redis.
+No runtime/config/credential change in this source slice. Wire compatible native
+callers only after the shared behavior is proven; incomplete integration remains
+explicit in this same phase. Keep rollback/runtime unchanged and clean exact test
+resources. No push/merge/release or broker orders.
+
+
+ED03/ED05 typed recovery source now uses ExecutionRecoveryReader around the real
+MarketCacheReader/projector. Only admitted sealed V2 native identity/feed reads;
+QUOTE/TRADE use one paired canonical view to update execution AND compatibility
+state atomically. BOOK/reference reuse ordered snapshot apply. Read-back, not RPC
+success, supplies the context. No V1 trade/OHLCV substitution, synthetic price,
+provider-direct I/O or new service. Concurrency4, max32 distinct in-flight keys,
+one finite existing recovery deadline; 50 same-key waiters coalesce to one fetch.
+These are process bounds, not a new claim about aggregate runtime quota/capacity.
+
+Source wired into native Risk owner and physical-egress adapter via the existing
+runtime construction module. Native Risk uses its binding age ceiling rather
+than the generic180s default. Sender passes remaining deadline and intent budget.
+Route ceilings apply to cache hits as well as refresh. Per-feed read-set expiry
+is retained in context lineage, rechecked at actual Risk validation and clamps
+sender permit; an expired optional TRADE does not veto QUOTE-only requirements.
+Recovery lifetime closes before SDK; Risk tasks cancel/join before reader closes.
+Factory leaves V1/disabled recovery unchanged; DUAL_READ cannot silently become
+execution recovery. Actual credential/mount/identity/quota activation remains a
+reviewed packet task, not a source claim of runtime readiness.
+
+First56Redis tests passed. Self-review added a real race reproducer: a new waiter
+joining the last caller's cancellation inherited CancelledError. It FAILED on
+the initial implementation (typed-recovery-cancel-red.xml); a closing-flight fence
+now joins owned cleanup before allowing fresh work, without a concurrent writer.
+The first native integration run also exposed invalid TEST_ONLY fractional-second
+order budget and a display-symbol-vs-native-identity comparison. Tests now use
+the integer-second order contract; matching uses canonical venue/product/native
+identity, not dataclass display-symbol equality. Failed receipts retained.
+Typed Query permission/source/gap errors retain reason; invalid source quality
+keeps Risk's exact stale/gap/authority classification instead of a generic success.
+
+Final command: isolated existing test image p18-56dae41, pytest -q --tb=short
+-p no:cacheprovider on test_edc_typed_recovery_redis.py, test_edc_recovery_runtime.py,
+test_edc_dispatch_guard.py, test_edc_dispatch_metadata.py, test_edc_required_reads.py,
+test_data_layer_v2_consumer.py, test_data_layer_v2_bridge.py,
+test_edc_execution_state_redis.py, test_execution_market_context.py and
+test_edc_paper_tick_provenance.py (their existing integration/unit directories).
+Result557PASS/0FAIL/0SKIP,9.451s:148actual isolated Redis cases, including64new
+recovery cases, plus409unit cases. Prior suites overlap; do not sum totals.
+Evidence ~/.local/state/qdl-v2/edc1-20261001/evidence/typed-recovery-final3.xml
+SHA256 f6a41aceb52b87ebcade2e982f85ad6315c4833d2f8fba81354b170fea98d68b.
+New files/runtime helper lint clean; complete TS whitespace check clean.
+TEST_ONLY provider-shaped inputs, no live/provider/latency/real broker evidence.
+No fresh PG/native-process proof in this slice; prior unchanged lock/readset
+proof is inherited, not misreported as newly executed.
+
+Cleanup: exact ts-edc1-recovery-redis and ts-edc1-recovery-net removed; DB15size0
+before stop, restart0/OOMfalse. All test clients --rm; no image build, BuildKit
+output or volume created. Existing test image3b4ee780f2d4 retained (also candidate
+runtime baseline). Available disk70785556480B before /70863409152B after; host
+activity means this is not attributable cleanup savings. Runtime/rollback unchanged;
+no push/merge/release/orders, no cleanup of unrelated worktrees or owner changes.
+
+EDC remains IN_PROGRESS, not certified. Remaining: BOOK_DELTA ownership/reset,
+wire/verify other applicable native paper/package service owners without changing
+matcher semantics, deployed old state/queued-pin/SDK migration, synchronized ED06
+provider attribution, actual native-process/PG integration where affected and
+reviewed runtime/fast-matrix/final acceptance. No historical refusal relabelled.
