@@ -63357,3 +63357,43 @@ unknown server text is not exposed. This replaces generic diagnostics, not retry
 or eligibility policy. R6 is limited to five-symbol/two-venue MARK reads while
 projectors stop/return; inherited R5 paired-restart and broker-fault evidence is
 not rerun. Existing four-role HMAC file hashes agree (values notpublished).
+
+
+### Hot Backup Narrow Production Packet - c8015ca
+
+Owner-approved scope proceeds after targeted safety gates, NOT a claim that every
+price is always eligible. R7 five-symbol/two-venue MARK:baseline191/191 usable,
+backup646/647 (p50/p99 21.300/60.124ms),return326/342. All17refusals preserve exact
+ineligible quality; no unsafe admission or watermark regression. R6 is INVALID:
+Stream test roles exited on isolated broker cold-start NotLeaderForPartition;
+harness lacked its own Stream prerequisite. R7 first verified both private RPCs
+and watched Stream processes; no provider/root-cause claim from invalidR6.
+Inherited R5:paired QUOTE314/314,MARK312/312,BOOK156/156; broker-loss fail-closed
+and return checked, no fake timestamp. These are same-host mirrored rehearsals,
+not independent-failure-domain HA or complete source-availability certification.
+
+FinalPython packaging18PASS. Rust72source+3realKafka/clippy/optimized build passed;
+unchanged projector binary reused with recorded source/binary provenance. Only
+six EXISTING services, no new topology: stream_kn_2 -> stream_kn_1 -> query_kn_2
+-> query_kn_1 -> market_projector_2 -> market_projector_1. Gate each role on process,
+actual private/consumer read, cache/projector progress and unchanged TS readiness.
+Any persistent degradation stops sequence and rolls back that exact role.
+
+Candidate images (same c8015ca source label; source-identical Rust binaries):
+Query sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c;
+Stream sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9;
+Projector sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b.
+Rollback EXACT per role:Query b40b49c361c7;Stream65918a656dcb;Projector0f6876e16e51,
+full digests in private before.json/rollback.compose.json. Packet path:
+/home/bobby/.local/state/qdl-v2/releases/v2.2.1-c8015ca-hot-backup/.
+Only config additions:Query QDL_KN_HOT_READ_TARGETS=qdl-v2-stream-a:8210,qdl-v2-stream-b:8210;
+Stream QDL_KN_HOT_READ_ENABLED=true. Existing env, mounts, TLS, caps, networks,
+Kafka groups/offsets/topology, Redis/state, manifests/realm keys retained.
+No core/ingestor/BAR/V1/alpha/order-path mutation. TS retains accepted c1f713a8.
+
+Previous reader packet env files are root-owned/unreadable to host user. New
+packet snapshots exact running environment (private0600), rather than guessing
+or modifying those env files; DockerCompose render and exact mounts/caps verified.
+No credentials printed/committed. Metadata/quorum and actual health must be read
+before rolling; final consumer observation and cleanup receipt follow, NOT C2
+or a full catalogue rerun. No remote push/merge/tag/published release yet.
