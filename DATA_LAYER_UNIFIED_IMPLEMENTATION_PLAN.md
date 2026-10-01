@@ -64365,3 +64365,82 @@ ED03 read-set/locks, ED04 paper provenance, ED05 real deferred sender boundary,
 provider attribution and full affected no-order matrix/final300s remain pending.
 Next work: reproduce and fix required-feed selection and network reads under
 account locks, preserving portfolio requirements and atomic admission versions.
+
+
+#### ED03 Required Read Set / Native Ordinary Lock Boundary - Started
+
+Source recheck confirms ordinary.admit holds command/account locks before custody
+and execution_context network reads; cache_reader always reads four feed types.
+Implement intent-derived optional required_feeds on the existing reader (default
+remains full context for old callers). Conditional registration preserves deferred
+L2; cancel requires no market read. Native ordinary uses a per-attempt prepared
+read set: missing dependencies abort the read-only transaction, fetch outside all
+locks under one bounded budget, then re-enter and read all account/metadata state
+again. Discover all nonflat custody marks as one batch; do not retry one position
+at a time or cache across admission requests. Cap retry rounds and never swallow
+unknown errors. Preserve current atomic grant/outbox/account ownership.
+
+Tests: actual Redis reader optional-feed failure, policy matrix, read-set duplicate
+identity/immutability/missing/timeout/cancellation, actual native ordinary PG
+admission with observation proving no transaction lock held during network wait,
+portfolio change between passes, stale at use, duplicate command and cancel.
+No runtime mutation or broker sends. Existing custody caller compatibility retained;
+other custody/settlement callsites must still be audited before ED03 fully closes.
+
+
+#### ED03 Ordinary Admission Read-Set Slice - Tested Locally
+
+Implemented existing reader optional required_feeds; default full-context API is
+unchanged. Same server ExecutionMarketPolicy derives QUOTE/MARK/TRADE/BOOK needs,
+including conditional deferred book and no market input for cancel. Custody reads
+MARK only. Native ordinary now uses request-local PreparedExecutionReads: collect
+all needed position marks, rollback/release transaction on missing dependencies,
+fetch outside locks, then repeat authoritative account/metadata/journal reads.
+At most3 validation rounds/2 fetch rounds, one3s fetch deadline (existing custody
+read bound) and8 fixed workers, not one task per position. This is a bounded
+local work budget, not a provider cadence/freshness change. Repeated identities
+reuse a view within an attempt; union refresh replaces the complete view, no
+cross-attempt shared cache. Missing returned data remains missing, not retry-loop.
+No external I/O survives cancellation into the next transaction. Conditional
+native risk input no longer unconditionally indexes quote when policy does not
+require it; no fabricated bid/ask. Financial formulas/grant/outbox unchanged.
+
+Behavioral red against exact prior ordinary.py:4/4 real-PG cases fail with market
+I/O under the ordinary account transaction. Red receipt SHA256
+1e5a31e662024713e92413c7d62bb9864b8ef6778104a12c1bdfaf2e1cc08b40.
+After patch:4/4 pass on actual native ordinary lifecycle (Binance/OKX x BBO/L2
+paper model). Real PG connection transaction state and pg_locks confirm no held
+advisory locks at exit; context propagation asserts no pool lease during market
+I/O. Test reader strips unrequested fields, so accidental quote/book dependencies
+cannot hide behind an overcomplete fixture. Tests include inherited submit/fill,
+duplicate/idempotency, reserve/cleanup/recovery lifecycle with synthetic test feeds,
+not real venue fills. No external broker transport available in test network.
+
+First API red16FAIL was missing-interface evidence, not proof of16 domain defects.
+Reader/policy/unit41PASS. Extended run47PASS exposed an unconsumed asyncio gather
+cancellation exception after test exit; fixed helper to own/await aggregate as
+well as children, added regression. Final88PASS/0FAIL/0ERROR/0SKIP (44.246s):
+4 real-PG ordinary,40 inherited PG custody,44 read/policy/cache/cancellation tests.
+Receipt ordinary-readset-cancel-fixed.xml SHA256
+483881f4c599e07d7765d9a15011c3d5650b3ee03f913ab3cb0ae5ef5490ab8a,
+under ~/.local/state/qdl-v2/edc1-20261001/evidence/. Four JUnit record_property
+format warnings retained; no leaked-task warning on final run. Ruff affected
+files and diff --check PASS. Initial Ruff read-only cache write failed; reran
+--no-cache. Python3.10 compatibility preserved (wait_for, not timeout_at).
+
+Remaining ED03: actual mid-prepare portfolio/metadata changes need targeted
+regression; ordinary_settlement.py:268 and paper_context.py:84 still call custody
+inside transactions. Do not call all account paths fixed. They need prepared
+inputs/revalidation without losing immutable fill/settlement evidence; no money
+rewrite or fresh-market prerequisite for pure cancel. ED04 paper selected-price
+provenance, ED05 native queued dispatch, provider attribution, packaging and final
+no-order acceptance remain pending. This slice changes no runtime or latency claim.
+
+Cleanup: all --rm clients gone; stopped/auto-removed only ts-edc1-readset-pg
+(restart0/OOMfalse,93 migrations on internal disposable PG), removed only
+ ts-edc1-readset-net and owned ordinary-before.py capture. No images built, no
+BuildKit layer, shared state/volumes untouched; existing active/rollback and
+builder images retained. Disk available65031696384B before,64937037824B after;
+host writes continued, so no positive disk saving claim from that net delta.
+Canonical DL stays fix/execution-view-diagnostics; native work stays existing
+feat/v2-rust-first-okx-demo worktree. No push/merge/deploy/release. Goal active.
