@@ -65338,3 +65338,54 @@ after fixtures, restart0/OOMfalse. Test clients--rm, no images/build cache/volum
 created. Disk available70633160704B before and70535372800B after; concurrent host
 writes, no attributable savings claim. Production, rollback and other worktrees
 unchanged; no push/merge/release/order action. Goal remains active.
+
+
+#### ED09 Validated Reference Proof Refresh - Implementation
+
+Complete same-coordinate MARK/INDEX refresh using the existing Risk at-use
+quality/expiry evaluator, not a second freshness policy. Require a strictly newer
+provider session-check timestamp, unchanged provider component state/authority,
+and revalidate after Redis reads before CAS. Query response/evaluated time alone
+is not progress. Invalidated markers cannot be refreshed back to eligible state.
+Test real Redis with frozen TEST_ONLY clocks, expiry, stale components, delayed
+reads, replay and refusal without writes. No runtime wiring or gate relaxation.
+
+
+ED09 generation handoff extension: explicit owner adoption requires the exact
+previous full view plus an authenticated snapshot (state_refresh), same identity/
+authority, strictly newer generation and non-regressing source/component clocks.
+Revalidate current quality after Redis read; BOOK_DELTA alone is not reset proof.
+CAS against exact marker/cache prevents a stale owner decision replacing newer
+state. Metadata/authority changes remain a separate compatible migration, not an
+implicit generation update. Test actual Redis reset and stale/racing refusal.
+
+
+ED09 reference refresh and explicit reset transitions tested locally. Same-event
+reference refresh requires strictly newer provider_session_checked_at_ns and the
+existing Risk execution_feed_valid_until_ms evaluation before and AFTER Redis
+reads. New Query response/evaluated time alone does not progress proof. Expired
+session/component, disconnect and invalidated marker do not renew price. Original
+price timestamps/components and absent reference offset remain unchanged.
+
+Explicit owner generation adoption takes exact prior full view plus state_refresh
+BOOK_SNAPSHOT/reference snapshot, requires same authority and newer generation,
+non-regressing event/component clocks, and at-use quality before/after reads.
+Concurrent owner advance prevents CAS; old-generation replay remains no-write.
+BOOK_DELTA alone is not reset authority. Metadata/contract migration is not
+silently accepted as generation change. Wire reset via authenticated full snapshot
+when integrating the normal worker; do not manufacture state_refresh on raw deltas.
+
+Final131PASS/0FAIL/0SKIP,1.955s, including51actual isolated Redis cases and80unit
+ordering/reference cases. execution-transitions-final.xml SHA256
+21a95b483f242141ce2c8f524b1268803aca47a923df03290740ae6df57100b6.
+21new Redis cases cover quiet proof freshness, response-only refresh refusal,
+post-read expiry, book reset/metadata/sequence proof and reference reset/races.
+Ruff import fixes only, format/check clean. TEST_ONLY facts; not live event/latency
+evidence. Actual owner/recovery wiring, legacy cache adoption, publish/ACK and
+BOOK_DELTA reset integration still OPEN before native/runtime acceptance.
+
+Cleanup exact ts-edc1-refresh-redis and ts-edc1-refresh-net; DB15size0 after tests,
+restart0/OOMfalse. All clients--rm; no image/build cache/volume created. Disk
+available70092484608B before,70051790848B after; host activity, no savings claim.
+Production/rollback artifacts unchanged, no order transport/push/merge/release.
+Goal active; no claim that local transition tests close the full EDC phase.
