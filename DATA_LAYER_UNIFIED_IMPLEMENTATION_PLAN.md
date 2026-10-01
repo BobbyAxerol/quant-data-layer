@@ -65529,3 +65529,39 @@ No image/build cache/volume created; available disk71094116352B before and
 unchanged; no push/merge/release/orders. Remaining full EDC work includes quiet
 prior-proof retention, BOOK_DELTA integration, coalesced typed Risk recovery,
 ED06 attribution and native/runtime/packaging acceptance. Goal stays active.
+
+
+#### ED02/ED09 Quiet Prior-View Retention - Implementation
+
+Worker still used aggregate event age to retain a previous reference after a
+rejected refresh. Replace that check with existing Risk at-use proof validation
+for typed views, keeping the same error allowlist and finite route bound. This
+can retain a valid quiet proof, never renew it; reject recent-but-gapped or
+ineligible prior views. Test both generic DATA_STALE and typed reference rejection
+paths, including no repeated READY/cache write. No provider/SLA/runtime change.
+
+
+ED02/ED09 prior retention corrected: old predicate produced10FAIL/14: rejected
+valid quiet references, accepted recent event despite gap/incomplete/ineligible/
+disconnected proof. Both generic DATA_STALE and typed reference rejection now
+use the same Risk at-use/expiry predicate. Error allowlist/retryability unchanged;
+route bound tightens typed error bound, never the reverse. No cache TTL renewal
+or READY progress occurs for a rejected poll.
+
+First broad run exposed12existing positive fixtures lacking source authority;
+corrected fixture source.authoritative only, not production validation. Tests
+cover both venues, valid quiet/expired session, hard invalid prior, wrong error,
+and tighter500ms route against2000ms response policy. Real Redis worker tests
+assert exact marker/cache bytes unchanged and readiness only while proof valid.
+Final224PASS/0FAIL/0SKIP,4.773s (84Redis cases plus140unit cases).
+retained-reference-final2.xml SHA256
+8e16f39677cdc5ed10026ed150a76276c7729c8d96003be9ca5776bb7526020a.
+TEST_ONLY facts; no live/provider attribution or native process proof claimed.
+New test lint clean; whitespace clean.
+
+Cleaned exact ts-edc1-retained-redis/net; DB15size0, restart0/OOMfalse, clients--rm.
+No images/build cache/volumes created. Disk available71026470912B before and
+70988742656B after, host activity/no savings claim. Runtime/rollback unchanged.
+No push/merge/release/order action. Full EDC remains open: BOOK_DELTA ownership/
+reset, coalesced typed Risk recovery, deployed legacy shape/migration, ED06
+provider attribution and affected native/runtime/packaging acceptance.
