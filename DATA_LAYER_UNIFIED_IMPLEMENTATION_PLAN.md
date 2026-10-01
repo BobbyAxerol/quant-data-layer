@@ -66392,3 +66392,61 @@ Do not insert order.price or fake event times to disguise a typed quote as a
 legacy last trade. Do not call this small source fence whole EDC completion.
 EDC IN_PROGRESS; runtime identity activation/provider attribution/acceptance and
 existing legacy/native caller integration remain outstanding.
+
+
+#### EDC-1 Typed Risk Authority Projection - Start
+
+Implement additive internal validated_execution_market projection into existing
+RiskInput, built only from server-validated context (never copied from raw order
+metadata). Native and Python numeric risk must use the same mark/effective price
+and audit, preserving legacy input/output when absent. Keep native arithmetic
+authority; do not synthesize order.price or event timestamps. Test real native
+parity on Binance/OKX and legacy corpus before wiring caller startup/preloader.
+This source slice alone does not activate runtime or close caller integration.
+
+
+#### EDC-1 Typed Risk Authority Projection - Tested Receipt
+
+Added optional internal RiskInput.validated_execution_market (mark/effective
+price plus audit), constructed ONLY by risk_input from server-validated typed
+context, never copied from client risk_context. Native arithmetic uses that
+projection; legacy inputs without it retain their previous shape/behavior.
+No order.price/timestamp rewrite, no cache/provider/realm changes.
+
+RiskChecker now passes its validated context to the native input builder,
+revalidates after authority/shadow await, and rejects an approved native result
+whose mark/effective/audit differs from the Python typed preflight. This prevents
+mixing new Python with a silently field-ignoring old native binary. This remains
+an internal server trust boundary: Rust numerical parity does not itself prove
+provider freshness. Existing typed validation owns that proof before/after await.
+
+Exact final native extension rebuilt offline with1job/2CPU/2GiB in retained
+builder.127PASS/0FAIL/0SKIP in3.403s using actual Rust bridge plus selected legacy,
+ordinary, OCO, RiskChecker, shadow and authority suites. Cases include both
+venues/sides, MARKET/LIMIT, price-deviation rejection, malformed/stale/gap input,
+raw-order field injection ignored, actual checker/native call, expiry during
+await and old-binary mismatch. Two Rust golden/property tests pass,0ignored,
+5unrelated filtered: cargo test --offline --locked -p trading-core --test golden
+risk. No claim of whole Rust suite or runtime execution certification.
+
+Evidence ~/.local/state/qdl-v2/edc1-20261001/evidence/risk-projection-exact.xml
+SHA256415b19062f06aefd61bab440d15bcf684824f4bea00aa10846991068afb04d36.
+Native extension SHA256
+764a9b9a72fcdc30a59815f0f9ce6539876ac04709bb6796eca8501cc63100ae.
+Initial104-test run had4failures: native rejection included audit while Python
+existing deviation rejection does not; matched existing contract, no gate change.
+Retained risk-projection-first.xml SHA256
+e1491619c35342ecc1d8d2886e8a1674c5ae4ebbf7451189dd8cd4ef30750281.
+Intermediate green results not added to final coverage. Ruff/diff check clean.
+
+Cleanup: all clients --rm, no image build or runtime/network/volume created;
+removed exact /tmp/edc1-risk-native1246349344B. Disk before removal75566772224B
+available, after76503134208B; concurrent host activity means no exact savings
+claim. Existing active/rollback images and stableDLv2.2.1 runtime unchanged.
+No broker orders, push/merge/tag/release. Existing TS upgrade/DL feature worktrees.
+
+EDC IN_PROGRESS. Actual main caller still has generic preflight; owner reader,
+selected readset injection and reservation at-use proof remain the next coherent
+integration slice. Do not label this authority projection full caller closure.
+Runtime identity activation, portfolio reporting dependency trace, simultaneous
+provider attribution and changed-role acceptance remain required by the plan.
