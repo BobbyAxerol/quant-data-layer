@@ -62372,3 +62372,86 @@ Open: exact broker-only rolling authorization and TLS/quorum preflight, measured
 post-change commit/GC/consumer recovery; separately TS book direct-writer
 ordering and worker0 outage investigation. Do not conceal these as quiet-market
 refusals or use end-of-window READY to close the goal.
+
+#### Approved Broker Rolling And Consumer Closure - 2026-10-01
+
+Owner explicitly approved sequential three-broker heap 512m/768m + G1, same CPU/RAM/durability/TLS/state, and shared consumer BOOK ordering/worker investigation. No orders, alpha, offsets or topology changes. Rollback is the frozen broker packet, one broker at a time.
+Preflight: leader3, all three voters, follower lag0, zero under-replicated partitions. Dynamic SSL truststore is /etc/kafka/secrets/truststore-kn-v220.jks; verify persistent mount. Initial CLI incorrectly used controller9093 for broker API; corrected9092 passed, no mutation. Raw Compose environment comparison must account for escaped dollars; compare rendered config, not source JSON.
+After each broker: health, ISR/quorum, TLS/client errors and heap check before next. Stop/rollback on failed recovery. Source regressions and affected fast matrix before one final300s consumer acceptance. No broad prune, retain active/rollback. Status IN_PROGRESS. apply_patch still unavailable (bubblewrap mountinfo); exact append fallback used.
+
+2026-10-01 rolling outcome: broker1/2/3 recreated sequentially03:56:13,
+03:57:34,03:58:43 UTC. ISRfullyrestored beforeeachnext; quorum3voters/lag0,
+leaderchanged3->1. Sameimage9516fb, samecaps/TLSmount/truststorehash2d5db19e.
+Compose literal dollars preserved (actual principal mapping verified). No offsets,
+ACL,volume or topologyreset. Subsequent120s GC: broker1/2/3 FullGC0; totalpauses
+1628.6/1057.1/1197.2ms, max86.3/21.4/35.9ms. Notsameworkloadcontrolledbenchmark.
+Important recovery finding: projectors auto-restarted1/2times after coordinator
+transport/epoch errors duringroll. One StageA stall continueduntil04:08:43.
+Post-GC firstpacedmatrix had2BNB/OKX actualMARK refusals; directproviderframes
+freshand170canonicalMARKrecords in25s window (read_committed, nojoin/commit,
+10745totalrecords scanned). This is canonical->materialization/recovery gap,
+NOTquietprovider. ISRalone wasinsufficient application-recoverypreflight between
+brokers; futurepackets must requirebothStageA/Bprogress andliveviewcatchup before
+nextbroker. Evidence retained; nofalsepass. Laterstagegroups caughtup (A lag20-71,
+B lag1-33 atread); nooffsetreset/manualprojectorrestart.
+Consumer215packagingtestsPASS;onlymarket_data_service rolled04:16UTC to
+f0e065b0... fromTS3b6f328, rollback1037c56, preservedconfig/cursors/mounts.
+NewBOOKatomicguard andworker_reason; startup60/60sessionready. Firstprobe hit
+sharedidentityquota and aborted asdesigned; probe defaultpause now3s instead0.75,
+notquotawidening. Laterfastmatrix60reads:20/20MARKreference,20/20genericMARK,
+19/20TRADE usable; BNBquiet attribution pendingproviderhistory. No finalC2yet.
+
+Finalfastattribution:60reads,20/20MARKreference,20/20genericMARK,19/20TRADE.
+TheoneBNB/OKX refusal matchedproviderhistory exacttrade239947906 at8232887ms;
+next239947907/908 occurred8250783ms,440ms AFTERrequest8250342ms. Refusalcorrect,
+no source substitution. PublichistorycapturefromQuery(trust_env=False) saved;
+firsturllibfromTSreturned403 andwasnotused asprovider evidence.
+Consumerfinal300s nowrunning once aftermatrix; observer measures event timestamp
+to receivedRedispublication (committedapply+transport upperbound, notSDKlatency).
+Healthpoll1s samplesreuse30sheartbeat; reportuniquecount,not300independentprobes.
+Cleanupapproved: taskRedis/network alreadyremoved; remove onlyfournewBuildKit
+records identifiedCreatedAt04:11-04:12 and65KBexternalbuildcontext. Preserveactive
+TSf0e065b0 androllback1037c56, brokerimage9516fb andbothComposepackets. Noshared
+volumes/networks/imagesprune. PrecleanupDocker images25.12GB/cache16.49GB;
+countsincludeunrelatedservices,notownedreclaimtarget.
+
+#### Final Observed Window And Honest Closure Boundary
+
+2026-10-01 final single300s consumer window completed:299pollsamples,11distinct
+30-second heartbeats, everyrecord60/60sessionREADY, no observedRedis watermark
+regression. No broker orders/alpha activation; test clients read-only. This proves
+sampledsteady-state recovery, NOT continuous60/60executioneligibility forquiet
+TRADE. ThreeOKXTRADE publications were ineligible and remaincounted separately.
+Consumer Redispublication event-age p50/p99ms: BINANCEQUOTE131.6/223.4,
+TRADE143.3/447.6,BOOK_DELTA115.3/204.8,MARK840.9/1337.3;
+OKXQUOTE135.4/428.1,TRADE131.6/582.1,BOOK_DELTA119.5/208.5,
+MARK633.0/1357.0. BOOK_SNAPSHOT50samplespervenue,median781.7/743.0,
+max1380.5/1309.0; no p99claim. OKXQUOTEmax2777.9ms retained, nothidden
+behindp99; receipteligibility iscachedquality,notfreshRiskadmission atobserver.
+Publicationarrival is anupperboundincluding observertransport, not exactRedis
+commit timestamp. Earlier1spollnumbers arenotdirectpairedcomparison.
+Fastrequest usablep50/maxms: MARKreferenceBinance12.12/29.21,OKX12.35/18.34;
+TRADEBinance12.00/24.16,OKX19.64/33.71;10requests/cell (OKXTRADE9usable,
+1legitquietrefusal8.09ms). No p99from10samples. Bothreplicas/fivesymbolscovered.
+Corelast6minutescommitmax113.2/150.8/109.8ms, rawagemax1118/1113/1083ms;
+previouscommitmax2450-2900ms. Differentwindows, notcontrolledloadcomparison.
+
+Status STEADY_STATE_300S_PASS_RECOVERY_GAP_OPEN. Do notcallFULLornewrelease:
+projectorStageAcoordinator/transactionrecovery during brokerrolling tookminutes
+and requiredautomaticprocessrestarts. CanonicalcontinuedwhileMARKcachelagged.
+Theexactinternalwait causeisnotyetproven; sourcealsohasunboundedQueueFullretry
+andcommitretryup tofour30s calls, butthesearecandidatefailuremechanisms,not
+establishedrootcauseofthisincident. This requiresboundedprojector-recovery work
+and faulttest, notanothersteady-stateC2. NoextraRustsourcepatch/rollwasmadehere.
+WorkerUNAVAILABLEold30sampleswerepersistedheartbeatobservations,notproofa
+processwasdeadfor30s; newdiagnosticsdifferentiateexpiredreport/processdeath.
+No workerunavailabilityobserved afterthisroll; priorcause notfullyattributed.
+
+Tests:215TS packagingtests (134unit+81realRedis) PASS;36Risk tests PASS,
+including20fivesymbol/twovenue MARKET/LIMIT allowedwithstaleLAST whileLAST
+conditionalandbadMARKblocked.4DLdiagnostic/componenttestsPASS. Noorderwrites.
+Cleanup: exacttestRedis/networkremoved;4ownedBuildKitrecords reclaimed212.3kB,
+externalbuildcontext65282bytesremoved. Activeconsumerf0e065b0 andnamedrollback
+1037c56 retained; no unrelatedimage/volume/worktreeprune. Source/evidence packet
+outsideGit preserved. No newGitHubrelease/push/merge. Detailedartifact:
+~/.local/state/qdl-v2/execution-view-diagnostics-20261001/closure-20261001.json.

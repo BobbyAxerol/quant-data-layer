@@ -102,6 +102,9 @@ async def main():
     from qdl_sdk import Feed, Grade, ReferenceProduct, ReferenceRequirement
     binding = json.loads(Path(settings.DATA_LAYER_V2_CONSUMER_BINDING_FILE).read_text())
     rounds = int(os.getenv("QDL_DIAGNOSTIC_ROUNDS", "2"))
+    pause = float(os.getenv("QDL_DIAGNOSTIC_PAUSE_SECONDS", "3"))
+    if not 0.75 <= pause <= 10:
+        raise ValueError("bounded diagnostic pause must be 0.75..10 seconds")
     if not 1 <= rounds <= 12:
         raise ValueError("bounded rounds must be 1..12")
     products = [p for p in binding["products"]
@@ -177,7 +180,7 @@ async def main():
                             row["call_to_outcome_ms"] = (time.perf_counter() - start) * 1000
                             row["completed_ns"] = time.time_ns()
                             print(json.dumps(row, default=str), flush=True)
-                            await asyncio.sleep(0.75)
+                            await asyncio.sleep(pause)
                 if cycle + 1 < rounds:
                     await asyncio.sleep(1)
         finally:
