@@ -1,7 +1,7 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **2026-10-01 owner approved, IN_PROGRESS:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
-> One consolidated Data Layer / TS data-boundary repair phase, now implementing.
+> **2026-10-01 REVIEW_HOLD / PLAN_APPROVAL_REQUIRED:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
+> One consolidated repair phase; latest core dependency review awaits owner approval.
 > Runtime change and release still require the reviewed changed-role packet.
 > The inherited runtime is KN Kafka-native with the hot-backup patch; historical
 > pre-KN status blocks below are not the current deployment inventory.
@@ -63501,7 +63501,12 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
+**Latest decision: REVIEW_HOLD / PLAN_APPROVAL_REQUIRED.** The latest owner
+request is audit and plan only. Earlier approved implementation receipts below
+are historical; preserve unfinished patches, but do not resume source changes or
+rollout before approval of this consolidated scope. See the checkpoint below.
+
+**Historical implementation status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
 not a new architecture program or a reopening of KN-1 through KN-5. The owner
 approved implementation after the written plan/audit. Historical planning receipts
 remain unchanged below. Deploy/release follows review of the implementation result
@@ -63975,3 +63980,107 @@ Existing image inventory retained, unrelated TS historical artifacts not pruned.
 No new latency/capacity certificate; EDC-1 remains IN_PROGRESS. Next source work
 must re-use the existing DL quiet MARK/INDEX proof validator rather than invent
 another divergent interpretation in TS, then test consumer-time expiry.
+
+
+<a id="edc1-core-review-checkpoint"></a>
+### EDC-1 Core Dependency Review And Consolidated Approval Checkpoint
+
+This is the SAME phase, not another architecture program. Latest owner direction
+requires review of the consolidated plan before further implementation. Prior
+source work is preserved, not reverted, not treated as production-certified.
+
+#### Read-Only Audit And Current Baseline
+
+Reviewed rules, EDC ledger, detailed KN guide addendum, TS upgrade journal and
+actual Risk policy, cache reader, ordinary admission, package/custody readers and
+paper MarketTick. An initial search used a nonexistent ordinary_admission.py;
+corrected to services/risk_pool/ordinary.py. A broad journal search was truncated;
+its output is not closure evidence. No source tests or provider probes this review.
+
+Docker inventory confirms Query2 3af57ddf1764, Stream2 1f13408fe946 and market
+projector2 a696cfba6ab3: KN architecture, NOT six SQLite spool writers. Shared
+market_data_service c1f713a8b13e and candidate market_data3b4ee780f2d4 differ;
+shared Risk/executor still v1.2.0-9081397, candidate Risk40d293d62b7d. Container
+health does not certify execution. No restart, build, order or data mutation.
+Retained rollback and published release v2.2.1 remain as in the baseline above.
+
+Source baseline DL272a4f5 / TS upgrade618ecd0 includes prior evidence-transport
+work. Uncommitted SDK extraction, reference-clock and typed-reference patches
+remain unfinished and untouched this review. A cold-import packaging regression
+is recorded in the last local test; it must be fixed before any packaging or
+release claim. Partial local test passes do not close the Risk use-time boundary.
+
+#### What Must Close In This One Phase
+
+| Boundary | Source observation / remaining uncertainty | Required completion |
+|---|---|---|
+| Ordinary Risk | Existing policy distinguishes intents; cache_reader.py:480 nevertheless reads all four feeds sequentially | Derive required reads from server policy; stale LAST cannot veto a QUOTE-based intent, while an actual LAST requirement remains enforced |
+| MARK/INDEX/LAST | Typed-reference patch is source-only; propagation alone does not certify eligibility | Exact feed/reference matching, original timestamps and shared proof validation at actual Risk use, not a cached eligible boolean |
+| Ordinary/package/custody | ordinary.py:197/382, package_market.py:22/53 and paper_custody.py:40/160 read market data within transaction paths | Complete portfolio dependency inventory; bounded network recovery outside account locks, then revalidate versions/deadline before reservation |
+| Paper execution | models.py:289 selects LAST/MARK/mid; lines291-299 take max sibling timestamp and later use quote quality | Reproduce downstream effect; preserve selected price/quantity/time/event provenance and existing fill-model economics |
+| Native sender | Deferred recheck exists but complete actual queued dispatch proof is missing | Trace executable path; no-order tests for queued expiry, child dispatch, metadata changes, replay and permit/idempotency fencing |
+| L2/inverse/package | Current order symbol alone is insufficient for portfolio/collateral dependencies | Native identity, units/multiplier/settlement, sequence/generation and every required existing-position mark; no USDT proxy for USD inverse |
+| TRADE | Six prior refusals lack simultaneous provider witness | Capture exact provider/canonical/consumer IDs, identify quiet vs pipeline vs consumption vs UNKNOWN; repair attributed internal delay only |
+| SDK/runtime | Shared/candidate/paper/sandbox identities and Redis mappings differ | Cold-import and built-wheel/image tests, pinned SDK/schema/realm/manifest per role; do not promote candidate proof as shared runtime evidence |
+
+Use existing ED01-ED10 findings, intent table and ED-T01-ED-T15 tests in full.
+These observations are not all proven broker incidents; hypotheses require failing
+behavioral tests before correction. MARKET/LIMIT, L2_LIMIT, conditional LAST/MARK/
+INDEX, native versus internal triggers, cancel/amend/reduce, packages and paper
+must remain distinct. Public feeds are not private balance/fill/account authority.
+Research metrics become execution prerequisites only under explicit policy.
+
+#### Ordered Work And Stop Conditions
+
+1. Freeze caller -> operation/stage -> product/feed/unit -> policy/deadline ->
+   entitlement -> exact-product backup mapping. Keep shared60 and candidate64
+   routes separate, including inverse and existing portfolio dependencies.
+2. Finish red-test-driven corrections above. Reuse Query -> private Rust Stream
+   backup and existing atomic projection; no recursive fallback, direct provider
+   call from Risk, second cache writer or strict-LAST substitution. Resolve the
+   SDK cold-import issue before building a candidate.
+3. Run affected deterministic and isolated real Redis/PostgreSQL/native tests.
+   Verify no network wait under account locks, no duplicate reserve/dispatch,
+   no backward watermark or reset/gap masking. Actual sender transport disabled.
+4. Run fast matrix through both Query replicas, TS cache and actual Risk reader;
+   capture exact rejected views. One bounded observer with independent quota or
+   proven spare budget, never overlapping probes on production TS identity.
+   Reuse unaffected KN/burst/replay/E04 evidence. Rerun only changed predicates.
+5. Only after applicable matrices pass: one final300s no-order consumer window.
+   Measure request->usable including queue, event->Redis apply, Risk-use and
+   recovery separately in ms; report failure latency and reason counts too.
+6. Review all ED dispositions, source/SDK/image/config mappings and remaining
+   limitations. Submit exact changed-role packet with per-role rollback before
+   rollout. Native candidate testing does not authorize shared Risk upgrade.
+7. After approved rollout and affected acceptance: feature->dev CI->main/tag,
+   scoped cleanup with disk pre/post, active plus named rollback retained. No
+   offset reset, cache flush, volume deletion or unrelated worktree cleanup.
+
+#### Exit And Owner Report
+
+Keep the frozen latency budgets and sample rules above; do not select thresholds
+after observing results. Report per venue/product/feed/intent/replica attempted,
+usable, refused, internal-error and timeout counts plus p50/p95/p99/max/N where
+sample size permits. Observe CPU/throttle/RSS/queue/lag/Redis and recovery bounds.
+Positive requirements must work; invalid evidence must reject for the exact
+reason; an unrelated missing feed must not veto an otherwise valid intent.
+
+No closure with unresolved in-scope code, packaging, identity or ordering defects.
+No promise that all orders execute when every valid source is unavailable. The
+target is zero avoidable INTERNAL denial while an approved exact-product source
+and valid proof exist. Same-host backup is not independent HA. A green session
+count is not universal price eligibility, and no actual order was sent here.
+
+Current review decision: NOT_READY_FOR_NEW_RELEASE; awaiting consolidated plan
+approval. This is not a claim that all current operations fail. After closure,
+resume existing TS E03/E07/E09 remainder, preserving passed E04 evidence; do not
+start P18.4 or enable alpha/live order authority under this phase.
+
+Documentation-only review: canonical /home/bobby/data_layer on
+fix/execution-view-diagnostics, sole DL worktree; TS authoritative upgrade remains
+/home/bobby/.worktrees/trading-system-next-upgrade on feat/v2-rust-first-okx-demo.
+No resources created or pruned, runtime unchanged, no new latency claim. Existing
+owner/source changes preserved and excluded from this documentation commit.
+apply_patch failed due to sandbox helper; asserted replacement used per rule32.
+First fallback attempt found no `python`; reran with python3, no prior file change.
+No push/merge/deploy/release in this checkpoint.
