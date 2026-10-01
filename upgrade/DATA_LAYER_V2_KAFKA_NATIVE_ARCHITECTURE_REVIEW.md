@@ -3102,3 +3102,40 @@ Final300s session60/60, no cache/watermark/report-expiry errors; six TRADE snaps
 eligibility refusals retained. The rolling quota-probe interference is separately
 recorded and rules out a zero-downtime claim. Same-host backup is not independent
 HA. Published release remainsv2.2.1; newsource/images await remote release workflow.
+
+
+<a id="execution-data-contract-closure-guide-20261001"></a>
+### EDC-1 Consumer Execution Contract Closure - Pending Approval
+
+2026-10-01 owner request: audit all actual TS Risk/execution data dependencies and
+write ONE consolidated repair phase before implementation. The authoritative
+scope, source findings, test cases, latency definitions, rollback and journal are
+[EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
+Status PLANNED / AWAITING_OWNER_APPROVAL; this addendum grants no runtime authority.
+It supplements the existing KN architecture, not another rearchitecture phase.
+
+Preserve the canonical Kafka -> Rust core -> KN cache/Stream -> Query boundary.
+Query remains entitlement/quality authority; Risk owns intent admission and must
+revalidate the required typed evidence at use. The accepted private Stream hot
+backup provides same-product projector-path redundancy, not independent HA.
+Public Stream GetSnapshot still delegates to Query and cannot be its fallback.
+
+The narrow completion is lossless quality/provenance propagation into TS,
+intent-and-portfolio-specific dependency selection, bounded recovery outside DB
+locks, and proof at actual native admission/dispatch/paper-matching boundaries.
+Do not replace a strict TRADE requirement with QUOTE, manufacture timestamps,
+let fresh QUOTE renew an old paper LAST price, or weaken component/session/gap
+checks. No new per-symbol workers, broker topology or SQLite spool path.
+
+Use the existing operation budgets. Measure request through consumer validation,
+provider event through actual TS Redis apply, and Risk use separately in ms.
+Do not quote callback time as Redis commit or session health as execution-ready.
+Inherited tests remain valid only for unchanged predicates; exact changed rows
+run before one final no-order window. Production rolling stress is not the core
+goal, and no historical C2/catalogue rerun is justified merely to search for bugs.
+
+Deployment/release requires the reviewed closure ledger and changed-role packet
+specified in EDC-1. Shared TS legacy runtime, native TS candidate, paper/sandbox/
+live market-data identity and broker order authority must remain distinguishable.
+No alpha/mainnet activation, TS accounting redesign or P18.3E money certificate
+is implied. This planning entry changes no code, images, limits or runtime state.
