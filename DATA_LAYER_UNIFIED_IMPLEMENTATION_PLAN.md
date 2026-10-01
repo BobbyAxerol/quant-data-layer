@@ -65042,3 +65042,42 @@ is ED07/ED09 work within EDC-1, not a new phase or permission to expand scope.
 Runtime/source deployment remains unchanged; no image/build/network/volume created.
 Offline clients --rm removed; existing active/rollback artifacts retained, no
 prune/disk reclamation, no push/merge/release or broker orders. Goal stays active.
+
+
+#### ED02/ED09 Reference Component Ordering Evidence
+
+Before implementing reference recovery CAS, inspected actual public reference
+shape: canonical Rust paired lineage has per-component source clocks, receipt
+clocks and capture IDs, but public labels omit original component clocks/IDs.
+Do not infer two clocks from aggregate min(timestamp), or assign an offset to
+reference data. Add these existing verified lineage fields to reference labels
+(additive map, no schema/cadence/eligibility change), test exact preservation with
+distinct clocks on both venues, then consume them in bounded apply comparison.
+This does not itself close atomic BOOK/MARK recovery or authorize reader rollout.
+
+
+Reference component labels implemented/tested locally. HttpExecutionMarkIndexReader
+now recomputes the existing Rust pair lineage and emits each component's original
+source time(ns), receive time(ns) and capture ID in the public reference labels.
+No provider request, second pair assembler, price timestamp rewrite or eligibility
+change. Aggregate observed time stays min(component source times); reference
+watermark stays absent. Quiet labels merge without duplicate keys.
+Red: both venue subcases raised missing-label errors; reference-component-labels-red.json
+SHA256dbde738f4c5b3a362634209478ac412a9fdd6fd835588397d8ecc3d086495b84.
+DL reader/pair-lineage suites41PASS/0skip; reference-component-labels-fixed.json
+SHA2560fd758a0b965a7488d1333edbcc9b1ed688978bf4f34b7489b05a92b4451145a.
+TS reference/cache/at-use suites111PASS/0skip; reference-component-transport-final.xml
+SHA256b6799cca6ce9050ba8e7e9db50803111a72edebddc8cde5d397fb76f688e3c4d. Both mark/index context fields retain
+component labels unchanged. Fixtures TEST_ONLY, not live/provider latency proof.
+
+Test setup corrections retained: Query image has unittest but no pytest, so used
+standard unittest directly; initial image UID could not write bounded evidence,
+reran only disposable read-only/network-none client as uid0. Initial TS new test
+used BLOCK policy for a30s quiet event; fixed fixture to explicitly request existing
+OBSERVE/session2000 policy. No implementation gate relaxed.
+No image/build/cache/network/volume created; all clients--rm, runtime unchanged.
+No rollout, push, merge or release. Existing active/rollback artifacts retained.
+Atomic BOOK/reference recovery remains OPEN: compare actual per-component evidence,
+not aggregate time/offset; stale Query must not overwrite newer owner state.
+The additive labels require eventual changed Query reader packaging in ED07;
+do not claim current runtime has them. SDK label map needs no schema/version bump.

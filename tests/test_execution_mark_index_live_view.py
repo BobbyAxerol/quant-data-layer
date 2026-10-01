@@ -1125,6 +1125,10 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(venue=record.identity.venue):
                 binding = _binding(record)
                 envelope = _envelope(binding, sequence=sequence)
+                _apply_pair_lineage(envelope, tag=f"component-proof-{sequence}",
+                    source_times=((NOW_NS - 1_000_000_000) // 1_000_000,
+                                  (NOW_NS - 500_000_000) // 1_000_000),
+                    mark_received_at_ns=NOW_NS, index_received_at_ns=NOW_NS + 100)
                 payload = {
                     "schema": "qdl.v2.execution-mark-index-view.v2",
                     "lease_epoch": 5,
@@ -1155,6 +1159,13 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     await client.aclose()
                 self.assertEqual(result.status, ReferenceStatus.OK)
+                labels = dict(result.observations[0].labels)
+                clocks = envelope.source_sequence.split(":")
+                for i, component in enumerate(("mark", "index")):
+                    self.assertEqual(labels[f"component_{component}_source_event_time_ns"], str(int(clocks[i]) * 1_000_000))
+                    self.assertEqual(labels[f"component_{component}_received_at_ns"], clocks[i + 2])
+                    self.assertEqual(labels[f"component_{component}_capture_id"], clocks[i + 4])
+                self.assertEqual(result.observations[0].observed_at_ns, envelope.source_event_time_ns)
                 self.assertEqual(
                     result.observations[0].instrument_uid, record.instrument_uid
                 )
