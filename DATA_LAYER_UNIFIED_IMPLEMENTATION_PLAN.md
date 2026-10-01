@@ -62748,3 +62748,139 @@ No alternate endpoint/fallback was introduced: equivalence requires same venue,
 instrument, units and approved execution semantics, fresh independent lineage,
 visible failover and watermark fencing. TRADE, QUOTE, MARK and INDEX are not
 interchangeable by default; Risk remains the admission authority.
+
+
+##### Paired Continuous-Input Handoff Acceptance - 2026-10-01
+
+Status: IN_PROGRESS, continuing owner-approved handoff, no new architecture phase.
+Guide section 18 K5-T03/T05/T07 remains authoritative. Candidate source 729436e;
+production remains 0f6876e16e51 for projector/OKX, untouched until shadow results.
+Use isolated `qdl-handoff-live-*` resources, no published ports; at most one broker,
+one Redis, two projectors, two Query readers, one read-only mirror and one no-order
+TS SDK observer. Existing images, one bounded Rust build, real canonical mirror
+(read_committed, assign-only, no source commit). Never read production spool.
+Use current sealed catalogue/identity contracts and read-only session evidence;
+all quota/cache/cursor/audit writes isolated. Mirror is bounded and has a deadline;
+no provider-direct traffic or order writes. Record exact image/binary/config hashes.
+
+Measure continuously before/during/after each projector restart: revoke, assign,
+cache apply, exact SDK usable response. Preserve all typed refusals, original
+component/event timestamps, source positions and watermark checks. Stop if shared
+production containers restart or TS session health persistently degrades; do not
+continue loading a damaged baseline. No freshness/session/quota widening or fake
+capture timestamps. Separate mirror-added latency and valid quiet TRADE rejection.
+Handoff goal is no pipeline-induced execution refusal in the observed window, not
+an unconditional zero-rejection promise. Recovery safety bound remains 120s;
+that bound must never be presented as an execution freshness SLA.
+
+Backup investigation is in scope: assess independent same-product sources and
+existing policy/admission, avoid same-cache replica failover masquerading as data
+redundancy. Any implemented backup must keep identity, units, component freshness,
+source provenance, ordering and Risk authority. No cross-venue price substitution,
+no REST snapshot pretending to be gap-free book delta, no automatic TRADE->QUOTE.
+No push/merge/release in this packet. Cleanup only owned test resources and builds;
+retain active plus named rollback artifacts and journal any remaining failure.
+
+##### Paired Handoff Result And Backup Boundary - 2026-10-01
+
+**Status: TESTED_SHADOW / CONTINUOUS_EXECUTION_GATE_FAILED.** No production rollout,
+release, push or merge. This is incomplete implementation/acceptance, not an
+approval gate. Source remains 729436e; optimized executable SHA256
+3bc6f1fd8b868ad6386ffb7f52ad1f59abc0100e0cdb1bc1406e0db2250e0769 was mounted into
+base image 0f6876e16e51 in shadow only. Production remains v2.2.1 plus the already
+recorded recovery candidate, not a newly certified zero-downtime version.
+
+Evidence root: `/home/bobby/.local/state/qdl-v2/projector-handoff-live-20261001/`.
+Receipts: evidence/paired-summary.json, four-milestones.json,
+paired-focused-latency.json, packet-redacted.json, cleanup.json. Raw bounded SDK
+outcomes and membership/apply/shutdown logs are retained beside them. Fresh test
+mTLS/JWT preserved the real TS binding/manifest policy; no production private
+credential was copied. Mirror used only the existing projector Kafka TLS subpath
+read-only, read_committed, assign-only, without committing source offsets.
+
+Test setup defects, not hidden product passes:
+- First proposed full-env/mount clone was rejected before execution; replaced by
+  public allowlist plus disposable test credentials. No unsafe clone ran.
+- Initial test broker exhausted its 512 MiB tmpfs (`No space left on device`).
+  Preserve r1-* logs and consumer-r1-storage-failure.jsonl; invalidate that run
+  for handoff certification. Corrected only isolated broker storage to disk-backed
+  data with small internal-topic partition/index sizing, leaving production alone.
+- Corrected missing copied public authority artifact, isolated Redis namespace
+  format and test consumer route-manifest path. These were harness setup failures.
+- Guard started after initial setup, not before its first action. Do not claim
+  initial setup was continuously guarded. Second run was under the active guard.
+
+Completed: optimized Rust build; actual canonical mirror -> isolated Kafka -> two
+candidate Rust projectors -> isolated Redis -> two existing Query readers -> real
+TS SDK validation. Initial 100 reads covered 50 non-BAR products x two replicas;
+subsequent reads focused six previously weak products. Two sequential projector
+restarts under continuous input; no order, fallback, production data or offset
+mutation. This is same-host shadow, not independent-failure-domain HA, not a
+new full-stream/cursor or whole-catalogue certificate.
+
+Four milestones (wall-clock ms; SDK endpoint is usable return, NOT TS Redis apply):
+| Restart | Graceful drain | Latest revoke -> peer assignment | Assignment -> first cache apply | Revoke -> sampled advanced usable view |
+| --- | ---: | ---: | ---: | ---: |
+| projector-1 | 334 ms | 244 ms | 1715 ms | 2046-2978 ms |
+| projector-2 | 345 ms | 65 ms | 1537 ms | 1645-2371 ms |
+The last range covers QUOTE/BOOK_SNAPSHOT/OKX BTC+DOGE MARK_INDEX on both Query
+replicas, requiring a watermark advance over the pre-restart view. Sequential
+sampling adds up to a polling cycle; these are not exact outage durations. The
+first apply marker is assignment-wide, not proof every product applied then.
+
+After startup, exact focused read outcomes and successful call-to-usable latency:
+| Feed | Requests | Usable | Refusals | p50 ms | p99 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QUOTE | 558 | 558 | 0 | 12.47 | 22.72 |
+| BOOK_SNAPSHOT | 278 | 278 | 0 | 29.89 | 67.92 |
+| MARK_INDEX_PRICE | 556 | 550 | 6 | 12.28 | 21.54 |
+| TRADE | 278 | 219 | 59 | 12.23 | 19.76 |
+All 2176 reads, including startup, retained: 18 MARK_INDEX refusals, 67 TRADE,
+8 BOOK_DELTA; no observed watermark regression. Do not hide startup or count
+refused reads as usable. Six focused MARK_INDEX refusals (DOGE four, BTC two) were
+immediately after first restart: exact rejected quality LIVE/session LIVE, stale
+provider-confirmation freshness, execution_eligible=false. One DOGE sample was
+2349 ms old. Both venues' original timestamps remain unchanged. TRADE refusals
+also occurred before/after restart; LAST_EVENT_STALE with live session does NOT
+prove quiet provider. No synchronized provider-byte attribution was completed.
+
+Production guard: 142 samples, all 60/60 session-ready, reported execution-ready
+50, no unexpected container identity/restart change. Final audit matched all 63
+baseline production containers including StartedAt. Neither this guard nor 60/60
+session health means every cached price is execution eligible.
+
+**Remaining narrow work / no blind steady-state rerun:** instrument/profile the
+1537-1715 ms assignment-to-apply interval (checkpoint adoption, data-reader fetch,
+transaction visibility and per-product apply) before changing a timeout. Ownership
+transfer itself is now tens/hundreds of ms. Two Query replicas share one cache;
+they are process redundancy, not protection against stalled materialization.
+Immediate rejoin also causes another cooperative rebalance; a controlled
+leave/rejoin delay is only a hypothesis until measured, not a production fix.
+
+**Backup direction, specified but NOT implemented/certified here:** use the
+existing Kafka-native Stream's verified same-product hot data as the preferred
+independent-of-projector read source, behind an explicit bounded read/failover
+contract. First prove it is independent for each feed; GetSnapshot delegating to
+Query would not qualify. A bounded view must retain immutable provider/component
+timestamps, generation, source offset, integrity/gap and session evidence, apply
+the same current-clock eligibility decision, reject watermark regression, and
+record source switches. No new service, synthetic event, timestamp refresh, buffer
+inflation or freshness widening. It still shares Kafka/provider failure domains.
+Same-venue REST is only an allowed finite-budget alternative when the exact
+product/units/authority/freshness contract is satisfied, with existing admission,
+429/418 limits and explicit provenance. REST BOOK_SNAPSHOT cannot supply replayable
+BOOK_DELTA; MARK, INDEX, QUOTE and TRADE remain distinct. Automatic switch-back
+must be fenced and monotonic. Risk remains authority; data read recovery must not
+retry orders or suppress legitimate rejection when every valid source is absent.
+This backup must be implemented and fault-tested before promising uninterrupted
+execution; do not advertise it as deployed or silently defer it as external debt.
+
+Cleanup completed: eight owned test containers and isolated network removed;
+test broker/Redis data, Rust target and disposable keys/compose removed. Evidence
+root 781 MiB -> 37 MiB. Host used bytes 223648493568 -> 222305861632 (host-wide
+change is not wholly attributable to this cleanup). No new image/BuildKit cache
+was created, no broad prune. Active images and named rollback set retained.
+Canonical /home/bobby/data_layer, fix/execution-view-diagnostics, one worktree;
+Query b40b49c361c7, Stream 65918a656dcb, core/Binance 658a9570c5fc,
+projector pair/OKX 0f6876e16e51, TS f0e065b0c21b remain unchanged. Runtime config,
+TLS, manifests and published stable v2.2.1 unchanged. Owner plan hunks preserved.
