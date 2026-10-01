@@ -63089,3 +63089,46 @@ projectors to prove backup, then unavailable backup refusal and safe return.
 Bounded evidence includes exact rejected quality, both coordinates, latency and
 resource measurements. No production faults/C2/catalogue rerun, no order path.
 After evidence, remove test containers/network/private files and unused builds.
+
+
+### Canonical Hot Backup Guarded Rehearsal Receipt - 2026-10-01
+
+Status: IMPLEMENTED_TESTED_LOCALLY / LIVE_HANDOFF_PENDING. Goal active, NOT
+production deployed/certified. Source checkpoint0fe9d370; no new phase/topology.
+Final Python hardening: malformed backup provider lineage returns typed
+HOT_BACKUP_LINEAGE_INVALID; MARK readback maps it to INTEGRITY. Targeted
+network-disabled/read-only unittest tests.test_kn_hot_view:13 PASS in3.145s.
+Earlier affected Python94 PASS, Rust70 PASS, real-Kafka3 PASS inherited; Rust
+binary hashes unchanged. No whole-catalogue/C2 rerun or gate relaxation.
+
+Guard stopped rehearsal BEFORE mirror, candidate Query/Stream/projector or probe
+started. Only isolated Kafka/cache started. Existing TS showed48/60 ready with
+worker3 REPORT_EXPIRED. After shadow removal12 samples were
+60,60,60,60,48,48,48,48,48,48,60,60 (worker1 expired). No evidence candidate caused
+this, nor that all12 affected feed prices were invalid. No live backup latency or
+zero-downtime evidence. Do not ignore guard or retry hoping for a green window.
+Read-only deployed TS fixed_workers.py/slice_health.py hashes match canonical
+source. Worker reports expire within1s, further bounded by route deadlines;
+REPORT_EXPIRED invalidates the whole report. This is a diagnostic lead, not a
+proven root cause. TS code, TTL, runtime and order path NOT changed.
+
+Evidence: /home/bobby/.local/state/qdl-v2/canonical-hot-backup-20261001/evidence/
+(rehearsal-receipt.json, production-guard.jsonl,
+production-after-shadow-stop.jsonl, cleanup.json). Cleanup2751053485->20887102
+bytes, reclaimed2730166383 bytes. Removed owned Kafka/Redis containers/networks,
+build target and disposable private runtime. Retained bounded evidence, safe
+harness and two hash-pinned binaries. No images built/BuildKit cache created;
+no broad prune.18 audited production containers kept IDs/start/restart counts.
+
+Canonical /home/bobby/data_layer, fix/execution-view-diagnostics, single worktree.
+Stable v2.2.1 unchanged. Query b40b49c361c7; Stream65918a656dcb;
+projector/OKX0f6876e16e51; cores/Binance658a9570c5fc; TS f0e065b0c21b.
+Config/manifest/state/offsets unchanged. Existing rollback7fe348060734 retained;
+active0f6876e16e51 remains future projector rollout rollback. No push/merge/release.
+Two owner plan hunks stay unstaged.
+
+Next: correlate expired worker reports with actual data/readiness, without
+changing TS policy; establish a usable guard baseline. Then real-canonical mTLS
+paired restart, backup failure/safe return, consumer-usable latency/resources,
+and immutable narrow rollout. These are unfinished acceptance, not missing
+approval, not completed work and not a reason to declare zero-downtime.

@@ -171,3 +171,16 @@ class HotQuerySelectionTests(unittest.TestCase):
         self.backup=replace(self.backup,rows=(CacheRow(self.backup.rows[0].canonical,10),))
         with self.assertRaisesRegex(QueryBackendError,"HOT_SOURCE_PAYLOAD_MISMATCH"):
             self.backend.latest(self.requirement)
+
+    def test_corrupt_backup_lineage_is_a_typed_internal_refusal(self):
+        from dataclasses import replace
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.runtime.kn_market_cache import CacheRow
+        from qdl.query.results import QueryBackendError
+        from qdl.query.contracts import CanonicalErrorCode
+        envelope=market_data_pb2.EventEnvelope.FromString(self.backup.rows[0].canonical)
+        envelope.source_id="wrong-provider-lineage"
+        self.backup=replace(self.backup,rows=(CacheRow(envelope.SerializeToString(),30),))
+        with self.assertRaises(QueryBackendError) as rejected:self.backend.latest(self.requirement)
+        self.assertEqual(rejected.exception.problem.code,CanonicalErrorCode.INTERNAL_ERROR)
+        self.assertIn("HOT_BACKUP_LINEAGE_INVALID",str(rejected.exception))

@@ -45,6 +45,8 @@ import time
 import threading
 from typing import Callable, Mapping
 
+from google.protobuf.message import DecodeError
+
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
@@ -272,8 +274,13 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 raise QueryBackendError(QueryProblem(
                     CanonicalErrorCode.INTERNAL_ERROR, "HOT_SOURCE_PAYLOAD_MISMATCH", False,
                 ))
-        records = self._parsed(binding, candidate)
-        self._validate_records(binding, records)
+        try:
+            records = self._parsed(binding, candidate)
+            self._validate_records(binding, records)
+        except (ValueError, DecodeError) as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.INTERNAL_ERROR, "HOT_BACKUP_LINEAGE_INVALID", False,
+            )) from error
         if len(records) != 1 or not self._hot_monotonic(binding, candidate):
             raise HotViewUnavailable("HOT_BACKUP_BEHIND_RETURNED_VIEW")
         return candidate
@@ -387,6 +394,8 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 view = self._hot_candidate(binding, view)
             except HotViewUnavailable:
                 return None, "BACKUP_UNAVAILABLE"
+            except QueryBackendError as error:
+                return None, "FENCED" if error.problem.code is CanonicalErrorCode.DATA_NOT_READY else "INTEGRITY"
         if view is None:
             return None, "NOT_READY"
         records = self._parsed(binding, view)
