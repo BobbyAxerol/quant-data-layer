@@ -862,6 +862,57 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         self.put_latest(binding, envelope.SerializeToString(deterministic=True), generation=6, offset=16, mark=16)
         self.assertEqual(read().reason, "LINEAGE_INVALID")
 
+    def test_mark_index_hot_backup_keeps_component_quality_and_monotonic_return(self):
+        import asyncio
+        import time as _time
+        from types import SimpleNamespace
+        from qdl.reference.local_mark_index import CacheRefreshingMarkIndexView
+        from qdl.runtime.kn_hot_view import CanonicalHotView, HotViewUnavailable
+        from qdl.runtime.kn_market_cache import CacheRow, SourceBoundary
+
+        exercised = set()
+        for binding, payload in self.latest_records:
+            if binding.feed is not FeedType.MARK_INDEX_PRICE or not binding.authoritative or binding.source_role != "PRIMARY":
+                continue
+            with self.subTest(binding=binding.binding_id):
+                exercised.add(binding.instrument.identity.venue)
+                now = _time.time_ns()
+                def timed(age):
+                    env = market_data_pb2.EventEnvelope.FromString(retimed_mark_index(payload, now_ns=now, age_ms=age))
+                    env.normalized_at_ns = env.received_at_ns + 1
+                    env.published_at_ns = env.received_at_ns + 2
+                    return env.SerializeToString(deterministic=True)
+                old, fresh = timed(10000), timed(100)
+                self.put_latest(binding, old, offset=10, mark=20)
+                candidate = CanonicalHotView(self.lpk(binding), (CacheRow(fresh, 30),), SourceBoundary(TOPIC_ID, 0, 40))
+                # Keep the primary's actual source partition for an exact comparison.
+                primary = self.reader.latest(self.lpk(binding))
+                candidate = replace(candidate, boundary=replace(candidate.boundary, partition=primary.boundary.partition))
+                replies = [candidate]
+                def hot(*args):
+                    if isinstance(replies[0], Exception): raise replies[0]
+                    return replies[0]
+                backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
+                    topic_id=TOPIC_ID, hot_client=SimpleNamespace(latest=hot))
+                view = CacheRefreshingMarkIndexView.from_catalog(self.catalog).attach_cache(backend=backend, relax_to_alpha=False)
+                def read():
+                    return asyncio.run(view.read(instrument_uid=binding.instrument.instrument_uid,
+                        instrument_revision=binding.instrument.metadata_revision,source_policy_id=binding.source_policy_id,
+                        max_freshness_ms=2000,gateway_epoch=1,now_ns=now))
+                result = read()
+                self.assertIsNotNone(result.record, result.reason)
+                self.assertEqual(result.record.canonical, fresh)
+                self.assertEqual(result.record.spool_watermark_offset, 40)
+                replies[0] = HotViewUnavailable("test outage")
+                self.assertIsNone(read().record, "must not return the old cached pair")
+                self.put_latest(binding, fresh, offset=30, mark=40)
+                self.assertIsNotNone(read().record, "primary catches up without backup")
+                # A fresh envelope with an old component pair still fails unchanged oracle.
+                now += 10_000_000_000
+                replies[0] = candidate
+                self.assertIsNone(read().record)
+        self.assertGreaterEqual(len(exercised), 2, "both Binance and OKX fixtures required")
+
     # ------------------------------------------------------------ D29 read view
 
     def test_the_stream_read_view_runs_the_python_oracle_on_one_view(self):

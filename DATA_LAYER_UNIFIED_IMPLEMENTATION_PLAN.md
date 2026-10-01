@@ -62992,3 +62992,100 @@ Canonical remains /home/bobby/data_layer, fix/execution-view-diagnostics, one
 worktree. Stable release v2.2.1 and runtime config/manifests unchanged: projector
 pair/OKX 0f6876e16e51, Query b40b49c361c7, Stream 65918a656dcb, core/Binance
 658a9570c5fc, TS f0e065b0c21b. No push/merge/release; owner plan edits preserved.
+
+
+### Canonical Hot Backup Implementation Checkpoint - 2026-10-01
+
+Status: IN_PROGRESS. Approved continuation, not a new phase or approval request.
+Guide: upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md section18,
+K5-T03/T05/T07 and the handoff counterfactual receipt immediately above.
+Goal: Query may use a newer committed same-product canonical view from existing
+Rust Stream when projector materialization cannot satisfy the read contract.
+Public GetSnapshot delegates to Query and MUST NOT be used for this fallback.
+Implement a bounded internal read RPC on the existing mTLS Stream listener,
+domain-separated authenticated request, shared committed Hub ring, exact bundle/
+topic/generation identity, no extra service or independent provider client.
+Query remains entitlement/quality owner, preserves source timestamps and cursor
+coordinates, never regresses after backup selection, never substitutes products.
+Hot feeds only; BAR/history/warmup, V1, TS/order, Kafka offsets and stored state
+are excluded. Reader failure, invalid/gapped view and stale components fail closed.
+Memory/work bounds, cancellation, authentication, generation changes, exact
+snapshot/delta selection and monotonic switchback require focused regressions.
+Then run paired projector restart with captured/real provider provenance and
+actual SDK reads; measure call-to-usable, source age, failover/recovery, RAM/CPU.
+No whole-catalogue/C2 bug hunting. Only after affected gates pass, roll existing
+changed roles with per-role current digest/config retained for rollback.
+No production change in this initial source slice; no push/merge/release.
+Cleanup disposable build/test resources, retain bounded evidence, update this
+journal per tested slice. Unrelated owner edits stay unstaged.
+
+
+Canonical backup source progress (same approved scope): implemented private
+`qdl.internal.v2.CanonicalHotView/ReadLatest` on the existing Rust mTLS listener,
+opt-in only, domain-separated HMAC, 8 in-flight operations, 100ms server work
+budget, 256KiB canonical payload, existing age/byte-bounded Hub ring. It never
+calls Query/Redis/GetSnapshot and never opens/commits/seeks a Kafka reader.
+Query client uses existing identity, <=2 TLS targets and one 250ms total budget,
+no external-provider token limiter/retry loop. Query applies its existing lineage
+and current-clock quality oracle; MARK/INDEX retries through its existing
+component/session checks. No public endpoint, freshness or provider policy change.
+
+Review caught and fixed a cursor distinction before deployment: the latest
+record offset differs from a partition read watermark. RPC now carries BOTH,
+atomically captured under the partition lock. Query compares record coordinates
+for price monotonicity and watermark for cursor continuity. It does not fabricate
+a cache generation/fence. A newer gap/reset/unverified book sibling or provider/
+book generation change blocks an older snapshot; unknown authority/topic, corrupt
+bytes and wrong physical/logical identity fail closed. Per-replica monotonic
+bookkeeping is bounded by catalog bindings; it is not a claim of network response
+ordering across concurrent clients or replacement for consumer watermark checks.
+
+Tests so far: Rust 35 unit +35 native-stream cases PASS (includes a real loopback
+gRPC framing/auth test; NOT mTLS production evidence); clippy all-targets PASS.
+Two existing Kafka integration cases were ignored by the local command and must
+be run against the disposable broker together with the new read-committed backup
+case. Python 12 protocol/selection cases PASS; focused real-Redis MARK tests plus
+those12 =15 PASS, including Binance and OKX component bounds and switchback.
+An initial 93-test run had two fixture-provenance failures after accidentally
+extending full lineage validation to the disabled-backup MARK path. Restricted
+that added validation to opt-in backup operation, preserving the existing path;
+both failures now pass. No loosening of canonical backup validation. A first Rust
+positive fixture lacked venue/market; corrected the test fixture, not identity
+validation. Full affected Python suite rerun and live paired rehearsal remain.
+Production unchanged, feature still IN_PROGRESS, no deployment/certification.
+Temporary resources are qdl-hot-backup-* on isolated qdl-hot-backup-test only;
+no published ports/shared Redis/Kafka access in these unit/integration runs.
+
+Source checkpoint verification update: affected Python suite now94/0/0 against
+isolated Redis; all3 real-Kafka integration tests PASS, including committed versus
+aborted canonical hot backup without projector/Query. Rust normal suite70/0 and
+loopback gRPC authentication framing PASS. Evidence summary in
+`/home/bobby/.local/state/qdl-v2/canonical-hot-backup-20261001/evidence/source-tests.json`.
+Optimized binaries building with2CPU/3GiB in existing builder; no image/runtime
+rollout. Opt-in defaults disabled. Next is bounded mTLS/real-canonical paired
+rehearsal, NOT full catalogue or C2. Temp broker/cache/build target retained only
+for this active rehearsal; cleanup occurs when its evidence is captured.
+
+Optimized build PASS: qdl-projector sha256
+5a54d52138844ded07c79d323c2ce4f628282641ab6d20b05e34e47a2f9ed743;
+qdl-stream-gateway sha256
+abbc3ade87cfa3efdd7263d0f7046f033fcd07295f3e12cc8902245693aa8f8e.
+Removed qdl-hot-backup-kafka, qdl-hot-backup-redis and qdl-hot-backup-test network;
+no new image/BuildKit cache, active build target retained for the live rehearsal.
+
+Bounded rehearsal packet (not production rollout): qdl-hot-live isolated network,
+Kafka/cache, paired projector/query/stream roles and no-order TS SDK probe;
+only disposable namespace containers and fresh test TLS/JWT credentials. Read
+allowlisted PUBLIC production catalog/acquisition/bundle/binding/authority only;
+provider session directory RO and existing approved Kafka mirror principal RO.
+No copying production consumer private keys or full environment/mount sets.
+Mirror canonical read_committed with manual assignment/no offset commit, bounded
+rate/deadline, writes isolated Kafka only. Preserve mirror provenance; isolated
+Kafka topic ID must be used consistently by projector/Stream/Query/cursor.
+Guard starts before shadow launch, stops owned labels on sustained TS session
+readiness regression or unexpected production restart. Compare existing real
+SDK request outcomes through paired restart; explicitly pause only isolated
+projectors to prove backup, then unavailable backup refusal and safe return.
+Bounded evidence includes exact rejected quality, both coordinates, latency and
+resource measurements. No production faults/C2/catalogue rerun, no order path.
+After evidence, remove test containers/network/private files and unused builds.

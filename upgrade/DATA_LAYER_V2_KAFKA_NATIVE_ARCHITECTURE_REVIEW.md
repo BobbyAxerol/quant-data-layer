@@ -3043,3 +3043,42 @@ public mainnet market products. They do not select demo exchange books, change
 account mode, establish broker execution parity, or permit order submission.
 Current TS process remains on its existing paper read identity until a consumer
 config handoff; the additional server mappings are active and tested no-order.
+
+
+### Execution Handoff Hot Backup - 2026-10-01
+
+Approved narrow continuation of KN-5 K5-T03/T05, tracked in the Unified Plan
+under Canonical Hot Backup Implementation Checkpoint. No new topology.
+The public Rust GetSnapshot/GetFeedStatus still delegates to Query and is NOT
+an independent fallback. Internal `qdl.internal.v2.CanonicalHotView/ReadLatest`
+reads the existing read-committed Hub ring on the same mTLS listener. Query
+remains the sole public entitlement/quality/cursor owner. The private response
+is canonical bytes and original record offset plus atomic partition watermark,
+not a synthetic Redis generation or execution approval. Both coordinates must
+remain distinct; a partition watermark may advance without a new product price.
+
+Disabled unless Stream QDL_KN_HOT_READ_ENABLED=true and Query
+QDL_KN_HOT_READ_TARGETS lists one/two TLS host:port targets. Reuse existing
+QDL_KN_READ_VIEW_SECRET_FILE with a distinct HMAC domain. No new secret copied
+from a consumer, provider limiter, service, group membership or per-read reader.
+Work is bounded (8 operations, 100ms Stream work, 250ms total Query attempt by
+default, <=256KiB canonical payload); measure peak RSS and tail before promotion.
+Cancellation must retain the admission permit until admitted work actually ends.
+
+Only same-product TRADE/QUOTE/MARK_INDEX_PRICE/BOOK_SNAPSHOT/BOOK_DELTA may use
+backup. Keep BAR/history warmup semantics and public schemas unchanged. Query
+checks source lineage and CURRENT quality after the read, and refuses a view
+behind its last selected record/watermark. MARK/INDEX must rerun component and
+session checks, not just generic event recency. Hard identity/fence/integrity
+refusals cannot be healed by trying a replica holding an older view. A newer
+book sibling with reset/gap/unverified state or different book/provider generation
+blocks the older snapshot. Backup failure never promotes an expired cached value.
+
+This is projector-path redundancy, not independent-host or provider HA. The two
+paths still share canonical Kafka/core and host infrastructure. Test no-recursion,
+read_committed (aborted records absent), identity/HMAC/mTLS negatives, bounded
+work, paired restart, exact cursor handoff, lost backup and primary return.
+Observe actual consumer usable data, requests/refusals and resource overhead;
+unit/in-process/loopback evidence alone cannot certify execution continuity.
+Roll only tested changed existing roles, preserve per-role image/config rollback,
+no offsets/reset/cache deletion. Clean isolated resources and record exact receipt.

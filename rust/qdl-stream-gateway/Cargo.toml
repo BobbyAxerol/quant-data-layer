@@ -24,6 +24,7 @@ rdkafka.workspace = true
 redis.workspace = true
 ring.workspace = true
 rustls.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["logging", "ring", "tls12"] }

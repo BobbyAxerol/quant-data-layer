@@ -42,6 +42,7 @@ import json
 from pathlib import Path
 import re
 import time
+import threading
 from typing import Callable, Mapping
 
 from qdl.adapters.intervals import canonical_interval_ms
@@ -52,6 +53,7 @@ from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
 from qdl.query.row_cache import BoundedRowCache
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
+from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewUnavailable
 from qdl.runtime.kn_bar_readback import binding_product_key
 from qdl.runtime.kn_market_cache import (
     KnCacheError,
@@ -150,6 +152,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         gap_scan_max_work_ms: int = STABLE_GAP_DIAGNOSTIC_MAX_WORK_MS,
         row_cache_entries: int = DEFAULT_ROW_CACHE_ENTRIES,
         diagnostic_exclusions: Mapping[str, str] | None = None,
+        hot_client=None,
     ) -> None:
         self._diagnostic_exclusions = dict(diagnostic_exclusions or {})
         unknown = self._diagnostic_exclusions.keys() - {b.binding_id for b in catalog.bindings}
@@ -175,6 +178,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         self.topic_id = topic_id
         self.environment = reader.environment
         self.rows = BoundedRowCache(row_cache_entries)
+        self.hot_client = hot_client
+        # Bounded by the immutable catalog, coordinates only (no second cache).
+        self._hot_boundaries: dict[str, tuple[object, int, str]] = {}
+        self._hot_boundary_lock = threading.Lock()
 
     # ------------------------------------------------------------ cache view
 
@@ -228,6 +235,94 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             )
         return view
 
+    def _hot_monotonic(self, binding, view, *, record=False) -> bool:
+        if view is None:
+            return False
+        if len(view.rows) != 1 or view.rows[0].source_offset is None:
+            raise _not_ready("HOT_RECORD_COORDINATE_UNKNOWN")
+        record_offset = view.rows[0].source_offset
+        digest = hashlib.sha256(view.rows[0].canonical).hexdigest()
+        with self._hot_boundary_lock:
+            previous = self._hot_boundaries.get(binding.binding_id)
+            if previous is not None:
+                boundary, prior_record_offset, prior_digest = previous
+                if (view.boundary.topic_id, view.boundary.partition) != (boundary.topic_id, boundary.partition):
+                    raise _not_ready("HOT_SOURCE_GENERATION_MISMATCH")
+                if view.boundary.offset < boundary.offset or record_offset < prior_record_offset:
+                    return False
+                if record_offset == prior_record_offset and digest != prior_digest:
+                    raise QueryBackendError(QueryProblem(
+                        CanonicalErrorCode.INTERNAL_ERROR, "HOT_SOURCE_PAYLOAD_MISMATCH", False,
+                    ))
+            if record:
+                self._hot_boundaries[binding.binding_id] = (view.boundary, record_offset, digest)
+            return True
+
+    def _hot_candidate(self, binding, primary=None):
+        """Authenticated committed bytes, validated by the same lineage oracle."""
+        if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
+            return None
+        candidate = self.hot_client.latest(binding, self.product_key(binding))
+        if primary is not None:
+            if candidate.boundary.topic_id != primary.boundary.topic_id or candidate.boundary.partition != primary.boundary.partition:
+                raise _not_ready("HOT_SOURCE_GENERATION_MISMATCH")
+            if candidate.boundary.offset < primary.boundary.offset or candidate.rows[0].source_offset < primary.rows[0].source_offset:
+                raise HotViewUnavailable("HOT_BACKUP_BEHIND_PRIMARY")
+            if candidate.rows[0].source_offset == primary.rows[0].source_offset and candidate.rows[0].canonical != primary.rows[0].canonical:
+                raise QueryBackendError(QueryProblem(
+                    CanonicalErrorCode.INTERNAL_ERROR, "HOT_SOURCE_PAYLOAD_MISMATCH", False,
+                ))
+        records = self._parsed(binding, candidate)
+        self._validate_records(binding, records)
+        if len(records) != 1 or not self._hot_monotonic(binding, candidate):
+            raise HotViewUnavailable("HOT_BACKUP_BEHIND_RETURNED_VIEW")
+        return candidate
+
+    def _latest_view(self, requirement, binding):
+        primary_error = None
+        try:
+            primary = self._view(binding, last=1)
+        except QueryBackendError as error:
+            if error.problem.code is not CanonicalErrorCode.DEPENDENCY_UNAVAILABLE:
+                raise
+            primary_error = error
+            primary = None
+        if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
+            if primary_error is not None:
+                raise primary_error
+            return primary
+        primary_records = self._parsed(binding, primary) if primary is not None else ()
+        self._validate_records(binding, primary_records)
+        items = self._items(requirement, primary_records)
+        quality = items[-1].quality if items else None
+        requires_execution = requirement.consumer_grade.value == "EXECUTION"
+        usable = quality is not None and quality.state == "LIVE" and quality.complete and not quality.gap_open and (
+            not requires_execution or quality.execution_eligible)
+        monotonic = self._hot_monotonic(binding, primary)
+        if usable and monotonic:
+            if self._hot_monotonic(binding, primary, record=True):
+                return primary
+        # An explicit corrupt/gapped primary is not merely a missing cache update.
+        if quality is not None and quality.gap_open:
+            return primary if monotonic else None
+        try:
+            candidate = self._hot_candidate(binding, primary)
+        except HotViewUnavailable:
+            candidate = None
+        if candidate is not None:
+            candidate_records = self._parsed(binding, candidate)
+            candidate_items = self._items(requirement, candidate_records)
+            q = candidate_items[-1].quality if candidate_items else None
+            if q is not None and q.state == "LIVE" and q.complete and not q.gap_open and (
+                not requires_execution or q.execution_eligible
+            ) and self._hot_monotonic(binding, candidate, record=True):
+                return candidate
+        if primary_error is not None:
+            raise primary_error
+        if primary is not None and not self._hot_monotonic(binding, primary):
+            raise _not_ready("HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND")
+        return primary
+
     @staticmethod
     def _row_key(binding: StableSourceBinding, payload_sha256: str) -> str:
         return f"{binding.binding_id}|{payload_sha256}"
@@ -264,7 +359,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             parsed.append(_ParsedStoredEvent(stored=stored, envelope=envelope))
         return self._select_records(binding, tuple(parsed), limit=max(1, len(parsed)))
 
-    def latest_stored_event(self, binding: StableSourceBinding) -> tuple[StoredEvent | None, str]:
+    def latest_stored_event(self, binding: StableSourceBinding, *, prefer_hot: bool = False) -> tuple[StoredEvent | None, str]:
         """The product's latest record for the MARK/INDEX views (D31/D36).
 
         Returns ``(stored, "OK")`` or ``(None, state)`` with a state the view
@@ -284,12 +379,26 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 return None, "FENCED"
             if code is CanonicalErrorCode.INTERNAL_ERROR:
                 return None, "INTEGRITY"
-            return None, "UNAVAILABLE"
+            if not prefer_hot:
+                return None, "UNAVAILABLE"
+            view = None
+        if self.hot_client is not None and (prefer_hot or (view is not None and not self._hot_monotonic(binding, view))):
+            try:
+                view = self._hot_candidate(binding, view)
+            except HotViewUnavailable:
+                return None, "BACKUP_UNAVAILABLE"
         if view is None:
             return None, "NOT_READY"
         records = self._parsed(binding, view)
         if not records:
             return None, "NOT_READY"
+        if self.hot_client is not None:
+            try:
+                self._validate_records(binding, records)
+            except ValueError:
+                return None, "INTEGRITY"
+            if not self._hot_monotonic(binding, view, record=True):
+                return None, "BACKUP_UNAVAILABLE"
         return records[-1].stored, "OK"
 
     # ------------------------------------------------------------ row derivations (D30)
@@ -333,7 +442,8 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         requested = 1
         if binding.feed is FeedType.BAR:
             requested, _start, _end, _opens = self._requested_window(requirement)
-        view = self._view(binding, last=max(2, requested) if binding.feed is FeedType.BAR else 1)
+        view = (self._view(binding, last=max(2, requested)) if binding.feed is FeedType.BAR
+                else self._latest_view(requirement, binding))
         if view is None:
             return None
         records = self._parsed(binding, view)
@@ -359,7 +469,11 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
 
         requested, start_ns, end_ns, expected_opens = self._requested_window(requirement)
         binding = self.catalog.binding_for(requirement)
-        view, records = self._history_view(binding, requested, start_ns, end_ns)
+        if binding.feed.value in HOT_FEEDS and self.hot_client is not None:
+            view = self._latest_view(requirement, binding)
+            records = self._parsed(binding, view) if view is not None else ()
+        else:
+            view, records = self._history_view(binding, requested, start_ns, end_ns)
         if view is None:
             return None, ()
         result = self._history_from_records(

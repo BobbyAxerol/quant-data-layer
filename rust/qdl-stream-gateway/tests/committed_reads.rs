@@ -316,3 +316,45 @@ async fn hub_barrier_and_replay_reader_split_the_committed_log_exactly() {
     hub.stop();
     reader.join().expect("reader thread");
 }
+
+
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker)"]
+async fn hot_backup_is_read_committed_without_projector_or_query() {
+    use prost::Message as _;
+    use qdl_stream_gateway::generated::marketdata_v2::{event_envelope::Payload, EventEnvelope, Quote};
+    use qdl_stream_gateway::hub::{Hub, HubConfig};
+    use qdl_stream_gateway::reader::KafkaLogSource;
+    use std::sync::Arc;
+    let bootstrap = bootstrap();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let topic = format!("kn1-hot-{stamp}");
+    create_topic(&bootstrap, &topic).await;
+    let producer = transactional_producer(&bootstrap, &format!("kn1-hot-tx-{stamp}"));
+    let committed = EventEnvelope { source_event_time_ns: 123, payload: Some(Payload::Quote(Quote { level: 1, ..Default::default() })), ..Default::default() }.encode_to_vec();
+    let aborted = EventEnvelope { source_event_time_ns: 456, payload: Some(Payload::Quote(Quote { level: 2, ..Default::default() })), ..Default::default() }.encode_to_vec();
+    for (payload, commit) in [(&committed, true), (&aborted, false)] {
+        producer.begin_transaction().unwrap();
+        producer.send(BaseRecord::to(&topic).key("hot").payload(payload)).unwrap();
+        producer.flush(Duration::from_secs(10)).unwrap();
+        if commit { producer.commit_transaction(Duration::from_secs(10)).unwrap(); }
+        else { producer.abort_transaction(Duration::from_secs(10)).unwrap(); }
+    }
+    let settings = KafkaSettings { bootstrap, topic,
+        group_id: format!("kn-hot-read-{stamp}"), client_id: format!("kn-hot-read-{stamp}"),
+        tls: None, fetch_wait_ms: 100 };
+    let (source, starts) = KafkaLogSource::open_warm(&settings, 100).unwrap();
+    let hub = Arc::new(Hub::new(&starts, HubConfig::default()));
+    let reader = hub.run(Box::new(source));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let record = loop {
+        if let Ok(record) = hub.latest_hot(b"hot", "QUOTE", Instant::now() + Duration::from_millis(100)) {
+            break record;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(record.raw.payload, committed);
+    assert_eq!(record.raw.offset, 0);
+    hub.stop(); reader.join().unwrap();
+}

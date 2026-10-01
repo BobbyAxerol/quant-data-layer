@@ -43,6 +43,14 @@ impl RawRecord {
 
 pub type SharedRecord = Arc<RawRecord>;
 
+#[derive(Debug)]
+pub struct HotRecord {
+    pub raw: SharedRecord,
+    /// Captured under the same partition lock as the selected row. The cursor
+    /// may cover later records of OTHER products and transaction markers.
+    pub boundary_offset: i64,
+}
+
 /// A record decoded once and shared by every subscriber of its key.
 #[derive(Debug)]
 pub struct LiveRecord {
@@ -181,6 +189,8 @@ pub struct Hub {
     config: HubConfig,
     pub metrics: HubMetrics,
     stop: AtomicBool,
+    reader_failed: AtomicBool,
+    reader_progress: Mutex<Option<Instant>>,
     /// Records produced before this replica started (the warm range, a
     /// restart backlog) are not live-path lag and stay out of the histogram.
     started_ms: i64,
@@ -216,6 +226,8 @@ impl Hub {
             config,
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
+            reader_failed: AtomicBool::new(true),
+            reader_progress: Mutex::new(None),
             started_ms: now_ns() / 1_000_000,
         }
     }
@@ -310,6 +322,123 @@ impl Hub {
         }
     }
 
+    /// A bounded read of committed canonical bytes, not an execution-quality verdict.
+    /// No Redis, Query, new Kafka reader, offset commit, or retained decoded cache.
+    pub fn latest_hot(
+        &self,
+        key: &[u8],
+        feed: &str,
+        deadline: Instant,
+    ) -> Result<HotRecord, String> {
+        use crate::requirement::is_product;
+        use qdl_contracts::qdl::common::v1::QualityFlag;
+        if !matches!(
+            feed,
+            "TRADE" | "QUOTE" | "MARK_INDEX_PRICE" | "BOOK_SNAPSHOT" | "BOOK_DELTA"
+        ) {
+            return Err("HOT_FEED_UNSUPPORTED".into());
+        }
+        self.check_hot_reader()?;
+        let mut selected = None;
+        let mut key_partition = None;
+        for (partition, state) in &self.partitions {
+            let state = state.try_lock().map_err(|_| "HOT_READER_BUSY")?;
+            let mut newest_scope = None;
+            for (at, raw) in state.ring.iter().rev() {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err("HOT_READ_DEADLINE".into());
+                }
+                if now.duration_since(*at) > self.config.ring_max_age {
+                    break;
+                }
+                if raw.key != key {
+                    continue;
+                }
+                if key_partition.is_some_and(|prior| prior != *partition) {
+                    return Err("HOT_PARTITION_MISMATCH".into());
+                }
+                key_partition = Some(*partition);
+                if raw.offset < 0 || raw.payload.len() > 256 * 1024 {
+                    return Err("HOT_RECORD_INVALID".into());
+                }
+                let envelope = EventEnvelope::decode(raw.payload.as_slice())
+                    .map_err(|_| "HOT_RECORD_INVALID")?;
+                // A newer unsafe sibling (snapshot/delta share a physical key)
+                // must not be hidden by returning an older healthy payload.
+                if envelope.quality_flags.iter().any(|flag| {
+                    matches!(
+                        QualityFlag::try_from(*flag),
+                        Ok(QualityFlag::SequenceGapBefore
+                            | QualityFlag::OutOfOrder
+                            | QualityFlag::ResyncRequired)
+                    )
+                }) {
+                    return Err("HOT_RECORD_GAPPED".into());
+                }
+                let book_generation = match &envelope.payload {
+                    Some(
+                        crate::generated::marketdata_v2::event_envelope::Payload::BookSnapshot(
+                            book,
+                        ),
+                    ) => {
+                        if !book.sequence_verified || book.book_generation == 0 {
+                            return Err("HOT_BOOK_UNVERIFIED".into());
+                        }
+                        book.book_generation
+                    }
+                    Some(crate::generated::marketdata_v2::event_envelope::Payload::BookDelta(
+                        book,
+                    )) => {
+                        if !book.sequence_verified || book.book_generation == 0 || book.reset {
+                            return Err("HOT_BOOK_UNVERIFIED".into());
+                        }
+                        book.book_generation
+                    }
+                    _ => 0,
+                };
+                let scope = (
+                    envelope.source_session_id.clone(),
+                    envelope.connection_generation,
+                    envelope.authority_revision,
+                    envelope.config_revision,
+                    envelope.lease_epoch,
+                    book_generation,
+                );
+                if newest_scope.as_ref().is_some_and(|newest| newest != &scope) {
+                    return Err("HOT_RECORD_GENERATION_MISMATCH".into());
+                }
+                newest_scope = Some(scope);
+                if is_product(feed, None, &envelope) {
+                    selected = Some(HotRecord { raw: raw.clone(), boundary_offset: state.next_offset - 1 });
+                    break;
+                }
+                if !(matches!(feed, "BOOK_SNAPSHOT" | "BOOK_DELTA")
+                    && (is_product("BOOK_SNAPSHOT", None, &envelope)
+                        || is_product("BOOK_DELTA", None, &envelope)))
+                {
+                    return Err("HOT_RECORD_PRODUCT_MISMATCH".into());
+                }
+            }
+        }
+        self.check_hot_reader()?;
+        selected.ok_or_else(|| "HOT_RECORD_MISSING".into())
+    }
+
+    fn check_hot_reader(&self) -> Result<(), String> {
+        if self.stop.load(Ordering::Acquire) || self.reader_failed.load(Ordering::Acquire) {
+            return Err("HOT_READER_UNAVAILABLE".into());
+        }
+        let progress = self
+            .reader_progress
+            .try_lock()
+            .map_err(|_| "HOT_READER_BUSY")?;
+        if progress.is_none_or(|at| at.elapsed() > Duration::from_secs(1)) {
+            return Err("HOT_READER_STALLED".into());
+        }
+        Ok(())
+    }
+
     /// Register `subscriber` for `key` on `partition`, resuming after
     /// `after`. Atomic with dispatch on that partition (D3).
     pub fn register(
@@ -391,13 +520,23 @@ impl Hub {
             .spawn(move || {
                 while !hub.stop.load(Ordering::Relaxed) {
                     match source.poll(Duration::from_millis(100)) {
-                        Ok(Some(record)) => hub.dispatch(record),
+                        Ok(Some(record)) => {
+                            hub.dispatch(record);
+                            hub.reader_failed.store(false, Ordering::Release);
+                            if let Ok(mut progress) = hub.reader_progress.lock() {
+                                *progress = Some(Instant::now());
+                            }
+                        }
                         Ok(None) => {
+                            if let Ok(mut progress) = hub.reader_progress.lock() {
+                                *progress = Some(Instant::now());
+                            }
                             for (partition, position) in source.positions() {
                                 hub.advance(partition, position);
                             }
                         }
                         Err(_) => {
+                            hub.reader_failed.store(true, Ordering::Release);
                             hub.metrics.reader_errors.fetch_add(1, Ordering::Relaxed);
                             std::thread::sleep(Duration::from_millis(100));
                         }
@@ -432,5 +571,149 @@ mod tests {
         let summary = hub.metrics.dispatch_lag.summary();
         assert_eq!(summary["n"], 1);
         assert_eq!(hub.metrics.records.load(Ordering::Relaxed), 3);
+    }
+    fn healthy(hub: &Hub) {
+        hub.reader_failed.store(false, Ordering::Release);
+        *hub.reader_progress.lock().unwrap() = Some(Instant::now());
+    }
+
+    fn hot_record(
+        partition: i32,
+        offset: i64,
+        feed: &str,
+        generation: u64,
+        flags: Vec<i32>,
+    ) -> RawRecord {
+        use crate::generated::marketdata_v2::{
+            event_envelope::Payload, OrderBookDelta, OrderBookSnapshot, Quote, Trade,
+        };
+        let payload = match feed {
+            "TRADE" => Payload::Trade(Trade::default()),
+            "QUOTE" => Payload::Quote(Quote::default()),
+            "BOOK_SNAPSHOT" => Payload::BookSnapshot(OrderBookSnapshot {
+                book_generation: 1,
+                sequence_verified: true,
+                ..Default::default()
+            }),
+            "BOOK_DELTA" => Payload::BookDelta(OrderBookDelta {
+                book_generation: 1,
+                sequence_verified: true,
+                ..Default::default()
+            }),
+            _ => panic!("test feed"),
+        };
+        RawRecord {
+            partition,
+            offset,
+            key: b"hot".to_vec(),
+            timestamp_ms: 1,
+            payload: EventEnvelope {
+                payload: Some(payload),
+                connection_generation: generation,
+                quality_flags: flags,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    fn latest(hub: &Hub, feed: &str) -> Result<HotRecord, String> {
+        hub.latest_hot(b"hot", feed, Instant::now() + Duration::from_secs(1))
+    }
+
+    #[test]
+    fn hot_read_preserves_zero_offset_and_does_not_join_or_seek() {
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        assert_eq!(latest(&hub, "QUOTE").unwrap().raw.offset, 0);
+        assert_eq!(hub.next_offset(0), Some(1));
+        hub.advance(0, 9);
+        let view = latest(&hub, "QUOTE").unwrap();
+        assert_eq!(view.raw.offset, 0);
+        assert_eq!(view.boundary_offset, 8);
+        assert_eq!(hub.subscriber_count(), 0);
+        assert_eq!(latest(&hub, "BAR").unwrap_err(), "HOT_FEED_UNSUPPORTED");
+    }
+
+    #[test]
+    fn hot_read_selects_exact_book_payload_and_never_hides_newer_gap_or_generation() {
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "BOOK_SNAPSHOT", 1, vec![]));
+        hub.dispatch(hot_record(0, 1, "BOOK_DELTA", 1, vec![]));
+        healthy(&hub);
+        assert_eq!(latest(&hub, "BOOK_SNAPSHOT").unwrap().raw.offset, 0);
+        assert_eq!(latest(&hub, "BOOK_DELTA").unwrap().raw.offset, 1);
+        hub.dispatch(hot_record(0, 2, "BOOK_DELTA", 2, vec![]));
+        assert_eq!(
+            latest(&hub, "BOOK_SNAPSHOT").unwrap_err(),
+            "HOT_RECORD_GENERATION_MISMATCH"
+        );
+        hub.dispatch(hot_record(0, 3, "BOOK_DELTA", 2, vec![16]));
+        assert_eq!(
+            latest(&hub, "BOOK_SNAPSHOT").unwrap_err(),
+            "HOT_RECORD_GAPPED"
+        );
+        assert_eq!(latest(&hub, "BOOK_DELTA").unwrap_err(), "HOT_RECORD_GAPPED");
+    }
+
+    #[test]
+    fn hot_read_refuses_malformed_latest_and_cross_partition_identity() {
+        let hub = Hub::new(&[(0, 0), (1, 0)], HubConfig::default());
+        healthy(&hub);
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        hub.dispatch(hot_record(1, 0, "QUOTE", 1, vec![]));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_PARTITION_MISMATCH");
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        healthy(&hub);
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        let mut bad = hot_record(0, 1, "QUOTE", 1, vec![]);
+        bad.payload = vec![255];
+        hub.dispatch(bad);
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_RECORD_INVALID");
+    }
+
+    #[test]
+    fn hot_read_refuses_failed_stopped_stalled_or_expired_reader() {
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_UNAVAILABLE");
+        healthy(&hub);
+        *hub.reader_progress.lock().unwrap() = Some(Instant::now() - Duration::from_secs(2));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_STALLED");
+        healthy(&hub);
+        assert_eq!(
+            hub.latest_hot(b"hot", "QUOTE", Instant::now()).unwrap_err(),
+            "HOT_READ_DEADLINE"
+        );
+        hub.stop();
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_UNAVAILABLE");
+        let hub = Hub::new(
+            &[(0, 0)],
+            HubConfig {
+                ring_max_age: Duration::ZERO,
+                ..Default::default()
+            },
+        );
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_RECORD_MISSING");
+    }
+
+    #[test]
+    fn hot_read_is_bounded_by_existing_ring_and_refuses_busy_partition() {
+        let hub = Hub::new(
+            &[(0, 0)],
+            HubConfig {
+                ring_max_bytes: 1,
+                ..Default::default()
+            },
+        );
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        assert_eq!(hub.ring_bytes(), 0);
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_RECORD_MISSING");
+        let _lock = hub.partitions[&0].lock().unwrap();
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_BUSY");
     }
 }
