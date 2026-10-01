@@ -64573,3 +64573,35 @@ ED04 is NOT fully closed: model-specific native required reads and integration
 recheck remain; ED05/ED06/runtime convergence/acceptance remain open.
 No image built, no rollout or shared writes. All test clients --rm/offline; no
 new volume/network/BuildKit output, no cleanup of active or rollback artifacts.
+
+
+#### ED04 Native Model Read Set - In Progress
+
+Next bounded slice derives native paper initial reads from the same DISPATCH
+policy for parent plus conditional child and selected fill model. No optional
+TRADE read for ordinary BBO/L2. Explicit LAST trigger remains required, derivative
+MARK/custody unchanged. Add actual entrypoint read-spy regression before patch;
+keep prepared-reader transaction/retry semantics. No runtime/broker writes.
+
+
+Native model read-set slice locally verified:20/20 old entrypoint cases fetched
+required_feeds=None; red receipt paper-readset-red.xml hash
+a8c1de69eef4cc83eb4d31ca7144b83e90cc0d2aa27a2c4b1df357ff3b889271.
+Native now unions existing DISPATCH parent+child policy with selected model feed.
+Ordinary BBO/L2 never adds TRADE unless LAST trigger actually requires it;
+derivative MARK and L2/child checks retained. Compatibility model readback reads
+its selected QUOTE/BOOK only; custody dependencies remain a separate prepared set.
+Found child alias precedence issue: parser prioritizes type over order_type, so
+child conversion must set both. Tests call actual native entrypoint and observe
+parent/child validator arguments; not source-text assertions. They stop before DB
+or sender and are not full native transaction/dispatch certification.
+First patched run hit20 fixture errors (missing alpha_id exposed by earlier
+parsing). Added proper identity fields; no production parser weakened. Retained
+failed receipts paper-readset-unit.xml and paper-readset-final.xml.
+Final246PASS/0FAIL/0SKIP,3.790s, paper-readset-child-final.xml hash
+7715833ac7af62968070c5819af38026a8f377cfd9c50f88dfb972550bff6105.
+Ruff and diff check PASS. Native real-PG lifecycle regression after these changes
+remains the next required step, followed by actual queued sender ED05. Do not mark
+ED04 or EDC fully closed from this unit boundary matrix alone.
+No image build/runtime/resource-cap changes; offline --rm clients removed, no
+new network/volume/BuildKit artifact. Existing active and named rollback retained.
