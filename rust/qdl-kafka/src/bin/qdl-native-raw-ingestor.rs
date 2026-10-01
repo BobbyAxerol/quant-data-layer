@@ -16,7 +16,8 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
 use qdl_contracts::qdl::provider::v1::{
-    CaptureBoundary, RawProviderEnvelope, TransportCompression, TransportProtocol,
+    CaptureBoundary, QuarantineReason, QuarantineRecord, RawProviderEnvelope, TransportCompression,
+    TransportProtocol,
 };
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::binance::{
@@ -33,9 +34,10 @@ use qdl_core::okx::{
 };
 use qdl_core::transport::{DurableRecord, RetryClass};
 use qdl_kafka::{
-    shutdown_signal, FencedKafkaSink, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
-    PendingKafkaAppend,
+    shutdown_signal, FencedKafkaSink, KafkaEventSource, KafkaTlsConfig, KafkaTransportConfig,
+    KafkaTransportError, PendingKafkaAppend,
 };
+use qdl_realtime_core::L2_RESNAPSHOT_REQUIRED_V1;
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use qdl_venue_core::backpressure::DeliveryClass;
 use serde::{Deserialize, Serialize};
@@ -207,6 +209,13 @@ impl RawBinding {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BookResyncConfig {
+    quarantine_stream: String,
+    consumer_group_prefix: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct IngestorConfig {
     runtime: ProviderRuntime,
     /// OKX: the `/ws/v5/public` service. Binance: the `/public/ws` routed base.
@@ -236,6 +245,8 @@ struct IngestorConfig {
     latest_state_flush_ms: u64,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
+    #[serde(default)]
+    book_resync: Option<BookResyncConfig>,
 }
 
 fn default_max_subscriptions_per_connection() -> usize {
@@ -352,6 +363,16 @@ fn partition_okx_bindings(
 impl IngestorConfig {
     fn validate(&self) -> Result<(), String> {
         self.authority.validate()?;
+        if let Some(resync) = &self.book_resync {
+            if resync.quarantine_stream.trim().is_empty()
+                || resync.quarantine_stream == self.raw_stream
+                || resync.consumer_group_prefix.trim().is_empty()
+            {
+                return Err(
+                    "book resync requires a separate quarantine topic and scoped group".into(),
+                );
+            }
+        }
         if !matches!(
             self.authority.mode,
             AuthorityMode::RustShadow | AuthorityMode::RustPrimary
@@ -1304,6 +1325,181 @@ async fn reserve(accepted: &AtomicU64, max_events: u64) -> bool {
     }
 }
 
+struct BookResyncListener {
+    source: KafkaEventSource,
+    retry_after: Instant,
+    failures: u32,
+    next_checkpoint: Instant,
+    published_anchors: HashMap<String, (String, u64, i64)>,
+}
+
+fn book_resync_listener(
+    config: &IngestorConfig,
+    lane: &str,
+    bindings: &HashMap<String, RawBinding>,
+) -> Result<Option<BookResyncListener>, KafkaTransportError> {
+    let Some(resync) = config.book_resync.as_ref() else {
+        return Ok(None);
+    };
+    if bindings.is_empty() || bindings.values().any(|b| b.feed != RawFeed::Book) {
+        return Ok(None);
+    }
+    let mut transport = kafka_config(lane).map_err(KafkaTransportError::Configuration)?;
+    transport.group_id = format!("{}-{lane}", resync.consumer_group_prefix);
+    transport.client_id = format!("{}-resync-{lane}", transport.client_id);
+    KafkaEventSource::new_live_control(&transport, &[&resync.quarantine_stream]).map(|source| {
+        Some(BookResyncListener {
+            source,
+            retry_after: Instant::now(),
+            failures: 0,
+            next_checkpoint: Instant::now(),
+            published_anchors: HashMap::new(),
+        })
+    })
+}
+
+fn matches_book_resync(
+    record: &DurableRecord,
+    config: &IngestorConfig,
+    bindings: &HashMap<String, RawBinding>,
+    session_id: &str,
+    generation: u64,
+    now_ns: i64,
+) -> bool {
+    let Ok(request) = QuarantineRecord::decode(record.payload.as_slice()) else {
+        return false;
+    };
+    if request.safe_summary != L2_RESNAPSHOT_REQUIRED_V1
+        || request.reason != QuarantineReason::SequenceGap as i32
+    {
+        return false;
+    }
+    let Some(raw) = request.raw.as_ref() else {
+        return false;
+    };
+    let Some(binding) = bindings
+        .values()
+        .find(|b| b.subscription_id == raw.subscription_id)
+    else {
+        return false;
+    };
+    let Some(l2) = binding.l2.as_ref() else {
+        return false;
+    };
+    let max_age_ns = l2
+        .snapshot_refresh_seconds
+        .unwrap_or(0)
+        .saturating_mul(1_000_000_000) as i64;
+    if binding.feed != RawFeed::Book
+        || raw.source_session_id != session_id
+        || raw.connection_generation != generation
+        || raw.test_provenance
+        || raw.provider != binding.provider
+        || raw.venue != binding.venue
+        || raw.market != binding.market
+        || raw.product_type != binding.product_type
+        || raw.native_symbol != binding.native_symbol
+        || raw.native_channel != binding.native_channel
+        || raw.adapter_version != binding.adapter_version
+        || raw.instrument_catalog_revision != binding.instrument_catalog_revision
+        || raw.config_revision != config.config_revision
+        || raw.lease_epoch != config.lease_epoch
+        || raw.partition_plan_epoch != config.partition_plan_epoch
+        || raw.authority_revision != config.authority.revision
+        || raw.received_at_ns <= 0
+        || request.quarantined_at_ns < raw.received_at_ns
+        || now_ns < request.quarantined_at_ns
+        || now_ns.saturating_sub(raw.received_at_ns) > max_age_ns
+    {
+        return false;
+    }
+    let mut evidence = Sha256::new();
+    evidence.update(raw.encode_to_vec());
+    evidence.update(request.reason.to_be_bytes());
+    let mut id = Sha256::new();
+    id.update(&raw.capture_id);
+    id.update(L2_RESNAPSHOT_REQUIRED_V1.as_bytes());
+    request.evidence_sha256 == evidence.finalize().as_slice()
+        && record.event_id == id.finalize().as_slice()
+        && raw.raw_frame_sha256 == Sha256::digest(&raw.raw_frame_bytes).as_slice()
+}
+
+// A request based on a pre-anchor delta is already being repaired. Reconnecting
+// here would throw away the just-published REST bootstrap on every generation.
+fn snapshot_satisfies_resync(
+    record: &DurableRecord,
+    anchors: &HashMap<String, (String, u64, i64)>,
+) -> bool {
+    let Ok(request) = QuarantineRecord::decode(record.payload.as_slice()) else {
+        return false;
+    };
+    let Some(raw) = request.raw else { return false };
+    anchors
+        .get(&raw.subscription_id)
+        .is_some_and(|(session, generation, receipt)| {
+            session == &raw.source_session_id
+                && *generation == raw.connection_generation
+                && *receipt >= raw.received_at_ns
+        })
+}
+
+// Hints are reissued and session-fenced, not market-data acknowledgements.
+// Coalesce offset submissions so a quarantine flood cannot queue one broker
+// commit request per rejected frame in librdkafka.
+fn claim_hint_checkpoint(next: &mut Instant, now: Instant) -> bool {
+    if now < *next {
+        return false;
+    }
+    *next = now + Duration::from_secs(1);
+    true
+}
+
+async fn book_resync_requested(
+    listener: &mut Option<BookResyncListener>,
+    config: &IngestorConfig,
+    bindings: &HashMap<String, RawBinding>,
+    session: &str,
+    generation: u64,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(listener) = listener else {
+        return std::future::pending().await;
+    };
+    tokio::time::sleep_until(listener.retry_after).await;
+    let received = listener.source.next().await;
+    let (record, _) = match received {
+        Ok(record) => record,
+        Err(error) => {
+            listener.failures = listener.failures.saturating_add(1);
+            listener.retry_after =
+                Instant::now() + Duration::from_secs(u64::from(listener.failures).min(30));
+            eprintln!(
+                "{}",
+                json!({"event":"qdl_book_resync_receive_failed", "error":error.to_string()})
+            );
+            return Ok(false);
+        }
+    };
+    let requested = matches_book_resync(&record, config, bindings, session, generation, now_ns()?)
+        && !snapshot_satisfies_resync(&record, &listener.published_anchors);
+    // A crash before reconnect is recovered by the core's bounded reissue.
+    // Checkpoint failure may replay this hint, but not across a new WS session.
+    if !claim_hint_checkpoint(&mut listener.next_checkpoint, Instant::now()) {
+        return Ok(requested);
+    }
+    if let Err(error) = listener.source.checkpoint_hint() {
+        listener.failures = listener.failures.saturating_add(1);
+        listener.retry_after =
+            Instant::now() + Duration::from_secs(u64::from(listener.failures).min(30));
+        eprintln!(
+            "{}",
+            json!({"event":"qdl_book_resync_checkpoint_failed", "error":error.to_string()})
+        );
+    } else {
+        listener.failures = 0;
+    }
+    Ok(requested)
+}
+
 async fn run_binance_connection(
     config: Arc<IngestorConfig>,
     route: BinanceRoute,
@@ -1346,6 +1542,7 @@ async fn run_binance_connection(
             .ok_or("Binance market WebSocket URL is required")?,
     };
     let publisher = RawPublisher::new(&config, &lane)?;
+    let mut resync_listener = book_resync_listener(&config, &lane, &bindings)?;
     let snapshot_client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(5))
@@ -1471,6 +1668,12 @@ async fn run_binance_connection(
                     .await
                     .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
                     {
+                        let anchor_key = frame.binding.subscription_id.clone();
+                        let anchor = (
+                            frame.session_id.clone(),
+                            frame.generation,
+                            frame.received_at_ns,
+                        );
                         if !publish_pending_frame(
                             frame,
                             &mut PendingPublishWindow {
@@ -1488,6 +1691,9 @@ async fn run_binance_connection(
                         {
                             exhausted = true;
                             break;
+                        }
+                        if let Some(listener) = resync_listener.as_mut() {
+                            listener.published_anchors.insert(anchor_key, anchor);
                         }
                     }
                 }
@@ -1512,8 +1718,16 @@ async fn run_binance_connection(
                         socket.next(),
                     );
                     tokio::pin!(read);
+                    // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
-                        biased;
+                        requested = book_resync_requested(&mut resync_listener, &config, &bindings, &session_id, generation) => {
+                            if requested? {
+                                eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
+                                disconnected = true;
+                                break;
+                            }
+                            continue;
+                        }
                         _ = latest_tick.tick(), if !latest.is_empty() => {
                             if !flush_latest_concurrent(
                                 &mut latest,
@@ -1546,6 +1760,8 @@ async fn run_binance_connection(
                             .await
                             .map_err(|error| std::io::Error::new(ErrorKind::Other, error))?
                             {
+                                let anchor_key = frame.binding.subscription_id.clone();
+                                let anchor = (frame.session_id.clone(), frame.generation, frame.received_at_ns);
                                 if !publish_pending_frame(
                                     frame,
                                     &mut PendingPublishWindow {
@@ -1563,6 +1779,9 @@ async fn run_binance_connection(
                                 {
                                     exhausted = true;
                                     break;
+                                }
+                                if let Some(listener) = resync_listener.as_mut() {
+                                    listener.published_anchors.insert(anchor_key, anchor);
                                 }
                             }
                             failures = 0;
@@ -1841,6 +2060,17 @@ async fn run_okx_service(
         .into_iter()
         .map(|binding| (binding.key(), binding))
         .collect();
+    let mut resync_listener = book_resync_listener(
+        &config,
+        &format!(
+            "okx-{}-{shard_index:03}",
+            match service {
+                OkxService::Public => "public",
+                OkxService::Business => "business",
+            }
+        ),
+        &binding_map,
+    )?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -1982,8 +2212,16 @@ async fn run_okx_service(
                         reader.next(),
                     );
                     tokio::pin!(read);
+                    // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
-                        biased;
+                        requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
+                            if requested? {
+                                eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
+                                disconnected = true;
+                                break;
+                            }
+                            continue;
+                        }
                         _ = latest_tick.tick(), if !latest.is_empty() => {
                             if !flush_latest_concurrent(
                                 &mut latest,
@@ -3000,5 +3238,322 @@ mod tests {
             1
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resync_tests {
+    use super::*;
+
+    fn fixture(
+        okx: bool,
+    ) -> (
+        IngestorConfig,
+        HashMap<String, RawBinding>,
+        RawProviderEnvelope,
+    ) {
+        let b = RawBinding {
+            provider: if okx { "OKX_DIRECT" } else { "BINANCE_DIRECT" }.into(),
+            venue: if okx { "OKX" } else { "BINANCE" }.into(),
+            market: if okx { "SWAP" } else { "USDM" }.into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: if okx { "BNB-USDT-SWAP" } else { "BNBUSDT" }.into(),
+            native_channel: if okx { "books" } else { "bnbusdt@depth@100ms" }.into(),
+            subscription_id: "book-test".into(),
+            adapter_version: "2.0.0".into(),
+            instrument_catalog_revision: 3,
+            feed: RawFeed::Book,
+            delivery_class: DeliveryClass::Lossless,
+            l2: Some(RawL2Config {
+                provider_protocol: if okx {
+                    "OKX_PUBLIC_BOOKS"
+                } else {
+                    "BINANCE_DIFF_DEPTH"
+                }
+                .into(),
+                depth_per_side: 100,
+                rest_snapshot_url: None,
+                snapshot_refresh_seconds: Some(30),
+            }),
+            mark_index_target: None,
+        };
+        let raw = RawProviderEnvelope {
+            provider: b.provider.clone(),
+            venue: b.venue.clone(),
+            market: b.market.clone(),
+            product_type: b.product_type.clone(),
+            native_symbol: b.native_symbol.clone(),
+            native_channel: b.native_channel.clone(),
+            subscription_id: b.subscription_id.clone(),
+            adapter_version: b.adapter_version.clone(),
+            instrument_catalog_revision: 3,
+            source_session_id: "test-book-lane-7".into(),
+            connection_generation: 7,
+            config_revision: 9,
+            lease_epoch: 1,
+            authority_revision: 2,
+            partition_plan_epoch: 1,
+            received_at_ns: 1_000_000_000_000,
+            raw_frame_bytes: b"{}".to_vec(),
+            raw_frame_sha256: Sha256::digest(b"{}").to_vec(),
+            capture_id: vec![1; 16],
+            ..Default::default()
+        };
+        let config = IngestorConfig {
+            runtime: if okx {
+                ProviderRuntime::Okx
+            } else {
+                ProviderRuntime::Binance
+            },
+            websocket_url: "wss://unit.test".into(),
+            business_websocket_url: None,
+            market_websocket_url: None,
+            raw_stream: "unit.raw".into(),
+            shard_id: "unit".into(),
+            lease_epoch: 1,
+            partition_plan_epoch: 1,
+            config_revision: 9,
+            heartbeat_seconds: 10,
+            max_events: 0,
+            max_runtime_seconds: 0,
+            metrics_every_events: 100,
+            generation_state_path: "/tmp/unit".into(),
+            session_liveness_dir: "/tmp/unit-session".into(),
+            session_liveness_write_interval_ms: 1000,
+            max_inflight_publishes: 16,
+            max_subscriptions_per_connection: 100,
+            latest_state_flush_ms: 50,
+            authority: AuthorityRecord {
+                schema: "qdl.authority-record.v1".into(),
+                slice_id: "unit".into(),
+                revision: 2,
+                mode: AuthorityMode::RustShadow,
+                candidate_image_digest: format!("sha256:{}", "0".repeat(64)),
+                capability_manifest_digest: "0".repeat(64),
+                contract_digest: "0".repeat(64),
+                partition_plan_digest: "0".repeat(64),
+                public_write_allowed: false,
+                legacy_write_allowed: false,
+                approved_by: "unit-test".into(),
+                effective_at_ns: 1,
+            },
+            bindings: vec![b.clone()],
+            book_resync: None,
+        };
+        (config, HashMap::from([(b.key(), b)]), raw)
+    }
+
+    fn request(raw: RawProviderEnvelope) -> DurableRecord {
+        let mut evidence = Sha256::new();
+        evidence.update(raw.encode_to_vec());
+        evidence.update((QuarantineReason::SequenceGap as i32).to_be_bytes());
+        let mut id = Sha256::new();
+        id.update(&raw.capture_id);
+        id.update(L2_RESNAPSHOT_REQUIRED_V1.as_bytes());
+        let record = QuarantineRecord {
+            quarantined_at_ns: raw.received_at_ns,
+            raw: Some(raw),
+            reason: QuarantineReason::SequenceGap as i32,
+            safe_summary: L2_RESNAPSHOT_REQUIRED_V1.into(),
+            retry_count: 0,
+            evidence_sha256: evidence.finalize().to_vec(),
+        };
+        DurableRecord {
+            stream: "unit.quarantine".into(),
+            partition_key: "unit".into(),
+            event_id: id.finalize().to_vec(),
+            payload: record.encode_to_vec(),
+            accepted_at_ns: record.quarantined_at_ns,
+        }
+    }
+
+    #[test]
+    fn book_resync_accepts_current_lane_and_rejects_superseded_replay() {
+        for okx in [false, true] {
+            let (config, bindings, raw) = fixture(okx);
+            let record = request(raw.clone());
+            assert!(matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns + 1
+            ));
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                "next-session",
+                8,
+                raw.received_at_ns + 1
+            ));
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                8,
+                raw.received_at_ns + 1
+            ));
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns - 1
+            ));
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns + 30_000_000_001
+            ));
+        }
+    }
+
+    #[test]
+    fn book_resync_rejects_wrong_identity_fence_and_tampering() {
+        for okx in [false, true] {
+            let (config, bindings, raw) = fixture(okx);
+            for field in [
+                "provider",
+                "venue",
+                "market",
+                "product",
+                "symbol",
+                "channel",
+                "subscription",
+                "adapter",
+                "catalog",
+                "config",
+                "authority",
+                "lease",
+                "partition",
+                "test",
+            ] {
+                let mut changed = raw.clone();
+                match field {
+                    "provider" => changed.provider.push('x'),
+                    "venue" => changed.venue.push('x'),
+                    "market" => changed.market.push('x'),
+                    "product" => changed.product_type.push('x'),
+                    "symbol" => changed.native_symbol.push('x'),
+                    "channel" => changed.native_channel.push('x'),
+                    "subscription" => changed.subscription_id.push('x'),
+                    "adapter" => changed.adapter_version.push('x'),
+                    "catalog" => changed.instrument_catalog_revision += 1,
+                    "config" => changed.config_revision += 1,
+                    "authority" => changed.authority_revision += 1,
+                    "lease" => changed.lease_epoch += 1,
+                    "partition" => changed.partition_plan_epoch += 1,
+                    "test" => changed.test_provenance = true,
+                    _ => unreachable!(),
+                }
+                assert!(
+                    !matches_book_resync(
+                        &request(changed),
+                        &config,
+                        &bindings,
+                        &raw.source_session_id,
+                        7,
+                        raw.received_at_ns + 1
+                    ),
+                    "{field}"
+                );
+            }
+            let mut record = request(raw.clone());
+            record.event_id[0] ^= 1;
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns + 1
+            ));
+            let mut record = request(raw.clone());
+            let mut decoded = QuarantineRecord::decode(record.payload.as_slice()).unwrap();
+            decoded.evidence_sha256[0] ^= 1;
+            record.payload = decoded.encode_to_vec();
+            assert!(!matches_book_resync(
+                &record,
+                &config,
+                &bindings,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns + 1
+            ));
+            let mut nonbook = bindings.clone();
+            for binding in nonbook.values_mut() {
+                binding.feed = RawFeed::Trade;
+            }
+            assert!(!matches_book_resync(
+                &request(raw.clone()),
+                &config,
+                &nonbook,
+                &raw.source_session_id,
+                7,
+                raw.received_at_ns + 1
+            ));
+        }
+    }
+
+    #[test]
+    fn book_resync_late_bootstrap_hint_does_not_reconnect_fresh_anchor() {
+        let (_, _, raw) = fixture(false);
+        let record = request(raw.clone());
+        let mut anchors = HashMap::new();
+        assert!(!snapshot_satisfies_resync(&record, &anchors));
+        anchors.insert(
+            raw.subscription_id.clone(),
+            (
+                raw.source_session_id.clone(),
+                raw.connection_generation,
+                raw.received_at_ns + 1,
+            ),
+        );
+        assert!(snapshot_satisfies_resync(&record, &anchors));
+        let mut current = raw.clone();
+        current.received_at_ns += 2;
+        assert!(!snapshot_satisfies_resync(&request(current), &anchors));
+        let mut other = raw.clone();
+        other.connection_generation += 1;
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+        let mut other = raw.clone();
+        other.source_session_id.push('x');
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+        let mut other = raw;
+        other.subscription_id.push('x');
+        assert!(!snapshot_satisfies_resync(&request(other), &anchors));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn book_resync_checkpoint_flood_is_coalesced() {
+        let mut next = Instant::now();
+        assert!(claim_hint_checkpoint(&mut next, Instant::now()));
+        for _ in 0..40_000 {
+            assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
+        }
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(claim_hint_checkpoint(&mut next, Instant::now()));
+        assert!(!claim_hint_checkpoint(&mut next, Instant::now()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn book_resync_disabled_has_no_poll_or_connection_side_effect() {
+        let (config, bindings, raw) = fixture(true);
+        let mut listener = None;
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            book_resync_requested(&mut listener, &config, &bindings, &raw.source_session_id, 7)
+        )
+        .await
+        .is_err());
     }
 }

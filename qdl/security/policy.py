@@ -60,6 +60,7 @@ class ServiceTokenVerifier:
         keys_by_id: Mapping[str, str | bytes],
         algorithms: Sequence[str] = ("RS256", "ES256"),
         max_lifetime_seconds: int = 900,
+        environments_by_key_id: Mapping[str, str] | None = None,
     ):
         if not issuer or not audience or not keys_by_id:
             raise ValueError("issuer, audience and at least one verification key are required")
@@ -70,6 +71,12 @@ class ServiceTokenVerifier:
         self._keys = dict(keys_by_id)
         self._algorithms = tuple(algorithms)
         self._max_lifetime = max_lifetime_seconds
+        if environments_by_key_id is not None:
+            if set(environments_by_key_id) != set(keys_by_id) or any(
+                value not in {"paper", "sandbox", "live"} for value in environments_by_key_id.values()
+            ):
+                raise ValueError("JWT key-realm bindings must cover exactly the keyring")
+        self._environments_by_key_id = environments_by_key_id
 
     def verify(self, token: str, *, expected_environment: str) -> Principal:
         try:
@@ -97,7 +104,11 @@ class ServiceTokenVerifier:
         if expires_at <= issued_at or expires_at - issued_at > self._max_lifetime:
             raise PermissionError("workload token lifetime exceeds policy")
         environment = str(claims["environment"])
-        if environment != expected_environment:
+        trusted_environment = (
+            self._environments_by_key_id[key_id]
+            if self._environments_by_key_id is not None else expected_environment
+        )
+        if environment != trusted_environment:
             raise PermissionError("workload token environment mismatch")
         roles = frozenset(str(role) for role in claims.get("roles", []))
         unknown = roles - _ROLE_PERMISSIONS.keys()

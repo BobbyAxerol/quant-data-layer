@@ -43,6 +43,7 @@ class DataPlaneSecurityConfig:
     algorithms: tuple[str, ...]
     max_token_lifetime_seconds: int = 900
     subjects_by_key_id: Mapping[str, str] | None = None
+    environments_by_key_id: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if not all((self.environment.strip(), self.issuer.strip(), self.audience.strip())):
@@ -60,11 +61,26 @@ class DataPlaneSecurityConfig:
             ):
                 raise ValueError("data-plane JWT key-subject bindings are invalid")
 
+        if self.environments_by_key_id is not None:
+            if (not isinstance(self.environments_by_key_id, Mapping)
+                    or self.subjects_by_key_id is None
+                    or set(self.environments_by_key_id) != set(self.keys_by_id)):
+                raise ValueError("JWT key-realm bindings require exact key-subject coverage")
+            if any(value not in {"paper", "sandbox", "live"} for value in self.environments_by_key_id.values()):
+                raise ValueError("JWT consumer realm must be paper, sandbox or live")
+
+    @property
+    def consumer_environments(self) -> frozenset[str]:
+        if self.environments_by_key_id is None:
+            return frozenset({self.environment})
+        return frozenset(self.environments_by_key_id.values())
+
     @classmethod
     def from_environment(cls) -> "DataPlaneSecurityConfig":
         try:
             keys = json.loads(os.environ["QDL_DATA_JWT_KEYS_JSON"])
             key_subjects = json.loads(os.environ["QDL_DATA_JWT_KEY_SUBJECTS_JSON"])
+            realms = json.loads(os.environ.get("QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON", "null"))
             issuer = os.environ["QDL_DATA_JWT_ISSUER"]
             audience = os.environ["QDL_DATA_JWT_AUDIENCE"]
         except (KeyError, json.JSONDecodeError) as error:
@@ -82,6 +98,7 @@ class DataPlaneSecurityConfig:
         )
         return cls(
             environment=os.environ.get("QDL_ENVIRONMENT", "paper").lower(),
+            environments_by_key_id=realms,
             issuer=issuer,
             audience=audience,
             keys_by_id={str(key): str(value) for key, value in keys.items()},
@@ -323,6 +340,7 @@ class DataPlaneIdentityService:
             keys_by_id=config.keys_by_id,
             algorithms=config.algorithms,
             max_lifetime_seconds=config.max_token_lifetime_seconds,
+            environments_by_key_id=config.environments_by_key_id,
         )
 
     def authenticate(self, bearer_token: str, *, consumer_id: str) -> DataPlaneAccess:

@@ -84,7 +84,9 @@ def parse_public_instrument(
         multiplier_text = format(Decimal(ct_val_text) * Decimal(ct_mult_text), "f")
     except InvalidOperation as exc:
         raise ValueError("OKX contract multiplier fields must be exact decimals") from exc
-    family_parts = identity.canonical_symbol.split("-")
+    # Contract value currency is not the underlying asset for inverse contracts.
+    # Dated/option IDs include expiry/strike; currency identity comes from family.
+    family_parts = str(payload.get("instFamily") or identity.canonical_symbol).split("-")
     family_base = family_parts[0] if len(family_parts) >= 2 else ""
     family_quote = family_parts[-1] if len(family_parts) >= 2 else ""
     record = InstrumentRecord(
@@ -93,7 +95,7 @@ def parse_public_instrument(
         asset_class=_ASSET_CLASSES[inst_type],
         native_symbol=inst_id,
         base_asset=str(
-            payload.get("baseCcy") or payload.get("ctValCcy") or family_base
+            payload.get("baseCcy") or family_base or payload.get("ctValCcy")
         ).upper(),
         quote_asset=str(payload.get("quoteCcy") or family_quote).upper(),
         settlement_asset=str(

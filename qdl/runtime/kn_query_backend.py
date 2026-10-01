@@ -47,7 +47,7 @@ from typing import Callable, Mapping
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
-from qdl.query import DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
+from qdl.query import CoverageStatus, DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
 from qdl.query.row_cache import BoundedRowCache
@@ -368,6 +368,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         )
         if result is None:
             return None, ()
+        # Native Binance 3d has overlapping historical grids. A retained recent
+        # suffix does not prove listing exhaustion or certify an older prefix.
+        if (binding.feed is FeedType.BAR and binding.interval == "3d"
+                and binding.instrument.identity.venue == "BINANCE"
+                and start_ns is None and len(result.items) < requested):
+            result = replace(result, coverage=CoverageStatus.PARTIAL)
         selected = records
         if start_ns is not None:
             selected = tuple(

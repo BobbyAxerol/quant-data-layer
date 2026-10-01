@@ -134,7 +134,8 @@ fn jwt_config(environment: &str) -> Result<JwtConfig, String> {
             value["max_lifetime_seconds"]
                 .as_i64()
                 .ok_or("jwt config max_lifetime_seconds must be an integer")?,
-        );
+        )?
+        .with_key_environments_json(&value["environments"].to_string());
     }
     JwtConfig::from_json(
         environment,
@@ -144,7 +145,8 @@ fn jwt_config(environment: &str) -> Result<JwtConfig, String> {
         &env("QDL_DATA_JWT_KEY_SUBJECTS_JSON")?,
         &env_or("QDL_DATA_JWT_ALGORITHMS", "RS256,ES256"),
         parsed("QDL_DATA_JWT_MAX_LIFETIME_SECONDS", "900")?,
-    )
+    )?
+    .with_key_environments_json(&env_or("QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON", "null"))
 }
 
 fn load_authority() -> Result<Authority, String> {

@@ -15,14 +15,14 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "qdl-sdk"
 NORMALIZED_NAME = "qdl_sdk"
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 DIST_INFO = f"{NORMALIZED_NAME}-{VERSION}.dist-info"
 DEPENDENCIES = (
     "grpcio>=1.70.0,<2.0.0",
     "httpx>=0.28.0,<1.0.0",
     "protobuf>=6.31.1,<7.0.0",
     "pydantic>=2.0.0,<3.0.0",
-    "PyJWT[crypto]>=2.13.0,<3.0.0",
+    "PyJWT[crypto]>=2.15.1,<3.0.0",
 )
 FIXED_TIMESTAMP = (2020, 1, 1, 0, 0, 0)
 

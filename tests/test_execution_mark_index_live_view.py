@@ -1239,6 +1239,43 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ReferenceStatus.ERROR)
         self.assertEqual(result.error_code, "LIVE_VIEW_PROTOCOL")
 
+    async def test_reader_preserves_typed_quiet_rejection_without_retry_or_rest(self):
+        cases = {
+            "STALE": "LIVE_VIEW_STALE",
+            "COMPONENT_STALE": "LIVE_VIEW_STALE",
+            "SESSION_LIVENESS": "LIVE_VIEW_STALE",
+            "SESSION_STATE": "LIVE_VIEW_UNAVAILABLE",
+            "QUIET_POLICY_UNAVAILABLE": "LIVE_VIEW_UNAVAILABLE",
+            "LINEAGE_INVALID": "LIVE_VIEW_UNAVAILABLE",
+            "GAP_OR_RESYNC": "LIVE_VIEW_GAPPED",
+            "IDENTITY_MISMATCH": "LIVE_VIEW_IDENTITY",
+            "FENCED": "LIVE_VIEW_UNAVAILABLE",
+        }
+        for reason, expected in cases.items():
+            with self.subTest(reason=reason):
+                calls = []
+                async def handler(request):
+                    calls.append(request.url.host)
+                    return httpx.Response(409, json={
+                        "detail": "execution MARK/INDEX live view unavailable:" + reason,
+                    }, request=request)
+                async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                    reader = HttpExecutionMarkIndexReader(
+                        ("https://stream_v2_active:8200",), SECRET, client=client,
+                    )
+                    result = await reader.fetch(
+                        ReferenceRequest(self.record, ReferenceProduct.MARK_INDEX_PRICE),
+                        max_freshness_ms=2000, source_policy_id="crypto_liquid_v2",
+                        event_recency_policy=StalePolicy.OBSERVE,
+                        max_session_liveness_ms=45000,
+                    )
+                self.assertEqual(result.status, ReferenceStatus.ERROR)
+                self.assertEqual(result.error_code, expected)
+                self.assertEqual(calls, ["stream_v2_active"])
+                self.assertTrue(result.error_detail.endswith(reader._bounded_reason(
+                    httpx.Response(409, json={"detail": "unavailable:" + reason})
+                )))
+
     async def test_reader_uses_one_deadline_across_active_passive_urls(self):
         envelope = _envelope(self.binding, sequence=50)
         payload = {

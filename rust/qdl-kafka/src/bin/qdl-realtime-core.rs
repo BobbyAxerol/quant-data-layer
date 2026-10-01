@@ -35,6 +35,8 @@ struct RuntimeConfig {
     metrics_every_batches: u64,
     #[serde(default)]
     strict_subscription_scope: bool,
+    #[serde(default)]
+    book_resync_quarantine: bool,
 }
 
 impl RuntimeConfig {
@@ -213,6 +215,18 @@ fn authority_mode_name(mode: AuthorityMode) -> &'static str {
     }
 }
 
+// A ready receive must not extend an expired batch. Tokio timeout alone polls
+// the input first, so an always-ready raw queue needs this explicit guard.
+async fn receive_batch_input<T>(
+    deadline: tokio::time::Instant,
+    next: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    if tokio::time::Instant::now() >= deadline {
+        return None;
+    }
+    tokio::time::timeout_at(deadline, next).await.ok()
+}
+
 async fn run_generation(
     config: &RuntimeConfig,
     generation: u64,
@@ -261,6 +275,9 @@ async fn run_generation(
     // describes its own interval rather than all of history.
     let mut raw_age = SpanSummary::default();
     let mut commit_latency = SpanSummary::default();
+    let mut collect_latency = SpanSummary::default();
+    let mut normalize_latency = SpanSummary::default();
+    let mut raw_age_by_partition: BTreeMap<(String, i32), SpanSummary> = BTreeMap::new();
     let mut ignored_out_of_scope = 0_u64;
     let mut scope_quarantines = 0_u64;
     let mut batches = 0_u64;
@@ -306,18 +323,25 @@ async fn run_generation(
                 Err(error) => return Err(error.into()),
             }
         };
+        let collect_started = tokio::time::Instant::now();
+        let batch_deadline = collect_started + Duration::from_millis(config.batch_wait_ms);
         let mut inputs = vec![first];
         while inputs.len() < config.batch_size
             && (config.max_events == 0 || processed + (inputs.len() as u64) < config.max_events)
         {
-            match tokio::time::timeout(Duration::from_millis(config.batch_wait_ms), bridge.next())
-                .await
-            {
-                Ok(Ok(input)) => {
+            let received = tokio::select! {
+                biased;
+                result = &mut shutdown => break 'service result?.as_str(),
+                result = receive_batch_input(batch_deadline, bridge.next()) => result,
+            };
+            match received {
+                Some(Ok(input)) => {
                     receive_failures = 0;
                     inputs.push(input);
                 }
-                Ok(Err(error)) if should_retry_receive_in_generation(&error, receive_failures) => {
+                Some(Err(error))
+                    if should_retry_receive_in_generation(&error, receive_failures) =>
+                {
                     receive_failures = receive_failures.saturating_add(1);
                     eprintln!(
                         "{}",
@@ -331,11 +355,13 @@ async fn run_generation(
                     );
                     break;
                 }
-                Ok(Err(error)) => return Err(error.into()),
-                Err(_) => break,
+                Some(Err(error)) => return Err(error.into()),
+                None => break,
             }
         }
 
+        collect_latency.observe(collect_started.elapsed().as_nanos().min(i64::MAX as u128) as i64);
+        let normalize_started = tokio::time::Instant::now();
         let normalized_at_ns = now_ns()?;
         let mut outputs = vec![];
         for input in &inputs {
@@ -349,8 +375,16 @@ async fn run_generation(
             // catches. Every four-quantity report before this printed
             // `received -> published = 0 ms`, which was two copies of one field
             // subtracting to zero, not a measurement.
-            raw_age.observe(normalized_at_ns.saturating_sub(raw.received_at_ns));
-            let result = if !is_approved_subscription(&raw, &approved_subscriptions) {
+            let age_ns = normalized_at_ns.saturating_sub(raw.received_at_ns);
+            raw_age.observe(age_ns);
+            raw_age_by_partition
+                .entry((
+                    input.cursor.stream.clone(),
+                    input.cursor.transport_partition,
+                ))
+                .or_default()
+                .observe(age_ns);
+            let mut result = if !is_approved_subscription(&raw, &approved_subscriptions) {
                 if config.strict_subscription_scope {
                     scope_quarantines = scope_quarantines.saturating_add(1);
                     core.quarantine_raw(
@@ -392,6 +426,14 @@ async fn run_generation(
                     Err(error) => return Err(error.into()),
                 }
             };
+            if config.book_resync_quarantine
+                && is_approved_subscription(&raw, &approved_subscriptions)
+                && raw.authority_revision == config.authority.revision
+            {
+                if let Some(request) = core.l2_resnapshot_request(&raw, normalized_at_ns) {
+                    result.quarantines.push(request);
+                }
+            }
             canonical += result.canonical.len() as u64;
             quarantines += result.quarantines.len() as u64;
             duplicates += result.duplicates as u64;
@@ -426,6 +468,8 @@ async fn run_generation(
                 });
             }
         }
+        normalize_latency
+            .observe(normalize_started.elapsed().as_nanos().min(i64::MAX as u128) as i64);
         let commit_started_ns = now_ns()?;
         bridge.commit(&inputs, &outputs).await?;
         commit_latency.observe(now_ns()?.saturating_sub(commit_started_ns));
@@ -448,10 +492,18 @@ async fn run_generation(
                     "batches": batches,
                     "raw_age_ms": raw_age.report(),
                     "commit_ms": commit_latency.report(),
+                    "collect_ms": collect_latency.report(),
+                    "normalize_ms": normalize_latency.report(),
+                    "raw_age_by_partition_ms": raw_age_by_partition.iter().map(|((topic, partition), age)| {
+                        json!({"topic": topic, "partition": partition, "age": age.report()})
+                    }).collect::<Vec<_>>(),
                 }))?
             );
             raw_age.reset();
             commit_latency.reset();
+            collect_latency.reset();
+            normalize_latency.reset();
+            raw_age_by_partition.clear();
         }
     };
     bridge.unsubscribe();
@@ -526,6 +578,85 @@ async fn main() -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_deadline_does_not_slide_with_continuous_arrivals() {
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_millis(25);
+        let mut received = Vec::new();
+        for offset in 1..256 {
+            let value = receive_batch_input(deadline, async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                offset
+            })
+            .await;
+            match value {
+                Some(value) => received.push(value),
+                None => break,
+            }
+        }
+        assert_eq!(received, vec![1, 2]);
+        assert!(started.elapsed() <= Duration::from_millis(26));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_deadline_idle_wait_uses_remaining_budget() {
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_millis(25);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            receive_batch_input(deadline, std::future::pending::<u64>()).await,
+            None
+        );
+        assert!(started.elapsed() <= Duration::from_millis(26));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_deadline_expired_does_not_consume_ready_record() {
+        let deadline = tokio::time::Instant::now();
+        let mut polled = false;
+        let result = receive_batch_input(deadline, async {
+            polled = true;
+            42
+        })
+        .await;
+        assert_eq!(result, None);
+        assert!(!polled);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_deadline_preserves_burst_order_and_receive_error() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(25);
+        let mut offsets = Vec::new();
+        for offset in 0..256 {
+            offsets.push(
+                receive_batch_input(deadline, std::future::ready(offset))
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(offsets, (0..256).collect::<Vec<_>>());
+        assert_eq!(
+            receive_batch_input(deadline, std::future::ready(Err::<(), _>("receive"))).await,
+            Some(Err("receive"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn batch_deadline_cancellation_does_not_eat_next_record() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(25);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep(Duration::from_millis(5)) => {},
+            _ = receive_batch_input(deadline, rx.recv()) => panic!("input should be waiting"),
+        }
+        tx.send(42).await.unwrap();
+        assert_eq!(
+            receive_batch_input(deadline, rx.recv()).await,
+            Some(Some(42))
+        );
+    }
 
     #[test]
     fn runtime_retries_only_retryable_or_capacity_transport_errors() {

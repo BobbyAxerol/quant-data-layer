@@ -13,7 +13,7 @@ use qdl_core::canonical::{
     TradeContext, TradeFixture,
 };
 use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
-use qdl_core::l2_book::{BookIdentity, BookOutcome};
+use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
@@ -68,12 +68,6 @@ impl L2Binding {
     fn materialized_snapshot_interval_ms(&self) -> u64 {
         self.materialized_snapshot_interval_ms
             .unwrap_or_else(|| self.snapshot_refresh_seconds.saturating_mul(1_000))
-    }
-
-    fn raw_receipt_is_expired(&self, received_at_ns: i64, processing_at_ns: i64) -> bool {
-        let max_age_ns = self.snapshot_refresh_seconds.saturating_mul(1_000_000_000);
-        let max_age_ns = i64::try_from(max_age_ns).unwrap_or(i64::MAX);
-        processing_at_ns.saturating_sub(received_at_ns) > max_age_ns
     }
 
     fn validate(&self, binding: &CoreBinding) -> Result<(), CoreError> {
@@ -400,6 +394,8 @@ struct MarkIndexPairState {
     index: Option<MarkIndexComponentState>,
 }
 
+pub const L2_RESNAPSHOT_REQUIRED_V1: &str = "L2_RESNAPSHOT_REQUIRED_V1";
+
 pub struct RealtimeCore {
     config: RealtimeCoreConfig,
     bindings: BTreeMap<String, CoreBinding>,
@@ -411,6 +407,7 @@ pub struct RealtimeCore {
     /// can be proved. Book frames never reach `ordering`, which is why this
     /// exists separately; see `process_l2`.
     l2_sessions: BTreeMap<String, String>,
+    l2_resnapshot_requests: BTreeMap<String, (String, u64, i64)>,
     ordering: OrderingTracker,
     seen_ids: HashSet<Vec<u8>>,
     seen_order: VecDeque<Vec<u8>>,
@@ -455,10 +452,78 @@ impl RealtimeCore {
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             l2_sessions: BTreeMap::new(),
+            l2_resnapshot_requests: BTreeMap::new(),
             ordering: OrderingTracker::new(4096),
             seen_ids: HashSet::new(),
             seen_order: VecDeque::new(),
         })
+    }
+
+    /// Called after processing a raw frame. The runtime commits this evidence
+    /// with that frame's offset; only its current acquisition lane may act on it.
+    pub fn l2_resnapshot_request(
+        &mut self,
+        raw: &RawProviderEnvelope,
+        processing_at_ns: i64,
+    ) -> Option<DurableRecord> {
+        let key = binding_key(
+            &raw.provider,
+            &raw.venue,
+            &raw.market,
+            &raw.product_type,
+            &raw.native_symbol,
+            &raw.native_channel,
+        );
+        let binding = self.bindings.get(&key)?;
+        let l2 = binding.l2.as_ref()?;
+        let adapter = self.l2_adapters.get(&key)?;
+        if raw.subscription_id != binding.source_id
+            || raw.instrument_catalog_revision != binding.instrument_catalog_revision
+            || self.l2_sessions.get(&key) != Some(&raw.source_session_id)
+            || adapter.core().generation() != raw.connection_generation
+        {
+            return None;
+        }
+        if adapter.core().status() == BookStatus::Ready {
+            self.l2_resnapshot_requests.remove(&key);
+            return None;
+        }
+        let retry_ns = i64::try_from(l2.snapshot_refresh_seconds)
+            .ok()?
+            .checked_mul(1_000_000_000)?;
+        if self
+            .l2_resnapshot_requests
+            .get(&key)
+            .is_some_and(|(session, generation, sent)| {
+                session == &raw.source_session_id
+                    && *generation == raw.connection_generation
+                    && raw.received_at_ns.saturating_sub(*sent) < retry_ns
+            })
+        {
+            return None;
+        }
+        self.l2_resnapshot_requests.insert(
+            key,
+            (
+                raw.source_session_id.clone(),
+                raw.connection_generation,
+                raw.received_at_ns,
+            ),
+        );
+        let mut record = self
+            .quarantine(
+                raw,
+                QuarantineReason::SequenceGap,
+                L2_RESNAPSHOT_REQUIRED_V1,
+                processing_at_ns,
+            )
+            .quarantines
+            .pop()?;
+        let mut id = Sha256::new();
+        id.update(&raw.capture_id);
+        id.update(L2_RESNAPSHOT_REQUIRED_V1.as_bytes());
+        record.event_id = id.finalize().to_vec();
+        Some(record)
     }
 
     pub fn process_bytes(
@@ -1020,24 +1085,17 @@ impl RealtimeCore {
         binding: &CoreBinding,
         raw: RawProviderEnvelope,
         payload: Value,
-        processing_at_ns: i64,
+        _processing_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
         let materialized_at_ns = raw.received_at_ns;
         let Some(l2) = binding.l2.as_ref() else {
             unreachable!("process_l2 only accepts an L2 binding")
         };
-        if l2.raw_receipt_is_expired(raw.received_at_ns, processing_at_ns) {
-            if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
-                adapter.request_resync(raw.connection_generation);
-            }
-            return self.quarantine(
-                &raw,
-                QuarantineReason::SemanticInvalid,
-                "L2 raw receipt exceeded provider renewal bound; resync required",
-                processing_at_ns,
-            );
-        }
+        // Processing backlog is not a provider continuity failure. Replay every
+        // validated book frame losslessly with its original source/receipt times;
+        // readers still enforce freshness. Dropping an aged delta and clearing
+        // the book strands a healthy OKX socket waiting for a new snapshot.
         let transport = match TransportProtocol::try_from(raw.transport_protocol) {
             Ok(value) => value,
             Err(_) => {
@@ -1694,6 +1752,7 @@ mod tests {
     use super::{
         CoreBinding, CoreError, L2Binding, L2ProviderProtocol, MarkIndexBinding,
         MarkIndexComponent, ProcessBatch, RealtimeCore, RealtimeCoreConfig,
+        L2_RESNAPSHOT_REQUIRED_V1,
     };
     use prost::Message;
     use qdl_contracts::qdl::common::v1::{QuantityUnit, SourceRole};
@@ -1702,6 +1761,7 @@ mod tests {
         CaptureBoundary, QuarantineReason, QuarantineRecord, RawProviderEnvelope,
         TransportCompression, TransportProtocol,
     };
+    use qdl_core::l2_book::BookStatus;
     use qdl_venue_core::ordering::SequencePolicy;
     use sha2::{Digest, Sha256};
 
@@ -2581,48 +2641,298 @@ mod tests {
         assert_eq!(evidence.reason, QuarantineReason::SequenceGap as i32);
     }
 
+    // Synthetic protocol fixtures: processing time is deliberately independent
+    // from provider and receipt time, as during Kafka backlog recovery.
+    fn delayed_book_frame(
+        binding: &CoreBinding,
+        snapshot: bool,
+        sequence: u64,
+        previous: u64,
+        generation: u64,
+        received_at_ns: i64,
+        bid_quantity: &str,
+    ) -> RawProviderEnvelope {
+        let time_ms = received_at_ns / 1_000_000;
+        let payload = if binding.venue == "OKX" {
+            serde_json::json!({
+                "arg": {"channel": "books", "instId": binding.native_symbol},
+                "action": if snapshot { "snapshot" } else { "update" },
+                "data": [{"seqId": sequence.to_string(),
+                    "prevSeqId": if snapshot { "-1".into() } else { previous.to_string() },
+                    "ts": time_ms.to_string(),
+                    "bids": [["60000", bid_quantity, "0", "1"]],
+                    "asks": [["60001", "1", "0", "1"]]}]
+            })
+        } else if snapshot {
+            serde_json::json!({"lastUpdateId": sequence, "E": time_ms,
+                "bids": [["60000", bid_quantity]], "asks": [["60001", "1"]]})
+        } else {
+            serde_json::json!({"s": binding.native_symbol, "U": previous,
+                "u": sequence, "pu": previous, "E": time_ms,
+                "b": [["60000", bid_quantity]], "a": [["60001", "1"]]})
+        };
+        let frame = raw_with_receipt(
+            binding,
+            &serde_json::to_vec(&payload).unwrap(),
+            generation,
+            received_at_ns,
+        );
+        if snapshot && binding.venue == "BINANCE" {
+            with_transport(frame, TransportProtocol::Http)
+        } else {
+            frame
+        }
+    }
+
     #[test]
-    fn stale_l2_raw_is_quarantined_without_redating_and_fresh_snapshot_recovers() {
-        let binding = binance_book_binding();
-        let mut core = core(binding.clone(), true);
-        let stale = with_transport(
-            raw(
-                &binding,
-                br#"{"lastUpdateId":100,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
-                1,
-            ),
-            TransportProtocol::Http,
-        );
-        let processing_at_ns = stale.received_at_ns + 30_000_000_001;
-        let rejected = core.process(stale, processing_at_ns).unwrap();
-        assert!(rejected.canonical.is_empty());
-        assert_eq!(rejected.quarantines.len(), 1);
-        let evidence =
-            QuarantineRecord::decode(rejected.quarantines[0].payload.as_slice()).unwrap();
-        assert_eq!(evidence.reason, QuarantineReason::SemanticInvalid as i32);
-        assert_eq!(evidence.quarantined_at_ns, processing_at_ns);
-        assert!(evidence.safe_summary.contains("renewal bound"));
+    fn l2_resnapshot_cold_owner_retry_is_bounded_and_session_fenced() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let received = 1_786_352_400_000_000_000;
+            let mut delta = delayed_book_frame(&binding, false, 101, 100, 7, received, "1");
+            delta.subscription_id = binding.source_id.clone();
+            core.process(delta.clone(), received).unwrap();
+            let request = core.l2_resnapshot_request(&delta, received).unwrap();
+            let decoded = QuarantineRecord::decode(request.payload.as_slice()).unwrap();
+            assert_eq!(decoded.safe_summary, L2_RESNAPSHOT_REQUIRED_V1);
+            assert_eq!(decoded.raw.as_ref(), Some(&delta));
+            assert_ne!(request.event_id, delta.capture_id);
+            assert!(core.l2_resnapshot_request(&delta, received + 1).is_none());
+            delta.received_at_ns += 29_000_000_000;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+            delta.received_at_ns += 1_000_000_000;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_some());
+            delta.connection_generation -= 1;
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+            delta.connection_generation += 1;
+            delta.source_session_id.push_str("-foreign");
+            assert!(core
+                .l2_resnapshot_request(&delta, delta.received_at_ns)
+                .is_none());
+        }
+    }
 
-        let mut fresh_delta = raw(
-            &binding,
-            br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
-            2,
-        );
-        fresh_delta.received_at_ns = processing_at_ns;
-        let buffered = core.process(fresh_delta, processing_at_ns).unwrap();
-        assert!(buffered.canonical.is_empty());
+    #[test]
+    fn l2_resnapshot_ready_book_suppresses_and_real_gap_rearms_request() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let received = 1_786_352_400_000_000_000;
+            let mut delta = delayed_book_frame(&binding, false, 101, 100, 7, received, "1");
+            delta.subscription_id = binding.source_id.clone();
+            core.process(delta.clone(), received).unwrap();
+            assert!(core.l2_resnapshot_request(&delta, received).is_some());
+            let mut snapshot =
+                delayed_book_frame(&binding, true, 100, 0, 7, received + 1_000_000, "1");
+            snapshot.subscription_id = binding.source_id.clone();
+            core.process(snapshot.clone(), snapshot.received_at_ns)
+                .unwrap();
+            delta.received_at_ns += 1_500_000;
+            core.process(delta.clone(), delta.received_at_ns).unwrap();
+            let mut good =
+                delayed_book_frame(&binding, false, 102, 101, 7, received + 2_000_000, "2");
+            good.subscription_id = binding.source_id.clone();
+            core.process(good.clone(), good.received_at_ns).unwrap();
+            assert_eq!(
+                core.l2_adapters[&binding.key()].core().status(),
+                BookStatus::Ready
+            );
+            assert!(core
+                .l2_resnapshot_request(&good, good.received_at_ns)
+                .is_none());
+            let mut gap =
+                delayed_book_frame(&binding, false, 110, 109, 7, received + 3_000_000, "3");
+            gap.subscription_id = binding.source_id.clone();
+            assert!(!core
+                .process(gap.clone(), gap.received_at_ns)
+                .unwrap()
+                .quarantines
+                .is_empty());
+            assert!(core
+                .l2_resnapshot_request(&gap, gap.received_at_ns)
+                .is_some());
+        }
+    }
 
-        let mut fresh_snapshot = with_transport(
-            raw(
-                &binding,
-                br#"{"lastUpdateId":100,"bids":[["60000","2"]],"asks":[["60001","1"]]}"#,
-                2,
-            ),
-            TransportProtocol::Http,
-        );
-        fresh_snapshot.received_at_ns = processing_at_ns;
-        let recovered = core.process(fresh_snapshot, processing_at_ns).unwrap();
-        assert_eq!(recovered.canonical.len(), 1);
+    #[test]
+    fn delayed_l2_contiguous_replay_preserves_times_state_and_lossless_publications() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut delayed = core(binding.clone(), true);
+            let mut timely = core(binding.clone(), true);
+            let receipt = 1_786_352_400_000_000_000;
+            let now = receipt + 60_000_000_000;
+            let frames = [
+                delayed_book_frame(&binding, true, 100, 0, 7, receipt, "1"),
+                delayed_book_frame(&binding, false, 101, 100, 7, receipt + 1_000_000, "2"),
+                delayed_book_frame(&binding, false, 102, 101, 7, receipt + 2_000_000, "0"),
+                delayed_book_frame(&binding, false, 103, 102, 7, now, "3"),
+            ];
+            for (offset, frame) in frames.into_iter().enumerate() {
+                let original_receipt = frame.received_at_ns;
+                let expected = timely
+                    .process_at_transport_offset(frame.clone(), original_receipt, offset as u64)
+                    .unwrap();
+                let actual = delayed
+                    .process_at_transport_offset(frame.clone(), now, offset as u64)
+                    .unwrap();
+                assert!(actual.quarantines.is_empty(), "{}", binding.venue);
+                assert_eq!(actual.canonical.len(), expected.canonical.len());
+                for (record, expected) in actual.canonical.iter().zip(&expected.canonical) {
+                    assert_eq!(record.payload, expected.payload);
+                    assert_eq!(record.accepted_at_ns, original_receipt);
+                    let event = EventEnvelope::decode(record.payload.as_slice()).unwrap();
+                    assert_eq!(event.received_at_ns, original_receipt);
+                    assert_eq!(event.normalized_at_ns, original_receipt);
+                    assert_eq!(event.published_at_ns, original_receipt);
+                    assert_eq!(event.source_event_time_ns, original_receipt);
+                }
+                if offset == 1 || offset == 2 {
+                    assert!(
+                        !actual.canonical.is_empty(),
+                        "delayed deltas cannot be skipped"
+                    );
+                }
+                if offset == 2 {
+                    assert!(delayed.l2_adapters[&binding.key()]
+                        .core()
+                        .view()
+                        .unwrap()
+                        .bids
+                        .is_empty());
+                    let duplicate = delayed
+                        .process_at_transport_offset(frame, now, offset as u64)
+                        .unwrap();
+                    assert!(duplicate.canonical.is_empty());
+                    assert_eq!(duplicate.duplicates, 1);
+                }
+            }
+            let view = delayed.l2_adapters[&binding.key()].core().view().unwrap();
+            assert_eq!(view.last_sequence, 103);
+            assert_eq!(view.snapshot_sequence, 100);
+            assert_eq!(view.bids.len(), 1);
+        }
+    }
+
+    #[test]
+    fn delayed_l2_real_gap_still_requires_provider_snapshot() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let receipt = 1_786_352_400_000_000_000;
+            let now = receipt + 60_000_000_000;
+            for frame in [
+                delayed_book_frame(&binding, true, 100, 0, 7, receipt, "1"),
+                delayed_book_frame(&binding, false, 101, 100, 7, receipt, "2"),
+            ] {
+                assert!(core.process(frame, now).unwrap().quarantines.is_empty());
+            }
+            let gap = core
+                .process(
+                    delayed_book_frame(&binding, false, 110, 109, 7, receipt, "3"),
+                    now,
+                )
+                .unwrap();
+            assert!(gap.canonical.is_empty());
+            assert_eq!(gap.quarantines.len(), 1);
+            assert!(core.l2_adapters[&binding.key()].core().view().is_none());
+            let after = core
+                .process(
+                    delayed_book_frame(&binding, false, 111, 110, 7, now, "4"),
+                    now,
+                )
+                .unwrap();
+            assert!(after.canonical.is_empty());
+            for frame in [
+                delayed_book_frame(&binding, true, 200, 0, 8, now, "5"),
+                delayed_book_frame(&binding, false, 201, 200, 8, now, "6"),
+            ] {
+                assert!(core.process(frame, now).unwrap().quarantines.is_empty());
+            }
+            assert_eq!(
+                core.l2_adapters[&binding.key()]
+                    .core()
+                    .view()
+                    .unwrap()
+                    .last_sequence,
+                201
+            );
+        }
+    }
+
+    #[test]
+    fn delayed_l2_invalid_level_still_invalidates_verified_state() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let receipt = 1_786_352_400_000_000_000;
+            let now = receipt + 60_000_000_000;
+            for frame in [
+                delayed_book_frame(&binding, true, 100, 0, 7, receipt, "1"),
+                delayed_book_frame(&binding, false, 101, 100, 7, receipt, "2"),
+            ] {
+                core.process(frame, now).unwrap();
+            }
+            let invalid = core
+                .process(
+                    delayed_book_frame(&binding, false, 102, 101, 7, receipt, "-1"),
+                    now,
+                )
+                .unwrap();
+            assert!(invalid.canonical.is_empty());
+            assert_eq!(invalid.quarantines.len(), 1);
+            assert!(core.l2_adapters[&binding.key()].core().view().is_none());
+            let fresh = core
+                .process(
+                    delayed_book_frame(&binding, false, 103, 102, 7, now, "3"),
+                    now,
+                )
+                .unwrap();
+            assert!(fresh.canonical.is_empty());
+        }
+    }
+
+    #[test]
+    fn delayed_l2_generation_change_requires_anchor_and_rejects_old_generation() {
+        for binding in [okx_book_binding(), binance_book_binding()] {
+            let mut core = core(binding.clone(), true);
+            let receipt = 1_786_352_400_000_000_000;
+            let now = receipt + 60_000_000_000;
+            for frame in [
+                delayed_book_frame(&binding, true, 100, 0, 7, receipt, "1"),
+                delayed_book_frame(&binding, false, 101, 100, 7, receipt, "2"),
+            ] {
+                core.process(frame, now).unwrap();
+            }
+            let unanchored = core
+                .process(
+                    delayed_book_frame(&binding, false, 201, 200, 8, receipt, "3"),
+                    now,
+                )
+                .unwrap();
+            assert!(unanchored.canonical.is_empty());
+            assert!(core.l2_adapters[&binding.key()].core().view().is_none());
+            let anchor = core
+                .process(
+                    delayed_book_frame(&binding, true, 200, 0, 8, receipt, "4"),
+                    now,
+                )
+                .unwrap();
+            assert!(!anchor.canonical.is_empty());
+            let old = core
+                .process(
+                    delayed_book_frame(&binding, true, 300, 0, 7, now, "99"),
+                    now,
+                )
+                .unwrap();
+            assert!(old.canonical.is_empty());
+            assert_eq!(old.filtered_outcome, Some("IGNORED_STALE_GENERATION"));
+            let view = core.l2_adapters[&binding.key()].core().view().unwrap();
+            assert_eq!(view.generation, 8);
+            assert!(view.last_sequence == 200 || view.last_sequence == 201);
+        }
     }
 
     #[test]
