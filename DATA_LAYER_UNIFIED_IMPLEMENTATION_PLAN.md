@@ -62455,3 +62455,14 @@ externalbuildcontext65282bytesremoved. Activeconsumerf0e065b0 andnamedrollback
 1037c56 retained; no unrelatedimage/volume/worktreeprune. Source/evidence packet
 outsideGit preserved. No newGitHubrelease/push/merge. Detailedartifact:
 ~/.local/state/qdl-v2/execution-view-diagnostics-20261001/closure-20261001.json.
+
+Runtime final audit correction: OKX ingestor also automatically restarted once
+at03:58:40 during broker rolling; bounded log contains InvalidOffset(-1001).
+No manual ingestor restart/config change was issued. Thus three non-broker
+services had automatic recovery events: projector1 once, projector2 twice,
+OKX ingestor once. All currently running/noOOM. Include this unresolved
+reconnect boundary in the recovery finding; do not report broker-only impact.
+Final disk201GiBused/90GiBavailable; decrease from203GiB is not attributed to
+212kB taskcleanup (normal Kafka retention also runs). Canonical branches:
+DL7d17c29 fix/execution-view-diagnostics; TS98acc61 consumerfix. No newworktree;
+four existingTSfeature/integrationworktrees untouched. Ownerdirtyhunks preserved.
