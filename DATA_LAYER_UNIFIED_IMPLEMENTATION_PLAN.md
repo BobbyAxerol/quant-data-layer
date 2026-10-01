@@ -63132,3 +63132,37 @@ changing TS policy; establish a usable guard baseline. Then real-canonical mTLS
 paired restart, backup failure/safe return, consumer-usable latency/resources,
 and immutable narrow rollout. These are unfinished acceptance, not missing
 approval, not completed work and not a reason to declare zero-downtime.
+
+
+### Hot Backup Guard Attribution - 2026-10-01
+
+Progress (not closure): read-only production correlation completed, no candidate,
+mirror or test services running.60 samples over120s,50 execution cache keys per
+sample.15 samples below58 session-ready; minimum36/60. Among the reported expired
+worker families,90 QUOTE/BOOK_DELTA observations all advanced their watermarks
+versus the preceding sample; observed data ages103.026..502.139ms. All90 carried
+execution_eligible at APPLY. This cached flag is NOT recomputed eligibility at
+read, and the unhealthy list is truncated at16; do not generalize to all routes.
+Evidence report-cache-correlation.jsonl and report-cache-correlation-summary.json
+under canonical-hot-backup-20261001/evidence. This contradicts interpreting every
+REPORT_EXPIRED as a stopped market-data pipeline, but does not establish complete
+execution availability or attribution of every production expiry.
+
+Deterministic in-memory probe imported deployed TS slice_health (no service/DB
+writes). TRADE last batch97s, fresh observed session99.99s, QUOTE fresh99.99s;
+report published99.99s valid_until100s from the TRADE event-age boundary. Parent
+at100.01s rejects it, although recomputing yields2/2 sessions ready and1/2 execution
+ready. Evidence report-expiry-reproduction.json. Retaining the original report
+would overstate execution readiness; simply raising TTL is NOT a valid fix.
+A future TS correction should preserve separate report/worker and per-feed
+execution/session deadlines, recompute expiries safely, and never preserve old
+execution counts. No such TS change or rollout is made in this Data Layer packet.
+
+Remaining gate unchanged: real paired restart/failover/safe-return acceptance
+has not run. Existing production guard cannot be ignored on this evidence alone.
+Need precise guard/consumer readiness handling before live rehearsal; no random
+retry, no policy relaxation, no full C2. Source backup remains opt-in/undeployed.
+No new images, containers, networks or source worktrees; no production mutation.
+Previous cleanup2.73GB and active/rollback retention remain valid. Evidence only
+added; no push/merge/release. Canonical branch fix/execution-view-diagnostics,
+source13718f4, stablev2.2.1 and all recorded image/config revisions unchanged.
