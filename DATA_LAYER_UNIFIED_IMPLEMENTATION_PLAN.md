@@ -66284,3 +66284,63 @@ changed-role rollout/affected acceptance. No current provider latency claim,
 no order, push/merge/tag/release, no closure of TS P18.3E money cases.
 
 TS source receipt committed as35c5e87 on feat/v2-rust-first-okx-demo; clean worktree, no push.
+
+
+#### EDC-1 Actual Caller Authority Audit - Read-Only Receipt
+
+Continued after35c5e87/3b10bee. Read-only Docker inspect plus whitelisted Settings
+reconstruction inside10existing containers; no secret values or complete env
+captured. Evidence caller-runtime-authority.json SHA256
+2914e436eb434e8c0a42e16c7c3a652eba7d850a355d298f48745b3d561652f7
+in ~/.local/state/qdl-v2/edc1-20261001/evidence/. This reconstructs Settings using
+current image/env/dotenv, NOT introspection of a live Python object's memory.
+
+- Shared Risk/paper/portfolio/performance images have no consumer-mode setting;
+  EPHEMERAL_ONLY and recovery-enabled flag exist. Portfolio legacy stats false.
+- Candidate Risk/Gateway/executor/portfolio report consumer mode V1, CORE_ONLY;
+  candidate market_data reports V2_PRIMARY, CORE_ONLY. Thus V2-populated cache
+  can exist while new typed recovery is not enabled on its Risk/sender callers.
+  Do NOT label cached data V1 merely because a caller's default mode is V1.
+- NATIVE_PAPER_RISK_BINDINGS_JSON absent on inspected processes. This establishes
+  that optional paper-owner selector is absent, not that all native engine
+  authority is disabled. Candidate Risk command is services.risk_engine.main;
+  executor is services.executor.main. Do not blindly activate paper bindings for
+  sandbox, change settlement authority, or deploy the whole upgrade to legacy.
+- Portfolio legacy stats effective setting is false on both shared and candidate.
+  Do not rewrite dormant stats accounting. Performance reporting uses its own
+  mark reader; whether its projections are downstream risk inputs still needs
+  a targeted consumer trace, not an assumption of live equity corruption.
+- Repo service/script search finds no caller constructing PaperPackageContext or
+  invoking PackageAdmission.admit_paper outside its definitions. Package proof
+  is source/native-PG coverage, not evidence generic runtime admission is wired.
+
+Newly pinpointed caller ordering issue in source Risk main: for non-native-bound
+orders, lines730+ call generic _load_market_data before RiskChecker's typed V2
+context validation. That loader uses latest/generic market status and compatibility
+recovery. A typed intent can therefore be denied before its exact QUOTE/L2/MARK
+requirements are considered. Typed policy already exists; this requires an
+actual caller regression/fix, not changing exchange freshness or claiming a
+provider fault. Paper payload-price fallback must never satisfy a typed V2 read.
+
+Next coherent implementation slice under existing EDC scope:
+1. Add actual-handler regressions for typed MARKET/LIMIT/L2/conditional versus
+   legacy, generic TRADE absent but required feeds valid, selected feed missing,
+   cancel, and pending command/idempotency behavior.
+2. Use owned shared reader for applicable typed callers, exact server-policy
+   readset and original deadlines. Route metadata remains pinned; do not use
+   general ticker or a fabricated timestamp. Preserve legacy contracts.
+3. Ensure generic reservation valuation and native shadow input cannot silently
+   reintroduce a last-trade dependency after typed validation; inspect both
+   boundaries and preserve Decimal/native quantity/collateral semantics.
+4. Configure caller identity/realm/manifest/quota only in reviewed deployment
+   packet; a source factory default must not silently grant credentials or
+   activate a different risk authority. Test process startup/shutdown/readback.
+
+This is progress via verified runtime/source attribution, not an acceptance run.
+No code edit, test/build, runtime change, broker/order action or new latency data
+in this slice. No temporary resources created; cleanup not needed. Active DL
+Query3af57ddf1764/Stream1f13408fe946/projectorsa696cfba6ab3, sharedmarketdata
+c1f713a8b13e and candidatemarketdata3b4ee780f2d4 unchanged; release v2.2.1
+and existing named rollback unchanged. Same active worktrees, no push/merge.
+EDC IN_PROGRESS: native/legacy integration, reporting authority trace, actual
+provider attribution, deployment compatibility and runtime acceptance still open.
