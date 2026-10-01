@@ -64654,3 +64654,42 @@ this delta is not solely attributed to our cleanup. Active/rollback images and
 all shared runtime state unchanged. No push/merge/release. ED04 source/native
 integration slice verified; EDC remains IN_PROGRESS, ED05 and provider/runtime
 acceptance are not closed by these tests.
+
+
+#### ED05 Executor Intent Preservation - In Progress
+
+Trace before wiring post-queue validation found OrderRequest omits risk_context,
+execution_intent and market_max_age_seconds, so model_dump into actor loses the
+Risk-admitted execution requirements. First preserve/normalize these fields with
+the existing Gateway/SDK normalizer and conflict rules (no new order policy).
+Test both venues, typed/legacy declarations, serialization through executor/actor,
+trigger defaults/conflicts and unrelated audit preservation. Do not call this
+post-queue enforcement: the actual reader/validator/permit boundary remains next.
+No runtime or public provider changes; source-only, inherited authority unchanged.
+
+
+ED05 executor-intent preservation locally tested: old schema18FAIL/2PASS outof20
+(executor-intent-red.xml SHA256
+ad6952fd9d5fe9f8163b18982dd8da1f3fc4e561af2d9251dc5dc1ca700b1c1a).
+OrderRequest now carries risk_context, execution_intent and positive declared
+market_max_age_seconds. Uses exact existing Gateway normalizer; retains audit
+fields, derives undeclared trigger/post_only defaults, rejects explicit conflicts.
+This is transported requirement data, NOT a new authority to expand entitlement
+or freshness. The future sender guard must enforce server policy as well.
+Initial497-case candidate473PASS/24FAIL: conditional fixture constructed a MARK
+OrderRequest then changed trigger_type on its dump, now conflicting with preserved
+MARK context. Declare reference before normalization instead. No conflict check
+removed; dedicated negative tests remain. Final497PASS/0FAIL/0SKIP,4.597s;
+executor-intent-fixed.xml SHA256
+d166c650d8c048e7a776a124362dbaae1727b6f64298b3963fd64bf00e0a349f.
+Covers typed/legacy intent roundtrip, LAST/MARK/INDEX, required L2, invalid age,
+ordinary/conditional/OCO and native actor/bridge unit regressions. No real PG or
+broker claim tested in this slice; post-queue readback/enforcement still OPEN.
+Packaging note: model_dump now carries preserved fields. Do not roll this into an
+old queued sender blindly; ED07 must test pending request/digest compatibility and
+recovery/drain handoff. Do not rewrite already-claimed request digests.
+Next guard placement must account for time spent obtaining quota and atomic claim,
+not just dequeue clock. Permit/adapter wire deadline can carry the shorter proof
+expiry, but actual under-lock expiry and per-child batch outcomes require tests.
+All source lint/diff checks pass. Offline --rm clients removed; no image/layer,
+network or volume created, no runtime/secret/cap/broker mutation, no broad prune.
