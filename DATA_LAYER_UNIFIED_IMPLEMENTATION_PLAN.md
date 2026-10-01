@@ -63501,9 +63501,9 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: PLAN_REVIEW_PENDING / OWNER_REQUESTED_CORE_AUDIT.**
-The latest owner request is planning only: inspect TS core/execution dependencies,
-consolidate this SAME phase and wait for approval before implementation.
+**Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1.**
+The owner resumed the full EDC-1 goal after the consolidated planning checkpoint.
+Continue this SAME phase; runtime deployment/release retains its review boundary.
 See [current closure proposal](#edc1-final-core-closure-proposal).
 Earlier source/test receipts remain valid at their stated boundaries, not runtime
 certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
@@ -64885,3 +64885,67 @@ consumer dependency matrix, fault cases, measured load and limitations.
 Planning verification: targeted source/plan inspection and Docker image inventory
 only. No tests rerun, provider load, code changes, build, orders, restart, push,
 merge or release. Owner plan edits and the previous unstaged receipt preserved.
+
+
+#### ED05 PostgreSQL Claim Deadline - In Progress
+
+Reproduce expiry while actual PG attempt/quota locks are held, not simulated
+clock assertions. Also test atomic two-child batch where first proof expires
+while second waits. Expected: zero committed dispatch claims, quota consumption
+rolled back, original unsent stages preserved. Patch only claim final checks;
+no offsets/schema/account policy change. Isolated p09/tmpfs namespace only.
+
+
+ED05 actual-PG deadline repair verified locally. Old code4FAIL/4: waiting on
+attempt, quota, or second batch child allowed an expired proof to commit. Red
+receipt dispatch-deadline-pg-red.xml SHA256
+eede1e41e9873f2399e5015c8bbf53b8f69b16a6c964f2b6b0c3cb2f5b488289.
+Repository now rechecks proof+request deadlines after all per-child writes/waits
+and all batch members before transaction exit. Expiry raises inside UoW, rolling
+back claims, quota consumption and SENT stages for the entire batch. Query uses
+its own permit, not the original placement request deadline. Port also checks
+permit after claim/commit and before any adapter call; claimed-but-unsent expiry
+remains a recovery/query case, never fabricated no-claim evidence.
+Final46PASS/0FAIL/0SKIP,9.509s; dispatch-deadline-final.xml SHA256
+8f9d3c4b1378fc726d64fe8f1f9035813a86aba4371348aa99a333657f87355d.
+Includes real pg_blocking_pids observation, four lock/batch scenarios, existing
+real-PG payload fence/one-use/query/deadlock regression, port postcommit send/query/
+batch negatives, guard unit matrix. No external order adapter called.
+
+PG15.18 tmpfs namespace applied93 migrations. First migration attempt preceded
+readiness (connection refused); verified pg_isready then applied, no recreate.
+Test resources cleaned: ts-edc1-claim-pg (restart0/OOMfalse) and ts-edc1-claim-net;
+all clients --rm. No image/build output created. Disk available66905780224B before
+and66842017792B after (PG tmpfs, concurrent host writes; no claimed disk saving).
+New tests lint clean and all diff whitespace checks pass. Active runtime/rollback
+unchanged, no push/merge. Native metadata-at-dispatch and exact-product recovery
+remain open; this closes measured claim-deadline bug, not all ED05/EDC acceptance.
+
+
+#### ED02 Strict Reference Budget At Use - Resumed Implementation
+
+Owner resumed EDC-1; previous planning hold is historical, not deployment approval.
+Reinspection found strict MARK_INDEX reference policy max_freshness_ms is retained
+but at-use quality and permit expiry use only the order/server max_age_ms. Reproduce
+with a stricter reference contract and delayed cache read; enforce the minimum for
+strict reference only. Quiet component/session proof semantics remain unchanged.
+Use existing projected reference/cache path in regression, both venues. No runtime
+or metadata/sender recovery closure implied; these remain on the complete ledger.
+
+
+Strict reference ceiling reproduced6FAIL/10 on old source, red receipt SHA256
+905ef27675903b914f0b836f71f937b0f078ac394976e668ac205b554996e4bd.
+A strict2s contract could get180s permit validity and be accepted at2001ms.
+Shared Risk evaluator and exclusive proof expiry now use min(order/server budget,
+strict reference max_freshness_ms). Missing/invalid declared strict policy budget
+fails closed; legacy non-reference profile and quiet component/session validation
+remain unchanged. Both venues tested through real reference adapter -> projection
+-> cache reader with TEST_ONLY in-memory Redis, plus native sender guard.
+Final178PASS/0FAIL/0SKIP; strict-reference-budget-final.xml SHA256
+8a05fcef645abc6fd9dbdb7028334cc33dbe6fea4be875c0b6c38c5c0c86e298. Includes original-event deadline boundaries, tighter order
+budget, malformed policy, quiet/session proof expiry and required-read regressions.
+No native Rust/accounting algorithm changed; not a real-PG or runtime certificate.
+Disposable offline clients removed via --rm, no images/build/network/volumes created.
+No runtime/SDK publication/manifest/cap/order change; active/rollback set unchanged.
+No disk reclamation claimed. Metadata-at-dispatch, typed recovery, ED06 attribution
+and remaining EDC acceptance/packaging stay OPEN. Goal remains active.
