@@ -66344,3 +66344,51 @@ c1f713a8b13e and candidatemarketdata3b4ee780f2d4 unchanged; release v2.2.1
 and existing named rollback unchanged. Same active worktrees, no push/merge.
 EDC IN_PROGRESS: native/legacy integration, reporting authority trace, actual
 provider attribution, deployment compatibility and runtime acceptance still open.
+
+
+#### EDC-1 Caller Integration - Declared Instrument Fence
+
+Before wiring legacy typed reads, source review finds shared _validate_identity
+compares venue/display symbol but not explicit order product/native symbol. Add
+behavior regressions on both venues then enforce declared identity using existing
+normalizers. Preserve omitted legacy fields, canonical aliases and actual order
+context; no manufactured defaults or product substitution. Source-only tests in
+existing image, no runtime/data/order mutation. Generic preflight replacement
+and native authority parity remain subsequent integration, not closed here.
+
+
+#### EDC-1 Declared Instrument Fence - Source Receipt
+
+Shared execution validator accepted six wrong-context cases on pre-fix source:
+Binance/OKX x wrong product, wrong native symbol, missing explicitly requested
+native symbol. Existing comparison checked only venue/display symbol. Patch
+compares explicitly declared product/native identity from order fields or
+RiskOrderIntent.ordinary_context/metadata using canonical normalizers. Product
+aliases remain valid, omitted legacy fields do not invent a contract. No price,
+feed-age, Risk authority or execution policy relaxed; malformed identity fails.
+
+Before: selected10tests,6expected failures/4pass, no skip;
+ declared-identity-red.xml SHA256
+ aab6bfc0ec2a703c941bbdfae2031de495a3a372b4005bfaa91d78e54e326385.
+After:151PASS/0FAIL/0SKIP,2.864s, exact finalsource on retained testimage
+3b4ee780f2d4 with source mounted read-only/networknone. Suites execution_market_
+context, edc_dispatch_guard, risk_domain_v2, risk_checker_market_metadata and
+edc_paper_tick_provenance. Evidence declared-identity-final.xml SHA256
+56f564e65917d93e1c1a20774b6414d9a953e01eaca5dd4af4d7a34026a88d4a.
+Earlier151green receipt retained separately, not additive coverage. Ruff/diff
+check pass. Unit/synthetic proof only, no DB/provider/runtime certification.
+
+No image/build/testvolume/network created; clients --rm. No cleanup/prune needed,
+active/rollback image set unchanged. Work remains in existing TS upgrade feature
+worktree and DLcanonical feature; no push/merge/release or runtime mutation.
+
+Caller wiring remains OPEN. Additional inspected constraint: Rust compatibility
+risk.rs derives effective price from generic market_data, while Python typed
+validation uses side-aware QUOTE plus MARK. Replacing only the preloader with a
+mark-price dict would preserve divergent native/Python behavior. Next integration
+must carry explicit typed assessment/provenance through the applicable authority
+and reservation boundary, test native parity, and retain post-wait expiry checks.
+Do not insert order.price or fake event times to disguise a typed quote as a
+legacy last trade. Do not call this small source fence whole EDC completion.
+EDC IN_PROGRESS; runtime identity activation/provider attribution/acceptance and
+existing legacy/native caller integration remain outstanding.
