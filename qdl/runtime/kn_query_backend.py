@@ -315,24 +315,26 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         # An explicit corrupt/gapped primary is not merely a missing cache update.
         if quality is not None and quality.gap_open:
             return primary if monotonic else None
+        backup_failure = "HOT_BACKUP_QUALITY_UNAVAILABLE"
         try:
             candidate = self._hot_candidate(binding, primary)
-        except HotViewUnavailable:
+        except HotViewUnavailable as error:
+            backup_failure = str(error)
             candidate = None
         if candidate is not None:
             candidate_records = self._parsed(binding, candidate)
             candidate_items = self._items(requirement, candidate_records)
             q = candidate_items[-1].quality if candidate_items else None
-            if q is not None and q.state == "LIVE" and q.complete and not q.gap_open and (
-                not requires_execution or q.execution_eligible
-            ) and self._hot_monotonic(binding, candidate, record=True):
+            # Newest canonical truth may be ineligible. Preserve that quality
+            # for the consumer instead of hiding it behind an older cache view.
+            if q is not None and self._hot_monotonic(binding, candidate, record=True):
                 return candidate
         if primary_error is not None:
             raise primary_error
         if quiet_primary:
-            raise _not_ready("HOT_QUIET_PRIMARY_UNVERIFIED")
+            raise _not_ready(f"HOT_QUIET_PRIMARY_UNVERIFIED: {backup_failure}")
         if primary is not None and not self._hot_monotonic(binding, primary):
-            raise _not_ready("HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND")
+            raise _not_ready(f"HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: {backup_failure}")
         return primary
 
     @staticmethod

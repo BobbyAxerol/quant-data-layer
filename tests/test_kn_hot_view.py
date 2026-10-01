@@ -85,6 +85,16 @@ class HotClientTests(unittest.TestCase):
         client=self.client();client._calls=(failed,client._calls[0])
         self.assertEqual(client.latest(self.binding,self.lpk).boundary.offset,0)
 
+    def test_transient_reason_is_bounded_and_does_not_expose_server_text(self):
+        for detail, expected in (("HOT_BROKER_UNCONFIRMED", "HOT_BROKER_UNCONFIRMED"),
+                                 ("private server diagnostic", "HOT_READER_UNAVAILABLE")):
+            class Unavailable(grpc.RpcError):
+                def code(self): return grpc.StatusCode.UNAVAILABLE
+                def details(self): return detail
+            def failed(*args, **kwargs): raise Unavailable()
+            with self.assertRaisesRegex(HotViewUnavailable, expected):
+                self.client(failed).latest(self.binding, self.lpk)
+
     def test_cursor_boundary_is_not_the_record_offset(self):
         self.reply["source_offset"]=100
         view=self.client().latest(self.binding,self.lpk)
@@ -163,6 +173,15 @@ class HotQuerySelectionTests(unittest.TestCase):
         self.now+=10_000_000_000
         result=self.backend.latest(self.requirement)
         self.assertFalse(result.quality.execution_eligible)
+
+    def test_expired_newest_backup_keeps_exact_quality_not_an_older_primary_error(self):
+        from qdl.runtime.kn_query_backend import parse_placeholder
+        self.assertTrue(self.backend.latest(self.requirement).quality.execution_eligible)
+        self.now += 10_000_000_000
+        result = self.backend.latest(self.requirement)
+        self.assertFalse(result.quality.execution_eligible)
+        self.assertEqual(result.quality.freshness_ms, 10010)
+        self.assertEqual(parse_placeholder(result.cursor), ("topic", 0, 40))
 
     def test_equal_record_offset_cannot_change_payload_even_with_newer_boundary(self):
         from dataclasses import replace

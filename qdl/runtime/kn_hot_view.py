@@ -101,7 +101,12 @@ class CanonicalHotClient:
                     if failure.code() not in {grpc.StatusCode.UNAVAILABLE,
                             grpc.StatusCode.DEADLINE_EXCEEDED, grpc.StatusCode.RESOURCE_EXHAUSTED}:
                         raise HotViewUnavailable("HOT_AUTHORITY_OR_PROTOCOL_REFUSED") from failure
-                    error = "HOT_READER_UNAVAILABLE"
+                    detail = getattr(failure, "details", lambda: None)()
+                    error = detail if detail in {
+                        "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP",
+                        "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE", "HOT_READER_BUSY",
+                        "HOT_RECORD_MISSING", "HOT_READ_DEADLINE", "HOT_READ_CAPACITY",
+                    } else "HOT_READER_UNAVAILABLE"
                     continue
                 if time.monotonic() > deadline:
                     raise HotViewUnavailable("HOT_READ_DEADLINE")

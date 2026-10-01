@@ -63326,3 +63326,34 @@ corrected using approved existing builder and qdl-cargo-home registry volume.
 No package download, dependency or lockfile change. Test containers and build
 cache retained only for replacement rehearsal; cleanup and exact provenance
 must be recorded before closure. Stablev2.2.1/active+rollback set unchanged.
+
+
+R5 replacement:3304requests,0watermark regression; paired restarts QUOTE314/314,
+MARK312/312,BOOK156/156 usable. Broker-pause unsafequietQUOTE after1s proof expiry
+is0 (versus52 inR4). Stream return QUOTE/MARK observed in294/157ms; Kafka return
+6.76/6.22s includes isolated mirror catch-up, NOT production recovery latency.
+Contract refusals retained: baselineMARK1; backup-onlyMARK1(DATA_NOT_READY primary
+behind); primary-returnMARK3. TRADE is not100%usable. Both projectors running after
+explicit restart; noOOM. Do not classify every residualMARK as provider fault.
+
+Code review explains a diagnostic loss: a newer valid-lineage backup that fails
+quality currently falls back to an older primary, which can then report primary
+behind instead of exposing the actual latest quality. Correct selection to return
+the monotonic canonical candidate with its ORIGINAL ineligible quality, just as
+an ineligible primary is returned today. SDK must still refuse; no stale execution
+admission. Add regression for expired newest backup after an earlier successful
+backup read; test the exact returned quality/coordinate before packaging.
+
+Production TLS preflight verified existing Query certificate includesclientAuth.
+Service names stream_kn_1/2 do NOT match certificateSAN; use existing aliases
+qdl-v2-stream-a/b:8210. Both aliases completed authenticatedTLS and returned expected
+UNIMPLEMENTED on oldprivateRPC. No TLS/CA/ACL changes or hostname-check bypass.
+Candidate image builds a957ae2 exist only locally, NOT rolled; superseded Python
+candidate must be removed after corrected packaging. Rust binary/source unchanged.
+
+Targeted selector/protocol18testsPASS. Hot RPC transient failures preserve only
+allowlisted reason codes (broker unconfirmed/catching-up/stalled/busy/deadline);
+unknown server text is not exposed. This replaces generic diagnostics, not retry
+or eligibility policy. R6 is limited to five-symbol/two-venue MARK reads while
+projectors stop/return; inherited R5 paired-restart and broker-fault evidence is
+not rerun. Existing four-role HMAC file hashes agree (values notpublished).
