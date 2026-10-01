@@ -64949,3 +64949,55 @@ Disposable offline clients removed via --rm, no images/build/network/volumes cre
 No runtime/SDK publication/manifest/cap/order change; active/rollback set unchanged.
 No disk reclamation claimed. Metadata-at-dispatch, typed recovery, ED06 attribution
 and remaining EDC acceptance/packaging stay OPEN. Goal remains active.
+
+
+#### ED05 Pinned Metadata Across Native Queue - Implementation
+
+Reuse existing INSTRUMENT_METADATA_BINDINGS_JSON and Risk-owned metadata cache.
+For new native PLACE/AMEND, stamp the server pin into the serialized queue item,
+not the caller object; include it in existing actor/request digest. At post-queue
+guard require the same identity/environment/contract/binding revision, read current
+Risk-owned metadata and market context within one deadline, validate both AFTER
+reads, and constrain permit to metadata expiry as well as market proof. Controls
+and reconciliation queries remain independent. Old queued mutating rows lacking
+the pin must not be silently upgraded/re-signed; ED07 drain/recovery remains.
+Test red/green wrong or changed pin, blocked/stale metadata, delayed read, timeout,
+control bypass and caller immutability on both venues. No metadata refresh owner,
+provider call, new writer/service or runtime changes.
+
+
+ED05 metadata source slice tested locally. Native enqueue stamps the server-owned
+canonical identity/contract/environment/profile/binding revision into a copy of
+the order; actor payload digest covers it. Sender requires the same pin and fresh
+Risk-owned metadata AFTER bounded reads; metadata expiry caps the permit, and a
+declared instrument_metadata_version cannot silently change. Binding changes during
+read fail closed. AMEND target resolution preserves the current queued pin, never
+inherits an old target's pin. Cancel/query/control stay independent. No provider
+I/O, refresh owner or new cache writer added. Native math/schema unchanged.
+
+Old source18FAIL/21, dispatch-metadata-red-positive-clock.xml SHA256
+ec3855f2295afd119e8584f6405319c3ec58eedce366dab6293314c6e0dcdb33.
+Initial red fixture used a negative synthetic observation; corrected to positive
+clock with1s policy and reproduced same18fail before source patch. First patched
+135cases127PASS/8FAIL: colon in typed error code was sanitized to a generic error.
+Replaced it with bounded underscore code, retaining exact metadata reason. Also
+covered queue pin forgery/immutability, old target AMEND pin, version mismatch,
+binding change mid-read, timeout task cleanup and metadata deadline.
+
+Final255PASS/0FAIL/0SKIP,3.252s; dispatch-metadata-final.xml SHA256
+94592ced6fe0a98b48d121ac7a01b1a3a0f790ab4f34b83a20919cbf3a48ee0b.
+Includes real isolated Redis owner projection -> cache reader -> native guard
+for Binance/OKX, READY then BLOCKED with cancel still allowed; existing reference
+quality/expiry, native actor/bridge and metadata contract regressions. Fixtures
+remain TEST_ONLY; no Rust-process queue or broker/runtime certificate claimed.
+New/narrow test/guard lint and full TS diff whitespace checks pass.
+
+Cleaned only ts-edc1-metadata-redis (--rm,tmpfs,restart0/OOMfalse) and
+ts-edc1-metadata-net; all clients--rm. No image or build cache created; retained
+existing active/rollback/builder artifacts. Disk available64994299904B before
+cleanup,64925552640B after (concurrent host writes; no claimed disk savings).
+Runtime/release/manifest unchanged; no push/merge. ED07 must provision matching
+metadata bindings in enqueue and sender environments and test old queued requests:
+do not manufacture a new pin for an already queued/claimed digest. Recover/drain
+old attempts under their supported original artifact. Actual Rust queued-path
+acceptance and typed exact-feed recovery still OPEN alongside ED06 attribution.
