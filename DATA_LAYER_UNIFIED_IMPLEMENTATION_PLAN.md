@@ -62542,3 +62542,120 @@ one atatime. Rollback projectors7fe348060734...,OKX658a9570c5fc...,sameeffective
 config/TLS/mounts/offsets. NoBinanceingestor/core/readers/TSchange inthispacket.
 Before nextrole:quorum/ISR, bothprojectors progress,cacheprobe,consumerheartbeat.
 This scopedoperation is owner-approved in latestKafka-client-recovery request.
+
+
+Immutable candidate built from855c914: sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec.
+Tag qdl-v2-rust:2.2.1-855c914, base658a9570. Hashdiff confirms exactlytwochanged
+binaries:projector dd64f94af9ae...,rawingestor9334c8bae4b5...;otherbinariesmatchbase.
+Packet candidate.compose.json/rollback.compose.json stored0600 under
+kafka-client-recovery-20261001;bothcomposevalidate. No config/state/TLS changes.
+Pre-roll guardPASS:29.4s,60/60sessionREADY,50executioneligible,StageA/Bprogress,
+zeroISRdeficit/quorumlag. Now applyoneprojector atatime, thenOKX, aftereach verify
+freshheartbeat/progress/quorum andBNB MARK-reference/BOOKacrossbothreplicas/venues.
+Originalsharedbaseline andexactbeforeIDs storedpre-roll-runtime.json. Noorderwrites.
+
+
+Firstrole applied05:42:57UTC:market_projector_1 only. During recovery probe5/8usable;
+3MARK reference refusals (BNBBinance two replicas,BNBOKX one),BOOK4/4usable.
+These exactfailedviewsretained projector-1-probe.jsonl. Operator error: probe was
+started concurrently with catch-up guard, not afterguard; itis transition evidence,
+not post-readyacceptance. Guard thenPASS72.814s (under frozen120s):newTSheartbeat
+60/60,StageA/Bprogress,ISR/quorumhealthy. Atfirstsample newStageA/B0inputs;later
+StageA5639whileStageB0,thenStageB3686. Actualtemporarymaterializationunavailability,
+notquietmarket andnotzero-downtimeHA. No extra restart/OOM. Before nextrole require
+onepost-ready8-readMARK/BOOKprobe; do notdiscardtransitionrefusals orlabelcontinuous
+executionavailability. IsolatedtestKafka/Redis/network andtwoownedanonymous
+volumesfromfirstfailedbootstrapremoved;productionstateunchanged.
+
+
+Projector1 post-readyprobe8/8usable; thenprojector2rolled05:46:35UTC. No new
+restart/OOM in either role. Projector1 abortedoneconcurrenttransaction duringpeer
+rebalance andcontinued (notfatal/restart). Projector2guard originallyFAIL because
+retainedstatus.json fromoldprocesswasbaseline; comparing old/newstarted_ms forever
+preventedPASS evenafteractualREADY. This ischeckerbug,notnewproductionstall.
+Saved all22samples andoriginalFAIL. Corrected consecutive-same-generation predicate
+onTHESAMEwindow:60/60freshheartbeat at66.800s,StageA/Bprogress+freshstatus at72.277s
+fromprocessstart,below120s. No thresholdwidening. Checker nowadvancesbaseline
+withoutresettingdeadline. SDKusabletime remainsseparatelymeasured,notinferredfrom
+heartbeat. Newconfirmation/quorum+post-ready8readspendingbeforeOKXroll.
+
+
+OKXingestorrolled05:51:24UTC afterprojector2post-readyprobe8/8andquorumconfirm.
+OKXguard62.073sPASS,60/60sessionREADY. Effectiveinspectaudit verifiesonlyimage
+changedinthreeapprovedroles (mountlistorder normalized,notstatechange);all63
+baselineoperationalcontainersotherwisehaveunchangedID/start/restart. Threecandidate
+rolesrestart0/OOMfalse. No newprovider/Kafka/autherrorsinboundedOKXlog.
+Post-roll60sRedispublicationobserver:60samples,3distinctheartbeats,allREADY60/60,
+zeroobservedwatermarkregression. This isaffected-pathfollow-up,inheritsprior300s;
+notanotherC2orproofcontinuouspriceeligibility. p99event->observedRedispublicationms:
+BinanceQUOTE242.94,TRADE784.42,BOOK_DELTA230.21,MARK1361.07;
+OKXQUOTE303.85,TRADE591.45,BOOK_DELTA249.78,MARK1396.32.
+BOOK_SNAPSHOT10samples/venue:median1056.2/804.0,max1292.9/947.6,no p99.
+These areupperboundsincludingobservertransport;notrequestlatency/norexactRedis
+committimestamps. Differentloadwindows,notcontrolledbefore-afterperformanceproof.
+FullaffectedTRADE/MARKpairedreplicamatrixstillrunning;donotclaimfinalPASSyet.
+
+##### Final Scoped Recovery Receipt - 2026-10-01
+
+Status: **SCOPED_RECOVERY_ROLLED_VERIFIED_PENDING_RELEASE_DECISION**.
+Source `855c914`; immutable image `qdl-v2-rust:2.2.1-855c914`, digest
+`sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec`.
+Detailed evidence: `/home/bobby/.local/state/qdl-v2/kafka-client-recovery-20261001/final-receipt.json`.
+
+- Source gates: 86 tests PASS, clippy PASS; one unrelated TLS integration ignored.
+  Real Kafka/Redis fault: 10.062 s broker pause, 9.046 s recovery after return,
+  all 24 authentic captured records applied, no duplicate or watermark regression.
+  The commit-response-loss test is a caller fault seam, not a network ACK-drop test.
+- Final paired-replica TRADE/MARK matrix: 60 reads, 59 usable, one valid refusal.
+  OKX BNB TRADE served native ID `239953219`, exactly matching the latest provider
+  WebSocket trade received before the request. Its price age was 6.658 s; session
+  LIVE, no gap, complete, execution ineligible. Next provider trade `239953224`
+  arrived after the request. This is evidenced quiet-market rejection, not a
+  waived pipeline delay. All 40 MARK snapshot/reference reads were usable.
+- Post-OKX-roll BNB MARK-reference/BOOK probe: 8/8 usable across both venues and
+  both Query replicas. No change to freshness, quota, bindings or fallback.
+- Request-to-usable latency below is milliseconds, median / maximum. Each group
+  has only 10 attempts, so no p99 claim; rejected requests remain in the receipt.
+
+| Path | Binance | OKX |
+| --- | --- | --- |
+| TRADE snapshot | 15.28 / 30.17 (10 usable) | 18.11 / 31.89 (9 usable, 1 refusal) |
+| MARK/INDEX snapshot | 16.89 / 19.94 | 12.75 / 30.97 |
+| MARK/INDEX execution reference | 12.17 / 14.13 | 11.90 / 14.02 |
+
+The prior paragraph records the separate event-to-observed-Redis-publication
+latencies. The 60-second post-roll observation had 60/60 session readiness at all
+60 samples and zero observed watermark regressions. It inherits unaffected prior
+300-second evidence, not a repeated whole-catalogue C2. Cached eligibility at
+publication is not a new Risk decision and does not promise every price usable.
+
+Runtime: only `market_projector_1`, `market_projector_2`, `ingestor_okx_swap`
+changed image. All three running, restart count 0, OOM false. Effective mounts,
+config, TLS and groups unchanged. Final inspect of 63 operational containers found
+no unexpected ID/start/restart changes. Final five-minute bounded logs contained
+60 status samples per projector with empty error maps; no OKX error matches.
+Projector 1 recorded one recovered transaction abort during its peer's rebalance.
+Binance ingestor remains on its prior image; no TS, alpha, order or reader rollout.
+
+Limits: rolling application readiness took approximately 60-73 seconds, with
+transition MARK refusals retained. This is NOT zero-downtime/HA certification.
+No new production broker outage was injected. Isolated recovery tests and rolling
+application checks close this scoped patch, not all possible Kafka failure modes.
+The historical incident's exact internal wait is not proven solely by these fixes.
+
+Cleanup: removed the isolated Kafka/Redis/network, owned anonymous test volumes,
+2,755,314,949 bytes of build target/context, and three exact unused BuildKit source
+cache entries (~17.39 MB). Initial host removal failed on root-owned builder files;
+completed with a no-network helper mounting only the test target. An unsupported
+multi-ID prune command made no change; exact one-ID commands succeeded. No broad
+prune or production-state deletion. Disk used changed 220,666,593,280 ->
+217,689,964,544 bytes; concurrent host writes mean this is not exact reclaim size.
+Retain active `0f6876e16e51`, projector rollback `7fe348060734`, and `658a9570`
+which is still active elsewhere and is the OKX rollback. No disposable test image
+was left: the sole new image is active. Existing unrelated build artifacts untouched.
+
+Canonical `/home/bobby/data_layer`, branch `fix/execution-view-diagnostics`, one
+worktree. Published `v2.2.1` unchanged; this candidate is not a newly published
+release. No push/merge/tag performed. Owner's two unrelated plan edits preserved.
+Next permitted step: review scoped receipt and decide the normal patch-release
+path (feature -> dev CI -> main/tag); do not restart whole-catalogue acceptance.
