@@ -3105,16 +3105,16 @@ HA. Published release remainsv2.2.1; newsource/images await remote release workf
 
 
 <a id="execution-data-contract-closure-guide-20261001"></a>
-### EDC-1 Consumer Execution Contract Closure - Pending Approval
+### EDC-1 Consumer Execution Contract Closure
 
 2026-10-01 owner request: audit all actual TS Risk/execution data dependencies and
 write ONE consolidated repair phase before implementation. The authoritative
 scope, source findings, test cases, latency definitions, rollback and journal are
 [EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
-Latest decision: IN_PROGRESS / OWNER_RESUMED_GOAL. Implement the full consolidated
-EDC-1 ledger and tests. Historical receipts remain preserved. Deployment/release
-still requires the reviewed changed-role packet; source approval is not certification.
-Deploy/release still requires the reviewed changed-role packet.
+Latest boundary: consolidated plan review before further implementation, per the
+latest owner request. Read the [core/execution review and stop rules](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-core-execution-consolidated-review).
+Preserve previously approved source/test work; it is not runtime certification.
+Deployment/release still requires the reviewed changed-role packet.
 It supplements the existing KN architecture, not another rearchitecture phase.
 
 Preserve the canonical Kafka -> Rust core -> KN cache/Stream -> Query boundary.

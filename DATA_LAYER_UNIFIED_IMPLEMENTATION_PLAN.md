@@ -63501,9 +63501,12 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: IN_PROGRESS / OWNER_RESUMED_GOAL.** The owner resumed the full
-EDC-1 objective after the consolidated audit checkpoint. Implement the complete
-ledger; deployment/release still follows the reviewed changed-role packet.
+**Latest review boundary: CONSOLIDATED_PLAN_REVIEW / NO_NEW_RUNTIME_ACTION.**
+The latest owner request is to inspect TS core/execution dependencies, consolidate
+the one-phase repair plan, and obtain approval before further implementation.
+Preserve previously approved source work and its evidence; it is not certified.
+The historical resumed goal and implementation receipts below remain unchanged.
+Deployment/release still requires the reviewed changed-role packet.
 Earlier planning and implementation receipts remain historical evidence.
 
 **Historical implementation status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
@@ -64203,3 +64206,120 @@ No production mutations, builds of new Docker images, pushes, merges or release.
 All disposable clients used --rm and ended. Wheel is an intentional pinned source
 artifact, not runtime state. No new BuildKit cache; active and rollback images
 retained, no unrelated cleanup. Full EDC goal remains active/IN_PROGRESS.
+
+
+#### ED01/ED08 Native Custody Proof - Started
+
+Previous turn progressed source + wheel tests/commits DL12785ab / TSc1d0236, not
+closure. Native custody currently rejects old event time even for a valid quiet
+reference and Python discards proof when serializing native mark. Add optional
+position-level market_evidence, not fields to valuation Mark (which deliberately
+denies unknown fields). Native custody revalidates immutable typed feed proof,
+identity and price association, current session/component ages and budget before
+passing the ORIGINAL mark unchanged to valuation. Existing strict path unchanged.
+No valuation/PnL formula, private accounting, broker or runtime change. Cover
+linear/inverse, both venues, fresh but invalid proof, expired session/components,
+generation/identity mismatch, clock boundary and strict legacy compatibility.
+Use existing offline native builder with bounded CPU/RAM and dedicated disposable
+output; then actual PyO3 plus isolated PG custody tests, no shared DB.
+
+Native custody checkpoint: actual PG15.18/Redis integration red4FAIL (both venues
+x NET/HEDGE), all PAPER_CUSTODY_MARK_NOT_CURRENT at old native boundary. After
+new optional position.market_evidence and actual compiled PyO3,44PASS/0skip includes
+new4 plus40 inherited custody cases (fees, wallet, account locks, delayed strict
+marks, inverse coin ledger). Rust9PASS includes linear/inverse quiet equality and
+12 tampered proofs, with original timestamp retained. Final fixture adjustment
+uses ETH settlement for ETH inverse; rebuild/retest before commit.
+Initial cargo invocation failed because a fixture directory was not mounted,
+not a Rust defect; corrected whole-source read-only mount and --lib. Correct red
+Rust8PASS/1FAIL demonstrates missing optional input contract, distinct from actual
+PG stale rejection. Reused one bounded scratch target for subsequent builds.
+Strict Clippy found10 pre-existing warnings in untouched economics, valuation,
+order_instructions, ordinary_controls and private_events/binance; none in changed
+files. Do not claim globally clean Clippy or modify those unrelated modules.
+Python affected lint PASS. Test PG16 image was inspected but not used; actual DB
+is the existing PG15.18 image in an internal disposable namespace, no host port.
+
+Deployment compatibility: old native rejects the new optional evidence field;
+ship new native reader before or atomically with Python producer in candidate.
+Old strict inputs remain accepted by new native. Do not deploy only the Python
+serializer on old Rust or reinterpret this source test as runtime approval.
+
+
+<a id="edc1-core-execution-consolidated-review"></a>
+### Consolidated TS Core / Execution Review Before Further Work
+
+Latest owner instruction: plan first, approve before continuing implementation.
+This checkpoint only reads source and updates documentation. It does not roll,
+publish, start broker tests, change policy or start a second repair phase.
+Existing uncommitted native custody changes are preserved, not silently reverted
+or represented as deployed. The already-running final custody test completed:
+9 PASS, 0 FAIL, 0 ignored; this is prior isolated source evidence, not a new
+production acceptance. The isolated custody PG/Redis and scratch target remain
+pending scoped cleanup, not production dependencies. No broad prune is approved.
+
+#### Review Result And Priority
+
+The recurrent failure pattern is a cross-boundary contract problem, not proof
+that Kafka-native storage needs another redesign. A DL certificate cannot by
+itself certify how an older shared TS or a newer native candidate interprets the
+view. Each fix below needs an actual consumer-boundary test and an affected
+runtime/SDK mapping. Do not roll all DL services for a consumer-only defect.
+
+| Priority / ledger | Rechecked boundary | Required closure and proof |
+|---|---|---|
+| P0 ED01/02/08 | Query/SDK -> TS typed cache -> Risk -> Rust custody | Preserve source clocks, policy, components and generation through every conversion. Re-evaluate at use. Existing SDK/Risk patch is source-tested; native custody patch is local only. Test old-event/valid proof AND fresh-event/invalid proof, exact identity/price, linear/inverse settlement, both venues. Ship compatible native reader with Python proof producer; old native rejects the new field. |
+| P0 ED03/08 | cache_reader.execution_market_context and ordinary admission | Reader currently reads quote/mark/last/book sequentially. Determine actual requirements per intent AND all portfolio/collateral positions; prepare bounded reads outside account locks, then validate versions and expiry inside the transaction. Test optional feed timeout cannot delay an otherwise valid intent; required position mark cannot be skipped. Reuse one exact instrument view within an admission to avoid inconsistent marks for repeated logical positions. |
+| P0 ED04 | MarketTick.from_execution_context | Source selects LAST/MARK/mid while using maximum quote/book/last timestamp and quote quality. Add behavioral red tests through real matcher before changing it. Preserve each selected model's event/volume/price provenance; fresh sibling must never renew stale input. Do not change strategy, fill algorithm, fees or accounting formulas. |
+| P0 ED05 | NativePhysicalEgressBridge enqueue -> actual actor/send boundary | Enqueue has a 30s request deadline; this alone does not prove current market eligibility. Trace the actual sender and enforce declared dispatch-stage requirements, including deferred child orders, without re-sending a consumed attempt. Cancel remains independent of new market price. Test with external transport disabled and real native scheduling/DB, not a helper that production never calls. |
+| P0 ED06/09 | Provider -> canonical -> cache/backup -> TS apply | Existing six TRADE refusals remain unattributed. Collect concurrent exact-event evidence, separate quiet from delayed pipeline, and verify book reset/sequence survives TS serialization. Fix only demonstrated delay/integrity defects; never substitute QUOTE for required LAST. |
+| P0 ED07/10 | Shared TS vs native candidate; probe isolation | Freeze image/SDK/realm/manifest/Redis mapping and own finite observer quota. Evidence on candidate cannot certify shared legacy Risk. No overlapping production-identity probes. Keep older still-running code explicitly separate in the release receipt. |
+
+#### One-Phase Execution Order And Stop Rules
+
+1. Freeze the dependency manifest by operation and stage, using ED-T01/T02/T10.
+   Include current TS60 and already-declared inverse/custody/package inputs only.
+   Enumerate ordinary, post-only/L2, LAST/MARK/INDEX conditional, trailing,
+   native protection registration, internally spawned child, amend/reduce/close,
+   cancel, paper model and portfolio valuation. Unknown support stays explicit.
+2. Finish source corrections ED01..ED05/ED08/ED09 with red-to-green behavioral
+   tests. Reuse already-passed 380 packaged-SDK tests and 44 isolated PG custody
+   tests only for unchanged predicates; test changed paths, not the whole history.
+   Do not reuse a green test of a compatibility wrapper as native sender proof.
+3. Close live attribution ED06 and exact-product recovery. If provider evidence
+   is missing, report UNKNOWN and add capture; do not claim internally repaired.
+   Backup must be an entitled same-product view with valid quality and original
+   time. Source invalidity/gap/epoch loss cannot be bypassed by another replica.
+4. Run fast dependency matrix on both Query replicas, TS apply and actual Risk;
+   then affected load/fault tests only. Freeze budgets before running. No C2 to
+   discover defects, no catalogue-wide rerun, no synthetic production evidence.
+5. Run one final 300s no-order window after required matrices are green. Report
+   usable-by-intent, not merely 60/60 sessions. Independently review source,
+   evidence and failed attempts, then present changed-role rollout packet.
+6. Only after owner approval: compatible reader-before-writer rollout, bounded
+   affected smoke/rollback-return, CI and approved dev/main release procedure.
+   Clean exact disposable resources, retain active plus named rollback, and stop.
+   Resume TS E03/E07/E09 only under its own next instruction, not automatically.
+
+#### Required Final Deliverables
+
+- A machine-readable operation -> required feed -> entitlement -> proof -> native
+  callsite matrix, with exact shared/candidate runtime provenance and exclusions.
+- ED01..ED10 dispositions with red/green tests, evidence paths/hashes and remaining
+  limitations. No unresolved internal correctness/ordering/packaging defect.
+- Per venue/product/feed/replica: attempts, usable, legitimate refusal, internal
+  error, timeout; request->usable (including client wait), event->Redis apply,
+  Risk-use and recovery in ms. Preserve component age separately. No p99 under
+  100 samples or omission of failed-request latency. Reuse frozen ED budgets.
+- A real-PG concurrency receipt, zero external-send receipt, atomic apply/replay
+  proof, and source/schema/SDK compatibility receipt. Proof of market data is
+  not a broker fill/accounting or live-authority certificate.
+- Exact changed services, immutable digests, config/manifest revisions, rollout
+  order, failure stop condition and per-role rollback. No generic 'prior image'.
+- Cleanup inventory with owned resources/disk pre/post, active/rollback retention,
+  source branch/worktree status and explicit release readiness decision.
+
+Current verdict: NOT_READY_FOR_RELEASE. Previously tested changes are useful but
+not the complete closure. This review cannot promise absence of all future bugs;
+it closes known cross-boundary defects and demands adverse-case evidence before
+TS qualification resumes. No new latency or runtime health claim is made here.
