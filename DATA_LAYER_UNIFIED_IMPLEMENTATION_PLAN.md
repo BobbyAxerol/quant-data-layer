@@ -63228,3 +63228,22 @@ This turn changes plans only. No runtime/build/test resource changes or cleanup
 needed; prior cleanup2.73GB remains recorded. Stablev2.2.1, active/rollback digests,
 config/manifest and single Data Layer worktree unchanged; owner plan hunks retained.
 No push/merge/tag. Full goal is not complete; owner resolved scope decision only.
+
+
+### TS Readiness Prerequisite Accepted - 2026-10-01
+
+Narrow TS fix source9160e5a deployed ONLY market_data_service atc1f713a8b13e;
+rollbackf0e065b0c21b. Source250/packaging250PASS including realMP and isolatedRedis.
+Real300s:297samples/11heartbeats,60/60sessionREADY,0REPORT_EXPIRED,0cachemissing,
+0watermarkregression. Execution48..50 retained, NOT FULL. Evidence:
+/home/bobby/.local/state/trading-system/readiness-20261001/acceptance-summary.json.
+Previous scope/guard blocker resolved by TS correction, not threshold adjustment.
+Resume existing guarded real-canonical rehearsal only; backup notyet certified.
+
+Rehearsal uses retained hash-pinnedRust binaries, currentQuery sourceRO and current
+TS SDK image, fresh testTLS/JWT; no permanent service. production-before.json now
+reflects APPROVED TS recreation; previous baseline archived, other17IDs/restarts
+unchanged. Guard thresholds unchanged. New guard evidence file avoids overwriting
+original failure. Isolated topic identity must be discovered and wired consistently
+before mirror/candidate startup. SourceKafka mirror read-only/no commits,1MiB/s,
+900s deadline, isolated destinations only. Exact previous packet scope retained.
