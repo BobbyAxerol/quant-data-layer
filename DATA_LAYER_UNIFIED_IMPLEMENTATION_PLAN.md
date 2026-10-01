@@ -63501,10 +63501,12 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: IN_PROGRESS / OWNER_RESUMED_GOAL.** Continue the complete
-EDC-1 ledger under the resumed user goal. The consolidated review checkpoint
-remains historical. Source tests are not runtime certification; deployment and
-release still require the reviewed changed-role packet.
+**Latest decision: PLAN_REVIEW_PENDING / OWNER_REQUESTED_CORE_AUDIT.**
+The latest owner request is planning only: inspect TS core/execution dependencies,
+consolidate this SAME phase and wait for approval before implementation.
+See [current closure proposal](#edc1-final-core-closure-proposal).
+Earlier source/test receipts remain valid at their stated boundaries, not runtime
+certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
 Earlier planning and implementation receipts remain historical evidence.
 
 **Historical implementation status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
@@ -64741,3 +64743,145 @@ Current repository checks permit expiry before later lock acquisition; must prov
 and close that final deadline window before release. No new image/layer/network/
 volume; disposable --rm/offline clients removed. Runtime/config/secrets/rollback
 unchanged, no push/merge or broker order authority.
+
+
+<a id="edc1-final-core-closure-proposal"></a>
+### EDC-1 Consolidated TS Core / Execution Closure Proposal
+
+Status: PLAN_REVIEW_PENDING. This latest owner-requested review supersedes earlier
+resume instructions, not their evidence. ONE existing phase, ED01..ED10 and
+ED-T01..ED-T15, not another architecture program. No implementation or deployment
+is authorized by this documentation update. Owner approves this consolidated scope
+first; review the completed candidate before runtime change/release.
+
+#### Rechecked Source And Runtime Boundaries
+
+Read-only reinspection: DL a1738cb on fix/execution-view-diagnostics, TS upgrade
+02b07f8 on feat/v2-rust-first-okx-demo. The prior uncommitted DL PostgreSQL receipt
+is preserved separately; this proposal does not silently stage or certify it.
+TS upgrade worktree is clean. Canonical TS remains a separate consumer-integration
+checkout; do not deploy the unfinished Rust-first upgrade into shared services.
+
+Docker inventory reconfirms two KN market projectors a696cfba6ab3, two Query
+3af57ddf1764, two Stream1f13408fe946, three cores/Binance ingest658a9570c5fc,
+OKX ingest0f6876e16e51 and BARf7351c3bda08. Shared market_data_service is
+c1f713a8b13e; isolated p183 market data is3b4ee780f2d4 and native sender43847d3191a0.
+Shared Risk/executor remainv1.2.0-9081397. This is deployment divergence, not proof
+of duplicate writers or wrong routing. No six legacy SQLite projectors observed.
+Inventory is process/image evidence only, NOT a new health/latency acceptance.
+Published DL remainsv2.2.1; retain exact active/rollback packet above.
+
+Source inspected: physical_egress/{market_guard,executor_actor,compatibility,
+repository}.py; risk_engine/{execution_market_context,data_layer_recovery,main}.py;
+market_data/prepared_execution.py; risk_pool/{ordinary,paper_custody,package_market}.py.
+The authoritative dependency table and detailed guide earlier in EDC-1 remain
+mandatory. Do not move I/O into pure Rust math/accounting reducers.
+
+#### What Is Fixed Versus Still Unproven
+
+| Boundary | Existing evidence to inherit | Work still required in this phase |
+|---|---|---|
+| Quality transport / clocks | ED01/02 local SDK/TS and native proof regressions | Actual deployed SDK/schema compatibility, same rejected view at Query -> TS -> Risk, named component policy parity |
+| Native admission / custody / packages | Prepared reads outside locks, portfolio mark dependencies, native-PG receipts | Complete dependency manifest including existing positions, exact inverse units/metadata; missing entitlement must be discovered before runtime admission |
+| Paper matching | Model-owned BBO/L2 provenance and native trailing tests | Preserve supported model readsets in packaging; no new matcher or strategy changes |
+| Native dispatch | Guard after quota; TS02b07f8 closes reproduced PG attempt/quota/batch lock-expiry bug,46tests | Metadata changing while queued, actual native scheduler-to-adapter proof, bounded exact-feed recovery, per-child results and request-digest transition |
+| TRADE refusals | Six exact refusals retained, no simultaneous provider witness | Synchronized attribution; repair only proven pipeline delay; UNKNOWN is not quiet-market proof |
+| Book / backup | Existing KN integrity and hot-backup receipts | Verify sequence/generation/depth/proof survives TS projection; required valid backup usable without older-state resurrection |
+| Packaging / live use | Shared and candidate namespaces previously inventoried | Pin realm, identity, manifest, SDK, image and Redis mapping; prove compatible transition and rollback, not just source tests |
+
+Additional source finding: RiskDataLayerRecovery.recover has a Binance LAST/trade
+path and an explicitly non-authoritative paper BAR fallback. Its name does NOT
+prove typed QUOTE/L2/MARK recovery exists. ExecutionDispatchGuard currently reads
+Redis context without a recovery hook. Reuse atomic projector/ownership primitives,
+NOT that generic price fallback as an execution view. This is an implementation
+boundary to complete, not evidence that all production orders currently fail.
+
+The guard builds phase/read requirements and proof expiry in separate steps.
+Prove they remain the SAME server-owned policy for every supported order/operation,
+including deferred conditional registration versus local child DISPATCH. Reuse
+policy APIs instead of duplicating feed lists. Explicitly test per-feed approved
+freshness against order/server max-age; a broader default must never override a
+stricter manifest. This is a review/test obligation, not an asserted live exploit.
+
+#### Ordered Work, One Phase
+
+1. Freeze an executable dependency inventory, not a global60/60 veto: caller,
+   intent, admission/dispatch/paper stage, venue/product/native symbol, feed,
+   schema/metadata/unit, realm/identity and exact policy. Include collateral and
+   existing nonflat positions for ordinary/package admission. Match both shared
+   and native candidate Redis namespaces. No new products or unrelated alpha edits.
+2. Complete typed required-feed recovery: coalesce concurrent reads of the same
+   product/feed/realm; bounded total deadline and concurrency; existing public
+   Query and its canonical backup; atomic existing projection then reread/validate.
+   No provider-direct Risk request, recursive fallback, BAR-as-QUOTE, or second
+   unfenced writer. Abort refresh when order deadline expires; no lock held over I/O.
+3. Finish sender obligations: fresh metadata/units/version after queue, per-child
+   batch behavior, unchanged claim/idempotency and post-commit expiry. Claimed but
+   unsent/uncertain must follow existing query recovery, never retry as a new send.
+   Cancellation/query cannot require optional prices. Prove actual native path
+   with external send disabled, not only a stand-in Python loop.
+4. Close attribution/quality gaps together using a bounded paired trace for both
+   venues/five symbols and demanded inverse. Capture exact refused component ages,
+   session, generation, topic/partition/offset, source IDs and apply clock. Quiet
+   LAST may remain unusable for LAST-dependent decisions but cannot block ordinary
+   QUOTE/L2-based decisions. No forced quote substitution or freshness relaxation.
+5. Review source and candidate; run affected fast matrix and affected load only;
+   then one final300s no-order window. Produce exact changed-role rollout packet.
+   Owner-reviewed rollout checks consumer usable state before each next role;
+   acceptance, release provenance and scoped cleanup close this SAME phase.
+
+#### Mandatory Proof Beyond Existing Green Tests
+
+- Native Risk -> queued sender: valid at admission then expired, metadata changed,
+  product delisted/disabled, units changed, canceled task, duplicate attempt;
+  no external adapter send on invalid proof. Preserve original payload digest.
+- Batch mixed good/bad children: deterministic result per child, no double reserve,
+  consumed claim falsely reported unsent, or unrelated feed outage blocking all.
+- Recovery: primary cache stale/absent with valid exact-feed backup; backup invalid;
+  primary return; concurrent newer apply; crash after apply before ACK; generation
+  reset; quota/deadline exhaustion. Actual Redis atomic predicates must run.
+- Intent matrix: MARKET/LIMIT/L2/post-only; LAST/MARK/INDEX conditional; native OCO
+  registration versus local child; amend/reduce/close/cancel; portfolio/inverse.
+  A positive order may depend on more than its own symbol. Negative optional feed
+  tests must not accidentally remove required collateral/mark inputs.
+- Old/new SDK/model wire transition: pending requests and claimed attempts, key
+  realm/revision, Redis field schema, unchanged cursor/offset. No rewriting old
+  request hashes to make new serialization pass. Test rollback reader compatibility.
+- Evidence attribution: matched provider/canonical/TS IDs, unique events separate
+  from repeated polls. Reuse historical evidence only for unchanged predicates.
+
+All numeric latency/quality thresholds remain those frozen above in EDC-1. Report
+ms from before client queue to consumer validation, event to actual Redis apply,
+Risk read/use and recovery separately. Per feed/venue/replica/intent include N,
+usable/refused/internal failures and failed-request duration, p50/p95/p99/max;
+withhold p99 if N<100. No new live latency measured by this planning audit.
+
+#### Review, Stop And Release Conditions
+
+Closure requires ED01..ED10 explicit disposition with source/evidence hash, no
+unresolved in-scope implementation, required-feed usable positive cases and exact
+negative rejection reasons, no order mutation, and no false zero-downtime claim.
+Healthy process and session-only readiness are insufficient. Provider-invalid
+prices must still block; the objective is zero avoidable INTERNAL data denials,
+not accepting every order regardless of market evidence.
+
+Before deployment, enumerate immutable image/source/SDK/config per changed role,
+full digest, mounts/realm/Redis namespace and compatible rollback. Keep unaffected
+roles unchanged. Build only changed binaries, no image per symbol or test retry.
+No release until affected runtime acceptance matches the candidate and CI/source
+provenance; follow feature -> dev -> approved main/tag. TS patch and DL patch may
+need separate artifacts; do not publish DL merely to hide an undeployed TS fix.
+
+Cleanup: inventory exact test containers/networks/images/cache before and after;
+remove only phase-owned disposable resources, keep active plus named rollback;
+record disk and restart checks. Do not delete state, offsets, volumes or unrelated
+worktrees. This planning pass created no resources and performs no cleanup.
+
+After this phase, report TS P18.3E evidence that was affected versus inherited;
+owner decides resume. E03 partial fills, E09 and P18.4 are not automatically closed.
+Do not promise that audit removes every possible future bug; certify the explicit
+consumer dependency matrix, fault cases, measured load and limitations.
+
+Planning verification: targeted source/plan inspection and Docker image inventory
+only. No tests rerun, provider load, code changes, build, orders, restart, push,
+merge or release. Owner plan edits and the previous unstaged receipt preserved.
