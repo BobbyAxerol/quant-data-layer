@@ -63501,11 +63501,10 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: PLAN_REVIEW_REQUIRED / NO_NEW_IMPLEMENTATION.**
-The latest owner request requires a consolidated dependency review and written
-plan before implementation approval. See [owner review checkpoint](#edc1-owner-review-checkpoint).
-Preserve existing patches/evidence; do not continue implementation or mutate runtime
-under an older approval. This remains ONE EDC-1 phase, not another upgrade program.
+**Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1.**
+The active goal continuation resumes the consolidated owner-review checkpoint.
+Continue this same phase; deployment/release still requires the reviewed exact
+changed-role packet. Existing source evidence is not runtime certification.
 See [current closure proposal](#edc1-final-core-closure-proposal).
 Earlier source/test receipts remain valid at their stated boundaries, not runtime
 certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
@@ -65214,3 +65213,50 @@ cache, record disk before/after, remove only unreferenced disposable artifacts.
 No broad prune, volume deletion or owner worktree cleanup. Existing owner plan
 hunks and unfinished TS source remain preserved. This planning pass created no
 image, container, network or volume and performed no cleanup or disk reclamation.
+
+
+#### ED09 Typed Latest-State Ordering Predicate - Implementation
+
+Implement reusable pure ordering evidence for BOOK and paired reference before
+Redis CAS wiring. BOOK compares explicit verified generation/sequence, retains
+zero and rejects reused coordinates with altered payload. Paired reference compares
+each original event/receipt/capture, not aggregate clock or a fictional offset.
+Regressing any component is no-write; conflicting immutable capture is an error.
+Different product/metadata/authority contract is a typed fence, not automatic
+adoption. This slice is NOT atomic apply or rollout; test predicate before CAS.
+
+
+#### EDC-1 Resumed - Ordering Boundary Review
+
+Goal continuation resumes implementation of the consolidated checkpoint; its
+prior PLAN_REVIEW_REQUIRED status is historical. Runtime/release review stays.
+Review the draft ordering predicate before shared atomic apply: malformed pair
+shapes must yield typed errors, and ingestion receipt time is not a proof that
+provider clocks can never lead host clocks. Preserve original timestamps; freshness
+and permitted skew belong to the existing quality evaluator, not an accidental
+new ordering SLA. Test malformed/zero/large coordinates, component regression and
+immutable capture conflict. No runtime wiring until Redis race/reset/quality
+refresh and owner-adoption proof is complete. No new service or provider call.
+
+
+ED09 ordering predicate locally verified: 22 draft cases passed; review added
+11 cases and reproduced5 failures (four untyped malformed-observation exceptions
+and an unintended zero-clock-skew restriction). Corrected typed shape validation
+and left eligibility/skew to the existing quality authority. No timestamp changed.
+BOOK retains exact integer generation/sequence including zero sequence and values
+beyond2**53; reference compares both components and immutable captures. Authority
+changes and new generation require explicit owner handoff, not blind adoption.
+
+Final149PASS/0FAIL/0SKIP,2.264s across ordering, reference transport, hot cache and
+native guard/metadata units; execution-ordering-final.xml SHA256
+5258bab5f6eab9cb0f415b3dec5dedc523991cd6aa4b193e8f2637eba8ed628d.
+Ruff fixed import ordering only, then clean. TEST_ONLY fixtures, no real Redis/PG
+or runtime proof in this slice. Predicate is not wired to production writers yet.
+Next required implementation remains shared atomic apply plus explicit generation
+adoption/invalidation/proof refresh, real Redis races and bounded typed recovery.
+Do not claim ED-T07 or full execution closure from this unit result.
+
+All offline clients used--rm; no new image/build/network/volume or runtime mutation.
+No cleanup of active/rollback artifacts or unrelated worktrees; no disk savings
+claimed. No push/merge/release. DL baseline v2.2.1 runtime unchanged by this work;
+shared/candidate TS deployments remain distinct from source. Goal stays active.
