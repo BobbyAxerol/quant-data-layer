@@ -64539,3 +64539,37 @@ SDK/runtime convergence and the affected full no-order matrix/300s remain open.
 Do not call the whole EDC goal complete or issue a release. Next source slice is
 ED04: preserve price/volume/event identity per declared paper fill model without
 changing its strategy or economic algorithm. All evidence under edc1-20261001.
+
+
+#### ED04 Model-Owned Tick Provenance - In Progress
+
+Continue the approved EDC goal. Trace confirms native ordinary profiles only
+allow BBO_EXECUTABLE/L2_QUEUE_APPROX. MarketTick.from_execution_context nevertheless
+borrows LAST price/volume, newest sibling timestamp and unrelated event identity.
+Correct this adapter and its two callers to use explicit model-owned QUOTE or
+BOOK provenance. Do not turn midpoint into a real TRADE, alter matching economics,
+or change trailing reference validation. First prove sibling changes do not
+renew event identity/clock/quality, cover both venues, and run existing paper
+regressions. This slice does not close remaining native read-set/dispatch or
+production acceptance. Source-only; rollback source commit; no runtime mutation.
+
+
+ED04 adapter slice locally tested: the unchanged default API reproduced wrong
+LAST80/quantity999/book identity on both venues (2FAIL, domain-red receipt hash
+25f8ef3282a9138552054ea8807d2b6271efd5ba0c8b2c2d3fb73503c652711a).
+The initial19 negatives were signature failures, not19 independent domain bugs.
+Model-owned adapter now uses QUOTE for BBO and BOOK for L2, original selected
+clock/quality/event identity, no borrowed trade quantity, exact decimal midpoint
+only as model reference. Both native and compatibility callers name their model.
+TRADE/BAR payload paths unchanged. Zero offsets are retained only with scoped
+coordinates; incomplete coordinates do not manufacture a Kafka cursor.
+Final187PASS/0FAIL/0SKIP,3.951s in existing offline test image; JUnit
+paper-provenance-final.xml hash
+a141a8ed60f85d3a8dc2113a3737fc9abb36e6c5936c1b0471c8322710b92914.
+Includes actual compatibility client/model selection and existing paper/trailing/
+ordinary unit regressions. These are synthetic unit tests, not native-PG or live
+provider acceptance. An import-order lint error was corrected.
+ED04 is NOT fully closed: model-specific native required reads and integration
+recheck remain; ED05/ED06/runtime convergence/acceptance remain open.
+No image built, no rollout or shared writes. All test clients --rm/offline; no
+new volume/network/BuildKit output, no cleanup of active or rollback artifacts.
