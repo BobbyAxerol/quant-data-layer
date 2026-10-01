@@ -65304,3 +65304,37 @@ ts-edc1-ordering-net. All test clients--rm. No image/build cache/volume created.
 Disk available69472391168B before and69716434944B after; host activity also changes
 disk, so not claimed as attributable reclaimed bytes. Active/rollback unchanged.
 DL/TS runtime untouched, no push/merge/release or order transport. Goal active.
+
+
+#### ED09 Owner Invalidation - Implementation
+
+Before proof refresh/adoption, add exact-view invalidation: an owner reporting
+a hard-invalid current view atomically removes the price while preserving its
+ordering fence and bounded reason. Invalidation must compare the same authority/
+generation/state, never delete a newer stream state based on an older Query
+response. A delayed identical response cannot resurrect the invalidated price.
+Test real Redis interleavings and retry; source only, no runtime wiring yet.
+
+
+ED09 exact-view invalidation implemented/tested: owner invalidates only the
+previously verified full view digest and matching authority/generation/coordinate.
+One Redis compare-and-store removes price and keeps ordering fence with one of
+four bounded reasons. Delayed duplicate cannot resurrect it; concurrently newer
+stream state is not deleted. Different proof/quality at same price coordinate is
+not treated as the same view. Retry after lost invalidation ACK is idempotent.
+New advancing verified state can replace the tombstone through existing predicate.
+
+Final63PASS/0FAIL/0SKIP,1.595s (30actual isolated Redis cases plus33predicate units);
+execution-invalidation.xml SHA256
+1b13f814706e082707b053503a2afd9c12704a891c072708c9c4c20ac7815260.
+New11Redis cases cover BOOK/reference x4reasons, owner/recovery race, exact-view
+identity and commit/ACK loss. TEST_ONLY facts; no live/provider/latency evidence.
+Ruff format/check pass. No runtime writer integration claimed: explicit owner
+generation adoption, validated same-state proof refresh and typed recovery wiring
+remain OPEN before the actual native and consumer acceptance gates.
+
+Cleaned exact ts-edc1-invalidation-redis and ts-edc1-invalidation-net; DB15size0
+after fixtures, restart0/OOMfalse. Test clients--rm, no images/build cache/volumes
+created. Disk available70633160704B before and70535372800B after; concurrent host
+writes, no attributable savings claim. Production, rollback and other worktrees
+unchanged; no push/merge/release/order action. Goal remains active.
