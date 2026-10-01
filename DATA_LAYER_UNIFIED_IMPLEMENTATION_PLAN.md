@@ -63166,3 +63166,36 @@ No new images, containers, networks or source worktrees; no production mutation.
 Previous cleanup2.73GB and active/rollback retention remain valid. Evidence only
 added; no push/merge/release. Canonical branch fix/execution-view-diagnostics,
 source13718f4, stablev2.2.1 and all recorded image/config revisions unchanged.
+
+
+### Hot Backup Live Acceptance Decision Boundary - 2026-10-01
+
+Blocked audit: the same live-acceptance blocker has persisted across three goal
+turns (initial guarded stop, report/cache correlation, current guard feasibility
+review). Source implementation/tests are complete to the recorded extent, but
+paired live failover and rollout remain unproven; goal must not be completed.
+No running test/session is being mistaken for a stopped job; all measurement
+commands finished, owned test containers/networks removed.
+
+Current read-only inspection confirms Risk cache_reader._typed_execution_feed
+reduces cached fields to common execution context; execution_market_context
+_quality_state checks age/authority/completeness/gap/eligibility but does not
+reconstruct full per-feed provider session/generation semantics. It cannot be
+substituted for the all-route guard based only on90 good QUOTE/BOOK_DELTA samples.
+Keeping an expired report would overstate execution counts; increasing TTL or
+ignoring REPORT_EXPIRED is not acceptable. Do not change the acceptance definition
+or rerun hoping the existing TS heartbeat is randomly green.
+
+The required external scope/decision is a narrow TS readiness-report correction
+(separate report/worker lifetime from per-feed execution/session expiries, fail
+closed on genuine worker loss), or an explicitly agreed independent complete
+production observer. Existing packet protects TS runtime/code; this turn does
+not silently expand it. Once that prerequisite is resolved, resume exactly the
+prepared paired handoff/backup failure/return rehearsal and narrow rollout;
+no new architecture, whole-catalogue rerun, or additional phase.
+
+Canonical /home/bobby/data_layer remains fix/execution-view-diagnostics; only one
+worktree. Stablev2.2.1 runtime image/config/manifest set and rollback retained as
+recorded above. No push/merge/deploy or new image/test resource in this turn.
+Owner's two plan hunks remain uncommitted. Status: SOURCE_TESTED,
+LIVE_ACCEPTANCE_BLOCKED, NOT production-certified or zero-downtime.
