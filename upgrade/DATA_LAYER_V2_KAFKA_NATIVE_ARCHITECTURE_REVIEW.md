@@ -3111,7 +3111,8 @@ HA. Published release remainsv2.2.1; newsource/images await remote release workf
 write ONE consolidated repair phase before implementation. The authoritative
 scope, source findings, test cases, latency definitions, rollback and journal are
 [EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
-Status PLANNED / AWAITING_OWNER_APPROVAL; this addendum grants no runtime authority.
+Status IN_PROGRESS / OWNER_APPROVED 2026-10-01; implementation journal is EDC-1.
+Deploy/release still requires the reviewed changed-role packet.
 It supplements the existing KN architecture, not another rearchitecture phase.
 
 Preserve the canonical Kafka -> Rust core -> KN cache/Stream -> Query boundary.

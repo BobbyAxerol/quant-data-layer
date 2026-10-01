@@ -1,8 +1,8 @@
 # Quant Data Layer Unified Implementation Plan
 
-> **2026-10-01 pending owner approval:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
-> One consolidated Data Layer / TS data-boundary repair phase. Documentation only;
-> no new implementation, runtime change or release is authorized by this entry.
+> **2026-10-01 owner approved, IN_PROGRESS:** [EDC-1 - Execution Data Contract Closure](#execution-data-contract-closure-20261001).
+> One consolidated Data Layer / TS data-boundary repair phase, now implementing.
+> Runtime change and release still require the reviewed changed-role packet.
 > The inherited runtime is KN Kafka-native with the hot-backup patch; historical
 > pre-KN status blocks below are not the current deployment inventory.
 
@@ -63501,13 +63501,12 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Status: PLANNED / AWAITING_OWNER_APPROVAL.** This is ONE bounded repair phase,
+**Status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
 not a new architecture program or a reopening of KN-1 through KN-5. The owner
-requested this written plan and audit first. No implementation, build, provider
-load, broker order, runtime rollout, cleanup or release was performed for EDC-1.
-Implementation starts only after approval; deploy/release follows review of the
-result and the exact changed-role packet. Do not inherit old blanket approval
-as permission to bypass this explicit review boundary.
+approved implementation after the written plan/audit. Historical planning receipts
+remain unchanged below. Deploy/release follows review of the implementation result
+and exact changed-role packet. Do not inherit old blanket approval as permission
+to bypass this explicit review boundary.
 
 ### Goal, Sources Of Truth And Stop Condition
 
@@ -63911,3 +63910,68 @@ E04 composite18/18 retains its separate denominator/evidence; retain the recorde
 E08 affected rehearsal only where its predicates remain unchanged. E07 data
 qualification and E09 expanded issuance require the converged candidate receipt.
 P18.4 alpha acceptance/release has not been completed by fixing Data Layer.
+
+
+#### EDC-1 Start / Work 1 And First Red Tests (2026-10-01)
+
+Owner approved implementation through the active EDC-1 goal. Source at start:
+DL cc8f61d, TS upgrade2d10a4f, canonical TS668e103. Prior plan-only receipts above
+remain historical. The deploy/release review boundary and all exclusions remain.
+Current checkout status rechecked: only inherited DL owner hunks and canonical TS
+compose/symbols changes; upgrade clean. No additional worktree created.
+
+First source slice targets ED01/ED02 evidence preservation before changing
+eligibility policy: reproduce discarded typed quality/component/reference proof,
+retain original timestamps and source coordinates, test aliasing/invalid inputs.
+The shared schema remains additive; no quiet-policy waiver or runtime mutation.
+Run tests using existing TS candidate image with source read-only, no network,
+no credentials/state mounts; no image rebuild merely to execute source tests.
+Continue through the complete EDC ledger; this slice does not close EDC-1.
+
+
+#### ED01/ED02 Evidence-Transport Slice - Tested Locally
+
+Read-only Work1 inventory validated both sealed consumer bindings against actual
+configured consumer/release SHA/revision. Shared:60 routes, rev10, paper realm,
+EPHEMERAL_ONLY -> redis_marketdata DB1. Candidate:64 routes, rev2, sandbox realm,
+CORE_ONLY -> p183_redis DB0 (its configured market URL DB1 is NOT active under
+CORE_ONLY). Candidate includes four BTC-USD-SWAP routes. No identity/Redis mix-up
+proved; this mapping must be used for every subsequent read/recovery test.
+Inventory: edc1-20261001/evidence/runtime-binding-inventory.json, SHA256
+773f3cb724a620c2beeac66cb9e017651d5afd97ff71998b620ec240385e584d.
+The first inventory script could not parse one URL port; retried with redacted
+host/path extraction. No credentials printed or stored, no config changes.
+
+ED01 reproduced on40 cases (five symbols x two venues x four feed types) plus
+one aliasing test. Retained deep-copied quality/source/contract and metadata_version
+in MarketCacheReader's internal context; existing scalar projections unchanged.
+ED02 reference observation labels and distinct timestamps now retained under
+contract.reference_observations/reference_received_at_ns. No fabricated cursor,
+no source timestamp modification, and no eligibility decision loosened. Actual
+consumer-time evaluation, intent-selective read sets and remaining ED cases are
+NOT closed by merely preserving these fields.
+
+Offline Docker source tests used existing image3b4ee780, network none, rootfs and
+source read-only, 1CPU/768MiB, transient /tmp and /app/logs, no secret/state mounts.
+Commands: python -m pytest -q -p no:cacheprovider with JUnit, first new
+`tests/unit/test_edc_execution_evidence.py`, then that file plus
+`test_data_layer_v2_consumer.py`, `test_v2_execution_hot_cache.py`,
+`test_execution_market_context.py`, `test_market_redis_plane.py`,
+`test_instrument_metadata_serving.py` (all under tests/unit).
+First collection failed on read-only log path, corrected with disposable tmpfs.
+First reference fixtures used list labels instead of SDK dict; corrected test
+shape BEFORE recording the red oracle, not counted as an implementation failure.
+Red43FAIL; reader-only41PASS/2FAIL isolates reference loss; both patches259PASS,
+0FAIL/0SKIP. JUnit SHA256 green:
+51fa149943d5beda4496d23bae819e41e57dfc0b2837fd48b87e2a602f4f0817.
+Red f5599bc81c9d74541682617df7ff7bf0f502fc130ec308b520c699d5ead3d58e;
+intermediate fb011aa1828591c7ee6441aa2ed64256951c897c1e4a36c5cc8e9a24faddaa27.
+All receipts at ~/.local/state/qdl-v2/edc1-20261001/evidence/.
+Ruff caught one new-test import formatting issue; fixed only that new file.
+
+No runtime rollout, new image, broker/provider request or live DB mutation.
+Disposable clients --rm, tmpfs removed on exit; no new build cache to prune.
+Existing image inventory retained, unrelated TS historical artifacts not pruned.
+No new latency/capacity certificate; EDC-1 remains IN_PROGRESS. Next source work
+must re-use the existing DL quiet MARK/INDEX proof validator rather than invent
+another divergent interpretation in TS, then test consumer-time expiry.
