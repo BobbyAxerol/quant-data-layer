@@ -62884,3 +62884,111 @@ Canonical /home/bobby/data_layer, fix/execution-view-diagnostics, one worktree;
 Query b40b49c361c7, Stream 65918a656dcb, core/Binance 658a9570c5fc,
 projector pair/OKX 0f6876e16e51, TS f0e065b0c21b remain unchanged. Runtime config,
 TLS, manifests and published stable v2.2.1 unchanged. Owner plan hunks preserved.
+
+##### Handoff Attribution And Equivalent Hot-View Backup - 2026-10-01
+
+Status IN_PROGRESS. Owner approved profiling/fixing assignment-to-apply, equivalent
+hot-view fallback and affected-path rehearsal/rollout, no new service/topology.
+Follow guide section 18 K5-T03/T05/T07 and previous measured receipt, not a new
+phase. First slice adds bounded per-assignment timing for checkpoint/ownership,
+watermark lookup, product preparation, seek, first committed poll and successful
+cache apply. No timeout, batch, freshness, credential or resource-cap change on
+assumption. Existing production remains untouched during diagnosis.
+Stream inspection confirms GetSnapshot/GetFeedStatus delegate to Query; they are
+NOT an independent fallback. Only the canonical Hub fan-out is independent of
+projector. Any backup must explicitly bypass that recursion, reuse current
+quality/identity checks, retain coordinates and reject gap/generation/mismatch or
+expired components. BAR history and stream replay contracts are not replaced by
+latest snapshots. Test bounded work/no unbounded logging, ownership/replay/fence,
+missing backup/stale/disconnect and switch-back before same-host paired rehearsal.
+Preserve every refusal and do not call successful-request p99 full availability.
+Roll only affected roles after exact tests; retain current per-role images/config
+as rollback, keep TS/V1/order/Kafka offsets/cache data unchanged. No release/push
+in this source slice. Cleanup scoped test builds/resources and journal status.
+
+Profile slice: 30 unit + 3 isolated real-Kafka/Redis tests PASS. Live restart
+attribution shows checkpoint 125-327 us, product pointers 660-1271 us and Redis
+apply 407-865 us, but ListOffsets/watermark calls 500993 and 767093 us. Interleaved
+prepare/seek starts long-poll Fetch on the SAME data client used by the next
+watermark request. Implement a dedicated never-assigned metadata client inside
+KafkaStateSource, no new service/group membership; keep exact bounds, timeout,
+read_committed data and cache checkpoints unchanged. This is a measured hypothesis
+about shared-connection head-of-line waiting; paired counterfactual still required.
+
+##### Handoff Metadata Counterfactual Receipt - 2026-10-01
+
+Status: PARTIAL_IMPLEMENTATION_TESTED / BACKUP_AND_ROLLOUT_INCOMPLETE. This is
+NOT a completed owner request, not waiting for owner approval, not zero-downtime.
+Implemented dedicated never-assigned metadata client for Stage B ListOffsets,
+plus bounded per-partition handoff logs. No timeout/freshness/resource/cursor or
+record-ownership change. Public endpoints and consumer policy remain unchanged.
+Evidence root: `/home/bobby/.local/state/qdl-v2/projector-handoff-profile-20261001`;
+`evidence/before/`, `after/`, `counterfactual.json`, `production-audit.json`,
+`cleanup.json` and bounded mirror commit logs preserve both runs. Optimized
+candidate binary SHA256 82ed317f64709396852f70b739df84498fc7ee19c7b04bad2d8756d0788dcb80.
+Same isolated Kafka/Redis/Query, real canonical mirror and real TS SDK, same
+original timestamps/policy; source changes mounted into base 0f6876e16e51 only
+in test. No deployment image built, no production rollout.
+
+Tests actually run after functional fix: Rust lib/bin 30/0; isolated real Kafka
+stage_b_kafka 3/0; isolated Redis stage_b_redis 27/0; clippy all-targets -D warnings
+PASS; optimized build PASS. Cases include aborted transactions, takeover, offset
+checkpoint recovery, wiped cache, ownership fences, replay, tombstones, revisions,
+partial prepare/poll errors, missing publish acknowledgement, interrupted rebuild
+and snapshot/delta isolation. No full catalogue/C2 rerun. Initial builder commands
+failed PATH/mount/workspace/cache layout before tests; corrected invocation is
+repo root /src, qdl-cargo-home mounted at /usr/local/cargo/registry, bounded 2 CPU /
+3 GiB, --offline --locked. Do not repeat the incorrect /src=rust or cargo-home
+registry-root mounts in subsequent slices.
+
+Counterfactual confirms the watermark bottleneck: after fix all six latest
+partitions' watermark reads during each takeover were 0.470-1.933 ms, versus
+500.993/767.093 ms examples (overall before maximum 1015.946 ms). This removes
+ListOffsets waiting on the data client's Fetch connection without lowering
+fetch.wait or dropping any retention/bounds checks. Extra client never joins a
+group, assigns records or commits offsets; it uses the same topic permissions.
+
+The remaining delay is now measured separately, NOT silently declared fixed:
+- Restart 1: revoke -> peer assignment 361 ms; assignment -> first apply 888 ms.
+- Restart 2: revoke -> peer assignment 160 ms; assignment -> first apply 1404 ms.
+- After seek, first committed poll still waited about 0.876/1.387 s; Redis apply
+  took approximately 0.326-0.989 ms. This establishes remaining reader/visibility
+  waiting, not proof whether coordinator/transaction visibility or fetch scheduling
+  is solely responsible. Do not rename it cache slowness or blindly tune timeouts.
+
+Focused post-startup reads (successful call -> usable latency only):
+| Feed | Usable / requests | Refusal | p50 ms | p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| QUOTE | 420/420 | 0 | 11.73 | 21.68 |
+| BOOK_SNAPSHOT | 210/210 | 0 | 27.88 | 43.45 |
+| MARK_INDEX_PRICE | 417/419 | 2 | 11.49 | 18.96 |
+| TRADE | 139/208 | 69 | 11.17 | 18.91 |
+Total including startup 1360 reads, zero observed watermark regression. Both
+MARK refusals were DOGE/OKX after second restart; exact rejected provider-confirmation
+freshness 2060 and 2018 ms, live session, no gap, execution ineligible. TRADE
+refusals retained separately; not classified as quiet venue without synchronized
+provider evidence. Lower watermark latency therefore does NOT establish full
+execution availability or a production performance certificate.
+
+Backup implementation remains required by the owner's approved scope. Inspection
+of rust/qdl-stream-gateway/src/readview.rs and service.rs confirms public snapshot
+and status still delegate to Query. No recursive Query -> Stream snapshot -> Query
+fallback was introduced. The independent Hub currently exposes canonical stream
+records, not a protected eligible latest-view read boundary usable by Query.
+Complete that boundary with same-product identity/generation/offset/integrity,
+bounded memory and current-clock quality checks, authenticated internal access,
+explicit source selection and monotonic return before enabling it. Keep SDK/public
+Query endpoints stable. Neither an old cache value nor a client-supplied transport
+header may bypass quality/entitlement. The owner has approved the goal; missing
+implementation/testing is not a new approval gate or external debt.
+
+Cleanup: eight owned containers + isolated network removed; test data, disposable
+credentials and build target removed. Evidence root 2.1 GiB -> 47 MiB; filesystem
+used 228229304320 -> 225557729280 bytes (shared-host delta, not an exclusive cleanup
+measurement). No image built/BuildKit cache created; active and named rollback
+images retained. Guard ran before shadow setup: 167 samples, min session-ready60,
+no guard trigger; final comparison all63 production IDs/StartedAt/restarts unchanged.
+Canonical remains /home/bobby/data_layer, fix/execution-view-diagnostics, one
+worktree. Stable release v2.2.1 and runtime config/manifests unchanged: projector
+pair/OKX 0f6876e16e51, Query b40b49c361c7, Stream 65918a656dcb, core/Binance
+658a9570c5fc, TS f0e065b0c21b. No push/merge/release; owner plan edits preserved.
