@@ -63501,10 +63501,12 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest decision: IN_PROGRESS / OWNER_RESUMED_EDC1.**
-The active goal continuation resumes the consolidated owner-review checkpoint.
-Continue this same phase; deployment/release still requires the reviewed exact
-changed-role packet. Existing source evidence is not runtime certification.
+**Latest decision: PLAN_REVIEW_PENDING / OWNER_APPROVAL_REQUIRED.**
+The latest owner request is audit and a written consolidated plan BEFORE further
+implementation. Follow [the execution closure review](#edc1-ts-core-final-review).
+Earlier implementation approvals/receipts are historical, not permission to
+continue code or runtime changes in this review. Existing source evidence is not
+runtime certification. This remains the SAME EDC-1 phase.
 See [current closure proposal](#edc1-final-core-closure-proposal).
 Earlier source/test receipts remain valid at their stated boundaries, not runtime
 certification. Do not resume from the historical OWNER_RESUMED_GOAL heading.
@@ -65565,3 +65567,133 @@ No images/build cache/volumes created. Disk available71026470912B before and
 No push/merge/release/order action. Full EDC remains open: BOOK_DELTA ownership/
 reset, coalesced typed Risk recovery, deployed legacy shape/migration, ED06
 provider attribution and affected native/runtime/packaging acceptance.
+
+
+<a id="edc1-ts-core-final-review"></a>
+### EDC-1 Consolidated TS Core / Execution Dependency Review
+
+**Status: PLAN_REVIEW_PENDING. Owner approval required before implementation.**
+This entry is the latest decision boundary for the existing EDC-1 phase, not a
+new phase. It preserves prior tests and failed evidence; no source-only receipt
+is promoted to deployed readiness. Review source: DL7b2f103, TS5a80318.
+The preceding TS5a80318/DL7b2f103 receipts record implementation already performed;
+this planning review does not conceal or certify it. No additional code/runtime
+changes are authorized by this entry.
+
+#### Goal And Governing Links
+
+Close all IN-SCOPE market-data dependencies of currently declared TS Risk,
+native execution, paper matching and alpha read contracts in one bounded phase.
+A required valid exact-product view available through our approved paths must
+not be lost through our projection, recovery or requirement selection. If no
+valid source exists, keep the exact refusal; never promise unconditional order
+acceptance. Order authorization and private broker accounting remain TS-owned.
+
+Use the [existing EDC guide](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#execution-data-contract-closure-guide-20261001),
+ED01-ED10 ledger, intent/stage dependency table and ED-T01-ED-T15 above as the
+full specification. TS authoritative plan is
+`/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md`;
+its P18.3E guide anchor is `p18e-critical-path-closure-20260930`. Do not use the
+canonical legacy TS checkout as evidence the native upgrade is deployed.
+
+#### Rechecked Source Boundaries And Remaining Work
+
+| Boundary | Current source evidence | Required closure, not a new product scope |
+|---|---|---|
+| Intent requirements | `services/risk_engine/execution_market_context.py::execution_required_feeds` derives QUOTE/MARK/BOOK/LAST from server policy | Prove actual MARKET/LIMIT, conditional registration/child, amend and cancel callers use it. An unrelated old TRADE must not veto an order not requiring LAST. |
+| Risk recovery | `services/risk_engine/data_layer_recovery.py::recover` handles Binance latest_trade and VN; paper can use non-authoritative candle fallback; no typed OKX branch here | Trace actual callers. Add coalesced exact-feed V2 recovery for affected native paths, not reuse this legacy method as execution-quality QUOTE/L2/MARK recovery. Preserve unrelated V1/VN behavior. |
+| Native sender | `services/physical_egress/market_guard.py::valid_until` reads metadata/context under a bounded deadline but has no exact-feed refresh | Integrate the same bounded recovery before the final at-use check. Metadata pin, permit expiry, ownership and idempotency must survive queue/lock delay; no send on expired proof. |
+| Book writers | `data_layer_bridge.py::_run_v2_feed` still routes BOOK_DELTA through ordinary `project_execution_feeds`; ordered snapshot worker is separate | Inventory all active writers and feed semantics. Raw delta is not a full executable book. Preserve sequence/generation/gap and atomic apply/cursor; no competing unguarded writer may overwrite a verified snapshot. |
+| Existing cache/queued state | New snapshot marker/adoption and metadata pin tests exist; deployed legacy reference shape not yet inventoried | Read-only inventory old schema/labels/realm/Redis prefix and queued digest. Provide explicit compatible adoption/drain or bounded reseed through authenticated data; no cache flush, fabricated proof or silent request re-signing. |
+| Portfolio/collateral | Ordinary/package/custody code uses prepared read sets outside external I/O under account locks | Prove all current positions and legs, settlement currency, native inverse identity, mark/conversion and metadata units. No USDT proxy for BTC-USD-SWAP; private balances are not a Data Layer feed. |
+| Quiet and freshness | Lossless component proof, explicit generation, prior-view retention and strict expiry have source tests | Exercise the real facade -> Redis -> Risk/native path. Session-ready is not eligible price; valid quiet proof may be retained only until its original expiry. |
+| TRADE attribution | Six historical refusals lack synchronized provider witness | Capture exact new refused view alongside provider/canonical/cache/apply within a bounded window. Classify quiet, ingest delay, consumer delay or UNKNOWN. Do not retrofit a later healthy read as historical root cause. |
+
+These are source integration/coverage findings, not proof every path is active
+on production or that each caused an actual broker rejection. Existing source
+improvements stay separate from runtime adoption and certification.
+
+#### Execution Order After Approval
+
+1. Freeze a single dependency inventory: caller, operation/stage, native identity,
+   realm, feed, interval/maxlen, metadata, freshness policy, quota, Redis target,
+   source SHA/image/config and writer owner. Cover TS60 plus already declared
+   candidate inverse/package/portfolio dependencies; no universe expansion.
+2. Close typed recovery and writer ownership together, using existing Query and
+   its private Kafka-native backup. One recovery owner per identity/feed, bounded
+   shared deadline, independent caller cancellation, no I/O under DB locks and
+   no direct exchange read from Risk. Apply by the existing ordered writer and
+   validate actual read-back; a successful RPC alone does not make Redis ready.
+3. Close integration/migration: BOOK delta vs snapshot semantics, restart/reset,
+   reference components, old cache and queued request compatibility, SDK/native
+   producer-reader ordering. Fail old unsupported state explicitly, with a
+   documented non-destructive path to restore service before rollout.
+4. Run the targeted test ladder below and synchronized real read-only attribution.
+   Fix any reproduced defect within these boundaries; record unrelated findings
+   without editing them. No fresh full-C2 run as a diagnostic loop.
+5. Review one consolidated result and changed-role deployment packet. Only then
+   roll changed binaries/config in compatible order, run affected acceptance and
+   publish through approved feature -> dev -> main release workflow.
+
+#### Test Ladder And Stop Conditions
+
+- Reuse source tests already proven, including the latest224PASS (84 actual
+  isolated Redis cases); these suites overlap earlier suites and must not be
+  summed as independent coverage. Re-run only changed predicates/dependencies.
+- Before performance: behavioral red/green tests for missing required vs optional
+  feed; exact venue/product/units; one stale reference component; heartbeat stop;
+  old replay; lost apply ACK; generation reset; same-sequence conflicting book;
+  source fencing; duplicate recovery; selected paper price/volume provenance.
+- Real isolated Redis and PostgreSQL: 50 same-product refresh callers coalesce;
+  cancellation does not orphan writes; different products progress; no network
+  waits under account locks; replay cannot regress state or reserve/send twice.
+- Actual native process test, not only helper tests: valid admission then delayed
+  queue, expired price/metadata, changed binding, conditional child and cancellation.
+  Broker transport disabled; reconcile zero test order/reserve/outbox liability.
+- Fast matrix: both Query replicas -> actual adapter -> Redis -> Risk at-use,
+  all affected declared identities/feed policies. Separate legitimate strict-LAST
+  refusals from availability failures and verify unaffected intents still pass.
+- Use one observer with independent bounded quota; preserve raw typed rejection,
+  original component clocks, generation, native IDs and comparable source offsets.
+  Missing provider witness remains UNKNOWN; do not assign unsupported causality.
+- Profile affected apply/recovery only if these changes invalidate prior throughput
+  evidence. Warmup/BAR/reference research compatibility smoke stays bounded; no
+  catalogue-wide recertification unless a demonstrated shared change requires it.
+- One final300s no-order consumer window after required rows pass. Freeze gates
+  before running. An affected failure requires a specific fix/replacement receipt,
+  not hiding failed samples or re-running until a lucky green window.
+
+#### Measurements And Release Decision
+
+Keep the existing EDC latency table and intent deadlines unchanged. Report in ms:
+request start BEFORE client queue -> validated usable result; matched provider
+event -> TS Redis apply ACK; Redis -> Risk use; recovery -> usable. Separate
+failure latency and unchanged quiet-event age. Report per venue/feed/replica with
+attempts, usable/refusal/internal-error counts and p50/p95/p99/max/sample N; no
+p99 for fewer than100 observations. Include CPU throttle, RSS/cap, queue/backlog,
+recovery deadline, OOM/restarts and host headroom. No fresh latency was measured
+in this planning review; historical values above remain historical.
+
+Release exit: zero unresolved in-scope implementation gap; required positive and
+negative domain cases proven; no unexplained internal rejection; compatible old
+state migration and rollback rehearsed; one source/SDK/manifest/image provenance
+map; exact candidate consumer reads accepted without enabling orders. Refusal
+because all permitted sources lack valid data stays explicit, not reclassified.
+An UNKNOWN historical refusal may remain historically unknown, but cannot be
+advertised as diagnosed or used to excuse current unexplained internal failures.
+
+Packet lists exact changed roles, digest/config/mounts, reader-before-producer
+compatibility, old writer quiescence, restart impact, health AND required-data
+checks before next role, stop conditions and per-role rollback. Do not replace
+unchanged core/ingestor/projector merely for image tidiness. Shared legacy TS and
+native candidate need separate compatible artifacts; do not deploy the whole
+unfinished TS upgrade into shared services. No architecture/topology addition.
+
+After acceptance retain only active images and explicit rollback set; remove only
+owned disposable clients/images/cache, record disk pre/post and restart checks.
+Do not delete state/volumes, owner edits or unmerged feature worktrees. This
+planning step creates no test image/container and performs no cleanup. Runtime
+and rollback digest baseline above is inherited, not newly health-certified.
+
+**Next permitted step: owner review of this same EDC-1 plan. No implementation,
+rollout, push/merge, release or P18.3E execution continuation from this entry alone.**
