@@ -65994,3 +65994,89 @@ old unguarded writers before adoption; legacy mode is not certified by these tes
 EDC-1 IN_PROGRESS: native paper/package owner wiring, actual native/PG proof,
 legacy Risk/portfolio authority, old state/queued metadata/SDK migration,
 synchronized provider attribution and reviewed runtime acceptance remain open.
+
+
+#### ED03/ED05 Native Paper Owner Wiring - Start
+
+Next in-scope integration: bind the existing shared typed recovery reader to
+the native paper service owner, with binding-specific age ceiling and explicit
+task cancellation/join before reader/SDK close. Keep V1/disabled mode semantics
+and legacy matcher unchanged; no new fallback, credentials or order authority.
+Use that same reader in applicable client BBO/L2 reads. Test actual main owner
+lifecycle and prepared read-set propagation; native PG/runtime proof remains
+required before whole-phase closure. No runtime change or new test image.
+
+Paper caller inspection also found head-of-line coupling: native polling stops
+the entire order sweep on one ExecutionMarketContextError. Narrow repair treats
+that typed market-data deferral per order (no status/fill mutation) and continues
+other orders; unexpected accounting/transaction errors and cancellation still
+propagate. Add two-order regression and typed reason preservation. This is the
+existing requirement that unrelated data must not veto another execution intent.
+
+Actual native paper command handler also converted typed market-data errors into
+PAPER_EXECUTION_ERROR rejection. Fix only native typed market deferral: preserve
+pending command, no ACK/reject/outcome, continue other batch orders, retry under
+existing original intent/grant deadlines. Do not extend deadline or alter legacy
+error handling/Redis claim ownership cadence. Add actual-handler batch and retry
+regressions; expired intent remains a separate terminal safety decision.
+
+
+#### ED03/ED05 Native Paper Owner - Tested Source Receipt
+
+Native paper main now owns the shared typed execution reader with the binding's
+age ceiling. Polling/command/heartbeat tasks cancel and join before reader/SDK
+close, including startup failure and parent cancellation. Native path does not
+create a competing legacy recovery client; legacy path keeps its behavior and
+closes its owned client. Applicable BBO/L2 client reads reuse the injected reader.
+V1/disabled factory policy remains unchanged; runtime identity/mount/quota is
+not activated merely by this source wiring.
+
+Fixed an actual caller-level head-of-line failure: a typed market-context refusal
+in one native open order no longer aborts polling of other orders. No status,
+fill or accounting mutation is made for the deferred order. Fetch-only timeout/
+connection/Redis failures, outside a DB transaction, become a typed data refusal;
+accounting errors/cancellation still propagate. Python3.10 asyncio.TimeoutError
+is covered separately from built-in TimeoutError. Native command handler keeps
+such commands pending instead of converting them into PAPER_EXECUTION_ERROR;
+it continues other orders in a batch and returns no-ACK until the whole batch
+succeeds. Original intent/grant deadlines, idempotency and Redis claim cadence
+are unchanged. This is not a promise that an expired command can still execute.
+
+Final unit command: existing p18-56dae41 image, --network none, pytest -qx
+--tb=short -p no:cacheprovider on test_edc_paper_owner.py,
+test_edc_paper_tick_provenance.py, test_paper_execution.py and
+test_edc_recovery_runtime.py.146PASS/0FAIL/0SKIP,3.002s.
+Evidence paper-owner-final3.xml SHA256
+b12c5899a33537bd620508153e731cf14d42aadde798ee5c9c94d2a0182632c9.
+Earlier successful139/141/143 receipts retained; do not sum overlapping suites.
+No live/latency claim from fixture inputs.
+
+Real PG integration: reused pinned Timescale6343bdc87ca1,93 migrations applied
+only to edc_paper_test on ts-edc1-settlement-pg/internal ts-edc1-paper-net, no
+published port or external broker access. Existing test_edc_ordinary_readset.py
+4/4PASS/0SKIP in23.305s, Binance/OKX x BBO/L2. Actual lifecycle covers duplicate,
+fill/outbox recovery, cancel with feed offline, pre-settlement fault, IOC/FOK/
+post-only and expired grant. Each case records50market reads outside transaction
+and73unlocked PG exits. Final DB census:36TEST_ONLYeconomic facts, pending
+exposure0, account reservations0, unpublished paper match outbox0.
+Evidence paper-owner-pg.xml SHA256
+ac95a15fd704415350a489e8db86d1091c781de11b8fb0d57d77537077a8360e.
+Four inherited JUnit record_property format warnings retained. This PG test uses
+controlled market inputs, not a real Query/Redis/native-process end-to-end test.
+Later handler-only changes inherit unchanged PG predicates; their tests are the
+final unit receipt, not a claim PG was rerun after every edit.
+
+Cleanup: exact test PG/network removed, tmpfs data destroyed only in owned test
+container; restart0/OOMfalse. All clients --rm. No image/build cache/volume created.
+Disk available75274866688B before /75112116224B after, shared host writes mean no
+positive savings claim. Retain existing active/rollback images; no broad prune.
+Rechecked production Query3af57ddf1764/Stream1f13408fe946 and shared TSmarket
+c1f713a8b13e/candidate3b4ee780f2d4 unchanged, restart0/OOMfalse. No rollout,
+manifest/cap/order/alpha mutation, push/merge/tag/release. Main and new tests lint
+clean, TS diff --check clean. EDC-1 remains IN_PROGRESS.
+
+Next: close remaining native package/legacy Risk/portfolio authority dependencies,
+then inspect deployed cache/queued metadata/SDK compatibility and actual runtime
+identity budgets. Synchronized TRADE/component provider attribution and reviewed
+changed-role acceptance still required. Neither this receipt nor the delta receipt
+certifies all EDC requirements, production availability or TS P18.3E money cases.
