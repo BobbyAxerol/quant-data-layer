@@ -64444,3 +64444,98 @@ builder images retained. Disk available65031696384B before,64937037824B after;
 host writes continued, so no positive disk saving claim from that net delta.
 Canonical DL stays fix/execution-view-diagnostics; native work stays existing
 feat/v2-rust-first-okx-demo worktree. No push/merge/deploy/release. Goal active.
+
+
+#### ED03 Settlement / Package Transaction Boundary - Started
+
+Rechecked native_execution.execute and PackageAdmission.admit_paper: market reads
+remain inside settlement/package transaction paths. Reuse request-local prepared
+reads with whole-transaction rollback on missing data; deepcopy mutable order /
+package state on each attempt so a rolled-back fill cannot survive in memory.
+No external network under account locks. Immutable fact/outbox/checkpoint writes
+stay in the same existing transaction. Cancel remains data-independent where no
+settlement is pending. Batch portfolio identities for all package accounts rather
+than spending one retry per account; keep existing3-round/3s/8-worker bounds.
+
+Also confirmed package expires_at uses old custody mark time even if custody's
+explicit quiet proof passed. Add validated proof expiry separately from event
+clock, not refreshed mark timestamps. Strict inputs retain observed_at+budget;
+quiet deadline is bounded by session AND both component deadlines. Test exact
+expiry, invalid/gap/generation, package acceptance and unchanged economics.
+Use isolated real PG, actual native code and synthetic labelled market feeds;
+no production, broker send, reset or new runtime service. Affected package/native
+execution tests and transaction/cancellation negatives are mandatory before commit.
+
+
+#### ED03 Settlement/Package And ED08 Proof Expiry - Tested Locally
+
+Native paper execute now owns a request-local prepared reader across match and
+settlement. A missing custody mark rolls back the whole match transaction before
+fetch; every attempt deepcopies the mutable input order. Outbox/economic facts/
+liquidity checkpoint remain atomic, and no rolled-back in-memory fill is reused.
+Package admission similarly retries a deepcopied package only after transaction
+exit. All participating account marks are discovered together; leg execution reads
+only QUOTE/BOOK. No unrelated configured account is included. Both keep3 bounded
+validation rounds, the same3s read budget and8 workers. Caller-owned outer
+transactions may not perform a network refresh; they receive an explicit
+prepared-input requirement instead. Public root entrypoints own rollback/fetch.
+
+Added execution_feed_valid_until_ms after full quality validation: strict event
+expiry unchanged, explicit quiet MARK/INDEX expiry is the minimum session/paired
+component deadline. Custody exposes this separate deadline; original prices and
+event timestamps remain intact. Package uses it instead of expiring a valid quiet
+MARK solely from old event age. No native money/matching formula changed.
+
+Exact prior native_execution/package_admission code reproduces8/8 lock failures
+on real isolated PG: ordinary settlement4 and package4, both venues/shared or
+separate accounts. Receipt settlement-package-lock-red.xml hash
+ e2339d29f27e800b0346f7dd69dde8fc08cdf5cbe66dda91e0f708bb5c0c91a4.
+First candidate42PASS/2FAIL: provenance negatives met a prepared-read request
+before bad pool epoch/digest. Moved all pool provenance checks before read-set
+fetch; did not weaken tests. Concurrent duplicate test now counts bounded
+preparation attempts (2..4), while verifying one durable admission and no new
+reads/builds for already-accepted duplicate. Old single-build assertion was tied
+to network under the serialized lock, not the business idempotency requirement.
+
+Final affected suite205PASS/0FAIL/0ERROR/0SKIP,66.714s, receipt
+settlement-package-final.xml hash
+ e8c70c0d35654a5c9f1b4afbe27b0306619cdf9280555869af94cab4c384214a.
+Includes actual native ordinary/package/PG custody, same/cross-venue package,
+NET/HEDGE and inverse fixtures, native matcher regression, expiry/read-set tests.
+Source feeds are explicitly synthetic. Rebuilt actual PyO3 with bounded offline
+builder; binary hash matches prior tested native exactly:
+b224133aab21d53017abc5b6d79ecc70614b88f84cf31c37b824b9298caaed60.
+
+Additional mid-fetch matrix:12PASS/0skip (4 quiet expiry rechecks +8 new cases),
+11.291s, settlement-package-mid-fetch-fixed.xml hash
+9207e9b68e0e68b70741d4121b103d1a830c6c6c3bb0d2be8aa9b8ce8f57da96.
+A real P05 fill committed during unlocked fetch must appear as fact_count2 and
+position-2 in final admission; instrument active=false during fetch must reject
+with INSTRUMENT_LIFECYCLE and create no package. Both venues/NET/HEDGE covered.
+First mid-fetch attempt10PASS/2FAIL was a test fixture cleanup defect: the metadata
+negative left a shared TEST instrument inactive for the next test. Restore exact
+owned instrument active flag; seed fixture explicitly active. Failed receipt kept.
+No production metadata was read or changed. Do not count the4 repeated quiet cases
+as new unique coverage or interpret these tests as provider execution evidence.
+
+All affected Ruff/diff checks PASS. Four JUnit record_property formatting warnings
+remain in integration receipt, not domain failures. Unit-only preliminary69PASS
+also retained in terminal evidence; final suite contains those predicates.
+
+Cleanup completed: ts-edc1-settlement-pg auto-removed (restart0/OOMfalse,93 isolated
+migrations), ts-edc1-settlement-net removed, all clients --rm, deleted exact old
+source captures and settlement-native-build (368998070 apparent bytes). Build
+output ownership corrected to actualUID1001 before removal. Disk available before
+64295837696B and after64617897984B, with concurrent host writes. No Docker image or
+BuildKit layer built; active, rollback and existing builder images unchanged.
+No shared DB/Redis/Kafka/volumes, runtime, broker, alpha or source worktree cleanup.
+
+ED03 primary ordinary/package entrypoints now have behavioral lock and account /
+metadata revalidation evidence; no production certification yet. ED04 still open:
+MarketTick selected price can borrow another feed's clock; native paper initial
+read still requests compatibility full-context until that model-specific repair.
+ED05 actual queued sender, ED06 contemporaneous provider attribution, ED07 deployed
+SDK/runtime convergence and the affected full no-order matrix/300s remain open.
+Do not call the whole EDC goal complete or issue a release. Next source slice is
+ED04: preserve price/volume/event identity per declared paper fill model without
+changing its strategy or economic algorithm. All evidence under edc1-20261001.
