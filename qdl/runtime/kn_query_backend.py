@@ -306,7 +306,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         usable = quality is not None and quality.state == "LIVE" and quality.complete and not quality.gap_open and (
             not requires_execution or quality.execution_eligible)
         monotonic = self._hot_monotonic(binding, primary)
-        if usable and monotonic:
+        # A live provider session cannot prove that an event-stale cache has
+        # consumed newer canonical records while its projector is unavailable.
+        quiet_primary = bool(requires_execution and usable and quality.event_recency_state == "STALE")
+        if usable and monotonic and not quiet_primary:
             if self._hot_monotonic(binding, primary, record=True):
                 return primary
         # An explicit corrupt/gapped primary is not merely a missing cache update.
@@ -326,6 +329,8 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 return candidate
         if primary_error is not None:
             raise primary_error
+        if quiet_primary:
+            raise _not_ready("HOT_QUIET_PRIMARY_UNVERIFIED")
         if primary is not None and not self._hot_monotonic(binding, primary):
             raise _not_ready("HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND")
         return primary

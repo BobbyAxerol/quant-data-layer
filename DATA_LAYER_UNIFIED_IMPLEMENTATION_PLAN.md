@@ -63247,3 +63247,82 @@ unchanged. Guard thresholds unchanged. New guard evidence file avoids overwritin
 original failure. Isolated topic identity must be discovered and wired consistently
 before mirror/candidate startup. SourceKafka mirror read-only/no commits,1MiB/s,
 900s deadline, isolated destinations only. Exact previous packet scope retained.
+
+
+Rehearsal harness corrections before consumer traffic: checkpoint topic was
+metadata-auto-created during mirror discovery; explicitly verify its onepartition
+configuration. Stream quota prefix corrected to existing stable-format namespace
+on isolatedRedis. Mirror's kn-shadow-mirror- group metadata was denied under
+kn-stream identity; release ACL grants DESCRIBE only on kn-stream-production-.
+Add only kn-stream-production-shadow- to harness allowlist, UUID-isolated manual
+assignment/no commit as before; no newACL/groupjoin/productionoffset change.
+This is harness-source correction, not a productionbinary or freshness change.
+
+
+Paired rehearsal found a real backup-selection gap before production rollout:
+with both projectors paused, then both Stream backups paused, QUOTE ON_CHANGE
+still returned eligible at33311ms event age because provider session wasLIVE.
+That proves provider liveness alone cannot attest cached materialization progress.
+BOOK at33058ms remained inside its declared snapshot freshness bound; do not
+silently change that contract. Narrow fix: execution-grade event-stale/quiet
+primary must be checked against independent canonical hot reader; if verification
+fails, do not reuse quiet primary. Keep original timestamps and quiet policy; a
+verified genuinely quiet canonical record may remain eligible. Add explicit
+selection regression before rollout. All ownedshadow roles stopped/removed;
+TS remains60sessionREADY under unchanged guard, candidatebackupNOTcertified.
+
+
+R2 source suite98PASS; paired restart and backup-only reads recovered with zero
+watermark regression. R3 fault driver refused to pause exited fenced projectors;
+not a valid Kafka fault run. R4 actually paused isolated Kafka12s: quiet QUOTE
+still eligible at11911ms because empty poll renewed reader_progress. This proves
+the new hot-reader liveness witness is insufficient. Fix requires bounded fresh
+broker-head confirmation plus consumed position, not thread activity. No new
+service, no provider timestamp/eligibility relaxation; test broker loss and
+catch-up before any production promotion. R2 primary-return was not proved:
+paused producers were fenced and correctly exited; restart explicitly required.
+
+
+### Canonical Backup Broker-Proof Correction - 2026-10-01
+
+Status SOURCE_TESTED; guarded replacement rehearsal pending. TS prerequisite is
+production-accepted, not a certificate for Data Layer backup. Scope remains
+Query selection and existing Rust Stream reader; no new service/public endpoint,
+no policy/realm/manifest/freshness change and no Data Layer production rollout.
+
+Fixes: quiet execution primary requires canonical verification; Stream must hold
+a positive broker-head observation whose original age is <=1s and whose offset
+has been consumed. Empty poll never renews this proof. One bounded background
+worker reuses the existing Kafka consumer (no new consumer/group), queries each
+partition under a250ms total cycle budget/80ms per-call maximum,500ms cadence;
+shutdown joins it. A newer head still catching up does not erase the last valid
+caught-up proof or extend its timestamp. A new broker confirmation after a
+reader error permits recovery even when the product has no new tick. Ring,
+quality, authority, generation, gap and monotonicity checks remain unchanged.
+
+Tests: Python affected98PASS with isolatedRedis; mirror5PASS/2Kafka cases notrun
+in that command. Rust37unit+35native PASS,3realKafkaPASS (aborted vs committed,
+read-only recovery),clippy all-targetsPASS,optimizedbuildPASS. New regression
+covers missing/expired head,caught-up boundary and quiet recovery after error.
+Two native positive fixtures initially failed because they waited only for
+reader position; now explicitly wait for the new broker-confirmed readiness,
+without changing any negative expectation. Final logs under existing evidence
+root: final2-*-broker-proof.log and broker-proof-final2-tests.json.
+Stream binary sha256c5d01f475b9b4a0ad2fdbd7872d07b9608683fdc7022b2b039b7354cacc01e21.
+
+R2 (before broker-proof correction):2716requests,0watermark regression. QUOTE
+baseline263/263,p50/p99=12.256/38.056ms; MARK263/264,11.684/37.106ms usable;
+BOOK142/142,28.075/65.287ms. Paired restart QUOTE301/301,MARK301/301,BOOK150/150.
+Backup-only QUOTE112/112,p99=36.727ms; MARK115/115,p99=61.475ms. These are real
+SDK call-to-validation shadow samples, NOT TS Redis completion or final-binary
+latency. TRADE refusals retained; one baseline OKXBTC MARK refused at2029ms with
+source authoritative=true. R2 primary-return notcertified after producer fencing.
+R4:988requests,0watermark regression but52QUIET_QUOTE unsafe admissions during
+isolated broker pause; evidence preserved as FAIL, not averaged away.
+Production guard140samples:60/60sessionready minimum,0unexpected runtime change.
+
+Initial build setup failures were missing registry mount/generated Rust files;
+corrected using approved existing builder and qdl-cargo-home registry volume.
+No package download, dependency or lockfile change. Test containers and build
+cache retained only for replacement rehearsal; cleanup and exact provenance
+must be recorded before closure. Stablev2.2.1/active+rollback set unchanged.

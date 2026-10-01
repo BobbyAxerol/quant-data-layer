@@ -63,7 +63,7 @@ PRODUCTION_PROJECT = "qdl_v2_stable_candidate"
 # (`phaseb_bootstrap_stable_broker.py` READ_ONLY_AUDIT_GROUP_PREFIXES; C40's
 # live handoff collector uses `qdl-c40-handoff-`). A unique id under one of
 # them is never joined and never committed. The default is for isolated tests.
-GROUP_PREFIXES = ("kn-shadow-mirror-", "qdl-c40-handoff-")
+GROUP_PREFIXES = ("kn-shadow-mirror-", "qdl-c40-handoff-", "kn-stream-production-shadow-")
 MIRROR_HEADERS = ("qdl-mirror-source-partition", "qdl-mirror-source-offset", "qdl-mirror-source-timestamp")
 PARTITION_EOF = -191  # librdkafka _PARTITION_EOF: informational
 

@@ -168,6 +168,13 @@ impl LiveSource {
 }
 
 impl LogSource for LiveSource {
+    fn broker_heads(&self) -> Vec<(i32, i64, Instant)> {
+        self.positions
+            .keys()
+            .map(|&p| (p, self.log.end(p), Instant::now()))
+            .collect()
+    }
+
     fn poll(&mut self, timeout: Duration) -> Result<Option<RawRecord>, String> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -2656,7 +2663,15 @@ async fn independent_hot_read_auth_identity_generation_and_raw_provenance() {
     original.market = "SWAP".into();
     let offset = h.log.append(0, QUOTE_KEY, &original);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while h.hub.next_offset(0).unwrap() <= offset {
+    while h.hub.next_offset(0).unwrap() <= offset
+        || h.hub
+            .latest_hot(
+                QUOTE_KEY.as_bytes(),
+                "QUOTE",
+                Instant::now() + Duration::from_millis(100),
+            )
+            .is_err()
+    {
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -2753,7 +2768,15 @@ async fn hot_read_real_grpc_framing_keeps_internal_auth_and_public_rpcs_separate
     original.market = "SWAP".into();
     let offset = h.log.append(0, QUOTE_KEY, &original);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while h.hub.next_offset(0).unwrap() <= offset {
+    while h.hub.next_offset(0).unwrap() <= offset
+        || h.hub
+            .latest_hot(
+                QUOTE_KEY.as_bytes(),
+                "QUOTE",
+                Instant::now() + Duration::from_millis(100),
+            )
+            .is_err()
+    {
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(5)).await;
     }

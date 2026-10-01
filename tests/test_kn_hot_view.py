@@ -184,3 +184,40 @@ class HotQuerySelectionTests(unittest.TestCase):
         with self.assertRaises(QueryBackendError) as rejected:self.backend.latest(self.requirement)
         self.assertEqual(rejected.exception.problem.code,CanonicalErrorCode.INTERNAL_ERROR)
         self.assertIn("HOT_BACKUP_LINEAGE_INVALID",str(rejected.exception))
+
+
+    def _quiet_primary(self):
+        # Selection-layer fixture: the separate quality oracle has admitted an
+        # ON_CHANGE quiet session. It cannot prove projector progress.
+        from dataclasses import replace
+        original = self.backend._items
+        def items(requirement, records):
+            values = original(requirement, records)
+            return tuple(replace(item, quality=replace(item.quality,
+                state="LIVE", execution_eligible=True, event_recency_state="STALE",
+                provider_session_state="LIVE", provider_session_liveness_ms=10))
+                if item.quality.freshness_ms > 1000 else item for item in values)
+        self.backend._items = items
+
+    def test_quiet_primary_checks_independent_latest_before_admission(self):
+        self._quiet_primary()
+        item = self.backend.latest(self.requirement)
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(item.quality.freshness_ms, 10)
+
+    def test_quiet_primary_cannot_mask_backup_outage(self):
+        from qdl.query.results import QueryBackendError
+        self._quiet_primary()
+        self.backup = HotViewUnavailable("stopped reader")
+        with self.assertRaisesRegex(QueryBackendError, "HOT_QUIET_PRIMARY_UNVERIFIED"):
+            self.backend.latest(self.requirement)
+
+    def test_verified_quiet_canonical_event_keeps_original_timestamp(self):
+        from qdl.runtime.kn_hot_view import CanonicalHotView
+        from qdl.runtime.kn_market_cache import SourceBoundary
+        self._quiet_primary()
+        self.backup = CanonicalHotView(self.lpk, self.primary.rows, SourceBoundary("topic",0,40))
+        item = self.backend.latest(self.requirement)
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(item.quality.freshness_ms, 10000)
+        self.assertTrue(item.quality.execution_eligible)

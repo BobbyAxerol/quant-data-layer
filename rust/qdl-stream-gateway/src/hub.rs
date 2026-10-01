@@ -91,6 +91,10 @@ pub trait LogSource: Send {
     fn poll(&mut self, timeout: Duration) -> Result<Option<RawRecord>, String>;
     /// `(partition, next offset the source will read)` per assigned partition.
     fn positions(&self) -> Vec<(i32, i64)>;
+    /// Positive broker responses only; an empty poll is not a liveness proof.
+    fn broker_heads(&self) -> Vec<(i32, i64, Instant)> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +195,7 @@ pub struct Hub {
     stop: AtomicBool,
     reader_failed: AtomicBool,
     reader_progress: Mutex<Option<Instant>>,
+    broker_heads: Mutex<HashMap<i32, (i64, Instant)>>,
     /// Records produced before this replica started (the warm range, a
     /// restart backlog) are not live-path lag and stay out of the histogram.
     started_ms: i64,
@@ -228,6 +233,7 @@ impl Hub {
             stop: AtomicBool::new(false),
             reader_failed: AtomicBool::new(true),
             reader_progress: Mutex::new(None),
+            broker_heads: Mutex::new(HashMap::new()),
             started_ms: now_ns() / 1_000_000,
         }
     }
@@ -410,7 +416,10 @@ impl Hub {
                 }
                 newest_scope = Some(scope);
                 if is_product(feed, None, &envelope) {
-                    selected = Some(HotRecord { raw: raw.clone(), boundary_offset: state.next_offset - 1 });
+                    selected = Some(HotRecord {
+                        raw: raw.clone(),
+                        boundary_offset: state.next_offset - 1,
+                    });
                     break;
                 }
                 if !(matches!(feed, "BOOK_SNAPSHOT" | "BOOK_DELTA")
@@ -422,7 +431,21 @@ impl Hub {
             }
         }
         self.check_hot_reader()?;
-        selected.ok_or_else(|| "HOT_RECORD_MISSING".into())
+        let selected = selected.ok_or_else(|| "HOT_RECORD_MISSING".to_owned())?;
+        let heads = self
+            .broker_heads
+            .try_lock()
+            .map_err(|_| "HOT_READER_BUSY")?;
+        let (head, confirmed) = heads
+            .get(&selected.raw.partition)
+            .ok_or("HOT_BROKER_UNCONFIRMED")?;
+        if confirmed.elapsed() > Duration::from_secs(1) {
+            return Err("HOT_BROKER_UNCONFIRMED".into());
+        }
+        if selected.boundary_offset + 1 < *head {
+            return Err("HOT_READER_CATCHING_UP".into());
+        }
+        Ok(selected)
     }
 
     fn check_hot_reader(&self) -> Result<(), String> {
@@ -518,8 +541,10 @@ impl Hub {
         std::thread::Builder::new()
             .name("qdl-kn-live-reader".into())
             .spawn(move || {
+                let mut failed_at: Option<Instant> = None;
                 while !hub.stop.load(Ordering::Relaxed) {
-                    match source.poll(Duration::from_millis(100)) {
+                    let polled = source.poll(Duration::from_millis(100));
+                    match polled {
                         Ok(Some(record)) => {
                             hub.dispatch(record);
                             hub.reader_failed.store(false, Ordering::Release);
@@ -536,9 +561,30 @@ impl Hub {
                             }
                         }
                         Err(_) => {
+                            failed_at = Some(Instant::now());
                             hub.reader_failed.store(true, Ordering::Release);
                             hub.metrics.reader_errors.fetch_add(1, Ordering::Relaxed);
                             std::thread::sleep(Duration::from_millis(100));
+                        }
+                    }
+                    // Keep the last caught-up proof until its original expiry.
+                    // A newer broker head still in flight must not erase it.
+                    let proofs: Vec<_> = source
+                        .broker_heads()
+                        .into_iter()
+                        .filter(|(partition, head, _)| {
+                            hub.next_offset(*partition)
+                                .is_some_and(|position| position >= *head)
+                        })
+                        .collect();
+                    if failed_at.is_some_and(|failed| proofs.iter().any(|(_, _, at)| *at > failed))
+                    {
+                        hub.reader_failed.store(false, Ordering::Release);
+                        failed_at = None;
+                    }
+                    if let Ok(mut heads) = hub.broker_heads.lock() {
+                        for (partition, offset, confirmed) in proofs {
+                            heads.insert(partition, (offset, confirmed));
                         }
                     }
                 }
@@ -575,6 +621,12 @@ mod tests {
     fn healthy(hub: &Hub) {
         hub.reader_failed.store(false, Ordering::Release);
         *hub.reader_progress.lock().unwrap() = Some(Instant::now());
+        for partition in hub.partitions.keys() {
+            hub.broker_heads
+                .lock()
+                .unwrap()
+                .insert(*partition, (0, Instant::now()));
+        }
     }
 
     fn hot_record(
@@ -634,6 +686,73 @@ mod tests {
         assert_eq!(view.boundary_offset, 8);
         assert_eq!(hub.subscriber_count(), 0);
         assert_eq!(latest(&hub, "BAR").unwrap_err(), "HOT_FEED_UNSUPPORTED");
+    }
+
+    #[test]
+    fn hot_read_requires_positive_broker_proof_and_catchup_not_poll_activity() {
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        hub.broker_heads.lock().unwrap().clear();
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
+        hub.broker_heads
+            .lock()
+            .unwrap()
+            .insert(0, (1, Instant::now() - Duration::from_secs(2)));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
+        hub.broker_heads
+            .lock()
+            .unwrap()
+            .insert(0, (2, Instant::now()));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_CATCHING_UP");
+        hub.advance(0, 2);
+        assert_eq!(latest(&hub, "QUOTE").unwrap().raw.offset, 0);
+    }
+
+    #[test]
+    fn quiet_reader_recovers_only_after_broker_confirmation_newer_than_error() {
+        struct Source {
+            failed: bool,
+            proof: Arc<Mutex<Instant>>,
+        }
+        impl LogSource for Source {
+            fn poll(&mut self, _: Duration) -> Result<Option<RawRecord>, String> {
+                if !self.failed {
+                    self.failed = true;
+                    return Err("disconnected".into());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                Ok(None)
+            }
+            fn positions(&self) -> Vec<(i32, i64)> {
+                vec![(0, 1)]
+            }
+            fn broker_heads(&self) -> Vec<(i32, i64, Instant)> {
+                vec![(0, 1, *self.proof.lock().unwrap())]
+            }
+        }
+        let hub = Arc::new(Hub::new(&[(0, 0)], HubConfig::default()));
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        let proof = Arc::new(Mutex::new(Instant::now()));
+        let reader = hub.run(Box::new(Source {
+            failed: false,
+            proof: proof.clone(),
+        }));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !hub.reader_failed.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_UNAVAILABLE");
+        *proof.lock().unwrap() = Instant::now();
+        while hub.reader_failed.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(latest(&hub, "QUOTE").unwrap().raw.offset, 0);
+        hub.stop();
+        reader.join().unwrap();
     }
 
     #[test]
