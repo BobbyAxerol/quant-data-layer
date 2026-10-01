@@ -66080,3 +66080,138 @@ then inspect deployed cache/queued metadata/SDK compatibility and actual runtime
 identity budgets. Synchronized TRADE/component provider attribution and reviewed
 changed-role acceptance still required. Neither this receipt nor the delta receipt
 certifies all EDC requirements, production availability or TS P18.3E money cases.
+
+
+<a id="edc1-execution-dependency-approval"></a>
+### EDC-1 Consolidated Execution Dependency Closure - Approval Addendum
+
+**Latest status: PLAN_REVIEW_PENDING.** This owner request supersedes earlier
+GOAL_RESUMED continuation for further implementation. One existing EDC-1 phase,
+not another phase or rearchitecture. Source receipts remain valid within their
+recorded scope; they do not constitute deployment or release acceptance.
+Owner approves this consolidated scope before further code/runtime work.
+
+Guide: [EDC architecture and invariants](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#execution-data-contract-closure-guide-20261001).
+Inherit [existing implementation and test plan](#edc1-owner-review-freeze),
+ED01-ED10 and their receipts. TS authority remains the upgrade worktree's
+Unified Plan and guide `p18e-critical-path-closure-20260930`; do not use the
+canonical legacy checkout's older journal as proof of upgrade completion.
+
+#### Goal And Review Baseline
+
+Prevent internal Data Layer or consumer integration faults from denying an
+execution intent when its required, authorized data is available. A genuinely
+invalid/missing required price still blocks; no promise that every order executes.
+Data closure must precede resuming missing TS money qualification cases.
+
+Read-only source review: DL813b084, TS upgradefcc5c6d. No runtime benchmark,
+provider attribution or new tests ran in this planning update. Preserved owner
+plan hunks are unrelated. No code/runtime/order/config changes are authorized
+by this documentation commit.
+
+#### Dependency Ledger Required Before Implementation
+
+Every row must identify actual caller, admission/dispatch/matching/valuation
+stage, venue/product/native instrument, required and optional feed, component,
+quantity/price units, metadata version, at-use expiry, identity/realm/manifest,
+quota, writer, cache namespace, SDK and deployed image. Mark source-only paths
+explicitly. Do not infer active settings from an absent environment variable.
+
+| Caller / operation | Data contract and mandatory negative case |
+|---|---|
+| Ordinary Risk and sender, MARKET/LIMIT | Server-owned policy selects QUOTE and derivative MARK as required; stale optional TRADE must not veto an unrelated order. MARKET still needs valuation/liquidity/risk context, not just a closed candle. |
+| Post-only / impact-sensitive | Verified complete BOOK_SNAPSHOT and required QUOTE/MARK, native size units, depth, sequence/generation; raw BOOK_DELTA cannot stand in for a snapshot. |
+| Conditional / OCO / trailing | Explicit LAST/MARK/INDEX and component clock; registration, trigger observation and spawned-child dispatch may have different dependencies. No implicit LAST-to-QUOTE substitution. |
+| Amend / cancel / reduce | Reprice/replacement revalidates required risk data; pure cancel preserves authorization/idempotency without inventing a fresh-price dependency. Reduce/close still follows its actual risk policy. |
+| Native paper matcher | Same BBO/L2 model and declared units as server policy; bounded deferral/recovery, no fabricated volume/fill or permanent rejection solely from a transient read failure. Original intent deadlines remain binding. |
+| Package / hedge / unwind | Every leg plus existing exposure/collateral dependencies; exact identity/feed and proof expiry after waiting for DB locks. One leg failure causes no partial admission mutation. No cross-venue atomicity claim. |
+| Custody / portfolio / valuation | Native contract multiplier, settlement/collateral/conversion and appropriate mark; inverse cannot use linear/USDT proxy. Identify whether each projection is authoritative or reporting-only before touching it. |
+| Alpha signal / history / reference | Existing BAR finality, warmup/batch/maxlen and reference contracts preserved; candles/research metrics do not silently become execution prices. Only affected compatibility checks. |
+
+#### Source Findings And What Is Still Unproven
+
+1. Ordinary typed policy exists in `execution_market_context.py` and sender
+   `market_guard.py`; deployed native/legacy authority and queued proof migration
+   still need verification. `risk_engine/core/checker.py` reads a general context;
+   this is a coverage dependency, not proof every live order uses that path.
+2. `risk_pool/package_market.py::qualify` checks quality and native instrument
+   rows but does not explicitly compare returned context identity, expected feed
+   kind or `execution_read_expiry_ms`. Native event-age checks do not themselves
+   establish the stricter route/read-proof expiry. Add failing regressions before
+   repair; actual runtime reachability must be established separately.
+3. Delta ordering/anchor and paper reader ownership now have tested source
+   receipts (TS7c86f32/fcc5c6d). Do not redo unchanged suites indiscriminately;
+   actual service wiring, old-state compatibility and image rollout remain open.
+4. Portfolio stats is guarded by `LEGACY_PORTFOLIO_STATS_ENABLED` (default false).
+   Performance has a separate mark reader. Trace effective settings and consumers;
+   do not claim active equity corruption or rewrite accounting from source alone.
+5. Historical TRADE/MARK refusals lack a simultaneous provider witness. They
+   remain UNKNOWN. A later healthy read cannot retroactively attribute them.
+
+#### One Phase, Ordered Work And Stop Conditions
+
+A. Freeze the dependency/runtime ledger above, including active competing writers,
+legacy flags and pending metadata pins. No deployment until ownership is explicit.
+B. Reproduce and repair only applicable in-scope data-boundary defects using the
+existing shared typed reader, Rust validation and atomic cache writer. Fetch outside
+DB transactions, revalidate after queue/lock waits and before use. Keep bounded
+concurrency/deadlines and cancellation/join; no new service or per-symbol worker.
+C. Run deterministic affected tests then isolated real Redis/PostgreSQL and actual
+native owner process with sending disabled. Stop on any identity/ordering/expiry
+failure before performance work. No synthetic result is broker/live evidence.
+D. Attribute real current refusals with matched provider ID/component times,
+canonical offset, generation/session, cache watermark and consumer apply. Separate
+quiet market, upstream delay, internal lag and unknown; fix reproducible internal
+faults. Use isolated capture replay for fault/load tests, not production chaos.
+E. Review one closure ledger and changed-role packet. Roll only changed binaries
+or config, verify consumer usable readback before the next role. Then one affected
+300-second no-order acceptance, not another whole-catalogue C2 bug-finding loop.
+F. Owner release decision follows evidence review; CI/feature->dev->main and
+immutable image/SDK/config provenance converge. TS-only changes do not require
+an artificial Data Layer binary release. Resume TS E cases only after data closure.
+
+#### Exact Tests And Reporting
+
+- Both venues, five current liquid symbols and already-declared inverse scope;
+  wrong product/venue/realm/feed, stale required vs optional, LAST/MARK/INDEX,
+  quiet session vs new provider event delayed in pipeline, disconnect/skew/gap.
+- Package wrong identity/feed, expired read proof despite recent event, lock delay,
+  later-leg failure; native metadata/collateral units and no partial reservation.
+- Replay duplicates/conflicts, reset/generation, legacy state adoption, concurrent
+  writer, crash after Redis apply before ACK, lost reply and monotonic watermark.
+- Main/backup/return using genuinely independent read paths within the existing
+  architecture; both invalid must block. Shared Kafka/host is not independent HA.
+- Coalesced same-product recovery, other-product fairness, quota isolation and
+  no external read under DB lock. Cancel and unrelated intents remain unaffected.
+- Reuse unchanged 4000/5000 aggregate event/s evidence; rerun actual adapter-to-Redis
+  captured replay only if modified hot-path behavior invalidates it. Include burst,
+  slow consumer, bounded backlog and recovery, never per-consumer extrapolation.
+- Before runs, record numeric gates from the active contract and operation budgets,
+  with source revision; missing gates require review, not post-result thresholding.
+- Report all affected rows, not successes only: attempt/success/refusal/error counts,
+  request-before-queue -> validated usable, provider event -> Redis apply ACK,
+  cache -> Risk use, recovery -> usable, all in ms. State sample count/window,
+  p50/p95/p99/max; under100 samples report max instead of claiming meaningful p99.
+- Record CPU/throttling/RSS/cap, event rates/backlog, IO and headroom. Session-ready
+  is distinct from execution-eligible. No timestamp renewal or freshness relaxation.
+
+#### Exit, Rollback And Cleanup
+
+Exit requires all applicable ledger rows implemented, tested and proven on the
+intended runtime; no unresolved current internal data refusal, unchecked writer,
+identity mismatch or backwards state. Legitimate provider absence is classified,
+not hidden. Keep historic failures and inherited certificates linked by predicate.
+
+Packet includes exact roles/digests/config/SDK/manifest revisions, activation order,
+old-writer quiescence, state/schema compatibility and per-role rollback. Do not
+roll the unfinished native TS upgrade wholesale into shared legacy. No offsets
+reset, cache flush, shared DB deletion, alpha activation or order authorization.
+
+After each test slice remove owned clients/networks/rows; after runtime acceptance
+retain active plus explicitly named rollback artifacts only within approved scope.
+Inventory disk before/after, runtime restarts and source/worktrees. No broad prune,
+no deletion of unmerged work or shared evidence. This planning pass creates no
+test artifacts, so cleanup is intentionally unnecessary.
+
+Stop here for owner review. No implementation, build, rollout, push, merge or
+release in this planning task. Publication readiness is NOT asserted.
