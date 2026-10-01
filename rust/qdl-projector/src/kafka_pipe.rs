@@ -9,6 +9,7 @@
 //! transactional id is fixed per replica: `init_transactions` fences any older
 //! instance still holding it.
 
+use crate::handoff::HandoffContext;
 use crate::stage_a::{InputRecord, OutputRecord, Pipe, PipeError};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer};
@@ -52,7 +53,7 @@ impl KafkaPipeSettings {
 
 pub struct KafkaPipe {
     settings: KafkaPipeSettings,
-    consumer: BaseConsumer,
+    consumer: BaseConsumer<HandoffContext>,
     producer: ThreadedProducer<DefaultProducerContext>,
     transaction_deadline: Option<Instant>,
 }
@@ -114,7 +115,7 @@ fn retry_transaction(
 
 impl KafkaPipe {
     pub fn open(settings: KafkaPipeSettings) -> Result<Self, String> {
-        let consumer: BaseConsumer = settings
+        let consumer: BaseConsumer<HandoffContext> = settings
             .base()
             .set("group.id", &settings.group_id)
             .set("isolation.level", "read_committed")
@@ -123,8 +124,9 @@ impl KafkaPipe {
             .set("auto.offset.reset", "earliest")
             .set("enable.partition.eof", "false")
             .set("partition.assignment.strategy", "cooperative-sticky")
+            .set("heartbeat.interval.ms", "500")
             .set("queued.max.messages.kbytes", "16384")
-            .create()
+            .create_with_context(HandoffContext::new("stage_a", settings.client_id.clone()))
             .map_err(|error| format!("stage A consumer: {error}"))?;
         consumer
             .subscribe(&[&settings.input_topic])
@@ -153,7 +155,7 @@ impl KafkaPipe {
         })
     }
 
-    pub fn consumer(&self) -> &BaseConsumer {
+    pub fn consumer(&self) -> &BaseConsumer<HandoffContext> {
         &self.consumer
     }
 }
@@ -332,7 +334,7 @@ mod recovery_tests {
         let consumer = settings
             .base()
             .set("group.id", "test-only")
-            .create()
+            .create_with_context(HandoffContext::new("stage_a", "test-only".into()))
             .unwrap();
         let producer = settings
             .base()

@@ -62659,3 +62659,92 @@ worktree. Published `v2.2.1` unchanged; this candidate is not a newly published
 release. No push/merge/tag performed. Owner's two unrelated plan edits preserved.
 Next permitted step: review scoped receipt and decide the normal patch-release
 path (feature -> dev CI -> main/tag); do not restart whole-catalogue acceptance.
+
+
+##### Approved Narrow Projector Handoff Follow-Up - 2026-10-01
+
+Status: **IN_PROGRESS**. Owner approved optimizing existing handoff before release.
+Guide: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md` section 18,
+K5-T03/K5-T05/K5-T07; extends the scoped recovery receipt above, not a new phase.
+Goal: attribute ownership loss -> assignment -> cache apply -> consumer usable,
+separating observer heartbeat delay from outage. Preserve committed offsets,
+transaction/owner fences, original timestamps and execution freshness. No new
+service, feed substitution, quota/buffer increase or architecture change.
+
+Read-only finding: projector binary has no SIGTERM/SIGINT handler; task loops never
+drain. Current containers have init=true and stop_timeout=45s. Kafka group consumers
+use cooperative-sticky but no explicit session timeout. Missing graceful group
+leave is a concrete defect; its contribution to historical 60-73s is not yet measured.
+Implement bounded cooperative shutdown between atomic steps with interruptible
+maintenance sleeps, thread drain, and explicit transition evidence. Never report
+successful shutdown when workers have not terminated. No production change until
+isolated tests pass; retain active 0f6876e16e51 as rollback for any subsequent
+projector-only rollout. No ingestion/core/reader/TS/order changes in this follow-up.
+
+Tests: shutdown during idle/in-flight/maintenance, bounded timeout, real Kafka group
+handoff and cache watermark continuity, authentic capture replay, per-feed consumer
+eligibility during restart. Freeze budgets before experiment, preserve failures.
+No whole-catalogue C2 rerun. Fallback may only use an entitled equivalent product,
+with independent freshness/lineage verification; fallback implementation is not
+silently included. Universal zero rejection during all source outages is not a
+safe or testable promise. Cleanup owned test artifacts and journal all evidence.
+
+
+Handoff slice progress: added SIGTERM/SIGINT cooperative stop, interruptible
+maintenance waits, 40s failed-drain bound under existing Docker 45s grace,
+rebalance callbacks and first post-assignment cache-apply evidence. Unit precursor
+28/28 passed; later instrumentation initially failed one test-only consumer generic
+and was corrected (no runtime mutation). Real isolated Kafka graceful leave test
+PASS: 84 exact synthetic test records, leave 134ms, first peer commit 347ms,
+catch-up 4243ms. Assignment callback shows approximately 3s wait after leave;
+not a consumer freshness PASS and not authentic market-price acceptance.
+
+Next measured experiment: reduce only projector group heartbeat from library
+3000ms default to 500ms; retain session timeout 45000ms, cooperative assignment,
+transaction deadline and all freshness limits. This adds bounded control traffic
+for four group clients, not data buffering. Compare the same isolated handoff test;
+retain the 15s safety test budget, report actual values without calling that budget
+an execution SLA. No production heartbeat change before affected-path acceptance.
+
+
+Handoff source slice tested, not runtime-certified:
+- `cargo test --offline --locked -p qdl-projector --lib --bin qdl-projector`:
+  30 PASS. Includes interruptible maintenance, finish admitted work without a
+  next step, bounded unsuccessful drain retaining worker handles, and panic refusal.
+- `cargo clippy --offline --locked -p qdl-projector --lib --bins -- -D warnings`: PASS.
+- `stage_a_kafka --ignored --skip captured_frames_recover --test-threads=1`:
+  7 PASS. Existing transaction/fencing/ACK-loss coverage plus new real-broker
+  member leave and executable SIGTERM/SIGINT restart tests. One prior broker
+  outage test deliberately excluded here, not silently skipped or re-certified.
+- `stage_b_kafka --ignored --test-threads=1`: 3 PASS, including cache loss and
+  owner takeover. All resources isolated, no production mutation.
+- Final 500ms-heartbeat leave test: leave 157ms, first peer commit 364ms,
+  catch-up 2621ms for 84 exact synthetic test records (test batches of three).
+  This is NOT a 2s freshness PASS and not a live load benchmark. Initial baseline
+  with 3000ms heartbeat was 4243ms; initial 500ms trial 2755ms. All retained here,
+  not a statistically established p99 improvement. No provider freshness relaxed.
+- Executable tests use six authentic captured latest products without timestamp
+  edits: both SIGTERM/SIGINT drained in 2300ms on final run, restart cache bytes and
+  source coordinates match. First focused run was 331ms / 2289ms. Captures are
+  historical, so this proves integrity and real process shutdown, not live eligibility.
+- Two test-code compile failures (context generic and signal argument type) were
+  fixed before final gates. No failed result is presented as runtime acceptance.
+
+Receipt/logs: `/home/bobby/.local/state/qdl-v2/projector-handoff-20261001/`.
+Cleanup removed both isolated broker/cache containers, their test storage/network,
+all disposable clients and 1,197,921,170 bytes of target artifacts. No image built,
+no BuildKit build/cache created; existing active/rollback images retained. Disk
+before/after captured in that evidence directory. No production restart, config,
+quota, freshness, manifest, identity or order change. Three prior candidate roles
+still use 0f6876e16e51, restart 0/OOM false; other operational identities unchanged.
+
+**Status remains IN_PROGRESS / SOURCE_TESTED_HANDOFF_ACCEPTANCE_INCOMPLETE**.
+Remaining implementation/acceptance, not an approval gate: paired restart under
+continuous authentic capture, ownership -> assignment -> apply -> exact consumer
+usable measurements, and per-feed refusal attribution. Do not promote based on
+this client-level 15s safety test budget or call it a zero-downtime release.
+Only after that affected-path gate may projector-only runtime rollout proceed.
+No alternate endpoint/fallback was introduced: equivalence requires same venue,
+instrument, units and approved execution semantics, fresh independent lineage,
+visible failover and watermark fencing. TRADE, QUOTE, MARK and INDEX are not
+interchangeable by default; Risk remains the admission authority.

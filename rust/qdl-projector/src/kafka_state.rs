@@ -13,6 +13,7 @@
 //! error, never a silent jump. `read_committed`, no auto-commit; group
 //! offsets are committed asynchronously for lag monitoring only.
 
+use crate::handoff::HandoffContext;
 use crate::stage_b::{PartitionReader, StateInput, StateSource};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer};
@@ -99,21 +100,26 @@ pub fn collect(
 }
 
 pub struct KafkaStateSource {
-    group: BaseConsumer,
+    group: BaseConsumer<HandoffContext>,
     data: BaseConsumer,
     /// Partitions the data consumer currently reads.
     reading: BTreeSet<(String, i32)>,
 }
 
 impl KafkaStateSource {
+    pub fn assignment_sequence(&self) -> u64 {
+        self.group.context().generation()
+    }
+
     pub fn open(settings: &KafkaStateSettings) -> Result<Self, String> {
-        let group: BaseConsumer = base(settings)
+        let group: BaseConsumer<HandoffContext> = base(settings)
             .set("client.id", &settings.client_id)
             .set("group.id", &settings.group_id)
             .set("auto.offset.reset", "earliest")
             .set("partition.assignment.strategy", "cooperative-sticky")
+            .set("heartbeat.interval.ms", "500")
             .set("queued.max.messages.kbytes", "1024")
-            .create()
+            .create_with_context(HandoffContext::new("stage_b", settings.client_id.clone()))
             .map_err(|error| format!("stage B group consumer: {error}"))?;
         let topics: Vec<&str> = settings.topics.iter().map(String::as_str).collect();
         group
