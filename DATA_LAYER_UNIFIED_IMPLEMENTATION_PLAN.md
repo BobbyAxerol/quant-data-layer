@@ -63501,12 +63501,10 @@ with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecutio
 <a id="execution-data-contract-closure-20261001"></a>
 ## EDC-1 - Execution Data Contract Closure (2026-10-01)
 
-**Latest review boundary: CONSOLIDATED_PLAN_REVIEW / NO_NEW_RUNTIME_ACTION.**
-The latest owner request is to inspect TS core/execution dependencies, consolidate
-the one-phase repair plan, and obtain approval before further implementation.
-Preserve previously approved source work and its evidence; it is not certified.
-The historical resumed goal and implementation receipts below remain unchanged.
-Deployment/release still requires the reviewed changed-role packet.
+**Latest decision: IN_PROGRESS / OWNER_RESUMED_GOAL.** Continue the complete
+EDC-1 ledger under the resumed user goal. The consolidated review checkpoint
+remains historical. Source tests are not runtime certification; deployment and
+release still require the reviewed changed-role packet.
 Earlier planning and implementation receipts remain historical evidence.
 
 **Historical implementation status: IN_PROGRESS / OWNER_APPROVED 2026-10-01.** This is ONE bounded repair phase,
@@ -64323,3 +64321,47 @@ Current verdict: NOT_READY_FOR_RELEASE. Previously tested changes are useful but
 not the complete closure. This review cannot promise absence of all future bugs;
 it closes known cross-boundary defects and demands adverse-case evidence before
 TS qualification resumes. No new latency or runtime health claim is made here.
+
+
+#### EDC Resumed / Native Custody Slice Closure (Source Only)
+
+The active user goal resumed implementation after the consolidated plan review;
+the review checkpoint is historical, not a new source blocker. Runtime/release
+still requires the reviewed changed-role packet. Previous turn progressed the
+plan; this turn completes and commits the preserved native custody slice.
+
+Final Rust custody suite:9PASS/0FAIL/0ignored,78 filtered, rustc1.84.1 offline
+builder. Corrected inverse fixture uses ETH collateral, not USDT. Rebuilt PyO3
+successfully; binary SHA256 remains exactly
+b224133aab21d53017abc5b6d79ecc70614b88f84cf31c37b824b9298caaed60,
+identical to the binary used for44PASS real isolated PG15.18/Redis tests. Thus
+44 tests are inherited unchanged, not rerun to manufacture another green window.
+Test DB had93 applied migration ledger rows. All data/proofs synthetic test-only;
+no provider or sandbox order evidence claimed. Red4FAIL retained, hash
+2ae168b85079008ded7a1e2c64bfc9729897b40818374155400ebdc0945217cd;
+green44PASS/0skip receipt hash
+343c182a8071bc603913b62b66ecb06d76def7051b2f4a49a5ebbfbbdf4ef041.
+Evidence: ~/.local/state/qdl-v2/edc1-20261001/evidence/native-custody-final-artifacts.json
+and native-custody-pg-{red,green}.xml. Strict global Clippy still reports the ten
+previously documented untouched warnings; no claim of a globally clean lint.
+
+Native optional position.market_evidence validates identity/price, original
+clock, policy/lineage, generation, session and both component ages. Valuation
+receives the original price/time unchanged. No money formula or accounting change.
+Reader-before-producer compatibility requirement remains mandatory for deployment.
+
+Cleanup: stopped/auto-removed only ts-edc1-custody-pg and ts-edc1-custody-redis,
+removed only ts-edc1-custody-net and native-custody-build (677757879 apparent bytes).
+Both test services had restart0/OOMfalse. No new image or BuildKit build created;
+existing builder/test images and production/rollback images retained. Initial
+host deletion failed on root-owned build output; a first ownership correction
+used wrong UID1000, corrected to actual1001, then exact-path removal succeeded.
+Disk available before cleanup66712784896B, after66993524736B; host writes continued,
+so do not equate this net delta with exact reclaimed bytes. Test containers now0.
+No shared volumes, source worktrees, Kafka, production DB/Redis or runtime changed.
+
+ED01/ED08 native quiet-proof boundary tested locally, NOT full EDC closure.
+ED03 read-set/locks, ED04 paper provenance, ED05 real deferred sender boundary,
+provider attribution and full affected no-order matrix/final300s remain pending.
+Next work: reproduce and fix required-feed selection and network reads under
+account locks, preserving portfolio requirements and atomic admission versions.
