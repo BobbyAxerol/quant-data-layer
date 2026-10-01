@@ -66215,3 +66215,72 @@ test artifacts, so cleanup is intentionally unnecessary.
 
 Stop here for owner review. No implementation, build, rollout, push, merge or
 release in this planning task. Publication readiness is NOT asserted.
+
+
+#### EDC-1 Resumed - Package Data Boundary Regression
+
+Owner goal continuation resumes the consolidated EDC-1 scope. Status IN_PROGRESS;
+prior approval hold is historical. Narrow current slice: reproduce package context
+identity/feed/read-expiry omissions on isolated PostgreSQL for Binance/OKX, then
+use shared validation without changing native price/size/accounting logic. Verify
+rejection leaves no package/reservation mutation and valid paths remain compatible.
+Use existing test image, tmpfs isolated PG, no sender/provider/runtime mutation.
+Cleanup exact test container/network; rollback is source revert only. Runtime
+activation and full closure remain gated by the consolidated packet/evidence.
+
+
+#### EDC-1 Package Boundary - Tested Source And Native PG Receipt
+
+Reproduced eight failing tests on pre-fix source: wrong context product, QUOTE
+labelled TRADE, BOOK_SNAPSHOT labelled BOOK_DELTA and expired read-proof were
+accepted on both Binance/OKX. This proves an internal admission-boundary defect
+with controlled inputs, not that a bad live order was sent.
+
+Package qualification now compares all four canonical identity fields, requires
+exact QUOTE/BOOK_SNAPSHOT kinds, applies existing shared quality/expiry validation
+at use, and propagates the minimum feed/read proof expiry into native Risk's
+existing decision context. Native price/quantity/collateral math is unchanged.
+Unrelated expired TRADE does not veto this QUOTE/BOOK package. Existing idempotent
+accepted-result behavior remains; no duplicated reservation or sender activation.
+
+Tests: real isolated PG15 with93 migrations and synthetic provider fixtures,
+existing test image3b4ee780f2d4, current Rust PyO3 rebuilt offline in retained
+standard builder (stable toolchain,1job,2CPU/2GiB,1m45s; no image build).
+66PASS/0FAIL/0SKIP in33.649s for test_edc_package_readset.py and
+ test_p14_paper_admission_context.py. Includes16 negative identity/feed/expiry
+cases,2 positive strict-proof deadline cases, existing cross-account/admission/
+quiet-mark/revalidation/idempotency/rollback tests. Shared validator21/21PASS
+in0.991s. Ruff and TS diff-check clean.
+
+Evidence directory: ~/.local/state/qdl-v2/edc1-20261001/evidence/.
+package-boundary-red.xml (8/8 expected failures) SHA256
+ d29506c69f65943c4b6b5580d8290f950156dd60c3e2113624f3a10a6f941baa.
+package-boundary-native-final.xml SHA256
+ d72621d381e5526d704edfbe478b6b089f5440cfd6e4d7015c5454a0a9e56cce.
+package-shared-validator.xml SHA256
+ 3760d7414a3f01240c0d3959b85d8dda0aa7e26d4205cdba77cd88a9a4bcabbf.
+Native extension SHA256
+ 084c77d66f124088ba5ea8f980012b27352cb46688c55b0c8acb6328ccc8e6a7.
+
+Initial wider run retained as package-boundary-green.xml despite its historical
+filename:50PASS/6FAIL, NOT green. Four failures were old image native extension
+rejecting current quiet-custody contract; two expected-error assertions needed
+exact EXECUTION_CONTEXT_STALE because the new shared boundary rejects earlier.
+Final run mounts freshly built extension and passes all66. No weakened contract.
+
+Cleanup: removed exact ts-edc1-settlement-pg (restart0/OOMfalse), internal
+ ts-edc1-package-net and656975064B scratch /tmp/edc1-package-native. Host removal
+first hit root-owned build files; scoped no-network helper removed only scratch.
+All clients --rm, no named volumes/images/BuildKit layers created. Available disk
+76885823488B during work ->77005729792B after; not attributable savings because
+host writes are concurrent. Docker inventory85images/29active25.18GB and
+422BuildKitentries/29active16.53GB retained; no broad prune. Existing production
+market_data_service c1f713a8b13e remains restart0/OOMfalse, no rollout or mutation.
+
+EDC-1 remains IN_PROGRESS. Source integration is not runtime/certificate proof.
+Next: verify effective legacy/native Risk, package/portfolio authority and runtime
+identity/cache/SDK adoption, synchronized provider attribution, then reviewed
+changed-role rollout/affected acceptance. No current provider latency claim,
+no order, push/merge/tag/release, no closure of TS P18.3E money cases.
+
+TS source receipt committed as35c5e87 on feat/v2-rust-first-okx-demo; clean worktree, no push.
