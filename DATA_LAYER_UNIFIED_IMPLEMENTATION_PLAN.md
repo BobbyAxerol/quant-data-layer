@@ -65430,3 +65430,49 @@ Cleanup removed only ts-edc1-projector-redis/network; DB15size0, restart0/OOMfal
 all clients--rm. Disk available71206694912B before,71235538944B after (shared host
 activity; no attributable savings). No images/build/volumes created, no active or
 rollback removal, no runtime mutation/push/merge/release. Goal remains active.
+
+
+#### ED09 Snapshot Worker Adoption - Implementation
+
+Wire snapshot workers under the existing resume_committed_cursor contract to
+ordered projector writes and authoritative read-back before READY. Stamp snapshot
+provenance only in the facade after successful validated Query/reference response.
+Read-back verifies marker/value digest and typed quality at use; missing/expired
+cache is not success. One write/read budget is bounded by poll cadence and route
+freshness, without changing those policies. Preserve legacy non-resume behavior.
+Unmarked legacy cache remains explicit adoption-required; deployment must resolve
+that migration before activating the new writer. No runtime change in this slice.
+
+
+ED09 snapshot worker wired in SOURCE under existing resume_committed_cursor mode.
+Facade latest_execution_feed now stamps state_refresh only after validated Query
+or reference result. Worker uses ordered projector and authoritative read-back
+before READY; a no-write stale response cannot become its last_valid view.
+Read-back checks schema/identity/marker/digest/order evidence and Risk at-use
+eligibility. Operation deadline bounded by current refresh cadence and route
+freshness; no policy widened. Legacy non-resume path remains unchanged.
+
+Actual worker review found hard source errors only changed health while cached
+price remained. Ordered worker now exact-view invalidates on explicit gap/fence
+or transport disconnect. Test confirms cache removal plus retained fence; invalid
+old view cannot delete a newer owner view. No new canonical record or fake event.
+Source typed wrapper supports current BOOK_SNAPSHOT/reference, not raw BOOK_DELTA.
+
+Final295PASS/0FAIL/0SKIP,4.941s (65actual isolated Redis cases plus230bridge/facade
+unit cases), execution-worker-final2.xml SHA256
+45405675ae7e9f706b0c9e2addb5526d142596e0765249e3d76cb7863b402916.
+Actual Redis+worker tests cover Query behind newer cache, reference apply/readback
+on Binance/OKX, missing/expired/tampered/unmarked cache and gap/disconnect.
+Earlier293pass retained separately before adding2hard-error cases. TEST_ONLY
+provider-shaped inputs; no actual provider/native-process/runtime certificate.
+New modules/tests lint clean after import sort; whitespace clean.
+
+Remaining BEFORE rollout: unmarked legacy cache adoption, worker restart/reset
+when last_valid is absent, BOOK_DELTA ownership/reset integration, quiet prior-view
+retention must use full proof rather than only aggregate event age, bounded
+coalesced Risk recovery and actual native/consumer acceptance. Current source is
+not a deployable closure merely because these selected tests pass.
+Cleaned exact ts-edc1-worker-redis/net after both runs; DB15size0, restart0/OOMfalse.
+Latest disk available71449616384B before,71348006912B after; shared host activity,
+no savings claim. No image/build/volume created; runtime/rollback unchanged.
+No push/merge/release/order action. Owner plan hunks preserved; goal active.
