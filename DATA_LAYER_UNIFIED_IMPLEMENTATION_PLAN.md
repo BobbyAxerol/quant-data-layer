@@ -63397,3 +63397,96 @@ or modifying those env files; DockerCompose render and exact mounts/caps verifie
 No credentials printed/committed. Metadata/quorum and actual health must be read
 before rolling; final consumer observation and cleanup receipt follow, NOT C2
 or a full catalogue rerun. No remote push/merge/tag/published release yet.
+
+
+### Hot Backup Production Roll - 2026-10-01
+
+Six approved roles now use c8015ca component images; no other Data Layer role,
+config/binding/offset/state or TS service was recreated. Pre/post each step checked
+projector progress, TS session readiness, quorum follower lag0 and no under-ISR.
+Private mTLS RPC positive reads on BOTH Streams before enabling Query. Probe
+initially selected inactive Spot bindings and correctly gotHOT_RECORD_MISSING;
+fixed test selection to approvedUSD-M/Swap, no manifest change.
+Projector2/1 application checks took65.987/65.221s. This includes waiting for fresh
+heartbeat/progress and admin checks; it is NOT per-feed data outage. Final300s
+consumer observation pending; do not declare zero-downtime or release closure.
+
+Measurement incident: simultaneous snapshot+reference probes reused production
+TS identity and exhausted its existing quota; snapshot probe stopped on first
+RATE_LIMITED. TS reported43/60 session-ready transiently with typedRATE_LIMITED,
+then recovered60/60 after probes ended. This is an operator/harness interference,
+not evidence of provider failure or reason to raise quota. Failed window retained
+as production-hot-rolling.jsonl; final observer is separate, finalSDK probe paced
+at <=1.33calls/s and not overlapped with reference probe. No threshold relaxation.
+Reference actualTS adapter read40/40 MARK/INDEX usable through two replicas during
+projector rollout. Query2preflight40/40 quote/book/mark/delta usable,TRADE7/10;
+trade eligibility refusals retained, no unsupported quiet-market attribution.
+
+Cleanup approved exact ownedpaths target/run/package and superseded a957ae2 test
+images, after confirming no container references/mounts. Keep c8015ca activeimage
+set, exact prior per-role rollback images, TS active/rollback, existing unrelated
+operational images and bounded evidence. No volume/globalprune. Pre-clean disk:
+236201295872used/74693341184available bytes. Owned target3067514017,
+run698400621,package44309030bytes. BuildKit cleanup only attributable unusedrecords.
+
+
+### Hot Backup Production Acceptance And Cleanup
+
+Status NARROW_RUNTIME_ACCEPTED_WITH_LIMITS. Not FULL, notzero-downtime, no newtag.
+Canonical sourcec8015ca and exact componentdigests in packet44f899f now deployed
+on exactlytwoQuery,twoStream,twoProjector. Scopeaudit18containers: six approved
+changes, zerounexpected; allsixrestart0/OOMfalse, Queryhealthy. No Kafka/topology/
+offset/Redis/configbinding/TLS/realm/order/alpha/core/ingestor/BAR mutations.
+TS staysc1f713a8b13e fromsource9160e5a. Publishedreleasev2.2.1 unchanged.
+
+Final realconsumer300s:297samples,299.152s sample-span,60/60sessionREADY throughout,
+execution47..50/60,0REPORT_EXPIRED,0cachemissing,0cachewatermarkregression.
+SDKsnapshot400requests across100(product,replica) combinations; max1.33req/s added.
+QUOTE80/80,p50/p95/max11.795/33.185/102.953ms;
+MARK_INDEX80/80,11.617/41.210/86.281ms;
+BOOK_SNAPSHOT80/80,27.410/45.595/70.600ms;
+BOOK_DELTA80/80,14.584/40.168/94.004ms;
+TRADE74/80,12.087/35.132/48.129ms forsuccessfulreads.
+No p99 (<100successsamples/feed),0SDKwatermarkregression. These measure actual
+market_data_service -> Query -> SDKexecutionvalidation, NOT event->Rediscommit.
+TRADE6refusals:5OKXBNB,1OKXDOGE; exactqualityLIVE/sessionLIVE/complete/nogap,
+eventSTALE,executionfalse,ages3817..20710ms. No simultaneousprovidercapture, so
+no claim every refusal isquietmarket orpipelinebug. Do not promote lasttrade
+into executableprice or substituteQUOTE silently.
+
+Actual TSreference:40/40MARK_INDEXusable onbothreplicas duringrolling,20/20before
+firstrecreatedprojector's firstcacheapply. Roll->assignment45.686/45.425s;
+assignment->firstcacheapply499/569ms. Exact oldownership-loss timestamp isnot
+captured (oldcontainerlog removed); rollstart isnot mislabelled asrevocation.
+Reference sampling starts30.478s afterrollstart, not a recoverylatency measurement.
+InheritedisolatedR5paired/fault/return andR7five-symbol evidence retained; nofault
+injection againstproductionKafka/cache. No claimofcompletecontinuousavailability.
+
+Rollingmeasurementfailure retained:30sample-seconds TSsession43/60 due totyped
+RATE_LIMITED while parallelprobes shareditsquota. This isourharnessinterference;
+removedprobeoverlap/pacedmeasurement, noquota/freshnesschange. Finalcleanwindow
+is acceptanceafterrecovery, noteraserforfailedrollingwindow. Operationalrule:
+neverrunprobes concurrently usingproductionidentity unless sparequota ismeasured.
+
+12boundedresourcesamples (notburst/capacitycertification): QueryfinalRAM148/324MiB
+ofexisting1.5GiB caps, Stream103/107MiB of512MiB, Projector85/98MiB of512MiB.
+SamplemaxCPU peronecore:Query37.26/72.82%,Stream8.61/24.36%,Projector17.17/16.84%.
+Noresourcecap increased. No newservice, per-symbolworker or permanentimagefamily.
+
+Receiptroot ~/.local/state/qdl-v2/canonical-hot-backup-20261001/evidence/:
+production-acceptance-summary.json, production-final-{observe,sdk}.jsonl,
+production-reference-rolling.jsonl, production-handoff-timeline.json,
+runtime-scope-verification.json, production-resources.jsonl, per-roleboundedlogs.
+Rollbackprivatepacket ~/.local/state/qdl-v2/releases/v2.2.1-c8015ca-hot-backup/;
+Queryb40b49c361c7,Stream65918a656dcb,Projector0f6876e16e51,TSf0e065b0c21b.
+
+Cleaned allownedshadowcontainers/network, disposabletarget/run/package
+(3810223668bytes logicaltotal), supersededimages88c973349c75/0d3fc8450135,
+14exactownedunusedBuildKitrecords. No volume/broadprune. Diskused
+236201295872->232755421184bytes (~3.45GB decrease; concurrenthostactivity applies).
+Active+explicitrollback retained; evidence/hash-pinnedbinaries retained. Existing
+unrelated TS/Portalworktrees anduserchanges untouched. DLsinglecanonicalworktree
+/home/bobby/data_layer branchfix/execution-view-diagnostics; TS canonical
+/home/bobby/trading_system branchfix/dev-consumer-recovery-integration.
+No push/merge/release; nextpermittedreleaseworkflow isfeature->dev->CI->main/tag
+with exactartifactattestation. No automaticresumeofTSupgrade/alpha/orderexecution.

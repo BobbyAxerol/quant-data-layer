@@ -3082,3 +3082,23 @@ Observe actual consumer usable data, requests/refusals and resource overhead;
 unit/in-process/loopback evidence alone cannot certify execution continuity.
 Roll only tested changed existing roles, preserve per-role image/config rollback,
 no offsets/reset/cache deletion. Clean isolated resources and record exact receipt.
+
+
+#### Broker-confirmed quiet reads and production receipt
+
+A quiet eligible cache view requires independent canonical verification: provider
+session liveness alone does not prove projector progress. The Stream reuses its
+existing Kafka consumer for bounded background positive broker-head confirmation;
+proof age <=1s, consumed head required,250ms cycle budget/80ms call maximum,
+500ms cadence. Empty poll never renews proof. A newer in-flight head does not
+extend the previous caught-up proof. Loss of broker proof fails closed even if
+provider heartbeats continue. Retain newest valid-lineage ineligible quality for
+SDK rejection; do not hide it behind an older primary. This is not a timestamp
+refresh or an alternative execution policy.
+
+Runtime c8015ca six-role rollout2026-10-01 and accepted TS readiness9160e5a are
+recorded in Unified Plan under Hot Backup Production Acceptance And Cleanup.
+Final300s session60/60, no cache/watermark/report-expiry errors; six TRADE snapshot
+eligibility refusals retained. The rolling quota-probe interference is separately
+recorded and rules out a zero-downtime claim. Same-host backup is not independent
+HA. Published release remainsv2.2.1; newsource/images await remote release workflow.
