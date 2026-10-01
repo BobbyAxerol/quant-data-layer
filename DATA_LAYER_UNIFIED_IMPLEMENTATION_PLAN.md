@@ -62243,3 +62243,132 @@ no futurephase or freshC2 isrequired. Releasecode and imagecomponents remain
 immutable; docs commits do notcause redundantimage rebuilds.
 TS E work isnotresumed automatically. Handoff permits using measuredbindings
 under unchangedpolicy; it does not grant brokerorder authority orcertify TS E09.
+
+<a id="execution-view-diagnostics-20261001"></a>
+### Execution View Diagnostics And Targeted Closure (2026-10-01)
+
+Status: IN_PROGRESS. Owner approved bounded correctness/latency repair; branch fix/execution-view-diagnostics from dev (same tree as v2.2.1 main). Guide: upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md section 18; execution-readiness convergence above. Preserve owner plan edits.
+
+Scope: compare generic snapshot and real TS MARK reference-batch under TS identity on both replicas; preserve exact refusal diagnostics, component timestamps, session, generation and watermark. Attribute BNB/DOGE with BTC/ETH/SOL controls via provider/canonical/cache. Session LIVE alone does not prove quiet TRADE. Fix reproduced shared defects only, no symbol bypass, timestamp refresh from duplicates, buffer enlargement or cross-feed substitution. Unused feeds must not block unrelated orders.
+
+Gates: targeted quiet/stale/component/disconnect/generation/replay regressions, fast matrix, then one 300-second consumer no-order acceptance and bounded quiet-cadence observation. Separate request-to-usable, event-to-apply and recovery; distinguish legitimate refusal from false rejection. Do not overwrite previous 124/128 or 20/20 evidence. Exit requires no unsafe acceptance or unexplained affected-scope refusal, replica correctness and bounded recovery, not always-usable TRADE or zero-slippage promises.
+
+Rollback/release/cleanup: freeze exact roles and digest rollback before any rollout. No V1, Kafka offsets/topology, Redis flush, state deletion, alpha activation or order mutation. Publish a patch only when runtime source requires it; do not alter v2.2.1 certificate. Remove task-created disposable resources, inventory disk/active/rollback, no broad prune. Entry runtime verified: five Rust roles 658a9570..., two Query b40b49c..., unchanged. Final-publication.json under execution-readiness-20260930/evidence remains publication authority.
+
+Tool note: apply_patch helper failed twice with bubblewrap mountinfo error, including elevated wrapper. Exact checked append fallback used per workspace rule 32.
+
+#### Diagnostic Slice 1 - Actual Consumer Path And Provider Attribution
+
+Evidence root: `~/.local/state/qdl-v2/execution-view-diagnostics-20261001/`.
+Added reusable `scripts/execution_view_diagnostics.py`: real TS binding/client,
+paired snapshot/reference reads, exact rejected-view diagnostics, existing TS
+converter, separate public WS observer. No stream ACK/order/runtime mutation.
+Initial 120 reads: 40/40 execution MARK reference usable, seven stale TRADE
+refusals. Longer first capture was NOT acceptance: repeated resolve plus reads
+contended for shared identity quota (95 RATE_LIMITED), and legacy Binance WS URL
+connected without data. Corrected probe to existing routed public/market URLs,
+cache resolved immutable requirements, pace reads at >=750ms and abort on quota
+refusal. Preserve the failed measurement, do not erase or call it production SLA.
+
+Corrected paced trace: 240 reads, zero RATE_LIMITED; 80/80 actual execution MARK
+reference reads usable. Two generic MARK snapshot refusals retained (BNB Binance,
+SOL OKX): strict event freshness 2053/2320ms versus 2000ms, authoritative source,
+LIVE session; reference path has explicit component/session quiet semantics.
+These are different API contracts, not evidence of failed TS MARK execution.
+Eight TRADE refusals in this paced run matched contemporaneous OKX last trade ID
+exactly (BNB/DOGE); no fabricated freshness. Earlier trace also captured six
+refusals while a newer native trade had reached ingress 192-738ms before the
+query. Bounded read_committed canonical trace (248918 records, 6/6 partition
+bounds, explicit assign/no subscribe/no commit) confirms the newer canonical
+record exists. Kafka CreateTime precedes those calls 67-359ms; it is NOT commit
+or cache visibility time. Latency attribution is not yet fully closed.
+Two initial Kafka trace ACL denials were recorded; split existing topic/group
+reader identity fixed access without changing any ACL or joining a group.
+
+Tests actually run: 59 component/session/paired-lineage/consumer-latency unittest
+cases PASS in existing Query image with network disabled and source read-only;
+3 new diagnostic behavior tests PASS; 19 existing TS Risk execution-context
+pytest cases PASS in existing candidate image, no network/DB/orders. Initial
+pytest command in Query image failed because pytest is absent; switched to the
+suite's native unittest runner, no dependency installation or new image.
+Probe unit tests distinguish matched native IDs, missing evidence, observer lag
+and pipeline lag for both venues/all five symbols. Runtime/config still unchanged.
+Next: measure actual fetch/visibility delay before selecting any runtime tuning;
+then affected-scope acceptance and cleanup, not a new whole-catalogue C2.
+
+#### Diagnostic Slice 2 - Acceptance Failure And Concrete Infrastructure Finding
+
+Single requested 300-second consumer window completed: 301 samples; 271 READY
+60/60 and 30 DEGRADED 36/60 (worker 0 unavailable); end READY. Two BOOK_DELTA
+watermark regressions observed in Redis (BTC/ETH Binance), both regressed views
+non-execution-eligible. Read-only TS source inspection finds atomic ordering is
+selected only for TRADE/QUOTE; BOOK_DELTA takes direct execution writes. This is
+a distinct consumer finding, not proof Data Layer rewound canonical offsets.
+No TS source/runtime changes made here; must not claim full acceptance.
+Paired window: 100 MARK execution-reference reads, 99 usable, one real BTC
+Binance COMPONENT_STALE on replica 2; generic snapshot MARK 90/100, TRADE 89/100.
+Exact provider capture proves Binance MARK kept arriving every second. Canonical
+20-second attribution confirms ingress-to-canonical-CreateTime delays up to
+~2.46s, not a provider support problem. At 03:26 UTC all three core metrics show
+commit maxima 2.45-2.90s and raw age maxima 4.5-5.0s. CreateTime still is not a
+commit timestamp. No claim that all latency has one proven cause.
+
+Concrete broker defect found: all three running JVMs use only -Xms256m -Xmx256m
+and no explicit collector; actual logs show DefNew/Tenured and repeated Full GC
+Allocation Failure, old generation ~174783/174784 KiB, ~114-122ms example pauses.
+Container limits are already 1536/2048/1536 MiB and 1.25/1.75/1.75 CPU; source
+heap never followed earlier container-budget increases. This is heap pressure,
+not evidence that exchange freshness should be relaxed. Paired live Kafka fetch
+experiment 17754 matched records: 500ms versus20ms fetch wait median advantage
+0.111ms, p99 3.416ms; do NOT tune fetch wait speculatively.
+
+Approved-source correction: stable Kafka environment heap 512m initial/768m max,
+explicit G1 with 100ms soft pause target, retaining cgroup limits, RF3/minISR2,
+acks/transactions/offsets/volumes/TLS unchanged. Test exact Compose contract and
+actual pinned-image JVM startup. Runtime packet must recreate at most one broker
+at a time, restore healthy quorum/ISR before next, preserve dynamic truststore
+overrides and all effective non-JVM fields; rollback old 256m/collector settings
+per broker. This is NOT authorized by the older five-Rust/two-Query packet and
+has NOT been executed. No broker restart until exact new packet is authorized.
+No new C2 loop; acceptance above remains failed, not superseded by end READY.
+
+New ten-product component matrix initially used a regressing component timestamp;
+retained view correctly ignored that obsolete pair. Fixed fixture to advance
+clock with unchanged INDEX and new MARK, refreshed session only. All 4 test
+methods (including ten product subcases) now PASS. Existing59 and TS19 tests
+remain separate evidence. No implementation defect was inferred from the bad
+fixture and no runtime quality code changed to satisfy it.
+
+#### Source Packet And Cleanup Checkpoint
+
+Prepared private packet (NOT APPLIED):
+`~/.local/state/qdl-v2/execution-view-diagnostics-20261001/broker-heap-packet/`.
+Candidate SHA256 `6ec37da74f119f2560142778b8223f6233a7ae3d13c64e8c2f24beacdd27ffa4`;
+rollback `018078667eb6f299f6fca690f77dde69bccd6dfcb637f621a0d8903bcfd5afe1`.
+Built from inspect, not obsolete multi-overlay Compose labels. Only the two JVM
+environment values differ; preserve broker image9516fb..., actual CPU ceilings
+1.25/1.75/1.75 and memory1536/2048/1536MiB, mounts, networks, healthcheck and TLS.
+Both Compose files validate. Existing pinned Kafka JVM starts with512/768MiB
+and explicitG1 in network-none disposable container; this is configuration
+validation, NOT proof of improved broker load/latency. Source stable-compose
+regression plus new diagnostic tests:5PASS; inherited59 and TS19 separatelyPASS.
+
+Final measurement `summary.json` preserves 300s failure and exact denominators:
+reference execution MARK Binance49/50, OKX50/50; successful-call p50/max
+11.75/33.24ms and12.73/42.33ms. TRADE Binance46/50, OKX43/50; successful-call
+p50/max9.89/33.52ms and9.28/21.22ms. Generic MARK45/50 each, a different strict
+contract. No p99 for these cells. Event-to-observed-Redis uses1s polling and is
+an upper bound, not exact commit latency: QUOTE p99 Binance2633ms/OKX3485ms;
+TRADE3151/2778ms; BOOK_DELTA2722/2652ms, including the observed degradation.
+No fabricated latency improvement, no clean certificate, no new release.
+
+All task Docker test clients use --rm; no images were built, no BuildKit cache
+created, no shared image/cache/volume pruning. Evidence and pending candidate/
+rollback JSON intentionally retained outside Git. Disk check203GiB used/87GiB
+available; no reclaimed-space claim. Production still v2.2.1, same core/query/
+stream/projector images. Source branch remains fix/execution-view-diagnostics,
+no extra worktree, no push/merge. Owner's two unrelated plan edits remain unstaged.
+Open: exact broker-only rolling authorization and TLS/quorum preflight, measured
+post-change commit/GC/consumer recovery; separately TS book direct-writer
+ordering and worker0 outage investigation. Do not conceal these as quiet-market
+refusals or use end-of-window READY to close the goal.

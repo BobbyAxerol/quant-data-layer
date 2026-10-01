@@ -1582,7 +1582,11 @@ class StableComposeAndBundleTests(unittest.TestCase):
         # working set plus headroom, not the original guess.
         self.assertEqual(compose["x-kafka"]["mem_limit"], "1536m")
         self.assertEqual(
-            compose["x-kafka-env"]["KAFKA_HEAP_OPTS"], "-Xms256m -Xmx256m"
+            compose["x-kafka-env"]["KAFKA_HEAP_OPTS"], "-Xms512m -Xmx768m"
+        )
+        self.assertEqual(
+            compose["x-kafka-env"]["KAFKA_JVM_PERFORMANCE_OPTS"],
+            "-XX:+UseG1GC -XX:MaxGCPauseMillis=100",
         )
         kafka_tmpfs = compose["x-kafka"]["tmpfs"]
         self.assertEqual(kafka_tmpfs, ["/tmp:rw,nosuid,nodev,exec,size=32m"])

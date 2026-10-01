@@ -55,7 +55,8 @@ x-kafka-env: &kafka-env
   KAFKA_LOG_RETENTION_MS: 86400000
   KAFKA_LOG_SEGMENT_BYTES: 16777216
   KAFKA_LOG_DIRS: /var/lib/kafka/data
-  KAFKA_HEAP_OPTS: -Xms256m -Xmx256m
+  KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+  KAFKA_JVM_PERFORMANCE_OPTS: -XX:+UseG1GC -XX:MaxGCPauseMillis=100
 
 x-kafka: &kafka
   logging: *logging
@@ -72,14 +73,15 @@ x-kafka: &kafka
     timeout: 5s
     retries: 36
     start_period: 20s
-  # Coordinator recovery exceeded 512 MiB despite a 256 MiB JVM heap. Keep
-  # native/direct-buffer headroom bounded without enlarging the Java heap.
+  # Retain native/direct-buffer headroom outside the bounded 768 MiB heap.
+  # Explicit G1 avoids small-container Serial GC ergonomics.
   # R1.25 (2026-09-17): at 768 MiB the kernel memcg OOM-killer killed kafka1's
   # JVM twice in 70 s once raw ingest reached ~930 rec/s (anon-rss 391 MB, the
   # rest page cache and mmap'd segment indexes, which the memcg charges). Docker
   # showed oom_killed=false because PID 1 is the entrypoint script, so the
   # crash loop was invisible to every health check. 1536 MiB is 2x the
-  # measured working set at 2x the morning's load; the heap stays 256 MiB.
+  # measured working set at 2x the morning's load. The 2026-10-01 heap
+  # correction uses at most half this limit after observed Full-GC pressure.
   mem_limit: 1536m
   cpus: 0.75
 
