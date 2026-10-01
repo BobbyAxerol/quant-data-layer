@@ -65476,3 +65476,56 @@ Cleaned exact ts-edc1-worker-redis/net after both runs; DB15size0, restart0/OOMf
 Latest disk available71449616384B before,71348006912B after; shared host activity,
 no savings claim. No image/build/volume created; runtime/rollback unchanged.
 No push/merge/release/order action. Owner plan hunks preserved; goal active.
+
+
+#### ED09 Restart Generation Recovery - Implementation
+
+Recover new generation after worker restart without an in-memory last_valid.
+Persist original observed_at_ms in ordering markers; use exact verified marker
+and cached bytes as CAS baseline. Older markers may recover the clock only from
+a matching cached value, never guess when both clock and value are absent.
+Authenticate/revalidate the replacement full snapshot; keep authority, component
+clock and generation fences. Test alive/expired/invalidated old price and owner
+races with actual Redis. No reset/flush, no source timestamp renewal.
+
+
+ED09 legacy adoption in same slice: seed a marker from an existing fully typed,
+verified same-authority cache value using exact-byte CAS. Do not rewrite value,
+renew TTL or publish. Missing generation/component proof remains explicit failure.
+A currently validated Query snapshot then goes through normal ordering/reset
+checks; old writer races cannot silently produce an adopted partial state.
+Deployment must still quiesce old unguarded writers before enabling this owner.
+
+
+ED09 restart/adoption source corrected after5red actual-Redis regressions:
+new worker had no previous_view and could not adopt any new generation; direct
+adoption with None raised AttributeError. Markers now retain original observed
+clock. Adoption compares against durable marker/current bytes when memory is
+absent, including expired or invalidated prices; current authenticated snapshot
+still requires newer generation, same authority and non-regressing clocks.
+Older marker can recover its missing clock only from digest-matching cached data.
+Missing both clock and cache remains typed failure, never an invented baseline.
+
+Legacy typed value adoption seeds ONLY an ordering marker using exact-byte CAS;
+no price rewrite, TTL renewal or publication. Projector tries this once within
+its existing total deadline before normal ordering/reset. Missing old generation/
+component proof or changed authority remains blocked. Old unguarded writers must
+be quiesced in the rollout packet; this is not concurrent compatibility with an
+old writer that ignores the marker. Refactored verified cache decoder is shared
+with authoritative read-back.
+
+Final197PASS/0FAIL/0SKIP,4.255s, including76actual isolated Redis cases plus121
+ordering/bridge/projector unit cases. execution-restart-adoption-final.xml SHA256
+2a7ebfcff1368ff72e469f68991b6b73787c2ae11968527f1ebe18f8a11e530e.
+New11Redis cases cover restart alive/expired/invalidated, older marker clock,
+BOOK/reference legacy seed TTL/no-publish, missing proof/authority and writer race.
+All TEST_ONLY facts, no new provider/native runtime certification. Lint/whitespace
+clean. Actual production legacy reference shape still needs inventory; cannot
+presume it contains the newly added component labels or clear cache to force pass.
+
+Cleanup exact ts-edc1-restart-redis/net; DB15size0, restart0/OOMfalse, clients--rm.
+No image/build cache/volume created; available disk71094116352B before and
+71069589504B after, shared host activity/no savings claim. Runtime/rollback
+unchanged; no push/merge/release/orders. Remaining full EDC work includes quiet
+prior-proof retention, BOOK_DELTA integration, coalesced typed Risk recovery,
+ED06 attribution and native/runtime/packaging acceptance. Goal stays active.
