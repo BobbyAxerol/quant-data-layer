@@ -64693,3 +64693,51 @@ not just dequeue clock. Permit/adapter wire deadline can carry the shorter proof
 expiry, but actual under-lock expiry and per-child batch outcomes require tests.
 All source lint/diff checks pass. Offline --rm clients removed; no image/layer,
 network or volume created, no runtime/secret/cap/broker mutation, no broad prune.
+
+
+#### ED05 Post-Queue Market Guard - In Progress
+
+Implement only BoundNativeBridge (the actual native actor adapter), not legacy
+shared egress globally. After existing preparation/quota returns and before send
+claim, read exact required feeds under one bounded deadline, validate at post-read
+clock, and shorten permit expiry to proof expiry. Original request digest/ownership
+unchanged. Native conditional registration uses ADMISSION requirements (exchange
+owns trigger); ordinary/local spawned child uses DISPATCH. Cancel/query/control
+remain independent. Failures terminalize exact unsent attempt, never invent a
+broker rejection or retry a claimed send. Wire existing core/market Redis policy
+and cap connection pools, no new service. Verify final DB claim expiry after waits
+and batch handling before calling ED05 complete. No rollout from source tests.
+
+
+ED05 post-queue guard candidate implemented/tested locally. BoundNativeBridge now
+performs required-feed read AFTER original preparation/quota, outside that DB UoW;
+uses existing typed Risk validator at post-read time and shortens existing permit
+to minimum declared/server age, component proof and original attempt deadline.
+The actual egress operation overrides risk_context.operation for requirement
+classification, so PLACE cannot masquerade as CANCEL. Native broker conditional
+registration retains deferred-book ADMISSION semantics, unlike local ordinary
+child DISPATCH. Same identity/native product required; no trade/quote substitution.
+Unsent failures terminalize the exact attempt; existing digest/quota/ownership
+and no-replay recovery remain. Cancel/query/control bypass market read entirely.
+Actor builds existing configured core/market Redis reader with finite4+4 pools
+and closes both on partial startup/shutdown. No direct provider call added.
+
+First93-case candidate81PASS/12FAIL:10 fixture pop(book) assumptions,1 Python3.10
+asyncio.TimeoutError not caught by builtin TimeoutError,1 old singleton Redis
+factory assertion. Fixed exact timeout handling and split test core/market clients
+with explicit close assertions. Failed receipt retained. Final110PASS/0FAIL/0SKIP
+2.209s, dispatch-guard-operation-final.xml SHA256
+857f9d102649905ffa6a4dbfbf6a11031366733351c3556f8797a02a38440ff4.
+Includes identity/stale/gap/delayed-read/timeout/cancelled-owned-task, explicit LAST
+trigger, missing optional book, original digest retention and pre-send rejection,
+existing actor and P09 port regressions. All synthetic/local, not broker/PG/live.
+New files lint clean, gitdiff whitespace clean; existing actor/test style findings
+remain (one-line statements/unused loop), no claim of globally clean lint.
+
+DO NOT DEPLOY or close ED05 yet: actual PostgreSQL expiry after lock wait, atomic
+batch expiry/per-child outcomes, metadata change while queued and typed recovery
+with existing valid exact-product backup still require affected integration tests.
+Current repository checks permit expiry before later lock acquisition; must prove
+and close that final deadline window before release. No new image/layer/network/
+volume; disposable --rm/offline clients removed. Runtime/config/secrets/rollback
+unchanged, no push/merge or broker order authority.
