@@ -63,6 +63,11 @@ class MirrorGuardTests(unittest.TestCase):
 
     def test_the_group_is_unique_under_a_granted_read_only_namespace_only(self):
         base = ["start", "--source-bootstrap", "kafka1:9092", "--since-seconds", "1", "--out", "x"]
+        shadow = mirror.source_config(mirror._parser().parse_args(base + ["--group-prefix", "kn-stream-production-shadow-"]))
+        self.assertTrue(shadow["group.id"].startswith("kn-stream-production-shadow-"))
+        self.assertFalse(shadow["enable.auto.commit"])
+        self.assertFalse(shadow["enable.auto.offset.store"])
+        self.assertEqual(shadow["isolation.level"], "read_committed")
         audit = mirror.source_config(mirror._parser().parse_args(base + ["--group-prefix", "qdl-c40-handoff-"]))
         self.assertRegex(audit["group.id"], r"^qdl-c40-handoff-kn4-mirror-[0-9a-f]{12}$")
         again = mirror.source_config(mirror._parser().parse_args(base + ["--group-prefix", "qdl-c40-handoff-"]))

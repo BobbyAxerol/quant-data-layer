@@ -23,6 +23,7 @@ use qdl_projector::expiry::{ExpiryError, ExpiryPublish, ExpiryReport, ExpiryTask
 use qdl_projector::kafka_pipe::{KafkaPipe, KafkaPipeSettings};
 use qdl_projector::kafka_state::{KafkaPartitionReader, KafkaStateSettings, KafkaStateSource};
 use qdl_projector::products::{retained_caps, ProductMap, ProductTransform, TransformSettings};
+use qdl_projector::shutdown::{drain_threads, Stop};
 use qdl_projector::stage_a::{StageA, StageAError, StageALimits, StageAMetrics};
 use qdl_projector::stage_b::{StageB, StageBError, StageBLimits, StageBMetrics};
 use rdkafka::config::ClientConfig;
@@ -276,7 +277,7 @@ fn write_status(status: &Shared, path: Option<&str>) {
     }
 }
 
-fn run_stage_a(config: Config, status: Shared, latest: u32, bars: u32) {
+fn run_stage_a(config: Config, status: Shared, latest: u32, bars: u32, stop: Arc<Stop>) {
     let products = ProductMap::from_bundle(&config.bundle)
         .unwrap_or_else(|error| fatal(&status, "stage_a", error));
     let transform = ProductTransform::new(
@@ -301,7 +302,7 @@ fn run_stage_a(config: Config, status: Shared, latest: u32, bars: u32) {
     })
     .unwrap_or_else(|error| fatal(&status, "stage_a", error));
     let mut stage = StageA::new(pipe, transform, StageALimits::default());
-    loop {
+    while !stop.requested() {
         match stage.step() {
             Ok(_) => {
                 if let Ok(mut shared) = status.lock() {
@@ -320,9 +321,14 @@ fn run_stage_a(config: Config, status: Shared, latest: u32, bars: u32) {
             Err(StageAError::Fatal(reason)) => fatal(&status, "stage_a", reason),
         }
     }
+    drop(stage);
+    println!(
+        "{}",
+        json!({"event":"stage_drained", "stage":"stage_a", "at_ms":now_ms()})
+    );
 }
 
-fn run_stage_b(config: Config, status: Shared) {
+fn run_stage_b(config: Config, status: Shared, stop: Arc<Stop>) {
     let layout = Layout::new(&config.bundle.environment);
     let settings = KafkaStateSettings {
         bootstrap: config.bootstrap.clone(),
@@ -352,9 +358,20 @@ fn run_stage_b(config: Config, status: Shared) {
     )
     .with_rebuild_reader(Box::new(reader));
     let mut source_errors = 0u32;
-    loop {
+    let mut last_applied_assignment = 0u64;
+    while !stop.requested() {
         match stage.step() {
-            Ok(_) => {
+            Ok(applied) => {
+                let assignment = stage.source.assignment_sequence();
+                if applied > 0 && assignment != last_applied_assignment {
+                    println!(
+                        "{}",
+                        json!({"event":"cache_apply_after_assignment",
+                        "at_ms":now_ms(), "replica":config.replica,
+                        "assignment_sequence":assignment, "records":applied})
+                    );
+                    last_applied_assignment = assignment;
+                }
                 source_errors = 0;
                 if let Ok(mut shared) = status.lock() {
                     shared.memory_pressure_ms = None;
@@ -376,13 +393,15 @@ fn run_stage_b(config: Config, status: Shared) {
                 if let Ok(mut shared) = status.lock() {
                     shared.memory_pressure_ms.get_or_insert(now_ms());
                 }
-                std::thread::sleep(Duration::from_secs(1));
+                stop.wait(Duration::from_secs(1));
             }
             Err(StageBError::Cache(CacheError::Redis(reason))) => {
                 // Reconnect and prepare every partition again (tail if the
                 // cache kept its state, rebuild if it lost it).
                 record_error(&status, "stage_b", format!("cache: {reason}"));
-                std::thread::sleep(Duration::from_secs(1));
+                if stop.wait(Duration::from_secs(1)) {
+                    break;
+                }
                 if let Err(error) = stage.recover_cache() {
                     record_error(&status, "stage_b", format!("reconnect: {error:?}"));
                 }
@@ -393,7 +412,7 @@ fn run_stage_b(config: Config, status: Shared) {
                 if source_errors > 30 {
                     fatal(&status, "stage_b", "30 consecutive errors".into());
                 }
-                std::thread::sleep(Duration::from_secs(1));
+                stop.wait(Duration::from_secs(1));
             }
         }
         if let Ok(mut shared) = status.lock() {
@@ -405,6 +424,11 @@ fn run_stage_b(config: Config, status: Shared) {
             shared.last_rebuild_error = stage.last_rebuild_error.clone();
         }
     }
+    drop(stage);
+    println!(
+        "{}",
+        json!({"event":"stage_drained", "stage":"stage_b", "at_ms":now_ms()})
+    );
 }
 
 /// BAR products of the bars partitions this replica owns.
@@ -420,7 +444,7 @@ fn owned_bars(config: &Config, status: &Shared, bars: u32) -> BTreeSet<i32> {
         .collect()
 }
 
-fn run_expiry(config: Config, status: Shared, bars: u32) {
+fn run_expiry(config: Config, status: Shared, bars: u32, stop: Arc<Stop>) {
     let products = ProductMap::from_bundle(&config.bundle)
         .unwrap_or_else(|error| fatal(&status, "expiry", error));
     let caps = retained_caps(&config.bundle, &products);
@@ -441,8 +465,10 @@ fn run_expiry(config: Config, status: Shared, bars: u32) {
         materializer_epoch: config.epoch,
         timeout: Duration::from_secs(30),
     };
-    loop {
-        std::thread::sleep(config.expiry_interval);
+    while !stop.requested() {
+        if stop.wait(config.expiry_interval) {
+            break;
+        }
         let owned = owned_bars(&config, &status, bars);
         let mine: BTreeMap<String, u64> = caps
             .iter()
@@ -483,7 +509,7 @@ fn run_expiry(config: Config, status: Shared, bars: u32) {
     }
 }
 
-fn run_cleaner(config: Config, status: Shared, bars: u32) {
+fn run_cleaner(config: Config, status: Shared, bars: u32, stop: Arc<Stop>) {
     let settings = CleanerKafkaSettings {
         bootstrap: config.bootstrap.clone(),
         replica: config.replica.clone(),
@@ -496,9 +522,14 @@ fn run_cleaner(config: Config, status: Shared, bars: u32) {
     let mut reader = settings
         .open_reader()
         .unwrap_or_else(|error| fatal(&status, "cleaner", error));
-    loop {
-        std::thread::sleep(config.cleaner_interval);
+    while !stop.requested() {
+        if stop.wait(config.cleaner_interval) {
+            break;
+        }
         for partition in owned_bars(&config, &status, bars) {
+            if stop.requested() {
+                break;
+            }
             match sweep_partition(
                 &mut reader,
                 &config.bars_topic,
@@ -523,7 +554,12 @@ fn run_cleaner(config: Config, status: Shared, bars: u32) {
     }
 }
 
-fn run() -> Result<(), String> {
+async fn run() -> Result<(), String> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|error| format!("install SIGTERM: {error}"))?;
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .map_err(|error| format!("install SIGINT: {error}"))?;
+    let stop = Arc::new(Stop::default());
     let config = Config::from_env()?;
     let latest = config.partitions(&config.latest_topic)?;
     let bars = config.partitions(&config.bars_topic)?;
@@ -533,22 +569,24 @@ fn run() -> Result<(), String> {
     }));
     let mut threads = Vec::new();
     if config.stage_a {
-        let (config, status) = (config.clone(), status.clone());
+        let (config, status, stop) = (config.clone(), status.clone(), stop.clone());
         threads.push(std::thread::spawn(move || {
-            run_stage_a(config, status, latest, bars)
+            run_stage_a(config, status, latest, bars, stop)
         }));
     }
     if config.stage_b {
-        let (b_config, b_status) = (config.clone(), status.clone());
-        threads.push(std::thread::spawn(move || run_stage_b(b_config, b_status)));
-        let (e_config, e_status) = (config.clone(), status.clone());
+        let (b_config, b_status, b_stop) = (config.clone(), status.clone(), stop.clone());
         threads.push(std::thread::spawn(move || {
-            run_expiry(e_config, e_status, bars)
+            run_stage_b(b_config, b_status, b_stop)
+        }));
+        let (e_config, e_status, e_stop) = (config.clone(), status.clone(), stop.clone());
+        threads.push(std::thread::spawn(move || {
+            run_expiry(e_config, e_status, bars, e_stop)
         }));
         if !config.cleaner_interval.is_zero() {
-            let (c_config, c_status) = (config.clone(), status.clone());
+            let (c_config, c_status, c_stop) = (config.clone(), status.clone(), stop.clone());
             threads.push(std::thread::spawn(move || {
-                run_cleaner(c_config, c_status, bars)
+                run_cleaner(c_config, c_status, bars, c_stop)
             }));
         }
     }
@@ -560,17 +598,40 @@ fn run() -> Result<(), String> {
             "bar_cap_clamp": config.bar_cap_clamp})
     );
     loop {
-        std::thread::sleep(config.status_interval);
+        tokio::select! {
+            _ = terminate.recv() => break,
+            _ = interrupt.recv() => break,
+            _ = tokio::time::sleep(config.status_interval) => {}
+        }
         write_status(&status, config.status_path.as_deref());
         if threads.iter().any(|thread| thread.is_finished()) {
             return Err("a task thread ended".into());
         }
     }
+    stop.request();
+    println!(
+        "{}",
+        json!({"event": "shutdown_requested", "at_ms": now_ms()})
+    );
+    // Fit within the existing 45s container grace. Never report a successful
+    // drain if a blocked operation or consumer destructor has not returned.
+    drain_threads(&mut threads, Duration::from_secs(40)).await?;
+    write_status(&status, config.status_path.as_deref());
+    println!(
+        "{}",
+        json!({"event": "shutdown_complete", "at_ms": now_ms()})
+    );
+    Ok(())
 }
 
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
-        Some("run") => match run() {
+        Some("run") => match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+            .and_then(|runtime| runtime.block_on(run()))
+        {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{}", json!({"event": "failed", "error": error}));

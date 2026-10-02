@@ -33,7 +33,7 @@ use qdl_contracts::state_contract::{
     SourceCoordinate, MAX_OFFSET,
 };
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The trailer offset of a legacy-imported row: no canonical coordinate
 /// exists, and no real Kafka offset ever reaches 2^63-1 (decision D13).
@@ -223,6 +223,7 @@ pub struct StageB<S: StateSource> {
     /// Why the last requested rebuild was refused or abandoned.
     pub last_rebuild_error: Option<String>,
     partitions: HashMap<(String, i32), PartitionState>,
+    handoff: HashMap<(String, i32), (Instant, bool)>,
     now_ms: fn() -> u64,
     rebuild_reader: Option<Box<dyn PartitionReader + Send>>,
     rebuild_queue: VecDeque<String>,
@@ -303,6 +304,7 @@ impl<S: StateSource> StageB<S> {
             metrics: StageBMetrics::default(),
             last_rebuild_error: None,
             partitions: HashMap::new(),
+            handoff: HashMap::new(),
             now_ms: system_now_ms,
             rebuild_reader: None,
             rebuild_queue: VecDeque::new(),
@@ -320,6 +322,7 @@ impl<S: StateSource> StageB<S> {
         self.cache.reconnect()?;
         self.metrics.cache_reconnects += 1;
         self.partitions.clear();
+        self.handoff.clear();
         self.fenced.clear();
         if self.rebuild.take().is_some() {
             self.metrics.rebuilds_abandoned += 1;
@@ -337,6 +340,7 @@ impl<S: StateSource> StageB<S> {
         self.metrics.zombies += 1;
         let key = (topic.to_owned(), partition);
         self.partitions.remove(&key);
+        self.handoff.remove(&key);
         let until = (self.now_ms)() + self.limits.fenced_backoff.as_millis() as u64;
         self.fenced.insert(key, until);
     }
@@ -441,6 +445,19 @@ impl<S: StateSource> StageB<S> {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        for key in &polled {
+            if let Some((started, seen)) = self.handoff.get_mut(key) {
+                if !*seen {
+                    println!(
+                        "{}",
+                        serde_json::json!({"event":"handoff_first_committed_poll",
+                        "topic":key.0,"partition":key.1,"at_ms":system_now_ms(),
+                        "seek_to_poll_us":started.elapsed().as_micros()})
+                    );
+                    *seen = true;
+                }
+            }
+        }
         let applied = match self.apply_polled(batch) {
             Ok(applied) => applied,
             Err(error) => {
@@ -462,6 +479,7 @@ impl<S: StateSource> StageB<S> {
         let assigned = self.source.assigned().map_err(StageBError::Source)?;
         self.partitions
             .retain(|key, _| assigned.iter().any(|(t, p)| t == &key.0 && *p == key.1));
+        self.handoff.retain(|key, _| assigned.contains(key));
         let now = (self.now_ms)();
         self.fenced.retain(|key, until| {
             *until > now && assigned.iter().any(|(t, p)| t == &key.0 && *p == key.1)
@@ -474,9 +492,17 @@ impl<S: StateSource> StageB<S> {
             let key = (topic.clone(), *partition);
             if !self.partitions.contains_key(&key) && !self.fenced.contains_key(&key) {
                 let state = self.prepare(topic, *partition)?;
+                let seek_started = Instant::now();
                 self.source
                     .seek(topic, *partition, state.next)
                     .map_err(StageBError::Source)?;
+                println!(
+                    "{}",
+                    serde_json::json!({"event":"handoff_seek_ready",
+                    "topic":topic,"partition":partition,"at_ms":system_now_ms(),
+                    "next":state.next,"seek_us":seek_started.elapsed().as_micros()})
+                );
+                self.handoff.insert(key.clone(), (Instant::now(), false));
                 self.partitions.insert(key.clone(), state);
                 fresh_partitions.insert(key);
             }
@@ -560,12 +586,17 @@ impl<S: StateSource> StageB<S> {
     }
 
     fn prepare(&mut self, topic: &str, partition: i32) -> Result<PartitionState, StageBError> {
+        let started = Instant::now();
         let fence = self.cache.take_ownership(topic, partition)?;
         let checkpoint = self.cache.checkpoint(topic, partition)?;
+        let checkpoint_us = started.elapsed().as_micros();
+        let watermark_started = Instant::now();
         let (earliest, end) = self
             .source
             .watermarks(topic, partition)
             .map_err(StageBError::Source)?;
+        let watermark_us = watermark_started.elapsed().as_micros();
+        let products_started = Instant::now();
         let now = (self.now_ms)();
         let horizon = self.limits.rebuild_horizon.as_millis() as u64;
         let mut any_ready = false;
@@ -581,6 +612,16 @@ impl<S: StateSource> StageB<S> {
                 held.push(lpk);
             }
         }
+        println!(
+            "{}",
+            serde_json::json!({"event":"handoff_partition_prepared",
+            "topic":topic,"partition":partition,"at_ms":system_now_ms(),
+            "checkpoint_us":checkpoint_us,"watermark_us":watermark_us,
+            "products_us":products_started.elapsed().as_micros(),
+            "total_us":started.elapsed().as_micros(),"products":held.len(),
+            "checkpoint_next":checkpoint.as_ref().map(|value| value.next),
+            "earliest":earliest,"end":end})
+        );
         let fresh = checkpoint
             .as_ref()
             .filter(|checkpoint| {
@@ -655,11 +696,22 @@ impl<S: StateSource> StageB<S> {
             }
             let (mut ops, fresh) = self.build_ops(&state, &frames)?;
             ops.extend(Self::source_ops(&frames));
+            let apply_started = Instant::now();
             match self
                 .cache
                 .apply(topic, partition, state.fence, next, (self.now_ms)(), &ops)?
             {
                 Applied::Ok(results) => {
+                    if let Some((started, _)) = self.handoff.remove(&key) {
+                        println!(
+                            "{}",
+                            serde_json::json!({"event":"handoff_first_cache_apply",
+                            "topic":topic,"partition":partition,"at_ms":system_now_ms(),
+                            "seek_to_apply_us":started.elapsed().as_micros(),
+                            "redis_apply_us":apply_started.elapsed().as_micros(),
+                            "next":next,"records":inputs.len()})
+                        );
+                    }
                     self.metrics.batches += 1;
                     for result in &results {
                         match result.as_str() {

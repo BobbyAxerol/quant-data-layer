@@ -311,12 +311,19 @@ class HttpExecutionMarkIndexReader:
         ):
             raise ValueError("execution MARK/INDEX live view identity/provenance mismatch")
         fields = self._fields(request, envelope)
+        component_lineage = paired_mark_index_lineage(envelope)
         observed_at_ns = int(envelope.source_event_time_ns)
         labels = [
             ("native_symbol", request.instrument.native_symbol),
             ("execution_view", "STABLE_STREAM_GATEWAY"),
             ("freshness_basis", freshness_basis),
             ("source_event_time_ns", str(observed_at_ns)),
+            ("component_mark_source_event_time_ns", str(component_lineage.mark_source_event_time_ms * 1_000_000)),
+            ("component_index_source_event_time_ns", str(component_lineage.index_source_event_time_ms * 1_000_000)),
+            ("component_mark_received_at_ns", str(component_lineage.mark_received_at_ns)),
+            ("component_index_received_at_ns", str(component_lineage.index_received_at_ns)),
+            ("component_mark_capture_id", component_lineage.mark_capture_id.hex()),
+            ("component_index_capture_id", component_lineage.index_capture_id.hex()),
             ("provider_confirmation_ns", str(int(envelope.received_at_ns))),
             ("connection_generation", str(int(envelope.connection_generation))),
             ("gateway_lease_epoch", str(int(payload["lease_epoch"]))),
@@ -328,11 +335,11 @@ class HttpExecutionMarkIndexReader:
             ),
         ]
         if event_recency_policy is StalePolicy.OBSERVE:
-            labels.extend(self._quiet_labels(
+            labels = list({**dict(labels), **dict(self._quiet_labels(
                 envelope,
                 response,
                 max_session_liveness_ms=max_session_liveness_ms,
-            ))
+            ))}.items())
         observation = ReferenceObservation(
             instrument_uid=request.instrument.instrument_uid,
             instrument_revision=request.instrument.metadata_revision,

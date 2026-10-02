@@ -723,14 +723,17 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     query_backend = os.environ.get(QUERY_BACKEND_ENV, "spool").strip() or "spool"
     if query_backend not in QUERY_BACKENDS:
         raise ValueError(f"{QUERY_BACKEND_ENV} must be one of {QUERY_BACKENDS}")
-    kn_backend = kn_issuer = kn_alpha_reader = None
+    kn_backend = kn_issuer = kn_alpha_reader = hot_client = None
     if query_backend == "kn3":
         # KN-4 D25: the Kafka-native market cache, no spool/handoff at all.
         spool = handoff = None
         reader = kn_reader_from_environment(os.environ)
         settings = KnCursorSettings.from_environment(os.environ, environment=config.environment)
+        from qdl.runtime.kn_hot_view import hot_client_from_environment
+        hot_client = hot_client_from_environment(os.environ, settings=settings, catalog=catalog, config=config)
         kn_backend = KnMarketCacheQueryBackend(
             reader, catalog, schema_digest=config.schema_digest, topic_id=settings.topic_id,
+            hot_client=hot_client,
             session_liveness_root=str(config.session_liveness_dir),
             row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
             diagnostic_exclusions={b.binding_id: "ACQUISITION_DISABLED"
@@ -811,6 +814,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
 
     @app.on_event("shutdown")
     async def close_stable_query():
+        if hot_client is not None:
+            await asyncio.to_thread(hot_client.close)
         if execution_mark_index_reader is not None:
             await execution_mark_index_reader.close()
         await service.close()

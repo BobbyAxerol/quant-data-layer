@@ -12,6 +12,7 @@ pub mod auth;
 pub mod authority;
 pub mod bundle;
 pub mod generated;
+pub mod hot_view;
 pub mod hub;
 pub mod memory;
 pub mod query_view;
