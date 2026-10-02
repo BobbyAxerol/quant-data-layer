@@ -68053,3 +68053,71 @@ performance owner input integration and actual caller/SDK/config convergence, th
 review changed-role packet and affected acceptance. Existing ports/fixtures do not
 prove deployed owner authority. Published DLv2.2.1 and named rollback unchanged.
 Canonical/worktrees unchanged from owner scope review; no new checkout.
+
+
+#### EDC-1 Valuation Owner Currency/Provenance Collection - Start
+
+Continue TS0545ba9/DL052fdac. Before native owner publication, reproduce business
+proof collisions: foreign-currency wallet changes, same numeric margin/fee/funding
+with changed currency, and P05 compatibility execution provenance changing while
+scalar totals stay equal. Existing reader filters cash by reporting currency and
+aggregates other monetary inputs without currency. This slice preserves typed
+monetary source rows and native position pins in the actual owner/Gateway proof
+path. No currency conversion/model guess, no new authority or money write.
+Keep full native owner integration open; proof improvement alone is not closure.
+Test actual isolated migrated PG and positive/negative scope isolation, owner
+refresh/publication parity; cleanup exact owned DB/network after evidence.
+No source/image/runtime release or production/broker mutation.
+
+
+#### EDC-1 Currency And P05 Business Proof - Verified Receipt
+
+Actual migrated PG reproduced16FAIL before correction: for both Binance/OKX,
+foreign wallet, margin currency, fee currency, realized-PnL currency, funding
+currency, compatibility P05 version/scope and settlement currency changed while
+the previous scalar digest still matched. Exact Gateway sizing_summary accepted
+retained equity proof. These are TEST_ONLY reproductions, not broker incidents.
+
+PerformanceRepository now collects grouped native monetary rows in one additional
+SQL statement (wallet all currencies, margins, fees, realized PnL and funding).
+It preserves missing currency as NULL, never reporting-currency substitution.
+Position reads retain P05 scope/key/version, PnL and instrument currencies/model.
+Owner publication and Gateway business readback include identical provenance in
+their repeatable-read snapshot. Mark-only updates and unrelated accounts remain
+non-invalidating. No formula/FX conversion or monetary mutation introduced.
+
+112PASS/0FAIL/0SKIP (64actualPG+48unit),31.743s. Exact test files:
+tests/integration/test_edc_equity_business_state.py;
+tests/integration/test_edc_performance_publication.py;
+tests/unit/test_edc_performance_publication.py;
+tests/unit/test_edc_performance_identity.py;
+tests/unit/test_edc_valuation_refresh.py; tests/unit/test_edc_valuation_time.py.
+Includes actual LISTEN/NOTIFY owner refresh/publication/readback and rollback on
+expiry/publication fault. Controlled-input publication fixture explicitly supplies
+empty provenance; currency collision tests use actual source SQL, not mocks.
+Ruff and diffcheck clean. Evidence ~/.local/state/qdl-v2/edc1-20261001/evidence/:
+valuation-currency-proof-before.xml SHA256
+0420f01af15def142d795015cbce1750d9c21a3a83d8ae93b43f1b8121938ffe;
+valuation-currency-proof-final.xml SHA256
+03aec677c6e38bf74c4741f7b6307dd398dc3ce63c7e26a9f97968434704e741.
+
+No new migration; tested94 existing migrations through95 on isolated p183.
+Old proof digests must be refreshed after paired owner/Gateway deployment; do not
+accept old proof via compatibility fallback. Do not roll Gateway alone before
+capable owner. Mixed-version refusal during transition is not zero-downtime proof.
+Grouped output is bounded by input currencies/instruments, not fill count; query
+cost still includes scoped fill aggregation and needs actual deployment-budget
+measurement before rollout. No production performance improvement claimed.
+
+Cleanup stopped --rm ts-edc1-settlement-pg, removed ts-edc1-publication-net; data
+was tmpfs only (inspect Mounts empty), all owned fixture schemas vanished. Existing
+test image reused, no build/cache/volume created. Available disk79288602624 ->
+79083921408 bytes; concurrent host writes, not claimed savings. No broad prune.
+Source only, no runtime/provider/order/push/merge/release. Active DLv2.2.1 images,
+TS c1f713a8b13e and named rollback retained; canonical/worktrees unchanged.
+
+EDC remains IN_PROGRESS. This closes proof blindness, NOT currency-aware native
+owner calculation. Remaining: exact P05 projection/context collection, qualified
+FX and native P15 result into existing performance publisher; then actual caller/
+SDK/config/native packaging, reviewed changed-role rollout and affected acceptance.
+Do not treat112tests as inverse availability or full EDC certification.
