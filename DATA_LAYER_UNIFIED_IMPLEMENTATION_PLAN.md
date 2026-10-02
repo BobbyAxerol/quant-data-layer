@@ -68642,3 +68642,43 @@ were written; corrected by retaining the SDK manifest's actual structured schema
 Apply_patch sandbox helper failed mountinfo, exact-match fallback used perRule32.
 Next: commit only this receipt/preparation, push feature and open dev PR/CI.
 No tag/publication or production rollout is authorized by this preparation artifact.
+
+
+#### v2.2.2 Query Artifact And Parent Handoff
+
+Status PACKAGED_PENDING_PARENT_ROLLOUT_REVIEW_AND_REMOTE_CI. Preparation committed
+as d6d2637 with BobbyAxerol identity; all11 source/ops commits remain intact.
+Attempted push to origin fix/execution-view-diagnostics was rejected BEFORE
+execution by automatic approval review (external-code export authorization).
+No network push, PR, CI, merge, tag or publication performed; no workaround.
+Parent must resolve that exact export approval before continuing remote workflow.
+GitHub read-only API confirmed publishedv2.2.1, no existing openPR or featureCI.
+
+Built Query-only immutable candidate fromd6d2637, preserving current base layers:
+qdl-v2-python:2.2.2-d6d2637,
+sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9.
+Exactly six source files differ fromc8015ca, matched byte-for-byte to committedGit.
+Base is current Query3af57ddf1764; dependency/state/auth/manifest policy unchanged.
+Candidate tests64/64PASS,0skip/0fail in12.930s, tests-onlymount; actual Query
+entrypoint/shared-validator import PASS. No source mount masks packaged imports.
+First build used unsupported FROM bareimageID and failed metadata resolution;
+corrected to locally pinnedtag after asserting its fullID, no dependency download.
+
+Parent-review-only packet prepared0600 (NOT applied):
+~/.local/state/qdl-v2/release-convergence-20261002/runtime/candidate.compose.json
+and rollback.compose.json. Both Compose configs validate and contain exactly
+query_kn_2 thenquery_kn_1, existing command/environment/mounts/TLS/caps/networks;
+only image changes. Rollback BOTH to
+sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c.
+No Stream/projector/core/ingestor/BAR/V1/TS/alpha/order mutation. Existing Rust
+runtime/binary tests and recovery acceptance remain inherited. Affected runtime
+MARK/INDEX/SDK reads on both replicas are still required after approved rollout;
+current preparation cannot certify unrolled Python bytes or promise zero downtime.
+
+Cleanup: isolated Redis/client containers removed, six exact owned BuildKit COPY
+records removed; private buildcontext40280bytes removed. Retain candidate image,
+currentactiveQuery as rollback and pre-existing active/explicitrollback set. No
+shared/broadprune or volume removal. Full disk pre/post and unchanged19-container
+identity/start/restart audit in release-convergence-20261002/evidence/cleanup.json.
+No runtime changes. Owner two plan hunks remain unstaged; global diff-check still
+reports their pre-existing trailing whitespace, staged scope is clean.

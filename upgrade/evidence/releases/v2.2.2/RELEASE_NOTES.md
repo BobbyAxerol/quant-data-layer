@@ -8,8 +8,11 @@ It keeps the KN architecture, source timestamps, entitlements and strict executi
 eligibility. SDK 2.0.7 carries the shared proof validator; public API remains 2.0.0.
 
 Rust recovery/Stream/projector changes already run on the recorded immutable
-component images. Python commits `12785ab` and `a243096` still need Query-only
-packaging and affected runtime readback. No Rust rebuild or catalogue C2 is implied.
+component images. Python commits `12785ab` and `a243096` are packaged as immutable
+Query candidate `qdl-v2-python:2.2.2-d6d2637`, digest
+`sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9`.
+Package tests pass64/64. Parent-reviewed Query-only rollout, affected runtime
+readback and remote CI remain pending. No Rust rebuild or catalogue C2 is implied.
 
 The preparation index lists exact source commits, current runtime, inherited
 measurements, rollback and remaining gates. It deliberately is not named

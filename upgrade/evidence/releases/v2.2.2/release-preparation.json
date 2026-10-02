@@ -1,19 +1,55 @@
 {
   "branch": "fix/execution-view-diagnostics",
   "cleanup": {
-    "buildkit_created": false,
-    "existing_images_and_worktrees_preserved": true,
-    "global_prune": false,
-    "images_built": 0,
-    "test_clients_auto_removed": true,
+    "context_bytes_removed": 40280,
+    "disk_available_after": 66404007936,
+    "disk_available_before": 66414989312,
+    "notes": "No broad prune/volume removal. Net disk includes concurrent TS work.",
+    "removed_build_cache_ids": [
+      "n1swh6qii32o3ionmpbnn1at9",
+      "yxa6bz3x5p5cmk6q5cr5p8ija",
+      "y775j0cvuc8ysp7bdbr5y44hq",
+      "oe7r85behtbszs9bxhst1hkrg",
+      "832caha8z8iy7hqajfari1w8j",
+      "j31o65938m7u0alh7ocbhgipq"
+    ],
+    "retained_candidate": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+    "retained_query_rollback": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+    "running_runtime_changes": [],
     "test_redis_removed": true
   },
   "commits_since_release": 78,
   "components": {
     "query_python": {
-      "candidate_image": null,
+      "candidate_image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "candidate_source": "d6d2637557c3759f829421d2174e21a44762f7fc",
       "configuration_change": false,
       "deployed_source": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+      "packaging_attestation": {
+        "base_image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+        "base_layer_prefix_verified": true,
+        "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+        "labels": {
+          "io.qdl.dependency-image": "builder",
+          "org.opencontainers.image.revision": "d6d2637557c3759f829421d2174e21a44762f7fc",
+          "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+          "org.opencontainers.image.title": "Quant Data Layer",
+          "org.opencontainers.image.version": "2.2.2"
+        },
+        "patched_file_sha256": {
+          "qdl/data_quality/execution_mark_index.py": "2923f11ce8005166c1777d0e722a9403d43aa02646ca754e77bee142171b8390",
+          "qdl/query/__init__.py": "47cef56512bffd01011c21d6b5ea29bad77239d74dc3e0d95a5f051b6a5f5f23",
+          "qdl/reference/execution_live.py": "e66f5345dbf62cb5a0febfc96d4a03e5e304ebfd78ba862ed93f9134f3a2e665",
+          "qdl_sdk/__init__.py": "7924c12920e8acf4f1f10d1b40e2e9ee12a2736e0bab995eae3fb462634fb311",
+          "qdl_sdk/execution_quality.py": "33a2a54f99d64ebafa5c7eb4ee38c6bcece1cc9561d0ad1c9409a043206a05c6",
+          "scripts/build_qdl_sdk_release.py": "f06cd7eb250c6827890bfddbb3c8df4a0cf2a7cc34bc0a595447c6f87767f105"
+        },
+        "production_rollout": false,
+        "runtime_policy_config_changes": false,
+        "sdk_version": "2.0.7",
+        "source_sha": "d6d2637557c3759f829421d2174e21a44762f7fc",
+        "tag": "qdl-v2-python:2.2.2-d6d2637"
+      },
       "pending_commits": [
         "12785ab4aa1586ca58b6406d7d54a08ea8e24a58",
         "a243096f7ccace5c21fb79b208cc65dcdb484403"
@@ -220,9 +256,15 @@
     "tag": "v2.2.1"
   },
   "release": "v2.2.2",
+  "remote": {
+    "ci": null,
+    "no_bypass": true,
+    "pr": null,
+    "push": "BLOCKED_BY_TOOL_APPROVAL_REVIEW_BEFORE_EXECUTION",
+    "reason": "Automatic review requested explicit authorization for export of this branch to origin/BobbyAxerol/quant-data-layer despite owner release-workflow approval."
+  },
   "required_next_steps": [
     "Push feature branch and open dev PR; all required CI jobs must pass.",
-    "Build immutable Query-only artifact from reviewed source; test package hashes, SDK wheel and actual entrypoint.",
     "Parent review exact candidate/rollback before Query2 then Query1 rollout; preserve environment/TLS/config/mount/state.",
     "Affected five-symbol/two-venue MARK reference/typed at-use proof through both Query replicas; retain failures, no order mutation. No catalogue/C2 rerun.",
     "Finalize certificate/report/notes with runtime digest and CI evidence, then dev release PR to main and tag v2.2.2 through existing release workflow.",
@@ -759,8 +801,18 @@
       "subject": "fix(reference): retain verified component clocks and capture lineage"
     }
   ],
-  "status": "PREPARED_PENDING_QUERY_PACKAGING_RUNTIME_DELTA_AND_CI",
+  "status": "PACKAGED_PENDING_PARENT_ROLLOUT_REVIEW_AND_REMOTE_CI",
   "tests": {
+    "candidate_package": {
+      "base_layers_and_six_file_hashes": "PASS",
+      "elapsed_seconds": 12.93,
+      "entrypoint_import": "PASS",
+      "failed": 0,
+      "log_sha256": "eebc3b934e64e112a085e8110e84bb4bbf216b4536099a52fbb6fdc356aea716",
+      "passed": 64,
+      "ran": 64,
+      "skipped": 0
+    },
     "isolated_redis_matrix": {
       "elapsed_seconds": 16.078,
       "failed": 0,
