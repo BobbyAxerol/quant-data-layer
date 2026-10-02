@@ -68576,3 +68576,69 @@ Next permitted work: resume remaining P18.3E qualification on this attested
 candidate; do not infer money/mainnet release or all-route continuity from this
 no-order owner/caller receipt. Preserve transient/refusal limits above; investigate
 a specific reproduced required-feed failure in its owner, not rerun DL catalogue.
+
+
+<a id="dl-v222-release-convergence-20261002"></a>
+### Data Layer v2.2.2 Release Convergence - 2026-10-02
+
+Status: IN_PROGRESS / SOURCE_AND_RUNTIME_PROVENANCE_REVIEW.
+Owner approved gathering already-fixed Data Layer commits and beginning the
+normal feature -> dev/CI -> main release workflow, conditional on actual evidence.
+This is release convergence for the existing narrow recovery/hot-backup patch,
+not a new implementation phase, catalogue/C2 rerun or TS upgrade certification.
+Guide: upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md sections
+18.12 K5.5/K5.6 and Broker-confirmed quiet reads and production receipt.
+
+Approved sidecar scope: inventory remote/source/runtime/certificate correspondence;
+inherit unaffected recorded Rust/fault/consumer evidence; verify changed Python/SDK
+packaging; prepare v2.2.2 provenance and feature PR into dev. Preserve both existing
+owner plan hunks. No squash/history rewrite, unrelated merge or TS source changes.
+No production rollout, tag or publication before reporting exact candidate/rollback
+and remaining gates to the parent. No heavy Rust build; component source equality
+must justify inheritance. All runtime config, TLS, groups, offsets, state, consumer
+entitlements and SDK callers stay unchanged in this source-preparation slice.
+
+Initial inventory: canonical /home/bobby/data_layer, sole worktree,
+fix/execution-view-diagnostics@e519034; remote dev830ac97/main d149b35;
+published v2.2.1. Existing live Query/Stream/projector are c8015ca component images.
+Two subsequent Python/SDK commits 12785ab and a243096 are not automatically
+covered by that runtime image. TS caller d63ae15 is explicitly outside this release.
+Required exit: exact deployed versus pending component map; deterministic SDK
+artifact; affected source tests; remote CI status; draft release packet with truthful
+limits. Do not generate a PASS certificate for an unrolled Python delta. Keep
+active/explicit rollback images; clean only disposable resources created here.
+
+
+Release-convergence source review result: 78 commits above published v2.2.1,
+11 source/ops commits and67 documentation-only commits. Preserve this tested
+history; no squash. Rust/Cargo/contract/config trees are unchanged since the
+accepted c8015ca component build. Current runtime: Query3af57ddf1764 x2,
+Stream1f13408fe946 x2,Projectora696cfba6ab3 x2,OKXingestor0f6876e16e51,
+cores/Binance658a9570c5fc. Active roles are running/OOMfalse; BARedge historical
+restart3 retained, others0. This inventory is not a new latency/uptime certificate.
+Canonical config remains phasec36-reference-l2-r14 and authority1; mounted runtime
+and consumer-realm identities are preserved, not regenerated for a release label.
+
+Affected Python/SDK suite:136ran,104PASS,32SKIP,0FAIL in121.057s. Thirty skipped
+Query cases require Redis; they were rerun with isolated Redis as part of42/42PASS,
+0skip/0fail in16.078s. Two Kafka mirror cases remain inherited locally and will run
+in required remote native CI. No broad catalogue/C2 or heavy Rust rebuild.
+SDK2.0.7 deterministic wheel SHA256
+e50b9164d064d0a0e9256ea1bb5c8afe2bd32eb2a505d36165c94fec58d90b14;
+generated contract digest unchanged2a25a601...624. New Query pending source is
+exactly12785ab(shared SDK proof validator/lazy service import) and
+a243096(lossless MARK/INDEX component clocks/capture lineage). Read-only runtime
+file hashes confirm the current Query does not yet contain those two commits.
+
+Prepared upgrade/evidence/releases/v2.2.2/release-preparation.json and draft notes.
+No certificate.json/PASS fabricated. They distinguish measured c8015ca latency,
+existing failed/refused windows, pending Query-only artifact and required CI.
+Evidence inventory/logs: ~/.local/state/qdl-v2/release-convergence-20261002/.
+Test clients --rm, isolated qdl-v222-release-redis stopped/removed. No runtime
+restart, orders, config change, image build or BuildKit creation in this slice.
+Existing active/rollback and user worktree hunks preserved; no broad prune.
+First metadata assembly stopped on absent optional SDK manifest key before files
+were written; corrected by retaining the SDK manifest's actual structured schema.
+Apply_patch sandbox helper failed mountinfo, exact-match fallback used perRule32.
+Next: commit only this receipt/preparation, push feature and open dev PR/CI.
+No tag/publication or production rollout is authorized by this preparation artifact.

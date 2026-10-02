@@ -1,0 +1,781 @@
+{
+  "branch": "fix/execution-view-diagnostics",
+  "cleanup": {
+    "buildkit_created": false,
+    "existing_images_and_worktrees_preserved": true,
+    "global_prune": false,
+    "images_built": 0,
+    "test_clients_auto_removed": true,
+    "test_redis_removed": true
+  },
+  "commits_since_release": 78,
+  "components": {
+    "query_python": {
+      "candidate_image": null,
+      "configuration_change": false,
+      "deployed_source": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+      "pending_commits": [
+        "12785ab4aa1586ca58b6406d7d54a08ea8e24a58",
+        "a243096f7ccace5c21fb79b208cc65dcdb484403"
+      ],
+      "pending_files": [
+        "qdl/data_quality/execution_mark_index.py",
+        "qdl/query/__init__.py",
+        "qdl/reference/execution_live.py",
+        "qdl_sdk/__init__.py",
+        "qdl_sdk/execution_quality.py",
+        "scripts/build_qdl_sdk_release.py"
+      ],
+      "rollback_image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+      "rollout_roles": [
+        "query_kn_2",
+        "query_kn_1"
+      ]
+    },
+    "rust": {
+      "evidence_inheritance": "Existing recovery, broker-proof, paired restart and narrow six-role acceptance; not whole-catalogue recertification.",
+      "rebuild_required": false,
+      "source_tree_unchanged_since": "c8015cac822c8f2759dafabe9a56f97409c39c73"
+    }
+  },
+  "documentation_only_commit_count": 67,
+  "existing_measured_sdk_latency": {
+    "BOOK_DELTA": {
+      "call_to_sdk_validated_usable_ms": {
+        "max": 94.00424198247492,
+        "p50": 14.584,
+        "p95": 40.168,
+        "p99": null
+      },
+      "refusal_codes": {},
+      "refused": 0,
+      "requests": 80,
+      "usable": 80
+    },
+    "BOOK_SNAPSHOT": {
+      "call_to_sdk_validated_usable_ms": {
+        "max": 70.60038601048291,
+        "p50": 27.41,
+        "p95": 45.595,
+        "p99": null
+      },
+      "refusal_codes": {},
+      "refused": 0,
+      "requests": 80,
+      "usable": 80
+    },
+    "MARK_INDEX_PRICE": {
+      "call_to_sdk_validated_usable_ms": {
+        "max": 86.28075197339058,
+        "p50": 11.617,
+        "p95": 41.21,
+        "p99": null
+      },
+      "refusal_codes": {},
+      "refused": 0,
+      "requests": 80,
+      "usable": 80
+    },
+    "QUOTE": {
+      "call_to_sdk_validated_usable_ms": {
+        "max": 102.95276599936187,
+        "p50": 11.795,
+        "p95": 33.185,
+        "p99": null
+      },
+      "refusal_codes": {},
+      "refused": 0,
+      "requests": 80,
+      "usable": 80
+    },
+    "TRADE": {
+      "call_to_sdk_validated_usable_ms": {
+        "max": 48.12901793047786,
+        "p50": 12.087,
+        "p95": 35.132,
+        "p99": null
+      },
+      "refusal_codes": {
+        "DataLayerClientError": 6
+      },
+      "refused": 6,
+      "requests": 80,
+      "usable": 74
+    }
+  },
+  "image_labels": [
+    {
+      "digest": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "labels": {
+        "org.opencontainers.image.revision": "855c914a72cbff56682b679d212a3e99d15bab42",
+        "org.opencontainers.image.title": "Quant Data Layer Rust runtime",
+        "org.opencontainers.image.version": "2.2.1-recovery-855c914"
+      },
+      "tags": [
+        "qdl-v2-rust:2.2.1-855c914"
+      ]
+    },
+    {
+      "digest": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "labels": {
+        "org.opencontainers.image.revision": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+        "org.opencontainers.image.title": "Quant Data Layer Rust runtime",
+        "org.opencontainers.image.version": "2.2.0-rc1"
+      },
+      "tags": [
+        "qdl-v2-rust:2.2.1-c8015ca-stream"
+      ]
+    },
+    {
+      "digest": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+      "labels": {
+        "org.opencontainers.image.revision": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+        "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+        "org.opencontainers.image.title": "Quant Data Layer",
+        "org.opencontainers.image.version": "2.2.1"
+      },
+      "tags": [
+        "qdl-v2-python:2.2.1-c8015ca"
+      ]
+    },
+    {
+      "digest": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "labels": {
+        "org.opencontainers.image.revision": "0e00c817289ce32ea767cea002c859814349fc72",
+        "org.opencontainers.image.title": "Quant Data Layer Rust runtime",
+        "org.opencontainers.image.version": "2.2.1-0e00c81"
+      },
+      "tags": [
+        "qdl-v2-rust:2.2.1-0e00c81"
+      ]
+    },
+    {
+      "digest": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "labels": {},
+      "tags": [
+        "apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9"
+      ]
+    },
+    {
+      "digest": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "labels": {
+        "org.opencontainers.image.revision": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+        "org.opencontainers.image.title": "Quant Data Layer Rust runtime",
+        "org.opencontainers.image.version": "2.2.1-recovery-855c914"
+      },
+      "tags": [
+        "qdl-v2-rust:2.2.1-c8015ca-projector"
+      ]
+    },
+    {
+      "digest": "sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d",
+      "labels": {
+        "org.opencontainers.image.revision": "8ba4165",
+        "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+        "org.opencontainers.image.title": "Quant Data Layer",
+        "org.opencontainers.image.version": "2.0.12-8ba4165"
+      },
+      "tags": [
+        "qdl-v2-python:2.0.12-8ba4165"
+      ]
+    },
+    {
+      "digest": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "labels": {},
+      "tags": [
+        "redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8"
+      ]
+    },
+    {
+      "digest": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "labels": {
+        "org.opencontainers.image.revision": "4fe7e9298d32c207d7822d1e03df4986b9c35d9c",
+        "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+        "org.opencontainers.image.title": "Quant Data Layer",
+        "org.opencontainers.image.version": "2.2.0-rc4"
+      },
+      "tags": [
+        "qdl-v2-python:2.2.0-rc4-4fe7e92"
+      ]
+    }
+  ],
+  "inherited_evidence": {
+    "broker-proof-final2-tests.json": "8dc7a9a187617941cc7af7af39b2e244a6e7d30de2679f415ccff05c2eb69881",
+    "production-acceptance-summary.json": "d49931f0f8ae2a6d3d8535d91fa1a9b13d5206220cbe52b229593a6425fb3c6d",
+    "rehearsal-r5-summary.json": "a5a829b53e33cc16e5fe0f25107339670e4b6cbff9803d43de625c3c6c717173",
+    "rehearsal-r7-summary.json": "cb476bc9c4c92fcae08958b504d65e30a42113dc720532c843a07b298d89ff81",
+    "runtime-scope-verification.json": "d7b9b394e27f9d875b0c4d522f7c0e8625e6c5a6932310d25b25766dfa548677"
+  },
+  "limits": [
+    "Measured latency is inherited from c8015ca, not a new runtime benchmark after pending Python changes.",
+    "Six historical TRADE refusals remain UNKNOWN without simultaneous provider witness; session-ready is not always execution-eligible.",
+    "No zero-downtime or independent-host/provider HA claim.",
+    "No TS caller, virtual capital, accounting, broker execution or P18.3E certificate included.",
+    "Binance3d and VN/DNSE V2 exclusions unchanged.",
+    "BAR edge observed historical restart count3; all other active Data Layer roles restart0/OOMfalse at inventory, not a fresh availability certificate."
+  ],
+  "not_a_release_certificate": true,
+  "published_baseline": {
+    "sha": "d149b3511dac4f3d1ce76e3686437d736d3b98f4",
+    "tag": "v2.2.1"
+  },
+  "release": "v2.2.2",
+  "required_next_steps": [
+    "Push feature branch and open dev PR; all required CI jobs must pass.",
+    "Build immutable Query-only artifact from reviewed source; test package hashes, SDK wheel and actual entrypoint.",
+    "Parent review exact candidate/rollback before Query2 then Query1 rollout; preserve environment/TLS/config/mount/state.",
+    "Affected five-symbol/two-venue MARK reference/typed at-use proof through both Query replicas; retain failures, no order mutation. No catalogue/C2 rerun.",
+    "Finalize certificate/report/notes with runtime digest and CI evidence, then dev release PR to main and tag v2.2.2 through existing release workflow.",
+    "Retain exact active plus rollback; remove only unreferenced task artifacts after convergence."
+  ],
+  "runtime_inventory": [
+    {
+      "config_env_sha256": "dfb0a61b9d849c1819b9a29f1ae50be151733b2a1da1b7ca08bc4e6d7834fb3e",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "d02b14cbb09de2107720398529a5a10ee1172dfea63639ae99eed96682ac4125",
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "limits": {
+        "memory": 536870912,
+        "nano_cpus": 750000000
+      },
+      "mount_identity_sha256": "d2177dd52e6801fd095bdf7699ca00953a7c47d2e9db793a82eb493147b282a1",
+      "name": "/qdl_v2_stable_candidate-market_projector_1-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "market_projector_1",
+      "started_at": "2026-10-01T12:16:20.78036445Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "fd51fb8b77f2a579ecbc0de8723a6170fc3bb2300a0f8d18eff258fa179d7b8e",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "de567d826c306e87c867c8e61b6d3cdfde688451eaa7b0c19f8bca3b5b0a5c1e",
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "limits": {
+        "memory": 536870912,
+        "nano_cpus": 750000000
+      },
+      "mount_identity_sha256": "8bb98b78b03d1972be62501f7a318ec7b9ef9ac49adb9c6787fa76761ca4814f",
+      "name": "/qdl_v2_stable_candidate-market_projector_2-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "market_projector_2",
+      "started_at": "2026-10-01T12:15:13.766866129Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "2ba34735613dfe4bf41dc14f10e7d4ebe2d251b213d17ffaa36e55c84402ac3c",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": "qdl-v2-stream-a:8210,qdl-v2-stream-b:8210",
+      "id": "37adb12eddd0b356b3372918c07f5c69b62a95f0d39fb3e8a6318fdbc68982d2",
+      "image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+      "limits": {
+        "memory": 1610612736,
+        "nano_cpus": 1500000000
+      },
+      "mount_identity_sha256": "3f6e174b01182983dffe6d5027aed05a18949e09200afe30d845244d4d252bd3",
+      "name": "/qdl_v2_stable_candidate-query_kn_1-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "query_kn_1",
+      "started_at": "2026-10-01T12:13:51.499377434Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "581555317b20e99ccba726f3f0d5cc3822c782a1ad096959222ce20723b81f64",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": "qdl-v2-stream-a:8210,qdl-v2-stream-b:8210",
+      "id": "ebb668bb22dd526efb7aebd9cb02c9460be2c5894711866a78de3fd435f01332",
+      "image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+      "limits": {
+        "memory": 1610612736,
+        "nano_cpus": 1500000000
+      },
+      "mount_identity_sha256": "7c3527eb3d077169aa31e87a91d27c7afde3c4025c36869e9f58292ec72a8017",
+      "name": "/qdl_v2_stable_candidate-query_kn_2-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "query_kn_2",
+      "started_at": "2026-10-01T12:12:10.479903764Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "bebc3bf7caa9bad59fd5b403f591f8d728f49af746aa78eca28bfdc9274b935c",
+      "health": null,
+      "hot_backup_enabled": "true",
+      "hot_backup_targets": null,
+      "id": "5a3e768c8d4547098f3a5fc515854f82dfdec915b3d30beaed0a852c28aa67f3",
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "limits": {
+        "memory": 536870912,
+        "nano_cpus": 750000000
+      },
+      "mount_identity_sha256": "37b73f695e9e5af496a38bde395ccb2aa88f928c8e37ca80441666815b9b5a6e",
+      "name": "/qdl_v2_stable_candidate-stream_kn_1-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "stream_kn_1",
+      "started_at": "2026-10-01T12:10:50.691735492Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "78542128d22c569776bb19ce4f9283df2901e93f99ec86b8b44b98e524e3795b",
+      "health": null,
+      "hot_backup_enabled": "true",
+      "hot_backup_targets": null,
+      "id": "424da78b051f17f982982906fa480985ba3390b284106553a70913c56fad7e1c",
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "limits": {
+        "memory": 536870912,
+        "nano_cpus": 750000000
+      },
+      "mount_identity_sha256": "37b73f695e9e5af496a38bde395ccb2aa88f928c8e37ca80441666815b9b5a6e",
+      "name": "/qdl_v2_stable_candidate-stream_kn_2-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "stream_kn_2",
+      "started_at": "2026-10-01T12:07:24.322915897Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "119cfc9fd8551c442e46a736caa7f5aed98419cac4fa33ec4c0155baff598427",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "bb3bd0b92f31e44927aaac14800b4829c4acd27568817ae315ba0144186f6521",
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "limits": {
+        "memory": 268435456,
+        "nano_cpus": 500000000
+      },
+      "mount_identity_sha256": "4fdbe0dc52d5709535f8dc7ad4746131650080b8e65633633c309590c7a9518f",
+      "name": "/qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "ingestor_okx_swap",
+      "started_at": "2026-10-01T05:51:24.840836395Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "78cdd3b7bec9baca976aa1ed57294d2565d5a47e9b6e83a3cd53282ec80853af",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "d8a2c138f252a658582fcb16fc8c86c75bf343d145dec65f9aad88156e9d2b02",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "limits": {
+        "memory": 1610612736,
+        "nano_cpus": 1750000000
+      },
+      "mount_identity_sha256": "8bf9e0c727cf6a938354e508fb5c8767f04e9963f96bdb51e1a02049fb54d6bc",
+      "name": "/qdl_v2_stable_candidate-kafka3-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "kafka3",
+      "started_at": "2026-10-01T03:58:43.963843285Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "4dc172945eba908941f4c26cf8c8eb5dddec071d24a7fe03db394b88af90ea7c",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "1168e31f4823b6587737e03a3f67ac1ed4edfecc37e0a6a4861584aa4f33f23b",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "limits": {
+        "memory": 2147483648,
+        "nano_cpus": 1750000000
+      },
+      "mount_identity_sha256": "3cb7dd67d1790ad668f1efc24e7f88fa65b2796b212c0500e51a5ca42a9c7e2e",
+      "name": "/qdl_v2_stable_candidate-kafka2-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "kafka2",
+      "started_at": "2026-10-01T03:57:34.401411155Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "359fb5a6f027d2c64ce8fae9110c9c69566afcc50a95fea7fd1883883006946a",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "36498e7e4a736260e213fc18d8998ab09f0f00dab2929db072aab52774e4d4b9",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "limits": {
+        "memory": 1610612736,
+        "nano_cpus": 1250000000
+      },
+      "mount_identity_sha256": "b3986716cc1f8736dcb17c3976d7f0632ad08f66e53d70f41b69defc0adbb45a",
+      "name": "/qdl_v2_stable_candidate-kafka1-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "kafka1",
+      "started_at": "2026-10-01T03:56:13.899839854Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "74f21b8ec41d4fd0503bcf7c804b648b63b190e0bd66d42690a0dfd07ec1b6dd",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "4f52527fcf7c58e0aa3ee3b71ade8cdae868b5b918594da185f01a8d78a25437",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "limits": {
+        "memory": 268435456,
+        "nano_cpus": 1000000000
+      },
+      "mount_identity_sha256": "6bed34ecd5862361c7aa1c051f04438027687004af79ba0b23174177c93b7886",
+      "name": "/qdl_v2_stable_candidate-rust_core-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "rust_core",
+      "started_at": "2026-09-30T17:46:56.312111099Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "932911645f163be5f0e8175a1608bbef38169c56e6dd38b803a8173990d0d447",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "babd37aafd1d12c0760bb241123f90bf5fe2cf304b8c26e500992801a7791bed",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "limits": {
+        "memory": 268435456,
+        "nano_cpus": 1000000000
+      },
+      "mount_identity_sha256": "f9a9a0dbac711a7b82fc4e9274094332784362a3b4a075c03de05086a851f4fe",
+      "name": "/qdl_v2_stable_candidate-rust_core_2-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "rust_core_2",
+      "started_at": "2026-09-30T17:46:23.058376424Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "eebdf1532824d1e5fa21dcff10cbd4c3347097512569b2559d64026a92a690d8",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "83b83de2e33196e1be1416e3367d9d5363a698f44b988aadb4dae9a0de13743a",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "limits": {
+        "memory": 268435456,
+        "nano_cpus": 500000000
+      },
+      "mount_identity_sha256": "cf9d4e3f5f704ebf1ebe53231373d03723d23d1bf9176539eb5fe4e478f4e4ba",
+      "name": "/qdl_v2_stable_candidate-rust_core_3-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "rust_core_3",
+      "started_at": "2026-09-30T17:45:38.534537186Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "0aca130b62180fca1e3e9d98e7ce5d5291b7c7aa578b1639e5567380f607a9ac",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "b68d5148e214c5cdd883047eb537eb892904105fd4b3979ed9e4907b9ddf02b3",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "limits": {
+        "memory": 268435456,
+        "nano_cpus": 500000000
+      },
+      "mount_identity_sha256": "2362124641d5b1be8ed7dada2939388784a321a888490298b838ec47aab832c3",
+      "name": "/qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "ingestor_binance_usdm",
+      "started_at": "2026-09-30T17:44:26.540267501Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "ff9be4a14ebe161d80f79bc700c407c538c9fe1a1fa140462aa9b8806dc92612",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "3eb81129ca4fe7232e714ef2c4610ce250762f8b6255c07cbe97bdd249391cef",
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "limits": {
+        "memory": 536870912,
+        "nano_cpus": 750000000
+      },
+      "mount_identity_sha256": "c5479ed72aa7a138e7f29d3415dba496d88b4b83516f98db0ea4ad7313bbabfb",
+      "name": "/qdl_v2_stable_candidate-binance_bar_edge-1",
+      "oom_killed": false,
+      "restart_count": 3,
+      "role": "binance_bar_edge",
+      "started_at": "2026-10-01T04:03:57.875233715Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "8c4cd6a3bd40bf6598d538e331cf58a898f326836ccdf4e06c6888066af0ae70",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "bac2c14d80d5ac0ce631aa58bbf4e64ab17c705a47dfe6fb8871f66ee8857c48",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "limits": {
+        "memory": 9663676416,
+        "nano_cpus": 1000000000
+      },
+      "mount_identity_sha256": "b565b39d20dbceaa24919426ab6f09fc6fcf89e11cbf396f1af83a30637fc49a",
+      "name": "/qdl_v2_stable_candidate-market_cache-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "market_cache",
+      "started_at": "2026-09-27T05:29:58.000340326Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "8c4cd6a3bd40bf6598d538e331cf58a898f326836ccdf4e06c6888066af0ae70",
+      "health": "healthy",
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "cd2c41218285c86c75b83634036097655ba29f88c0be85a89c7b240bd5531c0d",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "limits": {
+        "memory": 167772160,
+        "nano_cpus": 500000000
+      },
+      "mount_identity_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "name": "/qdl_v2_stable_candidate-stable_redis-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "stable_redis",
+      "started_at": "2026-09-16T06:38:55.588316335Z",
+      "state": "running"
+    },
+    {
+      "config_env_sha256": "be510c47197968c664ff7a9b5389db4180c6201d6a1f54d34b8da901fd329747",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "b591382be68324fd8c245c4f806c900f8ebfde0c5679e1b8b3ae3682ba61ac8a",
+      "image": "sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d",
+      "limits": {
+        "memory": 0,
+        "nano_cpus": 0
+      },
+      "mount_identity_sha256": "910d06ad8dbadfa35255d995d0a066aa8520cfaa4e6a516e64674688fa9c5c82",
+      "name": "/qdl_v2_stable_candidate-stable_tls_init-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "stable_tls_init",
+      "started_at": "2026-09-03T12:36:17.691555089Z",
+      "state": "exited"
+    },
+    {
+      "config_env_sha256": "be510c47197968c664ff7a9b5389db4180c6201d6a1f54d34b8da901fd329747",
+      "health": null,
+      "hot_backup_enabled": null,
+      "hot_backup_targets": null,
+      "id": "f1387505c5643c843eff7b36e47b0022df18078807b3362d23d328a8e0ff3f59",
+      "image": "sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d",
+      "limits": {
+        "memory": 0,
+        "nano_cpus": 0
+      },
+      "mount_identity_sha256": "5996ade7bf6cbd73f408e85ea87e36c4d809399d020091b0f35e24b9c95d8e55",
+      "name": "/qdl_v2_stable_candidate-stable_state_init-1",
+      "oom_killed": false,
+      "restart_count": 0,
+      "role": "stable_state_init",
+      "started_at": "2026-09-03T12:36:17.69711623Z",
+      "state": "exited"
+    }
+  ],
+  "schema": "qdl.release-preparation.v1",
+  "sdk": {
+    "contains_service_internals": false,
+    "dependencies": [
+      "grpcio>=1.70.0,<2.0.0",
+      "httpx>=0.28.0,<1.0.0",
+      "protobuf>=6.31.1,<7.0.0",
+      "pydantic>=2.0.0,<3.0.0",
+      "PyJWT[crypto]>=2.15.1,<3.0.0"
+    ],
+    "generated_contract_digest": "2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624",
+    "name": "qdl-sdk",
+    "python_requires": ">=3.10",
+    "reproducible_timestamp": "2020-01-01T00:00:00Z",
+    "schema": "qdl.sdk.release.v1",
+    "sdk_source_digest": "062fb1255aab7c3908661408a1c402f205801f9010185799562acc2fdd3cffe3",
+    "version": "2.0.7",
+    "wheel": "qdl_sdk-2.0.7-py3-none-any.whl",
+    "wheel_sha256": "e50b9164d064d0a0e9256ea1bb5c8afe2bd32eb2a505d36165c94fec58d90b14"
+  },
+  "source_head": "e5190349cd65c205e24f09f7a08587c710a974b5",
+  "source_or_ops_commits": [
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "docker-compose.v2-stable.yml",
+        "scripts/execution_view_diagnostics.py",
+        "tests/test_execution_view_diagnostics.py",
+        "tests/test_phaseb_stable_deployment.py"
+      ],
+      "sha": "341836e2af97fb0f85aa631ebf569823286943db",
+      "subject": "fix: diagnose execution refusals and bound Kafka JVM heap pressure"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "scripts/execution_view_diagnostics.py"
+      ],
+      "sha": "7d17c298de1cffa172a01c42e2f495047b172b0f",
+      "subject": "ops: record broker GC rollout and measured consumer recovery boundary"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs",
+        "rust/qdl-kafka/src/lib.rs",
+        "rust/qdl-projector/src/kafka_pipe.rs",
+        "rust/qdl-projector/tests/stage_a_kafka.rs",
+        "scripts/kafka_client_recovery_fault_test.py"
+      ],
+      "sha": "855c914a72cbff56682b679d212a3e99d15bab42",
+      "subject": "fix(kafka): bound projector recovery and separate durable delivery from cursor"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "rust/qdl-projector/Cargo.toml",
+        "rust/qdl-projector/src/handoff.rs",
+        "rust/qdl-projector/src/kafka_pipe.rs",
+        "rust/qdl-projector/src/kafka_state.rs",
+        "rust/qdl-projector/src/lib.rs",
+        "rust/qdl-projector/src/main.rs",
+        "rust/qdl-projector/src/shutdown.rs",
+        "rust/qdl-projector/tests/stage_a_kafka.rs"
+      ],
+      "sha": "729436ee70bac7c295b5acef316476aa9d32648d",
+      "subject": "fix(projector): drain on signals and instrument bounded handoff"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "rust/qdl-projector/src/kafka_state.rs",
+        "rust/qdl-projector/src/stage_b.rs"
+      ],
+      "sha": "9a1a05446e21552d0b0eaf28ef55653c3868d26c",
+      "subject": "fix(projector): isolate watermark requests from data fetch during handoff"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "Cargo.lock",
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/reference/local_mark_index.py",
+        "qdl/runtime/kn_hot_view.py",
+        "qdl/runtime/kn_query_backend.py",
+        "qdl/runtime/stable.py",
+        "rust/qdl-stream-gateway/Cargo.toml",
+        "rust/qdl-stream-gateway/src/hot_view.rs",
+        "rust/qdl-stream-gateway/src/hub.rs",
+        "rust/qdl-stream-gateway/src/lib.rs",
+        "rust/qdl-stream-gateway/src/main.rs",
+        "rust/qdl-stream-gateway/tests/committed_reads.rs",
+        "rust/qdl-stream-gateway/tests/native_stream.rs",
+        "tests/test_kn_hot_view.py",
+        "tests/test_kn_query_backend.py",
+        "upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md"
+      ],
+      "sha": "0fe9d370c23d331d0a4480ad30d6be7afc64c90f",
+      "subject": "fix: add bounded canonical hot backup for query handoff"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/runtime/kn_query_backend.py",
+        "tests/test_kn_hot_view.py"
+      ],
+      "sha": "13718f40dda8e0846b3f3f34879a015b384bae97",
+      "subject": "fix(query): type hot-backup lineage refusals and record guarded rehearsal"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/runtime/kn_query_backend.py",
+        "rust/qdl-stream-gateway/src/hub.rs",
+        "rust/qdl-stream-gateway/src/reader.rs",
+        "rust/qdl-stream-gateway/tests/native_stream.rs",
+        "scripts/kn_canonical_mirror.py",
+        "tests/test_kn_canonical_mirror.py",
+        "tests/test_kn_hot_view.py"
+      ],
+      "sha": "a957ae234765c75c5641126539d86c241c5529e9",
+      "subject": "fix: require broker-confirmed progress for canonical hot backup"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/runtime/kn_hot_view.py",
+        "qdl/runtime/kn_query_backend.py",
+        "tests/test_kn_hot_view.py"
+      ],
+      "sha": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+      "subject": "fix: retain latest canonical quality on ineligible hot reads"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/data_quality/execution_mark_index.py",
+        "qdl/query/__init__.py",
+        "qdl_sdk/__init__.py",
+        "qdl_sdk/execution_quality.py",
+        "scripts/build_qdl_sdk_release.py",
+        "tests/test_qdl_sdk_release.py",
+        "tests/test_sdk_execution_quality.py",
+        "upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md"
+      ],
+      "sha": "12785ab4aa1586ca58b6406d7d54a08ea8e24a58",
+      "subject": "fix: share execution reference proof validation with packaged SDK"
+    },
+    {
+      "docs_only": false,
+      "files": [
+        "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md",
+        "qdl/reference/execution_live.py",
+        "tests/test_execution_mark_index_live_view.py"
+      ],
+      "sha": "a243096f7ccace5c21fb79b208cc65dcdb484403",
+      "subject": "fix(reference): retain verified component clocks and capture lineage"
+    }
+  ],
+  "status": "PREPARED_PENDING_QUERY_PACKAGING_RUNTIME_DELTA_AND_CI",
+  "tests": {
+    "isolated_redis_matrix": {
+      "elapsed_seconds": 16.078,
+      "failed": 0,
+      "log_sha256": "0e221a9593c257a92ca02aab14e881b43ab491ca172ed24995e6d5a990c6084b",
+      "passed": 42,
+      "ran": 42,
+      "skipped": 0
+    },
+    "source_matrix": {
+      "elapsed_seconds": 121.057,
+      "failed": 0,
+      "passed": 104,
+      "ran": 136,
+      "skipped": 32,
+      "skips": "30 Redis-gated Query cases rerun with isolated Redis; two Kafka mirror cases inherited and required in remote native CI."
+    }
+  }
+}
