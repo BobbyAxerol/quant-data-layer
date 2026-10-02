@@ -68172,3 +68172,110 @@ arithmetic. Wire native valuation/performance with qualified FX before caller,
 SDK/config/native-binary convergence and reviewed changed-role deployment, then
 one final affected acceptance. This receipt does NOT close owner integration,
 certify inverse availability, or authorize deploying the unfinished TS upgrade.
+
+
+#### EDC-1 Actual Native Owner Publication
+
+IN_PROGRESS. Owner resumes native valuation/performance plus qualified FX in the
+existing publisher, caller/runtime convergence and final affected acceptance.
+Guide: Data Layer upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md,
+execution-data-contract-closure-guide-20261001; existing EDC-1 final scope review.
+Native positions must not pass through linear compatibility valuation. Explicit
+FX routes use typed INDEX observations, original component clocks, exact venue/
+instrument/currency legs; never USD=USDT. Read external prices outside transactions,
+revalidate at use/commit; provenance change invalidates prepared work. Keep native
+amounts on positions and reporting amounts on snapshots. Reuse Rust P15 reducers.
+Test real native binary and isolated PostgreSQL actual publication, expiry rollback,
+LINEAR/INVERSE, long/short/flat, mixed currencies and native authority failures.
+Legacy unpinned read contracts remain unchanged. No Data Layer source change or
+production rollout before tested packaging and exact changed-role/rollback review.
+
+
+EDC-1 actual owner publication implementation checkpoint (2026-10-02):
+- Existing publisher now invokes native P15 valuation for pinned LINEAR/INVERSE
+  positions and native performance reduction for reporting equity. Position writes
+  retain settlement PnL and quote notional; reporting snapshots contain converted
+  PnL/notional/fees/margin/cash, never BTC+USDT scalar sums. No Python valuation
+  fallback when the extension is absent. Fees are metrics, not subtracted twice
+  from an already settled wallet. Flat zero-exposure positions need no FX read.
+- PERFORMANCE_FX_ROUTES_JSON is an explicit bounded mapping. Key is
+  VENUE:BASE:REPORTING, value one or two legs with instrument_id, base_currency,
+  quote_currency. Each leg uses typed INDEX; inversion follows currency continuity,
+  not symbol guessing. Instrument terms must match the database and venue; source
+  digest/original component clock/expiry are retained. Rates use 80-digit working
+  precision and explicit half-even 18-decimal boundary; zero underflow is rejected.
+  No hardcoded stablecoin parity, no new provider binding or direct venue fetch.
+- FX metadata and all market proofs are rechecked inside publication; expiry after
+  writes rolls the transaction back. Gateway validates FX terms alongside P05
+  business proof, so changing an auxiliary FX instrument invalidates old equity.
+  V2 owner startup requires native inputs; legacy mode remains separate. This is
+  point-in-time DEPLOYMENT_ACCOUNT equity, NOT a new capital-flow/unitized-return
+  certificate or evidence of physical-account allocation across all deployments.
+- No actual market-data latency claimed from fixture timings. The isolated PG
+  tests use actual P05 commits, native binary, owner SQL and Gateway SQL, but
+  TEST_ONLY mark/index observations. Existing catalogue/load evidence is unchanged.
+
+Runtime convergence discovery, read-only:
+- ts-p183 has Gateway/Risk/executor/portfolio/market_data, but no performance owner
+  role. Shared performance_service is the old owner and can still publish to the
+  same shared DB. Do not launch a second unrestricted publisher or deploy the
+  entire unfinished upgrade into shared legacy services.
+- Prefix p18% inventory is historical PAPER: OKX36/Binance46 positions, none P05
+  pinned. This is NOT the actual sandbox cohort and must not be adopted/reset.
+- Bounded sandbox inventory identifies sandbox-binance-p183-ba0eb697ab-binance
+  (7/7 native pins,0open) and sandbox-okx-p183-ba0eb697ab-okx (10/10,0open).
+  Pins are an inventory, not native projection/market eligibility acceptance.
+- Runtime packet must give these accounts exactly one valuation writer, preserve
+  the legacy owner for unrelated accounts, supply explicit sandbox identity/SDK
+  2.0.7/Redis DB0 mapping plus FX entitlement, and pair owner/Gateway reader changes.
+  Need a narrow owner-scope exclusion/backport or equivalent verified single-owner
+  handoff; current source change alone does not establish that ownership. No reset,
+  fabricated adoption, order sending or Data Layer repair is implied.
+
+Remaining implementation/operations, NOT a missing generic approval:
+finish that single-owner deployment scope, immutable packaging of actual native
+binary plus SDK, role-specific runtime config/rollback, then the one affected
+300s no-order acceptance. No runtime/certification/release completion claimed.
+
+
+EDC-1 native owner publication tested receipt:
+225 distinct applicable cases PASS, no FAIL/SKIP in the retained final evidence;
+14 affected PG cases rerun after adding actual Gateway readback. Native extension
+built offline/locked/release with jobs1, builder capped1CPU/2GiB; binary SHA256
+cfb229f38b95fe3064f68a2ecc4e4f3cc8a7154c7b129db7bd1b179df4a2fb88.
+Actual-source SQL covers committed P05 -> owner -> position/snapshot -> Gateway,
+LINEAR/INVERSE Binance/OKX, explicit BTC/USD/USDT, native absence, mark/FX expiry
+after SQL writes with rollback, metadata invalidation. Unit cases additionally
+cover long/short/flat, no fee double-count, typed INDEX/MARK negatives and owned
+caller lifecycle. Zero closed exposure does not require unused FX dependencies.
+Legacy publication regressions retained. No real-provider/broker certification.
+
+Evidence ~/.local/state/qdl-v2/edc1-20261001/evidence/:
+- native-owner-publisher-clean-db.xml:176PASS,40.817s; SHA256
+  81b14c159e896b8df06f51fec0d4066efc308730c48bfc5b06b9f0398665811e.
+- native-owner-typed-caller.xml:47PASS,1.292s; SHA256
+  012a849e1588b8a528d5bd5536ea17b4012aa18dc1a311f6e523e97f5575babc.
+- native-owner-gateway-final.xml:14PASS,10.057s; SHA256
+  22b1b1fa434efff0ce84448e2d05aadac67e6b02895ef7efcc6c911a820bb4ea.
+- native-owner-zero-exposure-final.xml:68PASS,1.844s (overlaps19+47 above plus2
+  new regressions); SHA256 c92a5419ecb6016843259e0f820fb86fa429204e8de59baed2bb0872e77185b5.
+Do not sum these overlapping files as distinct-case coverage. Ruff/diffcheck clean.
+
+Failed runs retained: first8 PG failures were fixture missing venue_symbol, fixed.
+A later combined run had5 setup errors because retained old test schemas filled
+384MiB isolated tmpfs (not host/prod disk); recreated only owned test DB, applied94
+migrations through95 and reran clean. No production resource quota increased.
+Cleanup: all --rm test clients/builders removed, exact ts-edc1-settlement-pg and
+internal ts-edc1-publication-net removed; no persistent volume. No image build or
+BuildKit cache created; existing named builder/test/active/rollback images retained.
+Temporary native .so removed after verification. Disk available at DB cleanup
+75100114944 -> 74949054464 bytes; concurrent host writes, not claimed savings.
+
+Runtime still unchanged: DLv2.2.1 Query3af57ddf1764, TSmarket_data c1f713a8b13e,
+shared performance ab4e36aab9ef. Observed restart counts Query/market_data0,
+performance4 (existing), OOMfalse. No runtime rollout, SDK runtime replacement,
+provider/order action, alpha activation, push, merge or release. Canonical/worktree
+roles remain those recorded above; owner Data Layer plan hunks preserved.
+EDC-1 remains IN_PROGRESS until explicit single-owner runtime convergence and
+final affected acceptance; this is source integration completion for valuation,
+not a declaration that the deployed consumers already run it.
