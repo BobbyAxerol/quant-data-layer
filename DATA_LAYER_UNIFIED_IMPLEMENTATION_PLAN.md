@@ -66770,3 +66770,66 @@ active and named rollback artifacts, existing worktrees. No push/merge/release.
 EDC IN_PROGRESS, not certified/FULL. This closes the reproduced cross-venue
 recovery bug at source only. Actual owner/config/SDK and valuation boundary,
 provider attribution and affected-role packet/acceptance remain required.
+
+
+#### EDC-1 Performance Publication Completeness - Start
+
+Continue approved EDC data-boundary closure on TS8a89732/DLb0d10a1. Reproduce
+missing mark becoming zero PnL and partial publication when a later write fails.
+Use actual migrated isolated PostgreSQL tables and production repository writers;
+provider/cash/position inputs are controlled TEST_ONLY fixtures, not broker proof.
+Require all open-position reads before publication, publish positions/instrument/
+account/state atomically, defer only affected deployment and dependent portfolios.
+No provider I/O inside the publication transaction, no PnL formula/schema changes.
+Original mark provenance, at-use expiry and target summary age remain separate
+open ledger entries, not claimed complete by this atomicity slice. Retain previous
+receipts; tests target this boundary. No shared DB/runtime/order changes; cleanup
+exact tmpfs test DB/network/client, keep active/rollback images.
+
+
+#### EDC-1 Performance Publication Completeness - Tested Receipt
+
+Reproduced4 failures on actual isolated migrated PostgreSQL before patch: missing
+second-position mark still published on both Binance/OKX; injected error after
+real account/state writes left earlier position updates committed on both venues.
+Two positive controls passed. This is repository publication evidence with
+controlled TEST_ONLY inputs, not proof of a historical production misvaluation.
+
+Repository now requires finite positive marks for every open position before any
+publication. Flat positions need no price. Position mark/PnL updates, instrument
+snapshots, account snapshot and current projection state commit in one existing
+PostgreSQL transaction; external market reads remain outside that transaction.
+Failure rolls all these writes back. Missing valuation defers the affected
+deployment with a bounded cycle-level warning/count; other deployments continue.
+Dependent portfolio aggregates are excluded for that cycle by actual allocation
+join, avoiding partial totals; unrelated portfolios continue. No formula, schema,
+provider quality policy or order path changed.
+
+66PASS/0FAIL/0SKIP,7.855s:13 real-PG cases (two venues x valid/missing/zero/NaN/
+publish-fault/flat plus actual dependent-portfolio exclusion),1 cycle isolation
+unit and52 inherited adjacent performance/identity/sizing/target units. Production
+repository SQL runs on tables cloned from93migrations; cash/positions/market
+reads are controlled, no production DB, broker or provider touched. The pool
+observer verifies the actual acquired connection has no transaction during mark
+read. Fault injection after real writes verifies rollback, not a mocked publisher.
+
+Evidence performance-publication-before.xml SHA256
+b339c843b94b4204000627d9b7397a280beae115ee5da504a38507f62edcb016;
+performance-publication-final.xml SHA256
+b9550013a186714da2e42a66409260d8fc6d856e3fa284a38f25f678dbe3df95
+in ~/.local/state/qdl-v2/edc1-20261001/evidence. Intermediate6-pass run not
+added to distinct coverage. Ruff import-only cleanup and diff check pass.
+
+Removed exact --rm ts-edc1-settlement-pg (including tmpfs test schemas) and
+internal ts-edc1-publication-net; test clients --rm, no image/volume/buildcache
+created. Before cleanup available77298352128B, after77126881280B; concurrent
+host writes mean no disk-reclamation claim. Inventory85images/29active25.18GB,
+422cache/29active16.53GB; active/rollback retained, no broad prune. TestPG and
+shared market_data restart0/OOMfalse before cleanup. DL/TS runtime unchanged.
+
+EDC remains IN_PROGRESS. This closes missing-mark/partial-publication defects at
+source, not freshness/at-use certification. Original mark provenance and expiry,
+concurrent position change during prepared valuation, stale target-summary use,
+actual owned reader/config/SDK/identity, simultaneous provider attribution and
+changed-role acceptance remain open ledger requirements. Never count these unit/
+PG results as runtime latency or full execution/release qualification.
