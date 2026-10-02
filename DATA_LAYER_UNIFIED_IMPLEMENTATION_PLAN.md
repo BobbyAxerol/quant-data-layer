@@ -68720,3 +68720,35 @@ needed for a test-format delta. First plainrust image lacked installedformatter
 and attempted offline channel sync; corrected to existingtool-equippedbuilder.
 No dependency download or localheavyRustbuild. Runtime Rust src remains identical.
 PR27/CI36998897624: SDKPASS; contractfmtFAIL nowfixed; unit/native stillrunning.
+
+
+CI native job110811810392 found missing fault-harness wiring, not broker/runtime
+failure: captured_frames_recover test unwraps absentQDL_RECOVERY_FAULT_DIR before
+any data operation.7other stageA testsPASS. Original localfaultcontroller existed,
+but CI --ignored selected its case without controller. Fix only CI orchestration:
+label/capture exact isolated CI brokerID; fresh marker directory; bounded watcher
+pauses10s thenrestores; always-cleanup unpauses/kills watcher; require receipt.
+Do not skip the test, weaken frozenRTO or change native production code/binary.
+No localbrokerfault/load or runtimeprobe in this sidecar. Parent's pacedbaseline
+is exclusive. UpdatedCI will exercise the real captured-data fault as intended.
+
+
+Parent rollout START (owner-approved exactpacket): baseline completed64reads,
+63usable,44/44MARK two paths/two replicas PASS. OneDOGE TRADE event3219ms with
+session746ms refused correctly by strictpolicy; no simultaneousproviderwitness,
+not classified asquietmarket. Parent reports summaryhash3b8214...98cac; exactfile
+hash retained in parent evidence, abbreviated here pending fullreceipt assembly.
+Parent proceeds Query2canary, verifies3actualMARKreferenceviews beforeQuery1.
+No release/tag beforeCIgreen. Candidate digest51450612...ddf9a9 and reviewed
+image-only rollback remain unchanged; CI-only fixes do not alter runtime bytes.
+
+
+CI-controller behavioral regressions3/3PASS in12.432s with fakeDocker, no socket:
+required fault/restore+receipt, runner failure preserved with cleanup, wrongnamespace
+rejected before runner/pause. No synthetic result is represented as realKafka;
+remote nativejob remains the realfault gate. CI controller targets exactlabelled
+brokerID, bounded30minstep/watch,10soutage, mandatoryreceipt andalwaysunpause.
+Parent reports Query2 rolled at11:12:11Z to51450612,healthy/restart0/OOMfalse;
+realTS SDKcanary3/3MARKusable(BinanceBTC,OKXlinearBTC,inverseBTC), six component
+clock/capture labels preserved. Resolve->SDKusable143.641/38.115/37.039ms,n3,
+no percentile. Parent proceedsQuery1 thenone64readmatrix; nofullC2.
