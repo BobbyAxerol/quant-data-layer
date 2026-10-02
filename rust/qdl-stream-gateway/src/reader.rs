@@ -14,6 +14,10 @@ use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::message::Message;
 use rdkafka::{Offset, TopicPartitionList};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -133,8 +137,20 @@ impl KafkaSettings {
 
 /// The replica's one live reader: every partition, from its high watermark.
 pub struct KafkaLogSource {
-    consumer: BaseConsumer,
+    consumer: Arc<BaseConsumer>,
     topic: String,
+    heads: Arc<Mutex<Vec<(i32, i64, Instant)>>>,
+    stop: Arc<AtomicBool>,
+    head_worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for KafkaLogSource {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.head_worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl KafkaLogSource {
@@ -164,10 +180,57 @@ impl KafkaLogSource {
             starts.push((partition, start));
         }
         consumer.assign(&list).map_err(|error| error.to_string())?;
+        let consumer = Arc::new(consumer);
+        let heads = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let head_worker = {
+            let consumer = consumer.clone();
+            let heads = heads.clone();
+            let stop = stop.clone();
+            let topic = settings.topic.clone();
+            let partitions: Vec<i32> = starts.iter().map(|(partition, _)| *partition).collect();
+            std::thread::Builder::new()
+                .name("qdl-kn-broker-proof".into())
+                .spawn(move || {
+                    while !stop.load(Ordering::Acquire) {
+                        let cycle = Instant::now();
+                        let deadline = cycle + Duration::from_millis(250);
+                        let mut confirmed = Vec::with_capacity(partitions.len());
+                        for partition in &partitions {
+                            if stop.load(Ordering::Acquire) || Instant::now() >= deadline {
+                                break;
+                            }
+                            let started = Instant::now();
+                            let budget = deadline
+                                .saturating_duration_since(started)
+                                .min(Duration::from_millis(80));
+                            if let Ok((_, high)) =
+                                consumer.fetch_watermarks(&topic, *partition, budget)
+                            {
+                                if high >= 0 {
+                                    confirmed.push((*partition, high, started));
+                                }
+                            }
+                        }
+                        if let Ok(mut values) = heads.lock() {
+                            *values = confirmed;
+                        }
+                        while !stop.load(Ordering::Acquire)
+                            && cycle.elapsed() < Duration::from_millis(500)
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                })
+                .map_err(|error| format!("broker proof worker: {error}"))?
+        };
         Ok((
             Self {
                 consumer,
                 topic: settings.topic.clone(),
+                heads,
+                stop,
+                head_worker: Some(head_worker),
             },
             starts,
         ))
@@ -175,6 +238,13 @@ impl KafkaLogSource {
 }
 
 impl LogSource for KafkaLogSource {
+    fn broker_heads(&self) -> Vec<(i32, i64, Instant)> {
+        self.heads
+            .lock()
+            .map(|heads| heads.clone())
+            .unwrap_or_default()
+    }
+
     fn poll(&mut self, timeout: Duration) -> Result<Option<RawRecord>, String> {
         match self.consumer.poll(timeout) {
             Some(Ok(message)) => Ok(Some(RawRecord {

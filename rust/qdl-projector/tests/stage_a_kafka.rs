@@ -372,3 +372,518 @@ async fn two_members_rebalancing_publish_every_input_exactly_once() {
     assert_eq!(read_committed(&bootstrap, &output, 2), expected(60));
     assert_eq!(first.metrics.inputs + second.metrics.inputs, 60);
 }
+
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker)"]
+async fn commit_succeeded_but_ack_was_lost_restart_does_not_duplicate() {
+    let bootstrap = bootstrap();
+    let id = stamp();
+    let (input, output) = (format!("kn3-ack-in-{id}"), format!("kn3-ack-out-{id}"));
+    create_topics(&bootstrap, &[&input, &output], 2).await;
+    produce_inputs(&bootstrap, &input, 12);
+    let group = format!("kn-projector-ack-{id}");
+    let tx = format!("kn-projector-ack-{id}-0");
+    {
+        let mut pipe = KafkaPipe::open(settings(&bootstrap, &input, &group, &tx)).unwrap();
+        let batch = poll_some(&mut pipe, 12);
+        assert!(!batch.is_empty());
+        let mut next = BTreeMap::new();
+        pipe.begin().unwrap();
+        for record in batch {
+            pipe.send(&OutputRecord {
+                topic: output.clone(),
+                partition: record.partition,
+                key: record.key,
+                value: Some(record.payload),
+            })
+            .unwrap();
+            next.insert(record.partition, record.offset + 1);
+        }
+        pipe.commit(&next).unwrap();
+        // Fault seam: durable broker commit, caller loses its response/state.
+        // This is not a network packet-drop claim.
+    }
+    let pipe = KafkaPipe::open(settings(&bootstrap, &input, &group, &tx)).unwrap();
+    let mut stage = StageA::new(
+        pipe,
+        Copy {
+            topic: output.clone(),
+        },
+        StageALimits::default(),
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < until {
+        stage.step().unwrap();
+    }
+    assert_eq!(read_committed(&bootstrap, &output, 2), expected(12));
+}
+
+/// Real captured provider envelopes, real Kafka transaction coordinator outage,
+/// then the actual Stage B -> Redis path. The controller pauses ONLY test Kafka.
+#[tokio::test]
+#[ignore = "requires isolated Kafka/Redis and QDL_RECOVERY_FAULT_DIR controller"]
+async fn captured_frames_recover_after_broker_outage_without_loss_or_cache_regression() {
+    use base64::Engine as _;
+    use qdl_contracts::state_codec::{decode_latest_value, state_partition};
+    use qdl_contracts::state_contract::LogicalProductKey;
+    use qdl_projector::cache::{Cache, Layout};
+    use qdl_projector::kafka_state::{KafkaStateSettings, KafkaStateSource};
+    use qdl_projector::stage_b::{StageB, StageBLimits};
+    let fault = std::path::PathBuf::from(std::env::var("QDL_RECOVERY_FAULT_DIR").unwrap());
+    let bootstrap = bootstrap();
+    let id = stamp();
+    let (input, output) = (
+        format!("kn-recovery-in-{id}"),
+        format!("kn-recovery-out-{id}"),
+    );
+    create_topics(&bootstrap, &[&input, &output], 2).await;
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../contracts/golden/kn_v220/state_codec.json"
+    ))
+    .unwrap();
+    let real: std::collections::BTreeSet<_> = golden["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["synthetic"] == false)
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    let mut expected = BTreeMap::new();
+    let producer: BaseProducer = ClientConfig::new()
+        .set("bootstrap.servers", &bootstrap)
+        .set("acks", "all")
+        .create()
+        .unwrap();
+    let mut count = 0u64;
+    for record in golden["records"].as_array().unwrap() {
+        if !real.contains(record["name"].as_str().unwrap()) {
+            continue;
+        }
+        let key = record["lpk"].as_str().unwrap();
+        let lpk = LogicalProductKey::parse(key).unwrap();
+        let canonical = base64::engine::general_purpose::STANDARD
+            .decode(record["canonical_b64"].as_str().unwrap())
+            .unwrap();
+        let source = &record["source"];
+        let frame = qdl_contracts::state_codec::StateFrame::latest(
+            &canonical,
+            &lpk,
+            qdl_contracts::state_contract::SourceCoordinate {
+                topic_id: source["topic_id"].as_str().unwrap().into(),
+                partition: source["partition"].as_u64().unwrap() as u32,
+                offset: source["offset"].as_u64().unwrap(),
+            },
+            record["materializer_epoch"].as_u64().unwrap(),
+        )
+        .unwrap();
+        let bytes = frame.encode().unwrap();
+        producer
+            .send(
+                BaseRecord::to(&input)
+                    .partition(state_partition(&lpk, 2).unwrap() as i32)
+                    .key(key)
+                    .payload(&bytes),
+            )
+            .unwrap();
+        expected.insert(key.to_owned(), canonical);
+        count += 1;
+    }
+    producer.flush(Duration::from_secs(10)).unwrap();
+    assert!(count >= 20, "real capture coverage");
+    let group = format!("kn-recovery-{id}");
+    let tx = format!("kn-recovery-{id}-0");
+    let mut pipe = KafkaPipe::open(settings(&bootstrap, &input, &group, &tx)).unwrap();
+    let batch = poll_some(&mut pipe, 100);
+    assert!(!batch.is_empty());
+    pipe.begin().unwrap();
+    let mut next = BTreeMap::new();
+    for record in batch {
+        pipe.send(&OutputRecord {
+            topic: output.clone(),
+            partition: record.partition,
+            key: record.key,
+            value: Some(record.payload),
+        })
+        .unwrap();
+        next.insert(record.partition, record.offset + 1);
+    }
+    std::fs::write(fault.join("ready"), b"pause isolated test broker").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !fault.join("paused").exists() {
+        assert!(Instant::now() < deadline, "fault controller absent");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let outage_started = Instant::now();
+    let outcome = pipe.commit(&next);
+    assert!(
+        outage_started.elapsed() < Duration::from_secs(12),
+        "shared10s budget plus2s scheduling"
+    );
+    // A commit may have succeeded before outage or may be indeterminate.
+    // Retire either instance; init_transactions fences it before committed replay.
+    drop(pipe);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !fault.join("restored").exists() {
+        assert!(Instant::now() < deadline, "broker was not restored");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let restored = Instant::now();
+    let pipe = KafkaPipe::open(settings(&bootstrap, &input, &group, &tx)).unwrap();
+    let mut stage = StageA::new(
+        pipe,
+        Copy {
+            topic: output.clone(),
+        },
+        StageALimits::default(),
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < until {
+        stage.step().unwrap();
+    }
+    let mut committed_count = read_committed(&bootstrap, &output, 2).len();
+    while committed_count != count as usize && restored.elapsed() < Duration::from_secs(120) {
+        // Group ownership recovery is asynchronous; readiness is output progress,
+        // not a fixed sleep after recreating a client.
+        for _ in 0..20 {
+            stage.step().unwrap();
+        }
+        committed_count = read_committed(&bootstrap, &output, 2).len();
+    }
+    assert_eq!(
+        committed_count, count as usize,
+        "commit outcome {outcome:?}"
+    );
+    let redis_url = std::env::var("QDL_KN_TEST_REDIS").unwrap();
+    let layout = Layout::new(&format!("recovery-{id}"));
+    let open = || {
+        let source = KafkaStateSource::open(&KafkaStateSettings {
+            bootstrap: bootstrap.clone(),
+            topics: vec![output.clone()],
+            group_id: format!("kn-recovery-b-{id}"),
+            client_id: format!("kn-recovery-b-{id}"),
+            tls: None,
+        })
+        .unwrap();
+        StageB::new(
+            source,
+            Cache::connect(&redis_url, layout.clone()).unwrap(),
+            StageBLimits::default(),
+        )
+    };
+    let mut b = open();
+    let mut verified = false;
+    while restored.elapsed() < Duration::from_secs(120) {
+        b.step().unwrap();
+        verified = expected.iter().all(|(key, canonical)| {
+            let Some(generation) = b.cache.pointer(key).unwrap().ready else {
+                return false;
+            };
+            let value: Option<Vec<u8>> = redis::cmd("HGET")
+                .arg(b.cache.layout.latest(generation, key))
+                .arg("v")
+                .query(b.cache.connection())
+                .unwrap();
+            value.is_some_and(|v| decode_latest_value(&v).unwrap().canonical == *canonical)
+        });
+        if verified {
+            break;
+        }
+    }
+    assert!(
+        verified,
+        "all captured bytes materialized within frozen120s RTO"
+    );
+    let mut offsets = BTreeMap::new();
+    for key in expected.keys() {
+        let generation = b.cache.pointer(key).unwrap().ready.unwrap();
+        offsets.insert(
+            key.clone(),
+            b.cache.latest_coordinate(generation, key).unwrap(),
+        );
+    }
+    drop(b);
+    let mut b = open();
+    for _ in 0..50 {
+        b.step().unwrap();
+    }
+    for (key, coordinate) in offsets {
+        let generation = b.cache.pointer(&key).unwrap().ready.unwrap();
+        assert_eq!(
+            b.cache.latest_coordinate(generation, &key).unwrap(),
+            coordinate
+        );
+    }
+    let receipt = serde_json::json!({"captured_records":count, "cache_products":expected.len(),
+        "commit_outcome":format!("{outcome:?}"), "peak_backlog_bound_records":count,
+        "recovery_to_verified_cache_ms":restored.elapsed().as_millis(),
+        "scope":"isolated provider capture; old timestamps remain old, not live eligibility"});
+    std::fs::write(fault.join("receipt.json"), receipt.to_string()).unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker)"]
+async fn graceful_member_leave_preserves_committed_replay() {
+    let bootstrap = bootstrap();
+    let id = stamp();
+    let input = format!("kn-handoff-in-{id}");
+    let output = format!("kn-handoff-out-{id}");
+    create_topics(&bootstrap, &[&input, &output], 2).await;
+    let group = format!("kn-handoff-{id}");
+    let open = |member: usize| {
+        StageA::new(
+            KafkaPipe::open(settings(
+                &bootstrap,
+                &input,
+                &group,
+                &format!("kn-handoff-{id}-{member}"),
+            ))
+            .unwrap(),
+            Copy {
+                topic: output.clone(),
+            },
+            StageALimits {
+                max_batch_records: 3,
+                poll_timeout: Duration::from_millis(10),
+            },
+        )
+    };
+    let mut first = open(0);
+    let mut second = open(1);
+    produce_inputs(&bootstrap, &input, 24);
+    let until = Instant::now() + Duration::from_secs(40);
+    while Instant::now() < until {
+        first.step().unwrap();
+        second.step().unwrap();
+        if first.metrics.inputs + second.metrics.inputs == 24
+            && first.pipe.consumer().assignment().unwrap().count() == 1
+            && second.pipe.consumer().assignment().unwrap().count() == 1
+        {
+            break;
+        }
+    }
+    assert_eq!(first.metrics.inputs + second.metrics.inputs, 24);
+    assert_eq!(first.pipe.consumer().assignment().unwrap().count(), 1);
+    assert_eq!(second.pipe.consumer().assignment().unwrap().count(), 1);
+    let second_before = second.metrics.inputs;
+    let started = Instant::now();
+    // Same RAII close reached after the executable drains its atomic step.
+    drop(first);
+    let leave_ms = started.elapsed().as_millis();
+    produce_inputs(&bootstrap, &input, 60);
+    let mut first_commit_ms = None;
+    let until = started + Duration::from_secs(15);
+    while second.metrics.inputs - second_before < 60 && Instant::now() < until {
+        if matches!(second.step().unwrap(), Step::Committed { .. }) && first_commit_ms.is_none() {
+            first_commit_ms = Some(started.elapsed().as_millis());
+        }
+    }
+    assert_eq!(
+        second.metrics.inputs - second_before,
+        60,
+        "surviving owner must catch up within frozen 15s budget"
+    );
+    let catchup_ms = started.elapsed().as_millis();
+    let mut wanted = expected(24);
+    wanted.extend(expected(60));
+    wanted.sort();
+    assert_eq!(read_committed(&bootstrap, &output, 2), wanted);
+    println!(
+        "{}",
+        serde_json::json!({"event":"graceful_handoff_test", "provenance":"synthetic_test_only",
+        "leave_ms":leave_ms, "first_commit_ms":first_commit_ms, "catchup_ms":catchup_ms,
+        "exact_records":84, "budget_ms":15000})
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires isolated QDL_KN_TEST_KAFKA and QDL_KN_TEST_REDIS"]
+async fn executable_signals_drain_and_restart_authentic_latest_cache() {
+    use base64::Engine as _;
+    use qdl_contracts::gateway_bundle::canonical_sha256;
+    use qdl_contracts::state_codec::decode_latest_value;
+    use qdl_contracts::state_contract::LogicalProductKey;
+    use qdl_projector::cache::{Cache, Layout};
+    use serde_json::{json, Value};
+    use std::process::{Command, Stdio};
+    struct ChildGuard(std::process::Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let bootstrap = bootstrap();
+    let redis_url = std::env::var("QDL_KN_TEST_REDIS").unwrap();
+    let id = stamp();
+    let input = format!("kn-signal-in-{id}");
+    let latest = format!("kn-signal-latest-{id}");
+    let bars = format!("kn-signal-bars-{id}");
+    create_topics(&bootstrap, &[&input, &latest, &bars], 2).await;
+    let golden: Value = serde_json::from_str(include_str!(
+        "../../../contracts/golden/kn_v220/state_codec.json"
+    ))
+    .unwrap();
+    let mut bindings = Vec::new();
+    let mut expected = BTreeMap::new();
+    let mut selected = Vec::new();
+    for r in golden["records"].as_array().unwrap() {
+        if r["synthetic"] != false {
+            continue;
+        }
+        let lpk = LogicalProductKey::parse(r["lpk"].as_str().unwrap()).unwrap();
+        if !matches!(lpk.feed.as_str(), "TRADE" | "QUOTE" | "MARK_INDEX_PRICE") {
+            continue;
+        }
+        let payload = base64::engine::general_purpose::STANDARD
+            .decode(r["canonical_b64"].as_str().unwrap())
+            .unwrap();
+        if expected.insert(lpk.encode(), payload.clone()).is_some() {
+            continue;
+        }
+        bindings.push(
+            json!({"binding_id":r["name"],"instrument_uid":lpk.instrument_uid,
+            "venue":lpk.venue,"market":lpk.market,"feed":lpk.feed,"interval":null,
+            "source_policy_id":"p","physical_key":r["spool_partition_key"],"source_id":"s",
+            "stale_after_ms":1,"product_key":lpk.encode()}),
+        );
+        selected.push((
+            r["spool_partition_key"].as_str().unwrap().to_owned(),
+            payload,
+        ));
+    }
+    assert!(!expected.is_empty());
+    let dir = std::env::temp_dir().join(format!("qdl-signal-{id}"));
+    std::fs::create_dir(&dir).unwrap();
+    let mut bundle = json!({"schema":qdl_contracts::gateway_bundle::SCHEMA,"environment":"paper",
+        "catalog":{"catalog_revision":1,"source_policy_revision":1,"canonical_stream":input,"bindings":bindings},"manifests":[]});
+    bundle["sha256"] = json!(canonical_sha256(bundle.as_object().unwrap()));
+    let bundle_path = dir.join("bundle.json");
+    std::fs::write(&bundle_path, bundle.to_string()).unwrap();
+    let producer: BaseProducer = ClientConfig::new()
+        .set("bootstrap.servers", &bootstrap)
+        .create()
+        .unwrap();
+    for (index, (key, payload)) in selected.iter().enumerate() {
+        producer
+            .send(
+                BaseRecord::to(&input)
+                    .partition((index % 2) as i32)
+                    .key(key)
+                    .payload(payload),
+            )
+            .unwrap();
+    }
+    producer.flush(Duration::from_secs(10)).unwrap();
+    let mut cache = Cache::connect(&redis_url, Layout::new("paper")).unwrap();
+    let mut coordinates = BTreeMap::new();
+    for (iteration, signal) in ["-TERM", "-INT"].iter().enumerate() {
+        let log_path = dir.join(format!("run-{iteration}.log"));
+        let log = std::fs::File::create(&log_path).unwrap();
+        let mut child = ChildGuard(
+            Command::new(env!("CARGO_BIN_EXE_qdl-projector"))
+                .arg("run")
+                .env_remove("QDL_KN_KAFKA_CA")
+                .env_remove("QDL_KN_KAFKA_CERT")
+                .env_remove("QDL_KN_KAFKA_KEY")
+                .env("QDL_KN_BUNDLE_PATH", &bundle_path)
+                .env("QDL_KN_MATERIALIZER_EPOCH", "1")
+                .env("QDL_KN_REPLICA", "isolated-signal-test")
+                .env("QDL_KN_TOPIC_ID", "isolated-signal-topic")
+                .env("QDL_KN_KAFKA_BOOTSTRAP", &bootstrap)
+                .env("QDL_KN_MARKET_CACHE_URL", &redis_url)
+                .env("QDL_KN_CANONICAL_TOPIC", &input)
+                .env("QDL_KN_LATEST_TOPIC", &latest)
+                .env("QDL_KN_BARS_TOPIC", &bars)
+                .env("QDL_KN_STATUS_INTERVAL_S", "1")
+                .env("QDL_KN_EXPIRY_INTERVAL_S", "3600")
+                .env("QDL_KN_CLEANER_INTERVAL_S", "3600")
+                .env("QDL_KN_STAGE_A", "1")
+                .env("QDL_KN_STAGE_B", "1")
+                .stdout(Stdio::from(log.try_clone().unwrap()))
+                .stderr(Stdio::from(log))
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(40);
+        loop {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "projector exited: {}",
+                std::fs::read_to_string(&log_path).unwrap()
+            );
+            let ready = expected.iter().all(|(key, bytes)| {
+                let Some(generation) = cache.pointer(key).unwrap().ready else {
+                    return false;
+                };
+                let value: Option<Vec<u8>> = redis::cmd("HGET")
+                    .arg(cache.layout.latest(generation, key))
+                    .arg("v")
+                    .query(cache.connection())
+                    .unwrap();
+                value.is_some_and(|v| decode_latest_value(&v).unwrap().canonical == *bytes)
+            });
+            let log = std::fs::read_to_string(&log_path).unwrap();
+            let assigned = log
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .any(|v| {
+                    v["event"] == "projector_membership"
+                        && v["stage"] == "stage_b"
+                        && v["kind"] == "assign"
+                        && v["phase"] == "after"
+                        && v["partitions"].as_array().is_some_and(|a| !a.is_empty())
+                });
+            if ready && assigned {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cache readiness timed out: {log}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for key in expected.keys() {
+            let generation = cache.pointer(key).unwrap().ready.unwrap();
+            let coordinate = cache.latest_coordinate(generation, key).unwrap();
+            if iteration == 0 {
+                coordinates.insert(key.clone(), coordinate);
+            } else {
+                assert_eq!(
+                    coordinates[key], coordinate,
+                    "restart must not regress or invent a source coordinate"
+                );
+            }
+        }
+        let start = Instant::now();
+        assert!(Command::new("kill")
+            .arg(signal)
+            .arg(child.0.id().to_string())
+            .status()
+            .unwrap()
+            .success());
+        loop {
+            if let Some(exit) = child.0.try_wait().unwrap() {
+                assert!(
+                    exit.success(),
+                    "{}",
+                    std::fs::read_to_string(&log_path).unwrap()
+                );
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(40),
+                "signal drain exceeded budget"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let log = std::fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("shutdown_complete"));
+        assert!(log.contains("stage_drained"));
+        println!(
+            "{}",
+            json!({"event":"executable_signal_test","signal":signal,"drain_ms":start.elapsed().as_millis(),
+            "authentic_latest_products":expected.len(),"timestamps_unchanged":true,"live_eligibility_claim":false})
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}

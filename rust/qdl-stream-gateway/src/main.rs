@@ -367,8 +367,27 @@ async fn serve() -> Result<(), String> {
     let incoming = tls::incoming(address, tls_config)
         .await
         .map_err(|error| format!("listen: {error}"))?;
+    let hot_view = if env_or("QDL_KN_HOT_READ_ENABLED", "false") == "true" {
+        let secret = read("QDL_KN_READ_VIEW_SECRET_FILE")?;
+        let secret = secret.trim();
+        let bytes = (0..secret.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(secret.get(i..i + 2).unwrap_or("zz"), 16))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "hot read secret is not hex")?;
+        Some(qdl_stream_gateway::hot_view::HotViewServer(
+            qdl_stream_gateway::hot_view::HotView::new(
+                state.authority.clone(),
+                hub.clone(),
+                &bytes,
+            )?,
+        ))
+    } else {
+        None
+    };
     let stopping = state.clone();
     let served = Server::builder()
+        .add_optional_service(hot_view)
         .add_service(MarketDataStreamServiceServer::new(Gateway { state }))
         .serve_with_incoming_shutdown(incoming, async move {
             // SIGTERM (`docker stop`) or SIGINT: end every stream typed and

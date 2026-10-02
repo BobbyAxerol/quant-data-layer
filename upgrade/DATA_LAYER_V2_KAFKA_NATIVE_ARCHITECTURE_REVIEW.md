@@ -3043,3 +3043,116 @@ public mainnet market products. They do not select demo exchange books, change
 account mode, establish broker execution parity, or permit order submission.
 Current TS process remains on its existing paper read identity until a consumer
 config handoff; the additional server mappings are active and tested no-order.
+
+
+### Execution Handoff Hot Backup - 2026-10-01
+
+Approved narrow continuation of KN-5 K5-T03/T05, tracked in the Unified Plan
+under Canonical Hot Backup Implementation Checkpoint. No new topology.
+The public Rust GetSnapshot/GetFeedStatus still delegates to Query and is NOT
+an independent fallback. Internal `qdl.internal.v2.CanonicalHotView/ReadLatest`
+reads the existing read-committed Hub ring on the same mTLS listener. Query
+remains the sole public entitlement/quality/cursor owner. The private response
+is canonical bytes and original record offset plus atomic partition watermark,
+not a synthetic Redis generation or execution approval. Both coordinates must
+remain distinct; a partition watermark may advance without a new product price.
+
+Disabled unless Stream QDL_KN_HOT_READ_ENABLED=true and Query
+QDL_KN_HOT_READ_TARGETS lists one/two TLS host:port targets. Reuse existing
+QDL_KN_READ_VIEW_SECRET_FILE with a distinct HMAC domain. No new secret copied
+from a consumer, provider limiter, service, group membership or per-read reader.
+Work is bounded (8 operations, 100ms Stream work, 250ms total Query attempt by
+default, <=256KiB canonical payload); measure peak RSS and tail before promotion.
+Cancellation must retain the admission permit until admitted work actually ends.
+
+Only same-product TRADE/QUOTE/MARK_INDEX_PRICE/BOOK_SNAPSHOT/BOOK_DELTA may use
+backup. Keep BAR/history warmup semantics and public schemas unchanged. Query
+checks source lineage and CURRENT quality after the read, and refuses a view
+behind its last selected record/watermark. MARK/INDEX must rerun component and
+session checks, not just generic event recency. Hard identity/fence/integrity
+refusals cannot be healed by trying a replica holding an older view. A newer
+book sibling with reset/gap/unverified state or different book/provider generation
+blocks the older snapshot. Backup failure never promotes an expired cached value.
+
+This is projector-path redundancy, not independent-host or provider HA. The two
+paths still share canonical Kafka/core and host infrastructure. Test no-recursion,
+read_committed (aborted records absent), identity/HMAC/mTLS negatives, bounded
+work, paired restart, exact cursor handoff, lost backup and primary return.
+Observe actual consumer usable data, requests/refusals and resource overhead;
+unit/in-process/loopback evidence alone cannot certify execution continuity.
+Roll only tested changed existing roles, preserve per-role image/config rollback,
+no offsets/reset/cache deletion. Clean isolated resources and record exact receipt.
+
+
+#### Broker-confirmed quiet reads and production receipt
+
+A quiet eligible cache view requires independent canonical verification: provider
+session liveness alone does not prove projector progress. The Stream reuses its
+existing Kafka consumer for bounded background positive broker-head confirmation;
+proof age <=1s, consumed head required,250ms cycle budget/80ms call maximum,
+500ms cadence. Empty poll never renews proof. A newer in-flight head does not
+extend the previous caught-up proof. Loss of broker proof fails closed even if
+provider heartbeats continue. Retain newest valid-lineage ineligible quality for
+SDK rejection; do not hide it behind an older primary. This is not a timestamp
+refresh or an alternative execution policy.
+
+Runtime c8015ca six-role rollout2026-10-01 and accepted TS readiness9160e5a are
+recorded in Unified Plan under Hot Backup Production Acceptance And Cleanup.
+Final300s session60/60, no cache/watermark/report-expiry errors; six TRADE snapshot
+eligibility refusals retained. The rolling quota-probe interference is separately
+recorded and rules out a zero-downtime claim. Same-host backup is not independent
+HA. Published release remainsv2.2.1; newsource/images await remote release workflow.
+
+
+<a id="execution-data-contract-closure-guide-20261001"></a>
+### EDC-1 Consumer Execution Contract Closure
+
+2026-10-01 owner request: audit all actual TS Risk/execution data dependencies and
+write ONE consolidated repair phase before implementation. The authoritative
+scope, source findings, test cases, latency definitions, rollback and journal are
+[EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
+Latest decision: SCOPED_NATIVE_OWNER_CALLER_NO_ORDER_ACCEPTANCE_PASS under the
+[scoped runtime receipt](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-native-owner-caller-runtime-receipt-20261002).
+The approved two-account sandbox native-owner and candidate-caller packets are
+now deployed with SDK2.0.7. Final affected sizing60/60 over300s passes; prior market
+reads/recovery tests are inherited only where unchanged. Account equity remains0,
+no broker orders were sent, and reference-session reconnects remain recorded.
+This does not certify funded trading, wholeP18, return metrics or uninterrupted
+all-feed availability. No Data Layer runtime rollout or new release occurred.
+Preserve failed windows and explicit rollback/source/config provenance in receipt.
+The existing final approval plan remains the detailed test baseline. Existing receipts remain
+scoped evidence, not whole-path availability or deployment approval.
+Prior implementation followed the
+[final dependency closure plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-owner-review-freeze).
+Source receipts remain evidence, not deployment approval.
+Earlier source tests are not runtime certification.
+Deployment/release still requires the reviewed changed-role packet.
+It supplements the existing KN architecture, not another rearchitecture phase.
+
+Preserve the canonical Kafka -> Rust core -> KN cache/Stream -> Query boundary.
+Query remains entitlement/quality authority; Risk owns intent admission and must
+revalidate the required typed evidence at use. The accepted private Stream hot
+backup provides same-product projector-path redundancy, not independent HA.
+Public Stream GetSnapshot still delegates to Query and cannot be its fallback.
+
+The narrow completion is lossless quality/provenance propagation into TS,
+intent-and-portfolio-specific dependency selection, bounded recovery outside DB
+locks, and proof at actual native admission/dispatch/paper-matching boundaries.
+Do not replace a strict TRADE requirement with QUOTE, manufacture timestamps,
+let fresh QUOTE renew an old paper LAST price, or weaken component/session/gap
+checks. No new per-symbol workers, broker topology or SQLite spool path.
+
+Use the existing operation budgets. Measure request through consumer validation,
+provider event through actual TS Redis apply, and Risk use separately in ms.
+Do not quote callback time as Redis commit or session health as execution-ready.
+Inherited tests remain valid only for unchanged predicates; exact changed rows
+run before one final no-order window. Production rolling stress is not the core
+goal, and no historical C2/catalogue rerun is justified merely to search for bugs.
+
+Deployment/release requires the reviewed closure ledger and changed-role packet
+specified in EDC-1. Shared TS legacy runtime, native TS candidate, paper/sandbox/
+live market-data identity and broker order authority must remain distinguishable.
+No alpha/mainnet activation, TS accounting redesign or P18.3E money certificate
+is implied. The original planning entry changed no runtime. The subsequent scoped
+TS handoff and additive proof migration are recorded in the receipt above; Data
+Layer runtime, limits and bindings remain unchanged.

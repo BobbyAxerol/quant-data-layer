@@ -515,24 +515,71 @@ pub struct PendingKafkaAppend {
     partition_key: String,
 }
 
+/// A successful broker delivery is not always a usable cursor: idempotent
+/// duplicate-sequence responses can omit the original offset. Never invent one.
+#[derive(Debug)]
+pub enum PersistedKafkaAppend {
+    Positioned(AppendResult),
+    OffsetUnavailable {
+        stream: String,
+        partition: i32,
+        reported_offset: i64,
+    },
+}
+
+fn persisted_append(
+    stream: String,
+    partition_key: String,
+    partition: i32,
+    offset: i64,
+) -> Result<PersistedKafkaAppend, KafkaTransportError> {
+    if partition < 0 {
+        return Err(KafkaTransportError::Configuration(
+            "successful delivery has no partition".into(),
+        ));
+    }
+    if matches!(offset, -1001 | -1) {
+        return Ok(PersistedKafkaAppend::OffsetUnavailable {
+            stream,
+            partition,
+            reported_offset: offset,
+        });
+    }
+    let offset = u64::try_from(offset).map_err(|_| KafkaTransportError::InvalidOffset(offset))?;
+    Ok(PersistedKafkaAppend::Positioned(AppendResult {
+        cursor: Cursor {
+            stream,
+            transport_partition: partition,
+            partition_key,
+            offset,
+        },
+        duplicate: false,
+    }))
+}
+
 impl PendingKafkaAppend {
-    pub async fn wait(self) -> Result<AppendResult, KafkaTransportError> {
+    pub async fn wait_persisted(self) -> Result<PersistedKafkaAppend, KafkaTransportError> {
+        // Neither cancellation nor failed delivery may enter persisted_append.
         let delivery = self
             .delivery
             .await
             .map_err(|_| KafkaTransportError::Delivery(KafkaError::Canceled))?
             .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
-        let offset = u64::try_from(delivery.offset)
-            .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
-        Ok(AppendResult {
-            cursor: Cursor {
-                stream: self.stream,
-                transport_partition: delivery.partition,
-                partition_key: self.partition_key,
-                offset,
-            },
-            duplicate: false,
-        })
+        persisted_append(
+            self.stream,
+            self.partition_key,
+            delivery.partition,
+            delivery.offset,
+        )
+    }
+
+    pub async fn wait(self) -> Result<AppendResult, KafkaTransportError> {
+        match self.wait_persisted().await? {
+            PersistedKafkaAppend::Positioned(result) => Ok(result),
+            PersistedKafkaAppend::OffsetUnavailable {
+                reported_offset, ..
+            } => Err(KafkaTransportError::InvalidOffset(reported_offset)),
+        }
     }
 }
 
@@ -1340,5 +1387,108 @@ mod control_broker_tests {
                 .await
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod persisted_delivery_tests {
+    use super::*;
+
+    fn raw_record() -> DurableRecord {
+        DurableRecord {
+            stream: "raw-recovery-test".into(),
+            partition_key: "key".into(),
+            event_id: b"test-provenance-event".to_vec(),
+            payload: b"test-only".to_vec(),
+            accepted_at_ns: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn native_idempotent_duplicate_delivery_does_not_crash_or_invent_offset() {
+        use rdkafka::types::{RDKafkaApiKey, RDKafkaRespErr};
+        let producer: FutureProducer = ClientConfig::new()
+            .set("test.mock.num.brokers", "1")
+            .set("enable.idempotence", "true")
+            .set("message.timeout.ms", "3000")
+            .create()
+            .unwrap();
+        let sink = KafkaDurableSink { producer };
+        let cluster = sink.producer.client().mock_cluster().unwrap();
+        cluster.create_topic("raw-recovery-test", 1, 1).unwrap();
+        let first = sink.enqueue(&raw_record()).unwrap().wait().await.unwrap();
+        assert_eq!(first.cursor.offset, 0);
+        cluster.request_errors(
+            RDKafkaApiKey::Produce,
+            &[RDKafkaRespErr::RD_KAFKA_RESP_ERR_DUPLICATE_SEQUENCE_NUMBER],
+        );
+        assert!(matches!(
+            sink.enqueue(&raw_record())
+                .unwrap()
+                .wait_persisted()
+                .await
+                .unwrap(),
+            PersistedKafkaAppend::OffsetUnavailable { .. }
+        ));
+        // Cursor-returning APIs remain strict on the same native response.
+        cluster.request_errors(
+            RDKafkaApiKey::Produce,
+            &[RDKafkaRespErr::RD_KAFKA_RESP_ERR_DUPLICATE_SEQUENCE_NUMBER],
+        );
+        assert!(matches!(
+            sink.enqueue(&raw_record()).unwrap().wait().await,
+            Err(KafkaTransportError::InvalidOffset(-1 | -1001))
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_native_delivery_never_becomes_persisted() {
+        use rdkafka::types::{RDKafkaApiKey, RDKafkaRespErr};
+        let producer: FutureProducer = ClientConfig::new()
+            .set("test.mock.num.brokers", "1")
+            .set("enable.idempotence", "true")
+            .set("message.timeout.ms", "3000")
+            .create()
+            .unwrap();
+        let sink = KafkaDurableSink { producer };
+        let cluster = sink.producer.client().mock_cluster().unwrap();
+        cluster.create_topic("raw-recovery-test", 1, 1).unwrap();
+        cluster.request_errors(
+            RDKafkaApiKey::Produce,
+            &[RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED],
+        );
+        assert!(matches!(
+            sink.enqueue(&raw_record()).unwrap().wait_persisted().await,
+            Err(KafkaTransportError::Delivery(_))
+        ));
+    }
+
+    #[test]
+    fn successful_sentinel_has_no_fabricated_cursor() {
+        assert!(matches!(
+            persisted_append("raw".into(), "key".into(), 2, -1001).unwrap(),
+            PersistedKafkaAppend::OffsetUnavailable { partition: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn valid_offsets_including_zero_are_preserved() {
+        for offset in [0, 1, 999999] {
+            let PersistedKafkaAppend::Positioned(result) =
+                persisted_append("raw".into(), "key".into(), 2, offset).unwrap()
+            else {
+                panic!("missing real cursor")
+            };
+            assert_eq!(result.cursor.offset, offset as u64);
+            assert_eq!(result.cursor.transport_partition, 2);
+        }
+    }
+
+    #[test]
+    fn other_negative_offsets_and_missing_partition_are_not_success() {
+        for offset in [-2, -1000, i64::MIN] {
+            assert!(persisted_append("raw".into(), "key".into(), 2, offset).is_err());
+        }
+        assert!(persisted_append("raw".into(), "key".into(), -1, -1001).is_err());
     }
 }

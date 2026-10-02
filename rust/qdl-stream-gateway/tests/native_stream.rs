@@ -168,6 +168,13 @@ impl LiveSource {
 }
 
 impl LogSource for LiveSource {
+    fn broker_heads(&self) -> Vec<(i32, i64, Instant)> {
+        self.positions
+            .keys()
+            .map(|&p| (p, self.log.end(p), Instant::now()))
+            .collect()
+    }
+
     fn poll(&mut self, timeout: Duration) -> Result<Option<RawRecord>, String> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -2618,4 +2625,204 @@ async fn f4_a_starved_replay_storm_never_overflows_live_delivery() {
     }
     drop(live);
     harness.baseline().await;
+}
+
+// Independent canonical hot read: the harness read-view is NotReady, so a
+// successful reply cannot have gone through Query/Redis/GetSnapshot.
+fn hot_request(
+    patch: serde_json::Value,
+    key: &[u8],
+) -> Request<qdl_stream_gateway::hot_view::Body> {
+    use qdl_stream_gateway::hot_view::{Body, DOMAIN, SCHEMA};
+    let mut value = serde_json::json!({"schema": SCHEMA, "binding_id": "okx-test-quote",
+        "issued_at_ns": now_ns(), "environment": "paper", "stream": "md.canonical.v2",
+        "source_topic_id": "kn2TestTopicId00000000", "partition_plan_epoch": 1,
+        "source_policy_revision": 1, "catalog_revision": 9, "route_generation": "kn2-test-r1",
+        "schema_major": 2});
+    for (name, item) in patch.as_object().unwrap() {
+        value[name] = item.clone();
+    }
+    let body = serde_json::to_vec(&value).unwrap();
+    let mut signed = DOMAIN.to_vec();
+    signed.extend_from_slice(&body);
+    let tag = ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key), &signed);
+    let mut request = Request::new(Body { value: body });
+    request.metadata_mut().insert_bin(
+        "x-qdl-hot-signature-bin",
+        tonic::metadata::MetadataValue::from_bytes(tag.as_ref()),
+    );
+    request
+}
+
+#[tokio::test]
+async fn independent_hot_read_auth_identity_generation_and_raw_provenance() {
+    use qdl_stream_gateway::hot_view::HotView;
+    let h = Harness::new(Options::default());
+    let mut original = quote(99, vec![]);
+    original.venue = "OKX".into();
+    original.market = "SWAP".into();
+    let offset = h.log.append(0, QUOTE_KEY, &original);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while h.hub.next_offset(0).unwrap() <= offset
+        || h.hub
+            .latest_hot(
+                QUOTE_KEY.as_bytes(),
+                "QUOTE",
+                Instant::now() + Duration::from_millis(100),
+            )
+            .is_err()
+    {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let service = HotView::new(h.state().authority.clone(), h.hub.clone(), &[42; 32]).unwrap();
+    let empty = serde_json::json!({});
+    let response = service
+        .clone()
+        .read(hot_request(empty.clone(), &[42; 32]))
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&response.into_inner().value).unwrap();
+    assert_eq!(value["source_offset"], offset);
+    assert_eq!(value["source_partition"], 0);
+    use base64::Engine as _;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(value["canonical"].as_str().unwrap())
+            .unwrap(),
+        original.encode_to_vec()
+    );
+    let mut no_auth = hot_request(empty.clone(), &[42; 32]);
+    no_auth.metadata_mut().clear();
+    assert_eq!(
+        service.clone().read(no_auth).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        service
+            .clone()
+            .read(hot_request(empty, &[41; 32]))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    for patch in [
+        serde_json::json!({"source_topic_id":"another"}),
+        serde_json::json!({"catalog_revision":10}),
+        serde_json::json!({"environment":"live"}),
+        serde_json::json!({"route_generation":"other"}),
+        serde_json::json!({"issued_at_ns":1}),
+    ] {
+        assert_eq!(
+            service
+                .clone()
+                .read(hot_request(patch, &[42; 32]))
+                .await
+                .unwrap_err()
+                .code(),
+            Code::FailedPrecondition
+        );
+    }
+    assert_eq!(
+        service
+            .clone()
+            .read(hot_request(
+                serde_json::json!({"binding_id":"not-present"}),
+                &[42; 32]
+            ))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    assert_eq!(
+        service
+            .clone()
+            .read(hot_request(
+                serde_json::json!({"binding_id":"okx-test-bar"}),
+                &[42; 32]
+            ))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    h.hub.stop();
+    assert_eq!(
+        service
+            .read(hot_request(serde_json::json!({}), &[42; 32]))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn hot_read_real_grpc_framing_keeps_internal_auth_and_public_rpcs_separate() {
+    use qdl_stream_gateway::hot_view::{Body, HotView, HotViewServer, PATH};
+    let h = Harness::new(Options::default());
+    let mut original = quote(1, vec![]);
+    original.venue = "OKX".into();
+    original.market = "SWAP".into();
+    let offset = h.log.append(0, QUOTE_KEY, &original);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while h.hub.next_offset(0).unwrap() <= offset
+        || h.hub
+            .latest_hot(
+                QUOTE_KEY.as_bytes(),
+                "QUOTE",
+                Instant::now() + Duration::from_millis(100),
+            )
+            .is_err()
+    {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let service = HotView::new(h.state().authority.clone(), h.hub.clone(), &[42; 32]).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(HotViewServer(service))
+            .serve_with_incoming_shutdown(
+                tokio_stream::wrappers::TcpListenerStream::new(listener),
+                async {
+                    let _ = stopped.await;
+                },
+            ),
+    );
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let mut client = tonic::client::Grpc::new(channel);
+    client.ready().await.unwrap();
+    let path = tonic::codegen::http::uri::PathAndQuery::from_static(PATH);
+    let result: tonic::Response<Body> = client
+        .unary(
+            hot_request(serde_json::json!({}), &[42; 32]),
+            path.clone(),
+            tonic::codec::ProstCodec::default(),
+        )
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&result.into_inner().value).unwrap();
+    assert_eq!(value["source_offset"], offset);
+    client.ready().await.unwrap();
+    let result: Result<tonic::Response<Body>, Status> = client
+        .unary(
+            Request::new(Body {
+                value: b"{}".to_vec(),
+            }),
+            path,
+            tonic::codec::ProstCodec::default(),
+        )
+        .await;
+    assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
 }

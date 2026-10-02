@@ -114,9 +114,22 @@ class CacheRefreshingMarkIndexView(SpoolRefreshingMarkIndexView):
         return self
 
     async def read(self, *, instrument_uid: str, **kwargs):
+        result = await self._read_cache(instrument_uid=instrument_uid, **kwargs)
+        if (result.record is None and getattr(self._backend, "hot_client", None) is not None
+                and result.reason in {"STALE", "COMPONENT_STALE", "NOT_READY",
+                    "MARKET_CACHE_NOT_READY", "MARKET_CACHE_UNAVAILABLE", "MARKET_CACHE_BACKUP_UNAVAILABLE"}):
+            # Exactly one bounded attempt; identity/fence/gap/session refusals
+            # are not healed by remembering an older view from another replica.
+            return await self._read_cache(instrument_uid=instrument_uid, prefer_hot=True, **kwargs)
+        return result
+
+    async def _read_cache(self, *, instrument_uid: str, prefer_hot: bool = False, **kwargs):
         binding = self._bindings.get(instrument_uid)
         if binding is not None:
-            stored, state = await asyncio.to_thread(self._backend.latest_stored_event, binding)
+            if prefer_hot:
+                stored, state = await asyncio.to_thread(self._backend.latest_stored_event, binding, prefer_hot=True)
+            else:
+                stored, state = await asyncio.to_thread(self._backend.latest_stored_event, binding)
             reason = None if state == "OK" else f"MARKET_CACHE_{state}"
             if stored is not None:
                 try:

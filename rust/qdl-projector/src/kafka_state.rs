@@ -1,7 +1,8 @@
 //! [`StateSource`] over Kafka: stage B's reader of the state topics
 //! (KN-3 K3.3).
 //!
-//! Two consumers. The **group** consumer (group `kn-projector-v3-b`,
+//! Two record consumers plus a never-assigned metadata client. The **group**
+//! consumer (group `kn-projector-v3-b`,
 //! cooperative-sticky) only decides partition ownership; its partitions are
 //! paused and whatever it fetched before the pause is discarded. The **data**
 //! consumer reads the owned partitions in assign mode from explicit offsets
@@ -13,6 +14,7 @@
 //! error, never a silent jump. `read_committed`, no auto-commit; group
 //! offsets are committed asynchronously for lag monitoring only.
 
+use crate::handoff::HandoffContext;
 use crate::stage_b::{PartitionReader, StateInput, StateSource};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer};
@@ -99,21 +101,28 @@ pub fn collect(
 }
 
 pub struct KafkaStateSource {
-    group: BaseConsumer,
+    group: BaseConsumer<HandoffContext>,
     data: BaseConsumer,
+    // Metadata requests must not queue behind an in-flight data fetch.
+    metadata: BaseConsumer,
     /// Partitions the data consumer currently reads.
     reading: BTreeSet<(String, i32)>,
 }
 
 impl KafkaStateSource {
+    pub fn assignment_sequence(&self) -> u64 {
+        self.group.context().generation()
+    }
+
     pub fn open(settings: &KafkaStateSettings) -> Result<Self, String> {
-        let group: BaseConsumer = base(settings)
+        let group: BaseConsumer<HandoffContext> = base(settings)
             .set("client.id", &settings.client_id)
             .set("group.id", &settings.group_id)
             .set("auto.offset.reset", "earliest")
             .set("partition.assignment.strategy", "cooperative-sticky")
+            .set("heartbeat.interval.ms", "500")
             .set("queued.max.messages.kbytes", "1024")
-            .create()
+            .create_with_context(HandoffContext::new("stage_b", settings.client_id.clone()))
             .map_err(|error| format!("stage B group consumer: {error}"))?;
         let topics: Vec<&str> = settings.topics.iter().map(String::as_str).collect();
         group
@@ -128,9 +137,19 @@ impl KafkaStateSource {
             .set("queued.max.messages.kbytes", "16384")
             .create()
             .map_err(|error| format!("stage B data consumer: {error}"))?;
+        // Never assigned/subscribed: this client reads bounds, not market records.
+        // Sequential prepare/seek otherwise puts ListOffsets behind long-poll
+        // Fetch on the data connection for every newly assigned partition.
+        let metadata: BaseConsumer = base(settings)
+            .set("client.id", format!("{}-metadata", settings.client_id))
+            .set("group.id", format!("{}-metadata", settings.group_id))
+            .set("queued.max.messages.kbytes", "1024")
+            .create()
+            .map_err(|error| format!("stage B metadata consumer: {error}"))?;
         Ok(Self {
             group,
             data,
+            metadata,
             reading: BTreeSet::new(),
         })
     }
@@ -205,7 +224,7 @@ impl StateSource for KafkaStateSource {
     }
 
     fn watermarks(&mut self, topic: &str, partition: i32) -> Result<(i64, i64), String> {
-        self.data
+        self.metadata
             .fetch_watermarks(topic, partition, Duration::from_secs(10))
             .map_err(|error| error.to_string())
     }

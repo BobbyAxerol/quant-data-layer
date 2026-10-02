@@ -280,6 +280,7 @@ jobs:
       - name: Start isolated Kafka (KRaft, plaintext, no ACLs)
         run: |
           docker run -d --name kn-kafka --hostname localhost \
+            --label qdl.test.namespace=kn-native-integration \
             -e KAFKA_HEAP_OPTS="-Xmx512m -Xms256m" \
             apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9
           for attempt in $(seq 1 60); do
@@ -301,13 +302,41 @@ jobs:
           done
 
       - name: Committed reads, no-commit reader, projector stage A/B, market cache (Kafka + Redis)
+        timeout-minutes: 30
         run: |
+          fault_dir=$(mktemp -d)
+          broker_id=$(docker inspect --format '{{.Id}}' kn-kafka)
+          test "$(docker inspect --format '{{index .Config.Labels "qdl.test.namespace"}}' "$broker_id")" = kn-native-integration
+          # This controller targets the captured immutable CI container ID only.
+          (
+            trap 'docker unpause "$broker_id" >/dev/null 2>&1 || true' EXIT
+            for attempt in $(seq 1 18000); do
+              if test -f "$fault_dir/ready"; then
+                docker pause "$broker_id"
+                printf 'isolated CI broker paused\n' > "$fault_dir/paused"
+                sleep 10
+                docker unpause "$broker_id"
+                printf 'isolated CI broker restored\n' > "$fault_dir/restored"
+                exit 0
+              fi
+              sleep 0.1
+            done
+            echo 'Recovery test did not reach the fault boundary' >&2
+            exit 1
+          ) &
+          controller=$!
+          trap 'kill "$controller" 2>/dev/null || true; wait "$controller" 2>/dev/null || true; docker unpause "$broker_id" >/dev/null 2>&1 || true' EXIT
           docker run --rm --network container:kn-kafka \
             -e QDL_KN_TEST_KAFKA=localhost:9092 \
             -e QDL_KN_TEST_REDIS=redis://localhost:6379/0 \
             -e QDL_KN_TEST_REDIS_EXCLUSIVE=redis://localhost:6380/0 \
+            -e QDL_RECOVERY_FAULT_DIR=/fault \
+            -v "$fault_dir:/fault" \
             -v "$PWD:/workspace" -w /workspace rust:1.82-slim \
             sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev make pkg-config zlib1g-dev >/dev/null && cargo test -p qdl-stream-gateway --test committed_reads --locked -- --ignored && cargo test -p qdl-projector --locked -- --ignored --test-threads=1'
+          wait "$controller"
+          test -s "$fault_dir/receipt.json"
+          cat "$fault_dir/receipt.json"
 
       - name: Remove isolated Kafka and Redis
         if: always()

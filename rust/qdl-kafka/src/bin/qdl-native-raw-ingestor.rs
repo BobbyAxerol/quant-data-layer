@@ -868,17 +868,31 @@ enum BookSessionBootstrap {
 
 fn raw_publish_future(delivery: PendingKafkaAppend, deadline: Option<Instant>) -> RawPublishFuture {
     Box::pin(async move {
-        if let Some(deadline) = deadline {
-            return tokio::time::timeout_at(deadline, delivery.wait())
+        let persisted = if let Some(deadline) = deadline {
+            tokio::time::timeout_at(deadline, delivery.wait_persisted())
                 .await
                 .map_err(|_| {
                     KafkaTransportError::SnapshotTimeout(
                         "L2 raw Kafka delivery exceeded provider renewal bound".into(),
                     )
-                })?
-                .map(|_| ());
+                })??
+        } else {
+            delivery.wait_persisted().await?
+        };
+        if let qdl_kafka::PersistedKafkaAppend::OffsetUnavailable {
+            stream,
+            partition,
+            reported_offset,
+        } = persisted
+        {
+            eprintln!(
+                "{}",
+                json!({"event":"qdl_raw_persisted_without_offset",
+                "stream":stream, "partition":partition, "reported_offset":reported_offset,
+                "cursor_created":false})
+            );
         }
-        delivery.wait().await.map(|_| ())
+        Ok(())
     })
 }
 
