@@ -66833,3 +66833,72 @@ concurrent position change during prepared valuation, stale target-summary use,
 actual owned reader/config/SDK/identity, simultaneous provider attribution and
 changed-role acceptance remain open ledger requirements. Never count these unit/
 PG results as runtime latency or full execution/release qualification.
+
+
+#### EDC-1 Valuation Read/Publish Snapshot - Start
+
+Continue on TS6de3510/DLc36068a. Existing P15 valuation pins economic execution
+version and mark watermark, but is not the active legacy performance caller; do
+not install a competing accounting reducer. Close compatibility publication's
+concurrent-position window by fetching bounded market inputs outside DB ownership,
+then rereading business inputs and publishing within one repeatable-read snapshot.
+Only prepared matching instrument identities may be used; newly opened/unprepared
+positions defer. Recompute using current quantity/entry under the snapshot, not
+stale prefetch quantities. Do not change formulas or provider contract. Prove real
+PG changes during price acquisition and no network acquisition inside transaction;
+keep cadence skip before prefetch. Mark provenance/expiry and target summary
+quality remain open, explicitly not solved by DB snapshot isolation alone.
+No runtime/broker/shared DB changes; exact tmpfs test cleanup, inherit unchanged
+source evidence.
+
+
+#### EDC-1 Valuation Read/Publish Snapshot - Tested Receipt
+
+Real PG reproducer: both venues published equity1020 instead of1030 when a
+position quantity changed1->2 during price acquisition. This was a controlled
+second-connection write, not a broker fill or production incident attribution.
+
+Publication now prepares market values outside DB ownership, then rereads the
+position/cash/margin/fill/projection inputs and publishes within one repeatable-read
+transaction. Original prefetch quantities are not reused for arithmetic. Prepared
+keys include instrument/product/native identity, multiplier and metadata version;
+new/unprepared open positions defer instead of borrowing another price. Cadence
+skip happens before provider acquisition and is checked again on the DB snapshot.
+Concurrent write conflicts roll back and defer only that deployment via existing
+cycle handling, without retry spins. Existing formulas/P15 reducer unchanged.
+Most source diff is indentation of the existing computation under snapshot scope.
+
+74PASS/0FAIL/0SKIP,10.164s:19 actual-PG cases plus55 units, including quantity
+change during acquisition, a new position, a concurrent write inside publication
+causing real PostgreSQL serialization failure, missing/zero/NaN mark, flat, failure
+after publication writes, dependent portfolio exclusion and unrelated cycle
+progress. Actual acquired-connection observer checks market calls outside DB
+transactions; normal projected values and cadence no-fetch remain compatible.
+Synthetic market inputs; owned cloned migrated tables; not whole economics or
+provider/native/live certification. No production state mutations.
+
+First test setup was attempted before temporary PG readiness: migration connection
+refused and two tests had missing-table setup errors. Preserved artifact
+performance-position-before.xml SHA256
+b78841c6998e4ea30f8264bc1588451a37097410cecf4d8912764251e6e10914.
+Then pg_isready confirmed ready,93migrations applied, and prepatch reproducer
+failed both value assertions: performance-position-reproduced.xml SHA256
+565e36fc96e0fec7598761588cccfda563925a77e6e051625de6018b723e294d.
+Final performance-position-final.xml SHA256
+8a80c69c03ec01abdf849911ef43d9a05ce38110b1c11fd62ae88b1ecedbb1ee
+in ~/.local/state/qdl-v2/edc1-20261001/evidence. Intermediate68PASS not counted
+again. Ruff import-only fix/diff check clean. No unnecessary full C2 rerun.
+
+Cleanup exact ts-edc1-settlement-pg/tmpfs schemas/internal
+ts-edc1-publication-net; all test clients --rm, no image/volume/buildcache created.
+Available disk76661063680B before /76779978752B after; concurrent host activity,
+not a precise disk-savings claim. TestPG/shared market_data restart0/OOMfalse
+before cleanup, shared imagec1f713a8b13e unchanged. Preserve active/rollback and
+existing feature worktrees; no broad prune/push/merge/runtime rollout.
+
+EDC IN_PROGRESS. This closes the reproduced business-input race, not the market
+proof lifetime: original mark timestamps, freshness at publication, retained
+equity eligibility at target sizing and actual typed reader/config/SDK deployment
+remain mandatory. P15 provides a pinned native valuation contract but has no
+production performance caller here; do not pretend it was wired by this patch.
+Provider attribution and changed-role acceptance/release remain open.
