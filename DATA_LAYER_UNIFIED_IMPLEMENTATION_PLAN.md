@@ -66696,3 +66696,77 @@ or images: no cleanup/prune needed. Owner DL plan hunks remain untouched.
 Next permitted action: owner reviews this single consolidated phase. No further
 implementation/build/rollout/push/merge/release until that approval. This review
 has not measured current latency or certified FULL execution readiness.
+
+
+#### EDC-1 Resumed - Performance Recovery Identity Boundary
+
+Owner goal continuation resumes EDC-1 implementation; status IN_PROGRESS. Latest
+review plan remains the scope/exit authority, with exact runtime packet still
+required before deployment. Previous turn was progress (review/plan committed),
+not evidence of runtime closure. Current slice is source-only.
+
+Dependency trace finds a real path: performance account_equity_snapshots ->
+Gateway AlphaStateRepository.portfolio_summary -> portfolio-targets/rebalance
+when equity is omitted. This is not an automatic Risk authority, but performance
+is not reporting-only. The legacy stats circuit-breaker uses different tables
+and remains disabled per prior effective-settings evidence. No claim of actual
+wrong production sizing without corresponding runtime records.
+
+Reproduce PerformanceRepository._mark_price_from_data_layer routing every
+non-DNSE venue to Binance and dropping native instrument identity. Repair only
+provider/product/native routing and explicit response identity checks using
+existing versioned adapter; do not change PnL formulas or label TRADE as a new
+MARK feed. Tests cover both venues/five symbols, inverse native identity, wrong
+venue/product/native response, unsupported provider/product and legacy behavior.
+The broader typed valuation/read-proof/partial-publication boundary remains open
+until separately tested; a correct recovery route does not certify valuation.
+No runtime change, DB write, order, provider request or new image in this slice.
+Rollback source-only. Reuse retained test image, remove scoped test clients.
+
+
+#### EDC-1 Performance Recovery Identity - Tested Receipt
+
+Source reproduced13failures/5passes before patch: five OKX native routes and
+inverse recovery called Binance, four explicit wrong response identities were
+accepted, three unmapped products/venues fell through to Binance. Added symbol/
+instId mismatch and explicit Binance product cases after reproducer.
+
+Performance recovery now carries original native identity and explicitly maps
+venue/product into the existing versioned client. Unsupported mapping performs
+no provider read; supplied response canonical ID/venue/product/symbol/native ID
+cannot contradict the request. Implicit legacy Binance mode policy is retained;
+explicit product cannot inherit paper auto. DNSE branch unchanged. This is a
+recovery routing fix, not a new execution MARK source or product certification.
+In particular inverse routing proof does not certify legacy inverse valuation.
+
+52PASS/0FAIL/0SKIP,1.297s: test_edc_performance_identity,
+test_performance_projection, test_target_rebalance, test_sizing in retained
+image3b4ee780f2d4, source read-only, networknone. Fixtures are TEST_ONLY; no real
+provider/DB/broker test in this slice, no accounting formula change. Ruff and
+git diff --check pass. Before evidence performance-identity-before.xml SHA256
+8e01a5243677d66b37645e49e5f5611eacbf24ce8432af01cb8680948e3e932e;
+final performance-identity-final.xml SHA256
+704cdec6a168bcee0e72c993b94de064bca0ce87d4e931ccb95ae396a4d5b50e
+under ~/.local/state/qdl-v2/edc1-20261001/evidence. Intermediate31-pass run is
+not additional distinct coverage.
+
+Dependency conclusion: Gateway portfolio-targets/rebalance can consume the
+latest account equity snapshot if caller omits equity, then creates quantities
+submitted through normal bulk admission. Risk still validates orders separately;
+its inspected position profile uses signed quantity rather than stored mark.
+Do not classify performance as reporting-only or claim an actual historical bad
+order. Remaining source boundary: missing/stale valuation and partial publication
+(the legacy PositionPerformance uses zero unrealized when mark is missing),
+original mark provenance, and stale summary applicability to target sizing need
+resolution using existing typed/native contracts. No whole accounting redesign.
+
+Cleanup: all test clients --rm, no new image/network/volume/buildcache, only the
+existing active p183_market_data uses the retained test-image ancestry.
+Inventory85images/29active25.18GB;422buildcache/29active16.53GB. No broad prune.
+Disk available77132918784B at end; no before/after reclamation claim. Shared TS
+market_data and both Query replicas restart0/OOMfalse, image unchanged. Retain
+active and named rollback artifacts, existing worktrees. No push/merge/release.
+
+EDC IN_PROGRESS, not certified/FULL. This closes the reproduced cross-venue
+recovery bug at source only. Actual owner/config/SDK and valuation boundary,
+provider attribution and affected-role packet/acceptance remain required.
