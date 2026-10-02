@@ -55,3 +55,18 @@ excluded. No alpha activation, mainnet authority or funded sizing claim.
 Only `query_kn_2` and `query_kn_1`, same config/TLS/state, to
 `sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c`.
 No Kafka offset reset, Redis flush, old SQLite reactivation or TS/order mutation.
+
+## Final Publication Attestation
+
+The frozen certificate records `REQUIRES_REMOTE_CI_AND_MAIN_ANCESTRY` because it
+was assembled before the final remote checks. Publication resolves that external
+gate through the **annotated `v2.2.2` tag**, not by rewriting historical evidence.
+The annotation records the exact successful CI heads, run IDs and job conclusions,
+feature/dev/main ancestry, and SHA-256 of this frozen certificate and endpoint report.
+Inspect it with `git fetch origin tag v2.2.2` followed by
+`git show --no-patch v2.2.2`, or resolve the tag object via the
+[GitHub tag reference](https://api.github.com/repos/BobbyAxerol/quant-data-layer/git/ref/tags/v2.2.2)
+and read its `object.url` annotation. The annotation must resolve all required
+checks to PASS before the tag is pushed. The tag-triggered publication workflow
+then verifies main ancestry and the certified endpoint-report and SDK-wheel hashes.
+This resolution does not widen the scoped runtime acceptance or erase refusals.

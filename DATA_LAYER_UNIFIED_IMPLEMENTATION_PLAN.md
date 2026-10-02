@@ -68815,3 +68815,14 @@ This avoids recursive metadata-only CIheads without bypassing required gates.
 Runtimeacceptance remains44/44MARK,62/64allreads,20/20workerREADY with18/22
 executioneligible; no uninterruptedavailability or newC2 claim. Parentoneshot
 resourcefigures above are notcapacityproof. Existingrollback remainsretained.
+
+
+Final publication review: canonical .github/workflows/release.yml owns v2.* tag
+publication and exactly5assets (certificate,endpoint report,wheel,release manifest,
+CycloneDX SBOM). Never race scripts/publish_github_release.py against this workflow.
+Release notes now explicitly link annotatedtag attestation to resolve the frozen
+external-CI/main-ancestry fields. The tag seals actual successful finalCI head/run/
+job conclusions and certificate/report hashes; source is not edited after CI to
+pretend a previouspending field was observedgreen. This documentation-only final
+head requires CI; no runtime rebuild/retest. Source/runtime deltaaccepted, remote
+publication pending. Existing ownerhunks and active+3af57rollback remain preserved.
