@@ -50,6 +50,34 @@ Same-host Kafka backup is not independent HA or zero downtime. Historical refusa
 and failed rollout/probe windows remain retained. Binance3d and DNSE/VN V2 remain
 excluded. No alpha activation, mainnet authority or funded sizing claim.
 
+## Supplemental Binance Recovery Convergence
+
+A final provenance audit found the shared raw-ingestor recovery fix had reached
+OKX but not Binance. The parent rolled **only `ingestor_binance_usdm`** to the
+already-tested image `sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec`.
+No new source/build or config/TLS/state/offset change. The other16 role images and
+start times were unchanged during this supplemental step; three DL roles changed
+across both steps in total. The earlier two-Query receipt remains historical evidence.
+
+Five Binance symbols, two Query replicas, six read paths: **60/60 usable**.
+SDK-to-converter median/max milliseconds, n10 each: QUOTE28.37/99.89,
+TRADE44.74/70.10, MARKsnapshot31.80/66.54, MARKreference23.48/67.91,
+BOOKsnapshot85.89/109.36, BOOKdelta79.36/204.18. BOOKdelta uses snapshot RPC here,
+not a new streaming/burst test; timing excludes Redis apply. No p99 claim.
+
+Actual TS worker initially degraded to10/22session-ready despite these Query reads.
+A parent-owned TS CPU trial (1->1.5vCPU) recorded18/18READY,22/22sessions,
+18/22execution-ready over170.199s between samples in a planned180s window.
+Average1.026CPU and5.64% throttled periods are a bounded trial, not capacity proof.
+A separate TS adapter reconnect/ACK race was reproduced; SDK rejection is the
+correct safety behavior. Its fix is not a DL code change and is not certified by
+this Query result. **Publication remains gated on parent consumer-recovery closure**;
+the final tag must link that receipt. Earlier TRADE refusals remain unchanged.
+
+Supplemental Binance rollback is the same role/config to
+`sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023`.
+This image also remains active for three Rust cores and must not be pruned.
+
 ## Rollback
 
 Only `query_kn_2` and `query_kn_1`, same config/TLS/state, to

@@ -20,11 +20,121 @@
   },
   "commits_since_release": 78,
   "components": {
+    "binance_ingestor": {
+      "binary_sha256": "9334c8bae4b5277664225b11d006f28d25643bd63e5a42e50f1a1afb4c823951",
+      "consumer_recovery": {
+        "ack_race": "Parent reviewer reproduced a TS adapter prefetch/reconnect/ACK race with realSDK2.0.7; SDK rejects superseded event correctly. TS fix/acceptance owned separately by parent; not certified here.",
+        "cpu_trial": {
+          "cpu_cores_used_average": 1.0255509220419208,
+          "duration_seconds": 170.1993477344513,
+          "execution_ready": [
+            18
+          ],
+          "not_proof_ack_race_fixed": true,
+          "raw_sha256": "651fd91febac4229cca79d072e91ebcd689ec2d547fe971dded605bb8cf7ef79",
+          "ready": 18,
+          "samples": 18,
+          "session_ready": [
+            22
+          ],
+          "throttled_period_fraction": 0.0564042303172738
+        },
+        "cpu_trial_scope": "Parent changed candidate TS market_data CPU1->1.5 only; not a Data Layer quota change or capacity certificate.180s planned window,170.199s between18samples.",
+        "initial": "TS worker0 DEGRADED/WORKER_UNAVAILABLE;10/22sessions; not hidden by60/60Query reads",
+        "publication_hold": "Parent consumer-recovery closure required before tag; do not infer closure from READYsamples."
+      },
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "new_source_or_build": false,
+      "other_16_roles_image_and_start_unchanged": true,
+      "query_matrix": {
+        "groups": [
+          {
+            "feed": "MARK_INDEX_PRICE",
+            "max_ms": 66.53679581359029,
+            "median_ms": 31.803428544662893,
+            "n": 10,
+            "path": "snapshot",
+            "usable": 10
+          },
+          {
+            "feed": "MARK_INDEX_PRICE",
+            "max_ms": 67.90882302448153,
+            "median_ms": 23.483180557377636,
+            "n": 10,
+            "path": "execution_reference",
+            "usable": 10
+          },
+          {
+            "feed": "TRADE",
+            "max_ms": 70.0990678742528,
+            "median_ms": 44.73893600516021,
+            "n": 10,
+            "path": "snapshot",
+            "usable": 10
+          },
+          {
+            "feed": "BOOK_SNAPSHOT",
+            "max_ms": 109.36455195769668,
+            "median_ms": 85.8893459662795,
+            "n": 10,
+            "path": "snapshot",
+            "usable": 10
+          },
+          {
+            "feed": "QUOTE",
+            "max_ms": 99.88965606316924,
+            "median_ms": 28.365693986415863,
+            "n": 10,
+            "path": "snapshot",
+            "usable": 10
+          },
+          {
+            "feed": "BOOK_DELTA",
+            "max_ms": 204.18182504363358,
+            "median_ms": 79.35590262059122,
+            "n": 10,
+            "path": "snapshot",
+            "usable": 10
+          }
+        ],
+        "not_full_catalogue_or_zero_downtime": true,
+        "raw_sha256": "9e63b287974009d38ef69701c27e607cebd5764c89bcd930c2afd0e63b7f72cb",
+        "replicas": [
+          1,
+          2
+        ],
+        "samples": 60,
+        "symbols": [
+          "BNBUSDT",
+          "BTCUSDT",
+          "DOGEUSDT",
+          "ETHUSDT",
+          "SOLUSDT"
+        ],
+        "timing": "SDK request after resolve to execution converter outcome; not Redis consumer apply",
+        "usable": 60
+      },
+      "role": "ingestor_binance_usdm",
+      "rollback_image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "status": "AFFECTED_QUERY_READS_PASS_CONSUMER_RECOVERY_SEPARATE"
+    },
     "query_python": {
+      "applied_commits": [
+        "12785ab4aa1586ca58b6406d7d54a08ea8e24a58",
+        "a243096f7ccace5c21fb79b208cc65dcdb484403"
+      ],
+      "applied_files": [
+        "qdl/data_quality/execution_mark_index.py",
+        "qdl/query/__init__.py",
+        "qdl/reference/execution_live.py",
+        "qdl_sdk/__init__.py",
+        "qdl_sdk/execution_quality.py",
+        "scripts/build_qdl_sdk_release.py"
+      ],
       "candidate_image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
       "candidate_source": "d6d2637557c3759f829421d2174e21a44762f7fc",
       "configuration_change": false,
-      "deployed_source": "c8015cac822c8f2759dafabe9a56f97409c39c73",
+      "deployed_source": "d6d2637557c3759f829421d2174e21a44762f7fc",
       "packaging_attestation": {
         "base_image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
         "base_layer_prefix_verified": true,
@@ -44,24 +154,13 @@
           "qdl_sdk/execution_quality.py": "33a2a54f99d64ebafa5c7eb4ee38c6bcece1cc9561d0ad1c9409a043206a05c6",
           "scripts/build_qdl_sdk_release.py": "f06cd7eb250c6827890bfddbb3c8df4a0cf2a7cc34bc0a595447c6f87767f105"
         },
-        "production_rollout": false,
+        "production_rollout": true,
         "runtime_policy_config_changes": false,
         "sdk_version": "2.0.7",
         "source_sha": "d6d2637557c3759f829421d2174e21a44762f7fc",
         "tag": "qdl-v2-python:2.2.2-d6d2637"
       },
-      "pending_commits": [
-        "12785ab4aa1586ca58b6406d7d54a08ea8e24a58",
-        "a243096f7ccace5c21fb79b208cc65dcdb484403"
-      ],
-      "pending_files": [
-        "qdl/data_quality/execution_mark_index.py",
-        "qdl/query/__init__.py",
-        "qdl/reference/execution_live.py",
-        "qdl_sdk/__init__.py",
-        "qdl_sdk/execution_quality.py",
-        "scripts/build_qdl_sdk_release.py"
-      ],
+      "prior_deployed_source": "c8015cac822c8f2759dafabe9a56f97409c39c73",
       "rollback_image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
       "rollout_roles": [
         "query_kn_2",
@@ -245,7 +344,7 @@
     "runtime-scope-verification.json": "d7b9b394e27f9d875b0c4d522f7c0e8625e6c5a6932310d25b25766dfa548677"
   },
   "limits": [
-    "Measured latency is inherited from c8015ca, not a new runtime benchmark after pending Python changes.",
+    "Initial inherited latency and later actual Query/Binance SDK measurements are separately labelled in endpoint-report.json; no end-to-Redis claim.",
     "Six historical TRADE refusals remain UNKNOWN without simultaneous provider witness; session-ready is not always execution-eligible.",
     "No zero-downtime or independent-host/provider HA claim.",
     "No TS caller, virtual capital, accounting, broker execution or P18.3E certificate included.",
@@ -272,7 +371,8 @@
   "required_next_steps": [
     "Required remote CI on final metadata head; merge feature PR27 to dev preserving commits.",
     "Release PR dev->main and required CI; tag v2.2.2 only after final source/image/config/certificate review.",
-    "Retain active/explicitrollback; clean only obsolete unreferenced owned artifacts safely."
+    "Retain active/explicitrollback; clean only obsolete unreferenced owned artifacts safely.",
+    "Parent closes separate TS ACK-recovery publication hold; final annotatedtag links closure and actual CI outcomes. No new DL runtime changes."
   ],
   "runtime_inventory": [
     {
@@ -637,6 +737,7 @@
       "state": "exited"
     }
   ],
+  "runtime_inventory_basis": "Initial preparation snapshot retained below; final active inventory is certificate.json runtime, superseding original Binance image only.",
   "schema": "qdl.release-preparation.v1",
   "sdk": {
     "contains_service_internals": false,
@@ -805,7 +906,7 @@
       "subject": "fix(reference): retain verified component clocks and capture lineage"
     }
   ],
-  "status": "DEPLOYED_SCOPED_ACCEPTED_REMOTE_CI_REQUIRED",
+  "status": "DL_SCOPED_RUNTIME_ACCEPTED_FINAL_METADATA_CI_AND_PARENT_PUBLICATION_HOLD",
   "tests": {
     "candidate_package": {
       "base_layers_and_six_file_hashes": "PASS",

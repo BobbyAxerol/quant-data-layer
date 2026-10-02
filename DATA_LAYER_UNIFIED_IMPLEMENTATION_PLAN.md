@@ -68826,3 +68826,94 @@ job conclusions and certificate/report hashes; source is not edited after CI to
 pretend a previouspending field was observedgreen. This documentation-only final
 head requires CI; no runtime rebuild/retest. Source/runtime deltaaccepted, remote
 publication pending. Existing ownerhunks and active+3af57rollback remain preserved.
+
+
+<a id="v222-binance-shared-recovery-convergence"></a>
+#### Missing Binance Shared Recovery Rollout
+
+Status: PACKET_PREPARED / PUBLICATION_HELD. Read-only binary/source audit found
+Binance raw ingestor658a9570 still uses the old shared delivery helper; OKX0f6876e1
+contains855c914's persisted-without-offset handling. Both venues call the same
+raw_publish_future. This is an unrolled existing fix, not a newly observed Binance
+outage or justification to widen freshness. Evidence: release-convergence-20261002/
+evidence/binance-ingestor-provenance-gap.json, SHA256
+cd0ecde76eccfe1dfa612d2109f6cec63fa998dbf75a5b9a29dabfff3b6fa2a2.
+
+Complete the owner's latest full runtime/release convergence request with one
+missing-role packet, subject to runtime tool approval: recreate ONLY
+ingestor_binance_usdm to existing tested image
+sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec;
+rollback sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023.
+Private binance-recovery-candidate.compose.json and rollback under this release's
+runtime directory derive from the actual original role packet. Environment,
+command, entrypoint, mounts, networks, 0.5CPU/256MiB and healthcheck are preserved.
+No new code/build, Kafka offset/topology/ACL reset, cache reset, core/projector/
+reader/V1/TS/alpha/order mutation. Expect bounded Binance feed reconnect; no
+zero-downtime claim. Earlier recovery packet excluded Binance, so this missing
+role is explicitly named here rather than silently folded into the Query rollout.
+If automatic review requires more specific approval, stop this packet and keep
+publication held; do not bypass that decision.
+
+Inherit86 passed source/fault cases from855c914 for the same binary. Validate
+packaged ingestor hash, then after rollout verify generation/session recovery,
+both Query replicas and five Binance symbols for QUOTE/TRADE/MARK/L2, actual
+consumer worker readiness and bounded logs. Preserve strict legitimate refusals;
+no catalogue/C2 rerun. Final artifact must reflect actual role digest and scoped
+results before publication. Cleanup retains active/one rollback per role; do not
+remove658a9570 because three active Rust cores still use it.
+apply_patch failed with the known sandbox mountinfo error; exact append perRule32.
+
+
+Supplemental rollout observation 2026-10-02 12:35 UTC: tool approved exactly
+Binance role; recreate started12:24:53, completed successfully. Image0f6876e1,
+packaged raw-ingestorSHA9334c8bae4b5277664225b11d006f28d25643bd63e5a42e50f1a1afb4c823951,
+healthy/restart0/OOMfalse. Runtime config/TLS/state/quota unchanged.
+Five Binance symbols x twoQuery replicas x six read paths (QUOTE,TRADE,MARK
+snapshot/reference,BOOK snapshot/delta):60/60 execution-converter usable.
+Evidence binance-postroll-consumer-summary.json plus rawJSONL hash
+9e63b287974009d38ef69701c27e607cebd5764c89bcd930c2afd0e63b7f72cb.
+Median/max milliseconds, n10 perpath: QUOTE28.366/99.890;TRADE44.739/70.099;
+MARKsnapshot31.803/66.537;MARKreference23.483/67.909;
+BOOKsnapshot85.889/109.365;BOOKdelta79.356/204.182.
+Timing starts after resolve and ends execution conversion, NOT Redisapply; no
+p99/fullcatalogue/continuousavailability claim. No order/stream/cursor mutation.
+
+PUBLICATION REMAINS HELD: actual TS worker0 reported DEGRADED at12:35,10/22
+sessions,8/22execution; worker1/2READY. Logs show execution-ordering deadlines,
+stream_ended and unobserved/superseded ACK after reconnect. Query success does
+not close this consumer recovery finding. Preserve binance-postroll-worker.json,
+health and bounded timestamped logs; inspect existing TS worker/ordering/ACK
+path before publication or order qualification. No SLA/quota/cursor reset and
+no new architecture. Earlier two OKX TRADE refusals remain in evidence.
+
+
+#### Final Supplemental Release Metadata - Parent Consumer Hold Retained
+
+Source03d0805 CI37003584104 PASS all4jobs:2518unit tests,49skip,0fail;
+Redis42/42 and existing contract/native/security/packaging/release gatesPASS.
+No new source defect. MissingBinance role now runs tested0f6876e1;60/60affected
+readsPASS. Exact post-Binanceinventory compared against originalQuery receipt:
+onlyBinanceimage/startchanged,other16unchanged. Finalcertificate now carries
+currentinventory plus originalQuerysnapshot; no silent replacement of oldevidence.
+Query44/44MARK,62/64total andtwoOKXTRADErefusalsremain unchanged.
+
+ParentTS trial summary:18/18READY,22/22sessions,18/22execution,170.199s between
+18samples in planned180s window;1.026CPUaverage,5.64%throttledperiods.
+This isnotcapacityproof or ACKrace closure. Parentreviewer reproducedTSadapter
+prefetch/reconnect/ACKrace with realSDK2.0.7; SDKcorrectly rejects superseded ACK.
+Parentownsfix/acceptance; not a newDLruntime defect. Publication HOLD stays until
+parentclosure. No extraDLbuild/rollout/C2. All rawtrial/refusal evidencehashes
+retained. Certificate/report/notes/preparation reconciled together in one final
+metadata slice; requiredCI applies to this head, finaltag seals CI/mainancestry
+and parentclosure, avoiding metadata-only outcome commits.
+
+Validation:JSON parse;60rawread hash and18sample hash match; onlyone supplemental
+runtime rolechanged; originaltwo refusal records/64readreceipt unchanged;
+endpointreporthash matches certificate; SDKwheel hash unchanged; sixQuery source
+files unchanged. Active51450612 plusQueryrollback3af57 retained; Binance rollback
+658a9570 retained asactivecores. No cleanup of sharedTS resources. Bothownerplan
+hunks remainunstaged; parentBinance pre-action/rollout journal included.
+
+Release boundary clarified:3DLroleschanged(total2Query+Binance),14untouched.
+Parenthold is ONLY TS ACKcallerpatchlocal/affectedruntimeacceptance, not waiting
+for E03/E09 or the broader TS certificate. DLsource/runtime needs no furtherchange.

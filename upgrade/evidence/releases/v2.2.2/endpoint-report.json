@@ -101,6 +101,104 @@
     "timing_basis": "SDK snapshot/reference plus execution converter; starts after resolve, excludes consumer Redis apply; no p99 for n<100",
     "usable": 63
   },
+  "binance_ingestor_supplement": {
+    "binary_sha256": "9334c8bae4b5277664225b11d006f28d25643bd63e5a42e50f1a1afb4c823951",
+    "consumer_recovery": {
+      "ack_race": "Parent reviewer reproduced a TS adapter prefetch/reconnect/ACK race with realSDK2.0.7; SDK rejects superseded event correctly. TS fix/acceptance owned separately by parent; not certified here.",
+      "cpu_trial": {
+        "cpu_cores_used_average": 1.0255509220419208,
+        "duration_seconds": 170.1993477344513,
+        "execution_ready": [
+          18
+        ],
+        "not_proof_ack_race_fixed": true,
+        "raw_sha256": "651fd91febac4229cca79d072e91ebcd689ec2d547fe971dded605bb8cf7ef79",
+        "ready": 18,
+        "samples": 18,
+        "session_ready": [
+          22
+        ],
+        "throttled_period_fraction": 0.0564042303172738
+      },
+      "cpu_trial_scope": "Parent changed candidate TS market_data CPU1->1.5 only; not a Data Layer quota change or capacity certificate.180s planned window,170.199s between18samples.",
+      "initial": "TS worker0 DEGRADED/WORKER_UNAVAILABLE;10/22sessions; not hidden by60/60Query reads",
+      "publication_hold": "Parent consumer-recovery closure required before tag; do not infer closure from READYsamples."
+    },
+    "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+    "new_source_or_build": false,
+    "other_16_roles_image_and_start_unchanged": true,
+    "query_matrix": {
+      "groups": [
+        {
+          "feed": "MARK_INDEX_PRICE",
+          "max_ms": 66.53679581359029,
+          "median_ms": 31.803428544662893,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "MARK_INDEX_PRICE",
+          "max_ms": 67.90882302448153,
+          "median_ms": 23.483180557377636,
+          "n": 10,
+          "path": "execution_reference",
+          "usable": 10
+        },
+        {
+          "feed": "TRADE",
+          "max_ms": 70.0990678742528,
+          "median_ms": 44.73893600516021,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "BOOK_SNAPSHOT",
+          "max_ms": 109.36455195769668,
+          "median_ms": 85.8893459662795,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "QUOTE",
+          "max_ms": 99.88965606316924,
+          "median_ms": 28.365693986415863,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "BOOK_DELTA",
+          "max_ms": 204.18182504363358,
+          "median_ms": 79.35590262059122,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        }
+      ],
+      "not_full_catalogue_or_zero_downtime": true,
+      "raw_sha256": "9e63b287974009d38ef69701c27e607cebd5764c89bcd930c2afd0e63b7f72cb",
+      "replicas": [
+        1,
+        2
+      ],
+      "samples": 60,
+      "symbols": [
+        "BNBUSDT",
+        "BTCUSDT",
+        "DOGEUSDT",
+        "ETHUSDT",
+        "SOLUSDT"
+      ],
+      "timing": "SDK request after resolve to execution converter outcome; not Redis consumer apply",
+      "usable": 60
+    },
+    "role": "ingestor_binance_usdm",
+    "rollback_image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+    "status": "AFFECTED_QUERY_READS_PASS_CONSUMER_RECOVERY_SEPARATE"
+  },
   "inherited_hot_backup_sdk_reads": {
     "date_utc": "2026-10-01",
     "limits": [
@@ -194,7 +292,8 @@
     "Small per-venue/path samples: median/max only, no p99.",
     "Two postroll and one baseline TRADE refusal preserve strict policy; provider attribution remains UNKNOWN.",
     "20 sampled worker heartbeats are not uninterrupted availability or all60route certification.",
-    "Same Kafka/host hot backup is projector-path redundancy, not independent HA or zero downtime."
+    "Same Kafka/host hot backup is projector-path redundancy, not independent HA or zero downtime.",
+    "Supplemental Binance60/60 Query reads do not certify TS ACK recovery. Initial consumer degradation and separate CPU trial retained; BOOK_DELTA measured by snapshot RPC, not stream."
   ],
   "measured_after_rollout": {
     "consumer": "trading-system.sandbox.stable",
@@ -395,7 +494,7 @@
   },
   "release": "v2.2.2",
   "schema": "qdl.release-endpoint-report.v2",
-  "scope": "Affected Query MARK/INDEX proof and packaged SDK convergence; no new catalogue/C2/capacity certification.",
+  "scope": "Affected Query MARK/INDEX proof/SDK convergence plus missing Binance shared-recovery rollout; no new catalogue/C2/capacity certification.",
   "unchanged_catalogue": {
     "certificate_sha256": "1581c918d026c69c8c0f50d349b79405d419e3a04c98a4f2369a961c5be40c7a",
     "endpoint_report_sha256": "a7fa7ff9883a1a91f59315c3a5d1e3b08650e23c78a448f98fe92e16ed75b63b",

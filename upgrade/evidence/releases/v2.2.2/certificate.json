@@ -1,6 +1,104 @@
 {
+  "binance_ingestor_supplement": {
+    "binary_sha256": "9334c8bae4b5277664225b11d006f28d25643bd63e5a42e50f1a1afb4c823951",
+    "consumer_recovery": {
+      "ack_race": "Parent reviewer reproduced a TS adapter prefetch/reconnect/ACK race with realSDK2.0.7; SDK rejects superseded event correctly. TS fix/acceptance owned separately by parent; not certified here.",
+      "cpu_trial": {
+        "cpu_cores_used_average": 1.0255509220419208,
+        "duration_seconds": 170.1993477344513,
+        "execution_ready": [
+          18
+        ],
+        "not_proof_ack_race_fixed": true,
+        "raw_sha256": "651fd91febac4229cca79d072e91ebcd689ec2d547fe971dded605bb8cf7ef79",
+        "ready": 18,
+        "samples": 18,
+        "session_ready": [
+          22
+        ],
+        "throttled_period_fraction": 0.0564042303172738
+      },
+      "cpu_trial_scope": "Parent changed candidate TS market_data CPU1->1.5 only; not a Data Layer quota change or capacity certificate.180s planned window,170.199s between18samples.",
+      "initial": "TS worker0 DEGRADED/WORKER_UNAVAILABLE;10/22sessions; not hidden by60/60Query reads",
+      "publication_hold": "Parent consumer-recovery closure required before tag; do not infer closure from READYsamples."
+    },
+    "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+    "new_source_or_build": false,
+    "other_16_roles_image_and_start_unchanged": true,
+    "query_matrix": {
+      "groups": [
+        {
+          "feed": "MARK_INDEX_PRICE",
+          "max_ms": 66.53679581359029,
+          "median_ms": 31.803428544662893,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "MARK_INDEX_PRICE",
+          "max_ms": 67.90882302448153,
+          "median_ms": 23.483180557377636,
+          "n": 10,
+          "path": "execution_reference",
+          "usable": 10
+        },
+        {
+          "feed": "TRADE",
+          "max_ms": 70.0990678742528,
+          "median_ms": 44.73893600516021,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "BOOK_SNAPSHOT",
+          "max_ms": 109.36455195769668,
+          "median_ms": 85.8893459662795,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "QUOTE",
+          "max_ms": 99.88965606316924,
+          "median_ms": 28.365693986415863,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        },
+        {
+          "feed": "BOOK_DELTA",
+          "max_ms": 204.18182504363358,
+          "median_ms": 79.35590262059122,
+          "n": 10,
+          "path": "snapshot",
+          "usable": 10
+        }
+      ],
+      "not_full_catalogue_or_zero_downtime": true,
+      "raw_sha256": "9e63b287974009d38ef69701c27e607cebd5764c89bcd930c2afd0e63b7f72cb",
+      "replicas": [
+        1,
+        2
+      ],
+      "samples": 60,
+      "symbols": [
+        "BNBUSDT",
+        "BTCUSDT",
+        "DOGEUSDT",
+        "ETHUSDT",
+        "SOLUSDT"
+      ],
+      "timing": "SDK request after resolve to execution converter outcome; not Redis consumer apply",
+      "usable": 60
+    },
+    "role": "ingestor_binance_usdm",
+    "rollback_image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+    "status": "AFFECTED_QUERY_READS_PASS_CONSUMER_RECOVERY_SEPARATE"
+  },
   "ci": {
-    "head_sha": "d9e7f15356d61337f784bafda739b25af9703bb5",
+    "head_sha": "03d0805e2e4cbec4debbb2585bf2246444000210",
     "note": "Metadata is frozen before final-head CI; actual check conclusions must be verified at PR head before merge and at release PR before tag. This is a publication requirement, not a claim those pending checks passed.",
     "pull_request": "https://github.com/BobbyAxerol/quant-data-layer/pull/27",
     "release_metadata_head_requires_checks": true,
@@ -11,18 +109,17 @@
       "kn-native-integration"
     ],
     "reviewed_source_run": {
-      "head_sha": "d9e7f15356d61337f784bafda739b25af9703bb5",
-      "id": 37000061968,
+      "head_sha": "03d0805e2e4cbec4debbb2585bf2246444000210",
+      "id": 37003584104,
       "passed": [
         "contract-tests",
         "sdk-python310",
+        "unit-tests",
         "kn-native-integration"
       ],
-      "pending": [
-        "unit-tests"
-      ]
+      "pending": []
     },
-    "run_id": 37000061968,
+    "run_id": 37003584104,
     "status": "REQUIRED_EXTERNAL_GATE"
   },
   "classification": "SCOPED_AFFECTED_RUNTIME_DELTA_PASS_NOT_UNINTERRUPTED_EXECUTION_AVAILABILITY",
@@ -44,12 +141,18 @@
     "running_runtime_changes": [],
     "test_redis_removed": true
   },
-  "endpoint_report_sha256": "38234eaedbaede9a369fbe2256a9e97aa58be83a929daabf42f8f7fc6eedc7e5",
+  "endpoint_report_sha256": "d9e5e58be8a419941f34a7e2f9a9bca25f604e9ad737c1f6a47c9cc2232bf6ad",
   "evidence_sha256": {
     "baseline-consumer-reads.jsonl": "88db919028dfe20170abee789e1fba823ae6605c64c2407716a8de73860af70d",
     "baseline-consumer-summary.json": "3b8214f6251fc475ab4ad85a7528416eb7870df136b5667ad6e6526495f98cac",
+    "binance-ingestor-provenance-gap.json": "cd0ecde76eccfe1dfa612d2109f6cec63fa998dbf75a5b9a29dabfff3b6fa2a2",
+    "binance-postroll-consumer-reads.jsonl": "9e63b287974009d38ef69701c27e607cebd5764c89bcd930c2afd0e63b7f72cb",
+    "binance-postroll-consumer-summary.json": "772fb6db0855e388baaf6667055f4bc317edc0b257cda3854fc55a70975aa09e",
+    "binance-postroll-health.json": "0d600d7322af2091f2adbb3b719172321366e20fb2724f3cba6bb7ab3001aa97",
+    "binance-postroll-worker.json": "24c5d9edc01c2fcc44df3aaef04f4dc013e101b63efd1c69e1515be35c289b20",
     "candidate-package-result.json": "ce96654f2d3c2a7caea257bf7782e5c76fe79cd74a9b8d1c765f994f4d25e229",
     "cleanup.json": "bfae0307724c3130477e6d1840c743a44b59bca9c4aa494f827849e8844e945e",
+    "post-binance-runtime-inventory.json": "82d9d4caf4ec03d007b8e919dde4c3a1df599611e4913368a62f5441226686d1",
     "post-roll-runtime-inventory.json": "d9345ee800752ce0a894a9b4e9bf91b253b2567564406763c2ad7f4d50fe33a9",
     "postroll-consumer-reads.jsonl": "65fc23e775295b697b4cdb8b89193cd6d05c773d11de9678b2557dd3233bd329",
     "postroll-consumer-summary.json": "a1ce942c1c9e78069894ccb46375c9c83936298794725931732dd843c4180ac9",
@@ -57,16 +160,20 @@
     "postroll-worker-summary.json": "ee671a08b98e2d56e2cf8d5647fb9817905574d897b0483e95c8be014119fcd7",
     "query-image-attestation.json": "9ed1c9fa1f3899a17675365e16b93767b966a35442eb853b1d6a9e41192e5b05",
     "query-redis-result.json": "fecf39bd3cf2a4b3194a69ee5b01e8cb45a56be5620dd0dcb759d4bdbb68ca00",
-    "query2-canary.jsonl": "89c845dedfeefa0774e39c7cc320f83684b7d6af09966536e84900edf5466536"
+    "query2-canary.jsonl": "89c845dedfeefa0774e39c7cc320f83684b7d6af09966536e84900edf5466536",
+    "ts-cpu15-recovery-observation.jsonl": "651fd91febac4229cca79d072e91ebcd689ec2d547fe971dded605bb8cf7ef79",
+    "ts-cpu15-recovery-summary.json": "c2e3d205eef656a214e6ddea60b2b6dd9508402ef08aba05e97cfc069124bb44"
   },
   "gates": {
     "affected_mark_readback": "PASS44/44 SDK snapshot/reference through both replicas, both venues and inverse BTC;22referenceviews retain six component fields",
     "affected_query_packaging": "PASS64/64 plus actual entrypoint/shared-validator imports; six files match committed source and base layers preserved",
     "affected_query_redis": "PASS42/42 real isolated Redis; zero skipped",
+    "binance_shared_recovery": "PASS existing tested855c914 raw-ingestor binary deployed to missingBinance role;60/60 affected reads; no new source/build.",
+    "consumer_recovery": "SEPARATE_TS_ACK_FIX_PENDING_PARENT_CLOSURE; CPU trial18/18sampledREADY is not ACKrace acceptance.",
     "inherited_recovery": "Existing c8015ca hotbackup production and bounded isolated broker fault evidence, unchanged runtime Rust;tests-onlyformat/CI harness additions",
     "negative_trade_quality": "PASS strict rejection preserved;20reads18usable2staleeventrefusals, no provider attribution; not100%availability",
     "remote_ci": "PENDING_REQUIRED_CHECKS",
-    "runtime_scope": "PASS exactlytwoQueryrecreated;15otheractive roles unchanged;no topology/state/order mutation",
+    "runtime_scope": "PASS twoQuery plus one supplementalBinance ingestor; originalQuery receipt retained,16other roles unchanged during supplemental rollout.",
     "worker_observation": "PASS20/20 sampledREADY,session22/22,execution18/22;notnewC2"
   },
   "inherited_evidence_sha256": {
@@ -84,21 +191,12 @@
     "Same Kafka/host hot backup is projector-path redundancy, not independent HA or zero downtime.",
     "No broker orders, mainnet authority, funded sizing or P18.3E certificate included.",
     "No new full-stack capacity/burst or event-to-Redis latency benchmark.",
-    "Historical failures/refusals retained; current green reads do not explain their root causes."
+    "Historical failures/refusals retained; current green reads do not explain their root causes.",
+    "Supplemental Binance Query60/60 does not erase TS worker degradation; separate TS CPU trial18/18READY and reproduced adapter ACKrace are not a Data Layer full-availability certificate."
   ],
-  "publication_requires": "All required remote CI at final reviewed head, feature->dev then release PR->main, immutable tag workflow; statusPASS here certifies only bounded runtime delta.",
-  "publication_status": "REQUIRES_REMOTE_CI_AND_MAIN_ANCESTRY",
-  "release": "v2.2.2",
-  "rollback": {
-    "image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
-    "packet": "release-convergence-20261002/runtime/rollback.compose.json",
-    "preserve": "same environment, TLS, mounts, state, groups, offsets, config and consumer identity",
-    "roles": [
-      "query_kn_2",
-      "query_kn_1"
-    ]
-  },
-  "runtime": [
+  "publication_requires": "All required remote CI at final reviewed head, feature->dev then release PR->main, immutable tag workflow; statusPASS here certifies only bounded runtime delta. Parent must explicitly close consumer-recovery publication hold; annotated tag records that receipt without rewriting the earlier failure evidence. Consumer hold is limited to the TS ACK caller patch and affected runtime acceptance, NOT E03, E09 or TS release certification.",
+  "publication_status": "REQUIRES_FINAL_METADATA_CI_MAIN_ANCESTRY_AND_PARENT_CONSUMER_HOLD_RELEASE",
+  "query_rollout_runtime_snapshot": [
     {
       "health": null,
       "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
@@ -253,7 +351,181 @@
       "started": "2026-09-16T06:38:55.588316335Z"
     }
   ],
-  "runtime_scope_note": "Raw array hashes unsuitable: Docker mount order varies even for unchanged container IDs; Compose also reorders env. Query exact env values and mount source/destination/readonly checked against prereviewed packet. Other15 role IDs/images/start/env unchanged.",
+  "release": "v2.2.2",
+  "rollback": {
+    "image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+    "packet": "release-convergence-20261002/runtime/rollback.compose.json",
+    "preserve": "same environment, TLS, mounts, state, groups, offsets, config and consumer identity",
+    "roles": [
+      "query_kn_2",
+      "query_kn_1"
+    ]
+  },
+  "runtime": [
+    {
+      "health": "healthy",
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "oom": false,
+      "recreated": true,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "started": "2026-10-02T12:24:58.369037654Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "oom": false,
+      "recreated": true,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-query_kn_1-1",
+      "started": "2026-10-02T11:13:49.101943789Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "oom": false,
+      "recreated": true,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-query_kn_2-1",
+      "started": "2026-10-02T11:12:13.488673234Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_projector_1-1",
+      "started": "2026-10-01T12:16:20.78036445Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_projector_2-1",
+      "started": "2026-10-01T12:15:13.766866129Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+      "started": "2026-10-01T12:10:50.691735492Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+      "started": "2026-10-01T12:07:24.322915897Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "started": "2026-10-01T05:51:24.840836395Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka3-1",
+      "started": "2026-10-01T03:58:43.963843285Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka2-1",
+      "started": "2026-10-01T03:57:34.401411155Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka1-1",
+      "started": "2026-10-01T03:56:13.899839854Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core-1",
+      "started": "2026-09-30T17:46:56.312111099Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core_2-1",
+      "started": "2026-09-30T17:46:23.058376424Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core_3-1",
+      "started": "2026-09-30T17:45:38.534537186Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "oom": false,
+      "recreated": false,
+      "restart": 3,
+      "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+      "started": "2026-10-01T04:03:57.875233715Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_cache-1",
+      "started": "2026-09-27T05:29:58.000340326Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stable_redis-1",
+      "started": "2026-09-16T06:38:55.588316335Z"
+    }
+  ],
+  "runtime_scope_note": "Two Query roles in original slice plus exactly one Binance raw ingestor in supplemental convergence. Supplemental inventory verifies16other role images/start unchanged. Initial Query receipt and pre-supplemental inventory are retained separately; no reset or topology change.",
+  "runtime_scope_totals": {
+    "changed_roles": [
+      "query_kn_1",
+      "query_kn_2",
+      "ingestor_binance_usdm"
+    ],
+    "roles_observed": 17,
+    "unchanged_roles": 14
+  },
   "schema": "qdl.scoped-release-certificate.v2",
   "sdk": {
     "contains_service_internals": false,
@@ -275,5 +547,11 @@
     "wheel_sha256": "e50b9164d064d0a0e9256ea1bb5c8afe2bd32eb2a505d36165c94fec58d90b14"
   },
   "source_code_sha": "d6d2637557c3759f829421d2174e21a44762f7fc",
-  "status": "PASS"
+  "status": "PASS",
+  "supplemental_rollback": {
+    "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+    "packet": "release-convergence-20261002/runtime/binance-recovery-rollback.compose.json",
+    "preserve": "unchanged config/TLS/state/groups/offsets; image retained also by three active cores",
+    "role": "ingestor_binance_usdm"
+  }
 }
