@@ -66904,6 +66904,21 @@ production performance caller here; do not pretend it was wired by this patch.
 Provider attribution and changed-role acceptance/release remain open.
 
 
+#### EDC-1 Valuation Market-Time Proof - Start
+
+Continue TS a475074 / DL de74d99. Preserve original crypto price observation time
+and its existing PERFORMANCE_MARK_PRICE_MAX_AGE_SECONDS ceiling through prepared
+publication. Revalidate before and after writes; expiry rolls back. No timestamp
+renewal at DB write. Keep plain price compatibility wrapper, existing formulas
+and VN legacy branch; crypto proof is required only for current Binance/OKX
+publication. Missing/non-finite/future/expired timestamps fail closed; no new
+freshness threshold. Atomic account snapshot and business-input tests inherited.
+No schema or runtime changes. Gateway retained equity quality and typed execution
+MARK selection remain open; this compatibility TRADE valuation is not promoted
+to a MARK feed or execution proof. Tests include original mark_time persisted and
+expiry injected after actual PG publication writes. Cleanup exact test namespace.
+
+
 <a id="edc1-renewed-owner-review-20261002"></a>
 ### EDC-1 Consolidated Execution Dependency Repair - Renewed Owner Review
 
@@ -67061,3 +67076,62 @@ future market conditions; state the tested demand/load and remaining external li
 This review edited documentation only. No tests, deployment, order, restart,
 resource increase, cleanup, push or merge. Existing dirty TS code is preserved and
 not certified by this entry. Await owner approval of this consolidated plan.
+
+
+#### EDC-1 Resumed: Valuation Market-Time Transaction Proof
+
+Latest owner goal continuation resumes implementation of the consolidated EDC-1
+plan (DL anchor edc1-renewed-owner-review-20261002); IN_PROGRESS. Previous turn
+was progress: consolidated plan/guide committed as13b6689, not certification.
+Complete the preserved market-time slice first: original timestamp persists, and
+expiry after actual PG publication writes rolls back positions/snapshots/state.
+No runtime/shared DB/order mutation. Use isolated migrated PostgreSQL and test-only
+market values; reuse unaffected receipts. Typed MARK and retained equity quality
+remain separate unfinished closure rows, not solved by this compatibility proof.
+Exact test cleanup and source receipt required before commit.
+
+
+#### EDC-1 Valuation Market-Time Proof - Tested Receipt
+
+Implemented original observation/expiry propagation for current crypto compatibility
+valuation. Missing/nonfinite/future/expired timestamps fail closed. The existing
+max-age and 5s future-skew bound are retained, not a new execution SLA. The numeric
+compatibility wrapper stays available; actual crypto publication requires a typed
+ValuationMark. Position mark_price_at is original market time, not DB publication
+time. Revalidate before position writes and after account/state SQL, within the
+same transaction. Expiry rolls back all position/instrument/account/state writes.
+No accounting formula, schema, provider, broker, runtime or SDK deployment changed.
+This TRADE-price compatibility path is NOT certified native MARK valuation.
+
+75PASS/0FAIL/0SKIP,11.658s:21 actual isolated-PG cases and54 units. Both venues:
+original mark time persistence, expiry injected after actual SQL publication,
+missing/zero/NaN marks, publication failure, flat no-fetch, concurrent position
+changes and transaction conflict; equity/positions/state unchanged on rejection.
+Three controlled clock tests cover before/exactly/after original expiry. Actual
+DataLayerClient freshness validator is used for malformed market-time tests.
+Synthetic test inputs, not real provider or live money evidence. Unchanged tests
+in this small adjacent suite are compatibility checks, not additional coverage.
+
+Command: existing p18-56dae41 image, source RO, isolated PG DSN and SDK2.0.7;
+pytest tests/integration/test_edc_performance_publication.py plus unit
+{test_edc_valuation_time,test_edc_performance_identity,test_performance_projection,
+test_edc_performance_publication}.py, -p no:cacheprovider. pg_isready passed before
+93 migrations; migration status OK. Ruff on five changed source/test files PASS;
+git diff check PASS. Evidence valuation-time-final.xml SHA256
+5d33b7bce5345619ce8dc4dfdae0e823b7c16c07e84b3191aa60c02edb3c2420
+under ~/.local/state/qdl-v2/edc1-20261001/evidence.
+
+Cleanup removed exact --rm ts-edc1-settlement-pg (tmpfs schemas) and internal
+ts-edc1-publication-net; all clients --rm. No new image/build cache/volume.
+Available disk78173200384B before /77868961792B after; concurrent host writes,
+not a claimed reclaimed-byte delta. Inventory85images/29active25.18GB;
+422cache/29active16.53GB. Preserve active/rollback, no broad prune. Shared
+market_data c1f713a8b13e and both Query3af57ddf1764 restart0/OOMfalse unchanged.
+Canonical DL fix/execution-view-diagnostics; TS upgrade feature at existing
+worktree. Canonical TS and other features untouched. No push/merge/deployment.
+
+EDC-1 remains IN_PROGRESS. Required next closure: typed MARK/metadata policy in
+actual valuation caller, retained equity quality and Gateway target sizing at-use,
+actual process/SDK/config/identity convergence, matched provider attribution and
+changed-role runtime acceptance. This receipt closes one demonstrated proof-lifetime
+hole only; do not use it to declare FULL, release, or P18.3E certification.
