@@ -67721,3 +67721,58 @@ scoped cleanup retained. This is concrete configuration evidence, not a new
 latency/capacity/full-readiness claim. EDC remains IN_PROGRESS; native currency-aware
 performance integration, matched refusal evidence and real affected acceptance
 still required. All previously passing unchanged tests remain inherited.
+
+
+#### EDC-1 Native Currency Performance Port - Start
+
+Continue TSde5f2c8/DL76a34cb. Runtime census proved image/source gap; no rollout
+now. Reuse Rust performance::projection_json for existing P15 performance writer
+as with valuation; Python remains oracle, no fallback. Test wallet+inverse PnL
+in BTC and USDT with explicit FX, native fee/funding retention without double
+counting, missing/wrong FX, allocation conservation, actual PG atomic publication.
+This does not certify supplied FX provenance or wire compatibility performance
+inputs; original market-time and business-version validation still required at
+that integration boundary. No new financial formula, mode authority or service.
+
+
+#### EDC-1 Native Currency Performance Port - Tested Receipt
+
+Existing P15 project_performance now uses Rust performance::projection_json via
+PyO3, releases GIL, validates canonical reporting domain/currency/reducer/digest.
+No Python reducer fallback; existing authority, advisory lock, revision and journal
+transaction unchanged. Input case normalization preserved. Rust financial formulas
+unchanged; Python is oracle. No new currency conversion heuristics or USD=USDT.
+
+39PASS/0FAIL/0SKIP,3.784s:31unit and8 actual isolated-PG. Includes preceding native
+valuation wire regressions because extension packaging changed; new performance
+checks mixed BTC/USDT wallet+PnL, explicit FX, separately retained native fee/funding,
+allocation conservation, missing/wrong/zero/duplicate/stale-quality FX, overallocated
+capital, missing native and accepted canonical case normalization. Actual PG on
+both venue scopes persisted196USDT from100USDT +0.96BTC at declared100USDT/BTC;
+no fee double-count; missing FX cannot replace committed revision1. Prior P15
+atomic journal/version/watermark tests included; paper matcher cases deselected
+as unrelated, no mandatory gate skipped. Synthetic TEST_ONLY inputs, not provider
+FX freshness, broker funds or runtime certification.
+
+Builder8aaa0dafa4e9 offline/locked/release/jobs1, cap2GiB/1CPU,3m00s. Test client
+loaded new6070680byte extension before site-packages; SHA256
+cfb229f38b95fe3064f68a2ecc4e4f3cc8a7154c7b129db7bd1b179df4a2fb88.
+Evidence native-performance-port-final.xml SHA256
+e517de960fef1595eb3ad34151abb5fafcfa1c7e55c0883cd55c9ae189011828
+under ~/.local/state/qdl-v2/edc1-20261001/evidence.94migrations through95 in isolated
+p15. Ruff/diff clean after mechanical test formatting.
+
+Cleanup exact --rm builder/client, ts-edc1-settlement-pg tmpfs and
+ts-edc1-publication-net; temporary extension removed after hash. No new image,
+buildcache or volume. Disk available76652855296 before/76598046720 after; host
+concurrent writes, no claimed savings. Shared market_data c1f713a8b13e and Query
+3af57ddf1764 pair restart0/OOMfalse unchanged; retained active/rollback images.
+No runtime change, provider/order traffic, push/merge/release or broad prune.
+
+EDC IN_PROGRESS. Native P15 ports are now available, not a complete data collector:
+compatibility performance owner must bind authoritative P05 position provenance,
+collect monetary components by currency and obtain qualified FX outside DB locks,
+then publish with original market/business proof. Current compatibility aggregate
+SQL remains unfinished for multi-currency. Caller/SDK/config activation, matched
+provider attribution and final affected no-order acceptance are still mandatory.
+Do not promote this test receipt to inverse runtime availability or E09/FULL.
