@@ -68682,3 +68682,15 @@ shared/broadprune or volume removal. Full disk pre/post and unchanged19-containe
 identity/start/restart audit in release-convergence-20261002/evidence/cleanup.json.
 No runtime changes. Owner two plan hunks remain unstaged; global diff-check still
 reports their pre-existing trailing whitespace, staged scope is clean.
+
+
+#### v2.2.2 Explicit Remote Workflow Approval Resumed
+
+2026-10-02 owner explicitly approves Data Layer push/CI/dev/main/deploy/release/
+cleanup after the export rejection. The parent reserves actual Query rollout;
+this sidecar handles remote source convergence, PR/CI and journals only.
+Retry exact git push origin fix/execution-view-diagnostics; no alternate endpoint,
+credential workaround or bypass. This supersedes the prior permission blocker,
+not runtime/test gates. Keep v2.2.2 certificate pending until parent attests actual
+candidate Query rollout and affected reads. Preserve both user plan hunks and all
+source history. Main/tag/publication follow dev CI and final certificate only.
