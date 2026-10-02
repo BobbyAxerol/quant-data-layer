@@ -70,8 +70,9 @@
     },
     "rust": {
       "evidence_inheritance": "Existing recovery, broker-proof, paired restart and narrow six-role acceptance; not whole-catalogue recertification.",
+      "non_runtime_delta": "rustfmt-only committed_reads.rs test formatting; no compiled runtime source change",
       "rebuild_required": false,
-      "source_tree_unchanged_since": "c8015cac822c8f2759dafabe9a56f97409c39c73"
+      "runtime_source_unchanged_since": "c8015cac822c8f2759dafabe9a56f97409c39c73"
     }
   },
   "documentation_only_commit_count": 67,
@@ -251,17 +252,21 @@
     "BAR edge observed historical restart count3; all other active Data Layer roles restart0/OOMfalse at inventory, not a fresh availability certificate."
   ],
   "not_a_release_certificate": true,
+  "parent_packet_review": "PASS exact image-only delta, env/command/mounts/TLS/network/caps; runtime rollout reserved to parent",
   "published_baseline": {
     "sha": "d149b3511dac4f3d1ce76e3686437d736d3b98f4",
     "tag": "v2.2.1"
   },
   "release": "v2.2.2",
   "remote": {
-    "ci": null,
-    "no_bypass": true,
-    "pr": null,
-    "push": "BLOCKED_BY_TOOL_APPROVAL_REVIEW_BEFORE_EXECUTION",
-    "reason": "Automatic review requested explicit authorization for export of this branch to origin/BobbyAxerol/quant-data-layer despite owner release-workflow approval."
+    "base": "dev",
+    "ci": "IN_PROGRESS_WITH_RUST_TEST_FORMAT_FAILURE_CORRECTED",
+    "ci_head": "b7b9ddf49874c16276a7ce82e84aaf696f2e265a",
+    "ci_run": 36998897624,
+    "no_merge_tag_publication": true,
+    "pr": 27,
+    "push": "SUCCESS",
+    "url": "https://github.com/BobbyAxerol/quant-data-layer/pull/27"
   },
   "required_next_steps": [
     "Push feature branch and open dev PR; all required CI jobs must pass.",

@@ -68694,3 +68694,29 @@ credential workaround or bypass. This supersedes the prior permission blocker,
 not runtime/test gates. Keep v2.2.2 certificate pending until parent attests actual
 candidate Query rollout and affected reads. Preserve both user plan hunks and all
 source history. Main/tag/publication follow dev CI and final certificate only.
+
+
+Remote PR27 opened todev atb7b9ddf; CI36998897624 started. Parent independently
+reviewed candidate/rollback Compose versus live: ONLY image differs for
+query_kn_2/1; environment and command match; rollback3af57ddf verified, bothhealthy.
+Owner rollout approval is recorded; parent executes paced baseline then changed
+Query rollout/readback. Sidecar must not run concurrent consumer probes.
+
+CI contract job110811810266 failed cargo fmt --check at the newly added
+rust/qdl-stream-gateway/tests/committed_reads.rs test only (whitespace/wrapping).
+No runtime source change indicated; apply rustfmt mechanically, verify full fmt
+check and absence of runtime-source diff. SDKPython3.10 alreadyPASS; otherjobs
+continue. Preserve failedCI log under release-convergence-20261002/evidence/.
+No test predicate, freshness, contract or image change to repair a formatting gate.
+
+
+Parent additionally verified all6 actual mounts/readonly flags,1.5CPU/1.5GiB RAM,
+network keys and default2xmemoryswap; no packet blocker. Parent alone runs paced
+baseline and retains exact TRADE refusals without unsupported provider attribution.
+Formatter fix is limited to committed_reads.rs:48insertions/13deletions,
+whitespace/line wrapping only. Existing builder qdl-rust-builder:r134-test,
+RUSTUP_TOOLCHAIN1.82.0, cargo fmt --all -- --check PASS. No compile/image rebuild
+needed for a test-format delta. First plainrust image lacked installedformatter
+and attempted offline channel sync; corrected to existingtool-equippedbuilder.
+No dependency download or localheavyRustbuild. Runtime Rust src remains identical.
+PR27/CI36998897624: SDKPASS; contractfmtFAIL nowfixed; unit/native stillrunning.
