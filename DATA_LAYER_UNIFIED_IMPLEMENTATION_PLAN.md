@@ -66450,3 +66450,75 @@ selected readset injection and reservation at-use proof remain the next coherent
 integration slice. Do not label this authority projection full caller closure.
 Runtime identity activation, portfolio reporting dependency trace, simultaneous
 provider attribution and changed-role acceptance remain required by the plan.
+
+
+#### EDC-1 Risk Main Typed Read And Reservation - Start
+
+Wire existing owned recovery reader into Risk main, selecting server-policy
+feeds for explicit V2 intents before generic preflight. Preserve untouched legacy
+loader and native binding paths; no payload-price fallback for V2. Pass captured
+context directly into checker, revalidate after waits, and carry it as an explicit
+server argument to reservation (never trust raw risk_context as market proof).
+Validate inside reservation transaction before/after mutations so expiry after
+locks rolls back. Preserve original price timestamps and existing intent limits.
+Tests: actual helper/handler selection, checker reuse, timeout/expiry, owner
+shutdown, isolated DB reservation rollback where applicable. No runtime rollout.
+
+
+#### EDC-1 Risk Main Read Ownership And Reservation - Tested Receipt
+
+Risk main now owns a shared execution reader for the process lifetime, also
+reused by existing native admission bindings. Child tasks cancel/join before
+reader close; startup/task failure clears owner references. Explicit V2 intents
+select required feeds using the existing server policy and per-intent age/deadline.
+They no longer call generic _load_market_data first or use paper payload-price
+fallback. Legacy/no-contract and cancel routing retain their existing branches.
+Missing/unavailable data remains a typed refusal, not synthetic usable price.
+
+Captured context passes directly to RiskChecker (no competing second market
+read). Checker still validates at use and across authority waits. Reservation
+uses the validated mark/effective valuation as a Decimal string, not a new trade
+event: no event timestamp is fabricated and no compatibility cache is written.
+The repository receives proof as an explicit server argument, validates matching
+valuation and checks expiry within the existing paper/sandbox transaction before
+and after writes. Expiry raises through the transaction so balances/ledger/
+reservation/audit roll back. Main handles that typed refusal per order. Original
+risk policies, grant limits, native collateral arithmetic and sender authority
+remain unchanged. This does not certify a price stays fresh forever after commit;
+post-queue sender proof is still required as already implemented/planned.
+
+74PASS/0FAIL/0SKIP,2.946s, unit command selects test_edc_risk_main_reads,
+risk_broker_sync, risk_market_data_loader, risk_checker_market_metadata and
+edc_recovery_runtime in retained testimage3b4ee780f2d4/sourceRO/networknone.
+Covers both venues MARKET/LIMIT/L2/LAST/MARK/INDEX readsets, required vs optional
+TRADE, missing owner/timeout/stale/expired intent, actual handler branch selection,
+prepared context reuse, cancellation/startup/task failure and legacy regressions.
+Evidence risk-main-final.xml SHA256
+cb5e030cf80616424bfd54e102bef50d3628498e7d69f3185e4d69d41453daea.
+
+Actual isolated PG15/tmpfs p183,93migrations, native sandbox collateral fixtures:
+80PASS/0FAIL/0SKIP in32.808s (new3plus existing77), then targeted5/5in3.487s
+including2new paper rollback cases. Total distinct82, not85. Controlled clock
+expiry after actual reserve/ledger writes proves rollback; not a real broker or
+production lock outage. Evidence risk-reservation-first.xml SHA256
+27c6591d0454758071a59581c51f1d38635f2e4e65a7595240318a1cabfe106a;
+risk-reservation-paper.xml SHA256
+d45a8b8a0732543534dae6f5d627892c42416eb64bc832e6f54a2c0eced9cb24.
+Fixtures retain owned schemas only until exact isolated tmpfs container cleanup.
+Native risk projection parity127 and Rust2 from preceding receipt are inherited;
+this run used unchanged sandbox native arithmetic, not an old bridge as proof of
+new native risk projection. Ruff/diff checks pass; only import formatting after PG.
+
+Cleanup: removed exact ts-edc1-settlement-pg/internal ts-edc1-reservation-net,
+all clients--rm; no new image/volume/buildcache. TestPG and sharedmarketdata
+restart0/OOMfalse before removal; sharedruntime unchanged. Available disk
+77113188352B before /77063462912B after, concurrent writes, no savings claim.
+Images85/29active25.18GB,BuildKit422/29active16.53GB; no broad prune, retain
+active/explicit rollback set. No order/alpha/manifest/runtime change or push/merge.
+
+EDC remains IN_PROGRESS. This closes the tested source generic preflight/read
+owner/reservation boundary, not full deployed acceptance. Remaining ledger:
+package owner/authority applicability, performance downstream dependency,
+config/SDK/old-state adoption, runtime identity/quota packet, synchronized actual
+TRADE/MARK attribution and reviewed affected-role acceptance/release. Keep TS
+P18.3E money qualification separate; do not rerun catalogue/C2 to find source bugs.
