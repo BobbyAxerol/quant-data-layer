@@ -67601,3 +67601,60 @@ alone: additive proof migration, capable valuation owner and typed metadata/mark
 reader must precede it, with per-role rollback and old-state compatibility review.
 
 Source implementation receipt: TS commit `fc1cb06`; no push/merge.
+
+
+#### EDC-1 Existing Native Valuation Port - Start
+
+Continue TSfc1cb06/DLae7ec62; previous slice104tests passed and cleaned. Source
+inspection confirms Rust valuation::projection_json already implements P15 exact
+linear/inverse reducer, but PyO3 does not expose it and EconomicControlRepository
+calls Python valuation_projection. Add only a binding/shared native adapter and
+route the existing pinned transactional P15 valuation through it. Python stays
+oracle, no runtime fallback or new formula. Test native parity, missing extension,
+identity/version/currency, and actual isolated PG valuation/journal rollback.
+Performance compatibility inverse integration and currency aggregation still must
+follow; this port alone does not certify them or activate a runtime. No new service,
+shared DB writes, deployment or broker activity.
+
+
+#### EDC-1 Native Valuation Port - Tested Receipt
+
+Existing Rust trading_core::valuation::projection_json is now exposed through
+PyO3 (GIL released), shared native_domain validates returned scope/position/version/
+model/settlement currency/reducer and canonical digest. Existing P15 transactional
+project_valuation uses that port, no Python fallback. Native reducer mathematics
+unchanged; Python reducer retained only as test oracle for this path. Existing
+execution-version lock, mark watermark, atomic journal and rollback preserved.
+
+28PASS/0FAIL/0SKIP,3.536s:22unit and6 actual isolated-PG. Units cover linear/inverse
+long/short/flat, up/down/missing mark, missing extension and result tampering.
+Existing actual-PG valuation/journal tests plus4 inverse long/short venue-scope
+cases prove BTC settlement PnL +/-0.04 and quote notional20 for TEST_ONLY inputs,
+persisted payload equality and journal events. These are arithmetic/storage tests,
+not Binance/OKX API capability or broker certification. P15 writer still paper-only;
+no widening of its mode authority. Ruff/diff clean. Initial ruff import ordering
+fixed mechanically; initial builder inspection used its maturin entrypoint wrongly,
+then explicit bash inspected successfully; neither was hidden as a product failure.
+
+Compiled current source offline/locked/release/jobs1 in retained standard builder
+8aaa0dafa4e9, memory2GiB/cpu1,3m00s. Native extension5,906,808bytes SHA256
+4343c6fe3b0539e9f2bcfbe2f7d6eede98020d164b9d04afaa7380322f3b45e6.
+Mounted that newly built extension ahead of installed image extension for tests,
+not the stale retained native binary. Applied94 migrations through95 in tmpfs p15.
+Evidence native-valuation-port-final.xml SHA256
+a960440a54be70a766746a655d17f559e24963c74ebdeea7e137478bf0898016
+under ~/.local/state/qdl-v2/edc1-20261001/evidence.
+
+Cleanup: --rm builder/client, exact ts-edc1-settlement-pg and
+ts-edc1-publication-net removed; temporary compiled extension removed after hashing.
+No new image/build cache/volume or shared runtime mutation. Available bytes
+77511258112 before /77588119552 after cleanup (host-global, not exact attribution).
+Retained existing active/rollback images; no broad prune, orders, push or merge.
+
+EDC remains IN_PROGRESS. Performance compatibility currently still constructs
+linear PositionPerformance and aggregates legacy monetary columns. Required next
+integration must pin actual native economic position provenance and currency-aware
+account components, reusing P15/native authority; do not feed arbitrary compatibility
+rows to this reducer with invented execution versions. Native port alone does not
+complete inverse performance, caller/config activation, provider attribution or
+runtime300s acceptance. No FULL/release or TS E09 certification.
