@@ -68789,3 +68789,29 @@ Changedruntime source remainsd6d2637; subsequentcommits onlytestformat/CI/docs.
 Exactreport/certificate/notes are upgrade/evidence/releases/v2.2.2/.
 SDK2.0.7 wheelsha e50b9164...90b14 unchanged. Publish through existingtagworkflow
 onlyafter allrequiredchecks; no squash or forcepush. Ownerplanhunks remainunstaged.
+
+
+Superseded run36999420976 fullunit completed2515tests in1112.259s:
+2465PASS/1FAIL/49SKIP. Solefailure is staleSDK version assertion2.0.6 at
+StableReleaseVersionContractTests, source/runtimeSDKcorrectly2.0.7. Update only
+that explicit expectedversion; no runtime, threshold or package change. Full
+failurelog retainedci-unit-36999420976.log. Existing release2.0.6 historicalevidence
+is not rewritten. Two otherobsoleteCIruns cancelled after supersededhead, their
+failedlogs retained; currentfinalchecks must rerun on this test-only correction.
+
+
+Final SDK expectation audit: repository tests/workflows/current SDK/build helper
+contain no remaining2.0.6 expectation; historicalrelease evidence unchanged.
+Immutable candidate, networknone, read-only tests mount: versioncontract plus
+test_qdl_sdk_release5/5PASS in0.460s (including reproduciblewheel). No runtime
+package rebuild, policychange or consumer reprobe. Parentpostroll sourceverification
+confirms2replicas x6files exactlymatch checkoutSHA256, healthy/restart0/OOMfalse.
+Evidencepostroll-packaged-source-verification.json SHA256 a0c67035ad51570197878b70ca6bdad27b3111cc85c922f4980e95ae32ded58b.
+Final publication must seal an external CIattestation in annotatedtag/release:
+actualfinalhead, run/jobconclusions, dev/main ancestry and frozen certificatehash.
+Frozen certificate pending-external-CI fields are not a claim of publication;
+resolved attestation accompanies publication onlyafter allrequiredchecksPASS.
+This avoids recursive metadata-only CIheads without bypassing required gates.
+Runtimeacceptance remains44/44MARK,62/64allreads,20/20workerREADY with18/22
+executioneligible; no uninterruptedavailability or newC2 claim. Parentoneshot
+resourcefigures above are notcapacityproof. Existingrollback remainsretained.
