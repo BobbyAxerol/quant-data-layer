@@ -67658,3 +67658,66 @@ account components, reusing P15/native authority; do not feed arbitrary compatib
 rows to this reducer with invented execution versions. Native port alone does not
 complete inverse performance, caller/config activation, provider attribution or
 runtime300s acceptance. No FULL/release or TS E09 certification.
+
+
+#### EDC-1 Runtime Caller Convergence Census - Start
+
+Continue TS499cd02/DLa348c89. Native P15 port tested; next integration cannot
+assume compatibility monetary aggregates are currency-aware. _fetch_margins sums
+all account currencies; fill commission/PnL aggregates also lack currency grouping.
+Do not simply substitute inverse PnL and declare equity correct. Native P05
+provenance and P15 reporting-currency authority must be preserved. Before choosing
+which current caller to migrate, refresh the allowlisted runtime Settings/SDK/
+image/reader-method census. Read-only reconstructed Settings, not live-object or
+execution proof; no secrets/provider/Redis writes/SDK network requests. Exact
+shared and candidate roles only. Produce machine-readable per-caller gap ledger
+for the changed-role packet; no runtime activation in this census.
+
+
+#### EDC-1 Runtime Caller Convergence Census - Verified Receipt
+
+Fresh read-only census of12 named TS processes, no failed probe. Evidence
+caller-convergence-20261002.json SHA256
+2cc2e589908f30e071d7cb68a5b87d7ce60384b073a90e800144d9ee060a3691
+under ~/.local/state/qdl-v2/edc1-20261001/evidence. Source TS499cd02/DLa348c89.
+This changes the rollout decision: NONE of these images exposes the new owned
+execution recovery factory or native valuation binding. Source acceptance must
+not be described as those runtime processes receiving the fixes.
+
+| Actual process | Effective setting reconstructed in image | SDK distribution | Owned recovery factory present | Deployment treatment |
+|---|---|---|---|---|
+| shared Gateway | V1 | 2.0.0 | no | Retain legacy; never replace with whole unqualified upgrade merely to change mode |
+| shared Risk/executor/paper/performance/portfolio (5) | mode field absent | SDK absent | no | Legacy consumers; separately reviewed narrow integration/backport, not generic config activation |
+| shared market_data | V2_PRIMARY | 2.0.5 | no | Current bridge already reads V2; its presence does not upgrade downstream callers |
+| p183 Gateway/Risk/executor/portfolio (4) | V1 | 2.0.5 | no | Primary candidate targets for current source/SDK/config convergence, no live authority change |
+| p183 market_data | V2_PRIMARY | 2.0.5 | no | Preserve namespace/writer and coordinate SDK/schema compatibility with candidate readers |
+
+`ABSENT` means exactly missing setting/distribution/callable, not absence of every
+Rust module or native order authority. A settings modeV1 on a cache reader does
+not prove cache values came from V1. Reconstructed Settings and import probes do
+not prove runtime object selection or ready/eligible state; actual no-order caller
+invocation remains mandatory. No provider or Redis request in this census.
+
+Required convergence checklist before changed-role packet can become executable:
+- Pin actual candidate caller entrypoints and native authority, Redis namespace,
+  identity/realm/revision and process-count quota; keep candidate and shared distinct.
+- Candidate uses source-tested SDK2.0.7 and rebuilt native extension, not installed
+  SDK2.0.5/binary by assumption. Verify packaged imports and contract compatibility.
+- Enable V2_PRIMARY/recovery only where new reader factory is actually owned and
+  closed; show positive recovery at use and optional-feed refusal isolation.
+- Performance/sizing needs exact native P05 position version plus reporting-currency
+  rules. Current compatibility _fetch_margins sums all currencies and fee/PnL
+  aggregates lack currency grouping. Simply using inverse BTC PnL with USDT cash
+  would still be wrong. Reuse native P15 reporting/FX contracts and original
+  qualified conversion marks; never assume USD=USDT or discard foreign balances.
+- Additive proof migration and capable owner must precede auto-sizing Gateway;
+  do not enable a new Gateway with no owner or incompatible retained proof.
+- No packet may silently enable unrelated TS package/order authority, overwrite
+  shared V1, reset state or run candidate and legacy writers in one account scope.
+
+No source fix, build, test suite, provider measurement, runtime change, cleanup or
+new image/worktree in this census. Existing runtime digest set unchanged; previous
+scoped cleanup retained. This is concrete configuration evidence, not a new
+latency/capacity/full-readiness claim. EDC remains IN_PROGRESS; native currency-aware
+performance integration, matched refusal evidence and real affected acceptance
+still required. All previously passing unchanged tests remain inherited.
