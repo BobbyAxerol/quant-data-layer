@@ -67202,3 +67202,64 @@ invalidation for equity after a newer fill/cash change remain unfinished before
 activation, along with actual caller/SDK/config/identity and provider attribution,
 changed-role acceptance. Timestamp proof alone cannot certify all retained equity
 or FULL execution. Source slice tested, not release-certified.
+
+
+#### EDC-1 Typed Valuation Reader - Start
+
+Previous turn was progress: TSc6f271c / DL9f110f1 retained-equity proof with94
+passing tests. Source review now confirms performance active cadence600s versus
+mark max-age180s, loop60s: retained expiry alone cannot provide continuous target
+sizing readiness. Do not loosen lifetime. Close typed MARK reader ownership first
+using existing execution recovery/quality logic; never fall through to last-trade
+when configured V2 valuation is unavailable. Preserve legacy/VN compatibility.
+Keep original component timestamp and minimum read/component expiry. Test both
+venues, product identity, stale/gap/generation/authority and bounded lifecycle.
+No accounting formula changes or runtime activation. Business-version invalidation
+and demand-time valuation/refresh remain required before Gateway cutover; not
+solved by a source reader alone. No additional service or per-symbol worker.
+
+
+#### EDC-1 Typed Valuation Reader - Tested Receipt
+
+Configured V2 performance owner now acquires the existing owned execution reader
+and closes it plus compatibility client with AsyncExitStack on cancellation/error.
+Crypto valuation requests only MARK_INDEX_PRICE, validates exact product/native
+identity and existing shared quality/component/session rules; unavailable MARK
+never falls through to last-trade. Cache-only reader uses the same validation when
+recovery is disabled. Original component mark source time is retained when provided;
+expiry is min(component/session budget, server-owned read proof). Persisted basis
+TYPED_MARK remains distinguishable from compatibility price/account snapshot.
+No new pricing model, engine, service, callback authority or inverse PnL formula.
+Legacy/VN behavior stays on its existing branch. This is source wiring only.
+
+106PASS/0FAIL/0SKIP,13.699s:24 actual isolated-PG and82 units. Both venues cover
+typed MARK valid/missing/stale/gap/ineligible/wrong identity/wrong feed/read-expired,
+no legacy fallback, bounded timeout cancellation and owner closure. Actual migrated
+PG publication/summary retains TYPED_MARK basis plus original expiry; inherited
+atomic rollback/race tests remain valid. Values synthetic TEST_ONLY, not a real
+provider/read-process or native accounting certification. First81unit run is not
+added to distinct test totals. Existing FastAPI deprecation warnings remain outside
+scope. Ruff changed files and diff check pass.
+
+Evidence typed-valuation-final.xml SHA256
+cdffd346b0254eb0962fb1c53d0d3206c42b89d8d6edbab845cd1f38f23f0b7d
+in ~/.local/state/qdl-v2/edc1-20261001/evidence. Existing test imagep18-56dae41,
+source RO, vendorSDK2.0.7, isolated tmpfs PG94migrations after pg_isready. Ran
+integration test_edc_performance_publication plus units test_edc_typed_valuation,
+test_edc_valuation_time,test_edc_performance_identity,test_performance_projection,
+test_edc_equity_quality. No broker call/order/shared DB mutation.
+
+Cleanup exact ts-edc1-settlement-pg/tmpfs and ts-edc1-publication-net, clients--rm;
+no new images/buildcache/volumes. Available bytes before79678078976/after79488544768
+with concurrent host writes, not a reclaimed-byte claim. Inventory85images/29active
+25.18GB,422cache/29active16.53GB. Shared market_data/Query pair restart0/OOMfalse,
+images unchanged; active/rollback retained. Canonical/worktrees unchanged; no push,
+merge, cleanup of unrelated features or rollout. Main diff includes indentation
+under owned client lifetime; not a new performance computation implementation.
+
+EDC IN_PROGRESS: before activation, resolve retained equity's business-version
+invalidation and demand-time freshness versus600s publication cadence/60s loop.
+Native P15 already pins execution version; do not replace its reducer with another
+accounting engine. Existing compatibility linear formula is not inverse-certified.
+Actual caller modes/metadata/SDK/entitlement, matched provider refusal evidence,
+changed-role packet and runtime acceptance remain required. No FULL/release claim.
