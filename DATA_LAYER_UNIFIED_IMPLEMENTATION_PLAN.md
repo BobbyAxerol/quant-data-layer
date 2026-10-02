@@ -67776,3 +67776,67 @@ then publish with original market/business proof. Current compatibility aggregat
 SQL remains unfinished for multi-currency. Caller/SDK/config activation, matched
 provider attribution and final affected no-order acceptance are still mandatory.
 Do not promote this test receipt to inverse runtime availability or E09/FULL.
+
+
+#### EDC-1 Matched Runtime Attribution - Start
+
+Continue DLba4f734/TSd38c89e. Previous turn native performance source proof passed;
+no candidate deployment. Prior diagnostic journal already records matched quiet
+OKX trade refusals and separately192-738ms ingress-before-query cases, so historical
+attribution is mixed, not all UNKNOWN/quiet. Refresh only current affected
+TRADE/MARK routes with existing execution_view_diagnostics.py inside shared
+market_data_service, one cycle,3s pacing, one probe and stop on quota rejection.
+Provider WS observer uses established routed URLs with bounded25000 messages;
+no subscriptions on Data Layer Stream, ACK/cursor/order/Redis writes. Capture
+exact rejected views alongside provider timestamps/IDs; original policy unchanged.
+This is attribution, not C2/candidate certification. Do not infer commit/cache
+visibility from Kafka CreateTime or claim a REST later read explains prior refusal.
+
+
+#### EDC-1 Current Deployed Read Attribution - Receipt
+
+Existing paced diagnostic completed once,179.308s request window, exit0,60/60
+usable and0 quota refusals. Five symbols/two venues/two Query replicas:20TRADE
+snapshot,20MARK_INDEX snapshot,20execution MARK reference. This is NOT60 distinct
+TS route coverage, nor C2, nor acceptance of the undeployed candidate source.
+Measured existing shared market_data consumer SDK2.0.5; no order/ACK/Redis write.
+
+SDK call+converter timing in ms (10samples/group, no p99 claim):
+| Venue | Path | Median | Maximum | Usable |
+|---|---|---:|---:|---:|
+| Binance | TRADE snapshot |16.038|35.669|10/10|
+| OKX | TRADE snapshot |19.436|32.573|10/10|
+| Binance | MARK snapshot |18.479|44.062|10/10|
+| Binance | execution MARK reference |13.561|43.583|10/10|
+| OKX | MARK snapshot |12.114|30.238|10/10|
+| OKX | execution MARK reference |13.753|17.163|10/10|
+
+Clock starts after resolve, as implemented in existing script; excludes initial
+resolve and not event->Redis apply. Do not re-label it full call-to-usable or
+Risk admission latency. No rejection occurred, so no new root cause was established.
+Previous refusals and their original attribution are retained, not erased.
+
+Witness captured20,368OKX and25,930Binance frames; Binance observer emitted one
+RuntimeError,25,000trade frames at its configured bound (remaining frames from
+mark observer). This limits trade-witness coverage; not evidence of a production
+Binance disconnect. Script stores only exception type, so do not claim a fully
+uninterrupted provider witness or attribute all previous quiet/stale incidents.
+Do not rerun merely to obtain a green observer count; no refusal needs matching
+in this window. Raw12,896,399-byte bounded capture outsideGit retains original
+views and provider records, not credentials; summary explicitly records limits.
+
+Evidence root ~/.local/state/qdl-v2/edc1-20261001/evidence:
+runtime-attribution-20261002-summary.json SHA256
+8c57d0f7f465eeeaf5b1a6d15085833b9f5d3075227eaeb697ec532ddec1418a;
+raw SHA recorded inside summary. Temp cursor/audit directory auto-cleaned; clients
+and observers closed after probe. No container/image/buildcache created, no
+prune/restart/deployment/push/merge. Active and rollback unchanged.
+
+EDC remains IN_PROGRESS. Current deployed TRADE/MARK usable in this bounded window,
+not proof the revised Risk/execution/valuation callers are deployed. Next integration
+still requires native P05 position and currency-aware component collection, actual
+caller/config convergence, reviewed changed-role packet and affected acceptance.
+Source reading also suggests checking a race: recovery Query failure may precede
+a new valid stream cache write; reproduce before proposing a correction, and do
+not mask newer invalidation/auth failure with old cached data. No source change
+made for that hypothesis.
