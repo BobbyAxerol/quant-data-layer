@@ -67135,3 +67135,70 @@ actual valuation caller, retained equity quality and Gateway target sizing at-us
 actual process/SDK/config/identity convergence, matched provider attribution and
 changed-role runtime acceptance. This receipt closes one demonstrated proof-lifetime
 hole only; do not use it to declare FULL, release, or P18.3E certification.
+
+
+#### EDC-1 Retained Equity Proof - Start
+
+Continue TS ebdb952 / DL413cd61, IN_PROGRESS. Confirmed sizing caller consumes
+account_equity_snapshots without retained market-time quality. Add nullable/default
+empty valuation proof to that existing table only; old rows remain unverified,
+no history backfill. Publish original earliest market time and minimum expiry in
+the same transaction. Read summary preserves proof; automatic target equity rejects
+missing/expired proof and rechecks after asynchronous price/metadata acquisition.
+Do not silently fall through from invalid equity to cash or initial capital.
+Caller-declared explicit equity remains its existing sizing input, not Risk data
+authority. No formula or native MARK claims. Test migration idempotence, old-row
+compatibility, actual PG proof roundtrip, invalid/expired summary and no zero/NaN.
+Runtime migration/rollout not performed here. Typed valuation source and business
+version invalidation still need closure before activation; don't claim this alone
+certifies sizing. Exact isolated DB cleanup required.
+
+
+#### EDC-1 Retained Equity Proof - Tested Receipt
+
+Added migration95: one default-empty JSONB valuation_proof on existing
+account_equity_snapshots; no historical rewrite. Same publication transaction
+stores basis/version/original oldest observed time/minimum expiry. Flat account
+proof has a bounded account-snapshot lifetime; compatibility trade valuation stays
+explicit COMPATIBILITY_PRICE, not native MARK or execution authority. Original
+business formulas unchanged. Gateway summary selects/decodes the proof; automatic
+crypto target sizing requires exactly one currency snapshot with a valid proof
+and finite nonnegative equity, and revalidates after async price/metadata reads.
+Invalid snapshot does not silently select balances or initial capital. Explicit
+caller equity keeps existing sizing semantics and never replaces Risk authority;
+VN legacy branch preserved. No provider/runtime/production DB change.
+
+94PASS/0FAIL/0SKIP,12.723s:22 isolated real-PG +72 units. Includes migration run
+twice against an old-row table, empty-proof default/no data rewrite; publication
+SQL -> actual AlphaStateRepository summary query/decoder -> sizing validator for
+both venues, original timestamp/expiry, atomic expiry rollback and preceding
+position-race regressions. Gateway endpoint itself exercised with controlled
+metadata delay: expiry prevents invoking the order-plan builder. Valid case uses
+original equity; invalid/expired/missing/future/NaN/negative/ambiguous cases fail.
+No real order/provider evidence; adjacent inherited tests not counted twice.
+
+Command: existing p18-56dae41 source-RO test client, SDK2.0.7, migrated isolated
+PG; test_edc_performance_publication integration plus unit suites
+{test_edc_equity_quality,test_target_rebalance,test_edc_valuation_time,
+test_edc_performance_identity,test_performance_projection,
+test_edc_performance_publication}. Migration statusOK,94 scripts. Ruff changed
+source/test files PASS; two existing FastAPI on_event deprecation warnings, no
+unrelated lifecycle refactor. Final XML equity-quality-final.xml SHA256
+e5db519408133feed7309bf63f790be58d121c9a77707de6e067c476dbd11ebf.
+
+Exact testPG/tmpfs schemas/internal ts-edc1-publication-net removed; clients --rm,
+no image/buildcache/volume created. Available bytes before cleanup78977581056,
+after78858944512; host writes concurrent, no exact reclaimed-byte claim. Shared
+market_data c1f713a8b13e and both Query3af57ddf1764 restart0/OOMfalse unchanged.
+No broad cleanup/push/merge/deploy; active and named rollback artifacts retained.
+
+Deployment ordering requirement: additive migration before new SQL callers;
+producer creates fresh verified snapshots before switching Gateway. Old writers
+leave proof empty (fail-closed); never stamp history as current to pass. Rollback
+application/config only, retain additive column/data. This is NOT runtime approval.
+
+EDC remains IN_PROGRESS. Typed MARK/native valuation policy and business-version
+invalidation for equity after a newer fill/cash change remain unfinished before
+activation, along with actual caller/SDK/config/identity and provider attribution,
+changed-role acceptance. Timestamp proof alone cannot certify all retained equity
+or FULL execution. Source slice tested, not release-certified.
