@@ -67338,3 +67338,182 @@ owner-driven bounded refresh remains required before enabling the new sizing pat
 No extra Gateway accounting writer. Preserve native P15 authority and separate
 inverse formula certification. Actual process/identity/SDK convergence, matched
 provider attribution and changed-role runtime acceptance remain open. No FULL.
+
+
+<a id="edc1-ts-execution-final-audit-plan-20261002"></a>
+### EDC-1 TS/Core/Execution Data Closure - Final Approval Plan
+
+**Controlling status: PLAN_REVIEW_PENDING / IMPLEMENTATION_HOLD.**
+Latest owner instruction: inspect TS core/execution dependencies, consolidate ONE
+repair phase, document it before implementation, then wait for owner approval.
+This entry supersedes goal-resumed wording for further work. Do not continue the
+unfinished valuation-refresh implementation, deploy or release under an earlier
+resume. Preserve its dirty source/tests and evidence. This is the remaining EDC-1
+scope, NOT a new architecture or phase series.
+
+#### Sources And Audit Limits
+
+Read DL source at `787f75a`, TS upgrade at `06e599a`, current dirty changes,
+[previous consolidated scope](#edc1-renewed-owner-review-20261002),
+[EDC guide](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#execution-data-contract-closure-guide-20261001),
+and TS authoritative plan in `/home/bobby/.worktrees/trading-system-next-upgrade/`
+`TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md` (P18.3E dependency hold and EDC
+receipts). TS detailed authority remains
+`upgrade/TRADING_SYSTEM_UPGRADE_PLAN_V2_MASTER_RUST_FIRST_OKX_DEMO.md#p18e-critical-path-closure-20260930`.
+Canonical `/home/bobby/trading_system` is NOT the full upgrade implementation.
+
+Read-only Docker inventory confirms two KN projectors, Query/Stream pairs, three
+Rust cores and venue ingestors; shared TS and ts-p183 remain separate deployments.
+This is NOT a new latency/health certificate. Historical runtime settings evidence
+`~/.local/state/qdl-v2/edc1-20261001/evidence/caller-runtime-authority.json`
+is timestamped 2026-10-01T23:31:03Z: reconstructed container Settings, not live-object
+introspection. Refresh that exact audit before rollout; never infer V1 source data
+merely from a caller's default mode or infer duplicate writers from container count.
+No active stress, broker call, fresh provider attribution or production change in
+this planning review. Collected completion of an already-running pre-fix test;
+no new test was launched. Failed fairness evidence below is not runtime evidence.
+
+#### Confirmed Findings And Unproven Risks
+
+| ID | Observation / evidence | Required resolution, not assumption |
+|---|---|---|
+| A1 | `services/market_data/runtime.py::open_execution_market_reader` returns cache-only when caller mode is V1 or recovery disabled. Earlier runtime audit has p183 Gateway/Risk/executor at V1 while market_data is V2_PRIMARY; shared legacy roles lack the new mode setting. | Inventory actual process entrypoint, selected Redis DB/prefix, SDK, realm, manifest and owned recovery reader. Activate only intended readers after compatibility proof. Market-data service alone being V2 is insufficient. |
+| A2 | `execution_required_feeds` already selects QUOTE/MARK, optional L2 and explicit LAST by intent; `ExecutionDispatchGuard` checks again after waits and does not require prices for cancel. | Verify real Gateway -> Risk -> native sender and paper paths preserve intent and use this policy. Do not fix optional stale TRADE by weakening freshness or making it block ordinary orders. Source helpers alone are not runtime closure. |
+| A3 | Original six TRADE refusals and intermittent MARK rejection lack simultaneous provider witness. | Capture the exact rejected view and matched provider/canonical/cache evidence. Historical attribution stays UNKNOWN. Fresh later samples cannot explain past refusals. |
+| A4 | Dirty `services/performance/refresh.py::refresh_loop` processes requests serially. Existing pre-fix `test_slow_account_does_not_block_another_and_stop_joins_work` completed FAIL/TimeoutError at 0.5s, evidence `valuation-refresh-fairness-before.xml`. | Bounded account fairness using existing owner, coalescing and per-scope exclusion; cancellation joins, no notification storm. Measure availability and query cost, not just stale-equity rejection. This is an unfinished source defect, not a demonstrated production incident. |
+| A5 | Performance original-time/business-digest/proof corrections have scoped source/PG receipts, but owner-refresh remains dirty and undeployed. Compatibility linear valuation is not inverse certification. | Finish existing owner integration; reuse native P15 product economics for applicable inverse demand. Do not invent a second accounting engine or silently use linear PnL/cash as inverse equity. |
+| A6 | `qdl/runtime/kn_hot_view.py` uses bounded private hot reads, at most 8 slots/client and 500ms deadline; two targets share Kafka/host. | Test capacity and same-product fallback at the actual required feed, preserve invalidation/generation. These limits are reviewed constraints, not automatically bugs. No public GetSnapshot recursion, no independent-HA claim. |
+| A7 | Scope/source tests and deployed caller images are not converged. | Release ledger must match source, immutable image, SDK, config, identity and changed-role acceptance. Do not certify newer source by an older image's green window. |
+
+#### Required Data By Consumer Operation
+
+Build one machine-readable coverage ledger from actual code/config, not another
+manually maintained symbol list. Every row includes actual caller/entrypoint,
+operation, venue/product/native identity, required/optional feed, units, original
+clock/expiry, authority, reader/writer namespace, policy/manifest revision, quota,
+source/image/config, inherited test receipt and unresolved condition.
+
+| Consumer / operation | Inputs and boundary to prove |
+|---|---|
+| Signal and warmup | Declared final BAR interval, maxlen/history coverage, append/dedup and cursor. Closed BAR is signal input, not an execution price proxy. Inherit unchanged batch/history evidence; test only a changed dependency. |
+| Ordinary MARKET/LIMIT | Side-correct QUOTE; derivative MARK according to server-owned policy; exact metadata/quantity units. MARKET still needs risk/notional/slippage checks, not a last-trade dependency by default. |
+| L2-sensitive/post-only execution | Verified anchored snapshot/delta, depth and size units, sequence/generation/gap; recompute or reject stale proof at actual use. No independent hand-written book. |
+| Conditional/OCO/trailing | Explicit LAST/MARK/INDEX contract and component quality. Distinguish native registration from local child execution; broker owns native trigger, TS private lifecycle owns order status. Retain trigger intent through Gateway/Risk/dispatch. Do not add new order families. |
+| Cancel/query/recovery | Auth/ownership and lifecycle evidence; no unrelated market-price gate for plain cancellation. Amend/reduce remains operation-specific, not blanket exemption from risk checks. |
+| Sizing/valuation/reservation | Current positions/cash/fills/funding/margin and original typed MARK proof; business-version invalidation and owner refresh. Validate at admission and after queue/DB waits. Data Layer does NOT own broker balances, fills or collateral authority. |
+| Metadata/inverse | Native contract, multiplier, tick/lot/minimums, settlement/collateral currency, revision and expiry. Existing BTC-USD-SWAP is distinct from BTC-USDT-SWAP. Product economics remain native TS authority. |
+| Research reference | Funding/OI/ratios/taker/basis according to existing entitlement and purpose; do not make optional research feeds mandatory for every execution. No expansion to undeclared products. |
+
+Coverage is existing Binance/OKX five-symbol demand plus already approved inverse
+and actual caller-specific requirements. Keep shared 60-route and candidate
+64-route denominators separate; regenerate from manifests before claiming counts.
+DNSE/V1, Binance 3d history, new venues/products, alpha signal/sizing strategy
+changes, package activation and new broker order capabilities are excluded.
+
+#### Single-Phase Work Order And Gates
+
+1. **Freeze dependencies and inherited evidence.** Produce the caller ledger above;
+   classify implemented/tested/deployed separately. Enumerate actual runtime images,
+   config mounts/revisions and writers without exposing secrets. Reuse receipts for
+   unchanged predicates, identify exact missing rows before building anything.
+2. **Close only data-path defects.** Finish the dirty owner-refresh slice including
+   fairness and publication ordering; fix attributable ingest/read/apply/recovery
+   faults. Separate worker liveness, feed session and price eligibility. No expanding
+   buffers, arbitrary resource increase, global TTL extension or silent TRADE->QUOTE.
+   For unproven risks, write the smallest reproducer before choosing a correction.
+3. **Prove contracts and availability together.** Use affected unit/contract tests,
+   real isolated Redis/PG, then exact dual-replica SDK/consumer matrix. A fresh valid
+   required feed must reach actual admission/dispatch proof; safe refusal alone is
+   not a passing positive test. Stop and fix at the failing layer, no C2 bug hunting.
+4. **Review before runtime.** Review diff, evidence and per-role immutable deployment
+   packet. List migrations, SDK/config/realm/manifest changes, startup ordering,
+   active digest and rollback per role. No deployment in this planning turn. Never
+   roll the whole unfinished TS upgrade to activate a small data-boundary patch.
+5. **Affected rollout and final acceptance.** Only after approved scope and green
+   preflight, roll changed roles with actual usable consumer readback between them.
+   Run one final affected no-order 300s window. Add targeted recovery/backup-return
+   rehearsal for changed code, not the entire catalogue. Short acceptance cannot
+   certify all future market bursts or every order family.
+6. **Review, release, cleanup, TS handback.** Release only repositories with changed
+   deployable artifacts; TS-only correction does not require a DL binary release.
+   Follow feature->dev->main/CI and immutable tag workflow. Resume TS E after the
+   dependency receipt, not by declaring E03/E09 automatically complete.
+
+#### Required Test Matrix
+
+- Policy: ordinary order succeeds with valid required QUOTE/MARK despite stale
+  optional TRADE; explicit LAST refuses stale last; cancel does not wait for price.
+  Native conditional registration and local triggered-child proof tested separately.
+- Provider attribution: quiet/no-new-trade versus new provider event delayed in
+  pipeline; exact component timestamps/session/generation and canonical coordinates.
+  Compare only semantically identical venue channel/aggregation. Public REST later
+  read is not proof of earlier WS publication time. Preserve UNKNOWN when unobserved.
+- MARK/INDEX: component-specific cadence, missing pair, disconnect, generation reset,
+  future clock, stale component and eligibility checked AFTER asynchronous work.
+  Heartbeat never renews price time. No symbol exception for DOGE/BNB.
+- Book/apply: snapshot+delta integrity, duplicate/reorder, reset, old writer, crash
+  after Redis apply before ACK, atomic state/watermark and monotonic return from
+  backup. Newer explicit invalidation wins over an older apparently fresh view.
+- Recovery: deadline includes queue wait; bounded concurrency, coalescing/cancel,
+  slow account/feed cannot indefinitely starve unrelated work; metadata refresh
+  and price recovery occur outside held accounting transactions.
+- Valuation: actual isolated LISTEN/NOTIFY -> registered owner -> transaction ->
+  sizing read; concurrent fill/cash/metadata change invalidates old proof; periodic
+  and requested refresh preserve ordering; duplicate requests do not double-publish
+  money; one unavailable account does not block another; owner absent times out.
+- Real caller chain: SDK -> TS apply -> Risk -> native dispatch guard with send
+  disabled; metadata pin and price proof survive serialization/queue waits. Test
+  paper matcher separately using its true configured authority, not a helper only.
+- Identity/capacity: paper/sandbox/live cannot cross realms/consumer/revision;
+  quotas include every process instance and probe. No simultaneous probes borrowing
+  the same production identity. Isolated capture burst only if changed hot paths
+  invalidate inherited 4k/5k evidence; no uncontrolled production stress.
+
+#### Measurement And Acceptance Criteria
+
+Freeze numeric per-feed freshness, request/recovery deadlines, quotas and resource
+budgets from the approved contract/config BEFORE testing. Publish the values in
+receipt, not post-hoc thresholds. Distinguish minimum required freshness from a
+stale feed that the order does not require. A missing baseline is a prerequisite
+measurement, not permission to invent an easier gate.
+
+For each affected binding/venue/replica/operation report milliseconds:
+caller-start before queue -> validated usable data; provider event -> canonical;
+canonical -> successful TS Redis apply; Risk/dispatch read -> proof; outage ->
+usable recovery. Include refused/timeout/unknown samples, queue/service time,
+count and p50/p95/p99 only with adequate samples (otherwise median/max). Report
+component age separately from RPC duration, callback separately from Redis apply.
+Include CPU/throttle/RSS/I/O, peak backlog and drain, errors/restarts/OOM, recovery
+and capacity headroom. No new measured latency is claimed by this plan.
+
+Exit: no unexplained INTERNAL rejection where an entitled valid required view is
+available through an approved path; no wrong identity/price/units, stale proof,
+watermark regression or accounting mismatch. All applicable closure rows green,
+no unexplained mandatory-test skips. Legitimate provider silence, venue/risk limits
+or both paths invalid remain visible refusals, never a promise every order executes.
+One confirmed internal failure stops certification until its affected test passes.
+
+#### Rollback, Cleanup And Final Handback
+
+Rollback restores only changed role digest/config/SDK/identity; additive proof
+column is not dropped and state/cursors never rewound. Prevent competing writers.
+Retain current active images plus explicitly named rollback until acceptance;
+remove only owned temporary test containers/networks/tmpfs and unreferenced test
+images/cache under rules. No shared state reset, broad prune or worktree deletion
+of unmerged source. Record exact retention set, disk pre/post, restart/OOM check.
+
+Current inventory (read-only, not release attestation): DL projectors a696cfba6ab3,
+Query3af57ddf1764, Stream1f13408fe946, cores/Binance658a9570c5fc,
+OKX0f6876e16e51, BARf7351c3bda08; shared TS market_data c1f713a8b13e,
+p183 market_data3b4ee780f2d4. Existing release packet retained at
+`~/.local/state/qdl-v2/releases/v2.2.1-c8015ca-hot-backup/`; verify its complete
+immutable digests/config and named rollback before deployment. Canonical DL is
+`/home/bobby/data_layer` on `fix/execution-view-diagnostics`; TS implementation
+remains its existing upgrade worktree/branch. No extra worktree was created.
+No cleanup or runtime changes in this review; unfinished source and owner edits
+preserved. Report files/line changes, commits, test/evidence, per-operation latency,
+remaining limitations and explicit READY_FOR_DEPLOY versus certified distinction.
+
+TS handback remains E03 18/24 authentic cases, E04 composite 18/18 with separate
+denominator, and applicable E07/E08/E09 qualification before P18.4. Inherit unchanged
+E evidence; data acceptance does not certify six missing partial-fill cases.
