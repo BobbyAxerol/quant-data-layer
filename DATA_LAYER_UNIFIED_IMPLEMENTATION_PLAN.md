@@ -67263,3 +67263,78 @@ Native P15 already pins execution version; do not replace its reducer with anoth
 accounting engine. Existing compatibility linear formula is not inverse-certified.
 Actual caller modes/metadata/SDK/entitlement, matched provider refusal evidence,
 changed-role packet and runtime acceptance remain required. No FULL/release claim.
+
+
+#### EDC-1 Equity Business Snapshot Fence - Start
+
+Continue TS79a480a / DL89ded8a. Prior turn is progress: typed MARK source plus
+106test receipt. Retained equity needs a business-input digest independent of
+valuation updates. Reuse current performance SQL readers and canonical digest;
+exclude mark/unrealized/updated_at fields written by publication, include position
+identity/quantity/entry/realized/metadata, cash/allocation/margin/fill/funding inputs.
+Store digest with existing proof. Dedicated sizing-summary read uses one repeatable
+DB snapshot to compare proof against current inputs, no provider I/O in transaction.
+Re-read summary after async metadata/price acquisition before building quantities.
+Reporting summary remains backward compatible. No accounting formula rewrite,
+new DB table or runtime mutation. Isolated PG checks changed inputs and rollback,
+not just mocked signatures. Refresh via existing performance owner is next, still
+mandatory before cutover; do not mistake extra rejection for availability closure.
+
+
+#### EDC-1 Equity Business Snapshot Fence - Tested Receipt
+
+Stored proof now includes a canonical digest of the exact position identity,
+quantity/entry/realized/metadata, raw cash, allocation, margins, fill totals and
+funding inputs used in the publication snapshot. Excludes mark/unrealized/time
+fields changed by valuation itself. Existing SQL readers and digest reused; no
+new accounting formula or shadow version counter. Dedicated sizing_summary reads
+report data and compares current business inputs in one read-only repeatable-read
+transaction; public reporting summary unchanged. Gateway rereads after external
+price/metadata acquisition and uses current positions/equity together. A changed
+or unverified business proof cannot size orders, even if its market clock is fresh.
+
+Sizing read has one total timeout, using existing recovery budget3s from caller;
+not3s per SQL statement. Timeout surfaces TARGET_EQUITY_READ_TIMEOUT/503. It is
+not a whole-route latency claim. No provider I/O inside its read transaction.
+The digest query reuses existing scoped aggregates; production cost/refresh still
+must be measured, not assumed to be a constant-time native execution-version read.
+
+95PASS/0FAIL/0SKIP,25.047s:46 actual isolated-PG +49 units. New20 input-change
+cases (10 scenarios x2venues) plus2 actual pg_sleep cancellation cases: quantity,
+cash, backdated fill, metadata, allocation, funding, margin invalidate; mark-only
+updates and another account do not. Actual stored proof -> summary -> sizing
+validation, no mocked business readers in the new matrix. Bounded PG cancellation
+returns a nontransactional usable connection. Endpoint tests also invalidate
+business state during metadata await and assert no plan builder invocation.
+Unchanged adjacent publication/typed reader tests inherited in the narrow suite.
+
+Two setup mistakes were preserved, not labelled product failures: duplicate
+fixture-owned accounts table (20 failing setup paths,71pass), then omitted native
+instrument identity in one fixture (1fail). Corrected by reusing existing owned
+fixture tables and supplying explicit canonical identity. Files:
+equity-business-setup-failed.xml SHA256
+f92a51bc015f713ff5f24f86d816e8b7cdca3837ebd4a50111f23d11694a50fb;
+equity-business-instrument-setup-failed.xml SHA256
+a166f5e2a0f18cef83f58a01f32e1eae5b88f3ddfd910f1d8a31ffc57f62add8.
+Final equity-business-final.xml SHA256
+154c97153c8c8c9e964e546f82bdc0531c44837453951bfbabb76bd84ca84a2e
+under ~/.local/state/qdl-v2/edc1-20261001/evidence.
+
+Used existing source-RO p18-56dae41 client, SDK2.0.7,94migrations after PG readiness;
+pytest integration test_edc_equity_business_state/test_edc_performance_publication,
+unit test_edc_equity_quality/test_edc_typed_valuation/test_edc_valuation_time.
+Synthetic business/market inputs, real isolated SQL only; no broker/production
+certificate. Ruff/diff checks clean; existing FastAPI deprecation warnings retained.
+
+Cleanup exact --rm ts-edc1-settlement-pg/tmpfs and ts-edc1-publication-net, clients
+--rm, no new images/cache/volumes. Available bytes80168988672 before cleanup /
+79848517632 after (host concurrent writes, no claimed savings). Inventory85images/
+29active25.18GB;422cache/29active16.53GB. Shared market_data c1f713a8b13e and
+Query3af57ddf1764 pair restart0/OOMfalse unchanged. Active/rollback retained; no
+broad prune, remote push/merge, runtime or mainnet/alpha activation.
+
+EDC IN_PROGRESS. This is the correctness fence, not demand-time availability:
+owner-driven bounded refresh remains required before enabling the new sizing path.
+No extra Gateway accounting writer. Preserve native P15 authority and separate
+inverse formula certification. Actual process/identity/SDK convergence, matched
+provider attribution and changed-role runtime acceptance remain open. No FULL.
