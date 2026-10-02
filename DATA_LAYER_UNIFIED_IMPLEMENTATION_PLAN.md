@@ -68121,3 +68121,54 @@ owner calculation. Remaining: exact P05 projection/context collection, qualified
 FX and native P15 result into existing performance publisher; then actual caller/
 SDK/config/native packaging, reviewed changed-role rollout and affected acceptance.
 Do not treat112tests as inverse availability or full EDC certification.
+
+
+#### EDC-1 Owner Integration - Native Position Read Authority
+
+Owner explicitly approved owner integration -> caller/runtime convergence -> one
+final acceptance; no additional DL repair without reproduced DL defect. Continue
+TS e022dc6. Connect actual performance position reads to committed P05 context and
+version, and preserve those pins in native paper compatibility writes. Validate
+mode/venue/product/account/instrument, signed quantity/entry/PnL/currency against
+that committed projection. Preserve metadata-version continuity but never change
+model/multiplier/currency silently. Incomplete/mismatched provenance must not be
+used as inverse input. Read native rows in the same business transaction, market
+reads remain outside locks. No model reimplementation or money/order authority.
+Tests use owned migrated PG; source and existing linear compatibility remain
+distinct from full native valuation/FX publication, which still must be wired.
+Record exact proof and cleanup before commit. No Data Layer binary/runtime change.
+
+
+EDC-1 native position authority receipt: IMPLEMENTED / TESTED_LOCALLY; EDC remains
+IN_PROGRESS. Native paper fill/position now retain P05 scope/key/version and PnL
+currency atomically. Owner performs one batched native read, verifies projection
+digest, scope, terms, quantity/PnL and currency; metadata-version-only changes
+remain compatible. Prepared marks bind execution version; Gateway rejects invalid
+business proof without crashing its summary. No financial formula replaced yet.
+
+Final source: 148PASS/0FAIL/0SKIP, Ruff and diffcheck clean. Actual isolated migrated
+PostgreSQL plus unit regression, NOT production/broker evidence. Evidence under
+~/.local/state/qdl-v2/edc1-20261001/evidence/:
+- native-owner-inputs-final.xml:72tests/28.434s; SHA256
+  176cc77912ca13773b40e2839ac7154c78adc986347f75ec7b1ec7789051f8d7.
+- native-owner-paper-final.xml:4tests/23.736s; SHA256
+  d670e42af81f1899b9148e9386daa809742e5ea4dfe6f45abde9d3d59a031cfb.
+- native-owner-publication-regression.xml:72tests/13.345s; SHA256
+  7ff7819388070ebdfa86d343d08b21ff6e06e0a714b0c38db95387c1a0e44231.
+First paper run failed4 assertions because SELECT expanded to more columns;
+corrected named-column assertions and reran. Not a production failure.
+
+Cleanup stopped disposable --rm ts-edc1-settlement-pg and removed exact internal
+network ts-edc1-publication-net; database used tmpfs, no persistent volume. Clients
+auto-removed; reused existing test image, no new build/image/cache. Disk available
+78279913472 -> 78071558144 bytes (concurrent host writes; not claimed savings).
+No broad prune. Active/named rollback images retained. Shared market_data image
+c1f713a8b13e and two Query 3af57ddf1764 running/restart0/OOMfalse; no production
+mutation, no Data Layer code changes, no provider/order/alpha action. DL remains
+v2.2.1; canonical paths and existing feature worktrees unchanged; no push/merge.
+
+Remaining implementation: actual owner publisher still uses compatibility
+arithmetic. Wire native valuation/performance with qualified FX before caller,
+SDK/config/native-binary convergence and reviewed changed-role deployment, then
+one final affected acceptance. This receipt does NOT close owner integration,
+certify inverse availability, or authorize deploying the unfinished TS upgrade.
