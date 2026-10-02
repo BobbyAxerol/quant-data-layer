@@ -66,7 +66,8 @@
       "rollout_roles": [
         "query_kn_2",
         "query_kn_1"
-      ]
+      ],
+      "runtime_delta": "Parent deployed exacttwoQuery;44/44MARK accepted,62/64totalreads; two strictTRADErefusals retained."
     },
     "rust": {
       "evidence_inheritance": "Existing recovery, broker-proof, paired restart and narrow six-role acceptance; not whole-catalogue recertification.",
@@ -260,20 +261,18 @@
   "release": "v2.2.2",
   "remote": {
     "base": "dev",
-    "ci": "IN_PROGRESS_WITH_RUST_TEST_FORMAT_FAILURE_CORRECTED",
-    "ci_head": "b7b9ddf49874c16276a7ce82e84aaf696f2e265a",
-    "ci_run": 36998897624,
+    "ci": "CONTRACT_SDK_NATIVE_PASS_UNIT_PENDING_AT_METADATA_FREEZE",
+    "ci_head": "d9e7f15356d61337f784bafda739b25af9703bb5",
+    "ci_run": 37000061968,
     "no_merge_tag_publication": true,
     "pr": 27,
     "push": "SUCCESS",
     "url": "https://github.com/BobbyAxerol/quant-data-layer/pull/27"
   },
   "required_next_steps": [
-    "Push feature branch and open dev PR; all required CI jobs must pass.",
-    "Parent review exact candidate/rollback before Query2 then Query1 rollout; preserve environment/TLS/config/mount/state.",
-    "Affected five-symbol/two-venue MARK reference/typed at-use proof through both Query replicas; retain failures, no order mutation. No catalogue/C2 rerun.",
-    "Finalize certificate/report/notes with runtime digest and CI evidence, then dev release PR to main and tag v2.2.2 through existing release workflow.",
-    "Retain exact active plus rollback; remove only unreferenced task artifacts after convergence."
+    "Required remote CI on final metadata head; merge feature PR27 to dev preserving commits.",
+    "Release PR dev->main and required CI; tag v2.2.2 only after final source/image/config/certificate review.",
+    "Retain active/explicitrollback; clean only obsolete unreferenced owned artifacts safely."
   ],
   "runtime_inventory": [
     {
@@ -806,7 +805,7 @@
       "subject": "fix(reference): retain verified component clocks and capture lineage"
     }
   ],
-  "status": "PACKAGED_PENDING_PARENT_ROLLOUT_REVIEW_AND_REMOTE_CI",
+  "status": "DEPLOYED_SCOPED_ACCEPTED_REMOTE_CI_REQUIRED",
   "tests": {
     "candidate_package": {
       "base_layers_and_six_file_hashes": "PASS",
@@ -826,6 +825,7 @@
       "ran": 42,
       "skipped": 0
     },
+    "postroll_summary_sha256": "a1ce942c1c9e78069894ccb46375c9c83936298794725931732dd843c4180ac9",
     "source_matrix": {
       "elapsed_seconds": 121.057,
       "failed": 0,

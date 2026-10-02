@@ -1,25 +1,57 @@
-# Data Layer v2.2.2 - Draft Release Preparation
+# Quant Data Layer v2.2.2
 
-Status: **not published, not yet certified at the final Query artifact**.
+## Scope
 
-This patch groups existing Kafka client recovery, graceful projector handoff,
-broker-confirmed canonical hot backup and lossless reference proof changes.
-It keeps the KN architecture, source timestamps, entitlements and strict execution
-eligibility. SDK 2.0.7 carries the shared proof validator; public API remains 2.0.0.
+Bounded execution-readiness and recovery patch on the existing Kafka-native
+architecture. Kafka client retries and projector handoff are bounded; Query can
+use broker-confirmed canonical hot backup without inventing price timestamps.
+MARK/INDEX retains component clocks and capture lineage. SDK2.0.7 shares the
+execution proof validator. Public API, entitlement, realms and quality thresholds
+are unchanged. This is not a Trading System order/accounting certification.
 
-Rust recovery/Stream/projector changes already run on the recorded immutable
-component images. Python commits `12785ab` and `a243096` are packaged as immutable
-Query candidate `qdl-v2-python:2.2.2-d6d2637`, digest
+## Runtime Acceptance
+
+Query candidate `qdl-v2-python:2.2.2-d6d2637`:
 `sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9`.
-Package tests pass64/64. Parent-reviewed Query-only rollout, affected runtime
-readback and remote CI remain pending. No Rust rebuild or catalogue C2 is implied.
+Only two Query roles were recreated in the final convergence;15 other active
+Data Layer roles were unchanged. Both Query roles healthy, restart0/OOMfalse.
+Existing Rust recovery/Stream/projector component images and evidence are retained.
 
-The preparation index lists exact source commits, current runtime, inherited
-measurements, rollback and remaining gates. It deliberately is not named
-`certificate.json`: no PASS release certificate exists until final artifact and
-runtime delta agree. Existing 300-second acceptance is inherited only for
-unchanged predicates. Same-host Kafka backup is not independent HA or zero downtime.
+Actual TS sandbox SDK2.0.7, both Query replicas:
+- MARK/INDEX snapshot/reference: **44/44 usable**, including OKX inverse BTC;
+ 22 reference views preserve all six component clock/capture fields.
+- Total **62/64 usable**. Two OKX TRADE prices older than3s were correctly refused;
+ no simultaneous provider witness, so quiet-market versus pipeline attribution is
+ not claimed. No stale execution price was admitted.
+- Worker20/20 sampled READY over190.224s, session22/22, execution18/22, zeroV1fallback.
+ This is scoped read acceptance, not another C2 or uninterrupted availability.
 
-TRADE eligibility refusals remain visible; session health never authorizes an
-expired execution price. No alpha activation, TS accounting or broker/mainnet
-execution certification is part of this Data Layer patch.
+SDK call through validation, after metadata resolution, milliseconds:
+
+| Venue | Path | N | Median | Maximum |
+| --- | --- | ---: | ---: | ---: |
+| Binance | MARK reference |10|14.06|68.79|
+| Binance | MARK snapshot |10|19.70|55.97|
+| OKX | MARK reference |12|14.09|30.36|
+| OKX | MARK snapshot |12|18.02|69.37|
+
+No p99 for these small groups. These are not event-to-Redis-commit measurements.
+Unchanged endpoint/catalogue and prior hot-backup benchmarks remain explicitly
+inherited in endpoint-report.json, not relabelled as fresh full-system tests.
+
+## Verification And Limits
+
+Candidate64/64 packaging tests,42/42 isolated Redis tests, actual entrypoint and
+six-file Git/image hash checks pass. Remote contract/SDK/native fault gates pass
+at the reviewed code head; publication requires all checks at the final PR heads.
+The full certificate records the exact artifacts, evidence hashes and requirement.
+
+Same-host Kafka backup is not independent HA or zero downtime. Historical refusal
+and failed rollout/probe windows remain retained. Binance3d and DNSE/VN V2 remain
+excluded. No alpha activation, mainnet authority or funded sizing claim.
+
+## Rollback
+
+Only `query_kn_2` and `query_kn_1`, same config/TLS/state, to
+`sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c`.
+No Kafka offset reset, Redis flush, old SQLite reactivation or TS/order mutation.

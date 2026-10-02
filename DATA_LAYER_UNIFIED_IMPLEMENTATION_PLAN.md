@@ -68752,3 +68752,40 @@ Parent reports Query2 rolled at11:12:11Z to51450612,healthy/restart0/OOMfalse;
 realTS SDKcanary3/3MARKusable(BinanceBTC,OKXlinearBTC,inverseBTC), six component
 clock/capture labels preserved. Resolve->SDKusable143.641/38.115/37.039ms,n3,
 no percentile. Parent proceedsQuery1 thenone64readmatrix; nofullC2.
+
+
+#### v2.2.2 Final Affected Runtime Receipt And Release Metadata
+
+Parent completed exacttwoQuery rollout:query2 11:12:11Z/query1 11:13:46Z to
+sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9.
+Both healthy/restart0/OOMfalse. Other15activeDLroles retain IDs/images/start/env.
+Rawmountarray hash firstcomparison failed due Docker order, notconfigmutation;
+semanticenv/mountsource/destination/readonly comparison PASS, retained ininventory.
+No oldSQLiteprojector running, no topology/binding/auth/consumer/orderchange.
+
+ActualTS SDK2.0.7 postroll64reads:62usable;MARK44/44 across bothreplicas,
+five-symbol/two-venue plusOKXinverseBTC, all22referenceviews retain6componentfields.
+TwoOKXTRADErefusals DOGE3144ms/BNB3482ms, session239/520ms,LIVE/nogap/complete,
+executionfalse. Provider NOT_OBSERVED_SIMULTANEOUSLY; noquiet/pipelineattribution.
+Earlierbaseline63/64 and historicalfailedwindows retained, not overwritten.
+Postrollsummary SHA256a1ce942c1c9e78069894ccb46375c9c83936298794725931732dd843c4180ac9.
+Request->SDK/convertervalid afterresolve (NOTRedisapply),median/maxms:
+BinanceMARKreference14.065/68.789,snapshot19.699/55.970,n10each;
+OKXMARKreference14.090/30.356,snapshot18.018/69.375,n12each. No p99.
+Worker20/20READY over190.224s,session22/22,execution18/22,3workersREADY,
+zeroV1fallback,maxheartbeatage20.36s. Scoped samplewindow,notnewC2/allcatalogue.
+One-shotresource sample isnotcapacityproof: Query1CPU2.14%,RAM141.4MiB;
+Query2CPU65.66%,RAM399.3MiB of1.5GiB;Stream142/305MiB andprojector111.5/149.7MiB
+of512MiB. No newresourcesrequested. Parent retained existingrollback.
+
+Remote37000061968 atd9e7f15:contract/SDK/nativeintegrationPASS,unitstillrunning.
+RealKafka fault-controller wiring now exercised,not skipped. Fullunit previous
+releasedrun required21min (25minwholejob); no newhang inferred from wait alone.
+Finalmetadata assembled now to avoid another sourceiteration after runtimeclosure.
+certificate.json statusPASS is ONLY scopedruntime delta; publication requires
+remoteCI atfinalfeature/releaseheads and mainancestry. CI gate explicitly external,
+not misrepresented asgreen whileunitpending. No tag or release issued.
+Changedruntime source remainsd6d2637; subsequentcommits onlytestformat/CI/docs.
+Exactreport/certificate/notes are upgrade/evidence/releases/v2.2.2/.
+SDK2.0.7 wheelsha e50b9164...90b14 unchanged. Publish through existingtagworkflow
+onlyafter allrequiredchecks; no squash or forcepush. Ownerplanhunks remainunstaged.

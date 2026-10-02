@@ -1,0 +1,279 @@
+{
+  "ci": {
+    "head_sha": "d9e7f15356d61337f784bafda739b25af9703bb5",
+    "note": "Metadata is frozen before final-head CI; actual check conclusions must be verified at PR head before merge and at release PR before tag. This is a publication requirement, not a claim those pending checks passed.",
+    "pull_request": "https://github.com/BobbyAxerol/quant-data-layer/pull/27",
+    "release_metadata_head_requires_checks": true,
+    "required_jobs": [
+      "contract-tests",
+      "sdk-python310",
+      "unit-tests",
+      "kn-native-integration"
+    ],
+    "reviewed_source_run": {
+      "head_sha": "d9e7f15356d61337f784bafda739b25af9703bb5",
+      "id": 37000061968,
+      "passed": [
+        "contract-tests",
+        "sdk-python310",
+        "kn-native-integration"
+      ],
+      "pending": [
+        "unit-tests"
+      ]
+    },
+    "run_id": 37000061968,
+    "status": "REQUIRED_EXTERNAL_GATE"
+  },
+  "classification": "SCOPED_AFFECTED_RUNTIME_DELTA_PASS_NOT_UNINTERRUPTED_EXECUTION_AVAILABILITY",
+  "cleanup": {
+    "context_bytes_removed": 40280,
+    "disk_available_after": 66404007936,
+    "disk_available_before": 66414989312,
+    "notes": "No broad prune/volume removal. Net disk includes concurrent TS work.",
+    "removed_build_cache_ids": [
+      "n1swh6qii32o3ionmpbnn1at9",
+      "yxa6bz3x5p5cmk6q5cr5p8ija",
+      "y775j0cvuc8ysp7bdbr5y44hq",
+      "oe7r85behtbszs9bxhst1hkrg",
+      "832caha8z8iy7hqajfari1w8j",
+      "j31o65938m7u0alh7ocbhgipq"
+    ],
+    "retained_candidate": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+    "retained_query_rollback": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+    "running_runtime_changes": [],
+    "test_redis_removed": true
+  },
+  "endpoint_report_sha256": "38234eaedbaede9a369fbe2256a9e97aa58be83a929daabf42f8f7fc6eedc7e5",
+  "evidence_sha256": {
+    "baseline-consumer-reads.jsonl": "88db919028dfe20170abee789e1fba823ae6605c64c2407716a8de73860af70d",
+    "baseline-consumer-summary.json": "3b8214f6251fc475ab4ad85a7528416eb7870df136b5667ad6e6526495f98cac",
+    "candidate-package-result.json": "ce96654f2d3c2a7caea257bf7782e5c76fe79cd74a9b8d1c765f994f4d25e229",
+    "cleanup.json": "bfae0307724c3130477e6d1840c743a44b59bca9c4aa494f827849e8844e945e",
+    "post-roll-runtime-inventory.json": "d9345ee800752ce0a894a9b4e9bf91b253b2567564406763c2ad7f4d50fe33a9",
+    "postroll-consumer-reads.jsonl": "65fc23e775295b697b4cdb8b89193cd6d05c773d11de9678b2557dd3233bd329",
+    "postroll-consumer-summary.json": "a1ce942c1c9e78069894ccb46375c9c83936298794725931732dd843c4180ac9",
+    "postroll-worker-observation.jsonl": "ca37170367196abfe8acdeab818150624520be129b377a3b6ad1b35811966ced",
+    "postroll-worker-summary.json": "ee671a08b98e2d56e2cf8d5647fb9817905574d897b0483e95c8be014119fcd7",
+    "query-image-attestation.json": "9ed1c9fa1f3899a17675365e16b93767b966a35442eb853b1d6a9e41192e5b05",
+    "query-redis-result.json": "fecf39bd3cf2a4b3194a69ee5b01e8cb45a56be5620dd0dcb759d4bdbb68ca00",
+    "query2-canary.jsonl": "89c845dedfeefa0774e39c7cc320f83684b7d6af09966536e84900edf5466536"
+  },
+  "gates": {
+    "affected_mark_readback": "PASS44/44 SDK snapshot/reference through both replicas, both venues and inverse BTC;22referenceviews retain six component fields",
+    "affected_query_packaging": "PASS64/64 plus actual entrypoint/shared-validator imports; six files match committed source and base layers preserved",
+    "affected_query_redis": "PASS42/42 real isolated Redis; zero skipped",
+    "inherited_recovery": "Existing c8015ca hotbackup production and bounded isolated broker fault evidence, unchanged runtime Rust;tests-onlyformat/CI harness additions",
+    "negative_trade_quality": "PASS strict rejection preserved;20reads18usable2staleeventrefusals, no provider attribution; not100%availability",
+    "remote_ci": "PENDING_REQUIRED_CHECKS",
+    "runtime_scope": "PASS exactlytwoQueryrecreated;15otheractive roles unchanged;no topology/state/order mutation",
+    "worker_observation": "PASS20/20 sampledREADY,session22/22,execution18/22;notnewC2"
+  },
+  "inherited_evidence_sha256": {
+    "broker-proof-final2-tests.json": "8dc7a9a187617941cc7af7af39b2e244a6e7d30de2679f415ccff05c2eb69881",
+    "production-acceptance-summary.json": "d49931f0f8ae2a6d3d8535d91fa1a9b13d5206220cbe52b229593a6425fb3c6d",
+    "rehearsal-r5-summary.json": "a5a829b53e33cc16e5fe0f25107339670e4b6cbff9803d43de625c3c6c717173",
+    "rehearsal-r7-summary.json": "cb476bc9c4c92fcae08958b504d65e30a42113dc720532c843a07b298d89ff81",
+    "runtime-scope-verification.json": "d7b9b394e27f9d875b0c4d522f7c0e8625e6c5a6932310d25b25766dfa548677"
+  },
+  "limits": [
+    "Postroll request timing starts after metadata resolve and ends at SDK/converter validation, not consumer Redis apply.",
+    "Small per-venue/path samples: median/max only, no p99.",
+    "Two postroll and one baseline TRADE refusal preserve strict policy; provider attribution remains UNKNOWN.",
+    "20 sampled worker heartbeats are not uninterrupted availability or all60route certification.",
+    "Same Kafka/host hot backup is projector-path redundancy, not independent HA or zero downtime.",
+    "No broker orders, mainnet authority, funded sizing or P18.3E certificate included.",
+    "No new full-stack capacity/burst or event-to-Redis latency benchmark.",
+    "Historical failures/refusals retained; current green reads do not explain their root causes."
+  ],
+  "publication_requires": "All required remote CI at final reviewed head, feature->dev then release PR->main, immutable tag workflow; statusPASS here certifies only bounded runtime delta.",
+  "publication_status": "REQUIRES_REMOTE_CI_AND_MAIN_ANCESTRY",
+  "release": "v2.2.2",
+  "rollback": {
+    "image": "sha256:3af57ddf17642e2073e09e8d92450e3aca551ebd5d855462c9ce60f148e5e85c",
+    "packet": "release-convergence-20261002/runtime/rollback.compose.json",
+    "preserve": "same environment, TLS, mounts, state, groups, offsets, config and consumer identity",
+    "roles": [
+      "query_kn_2",
+      "query_kn_1"
+    ]
+  },
+  "runtime": [
+    {
+      "health": null,
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_projector_1-1",
+      "started": "2026-10-01T12:16:20.78036445Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_projector_2-1",
+      "started": "2026-10-01T12:15:13.766866129Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "oom": false,
+      "recreated": true,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-query_kn_1-1",
+      "started": "2026-10-02T11:13:49.101943789Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "oom": false,
+      "recreated": true,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-query_kn_2-1",
+      "started": "2026-10-02T11:12:13.488673234Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+      "started": "2026-10-01T12:10:50.691735492Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+      "started": "2026-10-01T12:07:24.322915897Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "started": "2026-10-01T05:51:24.840836395Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka3-1",
+      "started": "2026-10-01T03:58:43.963843285Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka2-1",
+      "started": "2026-10-01T03:57:34.401411155Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-kafka1-1",
+      "started": "2026-10-01T03:56:13.899839854Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core-1",
+      "started": "2026-09-30T17:46:56.312111099Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core_2-1",
+      "started": "2026-09-30T17:46:23.058376424Z"
+    },
+    {
+      "health": null,
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-rust_core_3-1",
+      "started": "2026-09-30T17:45:38.534537186Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "started": "2026-09-30T17:44:26.540267501Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+      "oom": false,
+      "recreated": false,
+      "restart": 3,
+      "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+      "started": "2026-10-01T04:03:57.875233715Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-market_cache-1",
+      "started": "2026-09-27T05:29:58.000340326Z"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "recreated": false,
+      "restart": 0,
+      "service": "qdl_v2_stable_candidate-stable_redis-1",
+      "started": "2026-09-16T06:38:55.588316335Z"
+    }
+  ],
+  "runtime_scope_note": "Raw array hashes unsuitable: Docker mount order varies even for unchanged container IDs; Compose also reorders env. Query exact env values and mount source/destination/readonly checked against prereviewed packet. Other15 role IDs/images/start/env unchanged.",
+  "schema": "qdl.scoped-release-certificate.v2",
+  "sdk": {
+    "contains_service_internals": false,
+    "dependencies": [
+      "grpcio>=1.70.0,<2.0.0",
+      "httpx>=0.28.0,<1.0.0",
+      "protobuf>=6.31.1,<7.0.0",
+      "pydantic>=2.0.0,<3.0.0",
+      "PyJWT[crypto]>=2.15.1,<3.0.0"
+    ],
+    "generated_contract_digest": "2a25a601ae80b2ee4b36e6d1cb8ca44a13b8a037bf69a96f45659d1782a3a624",
+    "name": "qdl-sdk",
+    "python_requires": ">=3.10",
+    "reproducible_timestamp": "2020-01-01T00:00:00Z",
+    "schema": "qdl.sdk.release.v1",
+    "sdk_source_digest": "062fb1255aab7c3908661408a1c402f205801f9010185799562acc2fdd3cffe3",
+    "version": "2.0.7",
+    "wheel": "qdl_sdk-2.0.7-py3-none-any.whl",
+    "wheel_sha256": "e50b9164d064d0a0e9256ea1bb5c8afe2bd32eb2a505d36165c94fec58d90b14"
+  },
+  "source_code_sha": "d6d2637557c3759f829421d2174e21a44762f7fc",
+  "status": "PASS"
+}

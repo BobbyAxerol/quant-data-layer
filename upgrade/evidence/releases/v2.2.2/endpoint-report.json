@@ -1,0 +1,433 @@
+{
+  "before_rollout": {
+    "consumer": "trading-system.sandbox.stable",
+    "groups": [
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 10,
+        "path": "execution_reference",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 20.683089969679713,
+        "usable_median_ms": 14.106379472650588,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 24.72531609237194,
+        "usable_median_ms": 18.74748698901385,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "TRADE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 51.40139092691243,
+        "usable_median_ms": 17.411745502613485,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 12,
+        "path": "execution_reference",
+        "refusal_latency_ms": [],
+        "usable": 12,
+        "usable_max_ms": 18.143375869840384,
+        "usable_median_ms": 13.044844381511211,
+        "venue": "OKX"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 12,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 12,
+        "usable_max_ms": 30.069750966504216,
+        "usable_median_ms": 18.29968940000981,
+        "venue": "OKX"
+      },
+      {
+        "feed": "TRADE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [
+          30.002977000549436
+        ],
+        "usable": 9,
+        "usable_max_ms": 28.706188080832362,
+        "usable_median_ms": 14.652421930804849,
+        "venue": "OKX"
+      }
+    ],
+    "no_order_or_stream": true,
+    "raw_sha256": "88db919028dfe20170abee789e1fba823ae6605c64c2407716a8de73860af70d",
+    "refusals": [
+      {
+        "diagnostics": null,
+        "error_code": "",
+        "error_type": "DataLayerClientError",
+        "feed": "TRADE",
+        "native_symbol": "DOGE-USDT-SWAP",
+        "path": "snapshot",
+        "provider_attribution": "NOT_OBSERVED_SIMULTANEOUSLY",
+        "quality": {
+          "complete": true,
+          "event_recency_state": "STALE",
+          "execution_eligible": false,
+          "flags": [
+            "LAST_EVENT_STALE"
+          ],
+          "freshness_ms": 3219,
+          "gap_open": false,
+          "policy_id": "crypto_primary_v2",
+          "provider_session_liveness_ms": 746,
+          "provider_session_state": "LIVE",
+          "state": "LIVE"
+        },
+        "replica": 2,
+        "venue": "OKX"
+      }
+    ],
+    "request_count": 64,
+    "schema": "qdl.affected-query-read-receipt.v1",
+    "sdk": "2.0.7",
+    "stage": "BEFORE_ROLLOUT",
+    "timing_basis": "SDK snapshot/reference plus execution converter; starts after resolve, excludes consumer Redis apply; no p99 for n<100",
+    "usable": 63
+  },
+  "inherited_hot_backup_sdk_reads": {
+    "date_utc": "2026-10-01",
+    "limits": [
+      "Rolling observer includes a separate failed quota-interference window, not erased by final observation.",
+      "Event age and call latency are different; no new event-to-Redis-commit latency claim.",
+      "No p99 claim for fewer than 100 successful samples.",
+      "Shared Kafka/host backup is not independent-domain HA or zero-downtime.",
+      "TRADE refusals require exact provider correlation to distinguish quiet market from delay."
+    ],
+    "observation": {
+      "cache_missing": 0,
+      "cache_watermark_regression": 0,
+      "execution_ready_max": 50,
+      "execution_ready_min": 47,
+      "max_heartbeat_age_s": 29.98753070831299,
+      "report_expired": 0,
+      "sample_span_s": 299.1524691581726,
+      "samples": 297,
+      "session_ready_max": 60,
+      "session_ready_min": 60
+    },
+    "scope": "production six-role hot-backup rollout; no full-catalogue/C2 certification",
+    "sdk": {
+      "BOOK_DELTA": {
+        "call_to_sdk_validated_usable_ms": {
+          "max": 94.00424198247492,
+          "p50": 14.584,
+          "p95": 40.168,
+          "p99": null
+        },
+        "refusal_codes": {},
+        "refused": 0,
+        "requests": 80,
+        "usable": 80
+      },
+      "BOOK_SNAPSHOT": {
+        "call_to_sdk_validated_usable_ms": {
+          "max": 70.60038601048291,
+          "p50": 27.41,
+          "p95": 45.595,
+          "p99": null
+        },
+        "refusal_codes": {},
+        "refused": 0,
+        "requests": 80,
+        "usable": 80
+      },
+      "MARK_INDEX_PRICE": {
+        "call_to_sdk_validated_usable_ms": {
+          "max": 86.28075197339058,
+          "p50": 11.617,
+          "p95": 41.21,
+          "p99": null
+        },
+        "refusal_codes": {},
+        "refused": 0,
+        "requests": 80,
+        "usable": 80
+      },
+      "QUOTE": {
+        "call_to_sdk_validated_usable_ms": {
+          "max": 102.95276599936187,
+          "p50": 11.795,
+          "p95": 33.185,
+          "p99": null
+        },
+        "refusal_codes": {},
+        "refused": 0,
+        "requests": 80,
+        "usable": 80
+      },
+      "TRADE": {
+        "call_to_sdk_validated_usable_ms": {
+          "max": 48.12901793047786,
+          "p50": 12.087,
+          "p95": 35.132,
+          "p99": null
+        },
+        "refusal_codes": {
+          "DataLayerClientError": 6
+        },
+        "refused": 6,
+        "requests": 80,
+        "usable": 74
+      }
+    },
+    "source": "c8015ca"
+  },
+  "limits": [
+    "Postroll request timing starts after metadata resolve and ends at SDK/converter validation, not consumer Redis apply.",
+    "Small per-venue/path samples: median/max only, no p99.",
+    "Two postroll and one baseline TRADE refusal preserve strict policy; provider attribution remains UNKNOWN.",
+    "20 sampled worker heartbeats are not uninterrupted availability or all60route certification.",
+    "Same Kafka/host hot backup is projector-path redundancy, not independent HA or zero downtime."
+  ],
+  "measured_after_rollout": {
+    "consumer": "trading-system.sandbox.stable",
+    "groups": [
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 10,
+        "path": "execution_reference",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 68.78868606872857,
+        "usable_median_ms": 14.064859482459724,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 55.97016308456659,
+        "usable_median_ms": 19.698999472893775,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "TRADE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 10,
+        "usable_max_ms": 45.47404497861862,
+        "usable_median_ms": 15.111130429431796,
+        "venue": "BINANCE"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 12,
+        "path": "execution_reference",
+        "refusal_latency_ms": [],
+        "usable": 12,
+        "usable_max_ms": 30.355585971847177,
+        "usable_median_ms": 14.089661999605596,
+        "venue": "OKX"
+      },
+      {
+        "feed": "MARK_INDEX_PRICE",
+        "n": 12,
+        "path": "snapshot",
+        "refusal_latency_ms": [],
+        "usable": 12,
+        "usable_max_ms": 69.37492988072336,
+        "usable_median_ms": 18.01805046852678,
+        "venue": "OKX"
+      },
+      {
+        "feed": "TRADE",
+        "n": 10,
+        "path": "snapshot",
+        "refusal_latency_ms": [
+          24.08719202503562,
+          76.12788607366383
+        ],
+        "usable": 8,
+        "usable_max_ms": 54.12530596368015,
+        "usable_median_ms": 13.920931960456073,
+        "venue": "OKX"
+      }
+    ],
+    "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+    "mark_reference_component_provenance": {
+      "1:6c7c9256-2905-5c75-a149-fa0ac36bbbc7": {
+        "six_fields_present": true
+      },
+      "1:8482b54b-6d9d-5aad-abe8-e22447d183a1": {
+        "six_fields_present": true
+      },
+      "1:8aedd349-6999-5874-b0dd-34c6451c0b3a": {
+        "six_fields_present": true
+      },
+      "1:a6884fb3-1fa0-53e0-9621-d01ba5f9a2de": {
+        "six_fields_present": true
+      },
+      "1:a953e16e-7138-5562-b5e8-c337a44d0b65": {
+        "six_fields_present": true
+      },
+      "1:b2d78145-b541-58e2-941b-06c44c65e45f": {
+        "six_fields_present": true
+      },
+      "1:e49b54ae-c23d-5351-9e64-47934aac28f8": {
+        "six_fields_present": true
+      },
+      "1:e4ce7249-a4e8-5073-beb8-dab908596c34": {
+        "six_fields_present": true
+      },
+      "1:ee93fabf-68df-5b50-8924-51bf25a5a757": {
+        "six_fields_present": true
+      },
+      "1:f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3": {
+        "six_fields_present": true
+      },
+      "1:fb26214c-7b9b-5961-95b2-55154755af0f": {
+        "six_fields_present": true
+      },
+      "2:6c7c9256-2905-5c75-a149-fa0ac36bbbc7": {
+        "six_fields_present": true
+      },
+      "2:8482b54b-6d9d-5aad-abe8-e22447d183a1": {
+        "six_fields_present": true
+      },
+      "2:8aedd349-6999-5874-b0dd-34c6451c0b3a": {
+        "six_fields_present": true
+      },
+      "2:a6884fb3-1fa0-53e0-9621-d01ba5f9a2de": {
+        "six_fields_present": true
+      },
+      "2:a953e16e-7138-5562-b5e8-c337a44d0b65": {
+        "six_fields_present": true
+      },
+      "2:b2d78145-b541-58e2-941b-06c44c65e45f": {
+        "six_fields_present": true
+      },
+      "2:e49b54ae-c23d-5351-9e64-47934aac28f8": {
+        "six_fields_present": true
+      },
+      "2:e4ce7249-a4e8-5073-beb8-dab908596c34": {
+        "six_fields_present": true
+      },
+      "2:ee93fabf-68df-5b50-8924-51bf25a5a757": {
+        "six_fields_present": true
+      },
+      "2:f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3": {
+        "six_fields_present": true
+      },
+      "2:fb26214c-7b9b-5961-95b2-55154755af0f": {
+        "six_fields_present": true
+      }
+    },
+    "no_order_or_stream": true,
+    "raw_sha256": "65fc23e775295b697b4cdb8b89193cd6d05c773d11de9678b2557dd3233bd329",
+    "refusals": [
+      {
+        "diagnostics": null,
+        "error_code": "",
+        "error_type": "DataLayerClientError",
+        "feed": "TRADE",
+        "native_symbol": "DOGE-USDT-SWAP",
+        "path": "snapshot",
+        "provider_attribution": "NOT_OBSERVED_SIMULTANEOUSLY",
+        "quality": {
+          "complete": true,
+          "event_recency_state": "STALE",
+          "execution_eligible": false,
+          "flags": [
+            "LAST_EVENT_STALE"
+          ],
+          "freshness_ms": 3144,
+          "gap_open": false,
+          "policy_id": "crypto_primary_v2",
+          "provider_session_liveness_ms": 239,
+          "provider_session_state": "LIVE",
+          "state": "LIVE"
+        },
+        "replica": 2,
+        "venue": "OKX"
+      },
+      {
+        "diagnostics": null,
+        "error_code": "",
+        "error_type": "DataLayerClientError",
+        "feed": "TRADE",
+        "native_symbol": "BNB-USDT-SWAP",
+        "path": "snapshot",
+        "provider_attribution": "NOT_OBSERVED_SIMULTANEOUSLY",
+        "quality": {
+          "complete": true,
+          "event_recency_state": "STALE",
+          "execution_eligible": false,
+          "flags": [
+            "LAST_EVENT_STALE"
+          ],
+          "freshness_ms": 3482,
+          "gap_open": false,
+          "policy_id": "crypto_primary_v2",
+          "provider_session_liveness_ms": 520,
+          "provider_session_state": "LIVE",
+          "state": "LIVE"
+        },
+        "replica": 1,
+        "venue": "OKX"
+      }
+    ],
+    "request_count": 64,
+    "schema": "qdl.affected-query-read-receipt.v1",
+    "sdk": "2.0.7",
+    "stage": "AFTER_ROLLOUT",
+    "timing_basis": "SDK snapshot/reference plus execution converter; starts after resolve, excludes consumer Redis apply; no p99 for n<100",
+    "usable": 62
+  },
+  "release": "v2.2.2",
+  "schema": "qdl.release-endpoint-report.v2",
+  "scope": "Affected Query MARK/INDEX proof and packaged SDK convergence; no new catalogue/C2/capacity certification.",
+  "unchanged_catalogue": {
+    "certificate_sha256": "1581c918d026c69c8c0f50d349b79405d419e3a04c98a4f2369a961c5be40c7a",
+    "endpoint_report_sha256": "a7fa7ff9883a1a91f59315c3a5d1e3b08650e23c78a448f98fe92e16ed75b63b",
+    "excluded": [
+      "Binance BAR 3d",
+      "DNSE/VN V2"
+    ],
+    "inheritance": "Only unchanged contract/config and previously certified endpoints; old measurements are not new-v2.2.2 benchmark.",
+    "release": "v2.2.1"
+  },
+  "worker_observation": {
+    "demanded_values": [
+      22
+    ],
+    "duration_seconds": 190.22429609298706,
+    "execution_ready_values": [
+      18
+    ],
+    "max_heartbeat_age_seconds": 20.359223127365112,
+    "not_full_catalogue_or_new_c2": true,
+    "raw_sha256": "ca37170367196abfe8acdeab818150624520be129b377a3b6ad1b35811966ced",
+    "ready": 20,
+    "samples": 20,
+    "samples_with_heartbeat": 20,
+    "session_ready_values": [
+      22
+    ],
+    "v1_fallback_values": [
+      0
+    ],
+    "worker_states": [
+      "READY"
+    ]
+  }
+}
