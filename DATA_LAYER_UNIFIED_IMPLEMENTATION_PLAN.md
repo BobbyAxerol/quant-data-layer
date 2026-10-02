@@ -68279,3 +68279,112 @@ roles remain those recorded above; owner Data Layer plan hunks preserved.
 EDC-1 remains IN_PROGRESS until explicit single-owner runtime convergence and
 final affected acceptance; this is source integration completion for valuation,
 not a declaration that the deployed consumers already run it.
+
+
+#### EDC-1 Single-Owner Runtime Scope
+
+IN_PROGRESS. Narrow convergence prerequisite: explicit account include/exclude
+scope in the existing performance owner and its on-demand refresh listener;
+account-scoped candidate must not publish global portfolios. Apply same predicate
+to deployment discovery, direct publication and refresh before DB/market work.
+Default legacy scope unchanged. Exact sandbox cohort from the read-only inventory
+above; no history adoption/reset. Test scope isolation and actual PG deployment
+selection before preparing paired legacy exclusion/candidate inclusion packet.
+This adds no DB authority/schema and does not itself authorize two overlapping
+writers; runtime order must exclude/drain old owner before admitting candidate.
+
+
+EDC-1 next tested slice: narrow legacy performance owner scope backport.
+Read-only actual image ab4e36aab9ef has no scope config, no refresh RPC and its
+cycle publishes every active deployment. Candidate inclusion alone is unsafe.
+Prepare a hash-attested backport changing ONLY legacy performance repository
+scope/discovery/publication guards plus shared OwnerScope parser. Preserve legacy
+calculations/imports/dependencies; do not copy the upgrade repository into shared
+runtime. Generate from exact running source and record before/after hashes. Test
+actual legacy source in isolated image/PG and prove unrelated account behavior.
+No runtime recreation before packet lists exact digest/config/rollback. Ordered
+handoff remains legacy exclude+drain -> candidate include, reverse for rollback.
+
+
+<a id="edc1-native-owner-scope-proof-20261002"></a>
+EDC-1 owner scope/proof receipt, 2026-10-02: TESTED_LOCALLY, NOT RUNTIME_CONVERGED.
+This implements the owner's reminder; inherited MARKET/LIMIT optional-TRADE and
+explicit LAST/L2/MARK regressions are not rerun because their predicates did not
+change. No Data Layer price/architecture change and no accounting rewrite.
+
+Implementation after native publisher commit 6432a61:
+- OwnerScope include/exclude fences deployment discovery/upsert, direct publish,
+  on-demand refresh and notification queue. include=[] owns nothing; a scoped
+  candidate cannot publish global portfolios. Legacy default remains unchanged.
+- Actual read-only DB proof initially rejected both real sandbox cohorts with
+  PERFORMANCE_NATIVE_INSTRUMENT_TERMS_MISMATCH. The nullable compatibility
+  instruments.base_currency/raw_metadata.economic_model were absent for several
+  instruments, while exact committed P05 context had complete authoritative
+  terms. Read projection now fills ONLY missing nullable fields from that P05
+  context and records native_term_sources in the business digest. Explicit
+  disagreement, scope/version/state/PnL mismatch still fails. No DB backfill,
+  guessed symbol-derived currency, old-history adoption or monetary mutation.
+- Narrow legacy backport generator uses AST boundaries and required before-SHA;
+  copies only scoped discovery and adds direct guards/parser. All accounting
+  methods remain byte-identical. Image recipe checks before/after hashes. Actual
+  legacy image tested with only those two files mounted, no upgrade dependencies
+  or native accounting copied into legacy. No backport image built/deployed yet.
+
+Exact affected verification (some cases inherited from the preceding 225-case
+receipt; do not add counts as globally distinct new cases):
+- native-owner-scope-pg.xml:77PASS/0FAIL/0SKIP,31.090s; SHA256
+  ce622ae9ce6d44c30cd9578ac93f97307f6c9cdf44606f9f8822b0b56a9ea685.
+  Actual isolated migrated PostgreSQL: owner partition, native provenance across
+  Binance/OKX linear/inverse and Gateway business-input invalidation.
+- native-owner-scope-unit-final.xml:56PASS/0FAIL/0SKIP,1.935s; SHA256
+  fb5acd19dd825eae7301555ca99e0eedfa3f860cff761c889b77c9e871b66cb4.
+  Includes notification filtering/cancellation and refresh/typed valuation.
+- native-owner-backport-unit.xml:7PASS/0FAIL/0SKIP,1.322s; SHA256
+  ca90a30b2b00a8b652858426135db190b4ae3fd2791ae127bb621e06821a8afb.
+- native-owner-backport-pg.json:6 explicit assertions PASS on real legacy image
+  ab4e36aab9ef + patched repository/parser against isolated migrated PG. Tested
+  scoped discovery/direct refusal/default parity/unowned-row preservation/empty
+  scope; transaction rolled back. Not a deployed performance certificate.
+- Ruff affected files PASS after one import-spacing correction; diffcheck PASS.
+
+Read-only actual shared DB, exact current sandbox accounts only:
+- native-owner-real-db-proof-cost.json preserves first two rejections (134.595ms
+  Binance,47.173ms OKX); these are not successful sizing samples.
+- native-owner-real-db-proof-cost-after.json SHA256
+  542896ba68b7191471235219afd00aa7641a738e37f89304492859dd86198fe4:
+  20/20 proof reads pass after correction,10/account,8 SQL statements/read.
+  Binance median21.139ms,max177.271ms(first read); remaining9 median20.645ms,
+  max28.982ms. OKX median23.817ms,max65.103ms(first read); remaining9
+  median22.846ms,max27.649ms. n=10 is NOT p99 or a load/capacity certificate.
+  Timed transaction+proof using actual current source in ephemeral docker-exec
+  process, NOT replacement of running service code. Excludes pool acquisition,
+  auxiliary FX-term checks, market recovery, Gateway/Risk/admission and sizing
+  total. It does not prove end-to-end sizing meets its deadline under load.
+
+Cleanup native-owner-scope-cleanup.json:
+Exact ts-edc1-settlement-pg (--rm,tmpfs) and ts-edc1-publication-net removed;
+owner-backport build context removed after preserving hash provenance. No volumes,
+shared data, source/worktrees, active/rollback images or operational containers
+removed. All test clients --rm. No image/BuildKit build generated by this slice.
+Host available72427294720 ->72425709568bytes, concurrent writes; no reclaimed-disk
+claim. Existing runtime unchanged: market_data c1f713a8b13e restart0; performance
+ab4e36aab9ef restart4(existing); candidate Risk/Gateway40d293d62b7d restart0,
+executor43847d3191a0 restart0; all observed running/OOMfalse. This is runtime
+inventory, not readiness acceptance. DLv2.2.1/Query3af57ddf1764 unchanged.
+
+Remaining same EDC-1 completion, not reclassified as technical debt:
+1. Build/attest minimal legacy-scope image and native candidate with SDK2.0.7.
+2. Exact runtime packet: old performance owner excludes the two sandbox accounts
+   and drains before candidate owner includes them; reverse ordering for rollback.
+   Preserve all unrelated legacy accounts and do not deploy full TS upgrade into
+   shared Gateway/Risk/executor. Candidate caller settings must agree with its
+   existing sandbox market_data identity/manifest revision2/RedisDB0, not shared
+   paper identity/revision10/RedisDB1. Revalidate actual mounted hashes/realm.
+3. Bind qualified INDEX FX paths (same venue; never USD=USDT), exercise actual
+   native publisher -> Gateway sizing -> Risk/execution at-use readers, then one
+   affected300s no-order acceptance. Current baseline lacks native owner role;
+   source tests and reconstructed Settings cannot replace this handoff.
+No order, alpha activation, runtime rollout, push, merge or release performed.
+Canonical TS /home/bobby/trading_system remains consumer branch668e103; upgrade
+source and authoritative journal /home/bobby/.worktrees/trading-system-next-upgrade,
+feat/v2-rust-first-okx-demo. Other active Portal/Claude worktrees remain intact.
