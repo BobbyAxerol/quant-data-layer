@@ -3111,11 +3111,11 @@ HA. Published release remainsv2.2.1; newsource/images await remote release workf
 write ONE consolidated repair phase before implementation. The authoritative
 scope, source findings, test cases, latency definitions, rollback and journal are
 [EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
-Latest decision: PLAN_REVIEW_PENDING / IMPLEMENTATION_HOLD under the
+Latest decision: IN_PROGRESS / OWNER_GOAL_RESUMED under the
 [TS/core/execution final approval plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-ts-execution-final-audit-plan-20261002).
-The latest owner request requires review and approval before further implementation.
-Preserve unfinished owner-refresh source and scoped test receipts; no runtime or
-release action is authorized by this planning update. Existing receipts remain
+The latest owner goal continuation resumes source implementation within this plan.
+Finish and verify the preserved owner-refresh slice; runtime changes still require
+the reviewed changed-role packet. Existing receipts remain
 scoped evidence, not whole-path availability or deployment approval.
 Prior implementation followed the
 [final dependency closure plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-owner-review-freeze).

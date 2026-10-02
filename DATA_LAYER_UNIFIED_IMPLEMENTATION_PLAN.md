@@ -67340,6 +67340,23 @@ inverse formula certification. Actual process/identity/SDK convergence, matched
 provider attribution and changed-role runtime acceptance remain open. No FULL.
 
 
+#### EDC-1 Owner-Driven Valuation Refresh - Start
+
+Continue TS06e599a / DL787f75a. Previous turn completed business-state fence with
+95test evidence. Use existing performance_projection PostgreSQL notification
+channel for exact registered deployment refresh; Gateway never publishes accounting.
+One bounded coalescing refresh lane inside the same performance owner, deadline
+carried and capped, cancellation joined; no service/container/topic. Existing
+transaction conflict handling protects publication alongside periodic reports.
+Gateway first reads validated sizing summary, requests refresh only for invalid
+proof, then bounded readback within one original budget; unavailable owner/mark
+fails closed, no timestamp renewal. Only source/isolated tests now. Required tests:
+actual LISTEN/NOTIFY, exact scope, dedup/cap/expired requests, actual SQL fresh
+publication/summary, timeout/cancel cleanup and unrelated owner progress. Keep
+normal reporting cadence unchanged; force only the requested active deployment.
+No shared DB notification, runtime mutation, broker call or order in this slice.
+
+
 <a id="edc1-ts-execution-final-audit-plan-20261002"></a>
 ### EDC-1 TS/Core/Execution Data Closure - Final Approval Plan
 
@@ -67517,3 +67534,70 @@ remaining limitations and explicit READY_FOR_DEPLOY versus certified distinction
 TS handback remains E03 18/24 authentic cases, E04 composite 18/18 with separate
 denominator, and applicable E07/E08/E09 qualification before P18.4. Inherit unchanged
 E evidence; data acceptance does not certify six missing partial-fill cases.
+
+
+#### EDC-1 Final Plan Resumed - Bounded Refresh Fairness
+
+Latest owner goal continuation resumes EDC-1 after documentation commit93e8d90.
+Status IN_PROGRESS / OWNER_GOAL_RESUMED; retain the final approval plan scope,
+reviewed changed-role packet and no-order runtime boundaries. Previous turn made
+progress: consolidated dependency audit and pre-fix fairness failure preserved.
+Finish the existing owner-refresh slice first: four bounded workers in the same
+owner, queued-scope coalescing, active-scope exclusion, original deadlines and
+cancel/join. No new service or unbounded queue. Test slow-account isolation, same
+scope never concurrent, queue bounds and cleanup, then adjacent valuation/PG
+proofs. No production mutation or source-to-runtime certification implied.
+
+
+#### EDC-1 Owner Refresh - Tested Source Receipt
+
+Completed existing bounded owner-refresh slice, including newly reproduced fairness
+failure. Gateway requests only invalid retained equity through existing PostgreSQL
+performance_projection channel; exact active deployment scope, one notification,
+one original deadline and validated readback. No Gateway accounting writer. Owner
+runs four fixed workers, at most64 queued scopes, per-scope active exclusion and
+coalescing; cancellation joins workers before closing repository clients. Slow
+account no longer blocks a healthy second account; missing owner/mark remains a
+bounded explicit failure, not manufactured equity.
+
+Forced and event-triggered snapshots use actual publication time, not an older
+cadence bucket. Pre-fix actual PG reproduction on both venues showed a later cash
+event hidden behind a prior forced snapshot; now normal event publication becomes
+latest and carries changed equity. Scheduled cadence remains unchanged and original
+market proof timestamps are preserved. No new accounting formula or service.
+
+Final:104PASS/0FAIL/0SKIP,25.160s (48 actual isolated-PG and56unit). Actual production
+notification callback/listener, registered owner SQL publication, Gateway readback,
+business changes and expiry, account isolation, same-scope exclusion/coalescing,
+slow-account progress, stop/join and absent-owner deadline. Test market/business
+inputs are TEST_ONLY, not real-provider/broker/runtime certification. Integration
+uses existing p183 fixture schemas plus own snapshot sequence, no shared DB writes.
+Ruff all8 affected source/test files and TS diff-check clean. FastAPI deprecation
+warnings unchanged. Existing source-RO p18-56dae41 image/SDK2.0.7;94 migrations
+through95 applied successfully only in disposable PostgreSQL.
+
+Evidence root ~/.local/state/qdl-v2/edc1-20261001/evidence:
+valuation-refresh-fairness-final.xml SHA256
+ da8f828e8a3b8cbb4ab5ed099eefc30c1c18f42d05c4712bb6f8465db0c3c602.
+Keep valuation-refresh-fairness-before.xml (one deterministic failing regression)
+and valuation-refresh-ordering-before.xml (two actual-PG failures); do not erase
+negative evidence. Earlier102-test receipt is superseded for this source slice,
+not counted as additional coverage. No full catalogue/C2 rerun.
+
+Cleanup exact ts-edc1-settlement-pg (--rm,tmpfs) and ts-edc1-publication-net;
+clients --rm; no new images, build cache or volumes. Available disk bytes
+78784192512 before /78646775808 after, concurrent host writes, no claimed savings.
+Inventory85images/29active25.18GB,422buildcache/29active16.53GB. Active and named
+rollback artifacts retained, no broad prune. Shared market_data c1f713a8b13e and
+Query3af57ddf1764 pair unchanged restart0/OOMfalse. No broker/order/alpha action,
+provider requests, runtime recreate, push/merge/tag or release.
+
+EDC remains IN_PROGRESS. Required next work: actual native product economics for
+inverse retained equity, complete caller/config/SDK/realm activation ledger and
+matched provider/refusal evidence, measured refresh/DB load and affected runtime
+acceptance under reviewed packet. This slice proves bounded owner refresh locally,
+not whole-stack capacity, live eligibility or E03/E09/P18.4. Do not deploy Gateway
+alone: additive proof migration, capable valuation owner and typed metadata/market
+reader must precede it, with per-role rollback and old-state compatibility review.
+
+Source implementation receipt: TS commit `fc1cb06`; no push/merge.
