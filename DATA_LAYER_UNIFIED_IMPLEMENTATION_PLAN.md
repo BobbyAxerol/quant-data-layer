@@ -66522,3 +66522,177 @@ package owner/authority applicability, performance downstream dependency,
 config/SDK/old-state adoption, runtime identity/quota packet, synchronized actual
 TRADE/MARK attribution and reviewed affected-role acceptance/release. Keep TS
 P18.3E money qualification separate; do not rerun catalogue/C2 to find source bugs.
+
+
+<a id="edc1-final-consumer-dependency-plan-20261002"></a>
+### EDC-1 Final Consumer Dependency Closure - Owner Review, 2026-10-02
+
+**Controlling status: PLAN_REVIEW_PENDING / IMPLEMENTATION_HOLD.** Latest owner
+instruction is to inspect, consolidate ONE repair phase, and wait for approval.
+This entry supersedes earlier goal-resumed instructions for further implementation;
+it does not erase completed source receipts. This is the remaining closure of
+EDC-1, not a new architecture or a second execution upgrade programme.
+
+Goal: eliminate internal data/integration refusals when the order's required,
+authorized evidence exists. Do not promise every order can execute: genuine
+missing/invalid required evidence, insufficient collateral and venue rejection
+remain legitimate. Stable means correct service and bounded recovery within the
+approved demand/load envelope, not an assertion of zero possible future bugs.
+
+Guide: [EDC design](upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md#execution-data-contract-closure-guide-20261001).
+Inherit [dependency ledger and tests](#edc1-execution-dependency-approval) and the
+subsequent source receipts. TS authoritative plan is the upgrade worktree at
+`/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md`;
+its detailed guide is `upgrade/TRADING_SYSTEM_UPGRADE_PLAN_V2_MASTER_RUST_FIRST_OKX_DEMO.md`,
+anchor `p18e-critical-path-closure-20260930`. Canonical TS's older journal is not
+proof of completed native upgrade. TS money certification remains separate.
+
+#### Review Facts And Limits
+
+Read-only source review: DL298e47b, TS8647290. Existing evidence inherited, no new
+benchmark, fault injection, broker order or production mutation in this review.
+Fresh Docker running-container inventory confirms two KN projectors a696cfba6ab3,
+two Query3af57ddf1764, two Stream1f13408fe946; TS shared market_data_service
+c1f713a8b13e and separate p183 market_data3b4ee780f2d4. Core/Binance658a9570c5fc,
+OKX0f6876e16e51, BARf7351c3bda08. No six-spool-projector assumption. Names/image
+IDs are inventory, NOT current health or latency certification. Published DL
+v2.2.1 and retained rollback packet remain unchanged.
+
+| Observation | Correct classification / remaining check |
+|---|---|
+| Typed Risk caller/reservation, native projection, package identity and delta/ACK patches have source receipts | Inherit scoped tests; deployed process, SDK, configuration and old-state compatibility still unproven. Source PASS is not active-runtime PASS. |
+| `execution_required_feeds` selects QUOTE for ordinary MARKET/LIMIT, derivative MARK, BOOK for declared L2 and TRADE for explicit LAST | Assert the actual caller and native sender use this policy. Optional stale TRADE must not become a global refusal; never silently substitute QUOTE for a requested LAST trigger. |
+| `open_execution_market_reader` returns plain cache in V1 mode and recovery only in V2_PRIMARY | Prior effective-settings audit found candidate Risk in V1 while candidate market-data is V2_PRIMARY. Recheck actual deployment settings; this does not imply cached records are V1. Reader ownership alone is insufficient. |
+| Package `/v1/order-packages/arb` keeps P14 submission ENGINEERING_ONLY | Do not advertise activated package admission or remove the block in this data phase. Preserve data-boundary tests and identify existing native caller applicability; package activation belongs to its TS authority scope. |
+| Performance `_mark_price` uses generic reader/fallback, writes positions_v2 mark/notional/unrealized_pnl with observation time | Trace writer/readers before changing it. RiskRepository inspected here uses signed quantity for profile/conflict, not these mark fields. No proven live equity corruption; no basis to declare all reporting paths harmless either. |
+| Private Query -> Rust hot view exists for five hot feed kinds with one shared deadline, bounded slots and monotonic source checks | Verify capacity under actual caller concurrency and both replicas; preserve newer ineligible truth, gap and generation fences. Public GetSnapshot delegation is not an independent backup. |
+| Historical TRADE/MARK refusals lack simultaneous provider witness | UNKNOWN attribution remains. New synchronized evidence can diagnose current behavior, not rewrite past refusals. |
+
+Source references: TS `services/risk_engine/execution_market_context.py`,
+`services/risk_engine/main.py`, `services/physical_egress/market_guard.py`,
+`services/market_data/runtime.py`, `services/market_data/execution_recovery.py`,
+`services/risk_engine/repository/risk_repo.py`, `services/performance/repository.py`,
+`services/portfolio_management/repository.py`, `services/gateway/main.py`;
+DL `qdl/runtime/kn_hot_view.py`, `qdl/runtime/kn_query_backend.py`.
+
+#### Scope And Contract Coverage
+
+One closure table must enumerate every actual consumer operation, not merely a
+count of healthy feeds. Fields: caller/process/image, route/identity/realm,
+venue/product/native symbol, component, units/metadata version, required/optional
+feeds, source/cache writer, TTL versus quality expiry, at-use deadline, recovery
+budget, quota, inherited receipt, missing proof and final outcome.
+
+| Operation | Data needed / special obligation |
+|---|---|
+| MARKET and ordinary LIMIT | Side-correct BBO for valuation/admission, derivative mark per existing policy; quantity/contract multiplier correct. MARKET does not need a fabricated last trade but still needs risk valuation. |
+| Post-only, impact-sensitive and L2 intent | Verified complete snapshot, sequence/generation and depth/size in correct units. Deltas update an anchored book, not a replacement snapshot. |
+| Native conditional/OCO/trailing | Declared LAST/MARK/INDEX at the appropriate stage; separate registration from local child dispatch. Native broker trigger authority is not a DL simulation. Do not widen supported order types. |
+| Cancel/query/reduce/amend | Cancel/query must not depend on unrelated fresh price; amend/reprice and reduce use existing risk policy. No bypass of authorization, liability or broker synchronization. |
+| Native paper matching | Same typed identity and liquidity requirements; transient unavailability defers within original deadline, no fake fill, volume or refreshed price timestamp. |
+| Package/hedge/unwind | Existing admitted paths only; per-leg proof, collateral/conversion and metadata, no partial reservation on later-leg failure. Explicitly list blocked/source-only routes. |
+| Positions/portfolio/valuation | Trace data that influences admission, exposure or allocation. Broker balance/private-event authority stays separate from public market data; inverse uses its own instrument and collateral, not a USDT proxy. |
+| Signal/history/reference | Preserve existing final BAR/batch/maxlen and metric entitlement. Only affected compatibility smoke; no whole universe rebuild. Research OI/funding/ratios are not automatic execution proof. |
+
+Both Binance and OKX, existing BTC/ETH/SOL/DOGE/BNB demand and already-declared
+inverse scope; exact roster from manifest, not assumed interchangeable symbols.
+Paper/sandbox/live data identities tested separately with sending disabled. No
+new VN/Deribit/Spot scope, Binance3d repair, alpha logic, private lifecycle feature,
+accounting formula/history repair, service topology or broader TS upgrade rollout.
+
+#### Ordered Work Inside This One Phase
+
+1. Freeze source/runtime/dependency inventory. Resolve every active writer and
+   caller, inspect effective configuration without printing secrets, preserve old
+   cursor/cache metadata and SDK revisions. Establish which missing proof is a
+   DL defect, TS integration defect, legitimate provider limit or disabled feature.
+   Stop before runtime if ownership or applicable authority remains ambiguous.
+2. Reproduce uncovered data-boundary faults, then fix only the evidenced layer.
+   Reuse Rust core, KN Query/Stream and TS typed reader/CAS writer. No duplicate
+   Python book engine. Include parent/child typed-intent propagation, stale proof
+   after scheduler/DB waits, metadata changes and actual native dispatch guard.
+   If performance is merely reporting, document and leave it; if its data governs
+   admission, fix that dependency/provenance, not unrelated PnL formulas.
+3. Close recovery and fallback end to end. Recovery reads outside DB locks;
+   coalesce bounded requests, preserve each original deadline, cancel/join on
+   shutdown. Cache state, generation, watermark and ACK must remain consistent.
+   Primary/backup/return must preserve identity, integrity and ordering; both
+   invalid block. Check cumulative fan-out quotas across processes, not just one
+   probe. No timestamp renewal, global TTL workaround or larger buffers to hide lag.
+4. Attribute current refusals using matched provider observation -> canonical
+   coordinates -> selected Query view -> actual TS Redis apply -> Risk/sender use.
+   Capture the rejected view, not a later successful fetch. Session-live cannot
+   prove an old strict LAST is usable. If new provider records exist, locate and
+   fix delay; if absent, preserve contract and prove unrelated intents still work.
+5. Run the affected deterministic/isolated matrix first, then actual candidate
+   owner processes with outbound broker sending disabled. Review all results and
+   one exact deployment packet before changing runtime. Roll only changed roles;
+   require consumer usable readback before continuing. Run one final affected
+   300-second no-order window after prerequisites pass, not C2 as a bug finder.
+6. Review closure and release readiness with owner. Source -> image/SDK -> runtime
+   config/manifest -> receipt must agree. Feature -> dev -> main/CI/tag through
+   approved workflow. A TS-only change does not require a fictional DL binary
+   release. Resume TS money qualification only after the data handoff is accepted.
+
+#### Test Matrix And Evidence Reuse
+
+- Domain: both venues/sides, required vs optional feeds, explicit product/native
+  identity, Decimal units, linear/inverse multiplier, LAST/MARK/INDEX and matching
+  component/session proof; wrong realm/revision/metadata/identity must fail.
+- Pipeline: quiet provider versus delayed new event, stale component, heartbeat
+  loss, future clock/skew, reconnect/reset, duplicate/conflicting sequence, book
+  snapshot/delta, per-feed readiness independent of worker health.
+- Lifecycle: real Redis apply then crash before ACK; replay cannot regress price
+  or resurrect invalid generation. Lost reply/idempotency, old state adoption,
+  competing old/new writers, cancellation, quota saturation and cross-product
+  fairness. Native owner startup/shutdown and Python/Rust contract parity.
+- Real isolated PostgreSQL: expiry across lock/queue waits, rollback reservation
+  and no partial package mutation; no provider I/O under transaction. Use current
+  receipts for unchanged predicates, rerun only changed and adjacent boundaries.
+- Data-path fault: targeted paired projector handoff plus backup/return only if
+  affected by changes; cold start and unavailable backup included. Shared host/
+  Kafka redundancy is not independent HA. No production broker chaos.
+- Capacity: actual adapter -> consumer Redis using durable provider capture;
+  reuse 4000/5000 aggregate event/s evidence if the hot path is unchanged, otherwise
+  rerun sustained/burst/replay/slow-consumer cases with exact fan-out stated.
+  Freeze numeric budgets from manifest and original intent before running; no
+  thresholds selected afterwards. Do not run all historical C2/catalogue suites.
+- Attribution sampling uses read-only provider calls within existing admission
+  policy; no public-IP ban/rate-limit risk from unbounded parallel probes. Record
+  inability to correlate as UNKNOWN, not quiet/provider-blame or PASS.
+
+Acceptance report for EVERY affected binding x replica x caller class: attempts,
+successes, usable/refusal/internal error and typed reason. Report request start
+BEFORE client queue -> validated consumer-usable; event/component -> TS Redis apply
+ACK; read -> Risk/native sender validation; outage -> caught-up usable, all in ms.
+Preserve original event clocks, component age and session freshness separately.
+Include sample count/window, p50/p95/p99/max (small samples report max), success
+latency plus failed/timeout durations, CPU throttle/RSS/caps, lag/backlog and IO.
+A request success, SDK callback or process health alone cannot close this phase.
+
+#### Exit, Rollback, Cleanup And Approval Boundary
+
+Exit: all applicable dependency rows have actual runtime proof or an explicit
+existing unsupported/source-only boundary; no unexplained current internal
+refusal, incorrect optional-feed veto, backwards state, identity/realm mismatch
+or unbounded recovery. Legitimate required-data refusal is visible and correctly
+scoped. Untested active dependency is a failed exit, not deferred technical debt.
+No claim to certify all future alpha strategies or all possible outages.
+
+Packet must list exact changed roles/full digests, SDK/native extension, effective
+config and manifest/JWT revisions, credentials by identifier only, old-writer
+quiescence and state compatibility, activation order and rollback per role.
+Rollback must handle newer watermarks/schema explicitly; never blindly start an
+old writer over incompatible new state. Retain named working image/config pairs.
+No Kafka reset/topology change, Redis flush, SQLite/DB deletion, V1 mutation,
+alpha activation or order sending. Additional blast radius requires owner review.
+
+After each slice remove only owned test clients/namespaces/rows. At release
+inventory images/build cache/disk and retain active plus named rollback; prune
+only authorized disposable artifacts, verify unchanged services/restarts and
+preserve unmerged code/worktrees. Current planning pass creates no test artifacts
+or images: no cleanup/prune needed. Owner DL plan hunks remain untouched.
+
+Next permitted action: owner reviews this single consolidated phase. No further
+implementation/build/rollout/push/merge/release until that approval. This review
+has not measured current latency or certified FULL execution readiness.
