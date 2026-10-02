@@ -68917,3 +68917,59 @@ hunks remainunstaged; parentBinance pre-action/rollout journal included.
 Release boundary clarified:3DLroleschanged(total2Query+Binance),14untouched.
 Parenthold is ONLY TS ACKcallerpatchlocal/affectedruntimeacceptance, not waiting
 for E03/E09 or the broader TS certificate. DLsource/runtime needs no furtherchange.
+
+
+<a id="v222-publication-closure-20261002"></a>
+#### V2.2.2 Publication Closure
+
+Status: PUBLISHED_SCOPED_RUNTIME_PATCH. Release workflow37016541264 succeeded
+at main fd5e61b450f716a0f4bda3e465ee2e091b50231e; annotated tagv2.2.2 immutable.
+PR27 merged feature into dev911679f; PR28 merged dev into main. Four CI jobs
+passed in37009506357 at4defb2d; tested/dev/main full trees are exactly
+3f409853f32acdba0f1f893b02fec7a1b0409e1b with the same contract baseline.
+Tag explicitly inherits that evidence; redundant merge-SHA runs were pending,
+not reported green. No protected required check bypassed. Five published assets
+and hashes verified: certificate55818717c0a3, reportd9e5e58be8a4,
+SDK2.0.7 wheele50b9164d064. External evidence under
+release-convergence-20261002/evidence/v2.2.2-publication-verified.json,
+release-ci-equivalence-before-main.json and v2.2.2-tag-attestation.txt.
+
+Parent consumer hold resolved by TS5c0a580/49b0be1: actual SDK reset/ACK race
+reproduced, narrow adapter fix,286 packaged tests pass; ONLY candidate
+p183_market_data nowae36ea79 at1.5CPU/512MiB. 300s had28/31READY samples,
+one repeated MARK-session refusal heartbeat, zero ACK/ordering deadline failures.
+This does NOT certify uninterrupted eligibility, E03/E09 or funded/live sizing.
+Original Query62/64 withtwoOKXTRADE refusals retained; later Binance60/60 does not
+erase them. No whole-catalogue/C2 repeat or new runtime change for publication.
+
+Canonical /home/bobby/data_layer converged mainfd5e61b; localdev matchedorigin/dev.
+Merged feature localbranch removed after ancestry check. Twoownerplanhunks preserved
+byte-for-byte. One canonical worktree; postpublication documentation slice alone
+uses docs/v222-publication-closure fromdev, to merge throughdev/main without
+retagging/rebuilding the immutable release or claiming new runtime acceptance.
+Active Query51450612, ingestors0f6876e1, cores658a9570, Stream1f13408f,
+projectorsa696cfba, BARf7351c3b; r14/authority1 unchanged. Queryrollback3af57ddf
+retained;658a9570 is alsoactivecores, never delete asunused. Prior scopedcleanup
+recorded above. Finalinventory retainsactive/explicitrollback andTSpreparedIOC
+bfa1786b. No broadprune, operationalstoppedcontainer, volume/data deletion.
+apply_patch failed with known mountinfo helper error; exactappend perRule32.
+
+Scoped final cleanup packet: remove only five BuildKit records verified
+Reclaimable=true/Shared=false/Mutable=false, QDL dependency builds:
+kajly8nctaa7ng6u1ww4vsfmo, qemr9ohb3ydzwnibfmu7jmcq6,
+ug91eqd3w4yrn0mu19mp5kqg7, vbff7zlk1nvj5q5yry8njifrp,
+amsh6ohjro3tsdakv4s1ilka5. Recheck immediately before exact-ID prune;
+record free disk and all running container image/start/restart before/after.
+No image is disposable in the current release/ACK slice: active/rollback/prepared
+IOC retained. Older test-labelled images include E-phase rollbacks and are not
+removed by name. No broad BuildKit/image prune or stopped operational cleanup.
+
+Final cleanup result: DEFERRED_TOOL_FILTER_NOT_PROVEN. First exact-ID BuildKit
+prune returned nonzero; automatic review rejected direct retry because filter
+semantics could not guarantee only the approved IDs. No workaround/broadprune.
+Read-only postcheck confirms allfiveIDs remain;removed0,free65225388032bytes.
+Previous subagent inventory free66016624640bytes is a different time, not a
+cleanup delta. Evidence final-scoped-cleanup.json. Prior testclients/buildcontexts
+already cleaned; active/rollback/preparedimages unchanged. This is artifact
+housekeeping still open, not a market-data correctness or release gate claim.
+Known unstaged owner whitespace atline13073 is preserved; stagedclosure diffclean.
