@@ -67842,6 +67842,21 @@ not mask newer invalidation/auth failure with old cached data. No source change
 made for that hypothesis.
 
 
+#### EDC-1 Query/Stream Recovery Race - Reproduction Start
+
+Continue DLf40f90c/TSd38c89e. Previous real deployed probe60reads usable, no
+refusal attribution claimed. Reproduce a separate source hypothesis with actual
+isolated Redis: Query request begins from missing cache, Stream applies newer
+valid TRADE/QUOTE while request awaits, Query returns older but otherwise valid
+paired snapshot whose event age fails at use. Current refresh propagates stale
+before authoritative readback. Required fix only if reproduced: bounded readback,
+same identity/metadata/authority and strictly advancing watermark, all normal
+eligibility checks; no writes of expired view, no retries/buffer/TTL increase.
+Do not recover through auth/gap/identity errors or a newer explicit invalidation.
+Test both venues, old/new offsets, stale cache, contract/metadata mismatch and gap.
+No runtime rollout, provider request or change to BOOK/MARK recovery semantics.
+
+
 <a id="edc1-owner-final-scope-review-20261002"></a>
 ### EDC-1 Consolidated Execution Dependency Repair - Owner Review Refresh
 
@@ -67975,3 +67990,66 @@ After this dependency exit, resume TS P18.3E at E03 18/24 authentic cells, E04
 18/18 composite evidence (different denominator), outstanding E08/E09 and then
 P18.4. This phase does not waive the six missing partial-fill cells or certify
 new order capabilities. Owner approval of this consolidated plan is the next step.
+
+
+#### EDC-1 Owner Goal Resumed - Recovery Race Closure
+
+Latest owner goal continuation resumes the consolidated scope at
+edc1-owner-final-scope-review-20261002. Status IN_PROGRESS / OWNER_GOAL_RESUMED;
+no new phase. Prior planning turn made progress by consolidating authoritative
+scope, not implementation completion. Continue preserved Query/Stream race fix:
+review real Redis regression, add equal-offset, policy/authority/generation,
+new invalidation and SDK refusal cases before commit. Source-only plus existing
+isolated ts-edc1-recovery-redis DB15; no production traffic or mutation. Keep
+original quality/deadline/ordering authority. Rollback is source revert only.
+After exact tests, cleanup owned Redis/network/anonymous test volume and record
+evidence. Native owner/currency and caller/runtime convergence remain mandatory
+next work, not waived by closing this race. Runtime still needs changed-role packet.
+
+
+#### EDC-1 Query/Stream Recovery Race - Verified Source Receipt
+
+Actual isolated Redis reproduced pre-fix4FAIL/20PASS (both Binance/OKX and
+TRADE/QUOTE). Query returned expired offset42 after Stream atomically applied
+valid offset43. Previous refresh propagated stale before authoritative readback.
+This is a reproduced source race, NOT attribution of historical production refusal.
+
+Correction only handles EXECUTION_CONTEXT_STALE for paired TRADE/QUOTE: read
+actual Redis again within existing deadline, require strictly newer offset and
+identical source/contract lineage, policy ID and metadata; use normal eligibility.
+Never apply the expired fetched pair. Caller rereads/validates full required set
+again before returning. MARK/BOOK paths, native policy and SLA unchanged.
+
+Final135PASS/0FAIL/0SKIP,5.348s:
+python -m pytest -q --tb=short -p no:cacheprovider
+tests/integration/test_edc_typed_recovery_redis.py
+tests/unit/test_edc_recovery_runtime.py
+--junitxml=/evidence/recovery-query-stream-race-review.xml
+Existing image local/trading-system-test:p18-56dae41, sourceRO, SDK2.0.7 from
+vendored wheel, isolated Redis DB15,1GiB/1CPU test client. Ruff exact changed files
+and TS diff check clean. No new image/native build or full catalogue/C2 run.
+Cases include old/equal offset, stale cache, config/authority/policy/provider and
+metadata mismatch, Query gap/auth, cached gap/ineligible invalidation, actual
+timeout cancels/joins pending Query and leaves no flight. Stored newer state never
+rewritten by stale pair. TEST_ONLY views, not market/provider latency evidence.
+
+Evidence ~/.local/state/qdl-v2/edc1-20261001/evidence/:
+recovery-query-stream-race-before.xml SHA256
+5348bf2cb36905832a074942348c620d8f9111e6e3758249e24177bee16435e3;
+recovery-query-stream-race-review.xml SHA256
+95e268f914a1164129eadc3b5706ea31239d7c48507dac44fe3e094a2f7c0f08.
+
+Cleanup: stopped owned --rm ts-edc1-recovery-redis, removed exact
+ts-edc1-recovery-net; its inspected anonymous volume51d2e429...65587 removed
+automatically and absence verified. Test clients auto-removed. Disk available
+76681150464 ->76623843328 bytes; concurrent host writes, no claimed disk savings.
+Inventory85images/29active, buildcache16.53GB/6.309GB reclaimable: no new artifact
+from this slice; no broad prune of unrelated work/active/named rollback.
+Shared market_data c1f713a8b13e and Query pair3af57ddf1764 still running,
+restart0/OOMfalse; no production change, broker/order, push/merge or release.
+
+EDC IN_PROGRESS, not FULL/certified. Next: finish actual currency-aware native
+performance owner input integration and actual caller/SDK/config convergence, then
+review changed-role packet and affected acceptance. Existing ports/fixtures do not
+prove deployed owner authority. Published DLv2.2.1 and named rollback unchanged.
+Canonical/worktrees unchanged from owner scope review; no new checkout.
