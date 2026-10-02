@@ -3111,10 +3111,15 @@ HA. Published release remainsv2.2.1; newsource/images await remote release workf
 write ONE consolidated repair phase before implementation. The authoritative
 scope, source findings, test cases, latency definitions, rollback and journal are
 [EDC-1 in the Unified Plan](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#execution-data-contract-closure-20261001).
-Latest decision: IN_PROGRESS / OWNER_GOAL_RESUMED under the
-[owner scope review refresh](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-owner-final-scope-review-20261002).
-The latest owner goal continuation resumes implementation of this consolidated scope.
-Preserve prior evidence; runtime still requires the exact changed-role packet.
+Latest decision: SCOPED_NATIVE_OWNER_CALLER_NO_ORDER_ACCEPTANCE_PASS under the
+[scoped runtime receipt](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#edc1-native-owner-caller-runtime-receipt-20261002).
+The approved two-account sandbox native-owner and candidate-caller packets are
+now deployed with SDK2.0.7. Final affected sizing60/60 over300s passes; prior market
+reads/recovery tests are inherited only where unchanged. Account equity remains0,
+no broker orders were sent, and reference-session reconnects remain recorded.
+This does not certify funded trading, wholeP18, return metrics or uninterrupted
+all-feed availability. No Data Layer runtime rollout or new release occurred.
+Preserve failed windows and explicit rollback/source/config provenance in receipt.
 The existing final approval plan remains the detailed test baseline. Existing receipts remain
 scoped evidence, not whole-path availability or deployment approval.
 Prior implementation followed the
@@ -3148,4 +3153,6 @@ Deployment/release requires the reviewed closure ledger and changed-role packet
 specified in EDC-1. Shared TS legacy runtime, native TS candidate, paper/sandbox/
 live market-data identity and broker order authority must remain distinguishable.
 No alpha/mainnet activation, TS accounting redesign or P18.3E money certificate
-is implied. This planning entry changes no code, images, limits or runtime state.
+is implied. The original planning entry changed no runtime. The subsequent scoped
+TS handoff and additive proof migration are recorded in the receipt above; Data
+Layer runtime, limits and bindings remain unchanged.
