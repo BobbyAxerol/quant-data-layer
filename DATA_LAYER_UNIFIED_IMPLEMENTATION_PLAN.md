@@ -69420,3 +69420,38 @@ perf_event_paranoid=4/missing CAP_PERFMON. No sysctl/capability change or retry
 through elevated credentials. Thread attribution remains valid but insufficient
 for a function-level CPU root cause. Empty perf output removed; command/error
 receipt retained externally. This is not evidence that optimization is impossible.
+
+DR07 follow-up within approved recovery scope: existing late BOOK_DELTA integration
+cases fail even before the reset patch. Trace the SDK OBSERVE result path (returns
+noneligible view rather than DATA_STALE exception) through strict projection.
+If confirmed, preserve complete authoritative ordered deltas as replay-only facts,
+never renew execution eligibility/session/TTL from stale replay. Keep gap, source,
+generation and sequence guards and ACK-after-apply. Required tests include all10
+venue/symbol late cases and negatives, plus Query-ahead/reset/replay. Do not treat
+pre-existing failures as waived or change the Data Layer freshness contract.
+
+DR07 owner isolation handoff2026-10-07: stopped delegated edits on Claude's TS
+worktree; saved exact adapter patch/test/Codex journal under
+/tmp/codex-dr07-move-20261007 (hashed migration-receipt.json). Created branch
+codex/dr07-reset-anchor in /home/bobby/.worktrees/ts-codex-dr07 from be0c15f.
+Commit58287fcfbd2c06fd714d12ce32ca8497bd63637c contains only adapter, new reset
+regressions and TS journal.532affected tests PASS in13.69s in this worktree,
+including real isolated Redis and all10formerly failing late cases. Exact trace
+showed BOOK projection used market2000ms rather than the BOOK45000ms already
+declared by its request; corrected policy selection without new thresholds or
+replay exceptions. Reset Query-anchor/ACK ordering also fixed, not deployed.
+
+After commit, removed only the identical copied adapter/test/Codex journal from
+Claude worktree. Owner blank-line deletion preserved; unrelated new risk_pool
+and price_match changes preserved. New worktree clean, no push/merge. Claude
+reviews58287fc before bringing it into feat/v2-rust-first-okx-demo.
+Test evidence: ~/.local/state/qdl-v2/dr07-hardening-20261007/isolated-worktree/
+attempt-2/{commands.json,affected-tests.log,source-receipt.json}. First setup
+failed before pytest due missing tmpfs mountpoint; retained, fixed harness only.
+Cleanup: RedisDB15zero; ts-codex-dr07-tests network and exact test containers
+removed; empty logs mountpoint removed; no build/prune,92images28.19GB and
+227BuildKit entries16.83GB retained. Available disk90497032192->90442244096bytes,
+concurrent host activity. Production writer f63785a27af8/image9150385e2bb3,
+restart0 unchanged. DL canonical main5bf5cd5 and active12-role/config set
+unchanged; active/rc2/named rollback retained. DR07 remains IN_PROGRESS; CPU,
+causal overflow attribution and commit->RedisACK measurement remain open.

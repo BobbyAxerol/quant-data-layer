@@ -117,3 +117,23 @@ External root: `/home/bobby/.local/state/qdl-v2/dr07-hardening-20261007/`. Bound
 - `trade-attribution-v2-summary.json` sha256 `85e39a900326133b8aa2608b8e9ca2769405a758c49756106d7e36a0b213647f`
 
 No runtime recreation, cap/config/manifest/quota/offset or order mutations. Existing rc2 and active/rollback images retained, no image build or broad prune. Disposable TS reset tests are documented in the TS journal; DL observations leave no container/network/image. Canonical `/home/bobby/data_layer` main5bf5cd5 unchanged; working branch fix/p184-dl-closure; no push/merge. Active role/config/digest and rollback map remains the [Phase C packet](p184-dl-phase-c-packet.md).
+
+## TS Source Handoff Update
+
+Owner moved Codex work to `/home/bobby/.worktrees/ts-codex-dr07`, branch
+`codex/dr07-reset-anchor`, base `be0c15f`, commit
+`58287fcfbd2c06fd714d12ce32ca8497bd63637c`. Claude's Paper worktree is no longer
+used for Codex edits/tests. Copied changes removed only after this tested commit;
+owner blank-line edit and concurrent risk/price-match work preserved.
+
+532affected tests PASS in13.69s, including the10late cases that initially failed.
+Their exact source cause was mismatched policy wiring: BOOK request45000ms,
+projection incorrectly using market2000ms. Final code selects the declared BOOK
+limit; TRADE and execution freshness unchanged. No new replay bypass was added.
+Query-ahead/reset replay preserves cache and TTL, never ACKs Query watermark;
+equal-sequence conflict fails closed. Real disposable Redis, synthetic transport.
+No runtime throughput/recovery or release certification is inferred.
+
+Evidence/cleanup receipt: external `isolated-worktree/attempt-2/` under the root
+above; migration `/tmp/codex-dr07-move-20261007/migration-receipt.json`. New worktree
+clean, no push/merge/deploy. The historical overflow cause remains unproved.
