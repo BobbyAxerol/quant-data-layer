@@ -68998,3 +68998,42 @@ pass with correct mounts (17/17); universal release + sandbox 21/0; quota 14/0. 
 builder's system libraries (openssl) and is compiled by the release image build.
 Next: one Rust + one Python image from this commit (digests recorded) for the Phase C packet; closure table and
 owner decisions D1-D3 handed over in Phase B.
+
+#### P18.4 Phase B Handover - Data Layer closure for the consolidated release (2026-10-07, Claude -> Codex)
+
+Status: HANDOVER. Trading System Phase A is closed on candidates: TS r59b (image
+sha256:9150385e2bb3596793b6ee209dbc99696c3ed07439d6f4199356f417a97b6105, source 054cfe3 on
+feat/v2-rust-first-okx-demo) passed surface 93/93 with the strict verifier, and the TS Data Layer consumer
+(writer market_data_service_p184w) runs that image since 2026-10-07 10:20 UTC (owner packet; TS plan journal
+"P18.4 Phase A - candidate r59"). Nothing in this section has run on a Data Layer role.
+
+Owner decisions 2026-10-07: **D2 in this release** (tolerant SDK response readers), **D1 deferred** (a quiet Binance
+book stays stale, never falsely fresh), **D3 separate project** (ingestor/bar-edge/Redis HA; limits recorded in
+the SPOF runbook). Interface rule (owner): versioned, additive-only interfaces, readers accept every supported
+version; fix internals, not endpoints.
+
+Candidate images from 4eb08dc (built, not run on any role): qdl-v2-rust:2.2.3-rc1-4eb08dc
+sha256:3566a6e3e6c7f7d6b82e7beee9075a02e42f1c0ebb292d3802a1bd8423e19520, qdl-v2-python:2.2.3-rc1-4eb08dc
+sha256:acf5fd06b6a3f8c7d1540180cf8f429bfef89af0d479fc432b205993cf353e96. They are superseded once D2 lands
+(rebuild both from the final commit; delete these by digest).
+
+| Item | State on this branch | Remaining work (Codex) | Close condition |
+|---|---|---|---|
+| IDR-040 fix 1 - REST refresh ahead of stream | fixed 4eb08dc, Rust 98/0 | none in source | candidate rust_core: no REST_AHEAD materialization; refusal log visible |
+| IDR-040 fix 2 - heartbeat quiet proof | not built (D1 deferred) | none this release | recorded limit: quiet Binance book = stale |
+| D2 - tolerant SDK response readers | not started. `qdl_sdk/models.py:119-120` ClosedModel is `extra="forbid"` for every model; SDK 2.0.7 | response models ignore unknown fields; requests, signed payloads and binding/manifest documents stay closed; tests both ways; SDK minor bump (2.1.0) with changelog | old-server/new-SDK and new-server/old-field round trips green; TS can upgrade the SDK before any new response field ships |
+| IDR-002 - request policy sealed | binding V3 fixed 4eb08dc | render V3 for trading-system.paper.stable at release | TS reader 2.1.0 deployed first (done: r59 writer), then mount V3; rollback = V2 file |
+| IDR-029 - quota visibility | log added 4eb08dc | none in source | TS measured (minute quota counter, read-only): 1204 -> 975 requests/min after TS batching; no quota or manifest change |
+| BAR 15m/30m gaps | KN cache keeps by open time (`rust/qdl-projector/src/expiry.rs`) | read-only gap diagnostic on the KN cache for the affected bindings | 0 gaps reported, or a defect row |
+| IDR-039 - mixed revisions | 5 revisions across 13 roles (v2.2.2 certificate) | one commit -> one Rust + one Python image | Phase C packet recreates the 13 non-infrastructure roles from two digests, certified once |
+| SPOF | runbook `docs/runbooks/kn-single-points-of-failure.md` | recovery-time per role (optional this release) | measured or stated as not measured in the certificate |
+| Consumer gate | tooling hardcodes `query_v2_1/2` | parameterise replica names for `query_kn_1/2`; measure event -> TS apply, usable/refusal by reason | numbers recorded per the four latency quantities rule |
+
+Not Data Layer (stays TS): IDR-062 (TS package rule requires book top == quote exactly; mitigated by the TS writer
+change, fixed in TS), POV volume source, reservations, writer CPU.
+
+Order: Codex implements D2 and the diagnostics on this branch (same worktree
+`/home/bobby/.worktrees/data-layer-p184-closure`), local CI, one commit per tested slice with this journal; then
+rebuild both images from that commit and write the Phase C packet (roles, digests, rollback, what is not touched).
+Phase C runtime changes, push and merge need the owner's approval per packet. CLAUDE.md section 4 couplings apply
+(manifest revision, image-baked catalog, stable_redis ephemeral, no compose up on KN containers).
