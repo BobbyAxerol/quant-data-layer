@@ -69359,3 +69359,64 @@ other host activity. Canonical main5bf5cd5 untouched; same active feature worktr
 No runtime rollout, push or merge. Stop and return readiness/packet for owner review;
 do not continue into TS Paper features or roll a candidate against failing baseline.
 Final audit checks PASS:60unique binding products x2replicas=120reads (119usable);1800cache GETs/zero missing; report60-row coverage and local links valid; qdl-idr062 containers/networks zero. TLS negative explicitly confirms hostname mismatch; no TLS bypass. Readiness measurements are not a replacement certificate.
+
+### DR07 hardening - owner approval 2026-10-07
+
+Status: IN_PROGRESS. Owner approved the five-part corrective direction after
+readiness slice 2; existing DR07/Phase C scope, not a new phase. Goal: attribute
+and remove internal delivery/backpressure defects and obtain four-boundary latency
+and CPU evidence. Guide: architecture review 18.13-18.14 and existing Phase C packet.
+Order: bounded offset-correlated trace + CPU profile -> reproduce responsible stage
+-> narrow tested fix -> isolated replay/fault acceptance -> converged candidate and
+approved core-first rollout/coherence/remaining roles. Missing timestamps remain
+NOT_MEASURED; no PUBSUB/callback substitution for Redis ACK. TRADE quiet vs lag
+requires contemporaneous provider identity; preserve strict LAST/intent dependencies.
+Invariants: no endpoint/schema/realm/quota/freshness change, bigger buffer, order,
+offset reset/state deletion or durability reduction. Observation/isolated tests
+first; Phase C HOLD until resource gate, DR01-DR08/broker delta and packet approval.
+No automatic budget increase or dependency on TS Paper feature construction.
+Tests: identity/time/ordering negatives, lossless replay/monotonic ACK, slow-consumer
+isolation, bounded recovery and same-capture CPU/latency. No full catalogue/C2 to debug.
+Rollback: active digests/config in packet; no runtime action yet. Cleanup exact test
+resources, retain active/rc2/rollback. Journal each coherent tested slice.
+Concurrent TS Paper changes owned by Claude are preserved; delegated read-only
+BOOK_DELTA/ACK review, no edits to those files. apply_patch helper failed (mountinfo);
+exact file writes with immediate diff review follow workspace rule32.
+
+DR07 investigation checkpoint: delegated source reproducer confirmed64BOOK deltas
+perform64MGET+64CAS EVAL sequentially, and reset control+new-generation delta in
+one batch yields delta before Query anchor (batch1 hides it). These are source
+findings, not proven cause of historical22s observation. TS plan records narrow
+ordering fix/test slice; concurrent Paper source remains untouched.
+Read-only31.801s thread profile: TS Python1.507vCPU, broker network threads about
+2.069vCPU combined; not a function-level profile. No CPU configuration changes.
+Observer fix separates PUBSUB drain from batched MGET and requires matching view
+for correlated samples.19 stdlib regression tests passed; runtime observation pending.
+
+### DR07 slice - bounded cache observer and paired TRADE attribution
+
+Status: IMPLEMENTED_TESTED_DIAGNOSTIC / DR07_IN_PROGRESS; Phase C remains HOLD.
+Report: [DR07 hardening progress](upgrade/evidence/p184-dr07-hardening-progress.md).
+Observer fixes its own serial GET/backlog and false event-to-current-cache matching;
+MARK pairs use existing component lineage, never a fabricated scalar cursor.
+25 stdlib tests PASS, diff-check PASS. Two read-only60s windows retained; second
+36659notifications/80groups,106MGET,p50/p95/max26.298/189.489/294.093ms.
+Second result INCOMPLETE because2oversize notifications; not a full-latency gate.
+BOOK_DELTA current-cache ages max1469.907ms in this window, not proof old22.825s fixed.
+Independent public BNB comparison75.189s:278cache samples per venue;719Binance/33OKX
+public events. Stale>3s: OKX141 (132same last ID/time,8provider-newer,1unattributed),
+Binance10 (10same ID/time). No quiet inference for unobserved original refusal.
+First attribution attempt had wrong Binance product/channel; preserved as failed
+measurement, corrected from production config; no cache/config mutation.
+CPU thread attribution, original observer limitations and all hashes in report.
+No runtime rollout, order, new image, push/merge, shared Redis write or cleanup
+of active/rollback artifacts. Read-only processes finished; no new DL resources.
+Remain: function-level CPU evidence/optimization, overflow/backlog attribution,
+actual commit/Redis ACK boundaries, isolated lossless/fault acceptance and approved
+core-first Phase C. Narrow TS reset fix is separately tested/journaled.
+
+CPU profiling limit: a15s49Hz user-space perf sample on Kafka2 was denied by
+perf_event_paranoid=4/missing CAP_PERFMON. No sysctl/capability change or retry
+through elevated credentials. Thread attribution remains valid but insufficient
+for a function-level CPU root cause. Empty perf output removed; command/error
+receipt retained externally. This is not evidence that optimization is impossible.
