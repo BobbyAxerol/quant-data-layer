@@ -69638,3 +69638,15 @@ Redis read path without shared writes/orders/subscriptions. Coherence result is
 review input for Claude; no replacement of complete TS DR01-DR08 acceptance.
 Observer begins before first lifecycle call; only this frozen scope is approved.
 A successful trial does not authorize release or rolling remaining roles.
+
+
+Pre-action safety refinement (no core has changed yet): the observer saw natural
+old-runtime CPU7.07vCPU/30s, later around6.0, before rollout. The prior calm-window
+5.978048 transient boundary would reinstate precisely the old-runtime resource
+prerequisite owner removed. Preserve those pre-action alerts, do not call them
+candidate failures. Before any trial, freeze revision2 safety at1.10 times the
+greater of old p95 and latest unmodified60s mean: baseline5.843292,
+trial stop threshold6.575853vCPU (two30s means). Full evidence and exact
+intervals core-trial/trial-safety-v2.json. This is a transitional non-regression
+guard, not resource-cap increase or release-gate change. Final5vCPU, coherence,
+lag, quorum, integrity and reverse rollback rules remain mandatory.
