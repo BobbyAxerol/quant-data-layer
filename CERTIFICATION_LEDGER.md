@@ -2125,3 +2125,19 @@ Inherited Phase A 4eb08dc, no catalogue/C2 rerun. Release waits for real/capture
 candidate resource/coherence evidence, TS DR01-DR08 and broker delta, and owner
 approval of the actual 12-role packet (handoff listed 13). D1/D3 remain deferred.
 Only source/docs, two candidate images and scoped test cleanup completed.
+
+
+### P18.4 IDR-062 offline pair and held core-first packet - 2026-10-07
+
+Status: PAIRED_OFFLINE_MEASURED_NOT_RUNTIME_CERTIFIED. Does not supersede any release
+certificate. [Paired result](upgrade/evidence/p184-idr062-offline-pair.md): identical
+ETH Binance/OKX public capture and configs on deployed 658a9570 / rc2 69e3b2b2;
+no shared changes. Top-change -> next snapshot p95 922/900 ms -> same-event 0 ms
+(provider timeline, NOT zero consumer latency). 44/41 actual top changes, exact
+delta parity; CPU observed .0600->.0627 vCPU and RSS HWM 19324->19612 KiB for one
+core/two bindings. 17 measurement/capture tests PASS. Capture hashed/deleted;
+test network/containers/keys cleaned; no new images or broad cache cleanup.
+[Phase C](upgrade/evidence/p184-dl-phase-c-packet.md): cores first, then Claude's
+post-rollout >=117/120 per-venue coherence receipt plus CPU/lag gates, then other
+roles. Prior pre-rollout coherence wording is superseded. Runtime remains HELD,
+TS DR01-DR08/broker delta and runtime approval still required. No release/push/merge.

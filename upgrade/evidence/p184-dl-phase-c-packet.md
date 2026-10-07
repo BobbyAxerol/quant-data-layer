@@ -5,25 +5,37 @@ Phase B handover and journal: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, final
 P18.4 Phase B entries. Architecture: DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md
 section 18.13. Candidate application source: `43bbcf0209f49e9cc1af6802af8f8a207a53ee3c`.
 Evidence root: `/home/bobby/.local/state/qdl-v2/p184-phaseb-20261007/evidence/`.
-The JSON packet there contains exact container names, config fingerprints and
-rollback digests, without environment secrets. No Phase C runtime or binding-mount action has run.
+The JSON inventory there contains exact container names, config fingerprints and
+rollback digests, without environment secrets; it is not a rollout-order runner.
+This amended Markdown governs ordering/gates and supersedes the old pre-core
+coherence prerequisite. No Phase C runtime or binding-mount action has run.
 
-## Blocking prerequisites
+Offline follow-up: [paired report](p184-idr062-offline-pair.md), measured on existing
+images without runtime changes. Receipt SHA256
+`b9d14de49256e7fb15b80faa430c52a610f18d5aa83c1be6dfc88f85e4de4ecc`.
+Snapshot workload x1.45; total BOOK messages x1.0413 on two ETH bindings;
+observed core CPU .0600 -> .0627 vCPU. These are NOT whole-stack or TS acceptance.
+
+## Prerequisites and post-core gate
 
 1. TS owner completes DR01-DR08 and broker delta, with new DL findings consolidated
    here before a single release. Do not substitute prior E09 or synthetic tests.
-2. IDR-062 candidate performance remains unmeasured: paired baseline/candidate
-   on identical approved provider capture/load; change only top materialization.
-   Record BOOK_SNAPSHOT messages/s and bytes/s, Kafka input/lag, and CPU/RSS/throttle
-   for core/query/stream/projector plus whole DL stack. <=5 steady-state vCPU is a
-   measured budget, not authority to lower existing container quotas. TS measures
-   its writer CPU. Keep all quotas, buffers and freshness gates unchanged.
-3. TS coherence >=39/40 sustained, with sample counts and rejected exact-view
-   reasons; report BOOK p95 versus existing 2000 ms package cap and paired baseline.
-   Keep exact book-top/QUOTE equality. Independent channels may still diverge;
-   faster materialization alone is not proof this gate passes.
+2. Complete the IDR-062 offline paired report using the existing deployed and rc2
+   Rust images, identical captured bytes/configuration and resource limits. Core
+   CPU/RSS and BOOK_SNAPSHOT message/byte rates are measured; downstream ratios
+   are estimates only. Offline core replay does NOT measure live Kafka lag or
+   whole-stack CPU, and is not a TS coherence certificate. Freeze the paired report
+   hash before runtime approval; no image rebuild for measurement-only changes.
+3. TS coherence is explicitly a **POST-CORE-ROLLOUT** gate, not a prerequisite that
+   the unchanged old core must pass. Claude measures 120 consecutive samples per
+   venue at 1 Hz after the three cores have caught up. Require >=117/120 per venue
+   (39/40 = 97.5%); do not pool venues, drop refused/time-out samples, substitute
+   a later green window or relax exact book-top/QUOTE equality. Preserve exact-view
+   rejection reasons; report BOOK p95 against the existing 2000 ms package cap.
+   Independent channels can still diverge: offline improvement does not imply PASS.
 4. Owner approves exact runtime packet, role names/digests, maintenance/refusal
-   window and rollback. Handoff says 13 roles; read-only inventory finds **12**.
+   window and rollback. Roster is the reviewed **12** existing application roles;
+   the old handoff count of 13 was incorrect and is resolved by this inventory.
    No inferred thirteenth role, V1 replacement or state initializer recreation.
 
 ## Images and scope
@@ -85,13 +97,51 @@ Preflight ISR/quorum, cache generations/checkpoints, actual consumer quality,
 TLS expiry/SAN, image digests, supported bindings/cursors and per-role config diff.
 Freeze pre-action inventory and typed refusals; keep active images as named rollback.
 
-Update existing readers one replica at a time (Query then Stream); then the two
-projectors separately, three cores separately, ingestors one venue at a time, and
-BAR edge last. Between every role verify assignment, lag progression, first cache
-apply and actual eligible consumer view, not process health alone. Stop on loss of
-ownership, gap/generation/identity mismatch, internal refusal or unbounded lag.
-Do not roll the next role merely because Kafka ISR recovered. This is a bounded
-maintenance handoff, not a zero-downtime or independent-HA certificate.
+1. Roll **rust_core -> rust_core_2 -> rust_core_3**, one at a time, to the Rust
+   candidate above. Query/Stream/projectors/ingestors/BAR edge remain unchanged.
+   Between cores verify assignment, committed-offset progress, first cache apply
+   and actual consumer eligibility, not just ISR or process health. Stop on an
+   ownership, integrity, generation or identity violation.
+2. **Hold all remaining roles. Claude measures TS coherence** on these new core
+   outputs using the post-core gate above, preserving 120 samples for each venue.
+   Collect Kafka lag and CPU on the same interval. This is a bounded maintenance
+   handoff, not a zero-downtime or independent-HA certificate.
+3. Only after that receipt PASS: Query replicas individually -> Stream replicas
+   individually -> projectors individually -> ingestors individually -> BAR edge.
+   Recheck application recovery and affected eligible reads after each role. Keep
+   SDK/binding compatibility checks in the binding section; no blanket catalogue or C2 rerun.
+
+### Core-stage rollback conditions (freeze before action)
+
+- Coherence **<117/120 on either venue**; four failures already make the window
+  impossible to pass and allow an early stop. A read error/timeout counts as failed,
+  not as a missing sample. An incomplete window is NOT PASS; hold or rollback,
+  never resume the other roles without a complete accepted receipt.
+- Exceed the CPU budget: the existing **5.0 steady-state vCPU whole-DL serving-stack
+  budget** remains the ceiling (`config/v2/kn-v220-candidate-budget.json`, cpu
+  denominator and production_acceptance: prior measured 4.6687 vCPU / 374.4 s,
+  not a measurement of this new candidate). Scope: Kafka/Redis, ingestors, cores, projectors, Query,
+  Stream and BAR edge; TS writer reported separately. Record the exact accounting
+  roster before action. Sample cgroup CPU counters every 10 s; two successive
+  non-overlapping 30 s means >5.0 trigger rollback. If a tighter measured operational
+  envelope is approved before action, use that lower frozen value. Never infer
+  whole-stack consumption from the offline two-binding core result. If the old
+  stack already exceeds this ceiling during preflight, HOLD before rollout rather
+  than attribute it to the candidate. No quota change is authorized here.
+- Kafka backlog rises on **six consecutive 10 s readings** (five strictly increasing
+  intervals) for any affected raw/core group or canonical/projector group. Record
+  per-partition high watermark minus committed offset, not message-age substitutes.
+  Unknown/missing offsets, counter reset or a rebalance invalidates the measurement:
+  HOLD and establish ownership first, not reinterpret an unknown lag as zero.
+- Any new loss/duplicate/integrity/fencing failure or OOM also stops this packet.
+
+On a triggered gate, stop further roles and restore every core already changed,
+reverse rollout order, to
+`sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023`
+with its recorded original config/mounts. Do not reset Kafka offsets/cache or roll
+unmodified readers. Confirm catch-up and consumer usable data on return. Retain the
+failed interval and rollback receipt; a retry needs an explained cause, not a
+fresh window chosen to replace failed evidence.
 
 No shared-runtime load or restart in Phase B. Phase C inherits unchanged evidence;
 run only packaging/affected protocol and consumer gates. Do not repeat whole C2
@@ -114,9 +164,9 @@ D3 remains separate: no independent ingestor/bar-edge/Redis/host HA claim.
 After runtime acceptance and explicit approval: feature -> dev CI -> main release,
 immutable tag/assets with source/image/config/evidence and supported SDK/binding
 versions. Never mutate v2.2.2. These rc2 images are not published stable artifacts.
-Remove only the two superseded rc1 image digests after replacement checks and no
-container reference; retain active, candidate and named rollback. Test containers
-use --rm; remove this task's build target after preserving logs. No broad prune,
+The two superseded rc1 images and Phase B build target have already been removed;
+do not repeat that cleanup. Retain active, candidate and named rollback images.
+New disposable tests use --rm and are removed after their evidence is recorded. No broad prune,
 shared cache cleanup, volume/network deletion or canonical/user-hunk modification.
 Record disk pre/post and running-role image/start/restart comparison. Feature
 worktree remains active until reviewed/merged; no worktree cleanup before that.

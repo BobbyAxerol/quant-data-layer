@@ -69241,3 +69241,36 @@ writes, not a reclaimed-byte claim). No image built or deleted; active/rc2/rollb
 retained. Shared cache inventoried 16.83 GB, not broad-pruned. Canonical main5bf5cd5
 and owner hunk untouched; published v2.2.2 unchanged. No push/merge, no TS edit.
 Next separate docs slice: core-first Phase C packet, post-core coherence gate.
+
+
+##### Phase C core-first packet amendment (Codex, 2026-10-07)
+
+Status: PACKET_UPDATED_RUNTIME_HELD. Measurement slice commit 5a261e0; no runtime
+approval or production certificate inferred. Guide section 18.13 unchanged;
+[packet](upgrade/evidence/p184-dl-phase-c-packet.md) now supersedes the prior
+pre-rollout coherence prerequisite and reader-first ordering. Approved user scope:
+three cores first -> Claude TS coherence -> remaining existing roles only.
+
+Post-core gate: 120 consecutive 1 Hz samples EACH venue, >=117 usable coherent
+samples EACH (39/40). Failures/timeouts remain in denominator; 4 failures permit
+early rollback. No exact top equality, freshness or risk contract relaxation.
+Incomplete measurement cannot open the remaining roles. CPU keeps the existing
+whole-stack 5.0 steady-state vCPU budget and accounting denominator, not the offline
+.0627 vCPU two-binding result. Proposed executable stop definition frozen in packet:
+two consecutive non-overlapping 30 s CPU means over budget; lag five consecutive
+increases over six 10 s readings. Missing offset/ownership is HOLD, never zero lag.
+These are packet operational observation rules, not claims they have run or new
+freshness/quality thresholds. Preflight already over budget means HOLD before
+changing any core. Stop on OOM/integrity/fencing failure as well.
+
+Rollback: all cores actually changed, reverse order, exact prior 658a9570...54023
+and per-role original config/mounts; no offsets reset, shared data delete, or
+reader rollback when readers never changed. Confirm recovery to consumer-usable,
+not just broker health. All other roles wait for Claude's complete accepted receipt.
+Reader/ingestor/projector/BAR digests and r22 V3 binding fields remain unchanged.
+Roster correction resolved: exactly 12 application roles, no invented 13th.
+Validation: packet diff, exact role/digest roster unchanged versus 5eb453d,
+117/120 arithmetic, linked paired report present, no stale reader-first sequence.
+No push/merge, no new test resources/images, no further runtime action. Cleanup
+and canonical/runtime/rollback inventory remain as recorded in paired slice above.
+Next permitted action is owner/Claude review; STOP and wait.
