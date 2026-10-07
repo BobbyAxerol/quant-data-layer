@@ -68973,3 +68973,28 @@ cleanup delta. Evidence final-scoped-cleanup.json. Prior testclients/buildcontex
 already cleaned; active/rollback/preparedimages unchanged. This is artifact
 housekeeping still open, not a market-data correctness or release gate claim.
 Known unstaged owner whitespace atline13073 is preserved; stagedclosure diffclean.
+
+#### P18.4 Phase A Data Layer Closure Fixes (2026-10-07, Claude)
+
+Branch `fix/p184-dl-closure` from dev f012cac; source and local tests only - no image, role, binding mount,
+Kafka, Redis or ledger change. Scope agreed with the owner: fix inside DL, keep every cross-system interface
+versioned and additive (owner rule 2026-10-07).
+
+- IDR-040 fix 1: a Binance REST refresh is a quiet proof only when `lastUpdateId <= last_sequence` of the
+  stream-applied book; a snapshot ahead of the stream returns the new outcome `REST_AHEAD_OF_STREAM` (no
+  publication, no re-stamp, logged with the other frame refusals). Rust qdl-core + qdl-realtime-core 98/0,
+  including `binance_rest_refresh_ahead_of_stream_does_not_materialize`. Fix 2 (heartbeat quiet proof) needs a new
+  quality field and is held for the owner decision on tolerant SDK response readers (qdl_sdk models are
+  extra=forbid, so any new response field breaks deployed consumers).
+- IDR-002: consumer route binding V3 = V2 + `request_policies` (requirement_id, event_recency_policy,
+  max_session_liveness_ms) rendered from the consumer manifest; products and the universal manifest digest are
+  unchanged (no manifest or JWT revision bump); V3 requires the manifest revision and covers every product once;
+  the sandbox extension carries policies. The TS reader (SDK 2.1.0) accepts V1/V2/V3 and is deployed first.
+- IDR-029: quota exhaustion is logged once per consumer and minute (`qdl_consumer_quota_exhausted`, count/limit).
+- SPOF: `docs/runbooks/kn-single-points-of-failure.md` - dependency map, effect, recovery and stated limits for
+  both ingestors, bar edge and stable_redis; no new service.
+Tests: full unittest discover 2512 run - 7 errors were mount-only (`/app/logs` not writable, `noexec` /tmp) and
+pass with correct mounts (17/17); universal release + sandbox 21/0; quota 14/0. The full Rust workspace needs the
+builder's system libraries (openssl) and is compiled by the release image build.
+Next: one Rust + one Python image from this commit (digests recorded) for the Phase C packet; closure table and
+owner decisions D1-D3 handed over in Phase B.

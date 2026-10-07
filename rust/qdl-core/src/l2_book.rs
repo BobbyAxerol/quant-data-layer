@@ -422,6 +422,9 @@ pub enum BookOutcome {
     DeltaUnsupported,
     ResyncRequested,
     Disconnected,
+    /// A periodic REST snapshot is ahead of the stream-applied book: it is not a quiet proof of the current
+    /// book (IDR-040), so nothing is published or re-stamped; the stream deltas catch up on their own.
+    RestAheadOfStream,
 }
 
 impl BookOutcome {
@@ -444,6 +447,7 @@ impl BookOutcome {
             Self::DeltaUnsupported => "DELTA_UNSUPPORTED",
             Self::ResyncRequested => "RESYNC_REQUESTED",
             Self::Disconnected => "DISCONNECTED",
+            Self::RestAheadOfStream => "REST_AHEAD_OF_STREAM",
         }
     }
 }

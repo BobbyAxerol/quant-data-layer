@@ -1211,6 +1211,7 @@ impl RealtimeCore {
                 BookOutcome::IgnoredStaleGeneration
                     | BookOutcome::SnapshotSourceRejected
                     | BookOutcome::IdentityMismatch
+                    | BookOutcome::RestAheadOfStream
             ) {
                 eprintln!(
                     "{{\"event\":\"qdl_realtime_core_l2_frame_refused\",\"binding\":\"{}\",\
@@ -2606,6 +2607,63 @@ mod tests {
         assert_eq!(book.native_sequence, "102");
         assert_eq!(book.levels[0].price.as_ref().unwrap().source_text, "60000");
         assert_ne!(initial_snapshot.event_id, snapshot.event_id);
+    }
+
+    #[test]
+    fn binance_rest_refresh_ahead_of_stream_does_not_materialize() {
+        // IDR-040: the venue is at 110 but the stream-applied book is at 102; a due REST refresh must not
+        // re-stamp the older book as current.
+        let binding = binance_book_binding();
+        let mut core = core(binding.clone(), true);
+        let _ = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+                    1,
+                ),
+                10,
+            )
+            .unwrap();
+        let _ = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                11,
+            )
+            .unwrap();
+        let _ = core
+            .process(
+                raw(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":102,"u":102,"pu":101,"E":2000,"b":[["60000","3"]],"a":[]}"#,
+                    1,
+                ),
+                12,
+            )
+            .unwrap();
+        let ahead = core
+            .process(
+                with_transport(
+                    raw(
+                        &binding,
+                        br#"{"lastUpdateId":110,"E":31001,"bids":[["1","1"]],"asks":[["2","1"]]}"#,
+                        1,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                13,
+            )
+            .unwrap();
+        assert!(ahead.canonical.is_empty(), "a REST snapshot ahead of the stream is no quiet proof");
+        assert!(ahead.quarantines.is_empty());
+        assert_eq!(ahead.filtered_outcome, Some("REST_AHEAD_OF_STREAM"));
     }
 
     #[test]

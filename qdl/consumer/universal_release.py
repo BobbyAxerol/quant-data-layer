@@ -36,6 +36,10 @@ _POLICY_SCHEMA = "qdl.v2.universal-release-policy.v1"
 _COVERAGE_SCHEMA = "qdl.v2.universal-release-coverage.v1"
 _CONSUMER_ROUTE_BINDING_SCHEMA_V1 = "qdl.v2.consumer-route-binding.v1"
 _CONSUMER_ROUTE_BINDING_SCHEMA_V2 = "qdl.v2.consumer-route-binding.v2"
+# v3 = v2 + request_policies: the event-recency entitlement of every product, sealed so a consumer never
+# configures it independently of the consumer manifest (IDR-002). Additive: v1/v2 stay readable.
+_CONSUMER_ROUTE_BINDING_SCHEMA_V3 = "qdl.v2.consumer-route-binding.v3"
+_EVENT_RECENCY_POLICIES = frozenset({"UNSPECIFIED", "BLOCK", "PAUSE", "OBSERVE"})
 _V2_VENUES = frozenset({"BINANCE", "OKX"})
 _REALTIME_FEEDS = frozenset({DemandFeed.TRADE, DemandFeed.QUOTE, DemandFeed.BAR})
 _BOOK_FEEDS = frozenset({DemandFeed.BOOK_SNAPSHOT, DemandFeed.BOOK_DELTA})
@@ -830,6 +834,49 @@ class UniversalReleaseManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsumerRequestPolicy:
+    """The request entitlement a consumer must send for one sealed product (consumer manifest requirement).
+
+    `event_recency_policy` None means the manifest leaves it unset (strict event recency); the Data Layer admits a
+    request only when both fields equal the manifest (qdl/consumer/manifest.py requirement_allowed).
+    """
+
+    requirement_id: str
+    event_recency_policy: str | None
+    max_session_liveness_ms: int | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "requirement_id", _sha256(self.requirement_id, "request policy requirement_id"))
+        if self.event_recency_policy is not None and self.event_recency_policy not in _EVENT_RECENCY_POLICIES:
+            raise ValueError("request policy event recency is invalid")
+        if self.max_session_liveness_ms is not None:
+            _positive_int(self.max_session_liveness_ms, "request policy max_session_liveness_ms")
+
+    def canonical_mapping(self) -> dict[str, object]:
+        return {
+            "requirement_id": self.requirement_id,
+            "event_recency_policy": self.event_recency_policy,
+            "max_session_liveness_ms": self.max_session_liveness_ms,
+        }
+
+    @classmethod
+    def from_canonical_mapping(cls, value: object) -> "ConsumerRequestPolicy":
+        if not isinstance(value, Mapping) or set(value) != {
+            "requirement_id", "event_recency_policy", "max_session_liveness_ms"
+        }:
+            raise ValueError("consumer route binding request policy fields are invalid")
+        recency = value["event_recency_policy"]
+        if recency is not None and not isinstance(recency, str):
+            raise ValueError("request policy event recency is invalid")
+        return cls(
+            requirement_id=str(value["requirement_id"]),
+            event_recency_policy=recency,
+            max_session_liveness_ms=_optional_positive_int(
+                value["max_session_liveness_ms"], "request policy max_session_liveness_ms"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ConsumerRouteBinding:
     """One sealed universal-release slice for exactly one workload consumer."""
 
@@ -849,6 +896,8 @@ class ConsumerRouteBinding:
     # binding seals the server-side consumer-manifest revision as well, so a
     # JWT minted for another revision fails before any data-plane connection.
     consumer_manifest_revision: int | None = None
+    # v3: exactly one request policy per product (IDR-002); empty keeps the v1/v2 shape.
+    request_policies: tuple[ConsumerRequestPolicy, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "consumer_id", _text(self.consumer_id, "binding consumer_id"))
@@ -886,6 +935,14 @@ class ConsumerRouteBinding:
         sorted_products = tuple(sorted(self.products, key=lambda item: item.requirement_id))
         if self.products != sorted_products:
             raise ValueError("consumer route binding products are not canonical")
+        if self.request_policies:
+            if self.consumer_manifest_revision is None:
+                raise ValueError("consumer route binding v3 needs the consumer manifest revision")
+            policies = tuple(sorted(self.request_policies, key=lambda item: item.requirement_id))
+            if self.request_policies != policies:
+                raise ValueError("consumer route binding request policies are not canonical")
+            if [item.requirement_id for item in policies] != [item.requirement_id for item in self.products]:
+                raise ValueError("consumer route binding request policies must cover every product exactly once")
         expected = _digest(self._canonical_without_digest())
         if self.binding_sha256 is not None and _sha256(self.binding_sha256, "binding_sha256") != expected:
             raise ValueError("consumer route binding checksum differs")
@@ -894,7 +951,9 @@ class ConsumerRouteBinding:
     def _canonical_without_digest(self) -> dict[str, object]:
         canonical = {
             "schema": (
-                _CONSUMER_ROUTE_BINDING_SCHEMA_V2
+                _CONSUMER_ROUTE_BINDING_SCHEMA_V3
+                if self.request_policies
+                else _CONSUMER_ROUTE_BINDING_SCHEMA_V2
                 if self.consumer_manifest_revision is not None
                 else _CONSUMER_ROUTE_BINDING_SCHEMA_V1
             ),
@@ -915,6 +974,8 @@ class ConsumerRouteBinding:
         }
         if self.consumer_manifest_revision is not None:
             canonical["consumer_manifest_revision"] = self.consumer_manifest_revision
+        if self.request_policies:
+            canonical["request_policies"] = [item.canonical_mapping() for item in self.request_policies]
         return canonical
 
     def canonical_mapping(self) -> dict[str, object]:
@@ -964,8 +1025,10 @@ class ConsumerRouteBinding:
         if schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V1:
             expected = base_expected
             consumer_manifest_revision = None
-        elif schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V2:
+        elif schema in {_CONSUMER_ROUTE_BINDING_SCHEMA_V2, _CONSUMER_ROUTE_BINDING_SCHEMA_V3}:
             expected = base_expected | {"consumer_manifest_revision"}
+            if schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V3:
+                expected |= {"request_policies"}
             consumer_manifest_revision = _positive_int(
                 value.get("consumer_manifest_revision"),
                 "consumer route binding consumer manifest revision",
@@ -1002,6 +1065,12 @@ class ConsumerRouteBinding:
             "execution_grade", "route", "fallback", "fallback_rule_id",
             "blocked_reason", "gap_policy",
         }
+        policies_raw = value.get("request_policies", [])
+        if not isinstance(policies_raw, list):
+            raise ValueError("consumer route binding request policies must be a list")
+        policies = tuple(ConsumerRequestPolicy.from_canonical_mapping(item) for item in policies_raw)
+        if schema == _CONSUMER_ROUTE_BINDING_SCHEMA_V3 and not policies:
+            raise ValueError("consumer route binding v3 needs request policies")
         products = []
         for raw in products_raw:
             if not isinstance(raw, Mapping) or set(raw) != product_expected:
@@ -1060,6 +1129,7 @@ class ConsumerRouteBinding:
             products=tuple(products),
             binding_sha256=str(value["binding_sha256"]),
             consumer_manifest_revision=consumer_manifest_revision,
+            request_policies=policies,
         )
 
 

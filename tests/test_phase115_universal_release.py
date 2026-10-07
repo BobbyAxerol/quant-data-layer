@@ -359,6 +359,59 @@ class UniversalReleaseManifestTests(unittest.TestCase):
         self.assertEqual(legacy.canonical_mapping()["schema"], "qdl.v2.consumer-route-binding.v1")
         self.assertIsNone(legacy.consumer_manifest_revision)
 
+    def test_v3_binding_seals_request_policy_and_keeps_v1_v2_bytes(self):
+        """IDR-002: v3 carries the manifest request entitlement per product; v1/v2 are unchanged."""
+        from dataclasses import replace
+
+        from qdl.consumer.universal_release import ConsumerRequestPolicy
+
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        v2 = ConsumerRouteBinding.from_manifest(manifest, consumer_id=consumer_id, consumer_manifest_revision=7)
+        policies = tuple(
+            ConsumerRequestPolicy(item.requirement_id, "OBSERVE" if index % 2 else None, 45000 if index % 2 else None)
+            for index, item in enumerate(v2.products)
+        )
+        v3 = replace(v2, binding_sha256=None, request_policies=policies)
+        mapping = v3.canonical_mapping()
+        self.assertEqual(mapping["schema"], "qdl.v2.consumer-route-binding.v3")
+        self.assertEqual(len(mapping["request_policies"]), len(v2.products))
+        self.assertNotEqual(v3.binding_sha256, v2.binding_sha256)
+        self.assertEqual(v3.universal_manifest_sha256, v2.universal_manifest_sha256)  # manifest untouched
+        parsed = ConsumerRouteBinding.from_canonical_mapping(mapping)
+        self.assertEqual(parsed.request_policies, policies)
+        self.assertEqual(parsed.canonical_mapping(), mapping)
+        # v1/v2 bytes do not change with v3 support.
+        self.assertNotIn("request_policies", v2.canonical_mapping())
+        self.assertEqual(ConsumerRouteBinding.from_canonical_mapping(v2.canonical_mapping()).request_policies, ())
+
+    def test_v3_binding_rejects_partial_unrevisioned_or_invalid_policies(self):
+        from dataclasses import replace
+
+        from qdl.consumer.universal_release import ConsumerRequestPolicy
+
+        manifest, *_ = _manifest()
+        consumer_id = manifest.products[0].consumer_id
+        v2 = ConsumerRouteBinding.from_manifest(manifest, consumer_id=consumer_id, consumer_manifest_revision=7)
+        full = tuple(ConsumerRequestPolicy(item.requirement_id, "BLOCK", None) for item in v2.products)
+        if len(full) > 1:
+            with self.assertRaisesRegex(ValueError, "cover every product"):
+                replace(v2, binding_sha256=None, request_policies=full[1:])
+        with self.assertRaisesRegex(ValueError, "manifest revision"):
+            replace(v2, binding_sha256=None, consumer_manifest_revision=None, request_policies=full)
+        with self.assertRaisesRegex(ValueError, "event recency"):
+            ConsumerRequestPolicy(v2.products[0].requirement_id, "LOOSE", None)
+        with self.assertRaises(ValueError):
+            ConsumerRequestPolicy(v2.products[0].requirement_id, "OBSERVE", 0)
+        mapping = replace(v2, binding_sha256=None, request_policies=full).canonical_mapping()
+        mapping["request_policies"] = []
+        with self.assertRaises(ValueError):
+            ConsumerRouteBinding.from_canonical_mapping(mapping)
+        tampered = replace(v2, binding_sha256=None, request_policies=full).canonical_mapping()
+        tampered["request_policies"][0]["event_recency_policy"] = "OBSERVE"
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            ConsumerRouteBinding.from_canonical_mapping(tampered)
+
     def test_consumer_route_binding_rejects_unknown_tampered_and_duplicate_routes(self):
         manifest, *_ = _manifest()
         with self.assertRaisesRegex(ValueError, "no admitted product"):
