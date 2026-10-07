@@ -69027,12 +69027,12 @@ sha256:acf5fd06b6a3f8c7d1540180cf8f429bfef89af0d479fc432b205993cf353e96. They ar
 | BAR 15m/30m gaps | KN cache keeps by open time (`rust/qdl-projector/src/expiry.rs`) | read-only gap diagnostic on the KN cache for the affected bindings | 0 gaps reported, or a defect row |
 | IDR-039 - mixed revisions | 5 revisions across 13 roles (v2.2.2 certificate) | one commit -> one Rust + one Python image | Phase C packet recreates the 13 non-infrastructure roles from two digests, certified once |
 | SPOF | runbook `docs/runbooks/kn-single-points-of-failure.md` | recovery-time per role (optional this release) | measured or stated as not measured in the certificate |
+| IDR-062 - BOOK top lags QUOTE | confirmed by code: the core materializes BOOK_SNAPSHOT only on a timer (`rust/qdl-realtime-core/src/lib.rs:1392-1399`, interval `qdl/runtime/execution_l2.py:23` = 1000 ms). TS measured on the TS cache, 120 samples/venue: book age p50 ~730 ms p95 ~1.2 s vs QUOTE p50 ~200 ms; 18-21% of reads the quote crosses the book, so TS package admission (exact book top == quote, a kept safety rule) refuses | also materialize when best bid/ask changes, bounded by a minimum interval (keep the 1000 ms timer as the quiet floor); same feed and contract; tests for top-change, floor and quiet cases | candidate measurement, one variable at a time: BOOK_SNAPSHOT msg/s, Kafka, rust_core/query/stream CPU (DL budget <= 5 vcore) and the TS writer CPU; TS coherence probe >= 39/40 sustained and book age p95 well under the 2000 ms package cap |
 | Consumer gate | tooling hardcodes `query_v2_1/2` | parameterise replica names for `query_kn_1/2`; measure event -> TS apply, usable/refusal by reason | numbers recorded per the four latency quantities rule |
 
-Not Data Layer (stays TS): IDR-062 (TS package rule requires book top == quote exactly; mitigated by the TS writer
-change, fixed in TS), POV volume source, reservations, writer CPU.
+Not Data Layer (stays TS): POV volume source, reservations, writer CPU.
 
-Order: Codex implements D2 and the diagnostics on this branch (same worktree
+Order: Codex implements D2, the IDR-062 top-change materialization and the diagnostics on this branch (same worktree
 `/home/bobby/.worktrees/data-layer-p184-closure`), local CI, one commit per tested slice with this journal; then
 rebuild both images from that commit and write the Phase C packet (roles, digests, rollback, what is not touched).
 Phase C runtime changes, push and merge need the owner's approval per packet. CLAUDE.md section 4 couplings apply
