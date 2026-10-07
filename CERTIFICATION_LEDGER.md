@@ -2102,3 +2102,26 @@ Published with `scripts/publish_github_release.py` against a fine-grained token
 held in a 0600 file outside the repository; the token was never printed and the
 tool refused to replace an existing release. `gh` is not installed on this host,
 which is why the script exists.
+
+
+## P18.4 DL closure candidate - 2026-10-07 (not certified)
+
+Status: SOURCE_CANDIDATE_READY_MEASUREMENT_PENDING. This entry does not replace
+previous immutable certificates or certify a runtime rollout. Published v2.2.2
+provenance is in upgrade/evidence/releases/v2.2.2/ and the Unified Plan publication
+closure; historical entries above are not a current runtime inventory.
+
+Candidate source 43bbcf0209f49e9cc1af6802af8f8a207a53ee3c, branch
+fix/p184-dl-closure. Rust 69e3b2b214331...; Python 77682eea5054...; exact
+digests/roles/rollback in [Phase C packet](upgrade/evidence/p184-dl-phase-c-packet.md).
+D2 SDK 2.1.0 response tolerance and IDR-062 top-change materialization are locally
+tested. Rust 102 PASS/1 existing ignored isolated-Redis test; SDK suites 28 and
+91 PASS; tools 8 PASS; packaged Python 29 PASS (overlapping source checks).
+Read-only BAR diagnostic: 20 retained 15m/30m windows, 214752 rows, zero gaps; not
+a proof beyond retained bounds. No shared mutation or latency improvement claim.
+
+External evidence: ~/.local/state/qdl-v2/p184-phaseb-20261007/evidence/phase-b-receipt.json.
+Inherited Phase A 4eb08dc, no catalogue/C2 rerun. Release waits for real/capture
+candidate resource/coherence evidence, TS DR01-DR08 and broker delta, and owner
+approval of the actual 12-role packet (handoff listed 13). D1/D3 remain deferred.
+Only source/docs, two candidate images and scoped test cleanup completed.

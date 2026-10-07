@@ -69124,3 +69124,58 @@ Real/capture candidate BOOK rate, Kafka/whole-stack CPU and TS coherence >=39/40
 remain unmeasured; do not infer those gates from synthetic source tests. Phase C
 remains held pending these measurements and TS DR01-DR08/broker delta. No role
 restart, shared state write, resource quota change, push or merge.
+
+
+##### Phase B candidate artifact and Phase C handoff (Codex, 2026-10-07)
+
+Status: SOURCE_CANDIDATE_READY_MEASUREMENT_PENDING. Not production-certified,
+not released, no Phase C execution. Source slices: eb7c649 (D2), f8f3770
+(probes/BAR), 43bbcf0 (L2); same application SHA for both completed images:
+
+- Rust qdl-v2-rust:2.2.3-rc2-43bbcf0 = sha256:69e3b2b214331a7ebb6a110dd8159c899bbbd6439aaf87293c8c68d145e3713d.
+- Python qdl-v2-python:2.2.3-rc2-43bbcf0 = sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f.
+
+Canonical Dockerfiles, full native build includes 12 binaries, four runtime native
+role binaries have resolved shared libraries. Python dependency receipt PASS: 48
+locked packages, 5954 hashed files; ten packaged source files match candidate.
+Initial Python build correctly refused tag-only dependency input; rebuilt with
+immutable acf5fd06 digest, without bypassing dependency verification. Packaged
+Python affected tests 29 PASS / 0 fail / 0 skip. Source counts above remain separate
+(overlap with packaged tests; do not sum as unique coverage). SDK wheel 2.1.0 SHA256
+3ed58182f3b6a077e21b218589c33b0a1289eb5cd1609f4910200aae6a138c47, not published.
+
+Binding compatibility check found source renderer r27 differs from the deployed
+writer's r22 in inventory/release/universal hash despite identical 60 products.
+DO NOT mount generic r27 output. Prepared r22 V3 by canonical dataclass constructor
+with identical products and manifest-10 policies; only schema, binding checksum
+and request_policies change. Old V2 remains untouched. An initial constructor
+probe retained the old checksum, then an empty checksum; both correctly rejected.
+Using documented None builds a NEW checksum, never overwrites old evidence.
+V3 binding hash a7a4380581a923223bf40a067fd4f718c2ccf0b23705abf216abc38f86de84bd;
+file hash 4bdaa49410190948a8d15ad07ffae5bd73ccb48cc327fd2936b36b815daba5dc.
+Universal b4e43688...9afe, release r22, JWT/manifest 10 and 60 products unchanged.
+No binding was mounted; no TS source/image/config was edited.
+
+Draft exact-role packet: [P18.4 Phase C](upgrade/evidence/p184-dl-phase-c-packet.md).
+It preserves the observed 12-role roster (not 13), all rollback digests, config
+fingerprints, TLS/state and source/group ownership. Owner must resolve roster and
+approve packet after TS DR01-DR08/broker delta and the unmeasured IDR-062 real/capture
+resource/coherence gates. No current improvement in consumer latency, <=5 vCPU
+whole-stack usage or uninterrupted execution eligibility is claimed. D1/D3 remain
+explicit owner deferrals, not secretly implemented.
+
+External receipt: p184-phaseb-20261007/evidence/phase-b-receipt.json SHA256 7ab598b514087c22d46645691d8e3632eec59ff8f13b05d3f43a4a03d4900ecf.
+Runtime post-check: all 19 inventoried DL containers (17 running, 2 prior stopped
+initializers) retain image/start/restart values; zero scoped test containers remain.
+Cleanup: removed exactly rc1 digests 3566a6e3... and acf5fd06... after zero-reference
+checks; removed the task's 695 MiB Cargo target (root-owned build files required
+a disposable cleanup container bound only to that directory). Active digests and
+named rollbacks untouched; no volume/network/shared data deletion. Free disk
+100953247744 -> 101003780096 bytes; shared-host delta is NOT
+a precise attribution of bytes reclaimed. BuildKit cache was inventoried, not
+broad-pruned: ownership-safe exact cache cleanup remains for Phase C closure.
+Retain new rc2 images specifically for this active handoff, not as indefinite
+archive. Canonical /home/bobby/data_layer main5bf5cd5 and owner plan hunks untouched;
+only active feature worktree modified. Stable published line remains v2.2.2.
+No push/merge. Next: Claude/owner review this packet and pending measurements,
+complete TS gates, then approve Phase C; do not silently promote this receipt.
