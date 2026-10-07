@@ -69609,3 +69609,32 @@ Cleanup pairedcontainers/network/capture/TLS and buildcontext complete; full dis
 imagecache inventory and retainedactive/rollback/candidate set recorded in report.
 No push/merge; no changes to Claude TSworktree. Source/app image provenance remains
 c33c90f; this slice only changes diagnostic/test/report tooling.
+
+
+### DR07 owner-approved core-only trial - 2026-10-07
+
+Owner explicitly approved changing gate order to trial the candidate. This
+supersedes ONLY the old-runtime<=5vCPU pre-action prerequisite for this bounded
+trial, not the final5vCPU release gate, not DR/broker release evidence, not TS
+source integration, and not permission to roll the other9application roles.
+Exact sequence rust_core -> rust_core_2 -> rust_core_3. Candidate
+sha256:0d8da150820ed684bda084e92f714537cb40bd81e2e3a6bc93fa9a4b33538411;
+rollback sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023.
+Render private compose from current inspect using existing kn_production_packet
+helpers; preserve config/TLS/state/offsets/aliases/caps, only image changes.
+Readiness is actual partition progress and usable consumer data, not process-up.
+
+Freeze before first action: trial safety CPU boundary=5.978048vCPU (already
+measured old-runtime p95), two consecutive non-overlapping30s whole-stack means
+above it stop further steps and roll changed roles back in reverse order.
+This boundary governs transitional safety only; after convergence300s mean<=5
+remains required for promotion. OOM/restart loop, integrity/ownership failure,
+missing ISR/quorum, five consecutive10s per-partition lag increases, or failure
+to recover application progress within120s also stop/rollback. A failed final
+CPU gate or post-core TS coherence<117/120 on either venue means trialFAIL and
+rollback, not changing limits to keep the candidate. Preserve failed samples.
+Consumer QUOTE/BOOK freshness/policies remain unchanged; observations use actual
+Redis read path without shared writes/orders/subscriptions. Coherence result is
+review input for Claude; no replacement of complete TS DR01-DR08 acceptance.
+Observer begins before first lifecycle call; only this frozen scope is approved.
+A successful trial does not authorize release or rolling remaining roles.
