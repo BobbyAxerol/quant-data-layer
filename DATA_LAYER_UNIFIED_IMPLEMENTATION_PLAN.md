@@ -69538,3 +69538,20 @@ Post-test formatting: rustfmt applied only to the new oracle test and standalone
 probe; the optimized production block is unchanged. Evidence hashes retain the
 measured pre-format source/harness, not silently rewritten. No new timing claim
 from formatting. New benchmark script parsed successfully; diff --check clean.
+
+DR07 TS trace handoff recorded2026-10-07: commit19d77e2 on
+codex/dr07-reset-anchor, /home/bobby/.worktrees/ts-codex-dr07, follows reset58287fc.
+Claude's Paper worktree untouched. BOOK/MARK writer opt-in fixed ring records real
+Redis reply monotonic clock, generation/native sequence and UNKNOWN lost-reply
+outcome; no PUBSUB-as-ACK, default OFF, no hot-path I/O/logging. 66 focused /725
+affected total PASS,0fail/skip,real isolated Redis; do not sum overlapping counts.
+Receipt dr07-hardening-20261007/ack-trace/source-test-receipt.json sha256
+f5af8b5beded6fcc484eefa106db8a9724d10eb8eb46113fffaabb5b6ffd286c.
+Five rounds of300calls: enabled diagnostic delta0.040279ms/apply (same-host),
+not live delivery latency. Canonical commit/SDK receive/other feeds still unmeasured.
+DB15zero, exact test containers/network removed; disk91,342,974,976->91,437,936,640
+bytes, no attributable whole-host reclaim. No builds/prune/runtime changes.
+DL core63238bf and TS19d77e2 are source handoffs only; Phase C HOLD. Do not use
+rc2 to claim new core bytes or deployed TS trace. No push/merge or active quota,
+freshness/manifest changes; next gate is affected source/candidate review and
+converged packet, not another catalogue/C2 debugging run.
