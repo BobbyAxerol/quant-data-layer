@@ -69095,3 +69095,32 @@ handoff's 13: 3 core + 2 ingestor + 2 projector + 2 stream + 2 query + 1 BAR edg
 Phase C must explicitly resolve this count; do not start an invented/thirteenth
 role, touch V1, or recreate state/TLS initializers to satisfy an incorrect count.
 No shared write/restart, test containers --rm, no TS edits or image cleanup yet.
+
+
+##### Phase B slice IDR-062 - bounded top-change materialization
+
+Status: IMPLEMENTED / TESTED_LOCALLY, not runtime-certified. Rust retains exact
+best bid/ask of the last emitted snapshot (not every delta); a changed top emits
+an additional snapshot after 100 ms of provider observation time. Suppressed
+changes remain pending. Unchanged top retains configured periodic cadence (1000 ms
+on execution bindings), evaluated only on verified provider transitions. No wall
+timer/heartbeat proof, timestamp rewrite, endpoint or binding/schema change.
+Comparison borrows exact decimal prices; allocations occur only when recording a
+published snapshot. Delta publication, event identity, sequence and generation
+fences stay intact. The floor bounds provider-time amplification, NOT wall-clock
+replay throughput or independent quote/book equality (channels are asynchronous).
+Tests: pinned Rust 1.82/OpenSSL builder, --locked, 2 CPU / 3 GiB; qdl-core 50 PASS,
+qdl-realtime-core 52 PASS, 0 fail, 1 existing ignored isolated-Redis admission test
+(outside changed BOOK path). New dual-venue tests: top/ask-only change, 99/100 ms
+floor, pending change on quantity-only delta, unchanged top at 999/1000 ms, exact
+delta/snapshot source sequence and timestamp, duplicate/gap rejection, 1000
+transitions yielding exactly 10 extra snapshots per provider second. Prior tests
+cover delayed replay, resync, lane and generation changes. Initial failures were
+test macro qualification and duplicate price rows in a new fixture; corrected
+without changing production validation. Offline builder cache was incomplete;
+locked crates downloaded in disposable builder, no runtime network credentials.
+Evidence rust-tests-final.log SHA256 fd9b80ac3b837485b41628b444de63b419edba8aa244c144ff262a3ff390f553.
+Real/capture candidate BOOK rate, Kafka/whole-stack CPU and TS coherence >=39/40
+remain unmeasured; do not infer those gates from synthetic source tests. Phase C
+remains held pending these measurements and TS DR01-DR08/broker delta. No role
+restart, shared state write, resource quota change, push or merge.

@@ -13,7 +13,7 @@ use qdl_core::canonical::{
     TradeContext, TradeFixture,
 };
 use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
-use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus};
+use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus, ExactDecimal};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
 use qdl_provider_envelope::validate as validate_raw;
@@ -396,11 +396,35 @@ struct MarkIndexPairState {
 
 pub const L2_RESNAPSHOT_REQUIRED_V1: &str = "L2_RESNAPSHOT_REQUIRED_V1";
 
+// Space hot snapshots by at least 100 ms of provider observation time.
+// Replay may run faster than wall time; it must retain deterministic output.
+// This is not a freshness proof: only verified provider transitions can emit.
+const L2_TOP_CHANGE_MIN_INTERVAL_MS: i64 = 100;
+
+struct L2SnapshotObservation {
+    observed_at_ms: i64,
+    generation: u64,
+    bid: Option<ExactDecimal>,
+    ask: Option<ExactDecimal>,
+}
+
+impl L2SnapshotObservation {
+    fn from_transition(transition: &BookTransition, observed_at_ms: i64) -> Option<Self> {
+        let view = transition.view.as_ref()?;
+        Some(Self {
+            observed_at_ms,
+            generation: transition.generation,
+            bid: view.bids.first().map(|level| level.price.clone()),
+            ask: view.asks.first().map(|level| level.price.clone()),
+        })
+    }
+}
+
 pub struct RealtimeCore {
     config: RealtimeCoreConfig,
     bindings: BTreeMap<String, CoreBinding>,
     l2_adapters: BTreeMap<String, L2BookAdapter>,
-    l2_snapshot_observed_at_ms: BTreeMap<String, i64>,
+    l2_snapshot_observations: BTreeMap<String, L2SnapshotObservation>,
     mark_index_pairs: BTreeMap<String, MarkIndexPairState>,
     partition_sequences: BTreeMap<String, u64>,
     /// The provider session that currently owns each L2 book, so a lane change
@@ -448,7 +472,7 @@ impl RealtimeCore {
             config,
             bindings,
             l2_adapters,
-            l2_snapshot_observed_at_ms: BTreeMap::new(),
+            l2_snapshot_observations: BTreeMap::new(),
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             l2_sessions: BTreeMap::new(),
@@ -1354,8 +1378,12 @@ impl RealtimeCore {
                 .insert(partition_key.clone(), canonical.partition_sequence);
             self.remember(canonical.event_id.clone());
             if let Some(observed_at_ms) = snapshot_observed_at_ms {
-                self.l2_snapshot_observed_at_ms
-                    .insert(binding_key.to_owned(), observed_at_ms);
+                if let Some(observation) =
+                    L2SnapshotObservation::from_transition(&transition, observed_at_ms)
+                {
+                    self.l2_snapshot_observations
+                        .insert(binding_key.to_owned(), observation);
+                }
             }
             durable.push(canonical_record(
                 &self.config.canonical_stream,
@@ -1390,10 +1418,21 @@ impl RealtimeCore {
         }
         let observed_at_ms = l2_observed_at_ms(transition, raw)?;
         let refresh_ms = i64::try_from(l2.materialized_snapshot_interval_ms()).ok()?;
+        let view = transition.view.as_ref()?;
+        let bid = view.bids.first().map(|level| &level.price);
+        let ask = view.asks.first().map(|level| &level.price);
         let due = self
-            .l2_snapshot_observed_at_ms
+            .l2_snapshot_observations
             .get(binding_key)
-            .map(|previous| observed_at_ms.saturating_sub(*previous) >= refresh_ms)
+            .map(|previous| {
+                let elapsed = observed_at_ms.saturating_sub(previous.observed_at_ms);
+                let top_changed = previous.bid.as_ref() != bid || previous.ask.as_ref() != ask;
+                // Compare against the last emitted snapshot, not the prior delta:
+                // a change suppressed by the floor must remain pending.
+                previous.generation != transition.generation
+                    || elapsed >= refresh_ms
+                    || (top_changed && elapsed >= L2_TOP_CHANGE_MIN_INTERVAL_MS)
+            })
             .unwrap_or(true);
         if !due {
             return None;
@@ -2661,7 +2700,10 @@ mod tests {
                 13,
             )
             .unwrap();
-        assert!(ahead.canonical.is_empty(), "a REST snapshot ahead of the stream is no quiet proof");
+        assert!(
+            ahead.canonical.is_empty(),
+            "a REST snapshot ahead of the stream is no quiet proof"
+        );
         assert!(ahead.quarantines.is_empty());
         assert_eq!(ahead.filtered_outcome, Some("REST_AHEAD_OF_STREAM"));
     }
@@ -2990,6 +3032,151 @@ mod tests {
             let view = core.l2_adapters[&binding.key()].core().view().unwrap();
             assert_eq!(view.generation, 8);
             assert!(view.last_sequence == 200 || view.last_sequence == 201);
+        }
+    }
+
+    fn hot_book_core(okx: bool) -> (RealtimeCore, CoreBinding) {
+        let mut binding = if okx {
+            okx_book_binding()
+        } else {
+            binance_book_binding()
+        };
+        binding
+            .l2
+            .as_mut()
+            .unwrap()
+            .materialized_snapshot_interval_ms = Some(1_000);
+        let mut engine = core(binding.clone(), true);
+        let initial = if okx {
+            raw(&binding, br#"{"arg":{"channel":"books","instId":"BTC-USDT-SWAP"},"action":"snapshot","data":[{"seqId":"101","prevSeqId":"-1","ts":"1000","bids":[["60000","1","0","1"]],"asks":[["60001","1","0","1"]]}]}"#, 1)
+        } else {
+            engine.process(raw(&binding, br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1000,"b":[["60000","1"]],"a":[]}"#, 1), 1).unwrap();
+            with_transport(raw(&binding, br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#, 1), TransportProtocol::Http)
+        };
+        assert_eq!(engine.process(initial, 2).unwrap().canonical.len(), 1);
+        (engine, binding)
+    }
+
+    fn hot_delta(
+        binding: &CoreBinding,
+        seq: u64,
+        stamp: i64,
+        bid: &str,
+        ask: &str,
+    ) -> RawProviderEnvelope {
+        let asks = if ask == "60001" {
+            serde_json::json!([[ask, "2", "0", "1"]])
+        } else {
+            serde_json::json!([["60001", "0", "0", "0"], [ask, "2", "0", "1"]])
+        };
+        let payload = if binding.venue == "OKX" {
+            serde_json::json!({"arg":{"channel":"books","instId":"BTC-USDT-SWAP"},"action":"update",
+                "data":[{"seqId":seq.to_string(),"prevSeqId":(seq-1).to_string(),"ts":stamp.to_string(),
+                    "bids":[[bid,"2","0","1"]],"asks":asks}]})
+        } else {
+            serde_json::json!({"s":"BTCUSDT","U":seq,"u":seq,"pu":seq-1,"E":stamp,
+                "b":[[bid,"2"]],"a":asks})
+        };
+        raw(binding, &serde_json::to_vec(&payload).unwrap(), 1)
+    }
+
+    #[test]
+    fn hot_top_change_coalesces_until_floor_on_both_venues() {
+        for okx in [false, true] {
+            let (mut engine, binding) = hot_book_core(okx);
+            // Changed top before the floor remains pending even if the next
+            // frame only changes quantity. Every original delta is still emitted.
+            for (seq, stamp, count) in [
+                (102, 1050, 1),
+                (103, 1099, 1),
+                (104, 1100, 2),
+                (105, 1200, 1),
+            ] {
+                let batch = engine
+                    .process(hot_delta(&binding, seq, stamp, "60000.5", "60002"), 3)
+                    .unwrap();
+                assert!(batch.quarantines.is_empty());
+                assert_eq!(
+                    batch.canonical.len(),
+                    count,
+                    "venue={} stamp={stamp}",
+                    binding.venue
+                );
+                if count == 2 {
+                    let delta =
+                        EventEnvelope::decode(batch.canonical[0].payload.as_slice()).unwrap();
+                    let snapshot =
+                        EventEnvelope::decode(batch.canonical[1].payload.as_slice()).unwrap();
+                    assert_eq!(snapshot.source_event_time_ns, stamp * 1_000_000);
+                    assert_eq!(snapshot.source_sequence, delta.source_sequence);
+                    assert_eq!(snapshot.partition_sequence, delta.partition_sequence + 1);
+                    assert_ne!(snapshot.event_id, delta.event_id);
+                    assert!(matches!(
+                        snapshot.payload,
+                        Some(event_envelope::Payload::BookSnapshot(_))
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hot_snapshot_amplification_is_bounded_in_provider_time() {
+        for okx in [false, true] {
+            let (mut engine, binding) = hot_book_core(okx);
+            let mut snapshots = 0;
+            for n in 1..=1_000 {
+                let bid = format!("60000.{n:04}");
+                let batch = engine
+                    .process(
+                        hot_delta(&binding, 101 + n, 1000 + n as i64, &bid, "60002"),
+                        3,
+                    )
+                    .unwrap();
+                assert!(batch.quarantines.is_empty());
+                assert!(matches!(
+                    EventEnvelope::decode(batch.canonical[0].payload.as_slice())
+                        .unwrap()
+                        .payload,
+                    Some(event_envelope::Payload::BookDelta(_))
+                ));
+                snapshots += batch.canonical.len() - 1;
+            }
+            assert_eq!(snapshots, 10);
+        }
+    }
+
+    #[test]
+    fn unchanged_top_waits_for_periodic_provider_transition_on_both_venues() {
+        for okx in [false, true] {
+            let (mut engine, binding) = hot_book_core(okx);
+            for (seq, stamp, count) in [(102, 1100, 1), (103, 1999, 1), (104, 2000, 2)] {
+                let batch = engine
+                    .process(hot_delta(&binding, seq, stamp, "60000", "60001"), 3)
+                    .unwrap();
+                assert!(batch.quarantines.is_empty());
+                assert_eq!(batch.canonical.len(), count);
+            }
+        }
+    }
+
+    #[test]
+    fn ask_only_top_change_emits_at_floor_without_waiting_one_second() {
+        for okx in [false, true] {
+            let (mut engine, binding) = hot_book_core(okx);
+            let batch = engine
+                .process(hot_delta(&binding, 102, 1100, "60000", "60002"), 3)
+                .unwrap();
+            assert_eq!(batch.canonical.len(), 2);
+            let duplicate = engine
+                .process(hot_delta(&binding, 102, 1100, "60000", "60002"), 4)
+                .unwrap();
+            assert!(duplicate.canonical.is_empty());
+            let gap = engine
+                .process(hot_delta(&binding, 104, 1200, "60000.5", "60002"), 5)
+                .unwrap();
+            assert!(gap.canonical.is_empty());
+            assert_eq!(gap.quarantines.len(), 1);
         }
     }
 
