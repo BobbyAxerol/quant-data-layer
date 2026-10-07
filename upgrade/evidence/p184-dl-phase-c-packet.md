@@ -1,6 +1,6 @@
 # P18.4 Data Layer Phase C Packet
 
-Status: DRAFT_NOT_AUTHORIZED. Source/local candidate only, not a release certificate.
+Status: DRAFT_HOLD_NOT_AUTHORIZED. Source/local candidate only, not a release certificate.
 Phase B handover and journal: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, final
 P18.4 Phase B entries. Architecture: DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md
 section 18.13. Candidate application source: `43bbcf0209f49e9cc1af6802af8f8a207a53ee3c`.
@@ -16,9 +16,48 @@ images without runtime changes. Receipt SHA256
 Snapshot workload x1.45; total BOOK messages x1.0413 on two ETH bindings;
 observed core CPU .0600 -> .0627 vCPU. These are NOT whole-stack or TS acceptance.
 
+## Readiness audit update - 2026-10-07
+
+[Readiness report](p184-dl-release-readiness.md) and [active capacity envelope](p184-idr062-capacity-envelope.md)
+are required inputs to this packet. They supersede any inference that the quiet
+pair or old whole-stack certificate proves present resource headroom.
+
+- Owner release dependency: **TS DR01-DR08, including DR07, plus broker delta**.
+  Do NOT wait for construction of TS Paper features or reopen unrelated phases.
+- Active pair: 270/312 top changes in about120s (135/156 per minute); rc2 source-time
+  materialization delay p50/p95/max0/0/0ms, n270/312. This is NOT client latency.
+  Snapshot count239 ->639; core9.81 ->10.51CPU-s; no delta-chain difference.
+- Actual acquisition roster17BOOK bindings. Steady-state scenario170snapshots/s;
+  observed-size estimate1.369MB/s protobuf, not a packet/replication byte ceiling.
+  Query RPC rate is not multiplied automatically by snapshot publication rate.
+- **Pre-action resource HOLD:** current full stack mean5.9618vCPU, p956.2197,
+  max6.3726 over60 intervals/307.156s, before isolated replay. The existing5vCPU
+  gate already fails; do not roll core then call rollback PASS against this
+  failing baseline. No cap/budget increase is implied. Owner must resolve the
+  measured resource prerequisite before authorizing this packet.
+- Current correct-TLS snapshot reads119/120usable; one BNB/OKX TRADE refusal
+  retained (4262ms event age, live session). No quiet-market root cause claimed.
+- Stream1 overflow+4 in approximately10min; cache polling observed BOOK_DELTA
+  up to22825ms while nearby Query reads remained fresh. Exact matched-watermark
+  attribution/recovery and full delivery measurements belong in DR07. No Paper
+  feature work is required to supply that handoff evidence. Do not label them
+  fixed or merely observer artifacts; distinguish the possible PUBSUB
+  observer lag from the separate GET cache observation.
+- qdl-sdk2.1.0 is candidate only; actual TS writer package is2.0.7. Binding r22
+  V2 remains mounted, V3 remains staged. No required endpoint replacement has
+  been identified, and no interface change is authorized by this report.
+
+After readiness/resource prerequisites and owner approval, retain the exact
+**core-first -> Claude TS coherence -> other roles** order below. No action was
+performed by this audit. Existing thresholds are unchanged: >=117/120 per venue,
+whole-stack <=5vCPU, no five consecutive rising lag intervals. A future change
+to an approved resource budget must be versioned before measuring, not chosen
+after seeing candidate results. Preserve all negative evidence.
+
 ## Prerequisites and post-core gate
 
-1. TS owner completes DR01-DR08 and broker delta, with new DL findings consolidated
+1. TS owner completes DR01-DR08 (including DR07) and broker delta, independently
+   of TS Paper feature construction, with new DL findings consolidated
    here before a single release. Do not substitute prior E09 or synthetic tests.
 2. Complete the IDR-062 offline paired report using the existing deployed and rc2
    Rust images, identical captured bytes/configuration and resource limits. Core

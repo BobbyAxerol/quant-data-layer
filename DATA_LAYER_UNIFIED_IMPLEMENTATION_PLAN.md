@@ -69315,3 +69315,47 @@ No resource increase, production write, rebuild or rollout. Raw capture and isol
 Commands: unchanged scripts/measure_l2_top_materialization.py run --seconds 120; read-only kn_production_watch.sample wrapper; bounded docker inspect/config reads.
 Next: finish contract/latency/health report and amend Phase C HOLD conditions; no TS Paper feature dependency added.
 Verification: receipt invariant checks PASS (same config/delta chains, denominator, zero candidate tails, 17 bindings, capture deletion). Harness bytes equal 5a261e0. Attempted pytest on host and existing Python candidate: both lack pytest, so no new unit-pass claim; prior 9 measurement tests remain inherited unchanged. Temporary qdl-idr062-readiness-tests --rm container removed, no dependency install/build.
+
+### Release-readiness slice 2 - read-only report / Phase C HOLD (2026-10-07)
+
+Status: AUDIT_COMPLETE_WITH_GAPS; PHASE_C_HOLD_NOT_AUTHORIZED. Not a release certificate.
+Owner decision: DL waits only on TS DR01-DR08 including DR07 plus broker delta,
+not TS Paper construction. Existing safety/resource gates still apply.
+Report: [DL readiness](upgrade/evidence/p184-dl-release-readiness.md).
+Packet: [Phase C core-first](upgrade/evidence/p184-dl-phase-c-packet.md).
+
+Measured on deployed KN, not rc2: 12 app +5 infrastructure roles unchanged;
+61 resource samples/60 intervals,307.156s;5.9618vCPU mean >5 gate. All container
+IDs/images/restart counters stable; BAR-edge historical3 restarts retained.
+Correct-TLS serial TS60 reads through both replicas:119/120usable; per-feed n19/20,
+request p50/p95/max in report, no p99. Exact BNB/OKX TRADE refusal age4262ms,
+session live59ms, stale LAST; no provider-side attribution from a later green read.
+Shared quota measured at correct :identity namespace: previous961/1500 before
+probe; later885/1500. No new identity, stream, quota, manifest or order.
+Cache GET observer:1800reads/30rounds,zero missing; BOOK_DELTA age up to22825ms.
+Stream active log metrics:overflow+4 over about10min, reader/decode errors delta0.
+These are open DR07 attribution/availability evidence, not silently fixed.
+
+Measurement limitations/errors retained: first120 requests used wrong TLS alias,
+ConnectError; aliases corrected after2-request smoke, no TLS bypass. First PUBSUB
+observer connection closed; bounded60s observer may include notification backlog, so not
+used as exact Redis write latency. GET cache age/first-observation upper bounds
+are distinct from SET ACK timing; canonical delivery lag and alpha cache latency
+NOT_MEASURED. Initial quota lookup lacked :identity suffix; corrected before
+requests. Missing pytest on host/candidate, unchanged source tests inherited;
+receipt/schema/table consistency checked independently. No app source changed.
+
+Kafka per-partition lag and exact role digests/config references, 60 binding rows,
+all HTTP/gRPC surfaces, SDK2.0.7 deployed vs2.1.0 candidate, V1/V2/V3 r22/JWT
+revisions, quota/concurrency/headroom and known D1/D3 limits are in report.
+BAR3d remains excluded; existing history errors/inflight admission deferrals are
+reported, not fixed under this audit. Historical18s BAR-edge restart not remeasured.
+
+Cleanup: isolated pair --rm containers/network/capture/TLS keys removed; diagnostic
+raw cache payload hashed then removed. No new image/build/cache; Docker92images
+28.19GB, BuildKit227entries16.83GB. Keep active+rc2+named rollback; broad prune not
+permitted by read-only scope. Disk pre/post102468628480/100905811968bytes includes
+other host activity. Canonical main5bf5cd5 untouched; same active feature worktree.
+No runtime rollout, push or merge. Stop and return readiness/packet for owner review;
+do not continue into TS Paper features or roll a candidate against failing baseline.
+Final audit checks PASS:60unique binding products x2replicas=120reads (119usable);1800cache GETs/zero missing; report60-row coverage and local links valid; qdl-idr062 containers/networks zero. TLS negative explicitly confirms hostname mismatch; no TLS bypass. Readiness measurements are not a replacement certificate.

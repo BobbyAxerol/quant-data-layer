@@ -2141,3 +2141,16 @@ test network/containers/keys cleaned; no new images or broad cache cleanup.
 post-rollout >=117/120 per-venue coherence receipt plus CPU/lag gates, then other
 roles. Prior pre-rollout coherence wording is superseded. Runtime remains HELD,
 TS DR01-DR08/broker delta and runtime approval still required. No release/push/merge.
+
+### 2026-10-07 - Read-only release-readiness audit (not promotion)
+
+Application rc2 remains43bbcf0, undeployed. See
+[readiness report](upgrade/evidence/p184-dl-release-readiness.md) and
+[active pair/capacity](upgrade/evidence/p184-idr062-capacity-envelope.md).
+Active pair PASS at135/156top-changes/minute; current whole-stack5vCPU gate FAIL
+(mean5.9618, n60intervals/307.156s). TS snapshot119/120usable; one strict LAST refusal.
+Stream overflow+4 and TS cache lag require DR07 attribution. Exact delivery lag/
+Redis-ACK/alpha cache latency NOT_MEASURED. Phase C HOLD, not authorized/deployed.
+Only TS DR01-DR08 includingDR07 +broker delta are release dependencies; no Paper
+feature construction added. Prior certificates kept immutable and scoped, no
+freshness/quota/resource threshold change. No required endpoint replacement identified.
