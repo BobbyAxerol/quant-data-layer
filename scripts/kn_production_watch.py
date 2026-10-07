@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Deadline-bounded KN-5 resource journal; emergency stop affects new roles only."""
+"""Bounded read-only resource journal; stopping requires explicit container IDs."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -54,6 +55,19 @@ def stop_reasons(row, low_idle_seconds=0):
     return reasons
 
 
+def explicit_stop_ids(row, allowed):
+    """No lifecycle authority comes from a historic phase name or guard alert."""
+    allowed = list(allowed)
+    if len(set(allowed)) != len(allowed) or any(
+        re.fullmatch(r"[0-9a-f]{64}", value) is None for value in allowed
+    ):
+        raise ValueError("stop authorization requires distinct full container IDs")
+    eligible = {row["containers"].get(f"{PROJECT}-{role}-1", {}).get("id") for role in NATIVE}
+    if any(value not in eligible for value in allowed):
+        raise ValueError("authorized stop ID no longer belongs to the observed role")
+    return allowed
+
+
 def cpu_ticks():
     values = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
     return sum(values), values[3] + values[4]
@@ -64,6 +78,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seconds", type=int, default=7200)
     parser.add_argument("--stop-file", type=Path, required=True)
+    parser.add_argument("--stop-container-id", action="append", default=[],
+                        help="Explicitly authorized full container ID; default is read-only")
     args = parser.parse_args()
     end = time.monotonic() + args.seconds
     previous_cpu = cpu_ticks()
@@ -73,6 +89,7 @@ def main():
     with args.out.open("x") as handle:
         while time.monotonic() < end and not args.stop_file.exists():
             row = sample()
+            stop_ids = explicit_stop_ids(row, args.stop_container_id)
             now_cpu = cpu_ticks()
             total_delta = now_cpu[0] - previous_cpu[0]
             idle = 100 * (now_cpu[1] - previous_cpu[1]) / total_delta if total_delta else 100
@@ -92,10 +109,9 @@ def main():
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
             handle.flush()
             if danger:
-                names = [f"{PROJECT}-{r}-1" for r in NATIVE if f"{PROJECT}-{r}-1" in row["containers"]]
-                if names:
-                    subprocess.run(["docker", "stop", "-t", "15", *names], check=True)
-                print("GUARD_STOP_NEW_KN_ROLES", flush=True)
+                if stop_ids:
+                    subprocess.run(["docker", "stop", "-t", "15", *stop_ids], check=True)
+                print("GUARD_STOP_EXPLICIT_IDS" if stop_ids else "GUARD_ALERT_NO_RUNTIME_MUTATION", flush=True)
                 return 3
             time.sleep(5)
     print("WATCH_COMPLETE", flush=True)

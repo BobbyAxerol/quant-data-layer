@@ -5,6 +5,18 @@ from scripts.measure_l2_top_materialization import distribution, top_delay, top_
 from scripts.phase114_l2_real_provider_capture import capture_replay_window
 
 class MeasurementTests(unittest.TestCase):
+    def test_candidate_digest_must_be_immutable_before_side_effects(self):
+        from unittest.mock import patch
+        from pathlib import Path
+        from scripts.measure_l2_top_materialization import image_digest, orchestrate
+        good = "sha256:" + "a" * 64
+        self.assertEqual(image_digest(good), good)
+        for bad in ("latest", "qdl:tag", "sha256:a", None, "sha256:" + "A" * 64):
+            with patch("scripts.measure_l2_top_materialization.command") as command:
+                with self.assertRaises(ValueError):
+                    orchestrate(Path("/must-not-create"), 60, bad)
+                command.assert_not_called()
+
     def test_censored_changes_stay_in_denominator(self):
         rows=[{"seq":str(i),"ms":i*100,"top":top} for i,top in enumerate([("1","3"),("2","3"),("2","4"),("2","4"),("1","4")])]
         result=top_delay(rows,[{"seq":"3","top":("2","4")}])

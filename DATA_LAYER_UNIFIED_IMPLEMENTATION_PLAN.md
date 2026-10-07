@@ -69555,3 +69555,57 @@ DL core63238bf and TS19d77e2 are source handoffs only; Phase C HOLD. Do not use
 rc2 to claim new core bytes or deployed TS trace. No push/merge or active quota,
 freshness/manifest changes; next gate is affected source/candidate review and
 converged packet, not another catalogue/C2 debugging run.
+
+### DR07 runtime closure continuation - 2026-10-07
+
+Status: IN_PROGRESS. Owner asks to finish full-stack candidate CPU, actual
+ overflow/replay recovery and canonical-to-Redis/consumer latency, plus related
+in-scope gaps. No Paper feature dependency, full catalogue/C2 rerun, hidden policy
+relaxation, new service or interface. Governing guide sections18.13-18.14 and
+Phase C packet still apply. Source baseline: DL c33c90f (core63238bf), isolated TS
+19d77e2; Claude worktree remains read-only for coordination, never edited/tested.
+
+Execution sequence: capture uncontaminated read-only baseline; verify source/image
+and DR matrix handoff; build one immutable candidate because core source changed;
+affected native tests and captured-provider replay; then apply only the exact
+eligible bounded runtime packet with named rollback. Keep existing CPU5vCPU,
+coherence117/120 per venue and per-partition lag gates; never bypass a failed
+prerequisite. No duplicate writer or competing same-identity probe. No orders.
+Measurement must name canonical durable-visibility/commit boundary explicitly;
+Kafka CreateTime and Redis PUBSUB are not commit/ACK clocks. Preserve missing and
+negative results; distinguish current baseline from candidate observations.
+Cleanup exact test/build resources after hashes; preserve active/named rollback.
+No push/merge/release until evidence convergence. New blockers are recorded here,
+not renamed technical debt or closed by an isolated microbenchmark.
+
+New in-scope monitoring safety finding before runtime action: existing
+kn_production_watch.main() auto-stops seven canonical roles by historical KN
+names on a guard event, even without an explicit stop roster. Current audit uses
+sample() only and has performed NO stops. Fix diagnostic default to read-only;
+optional emergency stop must specify exact immutable container IDs and validate
+against the current eligible roster, never infer authority from phase names.
+Add negative tests proving missing/mismatched IDs cannot stop production. This
+is observer tooling only, not an application/runtime/API/config change.
+Measurement harness also now accepts an explicit immutable candidate digest;
+10 targeted unit tests passed before capture, no new provider calls yet.
+
+
+DR07 closure checkpoint: read-only baseline31samples/30intervals,299.996s;
+12application+5infra mean5.779832/p955.978048/max6.012644vCPU, FAIL5gate.
+Stream overflow+0/+0 during approximately290s is an observation, NOT proof
+historical replay loop fixed. Canonical->actual TS Redis ACK NOT_MEASURED.
+Built exactly one changed-source Rust image rc3-c33c90f, digest0d8da150...38411;
+12binary/linkage checks PASS. Paired60s real ETH Binance/OKX capture: same delta
+chains,586/602deltas, core3.59->3.01CPU-s, RSS18420->18424KiB,n101 each;
+49/53top changes candidate source-time delay0ms (not wall-clock delivery).
+Snapshot message rate x1.492, totalBOOK x1.045; downstream CPU not measured.
+Tooling16tests PASS in existingPythonimage; host lackedhttpx for capturemodule,
+recorded rather than installing/changing host. Watcher auto-stop finding fixed:
+defaultread-only, explicit exactcontainerIDs required tostop. No runtime action.
+Report upgrade/evidence/p184-dr07-runtime-closure.md and Phase C packet updated;
+statusIN_PROGRESS/HOLD. OldCPUprerequisite still fails; boundedtrialproposal has
+NOT waived final5vCPU or authorized new image. No catalogue/C2 or Paperret tests.
+Cleanup pairedcontainers/network/capture/TLS and buildcontext complete; full disk,
+imagecache inventory and retainedactive/rollback/candidate set recorded in report.
+No push/merge; no changes to Claude TSworktree. Source/app image provenance remains
+c33c90f; this slice only changes diagnostic/test/report tooling.

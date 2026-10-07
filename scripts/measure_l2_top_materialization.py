@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -282,7 +283,15 @@ def stop_disposable(name):
         time.sleep(.2)
 
 
-def orchestrate(work, seconds):
+def image_digest(value):
+    if not isinstance(value, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+        raise ValueError("candidate requires an immutable sha256 image digest")
+    return value
+
+
+def orchestrate(work, seconds, candidate=CANDIDATE):
+    candidate = image_digest(candidate)
+    command(["docker", "image", "inspect", candidate, "--format", "{{.Id}}"])
     work.mkdir(parents=True, exist_ok=False); work.chmod(0o755)
     runtime = json.loads(command(["docker","inspect","qdl_v2_stable_candidate-rust_core-1"]))[0]
     if runtime["Image"] != BASELINE: raise ValueError("deployed baseline drift")
@@ -338,10 +347,10 @@ group.initial.rebalance.delay.ms=0
 """
     (work/"broker.properties").write_text(properties)
     result={"capture_sha256":capture_hash,"source":command(["git","-C",str(ROOT),"rev-parse","HEAD"]),
-            "baseline":BASELINE,"candidate":CANDIDATE,"runs":{},"resource_scope":"core container only, 1 CPU / 256 MiB, paced same capture"}
+            "baseline":BASELINE,"candidate":candidate,"runs":{},"resource_scope":"core container only, 1 CPU / 256 MiB, paced same capture"}
     command(["docker","network","create","--internal",PREFIX])
     try:
-        for label,image in [("baseline",BASELINE),("candidate",CANDIDATE)]:
+        for label,image in [("baseline",BASELINE),("candidate",candidate)]:
             for f in ["client-ready","core-ready"]: (work/f).unlink(missing_ok=True)
             broker=PREFIX+"-kafka";core=PREFIX+"-core"
             command(["docker","run","--rm","-d","--name",broker,"--network",PREFIX,"--network-alias","kafka",
@@ -413,8 +422,9 @@ group.initial.rebalance.delay.ms=0
 def main():
     p=argparse.ArgumentParser();p.add_argument("mode",choices=["run","capture","replay","analyse"])
     p.add_argument("--work",type=Path,required=True);p.add_argument("--seconds",type=float,default=60)
+    p.add_argument("--candidate-image", type=image_digest, default=CANDIDATE)
     a=p.parse_args()
-    if a.mode=="run": orchestrate(a.work,a.seconds)
+    if a.mode=="run": orchestrate(a.work,a.seconds,a.candidate_image)
     elif a.mode=="capture": client_capture(a.work,a.seconds)
     elif a.mode=="replay": client_replay(a.work)
     else: analyse(a.work)

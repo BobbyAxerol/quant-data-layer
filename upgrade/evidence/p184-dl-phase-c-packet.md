@@ -223,3 +223,20 @@ are not whole-stack vCPU evidence; the old 5.962 vCPU baseline still fails5.
 TS reset source58287fc is isolated in codex/dr07-reset-anchor for Claude review;
 no shared writer recreation is authorized by this DL packet. Optional Redis-ACK
 trace is a separate TS source slice, not evidence of current deployed ACK latency.
+
+
+## DR07 RC3 checkpoint - 2026-10-07 (not execution authorization)
+
+[Runtime closure report](p184-dr07-runtime-closure.md) supersedes candidate-resource
+inferences, not prior evidence. New proposed Rust candidate is
+`sha256:0d8da150820ed684bda084e92f714537cb40bd81e2e3a6bc93fa9a4b33538411`
+from c33c90f, optimization63238bf; rc2 does not include that optimization.
+Paired real capture:3.59->3.01CPU-seconds, equal delta chains,49/53 top changes
+materialized at source-time0ms delay (not consumer latency). Current full-stack
+baseline remains5.779832vCPU, p955.978048,n30/299.996s: prerequisite FAIL.
+Do not execute the rc2 roster above or silently substitute rc3 into an old approval.
+Proposed bounded-trial amendment must resolve old-runtime CPU prerequisite while
+retaining final<=5vCPU, coherence>=117/120 each venue, identity/integrity fencing
+and lag gates. No amendment applied or caps raised in this slice. Named rollback
+images/mounts/TLS/offsets unchanged. Claude's TS worktree remains protected;
+reset/ACK trace integration and real DR/broker receipts are still required.
