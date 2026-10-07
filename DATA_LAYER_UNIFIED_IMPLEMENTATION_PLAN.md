@@ -69035,5 +69035,5 @@ Not Data Layer (stays TS): POV volume source, reservations, writer CPU.
 Order: Codex implements D2, the IDR-062 top-change materialization and the diagnostics on this branch (same worktree
 `/home/bobby/.worktrees/data-layer-p184-closure`), local CI, one commit per tested slice with this journal; then
 rebuild both images from that commit and write the Phase C packet (roles, digests, rollback, what is not touched).
-Phase C runtime changes, push and merge need the owner's approval per packet. CLAUDE.md section 4 couplings apply
+Phase C runtime changes, push and merge need the owner's approval per packet. Owner 2026-10-07: build and test now, but the Phase C release WAITS for the TS DR01-DR08 matrix and the broker delta (TS plan journal "P18.4 gap audit"); Data Layer defects they find join this closure first, so the release is cut once. CLAUDE.md section 4 couplings apply
 (manifest revision, image-baked catalog, stable_redis ephemeral, no compose up on KN containers).
