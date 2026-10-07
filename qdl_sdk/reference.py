@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 
 from qdl_sdk.models import (
     ClosedModel,
+    ResponseModel,
     DecimalValue,
     Grade,
     ProblemDetails,
@@ -195,13 +196,13 @@ class ReferenceBatchRequest(ClosedModel):
         return self
 
 
-class ReferenceFieldView(ClosedModel):
+class ReferenceFieldView(ResponseModel):
     name: str = Field(min_length=1, max_length=160)
     value: DecimalValue
     unit: str = Field(min_length=1, max_length=80)
 
 
-class ReferenceLineageView(ClosedModel):
+class ReferenceLineageView(ResponseModel):
     provider: str = Field(min_length=1, max_length=80)
     provider_endpoint: str = Field(min_length=1, max_length=240)
     source_role: str = Field(min_length=1, max_length=40)
@@ -210,7 +211,7 @@ class ReferenceLineageView(ClosedModel):
     capability_constraint: str | None = Field(default=None, max_length=240)
 
 
-class ReferenceCoverageView(ClosedModel):
+class ReferenceCoverageView(ResponseModel):
     requested_start_ms: int | None = Field(default=None, ge=0)
     requested_end_ms: int | None = Field(default=None, ge=0)
     observed_min_ms: int | None = Field(default=None, ge=0)
@@ -237,7 +238,7 @@ class ReferenceCoverageView(ClosedModel):
         return self
 
 
-class ReferenceObservationView(ClosedModel):
+class ReferenceObservationView(ResponseModel):
     instrument_uid: str = Field(min_length=1, max_length=200)
     instrument_revision: int = Field(ge=1)
     product: ReferenceProduct
@@ -246,7 +247,7 @@ class ReferenceObservationView(ClosedModel):
     labels: dict[str, str] = Field(default_factory=dict)
 
 
-class ReferenceDataResponse(ClosedModel):
+class ReferenceDataResponse(ResponseModel):
     instrument_uid: str = Field(min_length=1, max_length=200)
     product: ReferenceProduct
     status: Literal["OK", "MISSING", "UNAVAILABLE", "ERROR"]
@@ -270,7 +271,7 @@ class ReferenceDataResponse(ClosedModel):
         return self
 
 
-class ReferenceBatchItemResponse(ClosedModel):
+class ReferenceBatchItemResponse(ResponseModel):
     instrument_uid: str = Field(min_length=1, max_length=200)
     product: ReferenceProduct
     status: str = Field(min_length=1, max_length=80)
@@ -278,7 +279,7 @@ class ReferenceBatchItemResponse(ClosedModel):
     problem: ProblemDetails | None = None
 
 
-class ReferenceBatchResponse(ClosedModel):
+class ReferenceBatchResponse(ResponseModel):
     contract_schema: str = Field("qdl.reference.batch.v2", alias="schema")
     request_id: str = Field(min_length=1)
     partial: bool

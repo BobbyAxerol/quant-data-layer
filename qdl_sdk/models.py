@@ -120,6 +120,15 @@ class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class ResponseModel(BaseModel):
+    """Accept additive response fields without relaxing known-field validation."""
+
+    # These types also describe the current server output in OpenAPI. Keep that
+    # published shape closed; tolerance is a reader behavior, not a new field.
+    model_config = ConfigDict(extra="ignore", populate_by_name=True,
+                              json_schema_extra={"additionalProperties": False})
+
+
 class WarmupTimeRange(ClosedModel):
     start_time_ns: int = Field(gt=0)
     end_time_ns: int = Field(gt=0)
@@ -147,7 +156,7 @@ class WarmupSpecification(ClosedModel):
         return self
 
 
-class ProblemDiagnostics(ClosedModel):
+class ProblemDiagnostics(ResponseModel):
     """Quality as Query evaluated it for the refused request (KN-4 review):
     the same non-secret metadata a served item carries, taken at the refusal,
     so a failure is never diagnosed from a status read seconds later."""
@@ -168,7 +177,7 @@ class ProblemDiagnostics(ClosedModel):
     received_at_ns: int | None = Field(default=None, ge=0)
 
 
-class ProblemDetails(ClosedModel):
+class ProblemDetails(ResponseModel):
     type: str
     title: str
     status: int
@@ -190,7 +199,7 @@ class ProblemDetails(ClosedModel):
         return result
 
 
-class DecimalValue(ClosedModel):
+class DecimalValue(ResponseModel):
     coefficient: str = Field(pattern=r"^-?(0|[1-9][0-9]*)$")
     scale: int = Field(ge=-38, le=38)
     source_text: str = Field(min_length=1, max_length=128)
@@ -247,7 +256,7 @@ class BasisKind(StrEnum):
     DERIVED = "DERIVED"
 
 
-class SourceView(ClosedModel):
+class SourceView(ResponseModel):
     venue: str = Field(min_length=1, max_length=40)
     provider: str = Field(min_length=1, max_length=80)
     source_id: str = Field(min_length=1, max_length=120)
@@ -255,7 +264,7 @@ class SourceView(ClosedModel):
     authoritative: bool
 
 
-class QualityView(ClosedModel):
+class QualityView(ResponseModel):
     state: Literal[
         "DISABLED", "STARTING", "CONNECTING", "SUBSCRIBING", "SYNCING",
         "LIVE", "DEGRADED", "GAPPED", "RESYNCING", "STALE", "OFFLINE",
@@ -277,7 +286,7 @@ class QualityView(ClosedModel):
     flags: list[str]
 
 
-class ContractView(ClosedModel):
+class ContractView(ResponseModel):
     schema_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     contract_version: str = Field(min_length=1, max_length=40)
     normalizer_version: str = Field(min_length=1, max_length=80)
@@ -289,7 +298,7 @@ class ContractView(ClosedModel):
     correlation_id: str = Field(min_length=1, max_length=200)
 
 
-class TradePayload(ClosedModel):
+class TradePayload(ResponseModel):
     feed: Literal[Feed.TRADE] = Feed.TRADE
     native_trade_id: str = Field(min_length=1, max_length=200)
     price: DecimalValue
@@ -301,7 +310,7 @@ class TradePayload(ClosedModel):
     is_buyer_maker: bool = False
 
 
-class QuotePayload(ClosedModel):
+class QuotePayload(ResponseModel):
     feed: Literal[Feed.QUOTE] = Feed.QUOTE
     bid_price: DecimalValue
     bid_quantity: DecimalValue
@@ -311,7 +320,7 @@ class QuotePayload(ClosedModel):
     level: int = Field(default=1, ge=1)
 
 
-class ResampleLineageView(ClosedModel):
+class ResampleLineageView(ResponseModel):
     base_interval: str = Field(min_length=1, max_length=20)
     constituent_count: int = Field(ge=1)
     first_watermark: int = Field(ge=0)
@@ -325,7 +334,7 @@ class ResampleLineageView(ClosedModel):
         return self
 
 
-class BarPayload(ClosedModel):
+class BarPayload(ResponseModel):
     feed: Literal[Feed.BAR] = Feed.BAR
     interval: str = Field(min_length=1, max_length=20)
     open_time_ns: int = Field(gt=0)
@@ -357,7 +366,7 @@ class BarPayload(ClosedModel):
         return self
 
 
-class BookLevel(ClosedModel):
+class BookLevel(ResponseModel):
     side: Literal["BID", "ASK"]
     price: DecimalValue
     quantity: DecimalValue
@@ -365,7 +374,7 @@ class BookLevel(ClosedModel):
     order_count: int = Field(default=0, ge=0)
 
 
-class BookSnapshotPayload(ClosedModel):
+class BookSnapshotPayload(ResponseModel):
     feed: Literal[Feed.BOOK_SNAPSHOT] = Feed.BOOK_SNAPSHOT
     native_sequence: str = Field(min_length=1, max_length=200)
     checksum: str | None = Field(default=None, max_length=200)
@@ -382,7 +391,7 @@ class BookSnapshotPayload(ClosedModel):
         return self
 
 
-class BookDeltaPayload(ClosedModel):
+class BookDeltaPayload(ResponseModel):
     feed: Literal[Feed.BOOK_DELTA] = Feed.BOOK_DELTA
     native_sequence_start: str = Field(min_length=1, max_length=200)
     native_sequence_end: str = Field(min_length=1, max_length=200)
@@ -400,14 +409,14 @@ class BookDeltaPayload(ClosedModel):
         return self
 
 
-class FundingRatePayload(ClosedModel):
+class FundingRatePayload(ResponseModel):
     feed: Literal[Feed.FUNDING_RATE] = Feed.FUNDING_RATE
     rate: DecimalValue
     funding_time_ns: int = Field(gt=0)
     next_funding_time_ns: int | None = Field(default=None, gt=0)
 
 
-class OpenInterestPayload(ClosedModel):
+class OpenInterestPayload(ResponseModel):
     feed: Literal[Feed.OPEN_INTEREST] = Feed.OPEN_INTEREST
     quantity: DecimalValue
     quantity_unit: QuantityUnit
@@ -421,13 +430,13 @@ class OpenInterestPayload(ClosedModel):
         return self
 
 
-class MarkIndexPricePayload(ClosedModel):
+class MarkIndexPricePayload(ResponseModel):
     feed: Literal[Feed.MARK_INDEX_PRICE] = Feed.MARK_INDEX_PRICE
     mark_price: DecimalValue
     index_price: DecimalValue
 
 
-class LongShortRatioPayload(ClosedModel):
+class LongShortRatioPayload(ResponseModel):
     feed: Literal[Feed.LONG_SHORT_RATIO] = Feed.LONG_SHORT_RATIO
     population: LongShortRatioPopulation
     sampling_interval: str = Field(min_length=1, max_length=20)
@@ -445,7 +454,7 @@ class LongShortRatioPayload(ClosedModel):
         return self
 
 
-class TakerFlowPayload(ClosedModel):
+class TakerFlowPayload(ResponseModel):
     feed: Literal[Feed.TAKER_FLOW] = Feed.TAKER_FLOW
     sampling_interval: str = Field(min_length=1, max_length=20)
     buy_volume: DecimalValue
@@ -460,7 +469,7 @@ class TakerFlowPayload(ClosedModel):
         return self
 
 
-class BasisPayload(ClosedModel):
+class BasisPayload(ResponseModel):
     feed: Literal[Feed.BASIS] = Feed.BASIS
     kind: BasisKind
     sampling_interval: str = Field(min_length=1, max_length=20)
@@ -489,7 +498,7 @@ class BasisPayload(ClosedModel):
         return self
 
 
-class ContractMetadataPayload(ClosedModel):
+class ContractMetadataPayload(ResponseModel):
     feed: Literal[Feed.CONTRACT_METADATA] = Feed.CONTRACT_METADATA
     contract_kind: str = Field(min_length=1, max_length=40)
     settlement_asset: str = Field(min_length=1, max_length=40)
@@ -517,7 +526,7 @@ class ContractMetadataPayload(ClosedModel):
         return self
 
 
-class TickerPayload(ClosedModel):
+class TickerPayload(ResponseModel):
     feed: Literal[Feed.TICKER] = Feed.TICKER
     last_price: DecimalValue
     last_quantity: DecimalValue | None = None
@@ -546,7 +555,7 @@ MarketPayload = Annotated[
 ]
 
 
-class MarketDataView(ClosedModel):
+class MarketDataView(ResponseModel):
     instrument_uid: str
     instrument_id: str
     instrument_revision: int = Field(ge=1)
@@ -583,13 +592,13 @@ class MarketDataView(ClosedModel):
         return self
 
 
-class SnapshotResponse(ClosedModel):
+class SnapshotResponse(ResponseModel):
     contract_schema: str = Field("qdl.marketdata.snapshot.v2", alias="schema")
     request_id: str
     data: MarketDataView
 
 
-class InstrumentView(ClosedModel):
+class InstrumentView(ResponseModel):
     instrument_uid: str
     instrument_id: str
     venue: str
@@ -602,7 +611,7 @@ class InstrumentView(ClosedModel):
     status: str
 
 
-class InstrumentPageResponse(ClosedModel):
+class InstrumentPageResponse(ResponseModel):
     contract_schema: str = Field("qdl.instruments.page.v2", alias="schema")
     items: list[InstrumentView]
     next_cursor: str | None = None
@@ -612,7 +621,7 @@ class InstrumentResponse(InstrumentView):
     contract_schema: str = Field("qdl.instrument.v2", alias="schema")
 
 
-class WarmupResponse(ClosedModel):
+class WarmupResponse(ResponseModel):
     contract_schema: str = Field("qdl.marketdata.warmup.v2", alias="schema")
     request_id: str
     snapshot_id: str = Field(min_length=1)
@@ -624,14 +633,14 @@ class WarmupResponse(ClosedModel):
     data: list[MarketDataView]
 
 
-class BatchItemResponse(ClosedModel):
+class BatchItemResponse(ResponseModel):
     instrument_uid: str
     status: str
     data: WarmupResponse | None = None
     problem: ProblemDetails | None = None
 
 
-class BatchResponse(ClosedModel):
+class BatchResponse(ResponseModel):
     contract_schema: str = Field("qdl.marketdata.batch.v2", alias="schema")
     request_id: str
     partial: bool
@@ -648,14 +657,14 @@ class BatchResponse(ClosedModel):
         return self
 
 
-class ReadinessItemResponse(ClosedModel):
+class ReadinessItemResponse(ResponseModel):
     instrument_uid: str
     status: str
     quality: QualityView | None = None
     problem: ProblemDetails | None = None
 
 
-class ReadinessResponse(ClosedModel):
+class ReadinessResponse(ResponseModel):
     contract_schema: str = Field("qdl.system-readiness.v2", alias="schema")
     request_id: str
     ready: bool
@@ -663,14 +672,14 @@ class ReadinessResponse(ClosedModel):
     results: list[ReadinessItemResponse]
 
 
-class FeedStatusResponse(ClosedModel):
+class FeedStatusResponse(ResponseModel):
     contract_schema: str = Field("qdl.feed-status.v2", alias="schema")
     instrument_uid: str
     feed: Feed
     quality: QualityView
 
 
-class GapView(ClosedModel):
+class GapView(ResponseModel):
     gap_id: str
     instrument_uid: str
     feed: Feed
@@ -680,7 +689,7 @@ class GapView(ClosedModel):
     detected_at_ns: int
 
 
-class GapProductCoverage(ClosedModel):
+class GapProductCoverage(ResponseModel):
     binding_id: str
     instrument_uid: str
     feed: Feed
@@ -692,7 +701,7 @@ class GapProductCoverage(ClosedModel):
     reason: str | None = None
 
 
-class GapScanCoverage(ClosedModel):
+class GapScanCoverage(ResponseModel):
     scope: Literal["RETAINED_WINDOW"]
     scan_complete: bool
     materialization_complete: bool
@@ -702,13 +711,13 @@ class GapScanCoverage(ClosedModel):
     products: list[GapProductCoverage]
 
 
-class GapListResponse(ClosedModel):
+class GapListResponse(ResponseModel):
     contract_schema: str = Field("qdl.data-quality.gaps.v2", alias="schema")
     items: list[GapView]
     coverage: GapScanCoverage | None = None
 
 
-class SystemReadinessSummary(ClosedModel):
+class SystemReadinessSummary(ResponseModel):
     contract_schema: str = Field("qdl.system-readiness.v2", alias="schema")
     status: str
     authority: str

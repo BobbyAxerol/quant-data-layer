@@ -69037,3 +69037,38 @@ Order: Codex implements D2, the IDR-062 top-change materialization and the diagn
 rebuild both images from that commit and write the Phase C packet (roles, digests, rollback, what is not touched).
 Phase C runtime changes, push and merge need the owner's approval per packet. Owner 2026-10-07: build and test now, but the Phase C release WAITS for the TS DR01-DR08 matrix and the broker delta (TS plan journal "P18.4 gap audit"); Data Layer defects they find join this closure first, so the release is cut once. CLAUDE.md section 4 couplings apply
 (manifest revision, image-baked catalog, stable_redis ephemeral, no compose up on KN containers).
+
+
+#### P18.4 Phase B implementation start (Codex, 2026-10-07)
+
+Status: IN_PROGRESS, source/local candidate only. Approved scope is the Phase B
+handover above at fa0cfa1: D2 tolerant responses with strict requests/documents,
+IDR-062 bounded top-change snapshots, read-only BAR 15m/30m coverage, configurable
+probe replicas. D1/D3 remain deferred. No TS file or canonical checkout edit.
+Tests target changed contracts and continuity first; inherited certificates are
+not rerun. Two final images must share one source SHA. Phase C packet is a draft,
+blocked on TS DR01-DR08/broker delta and explicit runtime approval. No shared data
+write, role restart, binding mount, push or merge. Rollback retains all active
+digests/config and V2 binding; only the two named rc1 candidates may be removed
+after replacement and reference checks. Record exact tests, resource limits and
+any unmeasured runtime gates per tested slice below. apply_patch failed with the
+known mountinfo helper error; exact scripted edits under workspace rule 32.
+
+
+##### Phase B slice D2 - tolerant SDK response readers
+
+Status: IMPLEMENTED / TESTED_LOCALLY, SDK 2.1.0; no server response field added.
+ResponseModel ignores additive unknown fields recursively through typed market,
+reference and problem responses. Known enums/decimals/domain validators remain
+strict. Warmup/reference requests and signed/binding/manifest documents unchanged.
+The shared response classes keep the published OpenAPI schema unchanged via
+json_schema_extra; initial regression found OpenAPI drift and the corrected run
+passed. Changelog: qdl_sdk/CHANGELOG.md. Version builder and two current-version
+tests updated, historical certificates untouched.
+Tests in existing acf5fd06 image, source mounted read-only, network none, 2 CPUs,
+1 GiB, tmpfs /tmp (exec) and /app/logs: SDK additive/release/projection/stable release
+28 PASS; stream SDK/reference V2/universal release/sandbox/quality/pre5/status/offset
+91 PASS, zero fail/skip in both final runs. First container failed before tests
+because /app/logs mount nested inside a read-only checkout; fixed mount layout
+(/src checkout, /app/logs tmpfs), not permissions on source. Containers --rm.
+No new image, shared mutation, push/merge or cleanup of retained artifacts.
