@@ -69179,3 +69179,65 @@ archive. Canonical /home/bobby/data_layer main5bf5cd5 and owner plan hunks untou
 only active feature worktree modified. Stable published line remains v2.2.2.
 No push/merge. Next: Claude/owner review this packet and pending measurements,
 complete TS gates, then approve Phase C; do not silently promote this receipt.
+
+
+##### IDR-062 paired offline measurement - approved follow-up start
+
+Status: IN_PROGRESS (2026-10-07). Same worktree/branch, no runtime mutation,
+no push/merge. Owner scope: capture active public ETH BOOK on Binance/OKX using
+phase114_l2_real_provider_capture.py; replay identical bytes/config/resource limits
+through the deployed baseline image and rc2-43bbcf0. No new image builds. Existing
+core executable requires Kafka: use disposable --rm broker/core/client containers
+on one internal test network, fresh test TLS and tmpfs state, no production mounts
+or credentials. This is offline replay, not production/consumer latency evidence.
+Guide: architecture review section 18.13; packet upgrade/evidence/p184-dl-phase-c-packet.md.
+Record snapshot msg/s and serialized bytes/s over captured provider duration;
+core CPU/RSS over paced replay, top-change-to-matching-snapshot delay in ms
+(p50/p95/max/n), superseded/unmatched changes and sequence/quarantine outcomes.
+Only downstream workload ratios are estimates, not measured whole-stack CPU.
+Activity must be demonstrated by actual top changes; no claim about market stress
+from an arbitrary short capture. Preserve compact hashes/metrics, delete this
+run's raw capture and disposable resources after measurement. Retain existing
+active/candidate/rollback images. Tests cover metric censoring and capture bounds.
+Second slice: move coherence to POST-core-rollout acceptance (>=117/120 per venue),
+explicit CPU/lag rollback and core-first order. Runtime execution remains held.
+Rollback for this offline slice is stop/remove exact disposable resources only.
+apply_patch helper failed (mountinfo path); workspace rule 32 exact edits used.
+
+
+##### IDR-062 offline pair completed (Codex, 2026-10-07)
+
+Status: PAIRED_OFFLINE_MEASURED_NOT_RUNTIME_CERTIFIED. Source/image/runtime unchanged;
+measurement tools and this journal only. Detailed immutable-image results, metric
+semantics, invalid harness attempts and cleanup:
+[IDR-062 paired report](upgrade/evidence/p184-idr062-offline-pair.md).
+Existing baseline 658a9570 vs rc2 69e3b2b2 on identical capture/config, one core per
+run, 1 CPU / 256 MiB, fresh internal Kafka --rm and tmpfs. No shared network/state.
+Capture started 12:52:17.878 UTC, 592 Binance ETH frames / 601 OKX ETH frames,
+44 / 41 actual top changes. Delta payload chains match (587 / 600 deltas); no
+post-bootstrap quarantine. One expected Binance bootstrap resnapshot advisory
+per core retained separately. Snapshot counts 59->87 and 61->87; msg/s .9832->1.4498
+and 1.0167->1.4500; protobuf bytes/s 7807.9->11509.5 and 8329.5->11877.4.
+Top-change -> next verified snapshot on provider clock: Binance baseline
+p50/p95/max 510/922/924 ms n43 plus 1 censored; OKX 500/900/900 ms n41.
+Candidate 0/0/0 ms n44/n41 (same-event materialization, NOT zero consumer latency).
+Exact-top and superseded-change denominators remain in report, no p99 claim.
+Core process CPU observed 3.60->3.76 s / 60 s (.0600->.0627 vCPU), observed RSS HWM
+19324->19612 KiB, 101 samples each. One short pair, not peak load or all-bindings
+certification. Combined snapshot workload estimate x1.45; combined BOOK messages
+x1.0413. No measured downstream CPU/consumer latency claim.
+Tests: existing Python candidate, network none, unittest modules
+`tests.test_l2_top_materialization_measurement tests.test_phase114_l2_provider_capture`:
+17 PASS, zero fail/skip. Initial pytest command unavailable in runtime image;
+used the suites' actual standard-library unittest runner. Four invalid/incomplete
+harness attempts kept as such; bounded bootstrap advisory classification and
+container auto-remove race fixes were tested, no production source changes.
+Evidence run5/paired-receipt.json SHA256 b9d14de49256e7fb15b80faa430c52a610f18d5aa83c1be6dfc88f85e4de4ecc;
+capture SHA256 3afa271cb5f1e99c84ebb68a90bdd1719b740c39c1bca7826f53c4727868d4a9,
+root ~/.local/state/qdl-v2/idr062-paired-20261007/. Captures/canonical raw dumps,
+fresh test keys, containers and internal network deleted; runtime image/start/
+restart inventory unchanged. Disk free 100669689856->100420591616 bytes (shared-host
+writes, not a reclaimed-byte claim). No image built or deleted; active/rc2/rollback
+retained. Shared cache inventoried 16.83 GB, not broad-pruned. Canonical main5bf5cd5
+and owner hunk untouched; published v2.2.2 unchanged. No push/merge, no TS edit.
+Next separate docs slice: core-first Phase C packet, post-core coherence gate.
