@@ -69674,3 +69674,46 @@ Keepactiveold/explicitcandidate0d8/namedrollback; nobroadprune orpush/merge.
 StatusoverallIN_PROGRESS: close residualcoherence attribution + TSreset/ACK
 integration + fullruntimeCPU/recovery/delivery gates + DR/broker evidence.
 Do notwaitforTS Paperfeatures, do notrebuildunchangedimages orrepeatC2 toguess.
+
+
+### DR07 exact-event caller continuation - 2026-10-07
+
+Status IN_PROGRESS/RELEASE_HOLD, owner explicitly approves finishing exact-event
+canonical -> Stream -> SDK -> TS writer trace, reset/ACK caller integration,
+recovery, full-stack CPU/continuous lag and DR01-DR08 plus broker delta receipts.
+Guide18.13-18.14/Phase C invariants unchanged. Prior three-core trial remains
+FAILED_ROLLED_BACK; do not repeat it without new attribution. No Paper dependency.
+Work only DL fix/p184-dl-closure and TS codex/dr07-reset-anchor, never edit/test
+Claude checkout. TS patch scope actualmarket_data_service_p184w only; inspect
+source/image/config first, retain9150385e rollback and existing state/identity.
+No new credentials, quotas, freshness, publicinterface, datareset, or newservice.
+Freeze concrete packet/digest before mutation; receipt reports exact changes.
+Canonical read_committed visibility is not a broker commit clock. Pair same
+identity/partition/offset/generation; bounded trace must identify missingpoints.
+Stop on integrity/ownership failure or readiness regression; preserve errors,
+roll back changed writer if gates fail. No push/merge/release in this slice.
+
+TS source finding reproduced: bridge BOOK_DELTA used market session budget,
+not adapter BOOK-specific budget. Commit83131d4 changes selector only;7newcases
+3FAIL before, full bridge/reset144PASS0skip with isolatedRedis after. Exact
+RedisDB15zero and testnetwork removed. Deployedwriter unchanged, SDK2.0.7;
+fixedworkers/main/cache_projector/cache_reader/execution_ordering bytes match
+Codex source before trace edits. Overlay will not import unrelated Paper code.
+
+
+### DR07 caller runtime receipt - 2026-10-07
+
+Status CALLER_DEPLOYED_OBSERVED / RELEASE_HOLD. Full continuation receipt:
+[Actual caller rollout](upgrade/evidence/p184-dr07-runtime-closure.md#actual-caller-rollout-and-exact-event-receipt---2026-10-07).
+TS source83131d4/452955f, only writer5849d716 deployed, rollback9150385e retained.
+144/529/491 PASS separate overlapping suites, zero skip. 2556 exact BOOK event
+joins to actual Redis ACK, zero identity mismatches. 31/31 READY60/60sessions;
+execution eligibility minimum47/60, not FULL. Trace timeout retained UNKNOWN
+with successful subsequent same-generation MARK apply1121ms later.
+Continuous lag2160 valid samples, no five-increase alarm; no overflow/replay growth
+in300s. DL17-role mean5.303766vCPU FAIL, old/current DL runtime unchanged.
+Prior core trial remains failed/rolled back. DR01-08/broker indexing still pending;
+DL DR07 hardening must not be confused with TS DR07 reference-metrics family.
+Do not wait for Paper features; do not issue release on these partial results.
+Cleanup context removed, disk93753360384->93753577472bytes; tests/networks gone.
+No broad prune concurrent caches, no data reset, no push/merge/release.

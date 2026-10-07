@@ -205,3 +205,130 @@ Release and remaining9role packetHOLD. Allobserver processes/testresources stopp
 activeoldimages+explicitrc3candidate andnamedrollback kept for investigatedscope.
 No push/merge/tag, noextraAPI/manifest change. Private rollbackpacket retained600
 outsideGit. Reportedbuild/paircleanup above remainsvalid; no broadDockerprune.
+
+
+## Actual caller rollout and exact-event receipt - 2026-10-07
+
+Status: CALLER_DEPLOYED_OBSERVED / RELEASE_HOLD. This supersedes only the earlier
+NOT_MEASURED statement for event-to-actual-TS-Redis-ACK, not the failed core trial.
+No DL runtime role changed in this continuation. No push, merge or release.
+
+### Source, packaging and runtime
+
+TS branch codex/dr07-reset-anchor: 83131d4 corrects BOOK session-budget selection;
+452955f adds bounded opt-in tracing to actual fixed/single workers. Bridge/reset
+144 PASS, source trace suite 529 PASS, packaged image 491 PASS, all zero skip;
+these overlapping suites must not be summed. Tests used disposable Redis; no
+shared financial rows, credentials or order submission. Bridge counterfactual:
+3/7 regressions failed before correction. Actual deployed market and BOOK budgets
+are both 45000ms, so this selector is a latent mismatch fix, NOT attribution of
+the observed runtime delay.
+
+Only market_data_service_p184w was replaced at 19:15:49 UTC with
+sha256:5849d7167561273af08bda2103c38cec5f4480f7a8809ea592c57abff7716ea1,
+source 452955f7b9f32a2b757caf7d9bcfac73e3cf188f, six app files over current base.
+SDK2.0.7, binding V2 r22, JWT10 and state/TLS/namespace/policies/caps retained.
+No whole Paper upgrade. Explicit rollback container
+market_data_service_p184w-dr07-rollback retains
+sha256:9150385e2bb3596793b6ee209dbc99696c3ed07439d6f4199356f417a97b6105.
+Old writer stopped after 30s ceiling with exit137, no OOM: do NOT certify graceful
+shutdown. New writer restart0/OOMfalse. No concurrent active writer or cache reset.
+Trace is bounded 4096 records/process with absolute expiry; four exports,
+16384 records, one process omitted three in-flight records at cap. Expired trace
+settings are inert; no extra recreate solely to remove them.
+
+### Actual measurements (all latency in ms)
+
+Exact canonical record joins require raw protobuf event-id SHA256, offset, feed,
+source hash, instrument, generation, native sequence and all envelope clocks.
+2556 exact matched ETH BOOK events, zero validation mismatches, all Redis EVAL1.
+Canonical observer is read_committed, explicit assignment, no group join/commit.
+Its observation clock is NOT the broker commit clock. Negative observer-to-SDK
+intervals reflect independently scheduled readers; never label them negative
+processing latency. Core normalized/received clocks were identical in the 701
+baseline records, not independent stages. Stream dispatch clock NOT_MEASURED.
+
+| Feed / venue | n | SDK return -> Redis ACK p50 / p95 / max | Event -> Redis ACK p50 / p95 / max |
+| --- | ---: | --- | --- |
+| BOOK_SNAPSHOT Binance | 169 | 57.893 / 136.682 / 360.574 | 168.772 / 275.901 / 1050.128 |
+| BOOK_SNAPSHOT OKX | 173 | 58.736 / 191.736 / 557.328 | 171.002 / 319.197 / 1083.462 |
+| BOOK_DELTA Binance | 1127 | 39.487 / 230.395 / 1335.608 | 155.282 / 474.117 / 1708.935 |
+| BOOK_DELTA OKX | 1087 | 40.281 / 243.220 / 1470.926 | 159.590 / 440.066 / 1639.998 |
+
+BOOK_DELTA SDK->writer p99: Binance650.2/OKX543.0ms. Writer duration p95
+66.2/61.3ms, Redis apply wait p95 32.0/29.4ms. Tail is predominantly before
+writer entry; batching/projection/preceding work are included. Without batch IDs
+and SDK ACK clocks this does NOT establish a specific queue/ACK root cause.
+Largest backlog events precede the resource sample window. 1192 unmatched trace
+keys are bounded-capture/sampling coverage, not proof of loss; 348 rows lack a
+stream-event join key (query/warmup). No extrapolation to alpha-cache ACK.
+
+Preserved negatives: 85 ordered older-state no-write decisions, seven duplicates,
+one MARK UNKNOWN/TIMEOUT. The OKX SOL generation104 timeout was followed by EVAL1
+with the same identity/source/generation and advancing component clocks 1121ms
+later. Subsequent recovery is observed; original ACK remains UNKNOWN.
+Four MARK startup timeouts reconnected. In the subsequent 300s no-order window,
+31/31 worker samples READY, session60/60; minimum execution-eligible47/60.
+Session-ready is NOT all-prices-eligible. Cursor ACK23021->90457,
+commits17772->69078, persistence errors0. This proves actual restart/progression,
+not full deliberate reset-fault, zero-downtime or 5000event/s certification.
+
+### Resource and continuous lag gates
+
+DL unchanged stack: 17 containers, 30 intervals/299.992s,
+mean5.303766/p95 5.502266/max5.545844 vCPU: FAIL <=5 gate. TS writer measured
+separately mean1.323835vCPU, not included in DL sum. All sampled identities stable,
+no new OOM. Kafka alone mean2.970528vCPU; no resource-cap changes.
+Active Stream overflow3389->3389 and replay1891705->1891705; passive109->109 and
+1138433->1138433 over the observed window. No loop observed, not a burst guarantee.
+
+Lag union19:14:50.963-19:24:36.602UTC: five groups, 36 group/topic/partition
+series, 60 observations each, 2160/2160 valid, unknown0. 473/2124 comparisons
+increased, longest consecutive streak4; zero five-increase alarms, including
+across file boundary. Maximum sample gap10.046s, process overlap4.318s. These
+are read-uncommitted log-end minus committed offsets, not LSO/processing latency.
+All bounded observer processes finished. No duplicate consumer/quota consumption.
+
+### Evidence and remaining release boundary
+
+Evidence root: /home/bobby/.local/state/qdl-v2/dr07-runtime-20261007/continuation/.
+Commands and raw bounded outputs: writer_packet.py + writer-packet/roll-*.json;
+writer-image-test/receipt.json; caller_resource_window.py + caller-window-300s/;
+readiness_observer.py + writer-packet/readiness-300s.jsonl;
+readonly_kafka_observer.py + writer-window-canonical-420s/;
+writer-window-lag-union-final-1791401299658010600.json;
+writer-same-event-preliminary/{summary,tail-attribution,outcome-denominators}.json.
+Core candidate0d8da150 remains undeployed after failed trial; active three cores
+remain658a9570. Do not substitute this old-DL-runtime CPU window for candidate
+qualification or erase prior coherence103/120 and105/120 failures.
+
+DR label warning: this runtime-hardening DR07 is NOT R2's DR07 reference-metrics
+case family. TS case-matrix has65 DR cases (9/8/6/10/12/4/12/4), broker matrix11.
+Read-only source inspection found no complete indexed DR01-DR08/broker receipt;
+this is missing acceptance indexing/evidence, not a claim every case failed.
+Broker-delta packet is still DRAFT; its Paper-completion prerequisite contradicts
+owner's latest release boundary. Reconcile it with Claude's active ownership;
+do not deploy its twelve-role packet blindly, wait for Paper features, or mark
+these receipts PASS from the BOOK trace.
+
+Next permitted work stays narrow: attribute BOOK/QUOTE alignment on exact frames
+before retrying the failed core candidate; profile pre-writer batching if tails
+violate the applicable feed contract, prove affected reset/fault path; qualify
+candidate CPU <=5 and the existing coherence gate; collect/index actual DR and
+broker delta evidence independently of Paper feature construction. No interface,
+freshness, durability, quota or benchmark threshold waiver is implied.
+
+### Cleanup and provenance
+
+Disposable tests/Redis/networks removed; observer processes completed. Build
+context (seven files) removed after source/image hashes saved. Free disk
+93753360384 ->93753577472 bytes; concurrent host activity prevents exclusive
+attribution. Docker inventory94 images/28.31GB, BuildKit444/18.29GB. No broad prune:
+concurrent Claude cache ownership is not isolated; active image5849, named9150
+rollback and existing explicit DL candidate/rollback retained. No shared volume,
+financial data, cursor or raw provider state deleted. Bounded trace evidence
+retained outside Git; private packet/inspect remain mode0600 for rollback.
+Canonical DL /home/bobby/data_layer main5bf5cd5, published v2.2.2 unchanged;
+feature fix/p184-dl-closure. Canonical TS /home/bobby/trading_system
+fix/dev-consumer-recovery-integration@668e103 unchanged; active patch source lives
+only in codex/dr07-reset-anchor. Claude's upgrade worktree was not modified.

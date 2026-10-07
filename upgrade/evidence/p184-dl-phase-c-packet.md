@@ -294,3 +294,17 @@ Release/remainingroleauthorization remainsHOLD. This is not a newapprovalrequest
 for the same failedimage: attribute residualBOOK/QUOTEconsumeralignment first,
 coordinate pendingTSreset/ACK integration, then affected-proofbeforeanyretrial.
 No source/manifest/freshness changes were made toforcecoherencePASS.
+
+
+## Caller integration continuation: release remains HOLD
+
+2026-10-07 actual TS writer now image5849d716 (source452955f); named rollback9150385e.
+Only caller changed. 2556 exact BOOK event-to-Redis-ACK joins,31/31 READY60/60sessions,
+no Stream overflow/replay growth in300s. All17 DL roles unchanged; CPUmean5.303766
+p955.502266vCPU,n30/299.992s FAIL5gate. Continuous lag2160valid/0unknown, longest
+increase streak4. This does not reopen authorization to retry failed0d8da150
+cores without new attribution, nor certify candidate CPU or all65DR+11brokercases.
+See [full receipt](p184-dr07-runtime-closure.md#actual-caller-rollout-and-exact-event-receipt---2026-10-07).
+Prior coherence and rollback conditions remain mandatory; no extra interface,
+freshness, resource-cap or policy change. Broker packet ownership must be reconciled
+without making unfinished Paper features a Data Layer release prerequisite.
