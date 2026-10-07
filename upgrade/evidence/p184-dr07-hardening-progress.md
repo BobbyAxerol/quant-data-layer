@@ -137,3 +137,50 @@ No runtime throughput/recovery or release certification is inferred.
 Evidence/cleanup receipt: external `isolated-worktree/attempt-2/` under the root
 above; migration `/tmp/codex-dr07-move-20261007/migration-receipt.json`. New worktree
 clean, no push/merge/deploy. The historical overflow cause remains unproved.
+
+## DR07 CPU Source Slice - 2026-10-07
+
+Status: TESTED_LOCALLY, not deployed, Phase C remains HOLD. Profiling already
+showed core normalization cost but did not provide a function-level CPU profile.
+A controlled TEST_ONLY allocation microbenchmark now isolates whole-book cloning
+on every L2 delta. All validations complete before the synchronous update loop;
+exclusive Rust ownership allows updating both sides without copying untouched
+levels. No changes to comparator, decimal precision, integrity/sequence/generation,
+publish cadence, Kafka durability or provider semantics.
+
+Reproducer: `python3 scripts/measure_l2_apply_cpu.py --baseline-ref 0fb731d
+--output <fresh-external-evidence-directory>`. Existing compiler image only,
+network none, 1 CPU / 512 MiB ceiling, alternating baseline/candidate order.
+Each sample applies 2,000 deltas of 10 updates. Five samples per side/depth;
+these are elapsed times with allocation instrumentation, NOT vCPU or live latency.
+
+| Levels per side | Baseline median / max (ms) | Candidate median / max (ms) | Allocations/delta old -> new |
+| --- | --- | --- | --- |
+| 20 | 35.635 / 38.471 | 15.646 / 18.101 | 280 -> 152 |
+| 400 | 330.114 / 359.657 | 24.486 / 27.836 | 2790 -> 258 |
+| 1000 | 816.535 / 833.999 | 23.063 / 27.816 | 6610 -> 276 |
+
+All paired final views identical. n=5 per row/variant; no p99 claim. Source
+regression: 3 Rust unit tests PASS, 0 fail/ignore, 2.23 s. Includes shared golden
+fixture (6 cases / 30 actions), exact decimal checks, and new full-depth clone
+oracle across 2,000 mixed deltas + duplicates, followed by invalid ask after valid
+bid. No partial state becomes visible after invalidation. Standalone test crate
+imports the unchanged module from the checkout; this is not a full workspace or
+provider acceptance. Candidate packaging / affected capture replay is still needed.
+
+External evidence: `dr07-hardening-20261007/l2-cpu/final-paired/receipt.json`, sha256
+`2ff2eec750555d7cd798a34ffc3634a4b01fc001ac8cd9abd6aee120258cec9f`,
+plus `l2-cpu/unit.log`, `source-hashes.json`, `cleanup.json`.
+Do not extrapolate the microbenchmark speedup to Kafka/projector/query/stream or
+claim the 5 vCPU full-stack gate passes. Kafka network CPU attribution remains
+open; perf is unavailable under current host policy and was not bypassed. No
+resource/durability/timeouts were changed to manufacture a pass.
+
+Cleanup: --rm compiler/benchmark containers gone; removed precisely 93 MiB test
+target and two exploratory binaries after hashes. Final harness removes its own
+scratch. Disk available 91,463,634,944 -> 91,565,522,944 bytes (concurrent host);
+no image builds or pruning. Inventory92 images28.19GB, BuildKit227entries16.83GB
+unchanged; active/rc2/named rollback retained. TS writer IDf63785a27af8,
+image9150385e2bb3, restart0/OOMfalse unchanged. Canonical DL main5bf5cd5 and
+12-role/config set unchanged. Source changes require a new immutable candidate
+before Phase C; rc2 cannot attest this new core optimization.

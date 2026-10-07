@@ -626,13 +626,10 @@ impl L2BookCore {
             }
         };
 
-        // Parse all updates before cloning/committing either side. A consumer
-        // can never observe a bid mutation without its matching ask mutation.
-        let mut next_bids = self.bids.clone();
-        let mut next_asks = self.asks.clone();
-        apply_updates(&mut next_bids, &mut next_asks, updates);
-        self.bids = next_bids;
-        self.asks = next_asks;
+        // All fallible validation is complete. Exclusive ownership and this
+        // synchronous, infallible update loop prevent partial publication;
+        // cloning the whole book would add work proportional to untouched depth.
+        apply_updates(&mut self.bids, &mut self.asks, updates);
         self.last_sequence = Some(frame.sequence_end);
         self.range_bridge_complete = self.range_bridge_complete
             || self.config.sequence_policy == SequencePolicy::RangeBridgeThenPrevious;
@@ -1194,6 +1191,128 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn delta_mutation_matches_clone_commit_oracle() {
+        let id = BookIdentity::new("TEST_ONLY", "TEST_BOOK", "TEST_CHANNEL").unwrap();
+        let mut core = L2BookCore::new(
+            BookConfig::new(
+                id.clone(),
+                SequencePolicy::PreviousSequence,
+                ChecksumPolicy::RequireVerified,
+                512,
+            )
+            .unwrap(),
+        );
+        let initial: Vec<_> = (0..400)
+            .flat_map(|i| {
+                [
+                    BookLevelInput {
+                        side: BookSide::Bid,
+                        price: (10000 - i).to_string(),
+                        quantity: "1.25".into(),
+                        order_count: Some(2),
+                    },
+                    BookLevelInput {
+                        side: BookSide::Ask,
+                        price: (10001 + i).to_string(),
+                        quantity: "2.5".into(),
+                        order_count: None,
+                    },
+                ]
+            })
+            .collect();
+        assert_eq!(
+            core.apply_snapshot(&BookSnapshot {
+                identity: id.clone(),
+                generation: 1,
+                sequence_end: 1,
+                checksum: ChecksumEvidence::Verified,
+                origin: SnapshotOrigin::WebSocket,
+                levels: initial
+            }),
+            BookOutcome::SnapshotApplied
+        );
+        let mut bids = core.bids.clone();
+        let mut asks = core.asks.clone();
+        for seq in 2..2002 {
+            let updates: Vec<_> = (0..10)
+                .map(|j| {
+                    let n = (seq * 17 + j * 31) % 430;
+                    let side = if j % 2 == 0 {
+                        BookSide::Bid
+                    } else {
+                        BookSide::Ask
+                    };
+                    BookLevelInput {
+                        side,
+                        price: if side == BookSide::Bid {
+                            (10000 - n).to_string()
+                        } else {
+                            (10001 + n).to_string()
+                        },
+                        quantity: if (seq + j) % 5 == 0 {
+                            "0".into()
+                        } else {
+                            format!("{}.0125", (seq + j) % 7)
+                        },
+                        order_count: Some(seq + j),
+                    }
+                })
+                .collect();
+            let mut next_bids = bids.clone();
+            let mut next_asks = asks.clone();
+            super::apply_updates(
+                &mut next_bids,
+                &mut next_asks,
+                super::parse_delta_levels(&updates).unwrap(),
+            );
+            let frame = BookDelta {
+                identity: id.clone(),
+                generation: 1,
+                sequence_start: None,
+                previous_sequence: Some(seq - 1),
+                sequence_end: seq,
+                checksum: ChecksumEvidence::Verified,
+                updates,
+            };
+            assert_eq!(core.apply_delta(&frame), BookOutcome::DeltaApplied);
+            assert_eq!(core.bids, next_bids);
+            assert_eq!(core.asks, next_asks);
+            assert_eq!(core.last_sequence, Some(seq));
+            assert_eq!(core.apply_delta(&frame), BookOutcome::Duplicate);
+            assert_eq!(core.bids, next_bids);
+            assert_eq!(core.asks, next_asks);
+            bids = next_bids;
+            asks = next_asks;
+        }
+        let invalid = BookDelta {
+            identity: id,
+            generation: 1,
+            sequence_start: None,
+            previous_sequence: Some(2001),
+            sequence_end: 2002,
+            checksum: ChecksumEvidence::Verified,
+            updates: vec![
+                BookLevelInput {
+                    side: BookSide::Bid,
+                    price: "9999".into(),
+                    quantity: "8".into(),
+                    order_count: None,
+                },
+                BookLevelInput {
+                    side: BookSide::Ask,
+                    price: "10001".into(),
+                    quantity: "-1".into(),
+                    order_count: None,
+                },
+            ],
+        };
+        assert_eq!(core.apply_delta(&invalid), BookOutcome::InvalidFrame);
+        assert!(core.view().is_none());
+        assert!(core.bids.is_empty() && core.asks.is_empty());
+        assert_eq!(core.last_sequence, None);
     }
 
     #[test]

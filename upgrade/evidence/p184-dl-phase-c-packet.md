@@ -209,3 +209,17 @@ New disposable tests use --rm and are removed after their evidence is recorded. 
 shared cache cleanup, volume/network deletion or canonical/user-hunk modification.
 Record disk pre/post and running-role image/start/restart comparison. Feature
 worktree remains active until reviewed/merged; no worktree cleanup before that.
+
+## DR07 source convergence amendment (2026-10-07)
+
+HOLD remains. The new L2 no-whole-book-clone source slice is unit/oracle tested
+and paired offline in `p184-dr07-hardening-progress.md`, but NOT inside rc2.
+Do not deploy rc2 and claim this optimization runs. After source review, converge
+one immutable core candidate and check affected provider capture/packaging before
+using the existing core-first packet. Keep baseline rollback digest and all
+coherence/lag/integrity gates above unchanged. Microbenchmark allocation savings
+are not whole-stack vCPU evidence; the old 5.962 vCPU baseline still fails5.
+
+TS reset source58287fc is isolated in codex/dr07-reset-anchor for Claude review;
+no shared writer recreation is authorized by this DL packet. Optional Redis-ACK
+trace is a separate TS source slice, not evidence of current deployed ACK latency.

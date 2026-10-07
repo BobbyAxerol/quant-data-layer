@@ -69455,3 +69455,86 @@ concurrent host activity. Production writer f63785a27af8/image9150385e2bb3,
 restart0 unchanged. DL canonical main5bf5cd5 and active12-role/config set
 unchanged; active/rc2/named rollback retained. DR07 remains IN_PROGRESS; CPU,
 causal overflow attribution and commit->RedisACK measurement remain open.
+
+### DR07 continuation - bounded delivery trace and CPU attribution (2026-10-07)
+
+Status: IN_PROGRESS; owner reconfirmed the approved five-part attachment.
+Scope/guide: existing DR07 hardening, architecture sections18.13-18.14 and Phase C
+packet. No new phase or Paper dependency. Keep reset slice58287fc for Claude review.
+TS changes only in ts-codex-dr07/codex/dr07-reset-anchor; never edit Claude's
+trading-system-next-upgrade worktree. Next slice: optional bounded internal
+measurement of existing apply/Redis ACK boundary with source identity, offsets,
+monotonic durations and honest missing commit/receive timestamps. No public schema
+change, new service, default hot-path logging or false PUBSUB-as-ACK claim.
+Tests: same apply semantics tracing off/on, negative/timeout/replay/no-ACK cases,
+bounded observer overhead and real isolated Redis. CPU: inspect existing bounded
+metrics/config; no sysctl/privilege, resource cap or durability change. Profile
+and optimize only with evidence. No rollout without converged packet; active
+digests/config unchanged, source revert is rollback. Journal/commit each tested
+slice; remove only exact test resources. No push/merge and no whole-catalogue/C2.
+
+CPU slice pre-edit evidence: isolated TEST_ONLY synthetic L2 microbenchmark,
+existing rust:1.83-slim image, no build/network/runtime mutation. Five alternating
+pairs per depth, 2,000 deltas/pair, 10 updates/delta, identical final view hashes.
+At depth400 each side, old clone-every-delta median324.303ms versus experimental
+in-place25.614ms; allocations/delta2790 versus258. At depth20:30.115/16.400ms;
+depth1000:852.838/24.977ms. Evidence: dr07-hardening-20261007/l2-cpu/.
+CPU optimization removes only two whole-book clones after all fallible
+validation/parsing completes. Exclusive &mut ownership, synchronous infallible
+update loop, no intermediate publication. Keep decimal comparator, protocol
+checks, snapshot frequency, Kafka durability and output unchanged. Validate
+existing golden fixture and baseline/candidate action parity including invalid
+updates/checksum/gap/generation/replay. Microbenchmark is not real-provider or
+full-stack capacity evidence; <=5vCPU remains UNPROVEN.
+
+## DR07 CPU Source Slice - 2026-10-07
+
+Status: TESTED_LOCALLY, not deployed, Phase C remains HOLD. Profiling already
+showed core normalization cost but did not provide a function-level CPU profile.
+A controlled TEST_ONLY allocation microbenchmark now isolates whole-book cloning
+on every L2 delta. All validations complete before the synchronous update loop;
+exclusive Rust ownership allows updating both sides without copying untouched
+levels. No changes to comparator, decimal precision, integrity/sequence/generation,
+publish cadence, Kafka durability or provider semantics.
+
+Reproducer: `python3 scripts/measure_l2_apply_cpu.py --baseline-ref 0fb731d
+--output <fresh-external-evidence-directory>`. Existing compiler image only,
+network none, 1 CPU / 512 MiB ceiling, alternating baseline/candidate order.
+Each sample applies 2,000 deltas of 10 updates. Five samples per side/depth;
+these are elapsed times with allocation instrumentation, NOT vCPU or live latency.
+
+| Levels per side | Baseline median / max (ms) | Candidate median / max (ms) | Allocations/delta old -> new |
+| --- | --- | --- | --- |
+| 20 | 35.635 / 38.471 | 15.646 / 18.101 | 280 -> 152 |
+| 400 | 330.114 / 359.657 | 24.486 / 27.836 | 2790 -> 258 |
+| 1000 | 816.535 / 833.999 | 23.063 / 27.816 | 6610 -> 276 |
+
+All paired final views identical. n=5 per row/variant; no p99 claim. Source
+regression: 3 Rust unit tests PASS, 0 fail/ignore, 2.23 s. Includes shared golden
+fixture (6 cases / 30 actions), exact decimal checks, and new full-depth clone
+oracle across 2,000 mixed deltas + duplicates, followed by invalid ask after valid
+bid. No partial state becomes visible after invalidation. Standalone test crate
+imports the unchanged module from the checkout; this is not a full workspace or
+provider acceptance. Candidate packaging / affected capture replay is still needed.
+
+External evidence: `dr07-hardening-20261007/l2-cpu/final-paired/receipt.json`, sha256
+`2ff2eec750555d7cd798a34ffc3634a4b01fc001ac8cd9abd6aee120258cec9f`,
+plus `l2-cpu/unit.log`, `source-hashes.json`, `cleanup.json`.
+Do not extrapolate the microbenchmark speedup to Kafka/projector/query/stream or
+claim the 5 vCPU full-stack gate passes. Kafka network CPU attribution remains
+open; perf is unavailable under current host policy and was not bypassed. No
+resource/durability/timeouts were changed to manufacture a pass.
+
+Cleanup: --rm compiler/benchmark containers gone; removed precisely 93 MiB test
+target and two exploratory binaries after hashes. Final harness removes its own
+scratch. Disk available 91,463,634,944 -> 91,565,522,944 bytes (concurrent host);
+no image builds or pruning. Inventory92 images28.19GB, BuildKit227entries16.83GB
+unchanged; active/rc2/named rollback retained. TS writer IDf63785a27af8,
+image9150385e2bb3, restart0/OOMfalse unchanged. Canonical DL main5bf5cd5 and
+12-role/config set unchanged. Source changes require a new immutable candidate
+before Phase C; rc2 cannot attest this new core optimization.
+
+Post-test formatting: rustfmt applied only to the new oracle test and standalone
+probe; the optimized production block is unchanged. Evidence hashes retain the
+measured pre-format source/harness, not silently rewritten. No new timing claim
+from formatting. New benchmark script parsed successfully; diff --check clean.
