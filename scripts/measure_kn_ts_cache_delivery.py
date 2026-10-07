@@ -92,6 +92,8 @@ async def main():
         await pub.aclose()
         await client.aclose()
     print(json.dumps({"schema": "qdl.kn5.actual-ts-cache-availability.v1", "seconds": time.monotonic() - started,
+        "query_replicas_declared": os.environ.get("KN_QUERY_REPLICAS", "").split(",") if os.environ.get("KN_QUERY_REPLICAS") else [],
+        "replica_attribution": "observer reads TS Redis only; declared names are packet metadata, not per-replica measurements",
         "boundary": "source event (BAR close) -> external GET after actual TS Redis SET/PUBLISH; not publisher ACK",
         "sampling": "at most2Hz per channel; max2000 samples per product; no source event dedup",
         "event_to_cache_readable": {k: summary(v) for k,v in samples.items()},

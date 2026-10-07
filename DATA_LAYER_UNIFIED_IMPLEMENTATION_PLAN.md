@@ -69072,3 +69072,26 @@ Tests in existing acf5fd06 image, source mounted read-only, network none, 2 CPUs
 because /app/logs mount nested inside a read-only checkout; fixed mount layout
 (/src checkout, /app/logs tmpfs), not permissions on source. Containers --rm.
 No new image, shared mutation, push/merge or cleanup of retained artifacts.
+
+
+##### Phase B slice - consumer probe names and BAR diagnostic
+
+Status: IMPLEMENTED / TESTED_LOCALLY; BAR retained-window observation READ_ONLY.
+KN_QUERY_REPLICAS selects exactly two distinct DNS names in benchmark_kn_ts_consumer
+(defaults preserved); all coverage aggregation uses the same selected pair.
+measure_kn_ts_cache_delivery has no Query RPC or hardcoded Query name: it observes
+TS Redis only. Added explicitly labelled declared-replica metadata, not invented
+per-replica attribution. No consumer/load measurement run on shared runtime.
+Added diagnose_kn_bar_window.py using existing KN generation/source-fenced reader.
+It checks only 15m/30m retained windows; empty generation, topic mismatch, diagnostic
+flags or missing opens cannot PASS. Eight focused diagnostic/replica unit tests
+PASS (zero fail/skip), acf5fd06 image, network none, read-only source.
+Executed approved read-only diagnostic inside query_kn_1: 20 bindings, 214752
+retained rows, 0 missing opens/flags/errors. No coverage claim before/after retained
+bounds, no repair/publication. Evidence external p184-phaseb-20261007/evidence/
+bar-window-query-kn-1.json SHA256 b80d38099ec27aeb3520cc8c15d506a7d6e5193799195d691e12b6d1d1408241.
+Inventory correction: 12 active non-infrastructure application roles, not the
+handoff's 13: 3 core + 2 ingestor + 2 projector + 2 stream + 2 query + 1 BAR edge.
+Phase C must explicitly resolve this count; do not start an invented/thirteenth
+role, touch V1, or recreate state/TLS initializers to satisfy an incorrect count.
+No shared write/restart, test containers --rm, no TS edits or image cleanup yet.
