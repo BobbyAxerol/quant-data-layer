@@ -69274,3 +69274,44 @@ Validation: packet diff, exact role/digest roster unchanged versus 5eb453d,
 No push/merge, no new test resources/images, no further runtime action. Cleanup
 and canonical/runtime/rollback inventory remain as recorded in paired slice above.
 Next permitted action is owner/Claude review; STOP and wait.
+
+
+##### Release-readiness read-only audit - owner decision 2026-10-07
+
+Status: IN_PROGRESS. Same fix/p184-dl-closure worktree, inherited reviewed commits
+5a261e0/9dbb93c. DL release waits on TS DR01-DR08 INCLUDING DR07 and broker delta,
+NOT TS Paper feature construction. Runtime/certificate gates remain fail-closed.
+Scope: actual BOOK binding count and 10/s per-binding provider-time ceiling;
+bounded higher-activity public capture replay using unchanged 5a261e0 harness and
+existing baseline/rc2 images; read-only current KN health/resource/quota/cache/log
+observation; capability/endpoint/version inventory; readiness report and packet.
+Guide: architecture review 18.13, Phase C packet and certification ledger.
+No production config/data/identity changes, order, restart, rollout, push/merge or
+image build. Passive observations first; additional request probes only at low
+rate after measured quota headroom, zero new stream subscriptions. Never run
+kn_production_watch.main (it can stop services); reuse sample() only. Never run
+full benchmark_kn_ts_consumer on shared runtime (isolated Redis writer/streams).
+Preregister higher-activity criterion: top changes/minute >=1.5x old 44/41 on BOTH
+venues. One 120 s capture in this bounded session; if criterion misses, report
+NOT_MEASURED for peak rather than relabel quiet data or wait indefinitely.
+Latency boundaries/p50/p95/max/n in ms; p99 only n>=100; no substitution of event
+age for request/commit/delivery timing. Unknowns explicitly NOT_MEASURED. rc2 is
+not deployed and current runtime measurements do not certify its rollout.
+Use scoped --rm offline resources only; hash/delete captures/test keys, preserve
+compact evidence. No new image/cache cleanup required; retain active/rc2/rollback.
+Each coherent slice committed with journal. Stop after report/packet for owner
+review. apply_patch sandbox failed; exact file edits per workspace rule 32.
+
+### Release-readiness slice 1 - active IDR-062 pair and capacity (2026-10-07)
+
+Status: MEASURED; current whole-stack CPU gate FAIL, candidate stack NOT_MEASURED.
+Readiness report: [capacity envelope](upgrade/evidence/p184-idr062-capacity-envelope.md).
+17 BOOK acquisition bindings confirmed in actual ingestors/core (7 Binance, 10 OKX), not multiplied by replicas.
+One unchanged-harness 120 s public capture: 270/312 top changes, about 135/156 per minute; preregistered active criterion PASS.
+Same-byte delta chains; rc2 top-change materialization delay 0/0/0 ms on n=270/312, source-time metric, not network latency.
+Snapshot counts 239 -> 639; core CPU 9.81 -> 10.51 CPU-s; RSS 21844 -> 23612 KiB, samples 199/198.
+Passive current-stack measurement: 61 samples/60 intervals, 307.156 s; mean 5.9618 vCPU exceeds unchanged 5-vCPU gate.
+No resource increase, production write, rebuild or rollout. Raw capture and isolated replay resources removed; disk accounting and retained images in report.
+Commands: unchanged scripts/measure_l2_top_materialization.py run --seconds 120; read-only kn_production_watch.sample wrapper; bounded docker inspect/config reads.
+Next: finish contract/latency/health report and amend Phase C HOLD conditions; no TS Paper feature dependency added.
+Verification: receipt invariant checks PASS (same config/delta chains, denominator, zero candidate tails, 17 bindings, capture deletion). Harness bytes equal 5a261e0. Attempted pytest on host and existing Python candidate: both lack pytest, so no new unit-pass claim; prior 9 measurement tests remain inherited unchanged. Temporary qdl-idr062-readiness-tests --rm container removed, no dependency install/build.
