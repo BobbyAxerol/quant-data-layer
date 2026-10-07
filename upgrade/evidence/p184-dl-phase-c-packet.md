@@ -281,3 +281,16 @@ trial stop threshold6.575853vCPU (two30s means). Full evidence and exact
 intervals core-trial/trial-safety-v2.json. This is a transitional non-regression
 guard, not resource-cap increase or release-gate change. Final5vCPU, coherence,
 lag, quorum, integrity and reverse rollback rules remain mandatory.
+
+
+## Executed trial outcome: FAIL, fully rolled back
+
+Owner-approved core-only trial executed; threecandidate0d8da150cores restored
+inreverseorder to658a9570 because post-coreTScoherence was103/120and105/120,
+not117/120. No otherrolewasrolled. PartialcandidateCPU5.158006vCPU,n19/189.995s,
+not300sPASS. Full receipt andmeasurementlimitations in
+[p184-dr07-runtime-closure.md](p184-dr07-runtime-closure.md).
+Release/remainingroleauthorization remainsHOLD. This is not a newapprovalrequest
+for the same failedimage: attribute residualBOOK/QUOTEconsumeralignment first,
+coordinate pendingTSreset/ACK integration, then affected-proofbeforeanyretrial.
+No source/manifest/freshness changes were made toforcecoherencePASS.

@@ -1,10 +1,12 @@
 # DR07 Runtime Closure Checkpoint - 2026-10-07
 
-Status: IN_PROGRESS / PHASE_C_HOLD. This is not a release certificate.
+Status: TRIAL_FAILED_ROLLED_BACK / RELEASE_HOLD. This is not a release certificate.
 Main plan: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, DR07 runtime closure continuation.
 Guide: DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md sections18.13-18.14.
 Evidence root: /home/bobby/.local/state/qdl-v2/dr07-runtime-20261007/.
-No production restart/config/credential/manifest/cap or order mutation in this slice.
+The pre-trial checkpoint below had no production mutation. The later owner-approved
+core-only image trial and reverse rollback are recorded at the end; no other
+role/config/credential/manifest/cap or order changes.
 No TS Paper feature dependency; DR01-DR08 and broker delta remain release inputs.
 
 ## Actual Current Runtime Baseline
@@ -133,3 +135,73 @@ TS canonical /home/bobby/trading_system fix/dev-consumer-recovery-integration668
 Codex TS worktree remains separate. Old DL core658a9570, projector a696cfba,
 Stream1f13408f, Query51450612, ingestors0f6876e1, BARf7351c3b unchanged.
 Full immutable rollback roster remains in the Phase C packet and inventory JSON.
+
+
+## Actual Owner-Approved Core Trial And Rollback
+
+Owner explicitly approved gate-order change after this report's first checkpoint.
+Plans committed4da52a8/60a3cf7 BEFORE lifecycle calls. Current-load transition
+boundary6.5758528vCPU (two30s windows) and final5vCPU are distinct; no resource cap
+was raised. Three cores rolled serially17:46-17:50UTC to0d8da150; private inspected
+compose preserved effectiveconfig/mounts/TLS/aliases/caps, receipt checks passed.
+Quorum leader2,epoch149,followerlag0; under-replicated partition list empty before
+action. One subsequent admin read showed raw lag14-31records across6partitions,
+canonical projector19-106. Continuous five-increasing-interval lag was NOT
+collected: operational sampling was incomplete, do not claim that gatePASS.
+
+Frozen post-core gate via deployed TS MarketCacheReader, ETH each venue,1Hz:
+
+| Result (n=120 each venue) | Binance | OKX |
+| --- | --- | --- |
+| Exact BOOK top equals QUOTE, both eligible at read |103/120 |105/120 |
+| Gate>=117/120 |FAIL |FAIL |
+| Stored BOOK observed_at age p50/p95/max |654.197/1104.025/1218.918ms |652.626/1119.492/1276.319ms |
+| Stored QUOTE observed_at age p50/p95/max |181.010/426.622/767.293ms |192.039/362.477/880.194ms |
+| Cache reader call p50/p95/max |16.412/150.317/249.192ms |15.700/155.352/246.358ms |
+
+These are TS Redis read and stored-view-age measurements, NOT SDKrequest latency,
+canonical commit latency, Redis ACK or alpha latency. Gate failed, so no second
+window was used to replace it. Do not diagnose the residual stage from age alone.
+BOOK and QUOTE remain independently updated streams. Core-only improvement did
+not prove their end-to-end alignment; matched event/offset trace is still needed
+at canonical, Stream, SDK and TSwriter before deciding the next source change.
+
+Core-only candidate CPU:17DLroles,19complete same-ID pre-decision intervals,
+189.994570s, mean5.158006vCPU,p95/max5.405644. NOT a completed300s acceptance.
+Measured cores combined0.325581vCPU; Kafka3.117959; projectors0.290687;
+Query0.296130; Stream0.209910; BAR0.551557. Workload differed from earlierbaseline,
+so before/after CPU is not a controlled causal performance ratio.
+Full300s recorder continued across rollback and its original aggregate failed
+on a missing cgroup usage key during recreate. Raw31samples retained. Segmented
+report excludes11mixed/post-decision intervals and interpolates nothing:
+core-trial/candidate-cpu-segmented.json. This does not change failed gate status.
+
+At17:56-17:57UTC rolled back3->2->1 to658a9570. Every rollback config checkPASS.
+Final12DLapp+TSwriter13/13running, noOOM; unchanged9otherDLroles andshared TS.
+Rollback consumer read5samples/venue: allQUOTE/BOOKfresh,4/5coherent each. This is
+return-to-baseline evidence only, NOT coherence acceptance or fullTSqualification.
+
+Observer v1 falsely flagged6stalls when generation reset processed counters;
+corrected identity=(containerID,generation),5controlledchecksPASS. Segments
+actually overlapped32.938s, maxsamplegap10.141s; no rawcollectiongap. Preserve
+original alerts, do not call them application crashes. Initial coherence
+observer incorrectly required quiet-session receipt fields on strict fresh
+BOOK/QUOTE; corrected feed-specific predicate,10TEST_ONLYchecksPASS; old5sample
+outputs retained and not used tocertify. No new markettimestamp or freshnesspolicy.
+
+Stream1 overflow+4 beforefirstrollout, then0additional observed during trial/
+rollback; replayed+23202 acrosswholewindow. Stream2overflow+0. Counters have not
+proved successful reset/cursor/ACK closure; unchangedTSwriter lacks the pending
+DR07 integration. Wholewindow approximately17:41-17:59, not a steady-state proof.
+Canonical-to-actual RedisACK andalpha cache remainNOT_MEASURED. The isolated
+QueryACKattempt made0providerrequests (config/harness/quota-preflight stops);
+no substituted latency is reported. Three remaining original gates are open,
+plus residualBOOK/QUOTEcoherence andTS DR/broker case-indexed releaseinputs.
+
+Next permitted source work is attribution and coordinatedTSreset/ACK integration
+in its own branch; no repeat imagebuild or release trial without an affected
+fix. No Paperfeaturedependency, nounrelatedDLendpointchanges, nofreshnesswaiver.
+Release and remaining9role packetHOLD. Allobserver processes/testresources stopped;
+activeoldimages+explicitrc3candidate andnamedrollback kept for investigatedscope.
+No push/merge/tag, noextraAPI/manifest change. Private rollbackpacket retained600
+outsideGit. Reportedbuild/paircleanup above remainsvalid; no broadDockerprune.

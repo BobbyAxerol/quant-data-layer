@@ -69650,3 +69650,27 @@ trial stop threshold6.575853vCPU (two30s means). Full evidence and exact
 intervals core-trial/trial-safety-v2.json. This is a transitional non-regression
 guard, not resource-cap increase or release-gate change. Final5vCPU, coherence,
 lag, quorum, integrity and reverse rollback rules remain mandatory.
+
+
+DR07 coretrial RESULT: FAILED_ROLLED_BACK (owner-approved gate-order trial).
+Sourcec33c90f/image0d8da150 deployed exactly3cores, configchecksPASS; nootherroles.
+TSdeployedcache coherence103/120Binance105/120OKX<117, FAIL. Reverse rollback
+3->2->1 complete658a9570;13app+TSrolesrunning/noOOM. No replacementgreenwindow.
+19purecandidateintervals/189.995s CPUmean5.158006,p95/max5.405644vCPU, NOT300sPASS.
+Originalaggregate hitmissingcgroupkeyduringrollback; rawsamples preserved and
+segmentedbyID/time beforedecision. Per-rolecores0.325581/Kafka3.117959vCPU.
+Streamoverflow+4 BEFOREtrial,0additionalduringtrial/rollback; cannotcloseoldloop.
+Guardgenerationresetfalsealarms corrected with5checks; overlap32.938s, no rawgap.
+Coherencepredicate corrected(strictfresh vsquietproof) with10testchecks; allold
+observeroutputsretained. Continuouslagtrendmissing, do notclaimgatePASS.
+
+Fullreport upgrade/evidence/p184-dr07-runtime-closure.md now records exactlatencies,
+scopes, CPU,evidence androllback; packetstillHOLD for remainingroles/release.
+Current canonical->actual RedisACK stillNOT_MEASURED; isolatedQueryprobe0requests,
+stoppedbyharness/config/quota reserve androlloutcoordination, notproviderrefusal.
+TSprobe38testsPASS inexistingimage; sourcehandoff only, noTSruntimeimagechange.
+Alltestcontainers/network/captures/privateprobecopies removed;guardprobesfinished.
+Keepactiveold/explicitcandidate0d8/namedrollback; nobroadprune orpush/merge.
+StatusoverallIN_PROGRESS: close residualcoherence attribution + TSreset/ACK
+integration + fullruntimeCPU/recovery/delivery gates + DR/broker evidence.
+Do notwaitforTS Paperfeatures, do notrebuildunchangedimages orrepeatC2 toguess.
