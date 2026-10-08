@@ -70262,3 +70262,33 @@ upstream observer integration remains open, not delegated away as done. CIgreen
 No actual acknowledgement from Claude is claimed. No TS/alpha edits, shared
 runtime/manifest changes, DR01 deployed/DR08 final, push/merge or release.
 Canonicalmain5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure, releaseHOLD.
+
+
+### DR05 canonical reader and TS validation closure - 2026-10-08 (Codex)
+
+Status IMPLEMENTING. Owner approves completing the isolated observation path now.
+Guide upgrade/evidence/p184-dr05-dl-fault.md, alignment guide; preserve shared
+runtime, TS worktree, release HOLD, no DR01 deployed/DR08 final. Raw broker ACK
+is not acceptance. Match raw capture IDs through read_committed canonical or
+quarantine, capture real Query/Stream response and typed quality, then validate
+with code inside fixed TS image (no app-source overlay). Independent positive,
+gap/unanchored-generation, recovery and old-generation fencing controls on both
+venues. No manufactured quality/timestamp/status; unknown evidence fails closed.
+Tests: bounded observer correlation, wrong identity/offset, genuine refusal,
+positive/recovered book, isolated real stack. Cleanup exact owned labels/names
+and private material; retain bounded hashed receipts; no images built/push/merge.
+
+DR05 integration discovery: exact Kafka Uuid(2^63-1,2^63-1) string contains '/'.
+Query intermediate cursor regex rejects it, while signed cursor V3 accepts it.
+New regression on old source:3tests/2errors. Necessary narrow source correction:
+accept '/' without rewriting topic identity, retain delimiter/negative checks.
+No public contract or deployed image changes. Initial Binance observation cursor
+failure kept; OKX alternate UUID succeeded, not used to erase initial failure.
+
+Cursor parser slice RESULT: fixed only intermediate coordinate character class
+for standard-base64 Kafka UUID '/'. No rewriting/signature/schema changes.
+Counterfactual oldsource:3tests,2errors; candidate3PASS. Combined cursor/DR05/
+hot-view suite60PASS0fail0skip/33.706s in existing77682eea image network-none.
+Real Binance snapshot now returned signed cursor and reached actual pinned TS
+SDK/adapter/BOOK validator (positive control accepted). Runtime/shared images
+unchanged; no certification from this partial case, recovery adapter ongoing.

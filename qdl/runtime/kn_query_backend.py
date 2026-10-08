@@ -84,7 +84,7 @@ from qdl.transport import Cursor, StoredEvent
 from qdl.transport.contracts import DurableEvent
 
 PLACEHOLDER_PREFIX = "kn3-source:"
-_PLACEHOLDER = re.compile(r"kn3-source:([A-Za-z0-9._@|+=-]{1,256}):([0-9]{1,10}):([0-9]{1,19})")
+_PLACEHOLDER = re.compile(r"kn3-source:([A-Za-z0-9._/@|+=-]{1,256}):([0-9]{1,10}):([0-9]{1,19})")
 QUERY_BACKEND_ENV = "QDL_STABLE_QUERY_BACKEND"
 QUERY_BACKENDS = ("spool", "kn3")
 CURSOR_KEYS_FILE_ENV = "QDL_KN_CURSOR_KEYS_FILE"
