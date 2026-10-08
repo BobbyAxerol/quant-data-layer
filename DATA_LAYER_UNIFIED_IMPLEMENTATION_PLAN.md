@@ -70089,3 +70089,38 @@ feature /home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure.
 Active runtime remains as previous inventory; patch not deployed. Keep BAR
 rollbackf7351c3b. Next: Claude reviews and runs DR window with final CI-green
 provenance, then combines Gateway cells/DR08/broker delta; v2.2.3 staysHOLD.
+
+
+### Pre-stage3 consolidated build, SDK and DR05 - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / RELEASE_HOLD. Owner confirms TS2abbe394 CI green
+(unit11415/integration3068 no failures), imagea6548ee3. This authorizes provenance
+when scheduled, NOT immediate DR01 deployed/DR08 final execution. Work now:
+(1) single-source commit build recipe/CI for IDR039, including IDR040fix1, bindingV3,
+quota logs, b6a0119 counters and IDR075; release rebuild waits until TS tests end;
+(2) reproducible qdl-sdk2.1.0 wheel handoff for TS/alpha without consumer rollout;
+(3) isolated DL DR05 GAP/GENERATION preparation/tests. No shared runtime, grants,
+credential or image changes. No DR01/DR08 final probes. New TS data findings
+arrive via INTEGRATION_DEFECT_REGISTER, not speculative broad changes.
+Tests: source/build-contract, wheel RECORD/reproducibility/clean-install SDK
+compatibility; DR05 fault fixture isolation and exact typed gap/generation safety.
+Every slice tested+journalled, no push/merge. Cleanup owned --rm resources only;
+keep active and BARf7351c3b rollback. Release rebuild/rollout remains later packet.
+Guides: upgrade/evidence/p184-dl-phase-c-packet.md and p184-dr-runtime-runbook.md.
+
+
+### SDK2.1.0 reproducible package preparation - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / ARTIFACT_PUBLICATION_IN_PROGRESS / DL_RELEASE_HOLD.
+Existing build_qdl_sdk_release.py is the canonical deterministic wheel builder;
+no new packaging system. Correct packaged README2.0.4->2.1.0 and strengthen
+RECORD test to verify every payload digest/size, no duplicate entries. SDK code,
+dependencies and generated contracts unchanged. Existing image77682eea, network
+none, sourceRO, --rm: python -B -m unittest discover -s tests -p '*sdk*.py' -q:
+89PASS0fail0skip11.467s. Includes reconnect/offsetzero, replica, executionquality,
+projection, public API and reproduciblewheel tests. Disposable removed.
+Freeze this package source before building consumer artifact outside Git; then
+clean-install test on exact TS a6548ee3 and alpha a03c62f0 images without shared
+network/config/identity. No application image rebuild or consumer restart.
+Public GitHub wheel publication follows existing certified DL tag workflow;
+local immutable hash-pinned handoff does not publish v2.2.3 or bypass HOLD.

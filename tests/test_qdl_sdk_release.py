@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import io
@@ -31,6 +32,17 @@ class QdlSdkReleaseTests(unittest.TestCase):
                 record_name = f"qdl_sdk-{first_result['version']}.dist-info/RECORD"
                 rows = list(csv.reader(io.StringIO(archive.read(record_name).decode())))
                 self.assertEqual({row[0] for row in rows}, names)
+                self.assertEqual(len(rows), len(names), "duplicate RECORD entries")
+                for name, encoded, size in rows:
+                    if name == record_name:
+                        self.assertEqual((encoded, size), ("", ""))
+                        continue
+                    payload = archive.read(name)
+                    expected = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode()
+                    self.assertEqual(encoded, "sha256=" + expected)
+                    self.assertEqual(int(size), len(payload))
+                self.assertIn("qdl_sdk-2.1.0-py3-none-any.whl", archive.read("qdl_sdk/README.md").decode())
+
             release = json.loads(Path(first_result["manifest"]).read_text())
             self.assertFalse(release["contains_service_internals"])
             self.assertEqual(release["version"], "2.1.0")
