@@ -470,6 +470,7 @@ impl MarketDataStreamService for Gateway {
             subscription: subscription.clone(),
         };
         let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        let terminal = Arc::new(Mutex::new(None));
         let auth = Authorized::new(
             state.authority.clone(),
             &access,
@@ -487,6 +488,7 @@ impl MarketDataStreamService for Gateway {
             _registered: registered,
             subscription,
             sender,
+            terminal: terminal.clone(),
             claims,
             request_token: body.cursor_token,
             auth,
@@ -496,7 +498,19 @@ impl MarketDataStreamService for Gateway {
         };
         tokio::spawn(task.run(registration.barrier, ring));
         Ok(Response::new(Box::pin(
-            ReceiverStream::new(receiver).map(|(item, _charge)| item),
+            ReceiverStream::new(receiver)
+                .map(|(item, _charge)| item)
+                // Drain the bounded handoff in order, then emit the terminal
+                // status even if a stalled receiver outlived the producer task.
+                .chain(tokio_stream::once(()).map(move |_| {
+                    Err(terminal
+                        .lock()
+                        .ok()
+                        .and_then(|mut status| status.take())
+                        .unwrap_or_else(|| {
+                            Status::internal("subscription task ended without a terminal status")
+                        }))
+                })),
         )))
     }
 
@@ -930,6 +944,7 @@ struct SubscriptionTask {
     _registered: Registered,
     subscription: Arc<Subscription>,
     sender: mpsc::Sender<Outbound<query::SubscribeResponse>>,
+    terminal: Arc<Mutex<Option<Status>>>,
     claims: CursorV3Claims,
     request_token: String,
     auth: Arc<Authorized>,
@@ -1022,11 +1037,11 @@ impl SubscriptionTask {
 
     async fn fail(&self, status: Status) {
         self.outcome(status.code().description());
-        let _ = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.sender.send((Err(status), None)),
-        )
-        .await;
+        // One terminal slot cannot be blocked by the data channel. Dropping
+        // the task closes that channel and wakes its receiver to drain it.
+        if let Ok(mut terminal) = self.terminal.lock() {
+            terminal.get_or_insert(status);
+        }
     }
 
     /// End the stream with the public BACKPRESSURE contract.

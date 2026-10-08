@@ -126,3 +126,14 @@ validation, Binance bootstrap semantics, typed immediate refusal rather than
 waiting for stale, and honest final SHA/image provenance. Do not mark final
 DR05 PASS from the diagnostic helper. The DL fixes have not been deployed or
 packaged as the final consolidated release. No TS source was edited.
+
+
+## 2026-10-08 Continuity Follow-Up (Codex)
+
+Owner approved passive attribution + isolated DR08 corrections. See
+[p184-dr08-continuity-closure.md](p184-dr08-continuity-closure.md). Current writer
+5849d716 still SDK2.0.7; its trace expired. No TS edits/restarts. IDR081 remains
+Claude-owned; new paired evidence also finds ETH BOOK_DELTA cache delay while
+BOOK_SNAPSHOT is timely, so BTC colocation does not close the whole finding.
+Need same-event SDK/apply/ACK/cursor capture on intended writer before runtime
+closure. New Rust terminal-status fix is isolated, not proof of stall root cause.

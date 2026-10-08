@@ -24,6 +24,75 @@ def packet(development=True):
             role: "sha256:" + "abcdef01" * 8 for role in ("core", "stream", "kafka", "python")}}}
 
 
+class ReplayBoundary(unittest.TestCase):
+    def test_reaches_live_then_receives_new_marker(self):
+        from unittest.mock import Mock
+        child, producer, start = Mock(), Mock(), Mock()
+        start.return_value = child
+        def wait(kind, *args):
+            if kind == "live":
+                producer.publish.assert_not_called()
+                return {"count": 10000}
+            producer.publish.assert_called_once_with(1)
+            return {"count": 10001, "last": 10003, "code": "OK", "controls": ["REPLAYING", "LIVE"]}
+        child.wait.side_effect = wait
+        result = R.replay_boundary(start, "slow", "old", producer, 2)
+        self.assertEqual(result["replay_count_at_live"], 10000)
+        start.assert_called_once_with("slow", "old", stop_after=10001)
+        child.close.assert_called_once()
+
+    def test_receiving_limit_without_live_is_not_success(self):
+        from unittest.mock import Mock
+        child, producer = Mock(), Mock()
+        child.wait.side_effect = RuntimeError("done before live: OUT_OF_RANGE")
+        with self.assertRaises(RuntimeError):
+            R.replay_boundary(Mock(return_value=child), "slow", "old", producer, 2)
+        producer.publish.assert_not_called()
+        child.close.assert_called_once()
+
+    def test_wrong_replay_count_and_bad_live_marker_fail_closed(self):
+        from unittest.mock import Mock
+        for live, end in ((9999, {}), (10000, {"count": 10001, "last": 10004, "code": "OK", "controls": ["LIVE"]}),
+                          (10000, {"count": 10001, "last": 10003, "code": "OK", "controls": []})):
+            with self.subTest(live=live, end=end):
+                child, producer = Mock(), Mock()
+                child.wait.side_effect = [{"count": live}, end]
+                with self.assertRaises(ValueError):
+                    R.replay_boundary(Mock(return_value=child), "slow", "old", producer, 2)
+                child.close.assert_called_once()
+
+
+class CandidateBinary(unittest.TestCase):
+    def test_overlay_cannot_be_relabelled_as_final(self):
+        p = packet(False)
+        p["stream_binary_override"] = {"sha256": "a" * 64}
+        with self.assertRaisesRegex(ValueError, "qualification"):
+            R.evidence_rows(p, {}, development=False, run_id="forged")
+
+    def test_inner_driver_checks_actual_binary(self):
+        p = packet()
+        p["stream_binary_override"] = {"sha256": "a" * 64}
+        with patch.dict(os.environ, {"P184_DR08_ISOLATED_NAMESPACE": p["namespace"]}), \
+                patch.object(R, "candidate_stream_provenance", return_value={"sha256": "b" * 64}):
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                R.validate_packet(p, development=True)
+
+    def test_overlay_is_development_only_and_hashed(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / "candidate"
+            p.write_bytes(b"test-only-binary")
+            result = R.candidate_stream_provenance(p, development=True)
+            self.assertEqual(result["sha256"], hashlib.sha256(p.read_bytes()).hexdigest())
+            self.assertEqual(result["bytes"], 16)
+            with self.assertRaises(ValueError):
+                R.candidate_stream_provenance(p, development=False)
+            p.write_bytes(b"")
+            with self.assertRaises(ValueError):
+                R.candidate_stream_provenance(p, development=True)
+        self.assertIsNone(R.candidate_stream_provenance(None, development=False))
+
+
 class Guards(unittest.TestCase):
     def setUp(self):
         self.p = packet()

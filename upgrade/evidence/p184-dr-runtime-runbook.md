@@ -128,6 +128,23 @@ no private keys, unchanged shared image/start/restart inventory and disk pre/pos
 Keep active images and bar-edge rollback `f7351c3b`; no broad prune. Final TS
 provenance requires a fresh run, not editing the development JSONL.
 
+### Continuity Regression Addendum (2026-10-08)
+
+Exact replay10000 now requires the actual LIVE control with count10000 and a
+subsequent newly published live marker. Receiving10000 then cancelling is not
+successful replay-to-live evidence. TRADE wire runner is not BOOK qualification.
+Prolonged TRADE/BOOK_DELTA handoff stalls are also covered by native direct-service
+regressions: terminal error survives a full data channel, fast peer advances,
+ordered suffix replay succeeds and task resources return to baseline.
+
+For a changed Rust executable only, development orchestration accepts
+`--stream-binary <absolute candidate path>`; it copies a bounded executable into
+the owned work directory, records SHA256/bytes separately from the base image,
+verifies it inside the driver, and removes the copy during cleanup. This option
+is forbidden in final qualification. It does not claim an image rebuild or
+allow shared rollout. Keep the original binary and hashes for reviewer replay.
+See p184-dr08-continuity-closure.md for counterfactual, wire and trace limits.
+
 ## Release Boundary
 
 v2.2.3 remains HOLD for final DR01-DR08/broker evidence, independent of building

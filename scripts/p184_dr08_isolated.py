@@ -138,6 +138,10 @@ def validate_packet(packet, *, development):
             raise ValueError(f"immutable {role} image ID required")
     restart_count(packet)
     validate_query_provenance(packet)
+    if packet.get("stream_binary_override"):
+        declared = packet["stream_binary_override"]
+        if declared != candidate_stream_provenance("/work/candidate-stream", development=development):
+            raise ValueError("candidate binary digest mismatch")
     if not development:
         sha, image = packet.get("ts_source_sha", ""), packet.get("ts_image_digest", "")
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or len(set(sha)) == 1:
@@ -151,12 +155,15 @@ def validate_packet(packet, *, development):
 def evidence_rows(packet, facts, *, development, run_id):
     """Development rows deliberately cannot satisfy the TS matrix checker."""
     validate_query_provenance(packet)
+    if packet.get("stream_binary_override") and not development:
+        raise ValueError("binary overlay cannot emit qualification evidence")
     mode = "DEVELOPMENT" if development else "QUALIFICATION"
     header = {"provenance": {
         "schema": SCHEMA, "source_sha": packet["ts_source_sha"],
         "image_digest": packet["ts_image_digest"], "mode": mode, "run_id": run_id,
         "data_provenance": "SYNTHETIC_TEST_ONLY", "images": packet["images"],
         "query_provenance": packet.get("query_provenance", {}),
+        "stream_binary_override": packet.get("stream_binary_override"),
         "packet_sha256": hashlib.sha256(json.dumps(packet, sort_keys=True).encode()).hexdigest(),
         "scope": "same-host isolated DL fault test; not TS consumer or real-provider certification",
     }}
@@ -483,6 +490,25 @@ def wait_seed(packet):
         consumer.close()
 
 
+def replay_boundary(start, consumer, token, producer, baseline_id):
+    """A full replay must reach LIVE before a new marker proves handoff."""
+    child = start(consumer, token, stop_after=REPLAY + 1)
+    try:
+        live = child.wait("live", 90)
+        if live.get("count") != REPLAY:
+            raise ValueError("exact replay did not reach LIVE at the expected boundary")
+        producer.publish(1)
+        done = child.wait("done")
+        passed = (done.get("code") == "OK" and done.get("count") == REPLAY + 1
+                  and done.get("last") == baseline_id + REPLAY + 1
+                  and "LIVE" in done.get("controls", []))
+        if not passed:
+            raise ValueError("post-replay live marker missing or out of order")
+        return {**done, "replay_count_at_live": live["count"], "live_marker_count": 1}
+    finally:
+        child.close()
+
+
 def run_faults(packet):
     facts, children = {}, []
     stage = "baseline_metrics"
@@ -536,11 +562,8 @@ def run_faults(packet):
         facts[CELLS[0]] = {"observed": True, "passed": False,
             "configured_queue_events": QUEUE, "slow_terminal": slow_end, "seed_commit": seed}
         stage = "exact_10000_replay"
-        replay = start(slow_id, old_token, stop_after=REPLAY)
-        replay_end = replay.wait("done", 90)
-        replay.close()
-        exact_replay = replay_end["code"] == "OK" and replay_end["count"] == REPLAY and replay_end["last"] == baseline_id + REPLAY
-        producer.publish(1)
+        replay_end = replay_boundary(start, slow_id, old_token, producer, baseline_id)
+        exact_replay = replay_end["replay_count_at_live"] == REPLAY
         fast_end = fast.wait("done")
         fast.close()
         stage = "out_of_range"
@@ -559,7 +582,7 @@ def run_faults(packet):
         recovery = measure_restarts(packet, producer, start, fresh_token, fresh_trade_id)
         facts[CELLS[1]] = {"observed": True,
             "passed": exact_replay and out_of_range and fresh_offset > old_offset,
-            "replayed": replay_end["count"], "range_code": range_end["code"],
+            "replayed": replay_end["replay_count_at_live"], "replay_handoff": replay_end, "range_code": range_end["code"],
             "old_snapshot_offset": old_offset, "fresh_snapshot_offset": fresh_offset,
             "baseline_trade_id": baseline_id, "fresh_snapshot_trade_id": fresh_trade_id,
             **recovery, "restart_kind": "consumer_process",
@@ -879,7 +902,23 @@ def serve_query(work):
         hot.close()
 
 
-def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None):
+def candidate_stream_provenance(path, *, development):
+    if path is None:
+        return None
+    if not development:
+        raise ValueError("binary overlay is development-only, not an image qualification")
+    path = Path(path).resolve(strict=True)
+    if not path.is_file() or not 0 < path.stat().st_size <= 512 * 1024 * 1024:
+        raise ValueError("bounded candidate binary required")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"sha256": digest.hexdigest(), "bytes": path.stat().st_size,
+            "container_path": "/work/candidate-stream", "scope": "development binary overlay; base image unchanged"}
+
+
+def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None, stream_binary=None):
     """Adapt measure_l2_top_materialization's isolated broker/core packet."""
     import shutil
     import subprocess
@@ -893,6 +932,7 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             raise ValueError("final TS image digest required before setup")
     count = restart_count({"development": development, **(
         {"restart_samples": restart_samples} if restart_samples is not None else {})})
+    candidate = candidate_stream_provenance(stream_binary, development=development)
     work = work.resolve()
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     namespace = "p184-dr08-" + uuid.uuid4().hex[:16]
@@ -931,6 +971,13 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             "ts_image_digest": image_digest, "images": IMAGES, "bootstrap": "localhost:9092",
             "restart_samples": count, "query_provenance": {"image_ref": QUERY_IMAGE_REF,
                 "scope": "isolated candidate Query; not production v2.2.2"}}
+        if candidate:
+            shutil.copyfile(stream_binary, work / "candidate-stream")
+            (work / "candidate-stream").chmod(0o555)
+            copied = candidate_stream_provenance(work / "candidate-stream", development=True)
+            if copied != candidate:
+                raise ValueError("candidate changed during staging")
+            packet["stream_binary_override"] = candidate
         (work / "packet.json").write_text(json.dumps(packet))
         def launch(role, image, args, *, memory, cpus, network, env=None, detach=True, extra=()):
             name = namespace + "-" + role
@@ -983,7 +1030,7 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             memory="256m", cpus=.5, network=net, env={"QDL_KAFKA_CERT_ROOT": "/work",
             "QDL_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092", "QDL_KAFKA_CLIENT_ID": namespace,
             "QDL_KAFKA_GROUP_ID": namespace, "QDL_PROVIDER_ADMISSION_ENABLED": "false"})
-        stream = launch("stream", IMAGES["stream"], ["/usr/local/bin/qdl-stream-gateway", "serve"],
+        stream = launch("stream", IMAGES["stream"], ["/work/candidate-stream" if candidate else "/usr/local/bin/qdl-stream-gateway", "serve"],
             memory="512m", cpus=.5, network=net, env={**common,
             "QDL_KN_BUNDLE_FILE": "/work/bundle.json", "QDL_KN_JWT_CONFIG_FILE": "/work/jwt-config.json",
             "QDL_KN_QUOTA_REDIS_URL": "redis://localhost:6379/0", "QDL_KN_QUOTA_PREFIX": "qdl:stable:v2:paper:" + namespace,
@@ -1046,6 +1093,7 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 if command(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]):
                     cleanup_failures.append(name)
+        (work / "candidate-stream").unlink(missing_ok=True)
         for filename in ("client.key", "server.p12", "slow.key", "fast.key", "cursor-keys.json",
                          "read-view.secret", "broker.properties"):
             (work / filename).unlink(missing_ok=True)
@@ -1072,6 +1120,7 @@ def main(argv=None):
     parser.add_argument("--packet", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--development", action="store_true")
+    parser.add_argument("--stream-binary", type=Path, help="development-only isolated candidate executable")
     parser.add_argument("--restart-samples", type=int,
                         help="orchestrator restart count: development 1-10, final 5-10")
     args = parser.parse_args(argv)
@@ -1081,11 +1130,13 @@ def main(argv=None):
         previous = signal.signal(signal.SIGALRM, orchestration_deadline)
         signal.alarm(600)
         try:
-            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest, restart_samples=args.restart_samples)
+            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest, restart_samples=args.restart_samples, stream_binary=args.stream_binary)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
         return 0
+    if args.stream_binary is not None:
+        parser.error("--stream-binary requires --orchestrate")
     if args.restart_samples is not None:
         parser.error("--restart-samples requires --orchestrate; inner driver uses its sealed packet")
     for directory, function in ((args.prepare_material, prepare_material), (args.prepare_topics, prepare_topics), (args.query, serve_query)):

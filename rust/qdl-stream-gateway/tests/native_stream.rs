@@ -1389,6 +1389,76 @@ async fn t05_a_slow_lossless_reader_ends_typed_and_resources_return_to_baseline(
     assert!(harness.state().metrics.overflow.load(Ordering::Relaxed) >= 1);
 }
 
+async fn prolonged_lossless_stall(feed: &str, key: &str, event: fn(u64) -> EventEnvelope) {
+    let mut options = Options::default();
+    options.limits.slow_consumer_after = Duration::from_millis(200);
+    let harness = Harness::new(options);
+    let cursor = harness.log.append(0, key, &event(1));
+    harness.settle();
+    let mut slow = harness.subscribe(feed, None, cursor, 10).await.unwrap();
+    let mut fast = harness.subscribe(feed, None, cursor, 100).await.unwrap();
+    slow.until_live().await;
+    fast.until_live().await;
+    let mut expected = Vec::new();
+    for sequence in 2..32 {
+        let offset = harness.log.append(0, key, &event(sequence)) as u64;
+        expected.push(offset);
+        assert_eq!(fast.collect(1).await.1, vec![offset]);
+    }
+    // Keep the slow receiver unpolled until its task releases its slot. The
+    // wait budget covers both legacy notification deadlines; the peer stays open.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while harness.state().open_streams() != 1 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        harness.state().open_streams(),
+        1,
+        "stalled task releases its slot"
+    );
+    assert_eq!(harness.state().metrics.overflow.load(Ordering::Relaxed), 1);
+    let mut received = Vec::new();
+    loop {
+        match slow.next().await {
+            Item::Event(offset, _) => received.push(offset),
+            Item::Control(_) => {}
+            Item::Error(code, message) => {
+                assert_eq!(code, Code::ResourceExhausted);
+                assert!(message.starts_with("RATE_LIMITED:"), "{message}");
+                break;
+            }
+            Item::End => panic!("{feed}: stalled receiver ended without a terminal status"),
+        }
+    }
+    assert!(!received.is_empty(), "queued handoff records are preserved");
+    assert!(
+        expected.starts_with(&received),
+        "handoff order is preserved"
+    );
+    assert!(
+        slow.0.next().await.is_none(),
+        "terminal status is emitted once"
+    );
+    let after = *received.last().unwrap() as i64;
+    let mut resumed = harness.subscribe(feed, None, after, 100).await.unwrap();
+    assert_eq!(resumed.until_live().await, expected[received.len()..]);
+    let next = harness.log.append(0, key, &event(32)) as u64;
+    assert_eq!(fast.collect(1).await.1, vec![next]);
+    assert_eq!(resumed.collect(1).await.1, vec![next]);
+    drop((slow, fast, resumed));
+    harness.baseline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_prolonged_trade_stall_preserves_terminal_status_and_peer_progress() {
+    prolonged_lossless_stall("TRADE", TRADE_KEY, trade).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_prolonged_book_delta_stall_preserves_terminal_status_and_peer_progress() {
+    prolonged_lossless_stall("BOOK_DELTA", BOOK_KEY, |sequence| delta(sequence, false)).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t05_the_replica_byte_budget_bounds_all_queues_together() {
     // A budget for about three records: a stalled reader cannot hold more.

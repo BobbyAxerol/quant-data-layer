@@ -1,5 +1,16 @@
 # P18.4 DR01/DR08 TRADE Incident Attribution
 
+## Open Incident Register: 2026-10-08 Continuity Follow-Up
+
+DL-DR08-CONTINUITY: IN_PROGRESS, linked TS IDR-078/081 (Claude-owned).
+Approved passive attribution and isolated correction, not rollout. Prior window:
+overflow+59/replay+84263/expired+4 over approximately15min, including BOOK_DELTA
+(~7.9MB queue) and TRADE (1000 queue,10000 replay,OUT_OF_RANGE). Cache600/600
+present is not usable: BOOK_DELTA source-age max8288.56ms. Historical observations,
+not same-event joins or proven cause. Runtime writer5849d716/Stream1f13408f lack
+pending worker/counter patches. Preserve unavailable spans and distinguish
+lossless recovery from snapshot resynchronization. DR08/release remain OPEN.
+
 Date: 2026-10-08. Status: READONLY_ATTRIBUTION_COMPLETE /
 INCIDENT_WINDOW_RECOVERY_NOT_MEASURED / PROPOSALS_WITHDRAWN.
 Owner update below supersedes the original proposal text.

@@ -70438,3 +70438,71 @@ Shared digests/config untouched;17read-only roles restart0/OOMfalse. Retain all
 active and BARrollbackf7351c3b; no push/merge/deploy. Claude next runs his actual
 WriterClone/control/cache/ACK validation with honest TS source/image provenance.
 DR05 final acceptance and v2.2.3 remain HOLD pending joint DR/broker evidence.
+
+### DR08 continuity attribution and bounded recovery - 2026-10-08 (Codex)
+
+Status IN_PROGRESS. Approved scope: runtime/source attribution, bounded passive
+same-event tracing, isolated DR08 reproductions/fixes. Guides: upgrade/evidence/
+p184-dr-runtime-runbook.md and p184-dr01-dr08-trade-attribution.md. No shared
+runtime changes, extra TS subscription, orders, TS edits, push/merge or release.
+Prior observation: roughly15min overflow+59/replay+84263/expired+4; TRADE queue1000,
+replay10000/OUT_OF_RANGE; BOOK_DELTA queue~7.9MB/RESOURCE_EXHAUSTED. TS cache
+600reads/60keys had0missing but BOOK_DELTA source-age max8288.56ms. These are not
+same-event latency joins or proof of transport cause. Preserve LOSSLESS semantics.
+Fresh runtime: writer5849d716, Stream1f13408f, core658a9570, Query/BAR51450612,
+projectora696cfba. TS source8b41608; Claude owns OR and IDR078/081. IDR081 OPEN
+colocates both BTC venues in one worker; do not duplicate TS ownership changes.
+Linked DL report is the incident register for BOOK continuity; do not edit
+Claude's TS INTEGRATION_DEFECT_REGISTER.md. Missing trace spans NOT_MEASURED.
+Tests: bounded item/byte queue, slow/fast isolation, replay/refusal, valid snapshot
+anchor/generation, no rewind, cursor after apply. Reuse DR08 existing60s restart
+and600s run limits; no increased quota/buffer/freshness or retrospective gates.
+Source rollback only; no runtime deployment. Cleanup owned disposable resources,
+retain active/named rollback images/evidence, no shared prune. apply_patch helper
+failed twice (mountinfo sandbox); use exact-match replacement and inspect diff.
+
+DR08 source review: terminal error/backpressure sends currently ignore timeout
+when the two-slot transport handoff stays full; closing sender can become clean
+EOF. Reproduce before fixing terminal status outside the bounded data channel.
+Also strengthen exact10000 replay proof to require LIVE, and add BOOK_DELTA
+coverage (existing DR08 is TRADE-only). These are in-scope defects, not measured
+cause of every current overflow. Runtime trace expiry is1791401054410448004:
+new SDK/apply/ACK spans cannot be acquired read-only on that expired hook; retain
+NOT_MEASURED rather than rearming/restarting writer without a runtime packet.
+
+DR08 progress: report upgrade/evidence/p184-dr08-continuity-closure.md links raw
+bounded evidence and Claude handoff. Python43PASS; real isolated TRADE DR08
+4development checksPASS, exact10000->LIVE->marker,5restarts p505516.627/max5545.290ms.
+This is test-only input/actualKafka+gRPC, not TS final evidence. Passive canonical
+1465/cache720 joins380unique noidentity mismatch; ETH delta external visibility
+p505033/4556ms remains an open consumer path finding. All6trace inner boundaries
+not present are explicitly NOT_MEASURED, not filled using cache GET timestamps.
+No shared changes or TS edits. DR08 stack removed, cleanup errors0; disk values
+and named rollback retention in report. Rust terminal-status regression pending.
+
+Rust counterfactual: both prolonged-stall regressions fail on old service in
+10.31s (terminal error missing). Candidate39library+37nativePASS0fail0ignored,
+including BOOK_DELTA suffix replay and peer independence. These tests invoke
+service directly, not Kafka/wire. Binaryb5e1c2c retained, target1480911808bytes
+removed; free45976342528->47115079680 (concurrent activity). Source changed, so
+reuse existing image with development-only hashed candidate executable for
+isolated DR08 wire validation; no new image or runtime rollout. Harness44PASS,
+including development-only overlay/size/hash checks. Final image qualification
+cannot use this option. Report/runbook updated before wire experiment.
+
+DR08 tested slice status IMPLEMENTED_TESTED_ISOLATED / TRACE_PARTIAL, not full
+three-step runtime closure. Final harness46PASS; Rust39library+37nativePASS,
+0fail0ignored, oldsource2regressionsFAIL. Candidate binaryb5e1c2c actual isolated
+Kafka/gRPC4development checksPASS;5restarts p505400.475/max5542.696ms, expired
+backlog->new snapshot->firstevent7063.953ms(n1). BOOKDELTA prolongedstall/suffix
+replay/fastpeer are direct-service tests, not full TS+Redis crash acceptance.
+Receipt41da3328, cleanupd235cadc, noownedcontainers/privatefiles/temporarycopy.
+Sharedruntimeunchanged=true. Source/interface/buffer/freshness unchanged except
+terminal error preservation; replay proof strengthened rather than weakening gate.
+Inventory95images28.96GB/cache467entries20.52GB; no images built/pruned. Exact
+Cargo target1.48GB removed, one121.77MB review binary retained. Disk pre/post in
+report; concurrent activity precludes attribution. Agent/observers finished.
+Runtime pending: SDK2.0.7 writer has expired tracing; canonical/cache join is not
+SDK/apply/ACK/cursor trace. ETH BOOK delay remains open alongside TS IDR081.
+Canonicalmain5bf5cd5/v2.2.2, featurefix/p184-dl-closure only; active digests and
+BARrollbackf7351c3b untouched. No TS edits/push/merge/deploy/release; v2.2.3 HOLD.
