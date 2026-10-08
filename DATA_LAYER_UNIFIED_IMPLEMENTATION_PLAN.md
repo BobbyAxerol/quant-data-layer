@@ -70711,3 +70711,36 @@ Two pytest attempts unavailable; all32tests run with stdlibunittest instead.
 Canonicalmain5bf5cd5/v2.2.2 and runtimeidentities unchanged; feature retained,
 v2.2.3HOLD, no push/merge. Continue caller trace under single-writer packet,
 not broad catalogue or load.
+
+### BOOK exact-event trace reactivation - 2026-10-08
+
+IN_PROGRESS. Owner explicitly approved recreate ONLY market_data_service_p184w
+with same image5849d716, unchanged identity/binding/Redis/cursors/mounts, trace
+expiry <=300s and4096records/process. Same-image old-config rollback prepared
+before action; never two writers. Guide p184-post-disk-recovery.md BOOK caller
+handoff. NoTSsourceedit, noDLrolechanges or freshness relaxation. Read-only
+assigned Kafka observer filters BTC/ETH BOOK, no group join/offset commits; join
+real event hashes/offsets against writer trace. Redis ACK is not SDK ACK/cursor.
+Stop/rollback on config drift, crash/OOM or writer unable to recover; preserve
+all failed observations. Evidence private outsideGit; no full env/keys in logs.
+Record runtime diff, window coverage, cleanup and unresolved stages after run.
+
+Trace RESULT: MEASURED_CONSUMER_BACKLOG_OPEN. Sameimage writer recreate completed,
+onlytraceexpiry changed; expired naturally after<=300s. NoDLrolechange, noTSedit.
+Canonical4096records/150.136s;4writerexports16384attempts.3425exactmatches with
+zeroidentity/generation/clockfailures:2885applied,523rejected,17other. Export
+omissions1+6inflight retained. OKXBTC matched622successes SDK->writerp953882.532ms,
+writer->ACK301.008ms,SDK->ACK3956.305ms. Significant postSDK/prewriterwait proven;
+which preparation/scheduling/prior-write cost dominates still needs batchtrace.
+Cursor acknowledged14961->35617/errors0;aggregate notsameeventACK/cursor proof.
+Heartbeat13/13READY60 but executionready50; freshcache BOOKstill~11.6-14.6sage.
+No completeconsumer/releasecertification. New boundedoffline exactjoin analyzer
+15unittestPASS;invalididentity/clock/generation/ambiguity failclosed. Guide and
+Claudehandoff: upgrade/evidence/p184-book-ack-trace-20261008.md. Source architecture
+unchanged; no concurrent TSedits. 8boundedwriter timeouts retained, noclaim all
+feeds continuous. Unrelated trusting_ptolemy container appeared concurrently;
+wholehostequalityassertionfailed, scopedwriterconfigverifiedunchangedexceptexpiry.
+Observer initial330s/10000 rejected by tool, reduced to300s/4096beforeexecution.
+Allmeasurementprocessesended; noimagesbuilt orcleanupneeded, BuildKit0Breclaimable.
+Activeplusnamedrollback retained; free98887442432bytes. Canonicalmain5bf5cd5,
+releasev2.2.2/runtimeDLunchanged,featurefix/p184-dl-closure;v2.2.3HOLD,no push/merge.
