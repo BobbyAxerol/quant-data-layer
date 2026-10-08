@@ -70609,3 +70609,50 @@ Final readonly disk recheck worsened to28430336bytes (~27.1MiB) available, root1
 Do not build/load until the concurrent writer/build owner restores disk headroom.
 All p184-capacity100 and p184-dr05 containers absent, worktree clean before this
 journal-only update. No causal attribution without process/disk investigation.
+
+### Owner-approved unused image and build-cache cleanup - 2026-10-08
+
+Status IN_PROGRESS. Owner explicitly authorizes deleting unnecessary images and
+unused build cache. Before cleanup root available17297408bytes,100%; Docker95
+images28.96GB/reclaimable8.491GB,467cacheentries20.52GB/reclaimable2.852GB.
+Kafka brokers already restart-loop before action. Scope: unused BuildKit cache
+older than1h (BuildKit retains in-use refs), then exact superseded DL/test image
+IDs after excluding ALL running/stopped container references, active candidates,
+named rollbacks and build bases. No force image deletion, container/volume/network
+removal, service restart or data/log deletion. Preserve source and evidence.
+Capture bounded pre/post image/container/restart inventory outside Git; compare
+runtime changes and record actual reclaimed bytes. No push/merge or release.
+
+First action: docker buildx prune --force --filter until=1h exited0, reported
+2.852GB reclaimed. Root free rose to101073723392bytes; gain exceeds this action,
+so concurrent cleanup/storage activity remains unattributed. No active cargo,
+rustc or docker-build/buildx process found in sanitized process scan afterward.
+Exact image cleanup allowlist: DLsuperseded0ed57643,b40b49c3,65918a65,f2040ac9,
+3af57ddf and retiredrc3candidate0d8da150; TSsupersededtest7a02c808,f2cc1f8d,
+3b4ee780 (no current script/Dockerfile/compose references). Preserve all69
+container image references including stopped rollback/operational containers;
+retainrc2Python77682/Rust69e3,buildbases,TSfinala654,alphaimages,allrollbacktags,
+BARf7351c3b,corehistorical7fe348 pendingretentionreview. Recheck beforeeachrmi;
+no --force. Detailed inventory/receipt outsideGit cleanup-20261008-unused-artifacts.
+
+Cleanup result SCOPED_CLEANUP_COMPLETE_KAFKA_UNRECOVERED. All9 allowlistedimages
+removed withoutforce, all69containers retained (including stopped rollback), no
+runtimeimage/start/restartcounter delta during imagecleanup, no volumes/networks
+or Kafka/DB/logdata touched. Second identical cacheprune reclaimed128.5MB after
+image deletion. Buildcache467->196entries,20.52->17.54GB,reportedreclaimable0B;
+35activecache refs retained. Images95->86. Remaining9.003GB Dockerlabelsreclaimable
+is NOT permission to delete activecandidate/buildbase/namedrollback artifacts.
+Exact retention inventory: retained-images.json f27db1c65b58b16c1ba00cf4e6cc10ec76646477b7c24d3062cc71677611cbe9.
+No cargo/rustc/dockerbuild process was seen during the sanitized safety scan.
+Disk17297408->101289484288freebytes (100%->68%used). Only2.852GB+128.5MB cache
+reclamation attributed to these cachecommands; muchlarger free-spacegain has
+concurrent/unidentified cause. Do not claim cleanup recovered101GB.
+Kafka1/2/3 stillrestart-loop, logsconfirm ENOSPC at2026-10-08T16:09:12Z before
+cleanup. No manual restart attempted; quorum/freshness NOT recertified. Broker
+recovery/integrity requires its own scoped operation, not another broadcleanup.
+Receipt 0af529653048ce4b8662f9c16a6c72ec080eef86f75abfb03e0bc0a2d3ec1e07, outsideGitroot cleanup-20261008-unused-artifacts;
+fullimagecommands/digests/containerinventory and exactretentions in that directory.
+Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged; featureworktree
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure retainedactive.
+All runtime digests/configs preserved, BARrollbackf7351c3b andTSrollback artifacts
+retained. No source/runtimecodechange, no testsrerun, no push/merge/release.
