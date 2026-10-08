@@ -70547,3 +70547,36 @@ change; no test resources created by this slice, cleanup intentionally unnecessa
 Canonicalmain5bf5cd5/v2.2.2, active featurefix/p184-dl-closure. Active/runtime and
 named rollback digests inherited unchanged from prior inventory, not remeasured.
 Capacity and WriterClone agents remain independent work in progress; no TS edits.
+
+DR05 WriterClone attempt found startup/deadline/evaluator issues in the TS-owned
+harness, not a demonstrated new provider failure. No final fault cell passed;
+canonical positive anchor was observed but TS writer exited with local PG5433
+connection refusal. Report: upgrade/evidence/p184-dr05-writerclone-followup.md.
+Do not edit Claude's worktree or rerun blind. DL-owned cleanup also has an
+AutoRemove race after channel exit: assign a narrow exact-identity absence check
+plus negative tests. Failure inspection/replacement must still fail closed; no
+broad cleanup and no swallowing arbitrary stop errors. Record results below.
+
+Capacity100 guide: upgrade/evidence/p184-capacity100-candidate.md records exact
+mixed/stress workload, logical versus authenticated identities, TS reservation,
+quota arithmetic, one-replica headroom and source MemoryPlan limits. No measured
+100-alpha capacity or resource activation claimed. Driver integration assigned
+narrowly; prior stage50 certified budget/evaluator must remain unchanged. Final
+CPU/RAM sizing needs offered/dequeued/apply/recovery evidence, not quota arithmetic.
+
+Parent independently reproduced TS evaluator counterexample read-only: gap step,
+old quantity2 instead of faulty3, actual validator EXECUTION_CONTEXT_STALE yielded
+(True,[]) rather than requiredFalse. This is a TS harness correctness finding,
+not proof of DL GAP closure; no TS source edited. WriterClone final acceptance
+must wait for this narrow adapter correction, not for Paper/OR feature work.
+
+Capacity100 tested slice: typed planner reuses Phase3 and generates180streams
+mixed or500stress streams (+assumedTS50),660reservedslots stress. Existing384
+single-replica slots insufficient; existing1024model307MiB is an estimate only.
+Fixed startup arithmetic to include snapshot/warmup AND Subscribe on reconnect:
+stress4950RPM peralpha identity BEFORE driverprobe/coldoverhead, not4500.
+Unit6modules103PASS0fail0skip in existing image77682,4.535s; parent32PASS subset,
+not additive. Full commands and limitations in capacity100 guide. No runtime
+quota/resource changes. Stage100 hostdriver remains unfinished; do not claim
+capacity from slot arithmetic or inherit stage50 PASS. This work does not wait
+Paper/OR. Testcontainers--rm removed; noimagesbuilt, rollback/active preserved.
