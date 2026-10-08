@@ -70744,3 +70744,58 @@ Observer initial330s/10000 rejected by tool, reduced to300s/4096beforeexecution.
 Allmeasurementprocessesended; noimagesbuilt orcleanupneeded, BuildKit0Breclaimable.
 Activeplusnamedrollback retained; free98887442432bytes. Canonicalmain5bf5cd5,
 releasev2.2.2/runtimeDLunchanged,featurefix/p184-dl-closure;v2.2.3HOLD,no push/merge.
+
+### Resilience closure - three approved packages - 2026-10-08
+
+Status IN_PROGRESS. Owner approved one scope, no architecture rewrite or broad
+catalogue rerun. Governing KN architecture guide and evidence
+upgrade/evidence/p184-book-ack-trace-20261008.md remain authoritative.
+
+R1 Consumer throughput / BOOK recovery: TS source remains Claude-owned. Reuse
+exact-event evidence and coordinate bounded ordered batch/ownership change,
+snapshot plus sequence/generation boundary resync, ACK only after confirmed
+apply. LOSSLESS TRADE must not silently become latest-state. Require slow-reader,
+partial apply, crash/ACK, old replay and generation/reset tests. No TS edits here.
+
+R2 Disk pressure / restart: extend existing read-only watcher with bytes/inodes,
+measured growth and explicit predeclared headroom policy; do not infer safety from
+process-up. No destructive auto-prune, FLUSH, offset reset or legacy spool recovery
+on KN. Check recovery tooling topology before mutation. Fail-closed on missing
+pressure/progress evidence, bounded retries and stable recovery before READY.
+Production policy derives from measured growth/retention, not guessed constants.
+
+R3 Fault acceptance / rollout: isolated storage/consumer faults first, fixed
+budgets before runs, exact role/image/config packet and rollback before deployment.
+Inherited unrelated tests remain inherited. Gate includes no loss/regression,
+quorum/ISR, projector progress, cache eligibility and consumer ACK/cursor; cleanup
+only owned test artifacts. Do not promote mocked faults to live acceptance.
+
+Initial slices: watcher disk safety and legacy-recovery topology fence, unit and
+isolated filesystem fault tests; no production mutations or release authority
+implied until concrete changed-role packet passes. Journal results per slice.
+
+R2 progress: source legacybootrecovery fence14unittestPASS; actualread-only
+assessment refuses KN with MANUAL before spool/cache I/O. Installedsystemdunit
+is inactive legacy canonical path, not KN controller. Broker/projector restart
+policy unless-stopped confirmed. No installedunit orruntime changed. Detailed
+threepackage tracking and currentOPENstates: upgrade/evidence/p184-resilience-closure.md.
+
+R2 initialsliceRESULT:35unitPASS(14boot/10watcher/11disk),0skip. Real isolated
+16MiB/64inode tmpfs exhausted bytes theninodes, pressure detected, ownedfiles
+removed, guard cleared andwrite/read succeeded in0.110404s. NoKafkafault
+certification inferred. Testcontainer --rm verifiedabsent; noimagebuild.
+Watchersource supports explicitpolicy/matchedTScontainer, failclosedunknown and
+hysteresis; no productionthresholds invented, noinstalledcontroller activated.
+Sourcefence rejects legacybootrecovery onKN (counterfactualRECOVER->MANUAL).
+R1 consumerfix, R2native recoverycoordinator and R3 endtoendfault/rollout remain
+implementationOPEN, nottechnicaldebt orcomplete. Guide includes evidencehashes:
+upgrade/evidence/p184-resilience-closure.md. NoTSworktreeedit;Claudeplan change
+preserved. No sharedruntimewrites/restart/flush/offsetreset, no push/merge.
+Images86 retainedactive/rollback;concurrentBuildKit219entries/50active observed,
+notowned/pruned. Testtmpfs removedautomatically, no sharedvolumes touched.
+
+Diskpost94548148224freebytes vs95856402432before; concurrenthost/buildusage,
+notattributed to16MiBtest(torn down). No reclaimclaim. Canonicalmain5bf5cd5 and
+v2.2.2 unchanged;DLcore658a9570/ingestor0f6876e1/QueryBAR51450612/projectora696cfba/
+Stream1f13408f,TSwriter5849d716 unchangedbyslice. Featurefix/p184-dl-closure
+retainedactive;v2.2.3HOLD, explicitrollbackimagesretained.
