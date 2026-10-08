@@ -3173,3 +3173,14 @@ realmpermission. Prepared files are not activation/certification. ActiveStream
 BTC TRADE overflow/replay observed under highertraffic remains a qualification
 finding. DR01-08/brokerdelta remain prerequisites; no dependency on building
 Paperfeatures. [PhaseCpacket](evidence/p184-dl-phase-c-packet.md) governs scope.
+
+
+### DR01/DR08 evidence and TRADE diagnosis follow-up
+
+Owner scope 2026-10-08: isolated runtime auth/fault runners, not a shared-runtime
+rollout. [Incident attribution and proposal boundaries](evidence/p184-dr01-dr08-trade-attribution.md)
+record why replica offers/local delivery counters cannot prove client apply rate.
+Use exact TS case roster/provenance; development placeholders are not acceptance.
+Retain v2.2.3 HOLD until DR/broker receipts and own DR01/DR08 meet their contracts.
+TRADE latest-state opt-in and realtime-core batch25->50 remain proposals only;
+no delivery-mode default, interface, broker config or core binary is changed.

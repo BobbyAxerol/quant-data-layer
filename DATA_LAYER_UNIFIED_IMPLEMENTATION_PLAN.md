@@ -69806,3 +69806,46 @@ checkout removed. Only owncompiledscriptcache removed. Diskfree105165643776 ->
 BuildKit444/18.29GB; retaincurrent/candidate/namedrollback, no broadprune. Canonical
 DL /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged, featurefix/p184-dl-closure;
 TS canonical668e103 unchanged, workon feat/v2-rust-first-okx-demo perowner.
+
+
+### DR01/DR08 isolated runtime evidence and TRADE attribution - 2026-10-08 (Codex)
+
+Status IN_PROGRESS / v2.2.3 HOLD. Approved scope: nine DR01 runtime cells using
+disposable test credentials; four DR08 ISOLATED_FAULT cells on temporary
+Kafka/core/Stream; bounded readonly attribution of the 03:21 TRADE incident.
+Roster and evidence contract: TS scripts/p184_case_matrix.py and
+scripts/p184_dr07_reference.py; architecture guide owner continuation 2026-10-08
+and upgrade/evidence/p184-dl-phase-c-packet.md remain governing references.
+No shared runtime, credential, manifest, quota, topic or consumer mutation.
+No push/merge/release. Keep bar-edge rollback f7351c3b until release approval.
+Runner development uses explicitly dummy TS provenance; final evidence requires
+Claude's final source SHA and image digest, not a relabelled development receipt.
+Correctness gates: exact nine/four cell identities, fail-closed negative auth,
+bounded queues, independent fast-consumer progress, observable overflow/range
+signals and measured restart recovery. Do not infer account authorization from
+an unchecked JWT claim. Test data provenance must remain explicitly test-only.
+LATEST_STATE opt-in TRADE and batch_wait_ms 25->50 remain proposals only.
+Rollback: no operational changes to undo; remove only named disposable test
+containers/networks/credentials and retain bounded evidence/hashes. Record exact
+commands, tests, measurement limitations and cleanup with each completed slice.
+
+
+### DR TRADE attribution slice - 2026-10-08 (Codex)
+
+Status READONLY_ATTRIBUTION_COMPLETE / RELEASE_HOLD. Detailed report:
+upgrade/evidence/p184-dr01-dr08-trade-attribution.md. Recomputed retained hashes
+and paired counter deltas; independently checked rates with Python datetime/JSON.
+The 9.996720s interval enclosing both overflows has aggregate hub offers
+2370.778/s and local outbound deliveries1057.447/s. NOT per-subscription rates,
+NOT client Redis ACK; lifetime totals135298/240841 cannot be divided by300s.
+Closure lacks per-subscription offered sampling and transport window telemetry.
+Two queues1000 and Binance replay10000/OUT_OF_RANGE are observed; exact TS vs
+network cause remains NOT_ATTRIBUTED. TS IDR078 later fresh/advancing samples do
+not reconstruct incident-time recovery latency. No additional consumer requests.
+Inspected actual realtime-core entrypoint and its one shared batch deadline;
+25->50ms remains an isolated paired-experiment proposal, not an implemented fix.
+Per-subscription TRADE LATEST_STATE also remains proposal-only, default LOSSLESS;
+no changes to existing QUOTE mode, canonical durability or consumer contracts.
+No runtime/image/config changes, no disposable resources created in this slice,
+no cleanup required. Bar-edge f7351c3b retained. DR01/DR08 runner work remains
+in progress; final TS SHA/image still required before final case evidence.
