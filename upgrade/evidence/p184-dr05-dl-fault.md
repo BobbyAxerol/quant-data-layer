@@ -57,8 +57,10 @@ venue. Schedules cover positive anchor/control, missing sequence or unanchored
 generation, new anchor/recovery, late old-generation snapshot and post-fence
 control. Timestamps are stamped at publication, never reused from preparation.
 
-`drive()` defines the adapter interface; it is **not an implemented Kafka
-publisher/TS observer**. The scheduled acceptance still needs that integration:
+`drive()` defines the adapter interface. The bounded Kafka publisher is now
+implemented in `scripts/p184_dr05_raw_publisher.py` and has a 16/16 exact-byte/
+offset readback on an isolated broker. See [alignment handoff](p184-claude-stage3-alignment.md).
+The canonical/Query/Stream observer and TS integration remain incomplete:
 publish real raw-envelope bytes through this core, retain assigned Kafka offsets,
 observe canonical/Stream/Query and invoke actual TS validation. Reset only the
 disposable case between cells; use bounded deadlines. Do not infer refusal or

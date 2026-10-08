@@ -70219,3 +70219,46 @@ PyJWT2.15.1 dependency update as documented. Recipe18PASS, SDK89PASS inherited;
 no rerun of unrelated gates. Hosted DL CI remains NOT_RUN, not claimed green.
 Canonical main5bf5cd5/v2.2.2 and shared runtime unchanged by this work. Active
 feature fix/p184-dl-closure; no push/merge. Main plan/guide/packet agree on HOLD.
+
+
+### Claude alignment and DR05 raw publisher - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / NO_SHARED_RUNTIME. Read Claude HEAD2abbe39 and current
+dirty roster: Gateway/SDK history pagination is in progress; no TS files edited.
+His p184_dr05_isolated.py owns stale/disconnect/fallback and explicitly delegates
+GAP/generation upstream injection to the isolated DL stack. Implement the missing
+bounded raw-envelope publisher using existing qdl.raw.envelope builder, preserve
+broker-confirmed partition/offset and TEST_ONLY provenance. Test identity mismatch,
+delivery error/timeout and invalid offset; no invented status/ACK or cell PASS.
+Align handoff with Claude, without running DR01 deployed/DR08 final or building
+images. Keep IDR040fix2 deferred, IDR075 paired activation and release timing gates.
+Scope excludes TS edits, dependency changes in alpha and shared consumer probes.
+Use existing image, isolated tests; cleanup only own containers/private files.
+
+
+DR05 raw publisher slice RESULT: IMPLEMENTED_TESTED / TS_ACCEPTANCE_STILL_OPEN.
+8unit tests PASS0fail0skip/.230s in existing77682eea network-none container.
+Actual isolated Kafka/core/Stream/Query/Redis stack:16TEST_ONLY envelopes,
+16exact byte-hash/capture-ID/offset readbacks, Binance+OKX gap schedule including
+new-generation anchor/late old-generation. ACK is not canonical/TS acceptance;
+no DR05 PASS emitted. Runtime-free tests also reject wrong identity/provenance,
+wrong namespace/endpoint/topic, sentinel offset, delivery error and timeout;
+ambiguous attempt fences publisher rather than resending. Existing raw builder
+preserves original payload clocks/generation; no public contract changes.
+
+Receipt ~/.local/state/qdl-v2/dr05-publisher-20261008/receipt-1791453132486033908.json
+SHA2560764e3bb6ea676ba9e4b5009112ed4bacab95ca53ac354817c8e2a5aec9cbcfe.
+Source file digest0a0580078a4dd8fa4449aa528d9e027423cd1d44dbb988a6ffb00ab6aa2d0c4a.
+Elapsed66.087s includes material/startup/test/cleanup, not recovery latency.
+All5roles/helper removed, privatefiles0, parent label-scoped ps empty; no images
+built. Diskfree83,987,636,224 ->83,501,821,952bytes, concurrent-host delta not
+attributed to test. No broadprune; active and BARrollbackf7351c3b retained.
+
+Alignment guide upgrade/evidence/p184-claude-stage3-alignment.md records read-only
+inspection of Claude's dirty history-pagination work and alpha_sdk2.4.0, distinct
+from qdl_sdk2.1.0. His DR05 runner owns consumer stale/disconnect/fallback; Codex
+upstream observer integration remains open, not delegated away as done. CIgreen
+2abbe39 cannot certify uncommitted changes; re-pin source/image when finalized.
+No actual acknowledgement from Claude is claimed. No TS/alpha edits, shared
+runtime/manifest changes, DR01 deployed/DR08 final, push/merge or release.
+Canonicalmain5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure, releaseHOLD.
