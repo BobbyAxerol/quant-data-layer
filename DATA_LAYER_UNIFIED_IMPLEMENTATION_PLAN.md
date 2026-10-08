@@ -70154,3 +70154,34 @@ mount. Retained deliverable128KB, not cleanup waste. No public tag/PyPI/GitHub
 publish: existing certified-tag release workflow still owns public distribution;
 local hash-pinned artifact is now available to both consumer builds. v2.2.3 HOLD.
 Canonical main5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure; no push/merge.
+
+
+### IDR039 one-commit build recipe and CI slice - 2026-10-08 (Codex)
+
+Status IMPLEMENTED_TESTED_LOCALLY / CI_CONFIGURED_NOT_RUN / BUILD_HOLD.
+Guide upgrade/evidence/p184-consolidated-build.md; generator
+scripts/p184_consolidated_build.py reads only full committed Git objects, checks
+ancestry/source contracts for IDR040fix1, bindingV3, quota log, b6a0119, IDR075.
+One private git archive is the source context for BOTH Python and Rust images;
+exact OCI revision/IDs checked, no overlays or per-role application source.
+Pending TS acceptance completion, exact-source DL CI and build approval produce
+HOLD with NO executable build script. Confirmed TS unit/integration CI is not
+substituted for completion of the pending TS acceptance window. No build executed.
+Final archived-source SDK rebuild must match handed-off wheel6923b46f; drift
+requires explicit review, never overwrite consumer artifacts.
+
+New CI consolidated-source-preflight job uses pinned checkout/setupPython and
+full Git history; proves exact github.sha source contracts and expectedHOLD.
+Existing deployment/release jobs unchanged. Initial real-Git unittest dependency
+would fail in application image without git/.git; moved real-source check to
+host CIjob and kept portable tests mocked. Parent verification:18PASS0fail0skip
+in network-none image77682eea; actual CI Pythonblock locally PASS against
+52642e52e01981590bc433bf95ac12d4e941cf10 (host python3, since no python alias).
+This is NOT remote CIgreen; workflow not dispatched or pushed. Source-marker
+checks do not replace semantic/package/DR regression. Operator receipt digests
+are attestations, not automatic remoteCI validation.
+Cleanup: no images built, temporary test container --rm removed, no runtime
+changes. Active/rollback retained, f7351c3b protected. Latest readonly disk
+inventory95images/28.96GB, BuildKit20.52GB/2.852GB reclaimable; no broadprune
+during Claude concurrent work. Canonicalmain5bf5cd5/v2.2.2 unchanged; same
+featureworktree/branch, no push/merge. Rebuild only after owner timing gate.

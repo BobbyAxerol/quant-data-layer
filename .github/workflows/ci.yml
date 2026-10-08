@@ -7,6 +7,78 @@ on:
     branches: ["dev"]
 
 jobs:
+  consolidated-source-preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact CI revision with prerequisite history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Portable consolidated recipe unit tests
+        run: python -B -m unittest tests.test_p184_consolidated_build -v
+
+      - name: Verify exact committed source and expected HOLD
+        run: |
+          python -B - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from scripts.p184_consolidated_build import CONTRACTS, PREREQUISITES
+
+          sha = os.environ["GITHUB_SHA"]
+          assert re.fullmatch(r"[0-9a-f]{40}", sha), "Expected full CI commit SHA"
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert head == sha, "Checkout differs from exact CI source"
+          result = subprocess.run(
+              [sys.executable, "-B", "scripts/p184_consolidated_build.py",
+               "--repo", ".", "--source-commit", sha, "--release", "v2.2.3"],
+              capture_output=True, text=True, check=False,
+          )
+          assert result.returncode == 2, (result.returncode, result.stderr)
+          assert not result.stderr, result.stderr
+          recipe = json.loads(result.stdout)
+          assert recipe["schema"] == "qdl.p184.consolidated-build-recipe.v1"
+          assert recipe["source_commit"] == sha
+          assert recipe["status"] == "HOLD"
+          assert recipe["build_script"] is None
+          assert recipe["build_script_sha256"] is None
+          assert recipe["prerequisites"] == PREREQUISITES
+          assert recipe["gates"] == {
+              "ts_tests": "pending", "ts_source_commit": None,
+              "ts_receipt_sha256": None, "dl_ci": "pending",
+              "dl_ci_source_commit": sha, "dl_ci_receipt_sha256": None,
+              "build_approval": "pending",
+          }
+          assert recipe["holds"] == [
+              "TS tests must finish and pass before any rebuild",
+              "DL CI must pass for the exact source commit",
+              "explicit build approval required",
+          ]
+          blobs = recipe["source_git_blobs"]
+          assert set(blobs) == set(CONTRACTS)
+          assert all(re.fullmatch(r"[0-9a-f]{40}", value) for value in blobs.values())
+          images = recipe["images"]
+          assert {(image["name"], image["dockerfile"]) for image in images} == {
+              ("qdl-v2-python", "Dockerfile"),
+              ("qdl-v2-rust", "Dockerfile.qdl-rust-runtime"),
+          }
+          assert len(images) == 2
+          assert all(image["source_commit"] == sha for image in images)
+          assert all(image["tag"] == f'{image["name"]}:v2.2.3-{sha}' for image in images)
+          print(f"Committed-source preflight PASS: {sha}; build remains HOLD")
+          PY
+
   contract-tests:
     runs-on: ubuntu-latest
     steps:
