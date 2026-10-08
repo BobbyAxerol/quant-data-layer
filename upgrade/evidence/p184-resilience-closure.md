@@ -115,3 +115,68 @@ concurrentBuildKit growth196->219entries/50active refs,1.126GB labeledreclaimabl
 Not owned by thisslice; no broadprune during concurrentClaude builds. No volumes
 removed; tmpfs test ephemeral. Diskavailable95856402432bytes beforetestinventory;
 postmeasurement recorded in mainjournal.
+
+## R2 Coordinator Slice - 2026-10-08
+
+Status: IMPLEMENTED_TESTED_LOCALLY; overall R1/R2/R3 IN_PROGRESS.
+`kn_recovery_state.py` supplies the pure state machine. Unknown/stale/conflicting
+observations fail closed. Disk, Kafka quorum/ISR, projector progress and consumer
+eligibility are independent ordered gates. Stable distinct samples are required;
+heartbeat alone cannot produce SERVING. One absolute recovery deadline, bounded
+backoff/attempts and sticky BLOCKED prevent infinite retry. After SERVING the
+state machine can start a new bounded episode when health deteriorates.
+
+`kn_recovery_runner.py` is a bounded invocation (not an installed daemon). It
+exits on SERVING/BLOCKED. Default is observe/propose only. Explicit approval IDs
+must belong to the packet; each start reinspects exact ID/image/name/exited state
+and refuses OOM. Inspect and start share one timeout. It never stops/recreates,
+flushes cache or resets offsets. Probe subprocess output is capped at 256 KiB;
+packet <=256 KiB, <=64 roles, run <=3600s, polling >=0.1s. Evidence output is new,
+exclusive mode0600; existing receipts cannot be overwritten.
+
+Required production integration STILL MISSING: supply a native probe which
+reads actual quorum/ISR, committed progress/cache catch-up and the production TS
+validator result, with a fresh monotonic timestamp. Arbitrary JSON booleans or
+READY60 are not acceptable certification evidence. No production packet or
+systemd installation has been made. The existing boot service has NOT received
+the legacy fence patch. Do not claim automatic full-stack recovery is deployed.
+
+Verification: `python3 -B -m unittest tests.test_kn_recovery_state
+ tests.test_kn_recovery_runner tests.test_kn_disk_pressure
+ tests.test_kn_production_watch tests.test_v2_stable_boot_recovery`: 68 PASS,
+0 failures/errors/skips, 0.371s. Coordinator24 + runner9 + prior35. Runner tests
+use mocked Docker commands; subprocess output overflow and timeout are real local
+process tests, not Kafka faults. Direct script --help passed. No image build,
+container creation or runtime mutation in this slice.
+
+## R1 Exact TS Handoff For Claude - 2026-10-08
+
+Read-only review at TS274fb5f; no edits to Claude's worktree. IDR-081 remains
+open. Reset anchors exist (58287fc/dfc70bd), but cache_projector still applies
+BOOK entries serially through execution_state.store_advancing. Per item this
+includes marker/value read, JSON comparison, CAS carrying old/new JSON, retries
+and some rejection readback. This identifies avoidable work, not a measured
+allocation of all observed latency. Existing writer5849d716 still SDK2.0.7.
+
+Proposed write ownership: Claude edits execution_state.py/cache_projector.py.
+Implement bounded runs (at most64) of same-key, same-generation BOOK_DELTA.
+Read/verify initial marker and value once, prepare all input before writing and
+simulate EVERY transition with existing ordering semantics. A bounded Lua CAS
+must check initial marker AND value; validate every argument before mutation,
+then preserve accepted writes and publish order/TTL. Do not retain only the last
+book delta. Initial CAS conflict performs no writes; recompute inside the SAME
+deadline. Lost/unknown Redis reply does not ACK; replay from confirmed cursor.
+Adoption, reset anchor and generation transitions remain scalar initially.
+Do not pipeline dependent same-key CAS or reuse TRADE semantics for BOOK.
+
+Required real Redis comparisons against scalar: both venues; sizes1/64/65;
+older/duplicate/conflicting sequence; corrupt marker/value; generation/reset;
+publication order, TTL and exact bytes; lost reply, partial failure, crash before
+and after ACK; no backward state or skipped delta. Coordinate tests in
+integration/test_edc_book_delta_redis.py and test_edc_execution_state_redis.py.
+Then reuse the SAME event-joined trace through SDK/apply/ACK/cursor. No claim
+of runtime latency improvement until that test and narrow rollout are complete.
+
+R3 remains open: actual Kafka/consumer fault integration, compatible narrow
+rollout and real consumer usability acceptance. Existing filesystem ENOSPC
+receipt is inherited, not substituted for Kafka durability/recovery.

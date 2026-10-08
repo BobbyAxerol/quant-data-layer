@@ -70799,3 +70799,48 @@ notattributed to16MiBtest(torn down). No reclaimclaim. Canonicalmain5bf5cd5 and
 v2.2.2 unchanged;DLcore658a9570/ingestor0f6876e1/QueryBAR51450612/projectora696cfba/
 Stream1f13408f,TSwriter5849d716 unchangedbyslice. Featurefix/p184-dl-closure
 retainedactive;v2.2.3HOLD, explicitrollbackimagesretained.
+
+### Resilience R2 native recovery coordination - 2026-10-08
+
+IN_PROGRESS, continuing approved R1/R2/R3 scope; guide
+upgrade/evidence/p184-resilience-closure.md. Implement bounded non-destructive
+KN recovery controller with explicit observed-role identity and deadlines. Gates:
+pressure cleared -> quorum/ISR -> projector committed progress -> exact consumer
+eligibility. Missing/stale observations never imply SERVING. Default observation
+only; exact-ID approved packet needed for Docker start of exited roles, never
+restart healthy roles, FLUSH, reset-offset, recreate or delete storage. Keep
+retry/backoff bounded and prevent repeated deadline extension. Unit/fault tests
+first; runtime changes remain role-specific packet-gated. TS worktree is active
+Claude-owned (274fb5f observed), no concurrent edits. Preserve plan dirty hunk.
+
+### Resilience R2 coordinator tested slice - 2026-10-08 (Codex)
+
+Guide: upgrade/evidence/p184-resilience-closure.md, R2 Coordinator Slice and R1
+Exact TS Handoff. Added scripts/kn_recovery_state.py, kn_recovery_runner.py and
+their two test files. Ordered gates, stable distinct observations, absolute
+deadline, bounded retries; default propose-only, exact approved exited-container
+start with fresh ID/image/state validation and shared inspect/start budget.
+No reset/delete/recreate or automatic OOM restart. Runner is bounded invocation,
+NOT installed native recovery service. Actual native observation adapter and
+Kafka/consumer fault acceptance still required. R1/R2/R3 remain IN_PROGRESS.
+
+Tests: python3 -B -m unittest tests.test_kn_recovery_state
+ tests.test_kn_recovery_runner tests.test_kn_disk_pressure
+ tests.test_kn_production_watch tests.test_v2_stable_boot_recovery:
+68PASS0FAIL0ERROR0SKIP in0.371s. Direct --help passed. Docker operations mocked;
+probe subprocess timeout/output-limit exercised with real temporary processes.
+Source-only, no runtime change. apply_patch failed with mountinfo-path sandbox
+helper error; exact scripted writes used under rule32, then diff verification.
+
+Claude TS ownership preserved at274fb5f; recorded specific bounded BOOK CAS
+batch handoff in guide, not a claim Claude has applied it. No TS files edited.
+Canonical DL /home/bobby/data_layer main5bf5cd5 / stablev2.2.2; feature
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure; v2.2.3 HOLD.
+Runtime observed: core658a9570, ingestors0f6876e1, Query/BAR51450612,
+projectorsa696cfba, Stream1f13408f; writer5849d716, bindingr22/JWT10 per last
+packet (config not revalidated here). Named BAR rollbackf7351c3b retained.
+Cleanup: local temporary probe files/processes disposed; no image/build/container
+created by this slice. Inventory87images/73containers/223cacheentries39active;
+2.62GB build cache reclaimable but concurrent Claude CI/build resources active,
+so no broad prune. Disk available87240540160bytes at inventory; no freed-space
+claim. Production listing healthy/up is NOT consumer eligibility acceptance.
