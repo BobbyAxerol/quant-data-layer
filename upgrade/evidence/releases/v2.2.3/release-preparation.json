@@ -1,0 +1,186 @@
+{
+  "active_runtime_roles": [
+    {
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "name": "qdl_v2_stable_candidate-binance_bar_edge-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-08T02:17:35.393509241Z"
+    },
+    {
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "name": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-02T12:24:58.369037654Z"
+    },
+    {
+      "image": "sha256:0f6876e16e51600419e1f172aae596bed9c2d369d1afcef93d1da30c18f262ec",
+      "name": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T05:51:24.840836395Z"
+    },
+    {
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "qdl_v2_stable_candidate-kafka1-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T03:56:13.899839854Z"
+    },
+    {
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "qdl_v2_stable_candidate-kafka2-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T03:57:34.401411155Z"
+    },
+    {
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "name": "qdl_v2_stable_candidate-kafka3-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T03:58:43.963843285Z"
+    },
+    {
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "name": "qdl_v2_stable_candidate-market_cache-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-09-27T05:29:58.000340326Z"
+    },
+    {
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "name": "qdl_v2_stable_candidate-market_projector_1-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T12:16:20.78036445Z"
+    },
+    {
+      "image": "sha256:a696cfba6ab383173607f96413c814f74c7abcc98a4c41f57c9c6e78a41bb70b",
+      "name": "qdl_v2_stable_candidate-market_projector_2-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T12:15:13.766866129Z"
+    },
+    {
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "name": "qdl_v2_stable_candidate-query_kn_1-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-02T11:13:49.101943789Z"
+    },
+    {
+      "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+      "name": "qdl_v2_stable_candidate-query_kn_2-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-02T11:12:13.488673234Z"
+    },
+    {
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "qdl_v2_stable_candidate-rust_core-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-07T17:56:52.401430746Z"
+    },
+    {
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "qdl_v2_stable_candidate-rust_core_2-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-07T17:56:25.704876381Z"
+    },
+    {
+      "image": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
+      "name": "qdl_v2_stable_candidate-rust_core_3-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-07T17:56:10.228521642Z"
+    },
+    {
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "name": "qdl_v2_stable_candidate-stable_redis-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-09-16T06:38:55.588316335Z"
+    },
+    {
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "name": "qdl_v2_stable_candidate-stream_kn_1-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T12:10:50.691735492Z"
+    },
+    {
+      "image": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
+      "name": "qdl_v2_stable_candidate-stream_kn_2-1",
+      "oom": false,
+      "restart_count": 0,
+      "started_at": "2026-10-01T12:07:24.322915897Z"
+    }
+  ],
+  "bar_edge": {
+    "image": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+    "owner_rollout_at": "2026-10-08T02:17:33Z",
+    "rollback": "sha256:f7351c3bda080a6d1266d49480dc65d7e590375f178252f858f87a04b1a4d685",
+    "source": "d6d2637557c3759f829421d2174e21a44762f7fc"
+  },
+  "busy_window": {
+    "cpu": {
+      "max": 5.870669239231109,
+      "mean": 4.882531768271189,
+      "n": 30,
+      "p95_nearest_rank": 5.564052047081731
+    },
+    "duration_ms": 299992.35502200003,
+    "mean_lte5": true,
+    "not_peak_capacity": true,
+    "rates": {
+      "basis": "LOG_END_OFFSETS_INCLUDES_TRANSACTION_MARKERS_NOT_PAYLOAD_COUNT",
+      "covers_cpu_window_with_small_snapshot_setup_margin": true,
+      "offset_increments": {
+        "md.canonical.v2": 287754,
+        "md.raw.realtime.v2": 249628
+      },
+      "partitions": 12,
+      "rate": {
+        "md.canonical.v2": 952.4805598220488,
+        "md.raw.realtime.v2": 826.2815362679872
+      },
+      "seconds": 302.110102965,
+      "topics": 2
+    },
+    "receipt_sha256": "e1434fe1c534a1c20946779a89b5a53fd9013cc5378f0b88b923058bc6a24e80",
+    "stream_overflow_delta": 2,
+    "stream_replayed_delta": 15901
+  },
+  "excluded_core_candidate": "sha256:0d8da150820ed684bda084e92f714537cb40bd81e2e3a6bc93fa9a4b33538411",
+  "idr075": {
+    "binding_sha256": "5a9a19385ae34d34213284f06aac8e5c7eb687068702f493590f2664dc0accdf",
+    "existing_linear_index_preserved": true,
+    "new_binding_revision": 23,
+    "new_manifest_revision": 11,
+    "old_binding_revision": 22,
+    "old_manifest_revision": 10,
+    "paired_environment": {
+      "DATA_LAYER_V2_JWT_MANIFEST_REVISION": "11",
+      "DATA_LAYER_V2_RELEASE_MANIFEST_SHA256": "6d35f2cf26d9a348d3000ffbf80dc5266dbbe6e8c7cbc0fdc0675345f501ad27"
+    },
+    "products": 64,
+    "status": "PREPARED_NOT_ACTIVATED"
+  },
+  "previous_published_release": "v2.2.2",
+  "release_gates_open": [
+    "DR01-DR08 indexed receipts",
+    "broker delta receipt",
+    "TRADE overflow/replay affected recovery proof",
+    "IDR075 approved paired runtime packet and actual Paper identity preflight",
+    "release source/image/config attestation and CI/approved publication"
+  ],
+  "runtime_changed_this_slice": false,
+  "schema": "qdl.release-preparation.v1",
+  "source_review_base": "1cd24e367bc9b3216318da740d0e7ab3f3ddba54",
+  "status": "PREPARED_RELEASE_HOLD_NOT_PUBLISHED",
+  "version": "2.2.3"
+}

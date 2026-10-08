@@ -69729,3 +69729,80 @@ acquisition/catalog/manifests unchanged; rollback compose retained. Whole DL 5.1
 Coherence gate redefined by the owner to the TS product path; with TS IDR-076 (bounded re-read) the current cores
 reach 120/120 per venue. Core candidate not needed for coherence. Evidence:
 upgrade/evidence/p184-dr07-runtime-closure.md (Claude continuation). Status RELEASE_HOLD for DR/broker receipts.
+
+
+### IDR-075 paired Paper entitlement and release-record continuation - 2026-10-08 (Codex)
+
+Status IN_PROGRESS / PREPARED_ONLY until approved runtime packet. Owner handoff
+supersedes the old core-first coherence gate: current658a9570 cores retained;
+TS product-path IDR-076 governs coherent reads. Existing bar edge51450612
+rollout is inherited with immutable evidence, not repeated. Scope: simultaneous
+readonly300s CPU/input-rate sample; prepare next DL release record; additive
+Paper inverse entitlement and TS manifest-revision/hash pairing. No other role
+may change without its exact approved packet. No push/merge/tag/publication.
+Read guide18.13-18.14 and PhaseC packet; do not wait for Paper feature completion.
+Source inspection shows BTC-USDT-SWAP MARK_INDEX_PRICE already entitled: preserve
+and prove its INDEX component path, do not add duplicate or confuse standalone
+INDEX reference products. Four inverse feeds only; copy ETH policy without
+weakening freshness/realm/quota, no TRADE/BAR additions. Use deployed catalog
+identity and bindingr22, not the source catalog that lacks runtime inverse rows.
+Prepare public artifacts outside runtime; sealedV3 rev11/r23 and paired TSenv
+change are not live authorization. Negatives: wrong realm/source/units, checksum,
+revision drift, missing pair, old policy mutation, duplicate/unapproved feed.
+Rollback preserves original paper manifest10/bindingr22/JWT10 together; no cache,
+cursor or financial mutation. Busy window must be supported by simultaneous
+input rates, not inferred from a CPU average. Cleanup only owned temp resources.
+
+
+### IDR-075 preparation and busy-window receipt - 2026-10-08 (Codex)
+
+Status PREPARED_NOT_ACTIVATED / RELEASE_HOLD. Owner's latest scope observed:
+no core candidate rollout, no reader/writer/runtime changes, no push/merge/tag.
+Release preparation v2.2.3 now records actual17role composition and inherited
+bar edge51450612 instead of stalef7351c3b. Published v2.2.2 not rewritten.
+See upgrade/evidence/releases/v2.2.3/{RELEASE_NOTES.md,release-preparation.json}
+and governing2026-10-08 section in upgrade/evidence/p184-dl-phase-c-packet.md.
+
+Busy readonlywindow03:21:03-03:26:03UTC,31samples/30intervals/299.992s:
+DLmean4.882532,p955.564052,max5.870669vCPU. Frozen300smean<=5 observedPASS;
+not allintervals<=5, not3000payload/s certificate. Input canonical952.48/raw826.28
+log-end offsets/s over302.110s, higher than all3priorbaselines; includesmarkers.
+BARmean0.016960vCPU. Noimage/config/restart/OOMchanges. ActiveStream overflow+2,
+replay+15901/subscriptions+3. Exactboundedlogs identify TS Paper BTC TRADE on
+Binance/OKX queued1000, then Binance replay10000 -> OUT_OF_RANGE. Do not call
+missingdata or infinite loop proved; affectedrecovery remainsopen. One TS
+BinanceBTC MARK timeout. No new consumerquota/probe used. Passiveunchanged.
+Evidence: ~/.local/state/qdl-v2/p184-codex-release-20261008/cpu/receipt.json
+SHA256e1434fe1 (fullhash in release record); overflow-attribution.json retains
+three exactclosures, commands/hash/samples preserved. No repeatedmeasurement.
+
+IDR075: scripts/prepare_paper_read_extension.py uses deployed public catalog and
+paperrev10/bindingr22, adds four already-acquired inverse feeds with ETHpolicy,
+keeps all60 products/61 priorrequirements/quotas. Target65manifestrequirements,
+64V2products, manifest/JWT11,bindingV3r23. BTC-USDT-SWAP MARK_INDEX_PRICE was
+alreadygranted; performance referenceINDEX uses same feed, no duplicategrant.
+No catalog/acquisition/sourcepolicy update or USD=USDT assumption. V3policies
+sealedfromactualmanifest, not guesseddefaults; consumerenvironmentpair validated.
+DLtests25PASS0fail0skip (unittest,89.939s) including9newnegatives/positives and
+existing sandbox/consumer/inversecontracts. Host lackedredis; image lackedpytest;
+used existing image's unittest, no dependencyinstall/build. TS28PASS0skip and
+actualpublicpacket validationPASS by strict TSparser, sourcefeature notoldbranch.
+Prepared packet SHA25627470ade38a9e638884de3f37fe41c8a66dc1c15aeca7de3d00bba808889a088;
+binding5a9a19385ae34d34213284f06aac8e5c7eb687068702f493590f2664dc0accdf;
+pairedreleasehash6d35f2cf26d9a348d3000ffbf80dc5266dbbe6e8c7cbc0fdc0675345f501ad27.
+Public artifacts/commands/receipts under sameevidenceroot/idr075/. Runtime still
+JWT10/bindingV2r22, no intended-read acceptance claimed for inversePaper.
+
+Next: reviewed exactreader/callerpacket, simultaneousgenerationcutover, actual
+Paperidentity no-orderpreflight, DR01-08 andbrokerreceipt; no waitforPaperfeatures.
+Do not infer permission to recreate any role from purepreparedfiles. Record new
+TRADE recovery finding with Claude before closing release, no buffer/gatewaiver.
+
+Cleanup: all --rm/no-networktestcontainers gone, no newimages/buildcache. Agents
+andboundedobserversfinished. Mergedclean codex/dr07-reset-anchor worktree/branch
+removed afterancestorcheck(dfc70bd merge), noClaude/Portal
+checkout removed. Only owncompiledscriptcache removed. Diskfree105165643776 ->
+105203245056bytes, concurrenthost noexclusiveattribution. Inventory94images28.31GB,
+BuildKit444/18.29GB; retaincurrent/candidate/namedrollback, no broadprune. Canonical
+DL /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged, featurefix/p184-dl-closure;
+TS canonical668e103 unchanged, workon feat/v2-rust-first-okx-demo perowner.

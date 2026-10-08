@@ -1,5 +1,55 @@
 # P18.4 Data Layer Phase C Packet
 
+## Governing owner amendment - 2026-10-08
+
+This supersedes the old core-first requirement below. Historical trial evidence
+remains immutable. Owner's gate is TS product-path coherent reads (IDR-076 bounded
+re-read) on existing658a9570 cores. Do not roll0d8da150 solely for coherence.
+Only approved bar edge51450612 has changed. No other role authorized by this file.
+Busy-window300s mean4.882532/p955.564052/max5.870669vCPU,n30/299.992s: observed
+mean<=5 PASS, not peak/every-interval PASS. Canonical/raw952.48/826.28 offsets/s
+exceed all three measured baselines. Retain overflow+2/replay+15901 and actual
+BTC TRADE queue closures; DR/recovery/broker gates remain open. See
+[v2.2.3 preparation](releases/v2.2.3/RELEASE_NOTES.md).
+
+### IDR-075 paired window: prepared, not applied
+
+Public artifacts: ~/.local/state/qdl-v2/p184-codex-release-20261008/idr075/.
+prepared.json SHA25627470ade38a9e638884de3f37fe41c8a66dc1c15aeca7de3d00bba808889a088.
+Only four inverse grants; linear MARK/INDEX already entitled. No acquisition,
+catalog, quota, freshness, realm or account change. Existing physical inverse
+source is in deployed catalog; no ingestor/core rollout.
+
+1. Reinspect exact active Paper callers before action. At preparation only
+   market_data_service_p184w uses this active Paper subject. Stopped rollback
+   containers are NOT rollout targets. Any newly created Paper/Risk/Gateway/
+   performance caller belongs in Claude's reviewed packet.
+2. Stage manifest11 and sealed V3 bindingr23 in new immutable paths; verify both
+   DL/TS preparers, hashes and policy fingerprints. Existing writer5849 supports
+   V1/V2/V3 parsing; no speculative rebuild for schema alone.
+3. Future approved packet must name Query query_kn_1/2, Stream stream_kn_1/2 and
+   affected Paper callers with exact images/config hashes. Reader manifests load
+   at startup: changing a source file alone does NOT activate. Preserve other
+   realms/keys. No global reader image upgrade or other role is implied.
+4. Quiesce affected Paper callers during the bounded mixed-generation window.
+   Roll readers sequentially with existing images and only exact Paper manifest
+   mount/list changes; confirm both replicas. Then activate caller revision11
+   AND binding/hash together. Do not accept both revisions silently or claim
+   zero downtime. Reuse identity key, never log its contents.
+5. No-order preflight each actual caller: inverse QUOTE/MARK_INDEX_PRICE/
+   BOOK_SNAPSHOT/BOOK_DELTA and existing linear INDEX component, both Query
+   replicas and affected Stream behavior. Wrong revision/realm/unapproved feed
+   must fail. Check original clocks, collateral/FX proof, cursor/recovery. This
+   read grant does not add inverse to persistent TS60 or authorize an order.
+6. On mixed generation/denied intended route/integrity failure, stop new callers;
+   restore both Query/Stream Paper manifest10, then caller bindingr22/hash/JWT10.
+   Preserve Redis/cursors/financial state. No old operational container deletion.
+
+This is preparation, not the executable private Compose packet. Owner approval
+is required before additional role recreates. DR01-DR08 and broker delta remain
+release prerequisites, independently of Paper feature completion.
+
+
 Status: DRAFT_HOLD_NOT_AUTHORIZED. Source/local candidate only, not a release certificate.
 Phase B handover and journal: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, final
 P18.4 Phase B entries. Architecture: DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md

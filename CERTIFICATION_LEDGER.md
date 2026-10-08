@@ -2154,3 +2154,21 @@ Redis-ACK/alpha cache latency NOT_MEASURED. Phase C HOLD, not authorized/deploye
 Only TS DR01-DR08 includingDR07 +broker delta are release dependencies; no Paper
 feature construction added. Prior certificates kept immutable and scoped, no
 freshness/quota/resource threshold change. No required endpoint replacement identified.
+
+
+### 2026-10-08 - Bar edge inherited; v2.2.3 preparation only
+
+Owner-approved bar edge51450612 (sourced6d2637) replacedf7351c3b at02:17:33UTC.
+No other role changed in this Codex continuation. Existing658a9570 cores retained;
+coherence uses owner-approved TS IDR076 productpath. Failed0d8da150 excluded.
+[Prepared v2.2.3](upgrade/evidence/releases/v2.2.3/RELEASE_NOTES.md) names17runtime
+images and rollback; NOT certificate/tag. Busywindowmean4.882532vCPU,n30/299.992s
+meets frozen300smean<=5; p955.564052/max5.870669 exceed5. Canonical/raw952.48/
+826.28offsets/s exceed threebaselines, markersincluded, not3000payload/sproof.
+Streamoverflow+2/replay+15901: TSPaperBTC TRADEqueueclosures bothvenues, followed
+byBinance replayOUT_OF_RANGE remain affectedrecoveryfindings. No evidence erased.
+IDR075prepared/tested: DL25/TS28PASS, realpublicpacket validatedbothsides. Target
+manifest/JWT11,bindingV3r23/64products; runtime10/r22. Fourinversefeeds addedonly
+topreparedartifacts, linearINDEX alreadyexists. Pairedruntimepreflight, DR01-08/
+brokerreceipts, releaseattestation/CI and approvedrollout remain gates. No new
+build/push/merge/tag or further runtime mutation. See mainplan for cleanup.
