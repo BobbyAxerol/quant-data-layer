@@ -1,7 +1,8 @@
 # P18.4 DR01/DR08 TRADE Incident Attribution
 
 Date: 2026-10-08. Status: READONLY_ATTRIBUTION_COMPLETE /
-INCIDENT_WINDOW_RECOVERY_NOT_MEASURED / PROPOSALS_NOT_EXECUTED.
+INCIDENT_WINDOW_RECOVERY_NOT_MEASURED / PROPOSALS_WITHDRAWN.
+Owner update below supersedes the original proposal text.
 This report is not a DR01-DR08 acceptance certificate. No implementation source
 change, runtime mutation, new measurement, test execution or cleanup was
 performed here.
@@ -149,7 +150,7 @@ retry, client-applied throughput and immediate recovery time are not proved by
 the incident window. The later IDR-078 sample supports eventual recovery as
 described above, without resolving precise stall attribution.
 
-## Proposal: Per-Subscription Delivery Mode
+## Withdrawn Proposal: Per-Subscription Delivery Mode
 
 NOT IMPLEMENTED OR AUTHORIZED FOR RUNTIME. Add explicit per-subscription TRADE
 delivery mode: omitted/default remains `LOSSLESS`; TRADE `LATEST_STATE` requires
@@ -175,7 +176,7 @@ Instrument per-subscription offered/accepted/dequeued/local-enqueued/coalesced/
 rejected counters with monotonic intervals and client received/applied progress.
 Keep replay separate; capture queue/byte high-water and wait distributions.
 
-## Proposal: Paired batch_wait_ms 25 -> 50
+## Withdrawn Proposal: Paired batch_wait_ms 25 -> 50
 
 NOT RUN. Owner verified running Entrypoint:
 `/usr/local/bin/qdl-realtime-core /runtime/core.json`.
@@ -234,3 +235,26 @@ runtime resources were created. DR acceptance, incident-window RTO, broker and
 release gates remain open; eventual recovery evidence is distinguished above.
 Future instrumentation, contract changes or an exact isolated measurement
 packet require review before execution.
+
+
+## Owner Follow-Up And Additive Counters (2026-10-08)
+
+Owner/Claude reports worker1 owns both BTC Binance and BTC OKX TRADE streams.
+The retained closure timestamps above differ by6.088298ms; other feed families
+did not overflow in the supplied incident window. This common worker and
+TRADE-only failure are consistent with a TS-side bottleneck and justify the
+owner decision to pursue TS recovery rather than alter TRADE semantics or core
+batching. Precise stall stage (TS processing/fsync versus gRPC backpressure)
+is not measured by those closure records; IDR-078 likewise retains that limit.
+Worker ownership is owner-supplied correlation, not reconstructed offered rates.
+LATEST_STATE and batch_wait_ms25->50 are withdrawn, not queued work. Historical
+proposal text above is retained for audit and does not authorize implementation.
+
+Additive source patch now emits subscription-local offered/dequeued in closure
+JSON. offered counts eligible live enqueue attempts including the overflow
+attempt, after duplicate/product/stale filtering. dequeued counts successful
+queue pops before read-time filtering/local handoff; excludes replay, coalescing
+and close-time discard. Neither is remote receipt or durable ACK. Existing
+delivered/replayed/queued/quality counters remain unchanged. Lifetime counts
+still require time bounds before reporting rates. Patch is source-tested, NOT
+deployed; it cannot retroactively fill the03:21 missing counters.

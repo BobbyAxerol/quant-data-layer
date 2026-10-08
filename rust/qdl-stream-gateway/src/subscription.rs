@@ -118,7 +118,10 @@ pub struct SubscriptionCounters {
     pub other_product: AtomicU64,
     pub rejected_at_push: AtomicU64,
     pub coalesced: AtomicU64,
+    /// Eligible live enqueue attempts, including the attempt that overflows.
     pub offered: AtomicU64,
+    /// Live queue pops, before read-time filtering or transport handoff; not ACKs.
+    pub dequeued: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -287,6 +290,7 @@ impl Subscription {
                 }
                 if let Some(item) = state.queue.pop_front() {
                     state.bytes -= item.weight;
+                    self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
                     return Next::Record(item.record, item.enqueued, item.charge);
                 }
                 if state.closed {
@@ -384,6 +388,93 @@ mod tests {
         offsets
     }
 
+    fn counts(subscription: &Subscription) -> (u64, u64) {
+        (
+            subscription.counters.offered.load(Ordering::Relaxed),
+            subscription.counters.dequeued.load(Ordering::Relaxed),
+        )
+    }
+
+    #[tokio::test]
+    async fn counters_count_eligible_attempts_and_local_pops_only() {
+        let mut subscription = queue(query::FeedType::Trade, 2);
+        subscription.requirement.delivery.max_freshness_ms = Some(1);
+        let trade = |offset| {
+            record(
+                offset,
+                event_envelope::Payload::Trade(Trade::default()),
+                vec![],
+            )
+        };
+        assert_eq!(counts(&subscription), (0, 0));
+        subscription.offer(&trade(0), 0); // At cursor floor.
+        subscription.offer(&quote(1, vec![]), 0); // Other product.
+        subscription.offer(&trade(1), 2_000_000); // Too old at push.
+        assert_eq!(counts(&subscription), (0, 0));
+        assert_eq!(
+            subscription.counters.other_product.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            subscription
+                .counters
+                .rejected_at_push
+                .load(Ordering::Relaxed),
+            1
+        );
+        subscription.offer(&trade(1), 0);
+        subscription.offer(&trade(1), 0); // Duplicate.
+        assert_eq!(counts(&subscription), (1, 0));
+        let charge = match subscription.next().await {
+            Next::Record(record, _, charge) => {
+                // This record is already counted even if a later read rejects it.
+                assert_eq!(
+                    delivery_decision(&subscription.requirement, &record.envelope, 2_000_000),
+                    Delivery::TooOld
+                );
+                charge
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(counts(&subscription), (1, 1));
+        assert!(
+            subscription.budget.used() > 0,
+            "handoff still owns its bytes"
+        );
+        drop(charge);
+        assert_eq!(subscription.budget.used(), 0);
+        subscription.offer(&trade(2), 0);
+        subscription.close(); // Discard is not a dequeue.
+        subscription.offer(&trade(3), 0);
+        assert!(matches!(subscription.next().await, Next::Closed));
+        assert_eq!(counts(&subscription), (2, 1));
+    }
+
+    #[tokio::test]
+    async fn failure_and_budget_overflow_do_not_count_as_dequeues() {
+        let failed = queue(query::FeedType::Trade, 2);
+        let trade = record(1, event_envelope::Payload::Trade(Trade::default()), vec![]);
+        failed.offer(&trade, 0);
+        failed.fail("test-only failure");
+        failed.offer(
+            &record(2, event_envelope::Payload::Trade(Trade::default()), vec![]),
+            0,
+        );
+        assert!(matches!(failed.next().await, Next::Failed(_)));
+        assert_eq!(counts(&failed), (1, 0));
+        failed.close();
+        assert_eq!(failed.budget.used(), 0);
+
+        let mut overflow = queue(query::FeedType::Trade, 2);
+        overflow.budget = ByteBudget::new(0);
+        overflow.offer(&trade, 0);
+        assert!(matches!(overflow.next().await, Next::Overflow));
+        assert_eq!(counts(&overflow), (1, 0));
+        assert_eq!(overflow.queued(), (0, 0));
+        assert_eq!(overflow.budget.used(), 0);
+        assert_eq!(counts(&failed), (1, 0), "counters are subscription-local");
+    }
+
     #[tokio::test]
     async fn a_latest_state_queue_keeps_the_newest_and_every_transition() {
         let budget = ByteBudget::new(1 << 20);
@@ -414,6 +505,11 @@ mod tests {
         );
         assert!(delivered.windows(2).all(|pair| pair[1] > pair[0]));
         assert_eq!(budget.used(), 0, "every byte released after draining");
+        assert_eq!(counts(&subscription), (20, delivered.len() as u64));
+        assert_eq!(
+            subscription.counters.coalesced.load(Ordering::Relaxed),
+            20 - delivered.len() as u64
+        );
     }
 
     #[tokio::test]
@@ -440,7 +536,14 @@ mod tests {
         }
         assert!(matches!(subscription.next().await, Next::Overflow));
         assert_eq!(subscription.counters.coalesced.load(Ordering::Relaxed), 0);
+        assert_eq!(counts(&subscription), (5, 0));
+        subscription.offer(
+            &record(6, event_envelope::Payload::Trade(Trade::default()), vec![]),
+            0,
+        );
+        assert_eq!(counts(&subscription), (5, 0));
         subscription.close();
+        assert_eq!(counts(&subscription), (5, 0));
         assert_eq!(budget.used(), 0);
     }
 

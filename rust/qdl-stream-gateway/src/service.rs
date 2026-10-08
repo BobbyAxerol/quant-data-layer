@@ -962,6 +962,8 @@ impl Drop for SubscriptionTask {
                 "replayed": load(&self.report.replayed),
                 "delivered": load(&self.report.delivered),
                 "aged_out_at_read": load(&self.report.aged_out),
+                "offered": load(&counters.offered),
+                "dequeued": load(&counters.dequeued),
                 "rejected_at_push": load(&counters.rejected_at_push),
                 "coalesced": load(&counters.coalesced),
                 "queued": queued,

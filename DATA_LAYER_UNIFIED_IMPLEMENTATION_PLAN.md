@@ -69977,3 +69977,46 @@ manifest/JWT10 and bindingV2r22 unchanged. No TS source edits, rollout, push/mer
 v2.2.3 HOLD for final DR/broker receipts. LATEST_STATE and batch25->50 proposals
 were neither implemented nor measured. Next permitted work: final-image isolated
 account fixture plus fresh provenance-bound DR01/DR08, then owner packet review.
+
+
+### DR owner correction and runtime-runner scope - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / RELEASE_HOLD. Owner supersedes prior DR01 handoff:
+existing local application runner is CONTROLLED_SIM only, never closes DR01.
+New stdin runner targets deployed query_kn using existing alpha r22/JWT14/mTLS,
+GET-only, baseline and exact negative realm/revision/entitlement checks plus
+compiled binding hash comparison. Do not execute it on shared runtime here.
+WRONG_ACCOUNT_DENIED belongs to Claude's TS Gateway, not DL. DR08 must name
+Query2.2.3-rc2-43bbcf0 explicitly and final recovery needs>=5 restart samples
+with p50/max. Add per-subscription offered/dequeued closure counters only; no
+queue, contract, freshness, quota or topology change. Add owner-supplied03:21
+worker correlation, distinguish correlation from exact transport attribution.
+LATEST_STATE and batch25->50 proposals are withdrawn, not implemented.
+TS candidate2abbe394ea0fb8f7f5ebcbb745ff70a8c83c9769 /
+sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a
+is provisional until Claude confirms CI green; do not certify using it yet.
+Tests: isolated source/unit/protocol only; no shared runtime, credentials or
+consumer traffic. Rollback is source-only; cleanup own test resources, retain
+f7351c3b. Each coherent slice gets tested commit+journal; no push/merge.
+Guide: upgrade/evidence/p184-dr-runtime-runbook.md.
+
+
+### DR Stream closure counter slice - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / NOT_DEPLOYED / RELEASE_HOLD. Owner-approved additive
+closure JSON now includes subscription-local offered/dequeued. Offered counts
+eligible live enqueue attempts including overflow; dequeued counts actual live
+queue pops before read-time filtering/transport, excludes replay/discard/coalesce.
+No new queue, TTL, delivery mode, quota or runtime behavior. Neither is client ACK.
+Regression covers duplicate/wrong product/stale, capacity/byte overflow, failure,
+close discard, independent subscriptions and coalescing without false dequeues.
+Existing offline builder/cache command: cargo test --offline --locked
+-p qdl-stream-gateway --lib --test native_stream -- --test-threads=2:
+74PASS0fail0ignored. Two bounded closure-log checks also passed, including two
+subscriptions each emitting offered1/dequeued1. No image build or shared rollout.
+Disposable builder containers removed; shared caches retained for concurrent work.
+Report upgrade/evidence/p184-dr01-dr08-trade-attribution.md now records owner
+worker1 correlation, exact6.088298ms closure separation, no other family overflow
+in supplied window, and withdrawal of LATEST_STATE/batch25->50. Exact stall stage
+remains unmeasured; owner TS-side working attribution is not invented telemetry.
+No push/merge; keep bar-edge rollbackf7351c3b. Runtime unchanged.
