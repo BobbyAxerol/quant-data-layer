@@ -86,8 +86,11 @@ def schedule(venue, fault):
                   ("still_unanchored", False, 111, 110, 7, "4")]
     else:
         steps += [("new_generation_unanchored", False, 201, 200, 8, "3")]
+    # Binance replays the buffered 201 delta when snapshot200 arrives.
+    # OKX rejects the unanchored delta and starts from snapshot200 instead.
+    return_previous = 201 if venue == "BINANCE" and fault == "GENERATION_CHANGE_FENCED" else 200
     steps += [("return_anchor", True, 200, 0, 8, "5"),
-              ("return_control", False, 202, 200, 8, "6"),
+              ("return_control", False, 202, return_previous, 8, "6"),
               ("old_generation", True, 300, 0, 7, "99"),
               ("post_fence_control", False, 203, 202, 8, "7")]
     return [{"phase": phase, "venue": venue, "snapshot": snap, "sequence": seq,
@@ -153,7 +156,7 @@ def topology(ns, work, topic_id=""):
             ["/usr/local/bin/qdl-stream-gateway", "serve"]),
         "query": ("query", "512m", "0.5", {**common, "PYTHONPATH": "/app:/app/generated/python",
             "PYTHONDONTWRITEBYTECODE": "1"},
-            ["python", "-B", "scripts/p184_dr08_isolated.py", "--query", "/work"]),
+            ["python", "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]),
     }
     result = {}
     for role, (image, memory, cpus, env, command) in spec.items():
@@ -179,7 +182,7 @@ def sh(argv):
 
 def owned(ns, role, call=sh):
     name = namespace(ns) + "-" + role
-    if role not in (*ROLES, "helper"):
+    if role not in (*ROLES, "helper", "tsvalidator"):
         raise ValueError("unknown owned role")
     ids = call(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]).splitlines()
     if not ids:
@@ -219,7 +222,7 @@ def cleanup(ns, call=sh):
     removed = []
     # Preflight ALL ownership before stopping anything. Never remove networks,
     # images, shared volumes, files or a container selected only by a label.
-    rows = [(role, owned(ns, role, call)) for role in reversed((*ROLES, "helper"))]
+    rows = [(role, owned(ns, role, call)) for role in reversed((*ROLES, "helper", "tsvalidator"))]
     if any(row and row["HostConfig"].get("AutoRemove") is not True for _, row in rows):
         raise ValueError("refuse non-disposable container")
     failures = []
@@ -399,9 +402,10 @@ group.initial.rebalance.delay.ms=0
         for feed in ("BOOK_SNAPSHOT", "BOOK_DELTA"):
             binding = next(x for x in loaded.bindings if x.source_id == b["source_id"] and x.feed.value == feed)
             mapping = manifest_mapping(consumer_id=cid, subject=subject, instrument_uid=b["instrument_uid"],
-                                       feed=feed, interval=None, source_policy_id=binding.source_policy_id)
+                                       feed=feed, interval=None, source_policy_id=binding.source_policy_id,
+                                       grade="EXECUTION", purposes=("INTERNAL_EXECUTION",))
             requirement = mapping["spec"]["requirements"][0]
-            requirement.update(warmup_limit=1, require_full_coverage=False, require_final_bars=False,
+            requirement.update(warmup_limit=1, require_full_coverage=True, require_final_bars=False,
                                max_freshness_ms=2000)
             requirements.append(requirement)
         mapping["spec"]["requirements"] = requirements

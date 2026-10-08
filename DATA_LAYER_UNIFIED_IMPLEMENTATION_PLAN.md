@@ -70292,3 +70292,79 @@ hot-view suite60PASS0fail0skip/33.706s in existing77682eea image network-none.
 Real Binance snapshot now returned signed cursor and reached actual pinned TS
 SDK/adapter/BOOK validator (positive control accepted). Runtime/shared images
 unchanged; no certification from this partial case, recovery adapter ongoing.
+
+
+DR05 observer/TS slice IN_PROGRESS: actual core read_committed canonical and
+quarantine are correlated by capture ID, with a post-commit EOF barrier for
+filtered frames. Query handoffs are captured from the actual public serializer;
+Stream unary GetFeedStatus/GetSnapshot use mTLS/JWT isolated EXECUTION identities.
+The fixed TS image a6548ee3 loads its own SDK/adapter/BOOK validator, then calls
+MarketCacheProjector.project_execution_snapshot and re-reads isolated Redis DB2.
+No TS application overlays, fabricated quality, clock override or state reset
+between generation changes. This is NOT the full TS writer Subscribe/ACK loop.
+
+NEW FINDING: real isolated OKX unanchored generation was quarantined by core,
+but both reader BOOK views remained LIVE and returned the old generation while
+within freshness. Initial exact receipt okx-generation-r1 SHA256
+0e7353eb42938c7ebfd2ae8317c6691c1b7913317fcd59375c0efc70dc5974bf.
+BOOK_SNAPSHOT age589ms, BOOK_DELTA731ms, each GetSnapshot OK. Later control
+recovers with genuine anchor and old-generation raw frame is filtered. Core
+src/lib.rs sequence-gap branch returns quarantine/resync, not reader invalidation.
+Do not close GAP/generation by waiting for DATA_STALE; no production incident
+is inferred from this TEST_ONLY injection. Shared runtime remains unchanged.
+
+Harness correction: a Redis NO_WRITE/cache equality false is not typed refusal.
+The preliminary okx-generation-final receipt (d5c2b8ce...) retains that weaker
+subcheck; the final verdict requires explicit ENDPOINT_REFUSED/APPLICATION_REFUSED
+and records BOOK validation separately from cache application. No old receipt
+rewritten. Parent final regression51PASS0fail0skip/31.718s. Four final isolated
+venue/fault cells now executing sequentially, using existing images only.
+
+Read-only coordination update: Claude TS HEAD01eb0d7 adds p184_dr05_upstream.py
+and WriterClone. Its JSONL reset_case/publish/canonical_observe orchestration is
+not yet the same as this per-case observer + in-image validator harness. Do not
+claim his full writer clone was run by these receipts. Alignment handoff will
+record the interfaces and the newly exposed upstream fault, without TS edits.
+
+
+DR05 slice RESULT: IMPLEMENTED_TESTED_ISOLATED / FAULT_PROPAGATION_FAIL.
+Report upgrade/evidence/p184-dr05-observer-results.md (exact hashes, commands,
+counts, images, cleanup); guide and Claude alignment updated together.
+Four selected cells (Binance/OKX x GAP/unanchored generation) all FAIL the real
+fault propagation check: previous BOOK_SNAPSHOT age473/544/465/542ms remains
+LIVE/eligible and passes actual TS BOOK validation. Core quarantines the exact
+fault capture. Redis NO_WRITE is not refusal. Twelve positive/recovery/post-fence
+controls match exact canonical snapshot byte hashes and reach TS Redis apply.
+Four late old-generation frames are filtered after raw commit; no generation
+rollback. No provider evidence or execution certification inferred.
+
+One fixture repair: Binance buffers delta201 and replays it at new anchor200;
+return_control must reference201, not200. Earlier generation-v2 failure retained;
+only that affected case rerun as generation-v3. Selected receipt SHA256 values:
+8e4eae0dc523256305a70e4066ba6397d3e18d6a86ddb1e0387db1a836b4b25e
+3703f46edf9bd308620724982a86d09b54e7b74b3a7b50ef0127278f744e53ac
+590291f159d34c89919ff9a864a43987800f99e70025d11426c2c087df294bdb
+f89356e55d6e688555c1fe943d97619a0fb4ca3567460e3a74f5b818658fd9c2
+(root ~/.local/state/qdl-v2/dr05-observer-20261008/, directories in report).
+
+Final parent DL suite52PASS0fail0skip32.861s (verdict, observer, raw publisher,
+stack material and cursor regression). Agent TS image+isolated Redis22PASS0skip
+5.992s, followed by3focused marker/cache tests PASS3.638s. Parent independent
+TS network-none19PASS3Redis skips2.311s. Overlap not summed. Exact production
+MarketCacheProjector handles new generation; no deletion/reset/clock fabrication.
+Helper application modules load from TSimagea6548ee3, not source mounts.
+
+Cleanup all owned cases complete, privatefiles0; report has byte-level disk
+pre/post. No images built; inventory95images28.96GB/BuildKit20.52GB is shared and
+not broad-pruned during Claude work. Retain active images and BARrollbackf7351c3b.
+Final read-only shared snapshot12app+5infra: restart0/OOMfalse, same role digests;
+not a runtime acceptance. Canonicalmain5bf5cd5/v2.2.2 and feature location unchanged.
+No runtime edits, TS edits, push/merge or release. v2.2.3 HOLD.
+
+Remaining implementation (not approval debt): propagate core BOOK gap/generation
+invalidation to canonical reader quality, then close on valid anchor. Both hot
+backup and primary need the fence. Full Claude WriterClone JSONL orchestration
+is not claimed completed: his new01eb0d7 interface needs fresh-case mapping and
+must not count eventual DATA_STALE as immediate GAP refusal. These interface
+points are recorded in p184-claude-stage3-alignment.md. Reuse this counterexample;
+no C2/full catalogue rerun, no shared rollout from this observer slice.

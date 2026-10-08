@@ -37,7 +37,7 @@ class PreparationTests(unittest.TestCase):
                 self.assertFalse(set(argv) & {"-p", "--publish", "--privileged", "--network=host"})
                 self.assertNotIn("/run/secrets", " ".join(argv))
                 self.assertTrue(any(a.startswith("sha256:") for a in argv))
-        self.assertIn("scripts/p184_dr08_isolated.py", commands["query"])
+        self.assertIn("scripts/p184_dr05_observer.py", commands["query"])
         self.assertIn("--query", commands["query"])
 
     def test_external_directory_required(self):

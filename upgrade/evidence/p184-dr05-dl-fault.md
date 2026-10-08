@@ -60,11 +60,12 @@ control. Timestamps are stamped at publication, never reused from preparation.
 `drive()` defines the adapter interface. The bounded Kafka publisher is now
 implemented in `scripts/p184_dr05_raw_publisher.py` and has a 16/16 exact-byte/
 offset readback on an isolated broker. See [alignment handoff](p184-claude-stage3-alignment.md).
-The canonical/Query/Stream observer and TS integration remain incomplete:
-publish real raw-envelope bytes through this core, retain assigned Kafka offsets,
-observe canonical/Stream/Query and invoke actual TS validation. Reset only the
-disposable case between cells; use bounded deadlines. Do not infer refusal or
-recovery from the injected phase name or fabricate status evidence.
+The canonical/Query/Stream observer and pinned-image TS BOOK validator are now
+implemented in `p184_dr05_observer.py`, `p184_dr05_observe_stack.py` and
+`p184_dr05_ts_validate.py`. This is a diagnostic isolated path, NOT Claude's full
+WriterClone subscription/ACK acceptance. One fresh disposable stack per cell;
+no phase-derived quality or rewritten clocks. Actual results below keep the
+upstream gap/generation refusal gate open.
 
 Pending rows have ok=false and no verifier provenance header. Even an adapter
 returning all-success cannot make drive emit PASS. Claude must supply reviewed
@@ -101,3 +102,57 @@ Active worktree /home/bobby/.worktrees/data-layer-p184-closure,
 fix/p184-dl-closure. Shared service images/config/manifest untouched. Retain active
 images and explicitly protected BAR rollback f7351c3b. No push/merge/public release.
 v2.2.3 HOLD; rebuild only after TS test completion and exact-source DL CI.
+
+
+## Observer And In-Image TS Validation (2026-10-08)
+
+Run from the feature checkout with existing images (no build):
+
+```bash
+python3 scripts/p184_dr05_observe_stack.py \
+  --output "$EVIDENCE/new-case-directory" --exported "$PUBLIC_EXPORT" \
+  --venue OKX --fault GENERATION_CHANGE_FENCED
+```
+
+`PUBLIC_EXPORT` is sanitized test material, never a credentials export. All raw
+frames are explicit TEST_ONLY. Receipt output is immutable per new directory.
+The observer follows raw capture ID -> core committed offset -> read_committed
+canonical/quarantine; negative absence needs EOF fetched after the core commit.
+Real Stream unary GetFeedStatus/GetSnapshot traverse Query and native hot-read
+views with temporary mTLS/JWT EXECUTION identities. Query's public serializer
+captures real handoff context; the harness never manufactures authority/quality.
+
+A helper-only mount runs in the pinned TS image a6548ee3; application bytes come
+from that image. Live mode uses actual wall clock, production SDK/adapter/BOOK
+validator and MarketCacheProjector, isolated Redis DB2, then a cache re-read.
+New generation uses production adoption, not deletion of the previous key.
+`book_validated` is separate from Redis write/cache equality: NO_WRITE is NOT a
+refusal. The offline replay is labelled separately and cannot replace live proof.
+
+Limits: no full Risk admission (MARK/QUOTE absent), no persistent Subscribe/ACK
+writer loop, no provider/mainnet evidence, no production modification. Query
+Python uses feature source mounted over the existing image; core and Stream are
+existing immutable binaries. These observations cannot certify a future image.
+
+### Finding Which Keeps DR05 Open
+
+A gap/unanchored generation can be quarantined correctly by core while the old
+BOOK_SNAPSHOT remains LIVE/eligible and passes the TS BOOK validator until its
+freshness deadline. Recovery with a new anchor works; old-generation input is
+filtered. This is a fault propagation problem, not proof that TS should loosen
+freshness. The current sequence-gap/resync branch in
+`rust/qdl-realtime-core/src/lib.rs` returns quarantine without invalidating the
+reader's previously healthy canonical book. Do not call DATA_STALE after waiting
+proof of immediate typed GAP/generation refusal.
+
+The candidate also exposed a source-coordinate parser defect for '/' in genuine
+Kafka standard-base64 topic UUID. Commit47d906e fixes the intermediate parser,
+not the signed cursor schema. No image or shared runtime was changed.
+
+Next narrow implementation must propagate authoritative book invalidation and
+recovery through existing canonical quality/read paths, fence by identity and
+generation, and close only on a valid replacement anchor. Both primary and hot
+backup must see the fence; no timestamp rewrite, Redis flush, timeout relaxation,
+provider substitution or extra service. The observer regression is the fixed
+counterexample for that repair. Core build/rollout remains under the approved
+single-revision release window, not silently included in this observer slice.

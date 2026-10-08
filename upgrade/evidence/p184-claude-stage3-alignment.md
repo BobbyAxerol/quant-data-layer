@@ -70,3 +70,44 @@ typed refusal, post-fault recovery and both venue identities.
 Canonical DL remains main5bf5cd5/v2.2.2, feature fix/p184-dl-closure. No push,
 merge, shared runtime change or image build. Retain active/rollback artifacts,
 including BARf7351c3b; cleanup is restricted to owned disposable tests.
+
+
+## DR05 Observer Handoff After TS01eb0d7
+
+Read-only TS inspection now finds `01eb0d7`, adding
+`scripts/p184_dr05_upstream.py` and WriterClone. This source is newer than the
+confirmed2abbe39/a6548ee3 pair: do not put01eb0d7 into provenance for that image.
+Codex has not changed or run Claude's TS checkout.
+
+Available DL implementation: RawPublisher + CanonicalObserver (bounded raw
+commit/EOF proof), real unary Query/Stream observations, and actual in-image TS
+SDK/BOOK validation + Redis adoption. See [DR05 guide](p184-dr05-dl-fault.md).
+This is NOT a substitute for the full writer clone stream/ACK path.
+
+Integration points to reconcile before claiming the new TS runner is wired:
+
+1. Claude's DlChannel expects JSONL reset_case/publish/canonical_observe. DL's
+   standalone runner owns one NEW five-role stack per cell and has no in-place
+   reset RPC. Reuse the Python publisher/observer APIs; bind each cell to a fresh
+   disposable stack. Do not implement reset by flushing shared state or merely
+   restarting sequence7 against an already advanced core.
+2. CanonicalObserver returns raw_committed_next, read_committed_eof, records and
+   capture-matched rows. `observed=true` must derive from those proofs, never the
+   phase label or broker publish ACK alone.
+3. Binance bootstrap anchor alone is intentionally not yet canonical LIVE; the
+   following continuity delta establishes the book. The TS evaluator currently
+   demands positive_anchor APPROVED on both venues. Respect this venue protocol;
+   do not force a bootstrap-only frame to become executable.
+4. The TS evaluator currently accepts any EXECUTION_CONTEXT_* refusal after
+   polling. DATA_STALE after a wait is not evidence of GAP propagation. Preserve
+   early snapshots while the prior book is still fresh and require a typed fault
+   fence (not INPUT_ERROR or Redis NO_WRITE). All repeated old views need their
+   canonical generation/sequence and actual validator outcome recorded.
+5. BOOK quality fault propagation is currently FAIL on the tested isolated path;
+   fixing the harness alone cannot turn that into PASS. Keep releaseHOLD and the
+   four cells open. Positive recovery and old-generation filtering are retained,
+   but do not imply immediate invalidation after a gap.
+
+No acknowledgement from Claude or full writer-clone acceptance is claimed here.
+The next shared handoff should pin the actual TS image and use these observations
+as the counterexample for the narrow upstream invalidation fix, not rerun C2.
