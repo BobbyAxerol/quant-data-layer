@@ -69912,3 +69912,68 @@ four Paper accounts within writer scope, two active alphas and isolated PG/Redis
 No runtime, real credentials, consumer quota, manifest or TS source changed.
 Test containers removed (--rm); no images built or removed, private keys removed.
 No push/merge; v2.2.3 HOLD and f7351c3b rollback retained. DR08 remains in progress.
+
+
+### DR08 isolated fault receipt and final handoff - 2026-10-08 (Codex)
+
+Status RUNNERS_IMPLEMENTED_TESTED / FINAL_DR_ACCEPTANCE_PENDING / RELEASE_HOLD.
+Guide and final-provenance procedure: upgrade/evidence/p184-dr-runtime-runbook.md.
+Attribution/proposal report: upgrade/evidence/p184-dr01-dr08-trade-attribution.md.
+DR01 full source binding is now canonical-validated before deriving disposable
+one-BAR identities; source roster counts/hash are recorded, not implied all-feed
+wire coverage. Final check in existing Python image77682eea with --rm/network
+none/.5CPU/512MiB, source read-only: python -B -m unittest
+ tests.test_p184_dr01_runtime -v:23PASS0fail0skip38.615s.
+No final TS SHA/image supplied yet. DR01 retains7/9 rehearsal, two account cells
+require isolated final-image Gateway. Unit mocks do not close those cells.
+
+DR08 scripts/p184_dr08_isolated.py owns disposable Kafka/core/Stream/Query/Redis
+and driver. Existing images only, no published ports or external network,
+explicit synthetic test provenance, queue1000/replay10000 unchanged. Slow client
+process paused while independent fast client progresses. Actual gRPC overflow,
+OUT_OF_RANGE and newer GetSnapshot recovery observed. This is ISOLATED_FAULT
+rehearsal, not production/provider latency, HA, projector recovery or TS Redis ACK.
+Tests: python3 -B -m unittest tests.test_p184_dr08_isolated -q:
+25PASS0fail0skip0.037s (parent rerun).
+
+Attempts1-11 preserved outside Git; harness setup failures covered permissions,
+Kafka file/segment sizing, quota/group namespaces, startup and test lineage.
+No production code/policy fix inferred from those test-packet errors. Cold-start
+seed expiry fixed by publishing a NEW test event after readiness, never changing
+old timestamps or relaxing freshness. Attempt12 raw receipt preserved unchanged:
+~/.local/state/qdl-v2/p184-dr08-development-20261008-attempt12/evidence.jsonl
+SHA256 3e9e0b93581e6b65bc9b0e04c2895ffc1aff1f60481c0e2af0e50513bc5c4471.
+One original check failed because parser expected the wrong textual status name.
+Corrected parser plus regression and independently verified raw closure matched
+exact consumer/subscription and actual wire RESOURCE_EXHAUSTED. Supplement:
+queue-parser-supplement.json SHA256
+87b218116e287b8b4dbc1a30f6ad5aa01d81277faf473b2acc276ec37c8f5834.
+stream-runtime.log SHA256
+f179343f670ae103acc7e5842a0439dfb6174aa37a4e6079fed89613b845710e.
+Combined4/4 DEVELOPMENT checks; original failed receipt is not overwritten.
+
+Measured queue at closure1000events/4719110bytes; sampled queue bytes max4989098.
+Replay10000 then OUT_OF_RANGE. Independent fast consumer10001ordered events,
+71 progress points while slow stopped. Controls/counters: overflow+1, expired+1,
+69 metrics samples. Recovery n=1, units ms: snapshot1744.467,
+client restart->first event5241.271, OUT_OF_RANGE->first event6999.346.
+Snapshot tradeID2->10004 and offset3->10107; not a p99 or consumer durable ACK.
+Development JSONL remains nonqualifying. Final provenance requires a fresh run,
+not rewriting its header. No conclusion about TS-vs-network03:21 root cause.
+
+Cleanup: all8 owned attempt12 containers removed, private keys removed,
+cleanup_failures=[], shared_runtime_unchanged=true. Disk free before91924062208B,
+after91898748928B; concurrent jobs mean delta is not attributable to this test.
+All earlier failed attempts cleaned; final DR01 container --rm removed. Images
+built0/removed0. Docker inventory:95images/41active/28.96GB; BuildKit19.8GB,
+2.125GB reclaimable. No broad prune during Claude concurrent work. Retain active
+images plus explicitly retained bar-edge rollback f7351c3b (inspect confirmed).
+
+Canonical /home/bobby/data_layer main5bf5cd5, stable releasev2.2.2; feature
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure. Runtime service
+set/config remains unchanged:3cores658a9570,2Stream1f13408f,2projector a696cfba,
+BAR/2Query51450612, ingestors0f6876e1, existing infrastructure. TS writer5849d716,
+manifest/JWT10 and bindingV2r22 unchanged. No TS source edits, rollout, push/merge.
+v2.2.3 HOLD for final DR/broker receipts. LATEST_STATE and batch25->50 proposals
+were neither implemented nor measured. Next permitted work: final-image isolated
+account fixture plus fresh provenance-bound DR01/DR08, then owner packet review.

@@ -347,6 +347,10 @@ class ActualHttpTests(unittest.TestCase):
             self.assertTrue(dr.denied(obs[venue]["consumer"], 403, "CONSUMER_MISMATCH"))
             self.assertTrue(dr.denied(obs[venue]["principal"], 401, "UNAUTHENTICATED"))
             self.assertIs(obs[venue]["baseline"]["identity_matches"], True)
+            self.assertGreater(obs[venue]["binding"]["source_roster_venue_products"], 1)
+            self.assertGreaterEqual(obs[venue]["binding"]["source_roster_products"],
+                                    obs[venue]["binding"]["source_roster_venue_products"])
+            self.assertEqual(len(obs[venue]["binding"]["source_roster_binding_sha256"]), 64)
 
 
 if __name__ == "__main__":

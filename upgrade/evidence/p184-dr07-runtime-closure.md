@@ -377,3 +377,12 @@ needed for this gate; it raises snapshots x1.47 and should not ride the release 
 Open: DR01-DR08 + broker-delta case receipts (TS runners; DR07 runner TS 74852a8), deliberate reset/fault proof on
 the writer (Codex reset-anchor now merged into the TS feature branch, dfc70bd), a busy-window CPU gate, and a DL
 release record that names the new bar edge image. No push/merge/release.
+
+
+## DR01/DR08 runner handoff - 2026-10-08
+
+See [runner runbook](p184-dr-runtime-runbook.md) and the main-plan DR08 receipt.
+DR01 has7/9 development HTTP cells, account authorization still needs isolated
+final-image Gateway; DR08 has4/4 development checks with preserved raw receipt
+and parser supplement. Neither is final TS provenance-bound acceptance.
+Runtime remains unchanged, v2.2.3 HOLD; retain f7351c3b until approved release.

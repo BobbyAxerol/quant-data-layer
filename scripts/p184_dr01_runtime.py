@@ -129,6 +129,8 @@ def build_fixture(directory):
 
     template = binding_from_stable_release(ROOT / "config/v2/stable-v2-release-routing.yaml",
                                           ROOT, "trading-system.paper.stable")
+    # Validate the entire compiled artifact before deriving disposable identities.
+    template = ConsumerRouteBinding.from_canonical_mapping(template.canonical_mapping())
     catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
 
     registry, manifests, credentials, records = InstrumentRegistry(), [], {}, {}
@@ -167,6 +169,9 @@ def build_fixture(directory):
             "binding": {"compiled": True, "binding_sha256": sealed.binding_sha256,
                 "manifest_sha256": manifest.manifest_sha256,
                 "compiler": "binding_from_stable_release + ConsumerRouteBinding",
+                "source_roster_products": len(template.products),
+                "source_roster_venue_products": sum(p.venue == venue for p in template.products),
+                "source_roster_binding_sha256": template.binding_sha256,
                 "test_scope": "isolated one-product ALPHA projection", "venue": venue}}
         records[venue] = item
     config = DataPlaneSecurityConfig(environment="paper", issuer=TEST_ISSUER, audience=TEST_AUDIENCE,
