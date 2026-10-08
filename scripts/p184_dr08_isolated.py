@@ -10,7 +10,9 @@ Stream GetSnapshot is required; hot-read or locally signed offsets are NOT a
 replacement for fresh snapshot recovery.
 
 Packet JSON keys: namespace, development, ts_source_sha, ts_image_digest,
-images (kafka/core/stream/python immutable sha256 IDs), bootstrap (localhost:9092),
+images (kafka/core/stream/python/query immutable sha256 IDs), query_provenance
+(candidate image_ref and inspected actual_image_digest), restart_samples (final
+5-10, development 1-10; defaults 5 and 1), bootstrap (localhost:9092),
 raw_topic, raw_template (base64 RawProviderEnvelope, test_provenance=true),
 consumer_id, fast_consumer_id, instrument_uid, metrics_path, and slice (the
 existing Slice args: bundle, cursor_keys, profile, probes, topic_id,
@@ -36,6 +38,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import statistics
 import sys
 import time
 from types import SimpleNamespace
@@ -49,6 +52,72 @@ QUEUE = 1000
 REPLAY = 10000
 MAX_METRICS_BYTES = 8 * 1024 * 1024
 QUEUE_BYTES = 32 * 1024 * 1024
+QUERY_IMAGE_REF = "qdl-v2-python:2.2.3-rc2-43bbcf0"
+QUERY_IMAGE_DIGEST = "sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f"
+MIN_FINAL_RESTARTS = 5
+MAX_RESTARTS = 10
+
+
+def restart_count(packet):
+    count = packet.get("restart_samples", 1 if packet.get("development") is True else MIN_FINAL_RESTARTS)
+    minimum = 1 if packet.get("development") is True else MIN_FINAL_RESTARTS
+    if type(count) is not int or not minimum <= count <= MAX_RESTARTS:
+        raise ValueError(f"restart_samples must be an integer in [{minimum}, {MAX_RESTARTS}]")
+    return count
+
+
+def validate_query_provenance(packet):
+    query = packet.get("query_provenance", {})
+    if (not isinstance(query, dict) or packet.get("images", {}).get("query") != QUERY_IMAGE_DIGEST
+            or query.get("image_ref") != QUERY_IMAGE_REF
+            or query.get("actual_image_digest") != QUERY_IMAGE_DIGEST):
+        raise ValueError("Query must be verified against candidate 2.2.3-rc2-43bbcf0, not production v2.2.2")
+
+
+def recovery_summary(samples):
+    """Reject copied samples and require ordered, independently timed restarts."""
+    if not isinstance(samples, list) or not 1 <= len(samples) <= MAX_RESTARTS:
+        raise ValueError("bounded measured restart sample list required")
+    previous_end, previous_trade = 0, 0
+    values = []
+    for sample in samples:
+        start, end, trade = (sample.get(key) for key in ("started_ns", "first_event_ns", "trade_id"))
+        if (any(type(value) is not int for value in (start, end, trade))
+                or not previous_end < start < end or trade <= previous_trade
+                or sample.get("code") != "OK" or sample.get("count") != 1):
+            raise ValueError("independent successful consumer restart measurements required")
+        elapsed = (end - start) / 1_000_000
+        if not 0 < elapsed < 60000 or sample.get("restart_to_first_event_ms") != elapsed:
+            raise ValueError("invalid measured restart latency")
+        values.append(elapsed)
+        previous_end, previous_trade = end, trade
+    return {"measurement_n": len(values), "restart_samples": samples,
+            "restart_to_first_event_ms_samples": values,
+            "restart_to_first_event_ms_p50": statistics.median(values),
+            "restart_to_first_event_ms_max": max(values)}
+
+
+def measure_restarts(packet, producer, start, token, trade_id):
+    samples = []
+    for index in range(restart_count(packet)):
+        if index:
+            producer.publish(1)
+            trade_id = producer.next_id - 1
+            token, _ = asyncio.run(snapshot(packet, packet["consumer_id"], trade_id))
+        child = start(packet["consumer_id"], token, stop_after=1)
+        try:
+            child.wait("live")
+            producer.publish(1)
+            recovered = child.wait("done")
+            if recovered.get("last") != trade_id + 1:
+                raise ValueError("restart recovered the wrong trade")
+            first_ns = recovered.get("first_ns", 0)
+            samples.append({"started_ns": child.started_ns, "first_event_ns": first_ns,
+                "trade_id": recovered["last"], "code": recovered["code"], "count": recovered["count"],
+                "restart_to_first_event_ms": (first_ns - child.started_ns) / 1_000_000})
+        finally:
+            child.close()
+    return recovery_summary(samples)
 
 
 def validate_packet(packet, *, development):
@@ -67,6 +136,8 @@ def validate_packet(packet, *, development):
     for role in ("kafka", "core", "stream", "python"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", packet.get("images", {}).get(role, "")):
             raise ValueError(f"immutable {role} image ID required")
+    restart_count(packet)
+    validate_query_provenance(packet)
     if not development:
         sha, image = packet.get("ts_source_sha", ""), packet.get("ts_image_digest", "")
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or len(set(sha)) == 1:
@@ -79,11 +150,13 @@ def validate_packet(packet, *, development):
 
 def evidence_rows(packet, facts, *, development, run_id):
     """Development rows deliberately cannot satisfy the TS matrix checker."""
+    validate_query_provenance(packet)
     mode = "DEVELOPMENT" if development else "QUALIFICATION"
     header = {"provenance": {
         "schema": SCHEMA, "source_sha": packet["ts_source_sha"],
         "image_digest": packet["ts_image_digest"], "mode": mode, "run_id": run_id,
         "data_provenance": "SYNTHETIC_TEST_ONLY", "images": packet["images"],
+        "query_provenance": packet.get("query_provenance", {}),
         "packet_sha256": hashlib.sha256(json.dumps(packet, sort_keys=True).encode()).hexdigest(),
         "scope": "same-host isolated DL fault test; not TS consumer or real-provider certification",
     }}
@@ -92,6 +165,15 @@ def evidence_rows(packet, facts, *, development, run_id):
         fact = facts.get(cell, {})
         observed = fact.get("observed") is True
         passed = observed and fact.get("passed") is True
+        if cell == CELLS[1] and not development:
+            try:
+                summary = recovery_summary(fact.get("restart_samples"))
+                passed = passed and summary["measurement_n"] == restart_count(packet)
+                fact = {**fact, **summary}
+            except (ValueError, TypeError, AttributeError):
+                passed = False
+            if not passed:
+                observed = False
         rows.append({"cell": cell, "level": "ISOLATED_FAULT", "mode": mode,
                      "run_id": run_id, "ok": passed and not development,
                      "outcome": "OBSERVED" if observed and not development else "NOT_OBSERVED",
@@ -474,25 +556,19 @@ def run_faults(packet):
         fresh_token, fresh_offset = asyncio.run(snapshot(packet, slow_id, fresh_trade_id))
         snapshot_ms = (time.monotonic_ns() - snapshot_started_ns) / 1_000_000
         stage = "consumer_restart"
-        restart = start(slow_id, fresh_token, stop_after=1)
-        restart.wait("live")
-        producer.publish(1)
-        recovered = restart.wait("done")
-        restart_ms = (recovered.get("first_ns", 0) - restart.started_ns) / 1_000_000
-        restart.close()
+        recovery = measure_restarts(packet, producer, start, fresh_token, fresh_trade_id)
         facts[CELLS[1]] = {"observed": True,
-            "passed": exact_replay and out_of_range and fresh_offset > old_offset
-                and recovered["code"] == "OK" and recovered["count"] == 1
-                and recovered["last"] == fresh_trade_id + 1 and 0 < restart_ms < 60000,
+            "passed": exact_replay and out_of_range and fresh_offset > old_offset,
             "replayed": replay_end["count"], "range_code": range_end["code"],
             "old_snapshot_offset": old_offset, "fresh_snapshot_offset": fresh_offset,
             "baseline_trade_id": baseline_id, "fresh_snapshot_trade_id": fresh_trade_id,
-            "restart_to_first_event_ms": restart_ms, "restart_kind": "consumer_process",
-            "snapshot_request_ms": snapshot_ms, "measurement_n": 1,
-            "range_observed_to_first_event_ms": (recovered.get("first_ns", 0) - range_observed_ns) / 1_000_000,
+            **recovery, "restart_kind": "consumer_process",
+            "snapshot_request_ms": snapshot_ms, "snapshot_request_measurement_n": 1,
+            "range_observed_to_first_event_ms": (recovery["restart_samples"][0]["first_event_ns"] - range_observed_ns) / 1_000_000,
+            "range_recovery_measurement_n": 1,
             "ack_measured": False,
             "fresh_snapshot_rpc": "MarketDataStreamService/GetSnapshot",
-            "snapshot_path": "isolated Query to canonical hot read; not projector recovery proof"}
+            "snapshot_path": "isolated candidate Query 2.2.3-rc2-43bbcf0 to canonical hot read; not production v2.2.2 or projector recovery proof"}
         facts[CELLS[2]] = {"observed": True,
             "passed": fast_end["code"] == "OK" and fast_end["count"] == REPLAY + 1 and fast_end["last"] == baseline_id + REPLAY + 1
                 and bool(progress_samples) and slow_resumed,
@@ -581,6 +657,7 @@ def dependency_smoke():
 
 
 IMAGES = {
+    "query": QUERY_IMAGE_DIGEST,
     "core": "sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023",
     "stream": "sha256:1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9",
     "python": "sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f",
@@ -802,7 +879,7 @@ def serve_query(work):
         hot.close()
 
 
-def orchestrate(work, *, development, source_sha, image_digest):
+def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None):
     """Adapt measure_l2_top_materialization's isolated broker/core packet."""
     import shutil
     import subprocess
@@ -814,6 +891,8 @@ def orchestrate(work, *, development, source_sha, image_digest):
             raise ValueError("final TS source SHA required before setup")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest) or len(set(image_digest[7:])) == 1:
             raise ValueError("final TS image digest required before setup")
+    count = restart_count({"development": development, **(
+        {"restart_samples": restart_samples} if restart_samples is not None else {})})
     work = work.resolve()
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     namespace = "p184-dr08-" + uuid.uuid4().hex[:16]
@@ -831,7 +910,9 @@ def orchestrate(work, *, development, source_sha, image_digest):
     before = inventory()
     try:
         for image in IMAGES.values():
-            command(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
+            actual = command(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
+            if actual != image:
+                raise ValueError("local image digest mismatch")
         runtime = json.loads(command(["docker", "inspect", "qdl_v2_stable_candidate-rust_core-1"]))[0]
         if runtime["Image"] != IMAGES["core"]:
             raise ValueError("deployed core image drift")
@@ -847,7 +928,9 @@ def orchestrate(work, *, development, source_sha, image_digest):
         cfg["authority"].update(mode="RUST_SHADOW", slice_id=namespace, approved_by="isolated DR08 test")
         (work / "core.json").write_text(json.dumps(cfg))
         packet = {"namespace": namespace, "development": development, "ts_source_sha": source_sha,
-            "ts_image_digest": image_digest, "images": IMAGES, "bootstrap": "localhost:9092"}
+            "ts_image_digest": image_digest, "images": IMAGES, "bootstrap": "localhost:9092",
+            "restart_samples": count, "query_provenance": {"image_ref": QUERY_IMAGE_REF,
+                "scope": "isolated candidate Query; not production v2.2.2"}}
         (work / "packet.json").write_text(json.dumps(packet))
         def launch(role, image, args, *, memory, cpus, network, env=None, detach=True, extra=()):
             name = namespace + "-" + role
@@ -912,8 +995,15 @@ def orchestrate(work, *, development, source_sha, image_digest):
             "QDL_KN_READ_VIEW_URLS": "https://localhost:8200", "QDL_KN_READ_VIEW_CA_FILE": "/work/ca.crt",
             "QDL_KN_HOT_READ_ENABLED": "true", "QDL_KN_METRICS_SECONDS": "1",
             "QDL_KN_MAX_REPLAY_EVENTS": str(REPLAY), "QDL_KN_QUEUE_BYTES_TOTAL": str(QUEUE_BYTES)})
-        launch("query", IMAGES["python"], script + ["--query", "/work"], memory="512m", cpus=.5,
+        query = launch("query", IMAGES["query"], script + ["--query", "/work"], memory="512m", cpus=.5,
                network=net, env={**penv, **common})
+        query_state = json.loads(command(["docker", "inspect", query]))[0]
+        packet["query_provenance"]["actual_image_digest"] = query_state["Image"]
+        validate_query_provenance(packet)
+        # Query may be reading its startup packet; publish the attestation atomically.
+        attested_packet = work / "packet.attested.json"
+        attested_packet.write_text(json.dumps(packet))
+        attested_packet.replace(work / "packet.json")
         ready_deadline = time.monotonic() + 30
         while True:
             core_state = json.loads(command(["docker", "inspect", namespace + "-core"]))[0]
@@ -982,6 +1072,8 @@ def main(argv=None):
     parser.add_argument("--packet", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--development", action="store_true")
+    parser.add_argument("--restart-samples", type=int,
+                        help="orchestrator restart count: development 1-10, final 5-10")
     args = parser.parse_args(argv)
     if args.orchestrate:
         def orchestration_deadline(_signum, _frame):
@@ -989,11 +1081,13 @@ def main(argv=None):
         previous = signal.signal(signal.SIGALRM, orchestration_deadline)
         signal.alarm(600)
         try:
-            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest)
+            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest, restart_samples=args.restart_samples)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
         return 0
+    if args.restart_samples is not None:
+        parser.error("--restart-samples requires --orchestrate; inner driver uses its sealed packet")
     for directory, function in ((args.prepare_material, prepare_material), (args.prepare_topics, prepare_topics), (args.query, serve_query)):
         if directory is not None:
             function(directory)
@@ -1017,11 +1111,12 @@ def main(argv=None):
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
-        for row in evidence_rows(packet, facts, development=args.development, run_id=run_id):
+        rows = evidence_rows(packet, facts, development=args.development, run_id=run_id)
+        for row in rows:
             output.write(json.dumps(row, sort_keys=True) + "\n")
         output.flush()
         os.fsync(output.fileno())
-    return 0 if all(facts.get(cell, {}).get("passed") is True for cell in CELLS) else 1
+    return 0 if all(row["development_pass"] if args.development else row["ok"] for row in rows[1:]) else 1
 
 
 if __name__ == "__main__":

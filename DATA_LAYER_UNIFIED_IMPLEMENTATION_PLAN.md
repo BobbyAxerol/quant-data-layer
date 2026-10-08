@@ -70020,3 +70020,19 @@ worker1 correlation, exact6.088298ms closure separation, no other family overflo
 in supplied window, and withdrawal of LATEST_STATE/batch25->50. Exact stall stage
 remains unmeasured; owner TS-side working attribution is not invented telemetry.
 No push/merge; keep bar-edge rollbackf7351c3b. Runtime unchanged.
+
+
+### DR08 provenance and repeated-restart slice - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / FINAL_RUN_PENDING. Runner now records and validates
+Query image2.2.3-rc2-43bbcf0 / sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f
+against actual container inspection. Never labels it productionQueryv2.2.2.
+Final mode requires5-10 independently started consumer processes, strictly
+advancing trade IDs, raw monotonic start/first-event samples, n/p50/max ms.
+Copied, missing, out-of-order or oldn1 samples cannot qualify. Initial full
+OUT_OF_RANGE recovery and snapshot timing remain separately labelledn1.
+Unit: python3 -B -m unittest tests.test_p184_dr08_isolated -q:
+40PASS0fail0skip. Docker orchestration mocked in new tests; no fault rerun,
+no fresh recovery measurements and no new acceptance claim. Previous rehearsal
+receipt unchanged. No containers/images created by this slice; no rollout.
+Final TS provenance remains gated on Claude CI confirmation. v2.2.3 HOLD.
