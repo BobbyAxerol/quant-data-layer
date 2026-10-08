@@ -6,6 +6,24 @@ Main journal: [approved parent-owned scope](../../DATA_LAYER_UNIFIED_IMPLEMENTAT
 "Pre-stage3 consolidated build, SDK and DR05". Parent handles journal and commit;
 neither was edited by this slice.
 
+## Governing Update: Independent Closure, 2026-10-08
+
+The TS build gate means completed market-data integration regressions, NOT
+completion of Paper/OR features. Final DR/broker acceptance and exact-source DL CI
+remain mandatory; existing receipts do not certify later source automatically.
+The recipe now also requires DR05 fence d68fb2ff47622db8224dc4b9e004dca4e20f643e
+and DR08 terminal-status 0b374bc918af02476cdfb1502d5df132426f901b, including the
+changed core/projector/read-view paths and prolonged-stall regressions. Seven
+prerequisite entries and 24 source paths are inventoried. Older candidate d68fb2f
+is refused because terminal-status ancestry is absent.
+
+Affected portable suite: 20 PASS, 0 FAIL, 0 SKIP. The real Git preflight against
+0b374bc validates ancestry/paths and remains HOLD (no CI or build attestation).
+CI's expected gate/hold fields are updated together with the generator.
+100-alpha capacity is a candidate workload, not a measured certification; see
+owner amendment in the main plan. Fixed 5-vCPU acceptance is superseded by
+measured adequate resources plus headroom, without relaxing correctness/latency.
+
 ## Authority and Scope
 
 - [Phase C packet](p184-dl-phase-c-packet.md), governing owner amendment first.
@@ -82,7 +100,7 @@ python3 -B scripts/p184_consolidated_build.py \
   --source-commit FULL_DL_COMMIT --release v2.2.3
 ```
 
-Only after TS tests FINISH and pass, exact-source DL CI passes, and the owner
+Only after TS market-data integration tests pass, exact-source DL CI passes, and the owner
 approves the future build, provide all explicit inputs:
 
 ```sh
@@ -182,6 +200,6 @@ deferred because this is source-only preparation, not image-phase closure.
 Concurrent DR05 and parent work were left untouched.
 
 Next permitted step: parent review, journal update and eventual commit; obtain
-final TS completion and exact-source DL CI receipts before separately authorizing
+final TS market-data integration and exact-source DL CI receipts before separately authorizing
 a consolidated rebuild. Building does not authorize deployment. DR/broker gates
 and paired IDR075 activation still need the reviewed runtime packet and approval.

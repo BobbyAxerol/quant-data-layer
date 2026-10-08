@@ -1,5 +1,26 @@
 # P18.4 Data Layer Phase C Packet
 
+## Governing Owner Amendment: 100 Alpha Plus TS, 2026-10-08
+
+This amendment supersedes older fixed <=5-vCPU and Paper-feature wait wording,
+not freshness, authority, integrity or LOSSLESS gates. Target: 100 active logical
+alpha consumers with 2-5 declared products each, plus the TS60 workload. Quota and
+resource changes must be sized from frozen offered rates, fanout, recovery and
+single-replica capacity; configured slots are not measured capacity. Preserve TS
+reservation and bounded per-client queues; do not increase buffers to conceal lag.
+
+Proceed independently of Claude's Paper/OR implementation: complete DL source,
+isolated DR05/DR08 and capacity preparation now. Building still requires exact
+source CI and TS market-data integration evidence; release requires final DR and
+broker delta. No shared runtime change is authorized by an offline candidate.
+Before activation, record exact images/config revisions, resource ceilings,
+per-identity quotas, rollback, measured queue/latency/CPU/RAM limits and cleanup.
+The consolidated build preflight must include DR05 fence d68fb2f and DR08 terminal
+fix 0b374bc, not merely the older rc2 candidate. See
+[p184-consolidated-build.md](p184-consolidated-build.md) and the main-plan entry
+"Owner amendment: 100 alpha plus TS capacity and independent DL closure".
+
+
 ## Governing owner amendment - 2026-10-08
 
 ### Consolidated-build timing and consumer handoff

@@ -55,13 +55,14 @@ jobs:
           assert recipe["build_script_sha256"] is None
           assert recipe["prerequisites"] == PREREQUISITES
           assert recipe["gates"] == {
-              "ts_tests": "pending", "ts_source_commit": None,
+              "ts_tests": "pending", "ts_tests_scope": "MARKET_DATA_INTEGRATION_ONLY",
+              "ts_source_commit": None,
               "ts_receipt_sha256": None, "dl_ci": "pending",
               "dl_ci_source_commit": sha, "dl_ci_receipt_sha256": None,
               "build_approval": "pending",
           }
           assert recipe["holds"] == [
-              "TS tests must finish and pass before any rebuild",
+              "TS market-data integration regressions must pass; Paper/OR feature completion is not required",
               "DL CI must pass for the exact source commit",
               "explicit build approval required",
           ]

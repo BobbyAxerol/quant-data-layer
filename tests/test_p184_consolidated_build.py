@@ -93,7 +93,30 @@ class RecipeTests(NoProcessTests):
 
     def test_prerequisite_roster(self):
         self.assertEqual(set(build.PREREQUISITES),
-                         {"IDR040fix1", "bindingV3", "quota_log", "b6a0119", "IDR075"})
+                         {"IDR040fix1", "bindingV3", "quota_log", "b6a0119", "IDR075", "DR05_book_fence", "DR08_terminal_status"})
+
+
+class IntegrationScopeTests(NoProcessTests):
+    def prepare(self, **kwargs):
+        with patch.object(build, "source_contract", return_value={"Dockerfile": SHA}):
+            return build.prepare(ROOT, SHA, "v2.2.3-rc.1", **kwargs)
+
+    def test_scope_is_market_data_not_paper_feature_completion(self):
+        result = self.prepare(**READY)
+        self.assertEqual(result["gates"]["ts_tests_scope"], "MARKET_DATA_INTEGRATION_ONLY")
+        self.assertEqual(result["status"], "PREPARED_NOT_EXECUTED")
+
+    def test_missing_new_recovery_prerequisite_refuses_old_candidate(self):
+        for missing in ("DR05_book_fence", "DR08_terminal_status"):
+            def fake(repo, *args):
+                if args[0] == "rev-parse":
+                    return SHA
+                if args[0] == "merge-base" and args[2] == build.PREREQUISITES[missing]:
+                    raise subprocess.CalledProcessError(1, "git")
+                return ""
+            with self.subTest(missing=missing), patch.object(build, "git", side_effect=fake):
+                with self.assertRaisesRegex(ValueError, missing):
+                    build.source_contract(ROOT, SHA)
 
 
 class SourceTests(NoProcessTests):
@@ -110,7 +133,7 @@ class SourceTests(NoProcessTests):
                 build.source_contract(ROOT, SHA)
 
     def test_missing_marker_fails_closed(self):
-        with patch.object(build, "git", side_effect=[SHA] + [""] * 6):
+        with patch.object(build, "git", side_effect=[SHA] + [""] * (len(build.PREREQUISITES) + 1)):
             with self.assertRaisesRegex(ValueError, "source contract changed"):
                 build.source_contract(ROOT, SHA)
 

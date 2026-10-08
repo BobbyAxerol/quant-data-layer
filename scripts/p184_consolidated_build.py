@@ -15,9 +15,21 @@ PREREQUISITES = {
     "quota_log": "4eb08dc15113cc4f73b65b239dfeb4f8ec0e23cf",
     "b6a0119": "b6a01190587e8771c62b5b4988782b06c5e2578a",
     "IDR075": "704552d8736905cdb73feec86f3f01d339d02cbb",
+    "DR05_book_fence": "d68fb2ff47622db8224dc4b9e004dca4e20f643e",
+    "DR08_terminal_status": "0b374bc918af02476cdfb1502d5df132426f901b",
 }
 CONTRACTS = {
     "rust/qdl-realtime-core/src/lib.rs": ["REST_AHEAD_OF_STREAM"],
+    "rust/qdl-core/src/canonical.rs": [],
+    "rust/qdl-kafka/src/bin/qdl-production-core.rs": [],
+    "rust/qdl-projector/src/products.rs": [],
+    "qdl/runtime/kn_hot_view.py": [],
+    "qdl/runtime/kn_query_backend.py": [],
+    "rust/qdl-stream-gateway/src/service.rs": ["terminal.get_or_insert(status)"],
+    "rust/qdl-stream-gateway/tests/native_stream.rs": [
+        "t05_prolonged_trade_stall_preserves_terminal_status_and_peer_progress",
+        "t05_prolonged_book_delta_stall_preserves_terminal_status_and_peer_progress"],
+    "tests/test_kn_hot_book_invalidation.py": [],
     "qdl/consumer/universal_release.py": ["qdl.v2.consumer-route-binding.v3"],
     "qdl/security/data_plane.py": ["qdl_consumer_quota_exhausted"],
     "rust/qdl-stream-gateway/src/subscription.rs": ["pub offered:", "pub dequeued:"],
@@ -92,7 +104,7 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
     blobs = source_contract(repo, commit)
     holds = []
     if ts_status != "pass":
-        holds.append("TS tests must finish and pass before any rebuild")
+        holds.append("TS market-data integration regressions must pass; Paper/OR feature completion is not required")
     if dl_ci_status != "pass":
         holds.append("DL CI must pass for the exact source commit")
     if build_approval != "approved":
@@ -136,7 +148,7 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
         "source_commit": commit, "release": release,
         "dependency_image": dependency_image,
         "prerequisites": PREREQUISITES, "source_git_blobs": blobs,
-        "gates": {"ts_tests": ts_status, "ts_source_commit": ts_commit,
+        "gates": {"ts_tests": ts_status, "ts_tests_scope": "MARKET_DATA_INTEGRATION_ONLY", "ts_source_commit": ts_commit,
                   "ts_receipt_sha256": ts_receipt, "dl_ci": dl_ci_status,
                   "dl_ci_source_commit": commit, "dl_ci_receipt_sha256": dl_ci_receipt,
                   "build_approval": build_approval},
@@ -147,6 +159,7 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
             "Ancestry and source markers do not replace semantic regression tests.",
             "One application commit does not make upstream package resolution reproducible.",
             "No image built, pushed, deployed or certified by this generator.",
+            "Final DR/broker delta and consumer capacity acceptance remain required after packaging; no dependency on Paper/OR feature completion.",
             "IDR075 remains prepared, not activated; IDR040fix2 remains deferred.",
         ],
     }

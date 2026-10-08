@@ -70506,3 +70506,44 @@ Runtime pending: SDK2.0.7 writer has expired tracing; canonical/cache join is no
 SDK/apply/ACK/cursor trace. ETH BOOK delay remains open alongside TS IDR081.
 Canonicalmain5bf5cd5/v2.2.2, featurefix/p184-dl-closure only; active digests and
 BARrollbackf7351c3b untouched. No TS edits/push/merge/deploy/release; v2.2.3 HOLD.
+
+### Owner amendment: 100 alpha plus TS capacity and independent DL closure - 2026-10-08
+
+Status IN_PROGRESS, approved by owner in current conversation. Target is100alpha
+logical consumers with2-5declared data products each PLUS TS60, not100idle sockets.
+Optimize before sizing, but the previous fixed <=5vCPU target is no longer an
+absolute acceptance ceiling: owner permits adequate CPU/RAM and quota for the
+measured workload. Preserve feed freshness/integrity/LOSSLESS and bounded memory;
+no unlimited buffers, wildcard entitlement, fabricated evidence or hidden skips.
+Reconcile independent identities versus logical sessions and per-subscription
+fanout; quota admission is not capacity proof. Freeze workload/measurement and
+headroom assumptions before a load run. Report throughput, RAM, CPU/throttle,
+queue, recovery and actual consumer apply latency under sustained/burst traffic.
+Guides: p184-consolidated-build.md, p184-dr-runtime-runbook.md,
+p184-dr05-fence-channel-handoff.md and approved Kafka-native architecture review.
+Do not wait for TS Paper/OR feature completion. Claude retains exclusive TS edits;
+Codex may run existing TS helper against disposable DL/TS clone namespaces only.
+Prepare resource/identity candidate and scoped tests; no shared role change until
+exact digest/config/rollback packet is recorded and its safety checks pass.
+Immediate parallel work: capacity100 workload/quota design using existing planner;
+DR05 actual WriterClone integration on existing approved interfaces. Existing
+0b374bc recovery proof inherited, only affected tests rerun. Runtime currently
+v2.2.2 unchanged, v2.2.3 HOLD; no push/merge/order or broad cleanup. Disposable
+stack labels, ports, state/credentials isolated; cleanup exact resources after run.
+Apply-patch helper remains unavailable (mountinfo error previously reproduced),
+manual edits use exact-match fallback with diff verification per workspace rule32.
+
+Build-preflight slice: require DR05 fence d68fb2f and terminal-status0b374bc ancestry
+and source paths in consolidated recipe; keep old certified artifacts immutable.
+Clarify TS gate is market-data integration regressions, not completion of Paper/OR.
+Candidate build/CI preconditions remain explicit; final DR/broker runtime acceptance
+still follows packaging. No fake CI attestations or build/release execution here.
+
+Build-preflight verification: portable unittest20PASS0fail0skip; exact inline CI
+block rehearsed against committed0b374bc PASS with legitimate HOLD, not hosted CI.
+Real old d68fb2f rejected for missing terminal-status ancestry. CI expectations,
+guide and governing PhaseC packet updated atomically. No image/build/runtime
+change; no test resources created by this slice, cleanup intentionally unnecessary.
+Canonicalmain5bf5cd5/v2.2.2, active featurefix/p184-dl-closure. Active/runtime and
+named rollback digests inherited unchanged from prior inventory, not remeasured.
+Capacity and WriterClone agents remain independent work in progress; no TS edits.
