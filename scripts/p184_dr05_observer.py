@@ -23,11 +23,11 @@ from scripts.p184_dr05_dl_fault import frame, namespace, schedule
 from scripts.p184_dr05_raw_publisher import RawPublisher
 
 
-def record_summary(topic, offset, wire, canonical):
+def record_summary(topic, offset, wire, canonical, *, partition=0):
     from qdl.marketdata.v2.market_data_pb2 import EventEnvelope
     from qdl.provider.v1.raw_provider_pb2 import QuarantineRecord, QuarantineReason
 
-    row = {"topic": topic, "offset": offset, "sha256": hashlib.sha256(wire).hexdigest()}
+    row = {"topic": topic, "partition": partition, "offset": offset, "sha256": hashlib.sha256(wire).hexdigest()}
     if canonical:
         event = EventEnvelope.FromString(wire)
         row.update(kind="canonical", capture_id=event.raw_capture_id.hex(),
@@ -79,7 +79,7 @@ class CanonicalObserver:
                     eof.discard(message.topic())
                     self.positions[message.topic()] = message.offset() + 1
                     records.append(record_summary(message.topic(), message.offset(), message.value(),
-                                                   message.topic() == self.canonical))
+                                                   message.topic() == self.canonical, partition=message.partition()))
                     if len(records) > 64:
                         raise RuntimeError("unexpected unbounded canonical output")
             if time.monotonic() >= next_check:

@@ -1,6 +1,8 @@
 # DR05 Isolated DL Stack Handoff
 
-Status: STACK_STARTUP_TESTED / TS_FAULT_ACCEPTANCE_NOT_RUN, 2026-10-08.
+Status: IMPLEMENTED_TESTED_ISOLATED / TS_FINAL_ACCEPTANCE_PENDING, 2026-10-08.
+Current packet/API and fence results: [DR05 fence/channel handoff](p184-dr05-fence-channel-handoff.md).
+Earlier receipts and implementation checkpoints below remain historical.
 Governing scope: Unified Plan, "Pre-stage3 consolidated build, SDK and DR05";
 [Phase C packet](p184-dl-phase-c-packet.md). No shared runtime changes.
 

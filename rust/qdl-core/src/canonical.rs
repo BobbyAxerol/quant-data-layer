@@ -838,6 +838,28 @@ pub fn canonicalize_l2_ready_snapshot(
     fixture: &TradeFixture,
     transition: &BookTransition,
 ) -> Result<EventEnvelope, String> {
+    l2_ready_snapshot(fixture, transition, None)
+}
+
+/// A real post-fence anchor may repeat a native sequence. Its capture identity
+/// distinguishes recovery from the pre-fault snapshot without changing prices.
+pub fn canonicalize_l2_recovery_snapshot(
+    fixture: &TradeFixture,
+    transition: &BookTransition,
+) -> Result<EventEnvelope, String> {
+    if fixture.context.raw_capture_id.is_empty() {
+        return Err("L2 recovery requires raw capture provenance".into());
+    }
+    let mut discriminator = b"recovery:".to_vec();
+    discriminator.extend_from_slice(&fixture.context.raw_capture_id);
+    l2_ready_snapshot(fixture, transition, Some(&discriminator))
+}
+
+fn l2_ready_snapshot(
+    fixture: &TradeFixture,
+    transition: &BookTransition,
+    recovery_discriminator: Option<&[u8]>,
+) -> Result<EventEnvelope, String> {
     let view = transition
         .view
         .as_ref()
@@ -853,7 +875,7 @@ pub fn canonicalize_l2_ready_snapshot(
         "book_snapshot",
         source_sequence,
         source_time_ms,
-        materialization_discriminator.as_deref().map(str::as_bytes),
+        recovery_discriminator.or(materialization_discriminator.as_deref().map(str::as_bytes)),
     )?;
     let unit = quantity_unit(&fixture.context)?;
     let mut levels = l2_levels(&view.bids, unit)?;
@@ -877,6 +899,36 @@ pub fn canonicalize_l2_ready_snapshot(
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
+}
+
+/// Publish a non-readable fence for both book products. No price/level or native
+/// sequence is invented; the receipt clock dates the invalidation, not a price.
+/// Existing quality/reset fields make old consumers fail closed as well.
+pub fn canonicalize_l2_invalidation(fixture: &TradeFixture) -> Result<Vec<EventEnvelope>, String> {
+    let generation = fixture.context.connection_generation;
+    if generation == 0 || fixture.context.raw_capture_id.is_empty() {
+        return Err("L2 invalidation requires generation and raw provenance".into());
+    }
+    let source_sequence = format!("g{generation}:invalid:{}", fixture.context.partition_sequence);
+    let at_ms = fixture.context.received_at_ns / 1_000_000;
+    let mut snapshot = base_envelope(fixture, "book_snapshot", source_sequence.clone(), at_ms)?;
+    snapshot.quality_flags.extend([
+        QualityFlag::SequenceGapBefore as i32, QualityFlag::ResyncRequired as i32,
+    ]);
+    snapshot.payload = Some(event_envelope::Payload::BookSnapshot(OrderBookSnapshot {
+        book_generation: generation, sequence_verified: false, ..Default::default()
+    }));
+    set_payload_hash(&mut snapshot)?;
+    let mut delta_fixture = fixture.clone();
+    delta_fixture.context.partition_sequence = fixture.context.partition_sequence.checked_add(1)
+        .ok_or("L2 invalidation sequence overflow")?;
+    let mut delta = base_envelope(&delta_fixture, "book_delta", source_sequence, at_ms)?;
+    delta.quality_flags = snapshot.quality_flags.clone();
+    delta.payload = Some(event_envelope::Payload::BookDelta(OrderBookDelta {
+        book_generation: generation, reset: true, sequence_verified: false, ..Default::default()
+    }));
+    set_payload_hash(&mut delta)?;
+    Ok(vec![snapshot, delta])
 }
 
 /// Convert only a publication-approved L2 transition into its canonical V2

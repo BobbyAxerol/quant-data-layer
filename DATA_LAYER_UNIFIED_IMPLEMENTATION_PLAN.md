@@ -70368,3 +70368,73 @@ is not claimed completed: his new01eb0d7 interface needs fresh-case mapping and
 must not count eventual DATA_STALE as immediate GAP refusal. These interface
 points are recorded in p184-claude-stage3-alignment.md. Reuse this counterexample;
 no C2/full catalogue rerun, no shared rollout from this observer slice.
+
+
+### DR05 upstream invalidation and TS packet integration - 2026-10-08 (Codex)
+
+Status IMPLEMENTING. Owner approves fixing canonical BOOK gap/generation
+propagation and providing isolated TS consumer bindings plus reset_case and
+canonical_observe APIs. TS Claude owns TsDr05Adapter and final evidence; drive
+continues ok=false. Guide p184-dr05-dl-fault.md and owner packet contract apply.
+No shared runtime, manifests, ACLs, TS source edits, push/merge or release.
+Tests: valid book -> fault -> immediate typed refusal -> valid anchor recovery;
+old generation/identity fencing, duplicate replay, primary/hot reader parity;
+packet V3 compiler/policies, path-only secret references, namespace ownership,
+bounded reset/canonical observation. Reserved TS ports6391/5433 untouched.
+Reuse schemas/quality flags and real committed observations; no stale wait,
+timestamp rewriting, invented prices or buffer/timeout relaxation. Isolated
+compile/tests only; any candidate binary is test-only until release packet.
+Cleanup exact disposable labels/private files, retain active/rollback artifacts.
+
+
+DR05 tested-slice update: IMPLEMENTED_TESTED_ISOLATED / TS_FINAL_ACCEPTANCE_PENDING.
+Current guide/evidence upgrade/evidence/p184-dr05-fence-channel-handoff.md.
+Core emits bounded canonical invalidation for both BOOK products on GAP or
+unanchored generation; primary validator and hot reader preserve typed refusal.
+Four isolated counterexample cells now pass diagnostic checks;12 positive/
+recovery controls retain exact canonical bytes. Previous failing receipts intact.
+Python120PASS0fail0skip43.876s; separate reset4PASS0fail0skip0.006s.
+Rust core52PASS0fail1ignored; projector product8PASS0fail0ignored.
+JSONL handoff16 actual publish/observe steps,2 real resets21670.885/19807.860ms;
+broker ID stable, topic UUID changed, raw starts0. TS ports6391/5433 unused.
+No Docker socket in helper; exact owned roles/topics/groups only. No TS edits.
+Scope kept: final TS WriterClone/control/cache evidence remains Claude-owned;
+drive ok=false, no final provenance/certificate. No shared runtime/push/merge.
+Disposable stack cleanup/privatefiles0 in all5receipts, exact hashes in report.
+Final binary rebuild after redundant-borrow cleanup is recorded separately;
+prior receipts retain original core hash, not relabelled as final image tests.
+
+DR05 self-review before commit found two in-scope compatibility/recovery cases:
+production-core alternate runner rejects mixed quarantine+canonical fence batches;
+same-generation/native-sequence recovery anchor can be deduplicated. Fix both
+with targeted regression before closing this slice; retain quarantine evidence
+and stable replay identity. No runtime changes or expanded catalogue testing.
+
+Pre-commit recovery regression reproduced0published records for a valid OKX
+post-fence snapshot at the same generation/native sequence. Fixed using the
+new anchor's immutable raw capture discriminator, retaining native sequence,
+prices, generation and clocks; duplicate replay remains suppressed. Final core
+suite53PASS0fail1ignored0.11s. Packet exact-schema/field-set/V3 parity recheck
+1PASS9.114s (overlaps120suite; not added to unique total).
+Read-only shared inventory17roles(12app+5infra), restart0/OOMfalse; no shared
+mutations. Images95/28.96GB, BuildKit20.52GB shared with Claude; no broad prune.
+
+DR05 slice FINAL: IMPLEMENTED_TESTED_ISOLATED / TS_FINAL_ACCEPTANCE_PENDING.
+Alternate runner fixed narrowly: retain paired BOOK invalidation and quarantine
+in one transaction; other mixed outcomes rejected. Three pre-fix regressions
+failed; final runner7PASS0fail0ignored. Parent core53PASS0fail1ignored; projector
+products8PASS; Python120PASS plus separate4resetPASS (overlapping checks not summed).
+Final binarybaafcb489bb17fabdd73bef383dcf3448581cc8bb63578e9df83e2a57107b6f2
+retained at ~/.local/state/qdl-v2/dr05-fence-20261008/bin/qdl-realtime-core-baafcb48.
+Affected OKX generation final-binary rerun PASS; receiptfcf4b6593732cde3fc6897e750346dea2ed9d3744d80ce29add82aa1a824000a.
+Earlier4cell/JSONL receipts preserve earlier binary hashes; no false provenance.
+All6case stacks/privatefiles removed; no testcontainers left. Removed exact
+Cargo target1225121125filebytes, free59893260288->60988051456bytes; concurrent
+activity prevents attribution. Root-owned copied build artifacts required one
+network-none cleanup helper mounted only to that target. No new image or shared
+prune. Full report/commands/proof limits in p184-dr05-fence-channel-handoff.md.
+Canonicalmain5bf5cd5/v2.2.2 unchanged, featurefix/p184-dl-closure only.
+Shared digests/config untouched;17read-only roles restart0/OOMfalse. Retain all
+active and BARrollbackf7351c3b; no push/merge/deploy. Claude next runs his actual
+WriterClone/control/cache/ACK validation with honest TS source/image provenance.
+DR05 final acceptance and v2.2.3 remain HOLD pending joint DR/broker evidence.

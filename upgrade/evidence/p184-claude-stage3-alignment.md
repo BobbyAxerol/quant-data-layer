@@ -111,3 +111,18 @@ Integration points to reconcile before claiming the new TS runner is wired:
 No acknowledgement from Claude or full writer-clone acceptance is claimed here.
 The next shared handoff should pin the actual TS image and use these observations
 as the counterexample for the narrow upstream invalidation fix, not rerun C2.
+
+
+## Current DR05 Handoff: Canonical Fence And JSONL (2026-10-08)
+
+The prior five integration points above are retained as history. DL now supplies
+per-venue ts-consumer.v1 packets and V3 bindings, a namespace-attested JSONL
+channel, and a broker-preserving host reset bridge. Four fault cells pass the
+isolated diagnostic;16 channel publish/observe steps and2 reset cycles pass.
+Use [current guide and exact receipts](p184-dr05-fence-channel-handoff.md).
+
+Remaining TS boundaries are unchanged: actual WriterClone control/Redis/ACK
+validation, Binance bootstrap semantics, typed immediate refusal rather than
+waiting for stale, and honest final SHA/image provenance. Do not mark final
+DR05 PASS from the diagnostic helper. The DL fixes have not been deployed or
+packaged as the final consolidated release. No TS source was edited.

@@ -9,7 +9,8 @@ use qdl_contracts::qdl::provider::v1::{
     QuarantineReason, QuarantineRecord, RawProviderEnvelope, TransportProtocol,
 };
 use qdl_core::canonical::{
-    canonicalize_l2_publication, canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
+    canonicalize_l2_invalidation, canonicalize_l2_publication, canonicalize_l2_recovery_snapshot,
+    canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
     TradeContext, TradeFixture,
 };
 use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
@@ -425,6 +426,7 @@ pub struct RealtimeCore {
     bindings: BTreeMap<String, CoreBinding>,
     l2_adapters: BTreeMap<String, L2BookAdapter>,
     l2_snapshot_observations: BTreeMap<String, L2SnapshotObservation>,
+    l2_invalidated: BTreeMap<String, (String, u64)>,
     mark_index_pairs: BTreeMap<String, MarkIndexPairState>,
     partition_sequences: BTreeMap<String, u64>,
     /// The provider session that currently owns each L2 book, so a lane change
@@ -473,6 +475,7 @@ impl RealtimeCore {
             bindings,
             l2_adapters,
             l2_snapshot_observations: BTreeMap::new(),
+            l2_invalidated: BTreeMap::new(),
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
             l2_sessions: BTreeMap::new(),
@@ -1109,6 +1112,48 @@ impl RealtimeCore {
         binding: &CoreBinding,
         raw: RawProviderEnvelope,
         payload: Value,
+        processing_at_ns: i64,
+        transport_offset: Option<u64>,
+    ) -> ProcessBatch {
+        let mut batch = self.process_l2_inner(binding_key, binding, &raw, payload,
+            processing_at_ns, transport_offset);
+        let Some(adapter) = self.l2_adapters.get(binding_key) else { return batch; };
+        if adapter.core().status() == BookStatus::Ready {
+            if !batch.canonical.is_empty() {
+                self.l2_invalidated.remove(binding_key);
+            }
+            return batch;
+        }
+        // A superseded/foreign frame cannot invalidate the current owner.
+        if adapter.core().generation() != raw.connection_generation
+            || self.l2_sessions.get(binding_key) != Some(&raw.source_session_id)
+            || matches!(batch.filtered_outcome, Some("IGNORED_STALE_GENERATION" | "IDENTITY_MISMATCH"))
+        { return batch; }
+        let scope = (raw.source_session_id.clone(), raw.connection_generation);
+        if self.l2_invalidated.get(binding_key) == Some(&scope) { return batch; }
+        let Some(sequence) = self.next_l2_partition_sequence(binding, transport_offset) else {
+            return batch;
+        };
+        let Ok(payload) = serde_json::from_slice(&raw.raw_frame_bytes) else { return batch; };
+        let fixture = l2_fixture(binding, &raw, payload, sequence);
+        let Ok(events) = canonicalize_l2_invalidation(&fixture) else { return batch; };
+        for event in events {
+            if self.seen_ids.contains(&event.event_id) { continue; }
+            self.partition_sequences.insert(l2_partition_key(binding), event.partition_sequence);
+            self.remember(event.event_id.clone());
+            batch.canonical.push(canonical_record(&self.config.canonical_stream, event, raw.received_at_ns));
+        }
+        self.l2_invalidated.insert(binding_key.to_owned(), scope);
+        self.l2_snapshot_observations.remove(binding_key);
+        batch
+    }
+
+    fn process_l2_inner(
+        &mut self,
+        binding_key: &str,
+        binding: &CoreBinding,
+        raw: &RawProviderEnvelope,
+        payload: Value,
         _processing_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
@@ -1124,7 +1169,7 @@ impl RealtimeCore {
             Ok(value) => value,
             Err(_) => {
                 return self.quarantine(
-                    &raw,
+                    raw,
                     QuarantineReason::SemanticInvalid,
                     "L2 raw transport protocol is invalid",
                     materialized_at_ns,
@@ -1135,7 +1180,7 @@ impl RealtimeCore {
             Some(value) => value,
             None => {
                 return self.quarantine(
-                    &raw,
+                    raw,
                     QuarantineReason::SemanticInvalid,
                     "L2 transport-derived partition sequence overflow",
                     materialized_at_ns,
@@ -1190,7 +1235,7 @@ impl RealtimeCore {
         let transition = {
             let Some(adapter) = self.l2_adapters.get_mut(binding_key) else {
                 return self.quarantine(
-                    &raw,
+                    raw,
                     QuarantineReason::SemanticInvalid,
                     "L2 binding has no initialized state machine",
                     materialized_at_ns,
@@ -1216,7 +1261,7 @@ impl RealtimeCore {
                 Ok(value) => value,
                 Err(_) => {
                     return self.quarantine(
-                        &raw,
+                        raw,
                         QuarantineReason::SemanticInvalid,
                         "L2 provider frame failed strict parser validation",
                         materialized_at_ns,
@@ -1291,7 +1336,7 @@ impl RealtimeCore {
                     QuarantineReason::SemanticInvalid
                 };
                 return self.quarantine(
-                    &raw,
+                    raw,
                     reason,
                     "L2 state machine rejected continuity; resync required",
                     materialized_at_ns,
@@ -1300,17 +1345,22 @@ impl RealtimeCore {
             transition
         };
 
-        let canonical = match canonicalize_l2_publication(
-            &l2_fixture(binding, &raw, fixture_payload.clone(), partition_sequence),
-            &transition,
-        ) {
+        let fixture = l2_fixture(binding, raw, fixture_payload.clone(), partition_sequence);
+        let publication = if self.l2_invalidated.contains_key(binding_key)
+            && transition.publication == BookPublication::Snapshot
+        {
+            canonicalize_l2_recovery_snapshot(&fixture, &transition).map(Some)
+        } else {
+            canonicalize_l2_publication(&fixture, &transition)
+        };
+        let canonical = match publication {
             Ok(value) => value,
             Err(_) => {
                 if let Some(adapter) = self.l2_adapters.get_mut(binding_key) {
                     adapter.request_resync(raw.connection_generation);
                 }
                 return self.quarantine(
-                    &raw,
+                    raw,
                     QuarantineReason::SemanticInvalid,
                     "L2 canonical projection failed strict validation",
                     materialized_at_ns,
@@ -1318,11 +1368,11 @@ impl RealtimeCore {
             }
         };
         let materialized_snapshot =
-            self.due_l2_materialized_snapshot(binding_key, l2, &raw, &transition);
+            self.due_l2_materialized_snapshot(binding_key, l2, raw, &transition);
         let mut publications = Vec::new();
         if let Some(canonical) = canonical {
             let snapshot_observed_at_ms = if transition.publication == BookPublication::Snapshot {
-                l2_observed_at_ms(&transition, &raw)
+                l2_observed_at_ms(&transition, raw)
             } else {
                 None
             };
@@ -1331,14 +1381,14 @@ impl RealtimeCore {
         if let Some(snapshot_transition) = materialized_snapshot {
             let Some(snapshot_partition_sequence) = partition_sequence.checked_add(1) else {
                 return self.quarantine(
-                    &raw,
+                    raw,
                     QuarantineReason::SemanticInvalid,
                     "L2 materialized snapshot partition sequence overflow",
                     materialized_at_ns,
                 );
             };
             let canonical = match canonicalize_l2_publication(
-                &l2_fixture(binding, &raw, fixture_payload, snapshot_partition_sequence),
+                &l2_fixture(binding, raw, fixture_payload, snapshot_partition_sequence),
                 &snapshot_transition,
             ) {
                 Ok(Some(value)) => value,
@@ -1347,7 +1397,7 @@ impl RealtimeCore {
                         adapter.request_resync(raw.connection_generation);
                     }
                     return self.quarantine(
-                        &raw,
+                        raw,
                         QuarantineReason::SemanticInvalid,
                         "L2 materialized snapshot failed strict canonical projection",
                         materialized_at_ns,
@@ -1854,6 +1904,34 @@ mod tests {
         }
     }
 
+    fn assert_book_fence(batch: &ProcessBatch) {
+        use qdl_contracts::qdl::common::v1::QualityFlag;
+        assert_eq!(batch.canonical.len(), 2);
+        let events: Vec<_> = batch.canonical.iter().map(|record|
+            EventEnvelope::decode(record.payload.as_slice()).unwrap()).collect();
+        assert_eq!(events[1].partition_sequence, events[0].partition_sequence + 1);
+        for event in &events {
+            assert!(event.quality_flags.contains(&(QualityFlag::SequenceGapBefore as i32)));
+            assert!(event.quality_flags.contains(&(QualityFlag::ResyncRequired as i32)));
+            assert!(!event.raw_capture_id.is_empty());
+            assert_eq!(event.source_event_time_ns, event.received_at_ns / 1_000_000 * 1_000_000);
+            match event.payload.as_ref().unwrap() {
+                event_envelope::Payload::BookSnapshot(book) => {
+                    assert!(book.levels.is_empty());
+                    assert!(!book.sequence_verified);
+                    assert_eq!(book.book_generation, event.connection_generation);
+                }
+                event_envelope::Payload::BookDelta(book) => {
+                    assert!(book.updates.is_empty());
+                    assert!(book.reset);
+                    assert!(!book.sequence_verified);
+                    assert_eq!(book.book_generation, event.connection_generation);
+                }
+                _ => panic!("book fence must not publish any price product"),
+            }
+        }
+    }
+
     fn core(binding: CoreBinding, allow_test: bool) -> RealtimeCore {
         core_many(vec![binding], allow_test)
     }
@@ -2280,7 +2358,7 @@ mod tests {
                 20,
             )
             .unwrap();
-        assert!(buffered.canonical.is_empty());
+        assert_book_fence(&buffered);
         assert_ne!(
             buffered.filtered_outcome,
             Some("IGNORED_STALE_GENERATION"),
@@ -2397,7 +2475,7 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert!(buffered.canonical.is_empty());
+        assert_book_fence(&buffered);
         assert_eq!(buffered.filtered, 1);
 
         let ready = core
@@ -2536,7 +2614,7 @@ mod tests {
                 11,
             )
             .unwrap();
-        assert!(buffered.canonical.is_empty());
+        assert_book_fence(&buffered);
 
         let initial = core
             .process(
@@ -2936,7 +3014,7 @@ mod tests {
                     now,
                 )
                 .unwrap();
-            assert!(gap.canonical.is_empty());
+            assert_book_fence(&gap);
             assert_eq!(gap.quarantines.len(), 1);
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
             let after = core
@@ -2964,6 +3042,32 @@ mod tests {
     }
 
     #[test]
+    fn same_generation_recovery_republishes_deduplicated_anchor() {
+        let binding = okx_book_binding();
+        let mut engine = core(binding.clone(), true);
+        let at = 1_786_352_400_000_000_000;
+        let original = engine.process_at_transport_offset(
+            delayed_book_frame(&binding, true, 100, 0, 7, at, "1"), at, 0).unwrap();
+        let gap = engine.process_at_transport_offset(
+            delayed_book_frame(&binding, false, 110, 109, 7, at + 1_000_000, "2"), at, 1).unwrap();
+        assert_book_fence(&gap);
+        let recovery = delayed_book_frame(&binding, true, 100, 0, 7, at + 2_000_000, "1");
+        let restored = engine.process_at_transport_offset(recovery.clone(), at, 2).unwrap();
+        assert_eq!(restored.canonical.len(), 1, "recovery anchor must replace fence");
+        assert_ne!(restored.canonical[0].event_id, original.canonical[0].event_id);
+        let event = EventEnvelope::decode(restored.canonical[0].payload.as_slice()).unwrap();
+        match event.payload.unwrap() {
+            event_envelope::Payload::BookSnapshot(book) => {
+                assert_eq!(book.native_sequence, "100");
+                assert_eq!(book.book_generation, 7);
+                assert!(book.sequence_verified);
+            }
+            _ => panic!("recovery requires snapshot"),
+        }
+        assert!(engine.process_at_transport_offset(recovery, at, 2).unwrap().canonical.is_empty());
+    }
+
+    #[test]
     fn delayed_l2_invalid_level_still_invalidates_verified_state() {
         for binding in [okx_book_binding(), binance_book_binding()] {
             let mut core = core(binding.clone(), true);
@@ -2981,7 +3085,7 @@ mod tests {
                     now,
                 )
                 .unwrap();
-            assert!(invalid.canonical.is_empty());
+            assert_book_fence(&invalid);
             assert_eq!(invalid.quarantines.len(), 1);
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
             let fresh = core
@@ -3012,7 +3116,7 @@ mod tests {
                     now,
                 )
                 .unwrap();
-            assert!(unanchored.canonical.is_empty());
+            assert_book_fence(&unanchored);
             assert!(core.l2_adapters[&binding.key()].core().view().is_none());
             let anchor = core
                 .process(
@@ -3175,7 +3279,7 @@ mod tests {
             let gap = engine
                 .process(hot_delta(&binding, 104, 1200, "60000.5", "60002"), 5)
                 .unwrap();
-            assert!(gap.canonical.is_empty());
+            assert_book_fence(&gap);
             assert_eq!(gap.quarantines.len(), 1);
         }
     }

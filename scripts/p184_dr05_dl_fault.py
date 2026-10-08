@@ -120,13 +120,29 @@ def drive(adapter, venue, fault):
             "observations": observations}
 
 
-def topology(ns, work, topic_id=""):
+def core_override(value):
+    """Pin an explicitly supplied test binary; never discover or build one."""
+    if value is None:
+        return None
+    supplied = value if isinstance(value, dict) else {"path": str(value)}
+    path = Path(supplied["path"]).resolve(strict=True)
+    if not path.is_file() or not os.access(path, os.X_OK) or any(c in str(path) for c in (":", ",")):
+        raise ValueError("explicit executable core binary path required")
+    with path.open("rb") as handle:
+        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    if "sha256" in supplied and supplied["sha256"] != digest:
+        raise ValueError("candidate core binary digest changed")
+    return {"path": str(path), "sha256": digest}
+
+
+def topology(ns, work, topic_id="", *, core_binary=None):
     """Generate executable Docker argv, but do not execute or discover config.
 
     Material preparation is a stage3 gate; topic UUID comes from the new broker.
     Query reuses DR08's generic real hot-read service, NOT its TRADE preparer.
     """
     namespace(ns)
+    core_binary = core_override(core_binary)
     work = Path(work).resolve()
     if work == ROOT or ROOT in work.parents or ":" in str(work) or "," in str(work):
         raise ValueError("external unambiguous work directory required")
@@ -169,7 +185,14 @@ def topology(ns, work, topic_id=""):
                 "-v", str(work) + ":/work", "-v", str(ROOT) + ":/app:ro", "-w", "/app"]
         if role == "kafka":
             argv += ["--hostname", "localhost", "--tmpfs", "/data:rw,size=512m,mode=1777"]
+            # Override image-declared VOLUMEs: reset must never retain broker state.
+            for target in ("/etc/kafka/secrets", "/mnt/shared/config", "/var/lib/kafka/data"):
+                argv += ["--tmpfs", target + ":rw,size=1m,mode=1777"]
             env = {"KAFKA_HEAP_OPTS": "-Xms256m -Xmx512m", "LOG_DIR": "/tmp/kafka-logs"}
+        elif role == "quota":
+            argv += ["--tmpfs", "/data:rw,size=1m,mode=1777"]
+        if role == "core" and core_binary:
+            argv += ["-v", core_binary["path"] + ":/usr/local/bin/qdl-realtime-core:ro"]
         for key, value in env.items():
             argv += ["-e", key + "=" + value]
         result[role] = argv + ["--entrypoint", command[0], IMAGES[image], *command[1:]]
@@ -411,6 +434,10 @@ group.initial.rebalance.delay.ms=0
         mapping["spec"]["requirements"] = requirements
         mapping["spec"]["quotas"]["max_buffer_events"] = 1000
         save(label + ".yaml", yaml.safe_dump(mapping))
+        from scripts.p184_dr05_case import consumer_packet
+        consumer, route = consumer_packet(work / (label + ".yaml"), loaded, b["venue"], ISSUER, AUDIENCE)
+        save(label + ".binding.json", route)
+        save("ts-consumer." + label + ".json", consumer)
         manifests.append(work / (label + ".yaml"))
         jwt_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         save(label + ".key", jwt_key.private_bytes(pem, serialization.PrivateFormat.PKCS8,
@@ -490,31 +517,43 @@ def init(work, export_path):
     return {"namespace": ns, "material_ready": True, "acceptance": False}
 
 
-def up(work):
+def up(work, timeout=120, *, core_binary=None):
+    deadline = time.monotonic() + timeout
+
+    def run(argv, limit=120):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("isolated services startup deadline")
+        return bounded(argv, min(limit, remaining))
+
     work = Path(work).resolve()
     packet = json.loads((work / "handoff.json").read_text())
     ns = namespace(packet["namespace"])
     if not packet.get("material_ready"):
         raise ValueError("run --init with sanitized export first")
-    if any(owned(ns, role) is not None for role in (*ROLES, "helper")):
+    if any(owned(ns, role, run) is not None for role in (*ROLES, "helper")):
         raise ValueError("namespace already in use; no implicit restart")
+    selected_core = core_override(core_binary if core_binary is not None else packet.get("core_binary"))
+    if selected_core:
+        packet["core_binary"] = selected_core
+        (work / "handoff.json").write_text(json.dumps(packet, indent=2) + "\n")
     for digest in set(IMAGES.values()):
-        if sh(["docker", "image", "inspect", digest, "--format", "{{.Id}} "]).strip() != digest:
+        if run(["docker", "image", "inspect", digest, "--format", "{{.Id}} "]).strip() != digest:
             raise ValueError("local immutable image mismatch")
     try:
-        bounded(topology(ns, work)["kafka"])
-        bounded(helper_command(ns, work, ["--topics", "/work"], network="container:" + ns + "-kafka"))
+        run(topology(ns, work, core_binary=selected_core)["kafka"])
+        run(helper_command(ns, work, ["--topics", "/work"], network="container:" + ns + "-kafka"))
         topic = json.loads((work / "packet.json").read_text())["slice"]["topic_id"]
-        for role, argv in topology(ns, work, topic).items():
+        for role, argv in topology(ns, work, topic, core_binary=selected_core).items():
             if role != "kafka":
-                bounded(argv)
-        deadline = time.monotonic() + 45
+                run(argv)
+        deadline = min(deadline, time.monotonic() + 45)
         while True:
-            result = readiness(ns)
+            result = readiness(ns, run)
             if result["process_isolation_ready"]:
                 try:
-                    bounded(helper_command(ns, work, ["--probe", "/work"], network="container:" + ns + "-kafka"), 25)
-                    return {**result, "services_reachable": True, "acceptance": False}
+                    run(helper_command(ns, work, ["--probe", "/work"], network="container:" + ns + "-kafka"), 25)
+                    return {**result, "services_reachable": True, "acceptance": False, "core_binary": selected_core}
                 except subprocess.CalledProcessError:
                     pass
             if time.monotonic() >= deadline:
@@ -551,6 +590,18 @@ def probe(work):
             await asyncio.wait_for(channel.channel_ready(), 5)
     asyncio.run(connect())
     return {"services_reachable": True, "functional_ready": False, "acceptance": False}
+
+
+def reset_case(work, venue, timeout=30):
+    """Host-only reset; the owned JSONL helper may remain, TS clones must stop."""
+    from scripts.p184_dr05_case import reset_case as reset
+    return reset(work, venue, timeout)
+
+
+def canonical_observe(work, raw_receipt, timeout=10):
+    """Run inside the attested isolated broker namespace."""
+    from scripts.p184_dr05_case import canonical_observe as observe
+    return observe(work, raw_receipt, timeout)
 
 
 def dispatch(argv=None):

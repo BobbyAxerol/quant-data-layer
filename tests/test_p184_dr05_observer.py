@@ -14,7 +14,8 @@ class RecordTests(unittest.TestCase):
                               raw_capture_id=b"1234567890123456", source_sequence="202")
         event.book_snapshot.native_sequence = "202"
         raw = event.SerializeToString()
-        result = record_summary("isolated.canonical", 0, raw, True)
+        result = record_summary("isolated.canonical", 0, raw, True, partition=3)
+        self.assertEqual(result["partition"], 3)
         self.assertEqual(result["capture_id"], event.raw_capture_id.hex())
         self.assertEqual(result["generation"], 8)
         self.assertEqual(result["payload"], "book_snapshot")

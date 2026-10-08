@@ -30,6 +30,10 @@ class HotViewUnavailable(RuntimeError):
     """Bounded backup refused; never permission to relax primary quality."""
 
 
+class HotViewGap(HotViewUnavailable):
+    """Authoritative book refusal; neither a replica nor cache may hide it."""
+
+
 @dataclass(frozen=True)
 class CanonicalHotView:
     """Source coordinates, not a fabricated materialized-cache generation/fence."""
@@ -97,11 +101,14 @@ class CanonicalHotClient:
                     reply = call(BytesValue(value=body), timeout=remaining / (len(self._calls) - index),
                         metadata=(("x-qdl-hot-signature-bin", signature),), wait_for_ready=False)
                 except grpc.RpcError as failure:
+                    detail = getattr(failure, "details", lambda: None)()
+                    if failure.code() == grpc.StatusCode.FAILED_PRECONDITION and detail in {
+                            "HOT_RECORD_GAPPED", "HOT_RECORD_GENERATION_MISMATCH", "HOT_BOOK_UNVERIFIED"}:
+                        raise HotViewGap(detail) from failure
                     # Auth/contract failures are not healed by trying another replica.
                     if failure.code() not in {grpc.StatusCode.UNAVAILABLE,
                             grpc.StatusCode.DEADLINE_EXCEEDED, grpc.StatusCode.RESOURCE_EXHAUSTED}:
                         raise HotViewUnavailable("HOT_AUTHORITY_OR_PROTOCOL_REFUSED") from failure
-                    detail = getattr(failure, "details", lambda: None)()
                     error = detail if detail in {
                         "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP",
                         "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE", "HOT_READER_BUSY",

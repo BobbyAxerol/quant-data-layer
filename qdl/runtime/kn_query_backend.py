@@ -55,7 +55,7 @@ from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
 from qdl.query.row_cache import BoundedRowCache
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
-from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewUnavailable
+from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewGap, HotViewUnavailable
 from qdl.runtime.kn_bar_readback import binding_product_key
 from qdl.runtime.kn_market_cache import (
     KnCacheError,
@@ -264,7 +264,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         """Authenticated committed bytes, validated by the same lineage oracle."""
         if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
             return None
-        candidate = self.hot_client.latest(binding, self.product_key(binding))
+        try:
+            candidate = self.hot_client.latest(binding, self.product_key(binding))
+        except HotViewGap as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.OPEN_SEQUENCE_GAP, str(error), True,
+            )) from error
         if primary is not None:
             if candidate.boundary.topic_id != primary.boundary.topic_id or candidate.boundary.partition != primary.boundary.partition:
                 raise _not_ready("HOT_SOURCE_GENERATION_MISMATCH")
@@ -425,7 +430,33 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         for parsed in records:
             entry = self._row(binding, parsed.stored.payload_sha256, parsed.stored.event.payload)
             if not entry.validated:
-                super()._validate_records(binding, (parsed,))
+                try:
+                    super()._validate_records(binding, (parsed,))
+                except ValueError as error:
+                    envelope = parsed.envelope
+                    payload = envelope.WhichOneof("payload")
+                    # Catalog checks identity/provenance before these payload
+                    # errors. Empty fences are refusals, never readable books.
+                    expected_error = {
+                        "book_snapshot": "stable book snapshot sequence/depth is incomplete",
+                        "book_delta": "stable book delta lacks continuity/snapshot sequence",
+                    }.get(payload)
+                    flags = set(envelope.quality_flags)
+                    if (expected_error is not None and str(error) == expected_error
+                            and envelope.instrument_uid == binding.instrument.instrument_uid
+                            and envelope.source_id == binding.source_id
+                            and payload == binding.feed.value.lower()
+                            and {common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,
+                                 common_pb2.QUALITY_FLAG_RESYNC_REQUIRED} <= flags):
+                        book = getattr(envelope, payload)
+                        empty = (not book.levels if payload == "book_snapshot"
+                                 else not book.updates and book.reset)
+                        if empty and not book.sequence_verified:
+                            raise QueryBackendError(QueryProblem(
+                                CanonicalErrorCode.OPEN_SEQUENCE_GAP,
+                                "BOOK_INVALIDATED_RESYNC_REQUIRED", True,
+                            )) from error
+                    raise
                 entry.validated = True
 
     def _item(self, requirement, binding, stored, envelope, gap_open):

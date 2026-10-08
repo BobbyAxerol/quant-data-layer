@@ -17,13 +17,15 @@ if str(ROOT) not in sys.path:
 from scripts import p184_dr05_dl_fault as dr
 
 
-def exercise(output, exported, venue, fault):
+def exercise(output, exported, venue, fault, core_binary=None):
+    override = dr.core_override(core_binary)
     output = output.resolve()
     dr.topology("p184-dr05-dl-0123456789abcdef", output)
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     started, free_before = time.monotonic(), shutil.disk_usage(output).free
     receipt = {"schema": "p184.dr05.stack-observation.v1", "acceptance": False,
-               "venue": venue, "fault": fault, "images": dr.IMAGES, "source_files": {}}
+               "venue": venue, "fault": fault, "images": dr.IMAGES, "source_files": {},
+               "test_core_binary": override}
     for name in ("p184_dr05_observer.py", "p184_dr05_raw_publisher.py", "p184_dr05_dl_fault.py"):
         receipt["source_files"][name] = hashlib.sha256((ROOT / "scripts" / name).read_bytes()).hexdigest()
     ok = False
@@ -33,7 +35,7 @@ def exercise(output, exported, venue, fault):
         ns = initial["namespace"]
         receipt["namespace"] = ns
         try:
-            receipt["startup"] = dr.up(work)
+            receipt["startup"] = dr.up(work, core_binary=override)
             ts_image = "sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a"
             live_args = ["docker", "run", "-d", "--rm", "--pull=never", "--name", ns + "-tsvalidator",
                 "--label", dr.LABEL + "=" + ns, "--network", "container:" + ns + "-kafka", "--read-only",
@@ -107,8 +109,9 @@ def main():
     parser.add_argument("--exported", type=Path, required=True)
     parser.add_argument("--venue", choices=dr.VENUES, required=True)
     parser.add_argument("--fault", choices=dr.FAULTS, required=True)
+    parser.add_argument("--core-binary", type=Path, help="isolated test-only compiled binary; no image build")
     args = parser.parse_args()
-    return 0 if exercise(args.output, args.exported, args.venue, args.fault) else 1
+    return 0 if exercise(args.output, args.exported, args.venue, args.fault, args.core_binary) else 1
 
 
 if __name__ == "__main__":
