@@ -2,6 +2,25 @@
 
 ## Governing owner amendment - 2026-10-08
 
+### Consolidated-build timing and consumer handoff
+
+Owner confirms TS CI at `2abbe394ea0fb8f7f5ebcbb745ff70a8c83c9769`
+(unit 11415/0, integration 3068/0), image
+`sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a`.
+This confirmation does NOT complete the pending TS acceptance window.
+Prepare [one-commit build/CI](p184-consolidated-build.md) now; execute the
+consolidated v2.2.3 rebuild only AFTER TS tests finish, with exact-source DL CI.
+No runtime changes or new image builds are authorized by this preparation.
+
+[SDK 2.1.0 local artifact handoff](qdl-sdk-2.1.0-consumer-handoff.md) is available
+to both consumer builds. Alpha must satisfy the declared PyJWT >=2.15.1
+dependency; its current image has 2.13.0. Public release remains HOLD.
+DR01 deployed and DR08 final remain unrun until Claude signals stage3.
+DR05 isolated-stack preparation is not a passed GAP/generation acceptance;
+actual TS validation and linked evidence remain required in that window.
+
+### Existing runtime and entitlement authority
+
 This supersedes the old core-first requirement below. Historical trial evidence
 remains immutable. Owner's gate is TS product-path coherent reads (IDR-076 bounded
 re-read) on existing658a9570 cores. Do not roll0d8da150 solely for coherence.

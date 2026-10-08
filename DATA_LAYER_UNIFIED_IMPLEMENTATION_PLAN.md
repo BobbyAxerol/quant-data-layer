@@ -70185,3 +70185,37 @@ changes. Active/rollback retained, f7351c3b protected. Latest readonly disk
 inventory95images/28.96GB, BuildKit20.52GB/2.852GB reclaimable; no broadprune
 during Claude concurrent work. Canonicalmain5bf5cd5/v2.2.2 unchanged; same
 featureworktree/branch, no push/merge. Rebuild only after owner timing gate.
+
+
+### DR05 isolated stack and stage3 timing handoff - 2026-10-08 (Codex)
+
+Status STACK_STARTUP_TESTED / TS_FAULT_ACCEPTANCE_NOT_RUN / RELEASE_HOLD.
+Guide upgrade/evidence/p184-dr05-dl-fault.md; scripts/p184_dr05_dl_fault.py.
+Five bounded --rm roles, network-none Kafka and shared ONLY disposable namespace,
+fresh TLS/JWT, four ETH BOOK products across Binance/OKX; sanitized public config
+allowlist, no shared credentials/state. Query is rc2-43bbcf0 (77682eea), not
+runtime v2.2.2; no new application image. Source-mounted test harness is not
+release-image certification. Prepared TEST_ONLY GAP/generation schedules retain
+positive control, recovery anchor, old-generation fence and post-fence control.
+Actual raw publisher/TS observation adapter remains NOT_IMPLEMENTED; no DR05
+cell closed. Pending rows cannot be submitted as runtime evidence or emit PASS.
+
+Parent source tests: existing77682eea image, network none, .5CPU/512MiB,
+python -B -m unittest tests.test_p184_dr05_dl_fault -q:26PASS0fail0skip/68.539s.
+Agent isolated startup smoke:55.13s, all5roles process-ready/services-reachable,
+functional_ready=false/acceptance=false. Namespace p184-dr05-dl-fa9ce97d336d41a2.
+Initial cleanup check raced asynchronous Docker --rm; fixed bounded removal wait
+and vanished-between-list/inspect handling, regression tested. Full rerun removed
+all5roles/helper, credentials and temporary directory; parent scoped ps empty.
+Smoke metrics transcribed from agent tool session, not archived DR acceptance.
+Diskfree79,907,880,960 ->79,716,106,240bytes, concurrent host delta not attributed
+to this smoke. No test images built; no broad prune; active/BARf7351c3b retained.
+
+PhaseC packet now records confirmed TS CI2abbe394/a6548ee3 but keeps TS test
+completion separate: no consolidated image build until TS acceptance finishes
+and exact-source DL CI passes. DR01 deployed/DR08 final await Claude stage3.
+SDK local publication complete, hosted publication not performed; alpha requires
+PyJWT2.15.1 dependency update as documented. Recipe18PASS, SDK89PASS inherited;
+no rerun of unrelated gates. Hosted DL CI remains NOT_RUN, not claimed green.
+Canonical main5bf5cd5/v2.2.2 and shared runtime unchanged by this work. Active
+feature fix/p184-dl-closure; no push/merge. Main plan/guide/packet agree on HOLD.
