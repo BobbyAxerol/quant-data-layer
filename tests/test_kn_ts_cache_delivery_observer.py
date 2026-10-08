@@ -180,6 +180,39 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
         result=await observer.observe(Client(view()),Pub([message(view())]),.02,period=.005,max_bytes=5)
         self.assertIn("MESSAGE_SIZE_LIMIT",result["errors"])
 
+    async def test_large_valid_book_is_observed(self):
+        v = view()
+        v["padding"] = "x" * 300000
+        result = await observer.observe(Client(v), Pub([message(v)]), .03, period=.005)
+        self.assertEqual(result["status"], "OBSERVED")
+        self.assertEqual(result["message_sizes"][CHANNEL]["over_256k"], 1)
+        self.assertTrue(result["event_to_cache_readable"])
+        self.assertEqual(result["redis_set_ack_latency"], "NOT_MEASURED")
+
+    async def test_aggregate_budget_rejects_without_hiding_loss(self):
+        v = view()
+        size = len(message(v)["data"])
+        result = await observer.observe(Client(v), Pub([message(v), message(v, CHANNEL+".extra")]),
+                                        .03, period=.005, max_pending_bytes=size)
+        self.assertEqual(result["status"], "INCOMPLETE")
+        self.assertIn("PENDING_BYTES_LIMIT", result["errors"])
+        self.assertLessEqual(result["sampling"]["peak_pending_bytes"], size)
+
+    async def test_replacement_does_not_accumulate_bytes(self):
+        v = view()
+        size = len(message(v)["data"])
+        result = await observer.observe(Client(v), Pub([message(v)] * 20),
+                                        .04, period=.005, max_pending_bytes=size)
+        self.assertEqual(result["status"], "OBSERVED")
+        self.assertEqual(result["sampling"]["peak_pending_bytes"], size)
+
+    async def test_oversized_cache_is_incomplete(self):
+        v = view()
+        current = dict(v, padding="x" * 1100000)
+        result = await observer.observe(Client(current), Pub([message(v)]), .03, period=.005)
+        self.assertEqual(result["status"], "INCOMPLETE")
+        self.assertIn("CACHE_SIZE_LIMIT", result["errors"])
+
     async def test_channel_limit(self):
         v=view();result=await observer.observe(Client(v),Pub([message(v),message(v,CHANNEL+".extra")]),.03,period=.005,max_channels=1)
         self.assertIn("CHANNEL_LIMIT",result["errors"])

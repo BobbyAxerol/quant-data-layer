@@ -70683,3 +70683,31 @@ limits,commands and receiptd0fc2764c74aa5bd5a8c7f28b8d72c44da35f1df63b62518b3029
 runtimeconfig/ACL changes; allreadprocessesended, noadditionalcleanupneeded.
 Canonicalmain5bf5cd5/v2.2.2 unchanged;featurefix/p184-dl-closure retained,
 v2.2.3HOLD. No push/merge. Existingdownstreamgap not proven caused bydisk.
+
+### Cache observer bounded payload repair - 2026-10-08
+
+IN_PROGRESS. Owner approved closing the seven observer size refusals and continuing
+BOOK consumer attribution, not broad catalogue/load or runtime changes. Guide:
+upgrade/evidence/p184-post-disk-recovery.md and KN architecture review. Observer
+only: finite per-message and aggregate retained bytes, bounded size attribution,
+cache payload validation, regression for large valid BOOK and over-budget inputs.
+No production buffer, freshness or eligibility relaxation. Real cache probe uses
+Redis PubSub/MGET only; ACK stays NOT_MEASURED unless instrumented at the writer.
+TS source is Claude-owned and read-only. Rollback is observer source only. Tests
+and a bounded real run precede receipt; no new image. apply_patch helper failed
+with mountinfo-path error; exact scripted replacement used and diff verified.
+
+Observer repair tested:32unittest PASS; oldsource large-valid-message regression
+fails as expected. Real120.322s/118215notifications includes8above256KiB, max496519
+bytes; zeroobservererrors,60execution/BARgroups. Pendingpeak1029467bytes below8MiB.
+New bounds affect only observer; freshness/productionqueues unchanged.
+BOOK_DELTA still max13375.109ms(OKXBTC,n135); freshRedisACK NOT_MEASURED because
+writertrace expired. Existing trace hook is deployed, newer slice logging not.
+Status OBSERVER_REPAIRED_BOOK_CONTINUITY_OPEN. Report and next caller dependency:
+upgrade/evidence/p184-post-disk-recovery.md#observer-repair-and-fresh-observation.
+NoTSedit/rollout/newimage; temporary --rm container removed.86images/69containers/
+196buildcacheentries retained,0Breclaimablecache; free99461668864bytes. No pruning.
+Two pytest attempts unavailable; all32tests run with stdlibunittest instead.
+Canonicalmain5bf5cd5/v2.2.2 and runtimeidentities unchanged; feature retained,
+v2.2.3HOLD, no push/merge. Continue caller trace under single-writer packet,
+not broad catalogue or load.

@@ -110,10 +110,14 @@ def compare_observation(channel, payload, current, now_ms):
             "watermark": watermark, "current_watermark": current_watermark}
 
 
-async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_bytes=262144):
+async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_bytes=1048576, max_pending_bytes=8388608):
     # Draining never awaits Redis GET. One bounded MGET samples the latest
     # notification per channel; this is observer sampling, not feed coalescing.
     pending, counts, errors = {}, Counter(), Counter()
+    pending_bytes = peak_pending_bytes = 0
+    message_sizes = {}
+    if min(max_bytes, max_pending_bytes, max_channels) <= 0:
+        raise ValueError("observer bounds must be positive")
     samples, current_ages, notification_ages, residence = (defaultdict(list) for _ in range(4))
     matches, eligible = Counter(), Counter()
     admitted_groups = set()
@@ -121,6 +125,7 @@ async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_byte
     started = time.monotonic()
     deadline = started + seconds
     async def drain():
+        nonlocal pending_bytes, peak_pending_bytes
         received = 0
         while time.monotonic() < deadline:
             item = await pub.get_message(ignore_subscribe_messages=True, timeout=.25)
@@ -132,9 +137,23 @@ async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_byte
                 errors["CHANNEL_LIMIT"] += 1
                 continue
             counts[channel] += 1
-            if len(item["data"]) > max_bytes:
+            size = len(item["data"])
+            stats = message_sizes.setdefault(channel, {"n": 0, "max_bytes": 0, "over_256k": 0, "rejected": 0})
+            stats["n"] += 1
+            stats["max_bytes"] = max(stats["max_bytes"], size)
+            stats["over_256k"] += int(size > 262144)
+            if size > max_bytes:
                 errors["MESSAGE_SIZE_LIMIT"] += 1
+                stats["rejected"] += 1
                 continue
+            previous_size = len(pending[channel][0]) if channel in pending else 0
+            next_bytes = pending_bytes - previous_size + size
+            if next_bytes > max_pending_bytes:
+                errors["PENDING_BYTES_LIMIT"] += 1
+                stats["rejected"] += 1
+                continue
+            pending_bytes = next_bytes
+            peak_pending_bytes = max(peak_pending_bytes, pending_bytes)
             pending[channel] = (item["data"], time.monotonic())
             received += 1
             if received % 128 == 0:
@@ -147,6 +166,7 @@ async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_byte
                 await task
             selected = list(pending.items())
             pending.clear()
+            pending_bytes = 0
             decoded = []
             for channel, (raw, received) in selected:
                 try:
@@ -173,6 +193,9 @@ async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_byte
             for (channel, payload, _, group, received), value in zip(decoded, values):
                 if value is None:
                     errors["CACHE_MISSING:" + group] += 1
+                    continue
+                if len(value) > max_bytes:
+                    errors["CACHE_SIZE_LIMIT"] += 1
                     continue
                 try:
                     current = json.loads(value)
@@ -210,13 +233,14 @@ async def observe(client, pub, seconds, *, period=.5, max_channels=128, max_byte
         "replica_attribution": "TS Redis only; no Query replica attribution",
         "sampling": {"mode": "latest notification per channel; time samples, not unique events; execution/last paths separate",
                      "period_seconds": period, "max_channels": max_channels,
-                     "max_notification_bytes": max_bytes, "max_samples_per_group": 2000},
+                     "max_notification_bytes": max_bytes, "max_pending_bytes": max_pending_bytes,
+                     "peak_pending_bytes": peak_pending_bytes, "max_samples_per_group": 2000},
         "event_to_cache_readable": {k: summary(v) for k,v in samples.items()},
         "current_cache_age_ms": {k: summary(v) for k,v in current_ages.items()},
         "notification_age_ms": {k: summary(v) for k,v in notification_ages.items()},
         "observer_residence_ms": {k: summary(v) for k,v in residence.items()},
         "cache_mget_batch_ms": summary(batches), "observed_messages": dict(counts),
-        "matches": dict(matches), "eligibility_at_write_not_revalidated": dict(eligible),
+        "message_sizes": message_sizes, "matches": dict(matches), "eligibility_at_write_not_revalidated": dict(eligible),
         "errors": dict(errors), "writes": 0, "order_actions": 0,
         "redis_set_ack_latency": "NOT_MEASURED", "canonical_commit_latency": "NOT_MEASURED"}
 

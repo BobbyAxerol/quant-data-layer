@@ -86,3 +86,60 @@ Recovery observation is completed, not whole-system certification. Kafka and
 materialization are moving again; downstream BOOK continuity/throughput and
 observer payload coverage must close before heavy load. Continue existing
 DR05/DR08/caller work, do not create a new broad Data Layer campaign.
+
+## Observer Repair And Fresh Observation
+
+2026-10-08: OBSERVER_REPAIRED_BOOK_CONTINUITY_OPEN. Observer per-message
+limit is now 1 MiB; latest pending notifications have an aggregate 8 MiB cap.
+These are observer bounds, not changes to production queues or eligibility.
+Counters retain channel, size, over-256KiB count and rejections without payload.
+Cache objects exceeding the decode bound remain INCOMPLETE. Pending serialized
+bytes are bounded; this is not an RSS bound on Redis parser/decoded objects.
+
+Real run 120.322s: 118215 messages, 8 above256KiB, max496519 bytes on Binance
+BTC BOOK_DELTA; zero size/budget/other observer errors. Peak pending1029467 bytes.
+All60 execution/BAR groups observed. Status OBSERVED is sampling completeness,
+NOT execution eligibility or full event delivery. Old7refusals remain unchanged.
+MGET176batches p50137.536/p95350.644/max477.204ms: observer roundtrip only.
+
+Worst-max instrument per feed, source-event age at cache read, ms; time samples
+not unique events or a paired improvement benchmark:
+
+| Feed / instrument | n | p50 | p95 | max |
+| --- | ---: | ---: | ---: | ---: |
+| QUOTE OKX BTC | 175 | 359.840 | 678.661 | 1171.773 |
+| TRADE OKX BNB | 86 | 740.769 | 2251.782 | 5306.195 |
+| BOOK_DELTA OKX BTC | 135 | 6828.955 | 11777.762 | 13375.109 |
+| BOOK_SNAPSHOT OKX ETH | 112 | 931.998 | 1436.762 | 1972.581 |
+| MARK_INDEX Binance BTC | 90 | 1592.823 | 2501.769 | 3370.146 |
+| BAR1m OKX BNB | 2 | 626.366 | insufficient n | 3202.268 |
+
+Evidence outsideGit: observer-payload-20261008/observer.json sha256
+a6ebfac67aa730fdf71890df052c9f04d71e2eebdf60cb8b54355e8a69c66146. Receipt and18selectedruntimeidentities alongside.
+32unittest PASS; large-payload regression fails on previous source as expected.
+Host and retainedPythonimage have no pytest; those attempts failed before tests.
+Used stdlib unittest for both test modules; no test silently skipped.
+
+### BOOK Caller Handoff
+
+Existing writer5849d716, SDK2.0.7 retains trace hooks but expiry is
+2026-10-07T19:24:14Z. Fresh canonical-to-Redis-ACK remains NOT_MEASURED.
+Historical same-event summary at dr07-runtime-20261007/continuation/
+writer-same-event-preliminary/summary.json has2556ETH BOOKjoins, no validation
+failures; SDK-to-RedisACK p95 Binance230.4/OKX243.2ms. This is historical, not
+current recovery proof and does not isolate Stream versus SDK pre-writer delay.
+Current BOOK writes and cursor ACK are serialized per batch. That is a candidate
+bottleneck, not a proved cause warranting concurrent writes that could break CAS.
+Do not overwrite Claude-owned TS source or run a second subscription.
+
+Next exact dependency: coordinate one current-writer packet, preserved credentials/
+namespace/cursors and named rollback, bounded trace expiry <=600s, max4096records
+perprocess, plus SDK ACK/cursor correlation in Claude-owned caller. Existing
+SDK-return/Redis-EVAL hooks alone cannot prove exact cursor persistence timing.
+No runtime activation performed here. No claim of complete BOOK remediation.
+
+No images built. Disposable failedpytest container auto-removed. Dockerinventory
+86images/69containers/196cacheentries unchanged; buildcache reclaimable0B.
+Disk available99461668864bytes at check. No deletion/prune needed this slice;
+active images and explicit rollbacks retained. Canonicalmain5bf5cd5/v2.2.2,
+featurefix/p184-dl-closure unchanged; v2.2.3 remains HOLD.
