@@ -69717,3 +69717,15 @@ DL DR07 hardening must not be confused with TS DR07 reference-metrics family.
 Do not wait for Paper features; do not issue release on these partial results.
 Cleanup context removed, disk93753360384->93753577472bytes; tests/networks gone.
 No broad prune concurrent caches, no data reset, no push/merge/release.
+
+### DR07 Claude continuation - bar edge storm removed, product coherence gate - 2026-10-08
+
+Owner-authorized continuation of Codex's DR07 closure. Found by CPU attribution: binance_bar_edge on 2.2.0-rc4
+(without fba8863) retried Binance 3d overlapping history every ~2.4 s forever (attempt ~19,500), costing 0.56 vCPU,
+~850 Kafka request segments/s per broker, rust_core admissions and Binance REST quota. Owner-approved single-role
+recreate 02:17:33 UTC to qdl-v2-python:2.2.2-d6d2637 (sha256:51450612...); config/mounts/limits and baked
+acquisition/catalog/manifests unchanged; rollback compose retained. Whole DL 5.1996/5.4454 (mean/p95) ->
+4.3657/4.5680 and 4.2965/4.6351 in two later 300 s windows (lower load; one earlier window unattributed spike).
+Coherence gate redefined by the owner to the TS product path; with TS IDR-076 (bounded re-read) the current cores
+reach 120/120 per venue. Core candidate not needed for coherence. Evidence:
+upgrade/evidence/p184-dr07-runtime-closure.md (Claude continuation). Status RELEASE_HOLD for DR/broker receipts.

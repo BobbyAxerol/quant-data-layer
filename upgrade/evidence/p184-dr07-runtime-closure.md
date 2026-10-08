@@ -332,3 +332,48 @@ Canonical DL /home/bobby/data_layer main5bf5cd5, published v2.2.2 unchanged;
 feature fix/p184-dl-closure. Canonical TS /home/bobby/trading_system
 fix/dev-consumer-recovery-integration@668e103 unchanged; active patch source lives
 only in codex/dr07-reset-anchor. Claude's upgrade worktree was not modified.
+
+
+## Claude continuation - CPU source, bar edge storm and product-path coherence - 2026-10-08
+
+Status: CPU_GATE_OBSERVED_PASS_TWO_WINDOWS / COHERENCE_PRODUCT_GATE_PASS_CURRENT_CORE / RELEASE_HOLD (DR/broker
+case receipts still open). Owner authorized this continuation; the single runtime change was approved explicitly.
+Evidence root (outside Git): /home/bobby/.local/state/qdl-v2/p184-claude-dl-closure-20261008/ (cpu_window.py, roll_bar_edge.py,
+coherence_attempts.py, cpu-*.json, rates-*.json, coherence-attempts-current-core.json, private/ mode 0600).
+
+CPU attribution (read-only): Kafka per-thread CPU (/proc task stat) put most broker CPU in data-plane network/request
+threads; per-peer socket segment rates (nsenter ss -ti, 20 s) showed inter-broker replication largest and
+binance_bar_edge at ~850 segments/s on EVERY broker with ~50 KiB/s. canonical carries 511 records/s plus 193
+transaction markers/s (core batch_wait_ms 25); raw has no markers. Bar edge log: Binance 3d history refused
+OVERLAPPING_PROVIDER_WINDOWS attempt ~19,500, retry ~2.4 s, image 2.2.0-rc4-4fe7e92 without fba8863 (the v2.2.2
+release record kept f7351c3b, recreated:false).
+
+Runtime change (owner-approved, only role binance_bar_edge, 02:17:33 UTC): f7351c3b -> qdl-v2-python:2.2.2-d6d2637
+sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9 (image query already runs). Compose from
+inspect, only image differs; config_unchanged true, running, OOM false, restarts 0. stable-acquisition-bindings.yaml,
+consumer manifests and catalog sha256 identical in both images; checkpoint mount unchanged. Rollback:
+private/rollback.compose.json (f7351c3b). After restart a one-time history coverage recheck ran ~25 min (settled
+02:44 UTC, published_rows 0 on rechecked bindings). Overlap now attempt=1 retry 86400 s, 383-row recent suffix.
+
+| 300 s window (17 DL roles, cgroup usage_usec) | mean | p95 | max | bar edge | Kafka canonical/raw msg/s |
+| --- | ---: | ---: | ---: | ---: | --- |
+| before (01:47, local CI ran on host meanwhile) | 5.1996 | 5.4454 | 5.4784 | 0.5643 | 645/528 (01:30, not simultaneous) |
+| after 1 (02:44) | 5.0258 | 6.4545 | 6.5009 | 0.0171 | not measured; series not recorded |
+| after 2 | 4.3657 | 4.5680 | 4.6772 | - | 608.0/463.7 (same window) |
+| after 3 | 4.2965 | 4.6351 | 4.6714 | - | 560.3/419.0 (same window) |
+
+Load was 10-15% lower in windows 2-3; the direct, load-independent saving is the bar edge 0.55 vCPU. Window 1's
+spike is unattributed. This is observed runtime evidence, not a peak-load certificate; the formal gate still needs a
+measured busy window.
+
+Product-path coherence (owner 2026-10-08: gate on the TS product path, not single reads). TS fix IDR-076 (TS
+2cebb7d): package admission re-reads BOOK+QUOTE after rollback up to 15 times, 100 ms apart, inside its 3 s readset
+deadline; exact-equality rule unchanged. Measured on the CURRENT cores 658a9570 through the deployed TS
+MarketCacheReader (Redis GET; re-read policy emulated in the probe), 120 attempts/venue at 1 Hz:
+Binance 120/120 coherent within deadline (first read 108/120; time p50/p95/max 10.8/352.3/1091.2 ms; reads p95/max
+4/11); OKX 120/120 (108/120; 10.6/332.8/416.3 ms; 3/4). The top-change core candidate 0d8da150 is therefore not
+needed for this gate; it raises snapshots x1.47 and should not ride the release for coherence.
+
+Open: DR01-DR08 + broker-delta case receipts (TS runners; DR07 runner TS 74852a8), deliberate reset/fault proof on
+the writer (Codex reset-anchor now merged into the TS feature branch, dfc70bd), a busy-window CPU gate, and a DL
+release record that names the new bar edge image. No push/merge/release.
