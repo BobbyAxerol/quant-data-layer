@@ -70656,3 +70656,30 @@ Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged; featureworktree
 /home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure retainedactive.
 All runtime digests/configs preserved, BARrollbackf7351c3b andTSrollback artifacts
 retained. No source/runtimecodechange, no testsrerun, no push/merge/release.
+
+### Post-disk Kafka and consumer recovery verification - 2026-10-08
+
+Status IN_PROGRESS; owner approved read-only recovery verification before any load.
+Scope bounded Kafka quorum/ISR and committed group-lag sampling, projector/cache
+progress, actual TS cache observation and bounded error logs. Reuse existing
+admin identity and observers; no second TS Stream subscription/quota use, orders,
+config/ACL/schema edits, reset-offsets, lifecycle action or stress. Process health
+alone cannot pass recovery. Record missing evidence/refusals separately. No broad
+catalogue rerun or resource increase. Evidence private directory outside Git;
+only bounded receipts/hashes into journal. Temporary read-only helpers --rm.
+
+Read-only recovery verdict INFRA_PROGRESS_RECOVERED_CONSUMER_ACCEPTANCE_INCOMPLETE.
+Quorum3voters/leader3/followerlag0;ISRempty twice.6samples99.814s/36group-partitions,
+committedoffsetsnondecreasing,noevery-samplegrowinglag. Corepeak172/final71records;
+projectorA142/90,B116/16. Projectorinputs+30933/+62098,latestapply+16094/+12570,
+no newstatuserrors/conflicts/cache-reconnects. Runtimeidentities/restartsunchanged.
+Initial adminport9093 mistake rejected, corrected9092; not a provider/runtimebug.
+TS120.095s observer saw60execution/BARgroups but INCOMPLETE:7oversizedmessages
+hit observer256KiB limit. BOOKDELTAmax16676.651ms(BinanceETH,n147),TRADE9810.625ms
+(n170). These are eventages at cache-read, not requestlatency/RedisACK. TSheartbeat
+READY60/60 n1 does not certify all-vieweligibility. Heavyload remainsHOLD.
+Guide/report upgrade/evidence/p184-post-disk-recovery.md includes feedtable,
+limits,commands and receiptd0fc2764c74aa5bd5a8c7f28b8d72c44da35f1df63b62518b30295b9efe3e542. No newcontainers/images/TSsourceedits or
+runtimeconfig/ACL changes; allreadprocessesended, noadditionalcleanupneeded.
+Canonicalmain5bf5cd5/v2.2.2 unchanged;featurefix/p184-dl-closure retained,
+v2.2.3HOLD. No push/merge. Existingdownstreamgap not proven caused bydisk.
