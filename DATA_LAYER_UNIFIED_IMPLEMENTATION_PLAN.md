@@ -69849,3 +69849,66 @@ no changes to existing QUOTE mode, canonical durability or consumer contracts.
 No runtime/image/config changes, no disposable resources created in this slice,
 no cleanup required. Bar-edge f7351c3b retained. DR01/DR08 runner work remains
 in progress; final TS SHA/image still required before final case evidence.
+
+
+### DR isolated runner rehearsal packet - 2026-10-08 (Codex)
+
+Status IMPLEMENTING_AND_TESTING / NOT_FINAL_TS_EVIDENCE. DR01 loopback HTTP
+uses existing Python rc2 image77682eea, --rm/network none, .5CPU/512MiB,
+fresh RS256 keys removed on exit; public source mounted read-only. Initial
+13 tests PASS0skip; HTTP rehearsal7/9 passes, two account cells explicitly open.
+Exact TS verifier independently confirms those two failures, not a roster or
+provenance error. A consumer mismatch is not broker/account authorization.
+Final account probes must GET TS balances from an isolated final-image Gateway:
+A->A and B->B positive balances, A->B same venue rejected with
+ACCOUNT_ALPHA_SCOPE_MISMATCH, invalid-key negative, all four accounts within
+writer scope. No order command, broker key or shared financial-data access.
+
+DR08 disposable packet uses unique p184-dr08-<random> names and --rm. Kafka
+network none; other roles join only that container namespace, no published
+ports or production network. Limits: Kafka1CPU/1536MiB, core.5/256MiB,
+Stream.5/512MiB, Query.5/512MiB, quotaRedis.1/64MiB, driver.75/512MiB.
+Reuse existing immutable images, new TLS/JWT/cursor keys mode0600, read-only
+source and fresh scoped evidence/state only. Query is minimal existing read-view
+support for real GetSnapshot RPC, not a new production service or schema.
+Copy only current core public configuration read-only and restrict to test
+BTC TRADE; synthetic records explicitly test_provenance=true in test-only
+core authority. No claims of real-provider latency, HA or TS durable ACK.
+Queue1000/replay10000 unchanged. Overall driver deadline600s; preserve failed
+attempts and cleanup all intended names by ownership label even startup/CLI
+failure. Remove keys after hashes/logs, verify production image/start/restart
+inventory unchanged; retain active and bar-edge f7351c3b rollback images.
+No sourceimage build, runtime rollout, batch-wait change or LATEST_STATE change.
+Final case acceptance awaits actual TS SHA/image, fresh run, and DR/broker receipts.
+
+
+### DR01 runner implementation receipt - 2026-10-08 (Codex)
+
+Status RUNNER_TESTED / FINAL_RUNTIME_ACCEPTANCE_PENDING. New runner
+scripts/p184_dr01_runtime.py emits the exact nine TS cell IDs and wrapped
+p184.surface-evidence-provenance.v1 header. RS256 ephemeral keys use0600 and
+TemporaryDirectory cleanup; actual DL app handles loopback HTTP in --network
+none existingPythonimage77682eea. Existing compiler seals a one-product
+BAR1m ALPHA binding pervenue; positive wire control reads metadata, NOT all
+r22 product data or mTLS/image-byte certification. Scope is explicit in rows.
+Source tests plus actual HTTP:23PASS0fail0skip39.818s. Scope-label-only followup
+host run22PASS1skip (HTTP requires containerdeps), not counted as runtime proof.
+First source version had header wrapping/placeholder and boundary issues caught
+before commit; corrected with tests. Account option uses public TS GET balances,
+strict positive exact-decimal balances, same-venue A->B403scope denial and an
+independent invalid-key403. No broker JWT account claim is invented. Account
+option tests are HTTP unit mocks, NOT actual final-image Gateway evidence.
+
+Rehearsal JSONL (before account-option addition) retained outside Git:
+~/.local/state/qdl-v2/p184-dr01-20261008-agent/dr01.rehearsal.jsonl
+SHA2563b6e1a90ad4129738f822b79d530d8d7d43e561ded2d445be418508fbbcbcf1f.
+Actual TS scripts/p184_case_matrix.py independently parsed exact header/roster:
+7/9 closed, only two WRONG_ACCOUNT_DENIED cells failed/NOT_OBSERVED. Dummy TS
+SHA/image means this is DEVELOPMENT ONLY, never included in final release
+bundle or relabelled. Fresh final-provenance run with isolated Gateway packet
+is required for nine-cell acceptance; Claude final TS SHA/image not yet supplied.
+Runner --account-packet schema and setup contract are documented in code; use
+four Paper accounts within writer scope, two active alphas and isolated PG/Redis.
+No runtime, real credentials, consumer quota, manifest or TS source changed.
+Test containers removed (--rm); no images built or removed, private keys removed.
+No push/merge; v2.2.3 HOLD and f7351c3b rollback retained. DR08 remains in progress.
