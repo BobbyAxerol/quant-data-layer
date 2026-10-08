@@ -17,48 +17,81 @@ test source hashes into the enclosing packet. A caller-supplied header alone
 does not attest code running inside an image. No runner grants mainnet/order
 authority or permits changing deployed readers/consumers.
 
-## DR01
+## DR01: Regression Versus Deployed Runtime
 
-Use the existing Python image with dependencies, source read-only, a fresh
-evidence mount, disposable credentials, bounded CPU/RAM and `--rm`. Initial
-DL-only rehearsal uses `--network none`; the HTTP server binds loopback only.
+`scripts/p184_dr01_runtime.py` is CONTROLLED_SIM only, including its old account
+fixture helpers. It must NEVER close a DR01 runtime cell. Account acceptance
+belongs to Claude's TS Gateway runner. New DL script:
+`scripts/p184_dr01_deployed.py`; no account cells and no automatic orchestration.
+
+Offline prepare uses the existing alpha deployment compiler with
+stable-v2-release-routing.yaml, catalog, policy, reference manifest and original
+alpha inventory. It seals full expected binding bytes and source hashes, exact
+manifest request policy and a valid catalog product outside access entitlements.
+Do not substitute the TS-only stable renderer for the alpha compiler.
 
 ```text
-python -B scripts/p184_dr01_runtime.py --development \
-  --source-sha <40-zeroes> --image-digest sha256:<64-zeroes> \
-  --output /evidence/dr01.rehearsal.jsonl
+python3 -B scripts/p184_dr01_deployed.py prepare \
+  --root /home/bobby/.worktrees/data-layer-p184-closure \
+  --inventory <original-alpha-inventory.json> \
+  --deployment <deployment-id> --venue BINANCE --output <fresh-binance-packet.json>
 ```
 
-The runner validates the complete source binding artifact and records its hash
-and per-venue product counts before deriving disposable identities. The initial
-fixture compiles one BAR-1m ALPHA projection per venue and exercises
-real HTTP authentication plus metadata access. It is not all-r22 data access,
-production mTLS, or a claim that TS consumed the sealed binding. Wrong account
-cannot be inferred from wrong consumer/subject. Without an account packet,
-those two cells explicitly remain NOT_OBSERVED and the runner exits nonzero.
+Repeat for OKX. Host prepare is offline; it does not mount credentials or call
+Query. If the exact deployed catalog is supplied with --catalog, its hash is
+recorded too. Prepared packets are secret-free but must be retained read-only.
 
-For account checks, run an isolated final-image TS Gateway and isolated
-PostgreSQL/Redis. Reuse TS's existing `test_p18e_current_gateway_http.py` setup
-contract; do not modify the shared Gateway or write into shared accounts.
-Create two active test alphas with separate generated API keys, each with a
-distinct Paper account per venue. Hash keys through TS's existing helper.
-Include all four accounts in `WRITER_ACCOUNT_SCOPE_JSON`, enable API-key auth,
-disable plaintext migration, and seed distinguishable test-only balances.
+Claude runs probe through stdin with the existing alpha-noorder-sdk2b.compose.json
+identity/mTLS mounts, once per venue, sequentially. Use a disposable compose run,
+not exec into a running strategy. Preserve the deployed image/identity; do not
+start dependencies, change credentials/entitlements, or launch the alpha entrypoint:
 
-Use `--account-packet /private/account-packet.json`; the exact schema is in
-`load_account_packet()`. It binds source/image, literal loopback Gateway URL,
-two venue pairs, account/alpha IDs, expected decimal balances, and external
-mode-0600 key files. Run the driver in the Gateway's isolated network namespace,
-never host networking. Keep fixture infrastructure within the same isolated
-namespace and no broker credentials. No shared ports/networks/mounts.
+```text
+docker compose -f <alpha-noorder-sdk2b.compose.json> run --rm --no-deps -T \
+  --entrypoint python -v <packet.json>:/run/p184/dr01-packet.json:ro \
+  <alpha-service> -B - probe --packet /run/p184/dr01-packet.json \
+  < scripts/p184_dr01_deployed.py > <fresh-venue-rows.jsonl>
+```
 
-Per venue the probe requires A->A and B->B nonempty exact balances, A->B on the
-same venue returning `403 ACCOUNT_ALPHA_SCOPE_MISMATCH`, and a separate invalid
-key refusal. GET-only, no redirects, no order endpoints. This proves application
-account authorization, not broker-side permissions. Auth/rate counters may change
-only inside disposable Redis. Inspect financial/command tables before/after and
-retire credentials with the fixture. Merely setting `GATEWAY_NO_ORDER_ONLY` is
-not a security boundary; isolated topology and the GET-only driver are required.
+Only four sequential GETs per venue: positive QUOTE from binding, same signed
+identity with environment=live (401 UNAUTHENTICATED), revision13 (401
+UNAUTHENTICATED), and real out-of-entitlement instrument/feed (403
+PERMISSION_DENIED). Normal JWT14, realm paper, TLS CA/hostname/client certificate
+checks remain enabled. No retries/proxy/redirects. Positive failure, drift or
+transport failure cannot become negative PASS. Token/signing material is never
+printed or copied. Budget:4 requests per venue, no streams or provider-direct.
+Save compose image/config hashes with the packet; caller-supplied TS header alone
+is not image attestation. `probe` imports SDK credentials, not DL server code.
+
+BINDING_COMPILE compares canonical compiled bytes/hash with the actual
+/run/p184/binding.json (or declared route-manifest env path). Source inspection
+and offline compilation on2026-10-08 found alpha bindings release_revision27,
+JWT14, not release_revision22. Both BB deployment hashes matched mounted files:
+Binance bbc8b0de1194778f70f94d5cd003fa251f3084250dee3590d4944b4e5f8b8fb8;
+OKX29e321e0c6067b34070227598fe8d694f3b491d017ffaa25d4e1073706225ac4.
+This is offline binding parity, NOT a runtime DR01 PASS or permission to rewrite
+revision. Keep TS bindingr22 terminology separate from alpha release revision.
+
+Evidence of no wildcard includes parsed concrete selector audit and file hashes.
+Archive a bounded human-readable grep alongside the packet:
+`rg -n 'instrument_uid:|feed:|source_policy_id:' consumers/stable/alpha-*-paper.yaml`.
+Source licensing grants are concrete source IDs in stable_catalog.entitlements;
+wire403 is mandatory, not replaceable by this config inspection.
+
+After both probes, and ONLY when Claude confirms CI green:
+
+```text
+python3 -B scripts/p184_dr01_deployed.py record --rows <binance-rows> <okx-rows> \
+  --ci-confirmed --source-sha <CI-green-TS-SHA> --image-digest <TS-digest> \
+  --output <new-dr01-dl.jsonl>
+```
+
+Recorder requires both venue rosters, merges NO_GLOBAL_GRANT into one all-venue
+cell and emits exactly7 DL cells. Claude separately supplies2 WRONG_ACCOUNT_DENIED
+cells; never fabricate them here. Output is exclusive, no receipt overwrite.
+Provisional TS source2abbe394ea0fb8f7f5ebcbb745ff70a8c83c9769 and
+sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a
+are NOT certified by this handoff; CI confirmation still required.
 
 ## DR08
 
@@ -76,6 +109,13 @@ python3 scripts/p184_dr08_isolated.py --orchestrate <fresh-directory> \
 
 The synthetic input is explicitly test-only. Test Query read-view support is
 needed for the actual GetSnapshot RPC, not a locally invented recovery cursor.
+Query provenance MUST explicitly name qdl-v2-python:2.2.3-rc2-43bbcf0 and actual
+inspected digest77682eea; this is NOT production Queryv2.2.2 evidence. Final mode
+requires --restart-samples5 (default5; allowed5-10), each a new consumer process
+with an independently observed advancing trade. Receipt retains raw monotonic
+start/receive times, sample list, n, p50 and max in ms. The first OUT_OF_RANGE to
+snapshot recovery remains n=1, reported separately from repeated restart latency.
+Old developmentn=1 is not promoted. No final measurement has run in this slice.
 Queue1000 and replay10000 remain fixed. Two distinct consumers must demonstrate
 slow-consumer overflow, fast-consumer progress, observable control/status/counters,
 and recovery via a newer snapshot after OUT_OF_RANGE. Separate configured limits

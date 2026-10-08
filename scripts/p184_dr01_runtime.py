@@ -1,4 +1,4 @@
-"""Bounded isolated DR01 HTTP probe; not shipped-image or mTLS qualification.
+"""CONTROLLED_SIM authentication regression; NEVER closes a DR01 runtime cell.
 
 Use --source-sha (40 hex) --image-digest (sha256:64 hex) --output FILE.
 Placeholder provenance requires --development and FILE.rehearsal.jsonl.
@@ -53,7 +53,7 @@ def result(cell, ok, evidence, *, observed=True):
         raise ValueError("known cell and strict boolean results required")
     if ok and not observed:
         raise ValueError("unobserved evidence cannot pass")
-    return {"cell": cell, "level": "RUNTIME", "ok": ok,
+    return {"cell": cell, "level": "CONTROLLED_SIM", "ok": ok,
             "outcome": "OBSERVED" if observed else "NOT_OBSERVED",
             "evidence": evidence, "at_ms": time.time_ns() // 1_000_000}
 

@@ -31,6 +31,9 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(set(dr.CELLS), expected)
         self.assertEqual(len(dr.CELLS), 9)
 
+    def test_never_runtime_level(self):
+        self.assertTrue(all(r["level"] == "CONTROLLED_SIM" for r in dr.assess(observations())))
+
     def test_strict_booleans(self):
         for bad in (1, 0, "false", [], None):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

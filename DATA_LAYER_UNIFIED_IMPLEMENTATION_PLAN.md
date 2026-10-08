@@ -70036,3 +70036,56 @@ Unit: python3 -B -m unittest tests.test_p184_dr08_isolated -q:
 no fresh recovery measurements and no new acceptance claim. Previous rehearsal
 receipt unchanged. No containers/images created by this slice; no rollout.
 Final TS provenance remains gated on Claude CI confirmation. v2.2.3 HOLD.
+
+
+### DR01 deployed runner handoff - 2026-10-08 (Codex)
+
+Status RUNNER_SOURCE_TESTED / DEPLOYED_PROBE_NOT_RUN / RELEASE_HOLD. Existing
+scripts/p184_dr01_runtime.py now emits CONTROLLED_SIM exclusively. Its historical
+account helpers remain regression-only, never used to close DR01. New
+scripts/p184_dr01_deployed.py separates offline prepare, stdin probe and record.
+Prepare reuses compile_alpha_deployment_bindings.compile_inventory against
+stable-v2-release-routing.yaml and original alpha inventory; rejects wildcards,
+seals expected binding+manifest hashes. Probe compares actual mounted binding
+bytes/checksum, identity, release hash and JWT14 before any request. GET-only,
+mTLS/hostname verification, no redirect/proxy/retry, bounded body/time. Four
+requests per venue: positive bound QUOTE, live401, revision13/401, valid catalog
+product absent from actual access manifest403PERMISSION_DENIED. Positive control
+failure never passes negatives. Runtime record requires both venues and explicit
+CI-green acknowledgement; exact7DL cells, no account cells. Claude supplies the
+remaining2Gateway account cells. Tokens, credentials and response bodies are not
+logged. No order/stream action, no actual alpha identity used in this slice.
+
+Offline actual compiler in existing image77682eea --rm/network none/.5CPU/768MiB:
+both BB deployment bindings match the files mounted by alpha-noorder-sdk2b.
+Observed release_revision27 (not22), access JWTmanifest14. Binance binding hash
+bbc8b0de1194778f70f94d5cd003fa251f3084250dee3590d4944b4e5f8b8fb8;
+OKX29e321e0c6067b34070227598fe8d694f3b491d017ffaa25d4e1073706225ac4.
+No configuration was rewritten to resolve naming confusion. Source selector
+inspection: rg -n '\*|\?' consumers/stable/alpha-binance-paper.yaml
+consumers/stable/alpha-okx-paper.yaml: exit1,0matches. Parsed concrete-selector
+audit also clean, hashes in prepared packet. This does not replace live403.
+Initial negative-selector prepare assumed same instrument had an ungranted feed;
+offline real inventory disproved it (StopIteration). Fixed selection to valid
+same-venue catalog instrument/feed outside access manifest, then both compile
+checks passed. No runtime requests occurred.
+
+Final tests in existing Python image, sourceRO/network none, ephemeral loopback
+HTTP only: python -B -m unittest tests.test_p184_dr01_deployed
+tests.test_p184_dr01_runtime tests.test_p184_dr08_isolated -q:
+73PASS0fail0skip38.268s (9new runner +24controlled regression +40DR08). Earlier
+test-mock environment parameter collision fixed; failed run retained in session
+output, not described as production defect. Readiness/latency/DR01 runtime cells
+not certified by these unit/controlled tests.
+
+Guide updated: upgrade/evidence/p184-dr-runtime-runbook.md includes exact
+prepare/probe/record commands, revision distinction and minimum5restart gate.
+TS SHA2abbe394/digesta6548ee3 remains provisional until Claude confirms CI green.
+No push/merge, shared runtime or manifest changes. Own --rm compile/test containers
+removed (docker ps -a --filter name=qdl-dr01 empty); no new images, secrets or
+networks retained. Rust cached build artifacts retained for concurrent work;
+no broad prune. Canonical /home/bobby/data_layer main5bf5cd5 releasev2.2.2;
+feature /home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure.
+Active runtime remains as previous inventory; patch not deployed. Keep BAR
+rollbackf7351c3b. Next: Claude reviews and runs DR window with final CI-green
+provenance, then combines Gateway cells/DR08/broker delta; v2.2.3 staysHOLD.
