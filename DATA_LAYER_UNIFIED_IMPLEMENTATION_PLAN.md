@@ -70124,3 +70124,33 @@ clean-install test on exact TS a6548ee3 and alpha a03c62f0 images without shared
 network/config/identity. No application image rebuild or consumer restart.
 Public GitHub wheel publication follows existing certified DL tag workflow;
 local immutable hash-pinned handoff does not publish v2.2.3 or bypass HOLD.
+
+
+### SDK2.1.0 consumer artifact handoff receipt - 2026-10-08 (Codex)
+
+Status LOCAL_ARTIFACT_PUBLISHED / TS_INSTALL_PASS / ALPHA_DEPENDENCY_UPDATE_REQUIRED.
+Guide upgrade/evidence/qdl-sdk-2.1.0-consumer-handoff.md. Package source
+b2c8c5696a7e6b9bdcf2d1f97e94f837f5ba0fe8; actual source files checked against
+that commit before attestation. Artifact outsideGit:
+~/.local/state/qdl-v2/sdk-2.1.0-b2c8c56/artifacts/qdl_sdk-2.1.0-py3-none-any.whl
+SHA2566923b46f46bd07c850b18a6074439bbcb4085d84428a8e72c476437dd51524e7.
+Manifest/SBOM alongside. consumer-install-receipt.json SHA256
+8a52a9b6967a5e516882f1988761c1a078cc7f2320ccdafb7489b06f17095b00.
+
+Isolated --rm/network none/pip --no-index --no-deps target installs: TS image
+a6548ee3 PASS; alpha a03c62f0 wheel imports PASS but existing PyJWT2.13.0 is below
+SDKdeclared>=2.15.1, so alpha AS-IS DEPENDENCY CHECK FAIL. Do not lower requirement.
+Downloaded exact public PyJWT2.15.1 wheel only (33KB), SHA256
+42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193; alpha disposable
+install with this wheel PASS, actual sdk/jwt paths under/tmp/sdk-only verified.
+All5declared dependency ranges checked with packaging.Requirement, protobuf
+query/marketdata imports PASS. This is packaging evidence, not DR or runtime
+acceptance; Claude must update alpha build dependency before consumer rollout.
+Initial smoke errors (venv pip absent, helper packaging absent, import cache
+selecting preinstalled SDK) corrected in harness only; record retained.
+
+All own test containers removed, no images built, no shared runtime/config/key
+mount. Retained deliverable128KB, not cleanup waste. No public tag/PyPI/GitHub
+publish: existing certified-tag release workflow still owns public distribution;
+local hash-pinned artifact is now available to both consumer builds. v2.2.3 HOLD.
+Canonical main5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure; no push/merge.
