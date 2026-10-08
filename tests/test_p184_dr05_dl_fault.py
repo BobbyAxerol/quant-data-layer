@@ -2,6 +2,7 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -131,6 +132,9 @@ class LifecycleTests(unittest.TestCase):
     def call(self, argv):
         self.calls.append(argv)
         if argv[1] == "ps":
+            if argv[-1].startswith("id="):
+                identity = argv[-1].removeprefix("id=")
+                return "\n".join(row["Id"] for row in self.rows.values() if row["Id"] == identity)
             role = argv[-1].removesuffix("$").split(NS + "-")[1]
             return self.rows[role]["Id"] if role in self.rows else ""
         role = argv[-1].removesuffix("-id")
@@ -184,6 +188,107 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             dr.cleanup(NS, no_stop)
 
+    def test_cleanup_stop_race_requires_exact_inspected_absence(self):
+        original = copy.deepcopy(self.rows["query"])
+        cases = ("absent", "present", "replacement", "foreign_replacement",
+                 "unrelated_error", "wrong_id_error", "extra_error", "list_error", "name_list_error")
+        for case in cases:
+            with self.subTest(case=case):
+                self.rows, self.calls = {"query": copy.deepcopy(original)}, []
+                stopped = False
+                def call(argv):
+                    nonlocal stopped
+                    if argv[1] == "stop":
+                        self.calls.append(argv)
+                        stopped = True
+                        if case != "present":
+                            del self.rows["query"]
+                        if case in ("replacement", "foreign_replacement"):
+                            self.rows["query"] = copy.deepcopy(original)
+                            self.rows["query"]["Id"] = "replacement-id"
+                            if case == "foreign_replacement":
+                                self.rows["query"]["Config"]["Labels"][dr.LABEL] = "foreign"
+                        message = "Error response from daemon: No such container: query-id"
+                        if case == "unrelated_error":
+                            message = "permission denied"
+                        elif case == "wrong_id_error":
+                            message = "Error response from daemon: No such container: other-id"
+                        elif case == "extra_error":
+                            message += "\nadditional failure"
+                        raise subprocess.CalledProcessError(1, argv, stderr=message + "\n")
+                    if stopped and argv[1] == "ps":
+                        if case == "list_error" and argv[-1] == "id=query-id":
+                            raise subprocess.CalledProcessError(1, argv, stderr="daemon unavailable")
+                        if case == "name_list_error" and argv[-1].startswith("name="):
+                            raise subprocess.CalledProcessError(1, argv, stderr="daemon unavailable")
+                    return self.call(argv)
+                if case == "absent":
+                    self.assertEqual(dr.cleanup(NS, call)["removed"], ["query"])
+                    self.assertIn(["docker", "ps", "-aq", "--no-trunc", "--filter", "id=query-id"], self.calls)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                        dr.cleanup(NS, call)
+                self.assertEqual([cmd[-1] for cmd in self.calls if cmd[1] == "stop"], ["query-id"])
+                if case in ("replacement", "foreign_replacement"):
+                    self.assertEqual(self.rows["query"]["Id"], "replacement-id")
+
+    def test_cleanup_successful_stop_rejects_replacement_without_waiting(self):
+        self.rows = {"query": self.rows["query"]}
+        def call(argv):
+            if argv[1] == "stop":
+                self.calls.append(argv)
+                self.rows["query"]["Id"] = "replacement-id"
+                self.rows["query"]["State"]["Running"] = False
+                return ""
+            if argv[1] == "inspect" and argv[-1] == "replacement-id":
+                self.calls.append(argv)
+                return json.dumps([self.rows["query"]])
+            return self.call(argv)
+        with patch.object(dr.time, "sleep", side_effect=AssertionError("replacement must not be polled")) as sleep:
+            with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                dr.cleanup(NS, call)
+            sleep.assert_not_called()
+        self.assertEqual([cmd[-1] for cmd in self.calls if cmd[1] == "stop"], ["query-id"])
+
+    def test_cleanup_successful_stop_requires_pinned_id_absence_not_just_name(self):
+        self.rows = {"query": self.rows["query"]}
+        stopped = False
+        def call(argv):
+            nonlocal stopped
+            if argv[1] == "stop":
+                self.calls.append(argv)
+                stopped = True
+                return ""
+            if stopped and argv[1] == "ps" and argv[-1].startswith("name="):
+                return ""
+            return self.call(argv)
+        with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+            dr.cleanup(NS, call)
+        self.assertEqual(self.rows["query"]["Id"], "query-id")
+        self.assertEqual([cmd[-1] for cmd in self.calls if cmd[1] == "stop"], ["query-id"])
+
+    def test_cleanup_inspection_errors_never_become_absence(self):
+        original = copy.deepcopy(self.rows["query"])
+        for after_stop in (False, True):
+            with self.subTest(after_stop=after_stop):
+                self.rows, self.calls = {"query": copy.deepcopy(original)}, []
+                stopped = False
+                def call(argv):
+                    nonlocal stopped
+                    if argv[1] == "stop":
+                        self.calls.append(argv)
+                        stopped = True
+                        return ""
+                    if argv[1] == "inspect" and (stopped or not after_stop):
+                        del self.rows["query"]
+                        raise subprocess.CalledProcessError(1, argv, stderr="inspection failed")
+                    return self.call(argv)
+                expected = RuntimeError if after_stop else subprocess.CalledProcessError
+                with self.assertRaises(expected):
+                    dr.cleanup(NS, call)
+                if not after_stop:
+                    self.assertFalse(any(cmd[1] == "stop" for cmd in self.calls))
+
     def test_cleanup_waits_for_async_auto_remove(self):
         original = self.call
         pending = {}
@@ -193,7 +298,7 @@ class LifecycleTests(unittest.TestCase):
                 self.rows[role]["State"]["Running"] = False
                 pending[role] = 2
                 return ""
-            if argv[1] == "ps":
+            if argv[1] == "ps" and argv[-1].startswith("name="):
                 role = argv[-1].removesuffix("$").split(NS + "-")[1]
                 if role in pending:
                     pending[role] -= 1

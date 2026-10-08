@@ -203,7 +203,7 @@ def sh(argv):
     return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15).stdout
 
 
-def owned(ns, role, call=sh):
+def owned(ns, role, call=sh, *, allow_disappearance=True):
     name = namespace(ns) + "-" + role
     if role not in (*ROLES, "helper", "tsvalidator"):
         raise ValueError("unknown owned role")
@@ -215,6 +215,8 @@ def owned(ns, role, call=sh):
     try:
         row = json.loads(call(["docker", "inspect", ids[0]]))[0]
     except subprocess.CalledProcessError:
+        if not allow_disappearance:
+            raise
         # --rm can finish between the exact-name listing and inspection.
         if not call(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]).strip():
             return None
@@ -245,19 +247,38 @@ def cleanup(ns, call=sh):
     removed = []
     # Preflight ALL ownership before stopping anything. Never remove networks,
     # images, shared volumes, files or a container selected only by a label.
-    rows = [(role, owned(ns, role, call)) for role in reversed((*ROLES, "helper", "tsvalidator"))]
+    rows = [(role, owned(ns, role, call, allow_disappearance=False))
+            for role in reversed((*ROLES, "helper", "tsvalidator"))]
     if any(row and row["HostConfig"].get("AutoRemove") is not True for _, row in rows):
         raise ValueError("refuse non-disposable container")
     failures = []
     for role, row in rows:
         if row:
             try:
-                call(["docker", "stop", "--time", "5", row["Id"]])
+                stop = ["docker", "stop", "--time", "5", row["Id"]]
+                try:
+                    call(stop)
+                except subprocess.CalledProcessError as error:
+                    # Only this pinned disposable's exact absence can excuse a failed stop.
+                    missing = "Error response from daemon: No such container: " + row["Id"]
+                    if error.returncode != 1 or error.cmd != stop or (error.stderr or "").strip() != missing:
+                        raise
+                    if call(["docker", "ps", "-aq", "--no-trunc", "--filter", "id=" + row["Id"]]).strip():
+                        raise
+                    if call(["docker", "ps", "-aq", "--no-trunc", "--filter",
+                             "name=^/" + ns + "-" + role + "$"]).strip():
+                        raise RuntimeError("container identity replaced during cleanup") from error
+                    removed.append(role)
+                    continue
                 deadline = time.monotonic() + 5
-                while (remaining := owned(ns, role, call)) is not None:
+                while (remaining := owned(ns, role, call, allow_disappearance=False)) is not None:
+                    if remaining["Id"] != row["Id"]:
+                        raise RuntimeError("container identity replaced during cleanup")
                     if remaining.get("State", {}).get("Running") or time.monotonic() >= deadline:
                         raise RuntimeError("--rm container still present")
                     time.sleep(.1)
+                if call(["docker", "ps", "-aq", "--no-trunc", "--filter", "id=" + row["Id"]]).strip():
+                    raise RuntimeError("inspected container still present during cleanup")
                 removed.append(role)
             except Exception as error:
                 failures.append(role + ":" + type(error).__name__)

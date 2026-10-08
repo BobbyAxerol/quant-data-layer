@@ -70580,3 +70580,32 @@ not additive. Full commands and limitations in capacity100 guide. No runtime
 quota/resource changes. Stage100 hostdriver remains unfinished; do not claim
 capacity from slot arithmetic or inherit stage50 PASS. This work does not wait
 Paper/OR. Testcontainers--rm removed; noimagesbuilt, rollback/active preserved.
+
+DR05 cleanup slice verified: exact-ID AutoRemove disappearance accepted only
+for matching NoSuchContainer; replacement, inspection/auth/otherstop errors
+failclosed. Oldsource12lifecycle tests3fail+1error; final82PASS in image77682,
+30portablePASS overlapping. Parent in-image dr05_dl_fault30PASS36.196s; host
+attempt lacked redis dependency (1error), not silently counted PASS. Reports
+retain both failed upstream attempts; no finalDR05/ACK qualification. Both stack
+namespaces/privatefiles removed, noimagesbuilt/pruned. No TS edits or rollout.
+
+CRITICAL shared-host disk observation at end of slice: df -B1 reports root100%,
+available229122048bytes (~218.5MiB). Earlier agent observation1.46GB followed
+11.18GB after stack cleanup. Concurrent host work prevents attribution; no
+claim that DL test consumed the decrease. Do not launch load/build before disk
+headroom is restored. All owned p184-dr05 containers absent. No shared cleanup,
+no stopping Claude or production, no deletion of financial state/active images.
+Evidence/Claude handoff: upgrade/evidence/p184-dr05-writerclone-followup.md.
+
+Offline actual-manifest capacity compile additionally succeeded for both mixed
+andstress profiles at sourcefa10d1b (image77682,networknone,readonly): same230/550
+active and276/660reserved streams. Actual alpha source manifests2400RPM/60streams
+each are insufficient; assumedTS50active needs60reserved vssealed50. This is
+source contract arithmetic, not an observed runtime quota or performance result.
+Runtime/release/config unchanged; canonicalmain5bf5cd5/v2.2.2, branchfix/p184-dl-closure.
+v2.2.3 HOLD, phaseIN_PROGRESS. No push/merge; kept active and namedBARrollback.
+
+Final readonly disk recheck worsened to28430336bytes (~27.1MiB) available, root100%.
+Do not build/load until the concurrent writer/build owner restores disk headroom.
+All p184-capacity100 and p184-dr05 containers absent, worktree clean before this
+journal-only update. No causal attribution without process/disk investigation.

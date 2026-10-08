@@ -127,3 +127,16 @@ preflight, module/worker wiring, validated per-stream activity/ACK evidence and
 real TS-clone consumption. Load execution and CPU/RAM sizing remain unfinished,
 not a Paper dependency or an external approval excuse. This report closes only
 the tested planner/design slice, NOT the100-alpha acceptance.
+
+### Real Manifest Compile And Disk Stop
+
+Parent repeated offline compile at sourcefa10d1b with actual source catalogue,
+acquisition and both alpha manifests plus TS. Both profiles compile; active/
+reserved counts remain230/276 and550/660. Alpha manifests currently declare
+2400RPM/60streams each; both fail the proposed workload quota check. Assumed TS
+requires60reserved streams versus source manifest50. This is NOT runtime quota
+readback and NOT traffic. Docker--rm/networknone/readonly removed after success.
+
+Before further load/build: root filesystem observed100%,229122048bytes free.
+Restore measured disk headroom with an ownership-safe cleanup packet; no broad
+prune while Claude may be building. No test or runtime data deleted to mask this.
