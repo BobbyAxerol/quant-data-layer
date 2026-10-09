@@ -71125,3 +71125,34 @@ No resources created; Docker/BuildKit inventory/cleanup deferred for this
 planning-only slice. v2.2.3 remains HOLD. Commit plan and await owner go-ahead
 per prompt section0 before runtime action. apply_patch failed mountinfo helper;
 exact append fallback used under rule32, followed by diff verification.
+
+### Phase D Claude alignment - 2026-10-09 (9ca122a/e292195)
+
+Status: D1_ROSTER_CONFIRMED_RPM_NOT_FROZEN; D2_TRADE_QUOTE_ATTRIBUTION_CLOSED.
+Documentation-only continuation of86dd0ae; no runtime action authorized by this
+entry. Scope: incorporate Claude's updated handoff, preserve G1-G14, no TS edits.
+Guide: upgrade/evidence/p184-capacity100-candidate.md, final confirmed-demand
+section. D1 rev11 now explicitly sizes RPM together with77 reserved slots for64
+active streams. Baseline900/898 units/min (n=2) and fastretry240 units/min are
+reported by Claude, not newly measured here. MARK/inverse incremental requests,
+SDK reconnect/startup and observer reserve still need numerical inputs;1500RPM
+is not accepted by default. Guide records formula and paired rollback boundary.
+
+D2 supersedes the earlier proposed TRADE/QUOTE periodic-delay investigation.
+Read TS phase-D runtime action6: image923de4c448db6d8b1d4c5454f2841a462a791bf1aa5896a4fb8fc69527e88eab,
+trace14:07:43-14:17:33Z. Repeated quiet TRADE snapshots with newer watermarks
+caused the apparent tails (IDR082), not demonstrated Stream delivery delay.
+Claude's stream-event maxima: TRADE847/726ms, QUOTE806/809ms (Binance/OKX).
+These are attributed diagnostic-window results, not independent stage100
+acceptance; no sample count invented. Do not reopen DL TRADE/QUOTE search without
+independent reproducible evidence. IDR082 APPLIED-versus-REFRESHED semantics
+remain TS-owned/open; MARK wake/G2, G4 attribution and D3-D6 remain separate.
+
+Validation: read latest TS handoff/journal, checked quota arithmetic and SDK
+retry boundary; documentation diff checked. No source suite rerun, probe/build,
+runtime/manifest/quota mutation, push or merge. CanonicalDL main5bf5cd5/v2.2.2,
+active worktree fix/p184-dl-closure; v2.2.3HOLD. Runtime digests/config and named
+rollback artifacts unchanged by this slice, not freshly inventoried. No test
+resources created; Docker/BuildKit cleanup deferred for documentation-only work.
+apply_patch failed with mountinfo helper; exact append fallback under rule32,
+followed by diff verification. No historical journal evidence overwritten.

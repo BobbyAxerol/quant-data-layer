@@ -192,3 +192,50 @@ Decision boundary: owner/Claude can use72 as the TS60 quota requirement in the
 next reviewed packet. Current deployment cannot accept the extra10 unchanged.
 Stage100 remains unmeasured, not blocked on Paper implementation. Approval to
 plan100alphas is not evidence that the existing384slot runtime can serve them.
+
+## Confirmed TS Demand And Joint RPM Decision - 2026-10-09
+
+Status: D1_ROSTER_CONFIRMED_RPM_NOT_FROZEN. Supersedes the conditional72-slot
+request above, not its historical evidence. Authority: Claude TS commits9ca122a
+and e292195, upgrade/p184-phase-d-mark-quota-handoff.md, appended answers to
+Codex86dd0ae. No deployment or fresh runtime measurement in this amendment.
+
+- Only market_data_service_p184w uses trading-system.paper.stable, per Claude's
+  runtime inventory. Linear50 + MARKwake10 + inverse4 =64 active streams.
+- Proposed rev11 max_streams=77 (ceil(64*1.2)); r23 inverse is paired with
+  MARKET_DATA_OKX_SYMBOLS activation by Claude. Existing50-slot grant is not enough.
+- Realistic100:244 active/293 reserved; stress100:564 active/677 reserved.
+  These are demand arithmetic, not measured capacity. One384-slot replica cannot
+  carry stress100 during peer loss; no buffer increase is implied.
+- Measured pre-wake identity traffic:900/898 quota units per complete minute,
+  n=2, writer12be5f9. This is a baseline, not a busy-market upper bound.
+- Fast BOOK retry now0.5/s/process:4*0.5*2*60=240 units/min. Two units cover
+  snapshot and successful Subscribe; failed snapshot costs less. This excludes
+  SDK in-session reconnects, initial subscription/resolve, and MARK/inverse delta.
+  qdl_sdk/client.py reconnect default5 is per session, not a global minute cap.
+
+Freeze requests_per_minute and max_streams together in the same rev11 packet.
+Use quota units counted by the real shared identity limiter, not event counts:
+
+    projected_peak = 900 + mark_delta + inverse_delta + 240
+                     + sdk_reconnect_reserve + startup_resolve_reserve
+                     + observer_reserve
+    proposed_rpm = ceil(projected_peak * (1 + approved_headroom_fraction))
+
+All terms are quota units/min. Subtract replaced polling only with paired
+evidence; avoid counting it twice. Deduplicate overlapping reconnect/startup
+paths when measured, or label their sum a conservative bound. Headroom fraction
+is a packet decision, not a new acceptance gate. Do not silently retain1500RPM.
+
+MARK delta is NOT_MEASURED. Observe canonical MARK wake rate per product and
+evaluate actual TS reference batching/coalescing over complete minute windows.
+Account for Query plus Subscribe across both replicas and fixed-minute reset
+bursts. MARK event count alone does not establish charged requests or compute
+capacity. Include inverse reference polls/resolve/wake, not just its four slots.
+Use existing read-only observations or an approved bounded observer, never a
+second Paper-identity stream. Record measured vs modeled terms separately and
+verify the selected quota with the actual caller before calling D1 accepted.
+
+Exit: numerical RPM with explicit inputs, shared-limiter namespace verified,
+old/new bundle hashes, r23/JWT11 paired reader/writer packet, rollback to rev10
+and r22/JWT10. Neither final RPM nor runtime activation is certified here.
