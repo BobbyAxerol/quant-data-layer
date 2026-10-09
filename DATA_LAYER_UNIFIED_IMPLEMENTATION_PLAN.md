@@ -71524,3 +71524,42 @@ byte identity / request-field validation (`test_fund_phase5_api`), decimal cache
 Open: a row read once gets no gain (first read neutral 2500, +6.5 % 5000); whether the probe's rows
 are in the row cache at stage 50 is unverified (no row-cache stats for single warmups). Effect on
 G5 needs a reader rollout (owner-approved packet) and a stage-50 rerun. No runtime change.
+
+### D3 window C G5 - first (row-cache-miss) cold read made cheaper - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY; not deployed. Supersedes the first-read part of the previous entry: the gate's
+read waits one full warmup in the single-active lane (max_active=1), so the first read's service time is what matters.
+- Per-row profile of the miss path (offline, image 77682eea, --cpus 1): history derivation ~200 us/row (catalog lineage
+  check, `bar_item_fields`, `_quality`, item construction), render ~160 us/row (`MarketDataView` input building and
+  validation, Python dump + `json.dumps`). Each decimal text was parsed by `Decimal` 3 times (catalog, item, public).
+- Changes:
+  - `qdl/domain/decimal.py` `CanonicalDecimal.from_text`: ASCII `-?digits[.digits]` read off the text (identical to the
+    Decimal result, ~5x cheaper); other spellings keep the Decimal path. Same fast path in `router._decimal_parts`.
+    The earlier per-text LRU caches were dropped: measured no faster than the fast path, and they thrash at 5000 rows.
+  - `router._decimal` and source/contract/quality metadata are passed to `MarketDataView` as model input (same
+    schemas, same validators, one pydantic-core call) instead of Python-built sub-models; `_flat_asdict` replaces a
+    recursive `asdict` for flat metadata (falls back to `asdict` otherwise).
+  - First render serializes with `model_dump_json` (byte-identical to `json.dumps(model_dump(mode="json"))` for every
+    shape tested, incl. control/non-BMP/U+2028 characters; a lone surrogate fails on both paths). The render slot keeps
+    its layout only from a row's second render on, so a row read once pays no layout encoding.
+  - `StableSpoolQueryBackend._item(..., extras=)` sets `render_key`/`render_slot` at construction (no second copy).
+    `MarketDataItem.with_view_fields` copies cursor/snapshot_id without re-running `__post_init__` (which reads
+    neither); used by `history_with_envelopes` and the cursor issuer's `bind_history`. `ContractMetadata` digest check
+    uses a set comparison (same rule).
+  - Unchanged: bars(), every validation layer, the cold duty cycle.
+- Microbenchmark (offline, synthetic random-walk BAR rows from the golden OKX bar, fake Redis, process parse caches
+  cleared before every first read, median of 5; base 902c280 vs this commit; body sha256 identical
+  2500 `76a976e71ac4d6b2`, 5000 `b5a1edd37e6a70ed`):
+  - production entry `history_with_envelopes` + render, first read: 2500 1091.0 -> 747.9 ms (-31 %);
+    5000 2065.2 -> 1539.7 ms (-25 %);
+  - first read by phase, 2500: history 520 -> 385, render 410 -> 243, total 1025.5 -> 728.0 ms (-29 %);
+    5000: history 1008 -> 791, render 801 -> 495, total 1996.3 -> 1479.5 ms (-26 %);
+  - repeated read (3rd): 2500 615.8 -> 275.1 ms; 5000 1178.9 -> 551.6 ms; 2nd read 614.5 -> 583.9 / 1197.2 -> 1158.5.
+  - The 35 % aim is not reached: what remains is pydantic validation/serialization (~70 us/row) and the protobuf
+    field reads of the catalog/item/quality layers, which this change keeps.
+- Tests (image 77682eea, --network none): 32 Query/KN modules, 569 run, 36 skipped (Redis-backed), 1 failure
+  (`test_fund_phase7_contract_security...provider_fallthrough`, identical on 902c280, pre-existing); plus 4 decimal
+  consumer modules (test_phase1_instrument_domain, test_phasec36_*) 39 OK. New: decimal fast path = Decimal reading over
+  edge spellings; first-render JSON identity over control/unicode text; out-of-contract decimals (scale 39, 29 digits,
+  129 chars) still fail in the view; `with_view_fields` equals `replace`.
+- Not verified: live effect at stage 50 (needs a reader rollout packet and a rerun).

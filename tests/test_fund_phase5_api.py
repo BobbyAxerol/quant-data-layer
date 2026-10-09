@@ -566,9 +566,12 @@ class Phase5ApiTests(unittest.TestCase):
             return JSONResponse(content=router_module._warmup(WarmupResult("r", value))
                                 .model_dump(mode="json", by_alias=True)).body
 
-        self.assertEqual(router_module._render_warmup_result(WarmupResult("r", slotted(history))),
-                         reference(history))
-        self.assertTrue(all(isinstance(slot.value, tuple) for slot in slots))
+        # First render: full validation, no layout kept (a row read once pays
+        # nothing extra); second render: full validation, layout kept.
+        for render in ("first", "second"):
+            self.assertEqual(router_module._render_warmup_result(WarmupResult("r", slotted(history))),
+                             reference(history), render)
+            self.assertEqual(all(isinstance(slot.value, tuple) for slot in slots), render == "second")
         later = replace(history, items=tuple(replace(
             item, cursor=f"cursor-{index}", snapshot_id="snapshot-2", watermark_offset=item.watermark_offset + 9,
             quality=replace(item.quality, state="STALE", freshness_ms=item.quality.freshness_ms + 61_000,
@@ -593,6 +596,55 @@ class Phase5ApiTests(unittest.TestCase):
         # A copied item shares its slot; equality ignores it.
         self.assertIs(copy.deepcopy(slots[0]), slots[0])
         self.assertEqual(replace(history.items[0], render_slot=slots[0]), history.items[0])
+
+    def test_first_render_json_and_decimal_inputs_match_the_model_path(self):
+        # P18.4 D3: the first render serializes with pydantic's JSON writer and
+        # passes decimals/metadata as model input; bytes and failures must be
+        # those of the model + json.dumps path.
+        from dataclasses import replace
+        from decimal import Decimal
+        from pydantic import ValidationError
+
+        history = self.backend.history(self.requirement)
+        item = history.items[-1]
+
+        def reference(value):
+            return router_module._encode_json(router_module._market_item(value).model_dump(mode="json", by_alias=True))
+
+        texts = ["é  \x00\x01\x1f\x7f\"\\/\t\n\r\b\f😀", *(chr(code) for code in range(0, 0xD800, 97))]
+        for text in texts:
+            changed = replace(item, cursor="c" + text, snapshot_id=text + "s")
+            self.assertEqual(router_module._market_item_json(changed), reference(changed))
+        broken = replace(item, cursor="a\ud800b")
+        for path in (lambda: router_module._market_item_json(broken), lambda: reference(broken)):
+            with self.assertRaises(ValueError):  # unencodable on both paths
+                path()
+        # Decimal parts: the ASCII fast path equals Decimal's reading.
+        for text in ("61234.10", "-0.000", "000.10", "9" * 40 + ".5", "1E+3", "1e-5", " 1.5", "+2", "1_0", ".5"):
+            sign, digits, exponent = Decimal(text).as_tuple()
+            value = int("".join(map(str, digits)) or "0") * (-1 if sign else 1)
+            with self.subTest(text=text):
+                self.assertEqual(router_module._decimal_parts(text), (str(value), -exponent))
+        for invalid in ("NaN", "x", "1.2.3", 1.5, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                router_module._decimal(invalid)
+        # Out-of-contract decimals still fail in the public view validation.
+        for text in ("1e-39", "1" * 29, "1" * 129):
+            bad = replace(item, payload={**item.payload, "close": text})
+            with self.subTest(text=text), self.assertRaises(ValidationError):
+                router_module._market_item_json(bad)
+
+    def test_view_field_copy_equals_replace_and_changes_only_view_fields(self):
+        from dataclasses import replace
+
+        item = self.backend.history(self.requirement).items[-1]
+        fast = item.with_view_fields(cursor="c-1", snapshot_id="s-1")
+        self.assertEqual(fast, replace(item, cursor="c-1", snapshot_id="s-1"))
+        self.assertEqual(vars(fast), vars(replace(item, cursor="c-1", snapshot_id="s-1")))
+        self.assertIsNot(fast, item)
+        self.assertNotEqual(item.cursor, "c-1")
+        with self.assertRaises(TypeError):
+            item.with_view_fields(watermark_offset=-1)
 
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(

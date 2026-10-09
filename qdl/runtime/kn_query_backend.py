@@ -37,6 +37,7 @@ spool stays the default until the KN-5 cutover.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
@@ -96,6 +97,14 @@ CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
 DEFAULT_ROW_CACHE_ENTRIES = 20_000
 # Item fields rebuilt per request (time/request dependent); never cached.
 _DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
+
+
+@lru_cache(maxsize=1)
+def _static_item_fields() -> tuple[str, ...]:
+    names = tuple(item_field.name for item_field in fields(MarketDataItem))
+    if not {"quality", "watermark_offset", "cursor", "snapshot_id"} <= set(names):
+        raise RuntimeError("MarketDataItem no longer has its request-dependent fields")
+    return tuple(name for name in names if name not in _DYNAMIC_ITEM_FIELDS)
 
 
 @dataclass
@@ -482,13 +491,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         key = self._row_key(binding, stored.payload_sha256)
         entry = self._row(binding, stored.payload_sha256, stored.event.payload)
         if entry.static is None:
-            item = super()._item(requirement, binding, stored, envelope, gap_open)
-            entry.static = {
-                item_field.name: getattr(item, item_field.name)
-                for item_field in fields(item)
-                if item_field.name not in _DYNAMIC_ITEM_FIELDS
-            }
-            return replace(item, render_key=key, render_slot=entry.render)
+            item = super()._item(requirement, binding, stored, envelope, gap_open,
+                                 extras={"render_key": key, "render_slot": entry.render})
+            entry.static = {name: getattr(item, name) for name in _static_item_fields()}
+            return item
         quality = self._quality(
             requirement, binding, envelope, gap_open=gap_open, watermark_offset=stored.cursor.offset,
         )
@@ -565,7 +571,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             snapshot_id=snapshot_id,
             stream_cursor=source_placeholder(view),
             watermark_offset=view.boundary.offset,
-            items=tuple(replace(item, snapshot_id=snapshot_id) for item in result.items),
+            items=tuple(item.with_view_fields(snapshot_id=snapshot_id) for item in result.items),
         ), envelopes
 
     def _history_view(self, binding, requested, start_ns, end_ns):
@@ -845,7 +851,7 @@ class KnCursorV3Issuer:
             history,
             stream_cursor=token,
             items=tuple(
-                replace(item, snapshot_id=history.snapshot_id, cursor=token) for item in history.items
+                item.with_view_fields(snapshot_id=history.snapshot_id, cursor=token) for item in history.items
             ),
         )
 

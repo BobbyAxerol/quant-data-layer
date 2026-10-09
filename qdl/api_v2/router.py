@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields as dataclass_fields
+from functools import lru_cache
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
@@ -14,12 +15,12 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
 from qdl_sdk.models import ResponseModel
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
     BatchResponse,
-    DecimalValue,
     FeedStatusResponse,
     GapListResponse,
     InstrumentPageResponse,
@@ -33,7 +34,6 @@ from qdl.api_v2.models import (
     ReferenceBatchRequest,
     ReferenceBatchResponse,
     SnapshotResponse,
-    SourceView,
     SystemReadinessSummary,
     WarmupResponse,
 )
@@ -171,13 +171,15 @@ def _reference_requirement(model) -> ReferenceDataRequirement:
     )
 
 
-def _decimal(value: object) -> DecimalValue:
-    if isinstance(value, dict):
-        return DecimalValue.model_validate(value)
-    if isinstance(value, float) or isinstance(value, bool):
-        raise ValueError("public V2 decimal fields cannot originate from binary float/bool")
+def _decimal_parts(source: str) -> tuple[str, int]:
+    """``(coefficient, scale)`` of a decimal text, as ``Decimal`` reads it."""
+
+    plain = PLAIN_DECIMAL_TEXT.fullmatch(source)
+    if plain is not None:
+        # ASCII ``-?digits[.digits]``: exactly the digits/exponent Decimal yields.
+        fraction = plain.group(2) or ""
+        return str(int(plain.group(1) + fraction)), len(fraction)
     try:
-        source = str(value)
         parsed = Decimal(source)
     except (InvalidOperation, TypeError, ValueError) as error:
         raise ValueError("canonical decimal field is invalid") from error
@@ -187,11 +189,27 @@ def _decimal(value: object) -> DecimalValue:
     coefficient = int("".join(map(str, digits)) or "0")
     if sign:
         coefficient = -coefficient
-    return DecimalValue(
-        coefficient=str(coefficient),
-        scale=-exponent,
-        source_text=source,
-    )
+    return str(coefficient), -exponent
+
+
+def _decimal(value: object) -> dict:
+    """The ``DecimalValue`` input of a canonical decimal text.
+
+    Returned as model input, not as a model: the enclosing public view
+    validates it with the same ``DecimalValue`` schema and validator in one
+    pydantic-core call, instead of one Python model construction per value
+    (P18.4 D3: 8 per BAR row)."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, float) or isinstance(value, bool):
+        raise ValueError("public V2 decimal fields cannot originate from binary float/bool")
+    try:
+        source = str(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("canonical decimal field is invalid") from error
+    coefficient, scale = _decimal_parts(source)
+    return {"coefficient": coefficient, "scale": scale, "source_text": source}
 
 
 def _book_levels(values: object) -> list[dict]:
@@ -371,8 +389,34 @@ def _typed_payload(item) -> dict:
     raise ValueError(f"public typed payload is undefined for {item.feed.value}")
 
 
+_SCALARS = (str, int, float, type(None))
+
+
+@lru_cache(maxsize=None)
+def _field_names(kind: type) -> tuple[str, ...]:
+    return tuple(field.name for field in dataclass_fields(kind))
+
+
+def _flat_asdict(value) -> dict:
+    """``dataclasses.asdict`` for a dataclass of scalars and tuples of scalars.
+
+    ``asdict`` recurses and copies every value (~15 us for the three metadata
+    objects of a view, P18.4 D3); for these values its result is this shallow
+    dict. Anything else takes ``asdict`` itself."""
+
+    result = {}
+    for name in _field_names(type(value)):
+        member = getattr(value, name)
+        if not isinstance(member, _SCALARS) and not (
+            type(member) is tuple and all(isinstance(element, _SCALARS) for element in member)
+        ):
+            return asdict(value)
+        result[name] = member
+    return result
+
+
 def _quality_fields(item) -> dict:
-    quality = {**asdict(item.quality), "flags": list(item.quality.flags)}
+    quality = {**_flat_asdict(item.quality), "flags": list(item.quality.flags)}
     if item.feed not in EXECUTION_PRICE_VALIDATION_FEEDS:
         quality["execution_eligible"] = False
     return quality
@@ -390,9 +434,10 @@ def _market_item(item) -> MarketDataView:
         received_at_ns=item.received_at_ns,
         revision=item.revision,
         payload=_typed_payload(item),
-        source=SourceView(**asdict(item.source)),
-        quality=QualityView(**quality),
-        contract=asdict(item.contract),
+        # Model inputs: validated by the view with the same schemas.
+        source=_flat_asdict(item.source),
+        quality=quality,
+        contract=_flat_asdict(item.contract),
         cursor=item.cursor,
         snapshot_id=item.snapshot_id,
         watermark_offset=item.watermark_offset,
@@ -423,6 +468,7 @@ def _encode_json(value) -> bytes:
 
 
 _VIEW_DYNAMIC_PREFIX = {name: _encode_json(name) + b":" for name in _VIEW_DYNAMIC_FIELDS}
+_RENDERED_ONCE = object()
 
 
 def _view_layout(dump: dict) -> tuple:
@@ -457,19 +503,27 @@ def _market_item_json(item) -> bytes:
     was ~170 us per row, two thirds of a warm 2,500-row warmup, and most of it
     re-derives the row's immutable fields (payload decimals, source, contract)
     on every request. An item from the market-cache backend carries its row's
-    ``render_slot``: the row's first render validates the whole view as
-    before and keeps the encoded static members there (~1.7 KB per row,
-    bounded and evicted with the row cache); later renders validate only the
-    request-dependent fields (same field definitions) and splice them in. The view's cross-field rule reads static
+    ``render_slot``: a render validates the whole view as before, and from
+    the row's second render on the encoded static members are kept there
+    (~1.7 KB per row, bounded and evicted with the row cache); later renders
+    validate only the request-dependent fields (same field definitions) and
+    splice them in. The view's cross-field rule reads static
     fields only. Bytes are identical; items without a slot take the full path.
     """
 
     slot = item.render_slot
     layout = slot.value if slot is not None else None
     if layout is None:
+        # A row's first render keeps no layout: a row read once pays no
+        # layout encoding. Pydantic's own JSON serializer writes exactly the
+        # bytes of ``_encode_json(model_dump(mode="json"))`` (compact, UTF-8,
+        # same escapes; checked over every BAR shape and all BMP characters
+        # in tests) at half the cost of a Python dump plus ``json.dumps``.
+        if slot is not None:
+            slot.value = _RENDERED_ONCE
+        return _market_item(item).model_dump_json(by_alias=True).encode("utf-8")
+    if layout is _RENDERED_ONCE:
         dump = _market_item(item).model_dump(mode="json", by_alias=True)
-        if slot is None:
-            return _encode_json(dump)
         slot.value = layout = _view_layout(dump)
         return _splice_view(layout, dump)
     return _splice_view(layout, _MarketDataViewDynamic(

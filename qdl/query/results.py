@@ -82,6 +82,9 @@ class QualityMetadata:
             raise ValueError("provider session liveness cannot be negative")
 
 
+_LOWER_HEX = frozenset("0123456789abcdef")
+
+
 @dataclass(frozen=True)
 class ContractMetadata:
     schema_digest: str
@@ -95,9 +98,7 @@ class ContractMetadata:
     correlation_id: str
 
     def __post_init__(self) -> None:
-        if len(self.schema_digest) != 64 or any(
-            character not in "0123456789abcdef" for character in self.schema_digest
-        ):
+        if len(self.schema_digest) != 64 or not set(self.schema_digest) <= _LOWER_HEX:
             raise ValueError("contract schema digest must be lowercase SHA-256")
         if not all(
             value.strip()
@@ -186,6 +187,23 @@ class MarketDataItem:
             or self.resample_lineage is not None
         ):
             raise ValueError("bar lifecycle metadata is valid only for bar items")
+
+    def with_view_fields(self, **changes: str | None) -> "MarketDataItem":
+        """``dataclasses.replace`` restricted to ``cursor``/``snapshot_id``.
+
+        ``__post_init__`` reads neither field, so the copy does not re-run it
+        on fields that did not change; a warmup binds both on every row
+        (P18.4 D3). Any other field goes through ``replace``."""
+
+        if not changes.keys() <= _VIEW_FIELDS:
+            raise TypeError(f"with_view_fields changes only {sorted(_VIEW_FIELDS)}")
+        clone = object.__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        clone.__dict__.update(changes)
+        return clone
+
+
+_VIEW_FIELDS = frozenset({"cursor", "snapshot_id"})
 
 
 @dataclass(frozen=True)

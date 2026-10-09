@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from decimal import Decimal, InvalidOperation
+import re
 
 
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
+# ASCII ``-?digits[.digits]`` (no '+', exponent, '_', whitespace or non-ASCII
+# digits). For such a text ``Decimal`` yields exactly these digits with
+# exponent -len(fraction), so coefficient and scale are read off the text.
+PLAIN_DECIMAL_TEXT = re.compile(r"(-?[0-9]+)(?:\.([0-9]+))?")
 
 
 @dataclass(frozen=True)
@@ -20,14 +24,18 @@ class CanonicalDecimal:
     @classmethod
     def from_text(cls, value: str) -> "CanonicalDecimal":
         source_text = str(value).strip()
-        if cls is CanonicalDecimal:
-            return _canonical_from_text(source_text)
-        return cls._parse(source_text)
-
-    @classmethod
-    def _parse(cls, source_text: str) -> "CanonicalDecimal":
         if not source_text:
             raise ValueError("decimal value is required")
+        plain = PLAIN_DECIMAL_TEXT.fullmatch(source_text)
+        if plain is not None:
+            # The venue spelling of nearly every price/quantity; ~5x cheaper
+            # than the Decimal path below and identical in result (P18.4 D3:
+            # a cold BAR warmup parses ~13 decimal texts per row).
+            fraction = plain.group(2) or ""
+            coefficient_value = int(plain.group(1) + fraction)
+            if INT64_MIN <= coefficient_value <= INT64_MAX:
+                return cls(coefficient=coefficient_value, scale=len(fraction), source_text=source_text)
+            return cls(coefficient=str(coefficient_value), scale=len(fraction), source_text=source_text)
         try:
             parsed = Decimal(source_text)
         except InvalidOperation as exc:
@@ -53,12 +61,3 @@ class CanonicalDecimal:
     @property
     def uses_text_coefficient(self) -> bool:
         return isinstance(self.coefficient, str)
-
-
-# A cold 2,500-row BAR warmup parses ~13 decimal texts per row through
-# layered checks (catalog lineage, item fields), and adjacent bars repeat
-# their prices (P18.4 D3 profile). The result is a frozen value of its text
-# alone, so it is shared; only valid texts are stored (a parse error raises
-# and is not cached) and the cache is bounded.
-_canonical_from_text = lru_cache(maxsize=8192)(CanonicalDecimal._parse)
-
