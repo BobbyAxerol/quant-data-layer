@@ -71563,3 +71563,21 @@ read waits one full warmup in the single-active lane (max_active=1), so the firs
   edge spellings; first-render JSON identity over control/unicode text; out-of-contract decimals (scale 39, 29 digits,
   129 chars) still fail in the view; `with_view_fields` equals `replace`.
 - Not verified: live effect at stage 50 (needs a reader rollout packet and a rerun).
+
+### D3 window C stage 50 rerun PASS with the SDK replica-start fix; stage 100 started - 2026-10-09 (Claude)
+
+Status: owner goal "run everything per Claude's recommendation". Server runtime unchanged.
+- Readers keep image 514506122111 (the rc3 Query rollout is blocked by the session permission classifier and left
+  to the owner).
+- The only change is client-side. Driver profile `sdk_from_source: true` (d2b9931) mounts this checkout's qdl_sdk,
+  including 5c81c25, over the client image copy. Mount verified on the client container (/app/qdl_sdk).
+- Stage 50 rerun (600 s, frozen p184-stage100-budget): 29/29 gates PASS, 0 failed. G5 cold:
+  - 2500 rows: B/O 2247/2578 ms (limit 6265.1);
+  - 5000 rows: 5621/5998 ms (limit 15267.0).
+  Both 2500-row reads took about one service time, without the earlier one-warmup step. This is consistent with the
+  two venues' cold reads using different replicas. The receipt has no per-read replica, so the routing is inferred
+  from timing, not observed.
+- Guard (20 s samples): TS READY 64/64, restarts 0, OOM 0, disk 88 GB. 0 client containers left.
+- Caveat: with two independent clients, random starts still collide with probability 1/2. The rc3 first-read speedup
+  (65e0757/76950c8) is the deterministic lever. It is built but not deployed.
+- Stage 100 (1800 s, 4 x 120 s G4 observer windows) started 21:01Z with the same SDK profile.
