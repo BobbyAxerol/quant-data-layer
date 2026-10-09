@@ -70894,3 +70894,33 @@ Host test36with2missing-dependency errors; existing-image final38PASS0ERROR0SKIP
 Scoped --rm test removed, no persistent stack/build/volume created or broadprune.
 Report records immutable summary/capture/script hashes. Runtime roles unchanged
 by this turn; no push/merge/release. G4 fullscope/DR05 acceptance remain open.
+
+### DR05 r8 HTTP404 and OKX three-symbol TRADE G4 - 2026-10-09
+
+Owner requests exact failing Query route from fresh isolated run and concurrent
+BNB/DOGE/SOL OKX TRADE canonical observation. Status IN_PROGRESS. Existing DR05
+Query runner installs only internal read-view routes; inspect against TS SDK
+HTTP requirements before attributing image failure. New isolated init/up/readiness
+may be used, no shared config changes; cleanup exact namespace and private keys.
+G4 same bounded assigned read_committed observer120s/10000rows/16MiB, no join or
+commit, no TS quota/stream. Announce UTC window; do not claim paired TS evidence
+without matching same-window offset trace. No dependency/image build or rollout.
+
+### DR05 r8 HTTP404 reproduction and OKX TRADE G4 result - 2026-10-09
+
+Report upgrade/evidence/p184-dr05-http404-g4-trade3-20261009.md.
+Fresh isolated Query actualHTTPS mTLS8/8routes404: instruments/snapshot/warmup/
+status for both ETHbindings. OpenAPI paths empty. Query logs only startup because
+access_log=False; actual URL/status captured from requests, not invented log.
+Root cause DL harness serve_query uses bareFastAPI+internalreadview only, missing
+public production router/auth wiring required by TS SDK. No SDK blame, no
+productionQuery defect inferred. Fix remains implementation next; r8 rerun alone
+cannot pass. No code/auth weakening or shared rollout performed.
+G4 OKX BNB/DOGE/SOL same09:26:17-09:28:17UTCwindow,227samples; per-symbol n30/94/103,
+p95380.293/146.769/174.404ms,max391.672/412.521/386.183ms. Read_committed visibility
+upper bounds; matching Claude TSprobe NOT_VERIFIED. No5-11s tail in this sample,
+no quiet/LAST or runtimeFULL claim. Hashes/limits in report. No complete-suite rerun.
+Cleanup exact isolated5roles and credentials; label inventoryempty. Observerexit0.
+No build/image/volume created; broadprune deferred unrelatedownedcache. Diskafter
+113936941056bytes; no pre/post freed claim. CanonicalDL main5bf5cd5/stablev2.2.2
+per ledger, featurefix/p184-dl-closure; runtime unchanged by turn, v2.2.3HOLD.
