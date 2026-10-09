@@ -70960,3 +70960,168 @@ failover.1024modeledplanfits but no capacitycertification. Inverseadditional
 subscriptions must be counted separately. No quota/buffer/manifest/runtimechange.
 Scoped62test final suite includes thisregression; no further build or resources.
 No push/merge; v2.2.3HOLD. Runtime/cleanup as precedingDR05entry.
+
+### Phase D DL closure plan - 2026-10-09
+
+Status: PLANNED_PENDING_OWNER_GO_AHEAD. Documentation only, not implementation
+or certification of D1-D6. Accept all six items of Claude's delegated prompt.
+Its section0 explicitly requires this plan commit before further runtime action.
+Previous rollout approvals do not authorize this new packet.
+
+#### Inputs and authority
+
+- DL working source d4e8d11, fix/p184-dl-closure, clean before this entry.
+- TS source inspected read-only aca225231b2bed91e86abcae879ea90d665c9167.
+- TS upgrade/p184-phase-d-codex-dl-prompt.md SHA256
+  8df6bf886bf570833b0c51fcd2d32fe2fd635ce59a0c23b3f43ca199773c6bba.
+- TS upgrade/p184-phase-d-gates.md SHA256
+  a2e10504531421068475d4960f14aee860eca4c81d49e4a987b1a8f033f31d4a.
+- TS upgrade/p184-phase-d-mark-quota-handoff.md SHA256
+  6b53e54902689f5d12e1885196af2af6d94cf96eec2e3efea1ab0b7a002448a7.
+- Read workspace/project rules, CLAUDE.md sections2/3/3b/4, ledger, this journal
+  from100-alpha amendment, TS phase-D slices/runtime incident and IDR002/003/
+  028/029/039/040/062/075/077. Existing detailed guides under upgrade/evidence/:
+  p184-capacity100-candidate.md, p184-consolidated-build.md,
+  p184-dl-phase-c-packet.md, p184-dr-runtime-runbook.md,
+  p184-resilience-closure.md, p184-dr05-fence-channel-handoff.md,
+  p184-dr05-public-router-20261009.md, p184-dr05-g4-build-handoff-20261009.md,
+  p184-dl-release-readiness.md. Historical observations are not current runtime.
+
+Frozen G1-G14 remain unchanged. G4 all-feed baseline/comparison and G5 missing
+shape-specific numeric limits are unresolved inputs, not permission to invent
+thresholds after results. Owner records those inputs before load; an actual gate
+change needs a reasoned owner amendment. Historical5-vCPU and core-first text in
+PhaseC is superseded by governing amendments. Preserve all failed evidence.
+
+#### Order and ownership
+
+Order: D1 packet -> D2 attribution -> D3 runnable measurement preparation -> D4
+resilience -> D5 final build/qualification/release. D6 reset diagnostics precedes
+further fault runs; D6 compatibility decisions precede final source freeze.
+These are slices of existing phaseD, not extra phases. Codex owns DL source,
+harnesses, packet/journal. Claude exclusively owns TS source/writer/validator,
+trace/alpha and broker delta. Never edit TS worktree or wait for Paper features.
+
+**D1: one Paper rev11 packet for inverse plus MARK wake, no double bump.**
+Compile demand from sealed products AND actual bridge paths. Sixty linear slices
+already include ten polled MARK slices; current stream count50 is not60.
+Adding ten wakes yields60 linear streams, NOT70. TS bridge lines881-884 select
+MARK separately. With four inverse QUOTE/MARK/BOOK_SNAPSHOT/BOOK_DELTA streams,
+planning demand becomes64 active/ceil(1.2x64)=77 reserved; verify with executable
+caller roster before sealing. Realistic100 would be244 active/293 reserved,
+stress100564/677. Current384 on one replica cannot cover stress peer loss. Do not
+sum two replicas to certify failover; do not increase per-client buffers.
+
+Audit request costs separately: TS _book_fast_retry_slot spaces attempts at1.5/s
+per process, not necessarily charged requests. qdl_sdk/client.py:957-1002 can
+snapshot/warmup then Subscribe; security/data_plane.py:395 and Rust auth.rs:554
+both consume quota. Warmup-refused and stream-fault-after-handoff cost different
+amounts. Verify real Redis URL/prefix parity, identity/global-vs-replica scope,
+fixed-minute boundaries, SDK internal retries, initial bursts, cold resolve,
+batch charging, all Paper callers and new wake reads before accepting1000+360
+against1500RPM. That arithmetic is NOT yet a proven worst-case request bound.
+Do not double-count replacement traffic. Freeze a measured recovery reserve.
+
+Deliver immutable rev11 manifest/bundle, r23 V3 binding and policy fingerprint,
+old/new hashes and paired JWT11 checklist. Explicitly supersede prior packet's
+no-quota-change statement, preserve its artifacts. Future exact scope: Query/
+Stream replicas and affected Paper callers, freshly inventoried digests/mounts;
+keep other realms/keys, ingestors/core/projectors, offsets/cache and orders intact.
+Quiesce callers during revision transition, verify readers then paired callers.
+Rollback readers to manifest10 and callers to r22/JWT10 together, never accept
+both revisions silently. Live/sandbox need separate owner decisions based on
+actual data identities/subscriptions, not the broker's execution mode.
+Owner approves exact quota/reader/caller packet; Claude confirms inverse roster
+and callers, then enables MARK wake only after admission/preflight.
+
+**D2: periodic TRADE/QUOTE attribution, not speculative code.**
+Read supplied trade-split.json; join offsets534102073/460611644/534133976 with UTC,
+identity/generation. Inspect dispatch/flush/keepalive, cursor refresh/signing,
+quota windows, Kafka poll/fetch/rebalance and projector cadence with file:line.
+A90.2s coincidence is a hypothesis, not causal proof. Check existing Stream send
+fields; aggregate counters are not per-event send time. Coordinate Claude's
+bounded rotating SDK/apply/ACK/cursor trace. No new TS stream, Redis MONITOR,
+offset commits or broad log dump. A read-only observer packet states duration,
+partitions/output bound/stop conditions; missing joins remain explicit. Include
+OKX QUOTE tail, separate quiet-state age from new-event transit. Only reproduced
+causality permits a proposed source fix/affected regression. Owner approves the
+observer window and any later runtime action; Claude supplies matching trace.
+
+**D3: stage100 driver and measurement freeze before load.**
+Finish candidate-only config, quota preflight, client/worker wiring, real TS
+clone and active per-stream apply/ACK proof. Do not reinterpret certified stage50.
+Freeze mixed/stress rosters including inverse/MARK, rates/fanout, startup/reconnect,
+probe overhead, batch symbols/interval/limit, warm/cold state, concurrency/bytes.
+Propose G5 limits per shape for owner freeze before results. G4 needs every
+feed/venue/interval paired by event/generation/partition/offset; read_committed
+observation is a visibility upper bound, not broker commit time. Owner freezes
+comparison tolerance after baseline but BEFORE candidate load. Missing/negative/
+skewed samples remain counted. BAR uses close; MARK component age is separate.
+Windows: one variable per>=10min comparison; >=30min stage100 steady, declared
+burst and faults; ramp20/50/100 with integrity/backlog/pressure stops. Report
+n,p50/p95/max, p99 only n>=100, refusals/errors included. G6 typed at-use quality
+is separate from G14 per-role CPU/throttle/RSS/cgroup memory/I/O/disk/queue;
+measure clients separately on aligned windows. Owner sets resource headroom from
+measurements, not a fixed5CPU ceiling. Confirm disk bytes/inodes/growth reserve
+before any approved load. Claude provides real receiver and ACK boundary.
+
+**D4: native recovery adapter and isolated fault acceptance.**
+Finish observation adapter for kn_recovery_runner/state: actual pressure,
+quorum/ISR, committed offsets/projector catch-up and TS at-use validator. READY
+or arbitrary success booleans cannot certify SERVING. Default observe/propose,
+typed unknown/fatal/fenced refusal, absolute deadline and bounded attempts;
+exact exited-container identity before an approved start. No auto-prune, FLUSH,
+offset reset, healthy-role restart or legacy spool recovery on KN.
+Use isolated broker/projector/Stream faults and production-shaped4-worker TS
+clone. Record outage start/fault cleared/first valid apply/caught-up per slice.
+G12 caught-up<=600s then G1-G3 inside; G10 loss/duplicate apply/overflow/replay
+expiry rules unchanged. Deliberately faulted slow-client controls separately
+labelled, never silently removed. Inherit unchanged ENOSPC/unit evidence.
+Owner approves fault/resource packet, then separate shared packet if needed;
+Claude supplies clone/validator/ACK. No mocked test becomes runtime acceptance.
+
+**D5: one-source image set and fresh final receipts.**
+Verify effective source plus ancestry for IDR040fix1,bindingV3,quota log,b6a0119,
+IDR075+D1,IDR062,d68fb2f,0b374bc and deployed IDR077 fact. A commit list alone
+cannot detect a revert. Exact-source CI/preflight before owner-approved build;
+hosted workflow/push needs separate permission, local rehearsal is not hosted CI.
+Build both images from one immutable archive, no overlays in final certificate.
+Rebuild SDK into fresh output; require exact wheel hash
+6923b46f46bd07c850b18a6074439bbcb4085d84428a8e72c476437dd51524e7.
+Drift HOLD, no overwrite; preserve mutable toolchain/OS risk and package inventory.
+Final DR01 joint account cells, DR05/DR07 with Claude, DR08>=5restarts use actual
+final DL+TS digests/configs in fresh directories. Final DR/broker delta is not
+Paper feature completion. G1-G14/source/images/artifacts must agree before
+certificate and owner release decision. Feature->dev CI->main/tag/assets only
+when authorized. No premature SDK publication, runtime freeze, push or deploy.
+
+**D6: narrow diagnostics and explicit compatibility decisions.**
+Keep bounded sanitized stderr/return code/stage/deadline for r13 reset failure;
+fail typed, immutable output, no blind retry or extending deadline. Regression:
+timeout/nonzero/topic error and existing reset isolation checks. Do this before
+another fault run, not after losing another diagnostic.
+For IDR040fix2 and IDR003 propose tolerant-reader-first rollout of an optional
+quality field, or explicit owner deferral with quiet-source refusal limits.
+SDK2.1.0 package availability does not mean every deployed reader tolerates it.
+Claude verifies TS/alpha/Risk reader versions before DL emits anything new.
+No silent schema/semantics change, invented heartbeat timestamp or eligibility.
+
+#### Safety, cleanup and this slice
+
+Before a runtime packet: fresh role IDs/digests/config/caps, proposed env checked
+against actual parser bounds. Guard RestartCount/OOM/heartbeat and real feed
+progress, not just memory. Do not repeat32768 vs4096 trace-cap incident. Reuse
+unchanged certified evidence; no broad catalogue/E03/E04 rerun.
+After each attempt stop owned observers/watchers, remove owned containers/private
+credentials/test artifacts after hashes, preserve immutable receipts and active/
+named rollback images. Record disk pre/post for actual cleanup; never prune
+Claude's concurrent work or shared operational state.
+This turn changes documentation only: no tests rerun, probes, Docker action,
+build, config/manifest change, runtime measurement or TS edit. Claude's writer
+0705cce3 and DR05r16 remain attributed reports, not independently recertified.
+CanonicalDL main5bf5cd5/v2.2.2 and active closure worktree confirmed by git worktree
+list. Runtime digests/config/rollback unchanged by this turn, not re-inspected.
+No resources created; Docker/BuildKit inventory/cleanup deferred for this
+planning-only slice. v2.2.3 remains HOLD. Commit plan and await owner go-ahead
+per prompt section0 before runtime action. apply_patch failed mountinfo helper;
+exact append fallback used under rule32, followed by diff verification.
