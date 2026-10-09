@@ -71581,3 +71581,38 @@ Status: owner goal "run everything per Claude's recommendation". Server runtime 
 - Caveat: with two independent clients, random starts still collide with probability 1/2. The rc3 first-read speedup
   (65e0757/76950c8) is the deterministic lever. It is built but not deployed.
 - Stage 100 (1800 s, 4 x 120 s G4 observer windows) started 21:01Z with the same SDK profile.
+
+### D3 window C stage 100 FAIL (2 of 32 gates); both point to the undeployed rc3 Query - 2026-10-09 (Claude)
+
+Run: 1800 s, 21:01Z, profile with sdk_from_source (5c81c25), readers on 514506122111, frozen p184-stage100-budget.
+Guard: 93 samples, TS READY 64/64, restarts 0, OOM 0, disk 88 GB. Client containers removed, guard stopped.
+- PASS (30/32):
+  - every latency class (p95 18-40 ms, p99 <= 207 ms);
+  - requests: 166,507 offered, 0 missed/failed/starved;
+  - streams: 161, 0 errors, all 51 bar streams delivered a final bar;
+  - fault windows BURST / RECONNECT measured;
+  - the four TS gates (0 disconnects, v2_error flat).
+- FAIL g5:COLD_2500:OKX 6658.3 ms > 6265.1. Binance was 3544.4 ms, so OKX ran 3114 ms later, about one warmup. Both
+  reads picked the same replica (probability 1/2 with random starts) and serialized behind the one-active lane.
+- FAIL startup:bounded: 9/100 sessions (s13 s29 s35 s37 s73 s77 s79 s81 s89) ended RATE_LIMITED in SETUP after 271
+  retries; setup 81.2 s (< 240 s).
+  - Arithmetic: 51 BAR sessions warm up 2500/5000 rows at once, about 25 per alpha identity.
+  - Lane per replica (qdl/query/service.py `_queued_local_batch_lane_policy`): max_active 1, 8 pending per consumer.
+    So about 18 slots per identity over 2 replicas.
+  - Each replica serves warmups one at a time at ~3-6 s under load. The frozen retry budget (10 attempts, <= 4 s)
+    gives up after ~28 s.
+  - The Query logs carry no line for these refusals, so the source (lane vs identity quota) is inferred.
+- G4 (4 x 120 s, observer assigned read_committed, 1 DONE each): every observed row is within baseline p95 x 1.2.
+  - trade 169/168, quote 178/183, book_delta 161/170, book_snapshot 157/162;
+  - mark 226/1407 (limits 371/1587);
+  - bar 1m 175/61356 (OKX open-time metric).
+  - bar 30m was NOT OBSERVED (no 30m close inside the windows). 5m rows have no baseline.
+- Both failures cost per-warmup service time on the one-active lane.
+  - rc3 (65e0757/76950c8) cuts the first read by 25-31 %. Repeated reads of the same product, which is what a fleet
+    start mostly is, get cheaper with it: 615 -> 275 ms at 2500 rows and 1179 -> 552 ms at 5000 (offline
+    microbench).
+  - rc3 image qdl-v2-python:2.2.3-rc3-76950c8 is built.
+  - The Query rollout was refused by the session permission classifier and is left to the owner.
+  - No gate or budget was changed.
+- Status: window C stage 100 NOT PASSED. Next: owner rolls query_kn_1, then query_kn_2, to rc3 (image only;
+  rollback 514506122111), then a stage-100 rerun.
