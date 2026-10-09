@@ -71322,3 +71322,41 @@ Status IMPLEMENTED / TESTED_LOCALLY.
   Pending gates: TS integration receipt, exact-source DL CI, owner build approval.
 - Since 0b374bc, served runtime changed only in 922a6ec. 76db472/522cf3e/f831571/ed2b284 are scripts or certification
   tooling, listed for the release notes.
+
+### D3 window A (baseline) executed; stage-100 budget frozen - 2026-10-09 (Claude)
+
+Status: owner-approved window A, runtime unchanged. Budget FROZEN before any candidate load.
+- G4 observer (scripts/p184_g4_observer.py, assigned read_committed, no join/commit), 4 x 120 s, 18:25:54-18:34:28Z.
+  Window 1 was idle; windows 2-4 overlapped the stage-50 run. 0 missing clocks, 0 negative samples. Per feed/venue p95
+  visibility (max of the four windows):
+  - trade 224/215 ms; quote 244/236; book_delta 219/241; book_snapshot 217/225;
+  - mark_index_price 309/1322 (Binance/OKX). The OKX composite carries the older (index) component time.
+  - OKX bar 1m 61.5 s: the OKX bar source time is the bar open. The same metric is used for baseline and candidate.
+- Stage-50 target run (v2.1.1 budget, alpha.binance/okx.paper.stable, image 514506122111, 4 workers), 300 s steady +
+  windows:
+  - every DL gate PASS. Latency p95 BAR 27/31, L2 37/75, MARK ref 24/28, QUOTE 34/39, TRADE 34/28 ms (Binance/OKX).
+  - requests, streams and cold all PASS. Cold 2500: 2337/4177 ms; cold 5000: 6572/10178 ms.
+  - The TS gates FAILED for a measurement reason: the driver sampled container market_data_service via core.config and
+    counted disconnects from docker logs only, so 0 TS samples were read. The writer is market_data_service_p184w, uses
+    shared.config and logs to /app/logs/*.log.
+  - Independent watcher (watch.log, 19 samples every 20 s, 18:29:22-18:35:30Z): TS READY 64/64 throughout, readers and
+    projectors restarts 0, disk 87 GB.
+  - With the fixed counter: TS disconnects 0 in the run window (18:28-18:36) and 0 in the 10 min before.
+- Driver fix (this commit): optional profile field ts_container; the heartbeat reads TRADING_REDIS_URL from the writer
+  environment; disconnects also read the writer's log files within the window. Checked live: heartbeat READY 64/64;
+  log-file counting finds 105 disconnects in an earlier window that had rolls. Driver suites 79 OK.
+- Frozen config/v2/p184-stage100-budget.json (scripts/p184_freeze_stage100_budget.py):
+  - G5 COLD_2500 <= 6265.1 ms, COLD_5000 <= 15267.0 ms (baseline max x 1.5);
+  - 17 G4 rows, candidate p95 <= baseline x 1.2;
+  - v2.1.1 latency targets kept; TS 64 routes.
+- Evidence ~/.local/state/qdl-v2/p184-d3-baseline-20261009/ (file, sha256 prefix):
+  - stage50/receipt.json 43ecd594aee10c3e
+  - stage50/gates.json 5ebec6252e9d1c96
+  - g4-1-summary.json 09bd7219c41e570a
+  - g4-2-summary.json 83c8ab8c3630bde9
+  - g4-3-summary.json f7174be2ebeaf4d9
+  - g4-4-summary.json a902171d065a9352
+  - watch.log 2c03e0528088e821
+  - profile-stage50.json 878c069f93dd63cc
+- Cleanup: driver client containers --rm (none left); the watcher was stopped; the observer ran inside query_kn_1 with no
+  leftover process.

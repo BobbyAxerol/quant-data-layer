@@ -232,7 +232,7 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
     # is recorded, never used to relax a gate.
     # KN-4 D41: a shadow kn4-matrix names the isolated canonical broker its
     # handoff oracle reads (never a production broker).
-    optional = {"monitored_containers", "scope", "oracle_bootstrap"}
+    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container"}
     if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
     scope = raw.get("scope", "production")
@@ -312,6 +312,8 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "monitored_containers": list(monitored) if monitored is not None else None,
         "scope": scope,
         "oracle_bootstrap": oracle,
+        "ts_container": raw.get("ts_container") if isinstance(raw.get("ts_container"), str)
+        and _NETWORK_RE.fullmatch(raw["ts_container"]) else None,
     }
 
 
@@ -1696,10 +1698,11 @@ _QUERY_METHODS = frozenset({
 })
 _TS_HEARTBEAT = """
 import asyncio, json, time
+import os
 import redis.asyncio as redis
-from core.config import settings
 async def main():
-    client = redis.from_url(settings.TRADING_REDIS_URL, decode_responses=True)
+    # The writer's own environment (current images use shared.config; older ones core.config).
+    client = redis.from_url(os.environ["TRADING_REDIS_URL"], decode_responses=True)
     rows = []
     async for key in client.scan_iter(match="service:heartbeat:market_data:*", count=100):
         value = await client.get(key)
@@ -3117,9 +3120,12 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
     }
 
 
-def _ts_heartbeat() -> dict[str, object] | None:
+_TS_LOG_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+
+
+def _ts_heartbeat(container: str = "market_data_service") -> dict[str, object] | None:
     try:
-        result = subprocess.run(["docker", "exec", "-i", "market_data_service", "python", "-"],
+        result = subprocess.run(["docker", "exec", "-i", container, "python", "-"],
                                 input=_TS_HEARTBEAT, capture_output=True, text=True, timeout=20)
         value = json.loads(result.stdout.strip().splitlines()[-1])
         value["at_ns"] = time.time_ns()
@@ -3128,11 +3134,22 @@ def _ts_heartbeat() -> dict[str, object] | None:
         return {"at_ns": time.time_ns(), "error": _safe_error(error)}
 
 
-def _ts_disconnects(since: str, until: str) -> tuple[int, Counter]:
-    result = subprocess.run(["docker", "logs", "--since", since, "--until", until, "market_data_service"],
+def _ts_disconnects(since: str, until: str, container: str = "market_data_service") -> tuple[int, Counter]:
+    """Writer disconnects in [since, until): its docker log AND its worker log files (fixed workers log to
+    /app/logs/*.log, not stdout - counting docker logs alone reported 0 for the P18.4 writer)."""
+    result = subprocess.run(["docker", "logs", "--since", since, "--until", until, container],
                             capture_output=True, text=True, timeout=60)
+    lines = (result.stdout + result.stderr).splitlines()
+    files = subprocess.run(["docker", "exec", container, "sh", "-c",
+                            "cat /app/logs/market_data_worker-*.log /app/logs/market_data_service.log 2>/dev/null"],
+                           capture_output=True, text=True, timeout=60)
+    low, high = since.replace("T", " ").rstrip("Z"), until.replace("T", " ").rstrip("Z")
+    for line in files.stdout.splitlines():
+        stamp = _TS_LOG_LINE.match(line)
+        if stamp and low <= stamp.group(1) < high:
+            lines.append(line)
     codes: Counter[str] = Counter()
-    for line in (result.stdout + result.stderr).splitlines():
+    for line in lines:
         if "slice disconnected" in line:
             match = re.search(r"code=([A-Z_]+)", line)
             codes[match.group(1) if match else "UNKNOWN"] += 1
@@ -3238,11 +3255,12 @@ def run_target_host(args: argparse.Namespace) -> int:
         *query_names, f"{prefix}-stream_v2_active-1", f"{prefix}-stream_v2_passive-1",
         "market_data_service",
     ]
+    ts_container = profile.get("ts_container") or "market_data_service"
     shadow = profile.get("scope") == "shadow"
     # A shadow run still samples the production Trading System: it is the
     # packet's stop condition (TS ready routes must not drop), not a consumer
     # of the shadow targets.
-    ts_samples = [] if matrix else [_ts_heartbeat()]
+    ts_samples = [] if matrix else [_ts_heartbeat(ts_container)]
     started_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     baseline_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
     started = time.monotonic()
@@ -3262,7 +3280,7 @@ def run_target_host(args: argparse.Namespace) -> int:
             cleanup_error = _safe_error(error)
     ended_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if not matrix:
-        ts_samples.append(_ts_heartbeat())
+        ts_samples.append(_ts_heartbeat(ts_container))
     stdout = process.stdout if process is not None else ""
     stderr = process.stderr if process is not None else ""
     receipt = None
@@ -3291,8 +3309,8 @@ def run_target_host(args: argparse.Namespace) -> int:
     evaluation = None
     if not matrix:
         run_minutes = max(1e-6, (time.monotonic() - started) / 60.0)
-        base_count, base_codes = _ts_disconnects(baseline_iso, started_iso)
-        run_count, run_codes = _ts_disconnects(started_iso, ended_iso)
+        base_count, base_codes = _ts_disconnects(baseline_iso, started_iso, ts_container)
+        run_count, run_codes = _ts_disconnects(started_iso, ended_iso, ts_container)
         trading_system.update(
             baseline_window=[baseline_iso, started_iso], run_window=[started_iso, ended_iso],
             baseline_disconnects_per_minute=round(base_count / 10.0, 3),
