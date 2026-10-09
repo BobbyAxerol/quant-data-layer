@@ -913,6 +913,80 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                 self.assertIsNone(read().record)
         self.assertGreaterEqual(len(exercised), 2, "both Binance and OKX fixtures required")
 
+    def test_execution_mark_index_takes_the_newer_hot_record_over_a_valid_cache_view(self):
+        """IDR-084: a usable but older projected MARK is replaced by the newer committed hot record."""
+        import asyncio
+        import time as _time
+        from types import SimpleNamespace
+        from qdl.reference.local_mark_index import CacheRefreshingMarkIndexView
+        from qdl.runtime.kn_hot_view import CanonicalHotView, HotViewUnavailable
+        from qdl.runtime.kn_market_cache import CacheRow, SourceBoundary
+
+        exercised = set()
+        for binding, payload in self.latest_records:
+            if binding.feed is not FeedType.MARK_INDEX_PRICE or not binding.authoritative or binding.source_role != "PRIMARY":
+                continue
+            with self.subTest(binding=binding.binding_id):
+                exercised.add(binding.instrument.identity.venue)
+                now = _time.time_ns()
+                def timed(age):
+                    env = market_data_pb2.EventEnvelope.FromString(retimed_mark_index(payload, now_ns=now, age_ms=age))
+                    env.normalized_at_ns = env.received_at_ns + 1
+                    env.published_at_ns = env.received_at_ns + 2
+                    return env.SerializeToString(deterministic=True)
+                cached, newer, older = timed(400), timed(100), timed(900)
+                self.put_latest(binding, cached, offset=10, mark=20)
+                primary = self.reader.latest(self.lpk(binding))
+                def hot_view(payload_bytes, offset, mark):
+                    return CanonicalHotView(self.lpk(binding), (CacheRow(payload_bytes, offset),),
+                                            SourceBoundary(TOPIC_ID, primary.boundary.partition, mark))
+                replies = [hot_view(newer, 30, 40)]
+                def hot(*args):
+                    if isinstance(replies[0], Exception): raise replies[0]
+                    return replies[0]
+                backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
+                    topic_id=TOPIC_ID, hot_client=SimpleNamespace(latest=hot))
+                view = CacheRefreshingMarkIndexView.from_catalog(self.catalog).attach_cache(backend=backend, relax_to_alpha=False)
+                def read():
+                    return asyncio.run(view.read(instrument_uid=binding.instrument.instrument_uid,
+                        instrument_revision=binding.instrument.metadata_revision, source_policy_id=binding.source_policy_id,
+                        max_freshness_ms=2000, gateway_epoch=1, now_ns=now))
+                result = read()
+                self.assertIsNotNone(result.record, result.reason)
+                self.assertEqual(result.record.canonical, newer)  # the newer committed record wins
+                # A hot outage leaves the valid cache view in place (never worse than before).
+                fresh_backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
+                    topic_id=TOPIC_ID, hot_client=SimpleNamespace(latest=hot))
+                fresh_view = CacheRefreshingMarkIndexView.from_catalog(self.catalog).attach_cache(
+                    backend=fresh_backend, relax_to_alpha=False)
+                replies[0] = HotViewUnavailable("test outage")
+                stored, state = fresh_backend.latest_stored_event(binding)
+                self.assertEqual(state, "OK")
+                self.assertEqual(stored.event.payload, cached)
+                # A hot record behind the cache is never taken.
+                replies[0] = hot_view(older, 5, 8)
+                stored, state = fresh_backend.latest_stored_event(binding)
+                self.assertEqual((state, stored.event.payload), ("OK", cached))
+                del fresh_view
+        self.assertGreaterEqual(len(exercised), 2, "both Binance and OKX fixtures required")
+
+    def test_non_mark_feeds_never_consult_the_hot_view_for_a_valid_cache_view(self):
+        from types import SimpleNamespace
+
+        def hot(*args):
+            raise AssertionError("hot view consulted for a non-MARK feed")
+        backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
+            topic_id=TOPIC_ID, hot_client=SimpleNamespace(latest=hot))
+        checked = 0
+        for binding, payload in self.latest_records:
+            if binding.feed in (FeedType.MARK_INDEX_PRICE, FeedType.BAR):
+                continue
+            self.put_latest(binding, payload, offset=10, mark=20)
+            stored, state = backend.latest_stored_event(binding)
+            self.assertEqual(state, "OK", binding.binding_id)
+            checked += 1
+        self.assertGreater(checked, 0)
+
     # ------------------------------------------------------------ D29 read view
 
     def test_the_stream_read_view_runs_the_python_oracle_on_one_view(self):

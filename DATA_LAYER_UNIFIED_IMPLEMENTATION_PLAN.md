@@ -71234,3 +71234,27 @@ Owner-approved retry window 15:47:40-15:50:02Z.
 - No ingestor/core/projector/Kafka/Redis change.
 - Open: the live/sandbox TS realms remain at 50 streams/1500 RPM (no owner decision). MARK G2 is a TS item (Binance ~1.18 s).
   v2.2.3 HOLD.
+
+### IDR-084 fixed in source: execution MARK takes the newer committed hot record - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY (not deployed; it goes into the consolidated D5 Query image).
+- Finding (TS register IDR-084, TS writer windows 2026-10-09):
+  - Query serves execution MARK/INDEX from the projected kn3 latest view (CacheRefreshingMarkIndexView ->
+    KnMarketCacheQueryBackend.latest_stored_event).
+  - That view is visible about 300 ms after the venue event (Binance p50 292-305 / p95 367-377 ms), while canonical
+    read_committed visibility is 150-181 ms p95 (2026-10-09 G4 observer).
+  - The TS MARK floor stayed about 400 ms p50 whatever the TS read cadence; OKX G2 p95 was 508-534 ms.
+- Fix in `qdl/runtime/kn_query_backend.py` latest_stored_event: for MARK_INDEX_PRICE with a valid cache view, read the
+  existing Rust canonical hot view (QDL_KN_HOT_READ_TARGETS) and take it only when its source offset is newer.
+  - It passes the same `_hot_candidate` lineage/monotonic/generation gates.
+  - Behind or unavailable -> the cache view stands (previous behaviour).
+  - Same offset with different bytes -> INTEGRITY.
+  - Other feeds are unchanged and never consult the hot view for a valid cache view.
+- Tests (disposable Redis, rc2 image 77682eea): tests.test_kn_query_backend + test_kn_hot_view +
+  test_kn_hot_book_invalidation + test_execution_mark_index_live_view: 90 PASS, 0 fail, 0 skip. New cases:
+  - newer hot record wins on both venues;
+  - hot outage keeps the valid cache view;
+  - a hot record behind the cache is never taken;
+  - non-MARK feeds never consult hot.
+- Load note: about 1 extra hot gRPC read per execution MARK read (TS: up to 2/s per symbol, 10 linear + 1 inverse) on the
+  Stream gateways. To measure in the D5 rollout; it is not a capacity claim.

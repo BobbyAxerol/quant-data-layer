@@ -408,6 +408,21 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 return None, "BACKUP_UNAVAILABLE"
             except QueryBackendError as error:
                 return None, "FENCED" if error.problem.code is CanonicalErrorCode.DATA_NOT_READY else "INTEGRITY"
+        elif self.hot_client is not None and view is not None and binding.feed is FeedType.MARK_INDEX_PRICE:
+            # IDR-084: the projected cache trails the committed canonical record by ~150 ms (Binance MARK visible p50
+            # ~300 ms after the venue event). The Rust hot view serves the same committed bytes without the projector,
+            # so MARK/INDEX takes the newer of the two. Every lineage/monotonic gate of the backup path applies; a hot
+            # read that is behind or unavailable leaves the cache view in place (the previous behaviour).
+            try:
+                candidate = self._hot_candidate(binding, view)
+            except HotViewUnavailable:
+                candidate = None
+            except QueryBackendError as error:
+                if error.problem.code is CanonicalErrorCode.INTERNAL_ERROR:
+                    return None, "INTEGRITY"  # same offset, different bytes: never pick one silently
+                candidate = None
+            if candidate is not None and candidate.rows[0].source_offset > view.rows[0].source_offset:
+                view = candidate
         if view is None:
             return None, "NOT_READY"
         records = self._parsed(binding, view)
