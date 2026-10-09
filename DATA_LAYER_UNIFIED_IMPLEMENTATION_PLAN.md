@@ -71219,3 +71219,18 @@ error: healthy, bundle f04ba6dc, restarts 0. The TS writer reached only 54/64 re
 authority includes the release manifest hash, and the marker has no TTL). Everything was rolled back to rev10 / bundle
 c5d964c4 / writer 9ca122a, READY 60/60. DL artifacts and reader step are unchanged and reusable. The retry waits for the
 TS IDR-083 fix. Receipts are in the TS journal (runtime action 7). v2.2.3 HOLD.
+
+### D1 rev11 APPLIED - 2026-10-09 (Claude)
+
+Owner-approved retry window 15:47:40-15:50:02Z.
+- Runtime now:
+  - query_kn_1/2: same image 514506122111, /consumer-realms = `~/.local/state/qdl-v2/p184-d1-rev11-20261009/reader-public`,
+    Paper manifest path `/consumer-realms/trading-system.paper.stable-r11.yaml` (rev 11, 77 streams / 3000 RPM, +4 inverse);
+  - stream_kn_1/2: same image 1f13408fe946, bundle f04ba6dc.
+- TS writer 71404a7 on JWT 11 / binding r23: READY 64/64, 64 active subscriptions on stream_kn_1, identity quota
+  1575-1593/min, no 429.
+- Rollback per reader: the saved composes in the TS state dir `p184-rev11-window/readers/*-rollback.compose.json` (old
+  realm dir + baked Paper manifest).
+- No ingestor/core/projector/Kafka/Redis change.
+- Open: the live/sandbox TS realms remain at 50 streams/1500 RPM (no owner decision). MARK G2 is a TS item (Binance ~1.18 s).
+  v2.2.3 HOLD.
