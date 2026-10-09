@@ -70844,3 +70844,19 @@ created by this slice. Inventory87images/73containers/223cacheentries39active;
 2.62GB build cache reclaimable but concurrent Claude CI/build resources active,
 so no broad prune. Disk available87240540160bytes at inventory; no freed-space
 claim. Production listing healthy/up is NOT consumer eligibility acceptance.
+
+### Phase D G4-G6 handoff and Redis APPLY attribution correction - 2026-10-09
+
+Owner delegated TS upgrade/p184-phase-d-gates.md to Codex. Documentation review
+filled G4-G6 with verified v2.2.0 certificate/endpoint hashes and TS paper source
+manifest revision10 semantics; no invented all-feed canonical baseline or batch
+p95 from n=1 history samples. Status DRAFT_PENDING_OWNER_FREEZE; missing numeric
+coverage and G2/G9 semantic conflicts listed for Claude/owner, not waived.
+TS phase-D a4507abb identifies Redis APPLY contention; updated resilience guide
+to supersede speculative BOOK-CAS batching. No unsynchronised TS application edit.
+Four workers unchanged; full mixed benchmark then explicit runtime packet needed.
+Validation: JSON/hash, per-row numeric cross-check, diff/Markdown checks only.
+No runtime/probe/build/container/secret changes, no resource cleanup needed.
+Canonical DL /home/bobby/data_layer main5bf5cd5, stablev2.2.2 as previously recorded;
+closure branch fix/p184-dl-closure; runtime digests/config/rollback unchanged by
+this docs-only review, not re-inspected. v2.2.3 HOLD. No push/merge.

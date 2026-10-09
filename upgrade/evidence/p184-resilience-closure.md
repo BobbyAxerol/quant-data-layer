@@ -180,3 +180,17 @@ of runtime latency improvement until that test and narrow rollout are complete.
 R3 remains open: actual Kafka/consumer fault integration, compatible narrow
 rollout and real consumer usability acceptance. Existing filesystem ENOSPC
 receipt is inherited, not substituted for Kafka durability/recovery.
+
+## R1 Handoff Correction - 2026-10-09
+
+Claude TS phase-D slices3-6 (sourcea4507abb) provide newer profiling: Redis atomic
+APPLY contention blocks BOOK/MARK/readers. Previous same-key BOOK CAS batch
+proposal above is NOT an instruction to implement speculatively. Real BOOK
+batches are often size1; prioritise APPLY encoding/EVALSHA/source-contract dedup
+already under Claude ownership. Full mixed workload must include production-size
+BOOK_SNAPSHOT and MARK, absent in the earlier idle-Redis benchmark. Per-callCPU
+improvement alone is not end-to-end closure; keep four workers per owner.
+See TS upgrade/p184-phase-d-gates.md, Codex DL Review2026-10-09: G4-G6 receipts,
+semantic objections and freeze blockers. G4 all-feed canonical baseline and G5
+warmup/batch numeric limits are not available as certified stage50 values. No
+runtime changes, load, release or new phase authorised by this documentation.
