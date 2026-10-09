@@ -85,3 +85,29 @@ class Stage100G5GateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreezeBudgetTests(unittest.TestCase):
+    def test_freeze_derives_g5_and_g4_from_the_baseline_and_validates(self):
+        import json
+        from pathlib import Path
+        from scripts.p184_freeze_stage100_budget import freeze
+        base = json.loads(Path("config/v2/v211-target-acceptance-budget.json").read_text())
+        receipt = {"cold": [{"venue": "BINANCE", "rows": 2500, "ms": 1000.0}, {"venue": "OKX", "rows": 2500, "ms": 2000.0},
+                            {"venue": "OKX", "rows": 5000, "ms": 3000.0},
+                            {"venue": "BINANCE", "rows": 5000, "ms": 9.0, "error": {"type": "X"}}]}
+        g4 = [{"trade|OKX|": {"visibility_ms": {"p95": 200.0}}}, {"trade|OKX|": {"visibility_ms": {"p95": 250.0}}}]
+        budget = freeze(base, receipt, g4, ts_routes=64, sources={})
+        self.assertEqual(budget["g5_shape_limits_ms"]["COLD_2500"]["p95"], 3000.0)
+        self.assertEqual(budget["g5_shape_limits_ms"]["COLD_5000"]["p95"], 4500.0)  # the failed read is excluded
+        self.assertEqual(budget["g4_delivery_visibility"]["table"]["trade|OKX|"]["candidate_p95_limit_ms"], 300.0)
+        self.assertEqual(budget["trading_system"]["demanded_routes"], 64)
+        self.assertEqual(budget["latency_ms"], base["latency_ms"])  # certified stage-50 targets kept
+
+    def test_freeze_refuses_without_a_successful_cold_read(self):
+        import json
+        from pathlib import Path
+        from scripts.p184_freeze_stage100_budget import freeze
+        base = json.loads(Path("config/v2/v211-target-acceptance-budget.json").read_text())
+        with self.assertRaisesRegex(ValueError, "COLD_5000"):
+            freeze(base, {"cold": [{"venue": "OKX", "rows": 2500, "ms": 1.0}]}, [], ts_routes=64, sources={})
