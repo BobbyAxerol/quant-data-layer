@@ -70860,3 +70860,37 @@ No runtime/probe/build/container/secret changes, no resource cleanup needed.
 Canonical DL /home/bobby/data_layer main5bf5cd5, stablev2.2.2 as previously recorded;
 closure branch fix/p184-dl-closure; runtime digests/config/rollback unchanged by
 this docs-only review, not re-inspected. v2.2.3 HOLD. No push/merge.
+
+### DR05 public export, paired TRADE/MARK G4 and build lock audit - 2026-10-09
+
+Status IN_PROGRESS; owner requests existing public export or isolated init,
+concurrent TRADE/MARK canonical timing and uv-lock audit. Reuse public export
+dr05-observer-20261008/public-export.json, validate through isolated_config; do not
+start a duplicate DR05 stack while Claude starts adapter. Bounded read-only assigned
+Kafka observer, no joins/offset commits, no second TS stream, credentials only
+in-memory existing mount paths. At most120s/10000 observations/16MiB output.
+Measure exact-event source->published separately from read_committed visibility
+upper bound, never call CreateTime commit time. Keep missing/negative timestamps
+explicit. Same current window for TRADE and MARK; historical5-11s attribution
+requires matching TS event trace, not today's aggregate alone. No rollout/build,
+no broad runtime dependency changes. Audit Dockerfiles/lock verifier and document
+mutable toolchain/OS resolution separately from application lock. Cleanup only
+own temporary observer; retain bounded receipt.
+
+### DR05/G4/build handoff result - 2026-10-09
+
+Guide/report upgrade/evidence/p184-dr05-g4-build-handoff-20261009.md.
+Public export validated, existing path+hash handed to Claude; no duplicate stack.
+Real read-only canonical window08:19:24-08:21:24UTC,120s,2689sampled TRADE/MARK
+BTC/ETH observations. TRADE p95103-190ms; BinanceMARK150-181ms; OKXMARK928-985ms;
+max1885.003ms. Exact per-product counts and p50/p95/p99/max in report. Boundary
+read_committed observed visibility upper bound, not publish/commitclock; no same
+window TSACK trace so no retrospective5-11s causal claim. Writer observed162ea147,
+not previous5849d716. Observer no joins/commits/writes and exited0.
+Build audit: no uv sync; Poetrylock/main RECORD verification and cargolocked.
+Mutable setuptools>=78.1.1/bootstrap/OS dependencies remain reproducibility risk,
+not silently fixed or claimed fully reproducible. No new image or dependency.
+Host test36with2missing-dependency errors; existing-image final38PASS0ERROR0SKIP.
+Scoped --rm test removed, no persistent stack/build/volume created or broadprune.
+Report records immutable summary/capture/script hashes. Runtime roles unchanged
+by this turn; no push/merge/release. G4 fullscope/DR05 acceptance remain open.
