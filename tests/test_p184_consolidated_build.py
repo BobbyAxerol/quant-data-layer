@@ -93,7 +93,8 @@ class RecipeTests(NoProcessTests):
 
     def test_prerequisite_roster(self):
         self.assertEqual(set(build.PREREQUISITES),
-                         {"IDR040fix1", "bindingV3", "quota_log", "b6a0119", "IDR075", "DR05_book_fence", "DR08_terminal_status"})
+                         {"IDR040fix1", "bindingV3", "quota_log", "b6a0119", "IDR075", "DR05_book_fence", "DR08_terminal_status",
+                          "IDR084_hot_mark"})
 
 
 class IntegrationScopeTests(NoProcessTests):

@@ -71304,3 +71304,21 @@ Status IMPLEMENTED / TESTED_LOCALLY (no traffic, no runtime change).
     fix in the driver's own tests.
 - The stage-100 plan does not fit the deployed alpha manifests (2400 RPM / 60 streams). The capacity100 candidate quota
   (4950 / 300) carries it. That runtime packet is the next D3 slice.
+
+### D3/D5 slices: ticker fix, budget freeze tooling, quota renderer, recipe prerequisite - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY.
+- ed2b284 (cherry-picked from a subagent worktree, which has since been removed): DeclaredRateTicker offered a phantom tick
+  at the window end on long-uptime hosts. time.monotonic() is about 2.1e6 s here, so `(start+0.2)-start` = 0.20000000019
+  and the quotient exceeded the 1e-9 tolerance. A due time within 1 us of the end now counts as the boundary; a
+  regression test was added. This is the root cause of the "pre-existing" test_a_typed_rejection_is_counted_by_code
+  failure noted in D3 slice 1, which was a product bug, not the test. Suites: 112 OK.
+- fc22491 scripts/p184_freeze_stage100_budget.py: v2.1.1 latency classes kept, G5 COLD_<rows> = baseline max x 1.5,
+  G4 table = baseline p95 x 1.2, TS routes 64; it validates through load_p184_stage100_budget. 9 tests OK.
+- 06b77e0 scripts/p184_render_quota_revision.py: revision +1 and named quotas upward only; any other difference is
+  refused. The repo alpha manifests equal the copies baked in Query 514506122111 (sha d201b2e7 / e8fb3ea7).
+- Recipe: PREREQUISITES + IDR084_hot_mark 922a6ec, and the kn_query_backend contract marker
+  `binding.feed is FeedType.MARK_INDEX_PRICE`; tests.test_p184_consolidated_build 20 OK. The preflight at HEAD stays HOLD.
+  Pending gates: TS integration receipt, exact-source DL CI, owner build approval.
+- Since 0b374bc, served runtime changed only in 922a6ec. 76db472/522cf3e/f831571/ed2b284 are scripts or certification
+  tooling, listed for the release notes.

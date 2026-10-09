@@ -13,8 +13,9 @@ completion of Paper/OR features. Final DR/broker acceptance and exact-source DL 
 remain mandatory; existing receipts do not certify later source automatically.
 The recipe now also requires DR05 fence d68fb2ff47622db8224dc4b9e004dca4e20f643e
 and DR08 terminal-status 0b374bc918af02476cdfb1502d5df132426f901b, including the
-changed core/projector/read-view paths and prolonged-stall regressions. Seven
-prerequisite entries and 24 source paths are inventoried. Older candidate d68fb2f
+changed core/projector/read-view paths and prolonged-stall regressions. Eight
+prerequisite entries (2026-10-09: + IDR084_hot_mark 922a6ec, the only served-runtime change since 0b374bc, with its
+kn_query_backend contract marker) and 24 source paths are inventoried. Older candidate d68fb2f
 is refused because terminal-status ancestry is absent.
 
 Affected portable suite: 20 PASS, 0 FAIL, 0 SKIP. The real Git preflight against

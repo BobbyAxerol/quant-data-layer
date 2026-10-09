@@ -17,6 +17,7 @@ PREREQUISITES = {
     "IDR075": "704552d8736905cdb73feec86f3f01d339d02cbb",
     "DR05_book_fence": "d68fb2ff47622db8224dc4b9e004dca4e20f643e",
     "DR08_terminal_status": "0b374bc918af02476cdfb1502d5df132426f901b",
+    "IDR084_hot_mark": "922a6ec38a8da94d30c634f025fd23c03838c24d",
 }
 CONTRACTS = {
     "rust/qdl-realtime-core/src/lib.rs": ["REST_AHEAD_OF_STREAM"],
@@ -24,7 +25,7 @@ CONTRACTS = {
     "rust/qdl-kafka/src/bin/qdl-production-core.rs": [],
     "rust/qdl-projector/src/products.rs": [],
     "qdl/runtime/kn_hot_view.py": [],
-    "qdl/runtime/kn_query_backend.py": [],
+    "qdl/runtime/kn_query_backend.py": ["binding.feed is FeedType.MARK_INDEX_PRICE"],
     "rust/qdl-stream-gateway/src/service.rs": ["terminal.get_or_insert(status)"],
     "rust/qdl-stream-gateway/tests/native_stream.rs": [
         "t05_prolonged_trade_stall_preserves_terminal_status_and_peer_progress",
