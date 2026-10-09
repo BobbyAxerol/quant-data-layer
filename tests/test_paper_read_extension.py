@@ -135,3 +135,26 @@ class PaperReadExtensionTests(unittest.TestCase):
         self.source.update(manifest=result["manifest"], binding=result["binding"])
         with self.assertRaisesRegex(ValueError, "already present"):
             self.prepare()
+
+    def test_quota_raise_is_applied_only_to_the_named_keys_and_recorded(self):
+        plain = self.prepare()
+        raised = prepare_paper_extension(**self.source, quotas={"max_streams": 77, "requests_per_minute": 3000})
+        quotas = raised["manifest"]["spec"]["quotas"]
+        before = self.source["manifest"]["spec"]["quotas"]
+        self.assertEqual((quotas["max_streams"], quotas["requests_per_minute"]), (77, 3000))
+        self.assertEqual({k: v for k, v in quotas.items() if k not in ("max_streams", "requests_per_minute")},
+                         {k: v for k, v in before.items() if k not in ("max_streams", "requests_per_minute")})
+        self.assertEqual(raised["provenance"]["quota_change"],
+                         {"max_streams": {"from": before["max_streams"], "to": 77},
+                          "requests_per_minute": {"from": before["requests_per_minute"], "to": 3000}})
+        self.assertNotIn("quota_change", plain["provenance"])
+        self.assertEqual(raised["binding"]["products"], plain["binding"]["products"])
+        self.assertNotEqual(raised["consumer_environment"], plain["consumer_environment"])  # new manifest hash pairs
+        ConsumerManifestLoader.from_mapping(raised["manifest"])
+
+    def test_quota_change_never_lowers_or_touches_other_keys(self):
+        current = self.source["manifest"]["spec"]["quotas"]
+        for bad in ({"max_streams": current["max_streams"]}, {"requests_per_minute": 1000},
+                    {"max_batch_items": 100}, {"max_streams": "77"}):
+            with self.assertRaisesRegex(ValueError, "quota change"):
+                prepare_paper_extension(**self.source, quotas=bad)

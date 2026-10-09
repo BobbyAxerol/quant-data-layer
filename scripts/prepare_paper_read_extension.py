@@ -1,4 +1,7 @@
-"""Prepare the owner-approved IDR-075 Paper entitlement; never activate it."""
+"""Prepare the owner-approved IDR-075 Paper entitlement; never activate it.
+
+Optional quota raise (P18.4 D1, owner 2026-10-09): only max_streams / requests_per_minute, only upward, recorded in the
+provenance. Without it the packet is byte-identical to the original IDR-075 preparation."""
 from __future__ import annotations
 
 import argparse
@@ -28,7 +31,10 @@ def key(row):
     return (row["instrument_uid"], row["feed"], row.get("interval"), row["source_policy_id"])
 
 
-def prepare_paper_extension(*, catalog, manifest, binding):
+QUOTA_KEYS = frozenset({"max_streams", "requests_per_minute"})
+
+
+def prepare_paper_extension(*, catalog, manifest, binding, quotas=None):
     """Reuse deployed inverse feeds; no acquisition, credential or runtime mutation."""
     current = StableSourceCatalog.from_mapping(catalog)
     consumer = ConsumerManifestLoader.from_mapping(manifest)
@@ -81,6 +87,13 @@ def prepare_paper_extension(*, catalog, manifest, binding):
         raise ValueError("inverse extension already present; explicit revision review required")
     target, new_binding = deepcopy(manifest), deepcopy(binding)
     target["metadata"]["revision"] += 1
+    quota_change = None
+    if quotas:
+        current_quotas = manifest["spec"]["quotas"]
+        if (set(quotas) - QUOTA_KEYS or any(type(v) is not int or v <= current_quotas[k] for k, v in quotas.items())):
+            raise ValueError("quota change must raise max_streams/requests_per_minute only")
+        quota_change = {k: {"from": current_quotas[k], "to": v} for k, v in sorted(quotas.items())}
+        target["spec"]["quotas"].update(quotas)
     for feed in sorted(FEEDS):
         policy = "crypto_primary_v2" if feed == "QUOTE" else "crypto_liquid_v2"
         k = (template["instrument_uid"], feed, None, policy)
@@ -120,6 +133,8 @@ def prepare_paper_extension(*, catalog, manifest, binding):
                       consumer_manifest_sha256=parsed.manifest_sha256,
                       deployed_catalog_sha256=digest(catalog),
                       added_products=4, existing_fx_product_preserved=True)
+    if quota_change is not None:
+        provenance["quota_change"] = quota_change
     new_binding.update(schema="qdl.v2.consumer-route-binding.v3",
                        consumer_manifest_revision=parsed.manifest_revision,
                        release_revision=base.release_revision + 1,
@@ -139,9 +154,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("catalog", "manifest", "binding", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--max-streams", type=int)
+    parser.add_argument("--requests-per-minute", type=int)
     args = parser.parse_args()
+    quotas = {k: v for k, v in (("max_streams", args.max_streams),
+                                ("requests_per_minute", args.requests_per_minute)) if v is not None}
     result = prepare_paper_extension(**{name: yaml.safe_load(getattr(args, name).read_text())
-                                       for name in ("catalog", "manifest", "binding")})
+                                       for name in ("catalog", "manifest", "binding")}, quotas=quotas or None)
     # Never overwrite an earlier preparation or a live manifest.
     with args.output.open("x") as out:
         json.dump(result, out, indent=2, sort_keys=True)
