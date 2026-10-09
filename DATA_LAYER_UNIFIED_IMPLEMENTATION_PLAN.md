@@ -71360,3 +71360,21 @@ Status: owner-approved window A, runtime unchanged. Budget FROZEN before any can
   - profile-stage50.json 878c069f93dd63cc
 - Cleanup: driver client containers --rm (none left); the watcher was stopped; the observer ran inside query_kn_1 with no
   leftover process.
+
+### D3 window B prepared (alpha rev15 quotas + Stream 1024 subscriptions) - 2026-10-09 (Claude)
+
+Status RENDERED_NOT_APPLIED.
+- Manifests (scripts/p184_render_quota_revision.py, from the repo copies that equal the Query-baked ones):
+  - alpha.binance.paper.stable rev 15: 4950 RPM / 300 streams, manifest_sha256 06db86f0, file sha256 8fed780a;
+  - alpha.okx.paper.stable rev 15: 4950 / 300, manifest_sha256 b2ba5729, file sha256 33b9cfd4;
+  - only the revision and those two quotas differ.
+- Gateway bundle: rebuilding the deployed inputs reproduces the live f04ba6dc (parity). The new bundle bce26969 (file
+  aa113b28) changes only the two alpha manifests; catalog/environment/schema are equal.
+- Reader step (~/.local/state/qdl-v2/p184-d3-capacity-20261009/readers_capacity.py, file sha256 5531bf81), same images:
+  - Query: two QDL_STABLE_CONSUMER_MANIFESTS entries now point at /consumer-realms/alpha.*-r15.yaml;
+  - Stream: QDL_KN_MAX_SUBSCRIPTIONS 384 -> 1024;
+  - all four readers: /consumer-realms -> the new realm dir (rev11 realm + the two r15 files + bundle bce26969).
+  Rollback composes = the current rev11 realm and 384.
+- Driver: profile field manifest_overrides (1f28448) mounts the r15 files over the client's baked manifests, so the client
+  quotas and JWT revision match the readers. Profile profile-stage100.json validates (ts_container market_data_service_p184w).
+- No alpha caller runs today. Before Phase E alphas must mint JWT revision 15.
