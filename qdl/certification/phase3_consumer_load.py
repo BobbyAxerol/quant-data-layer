@@ -667,11 +667,17 @@ class DeclaredRateTicker:
         self._end = end
         self._next = 0
 
+    # A due time within this many seconds of ``end`` is at the boundary, not before it. Monotonic clocks are host
+    # uptime: past 2**21 s (~24 days) ``(start + 0.2) - start`` carries ~2e-10 s of rounding, which a tolerance on
+    # the period quotient (1e-9 of a period) does not absorb and which offered one phantom tick due exactly at ``end``.
+    _BOUNDARY_S = 1e-6
+
     @property
     def offered(self) -> int:
-        if self._first >= self._end:
+        window = self._end - self._first - self._BOUNDARY_S
+        if window <= 0:
             return 0
-        return math.ceil((self._end - self._first) / self._period - 1e-9)
+        return math.ceil(window / self._period)
 
     def take(self, now: float) -> tuple[float | None, int]:
         missed = 0
