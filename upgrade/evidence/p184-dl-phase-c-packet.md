@@ -398,3 +398,78 @@ See [full receipt](p184-dr07-runtime-closure.md#actual-caller-rollout-and-exact-
 Prior coherence and rollback conditions remain mandatory; no extra interface,
 freshness, resource-cap or policy change. Broker packet ownership must be reconciled
 without making unfinished Paper features a Data Layer release prerequisite.
+
+## D1 Rev11 Paired Quota Packet - 2026-10-09
+
+Status: D1_PACKET_COMPLETE_NOT_APPLIED. Owner explicitly requests no apply.
+This governs D1 over the old IDR075 no-quota-change/TS60-only statements above.
+It does not authorize any role recreation, release or the failed core candidate.
+D2 TRADE/QUOTE attribution is closed; IDR082 remains with TS.
+
+### Frozen proposed configuration
+
+| Item | Before | Paired target |
+| --- | --- | --- |
+| Data identity | trading-system.paper.stable | Unchanged |
+| Consumer manifest / JWT revision | 10 / 10 | 11 / 11 |
+| Route binding | r22 | r23, sealed V3 |
+| max_streams | 50 | 77;64 expected active |
+| requests_per_minute | 1500 | 3000 |
+| MARK stream wake | false | true |
+| MARK wake minimum interval | New config, not assumed deployed | 500ms |
+| OKX symbols | Existing linear list | Preserve list, add BTC-USD-SWAP |
+
+Ten linear products have50 ordinary streams plus10MARK wakes. Inverse adds
+QUOTE/BOOK_SNAPSHOT/BOOK_DELTA plusMARKwake. Preserve all existing linear
+entitlements and policies. No new TRADE/BAR inverse entitlement implied.
+TS must contain f457e7a and the0.5/s/process BOOK retry cap; an older writer
+cannot be accepted with this budget merely by setting the environment variable.
+Sizing:900+1200+120+240+20=2480units/min, reserve520 at3000. Last20 is estimated
+reconnect/probe traffic, not an unlimited-fault guarantee. See capacity guide.
+
+### Paired operator checklist (not executed)
+
+- [ ] Reinventory actual callers: expected only market_data_service_p184w uses
+  this identity. If others now exist, stop and account for them before action.
+- [ ] Render NEW immutable manifest11/bundle plus r23binding from the approved
+  catalogue with77/3000. The earlier IDR075 prepared.json hash refers to the
+  old packet and MUST NOT be reused as proof for this quota change. Validate
+  binding policies/compiler, write new hashes and old/new semantic diff; only
+  intended Paper grants/quota/revision may differ. Do not overwrite old packet.
+- [ ] Claude provides final TS digest including f457e7a, env parser check and
+  paired JWT11/binding hash. Keep key material private; keep subject/realm/key
+  identity unchanged. Confirm500ms effective runtime value and four workers.
+- [ ] Capture current exact image/config/mount hashes for query_kn_1/2,
+  stream_kn_1/2 and writer plus rollback compose. This documentation deliberately
+  does not invent fresh digests. Preserve TLS, endpoints, Redis/cursors and caps.
+- [ ] Confirm shared Query/Stream identity limiter uses matching Redis/prefix
+  and charges per request/Subscribe, not one independent allowance per replica.
+- [ ] Owner approves rendered role/config/digest packet. Quiesce the affected
+  writer; never run old and new writer together. Sequentially recreate only
+  four readers with current approved images and new Paper manifest/bundle.
+  Check other consumers after each step. No ingestor/core/projector/Kafka changes.
+- [ ] Claude activates the sole writer with JWT11+r23/hash, inverse list,
+  MARK_STREAM_WAKE=true and MARK_WAKE_MIN_INTERVAL_MS=500 together. Stagger
+  subscription startup; keep existing recovery/backoff, no extra probe stream.
+- [ ] No-order preflight both replicas using the actual caller: expected
+  linear/inverse grants work, wrong revision/realm and ungranted feeds reject.
+  Confirm64 active subscriptions within77, original timestamp/component proof,
+  source identity/generation and cache/cursor monotonicity. No trading permission.
+- [ ] Observe complete quota minute windows including startup and recovery;
+  record peak usage,429, reconnects, wake/failure counters and resource/backlog.
+  Measure MARK G2 max<1000ms,p95<=500ms on new-event transit; keep quiet age
+  separate. Reuse unchanged evidence; do not reopen TRADE/QUOTE investigation.
+  Report n and units, no p99 below100samples. Stage100 remains a separate gate.
+
+Stop progression for intended-route auth rejection, duplicate writer, integrity
+or generation error, OOM/restart loop, quota429 under declared workload, or
+failure of frozen applicable G1-G14 gates. Keep failed evidence. If rollback is
+needed, stop new writer FIRST, restore four readers to saved manifest10/config,
+then restore writer r22/JWT10, previous symbol list and wake=false with saved
+image/config. Check both replicas and actual consumer before resuming. Never
+flush data, reset offsets, weaken freshness, grant both revisions or claim
+zero-downtime during the paired transition. Keep stopped operational rollback
+containers/images until acceptance; cleanup only disposable owned resources.
+
+D1 design/packet is closed; rendering/sealing and runtime checklist remain
+NOT_RUN until the execution window. v2.2.3 remains HOLD on remaining gates.

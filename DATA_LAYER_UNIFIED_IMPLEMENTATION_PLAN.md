@@ -71156,3 +71156,30 @@ rollback artifacts unchanged by this slice, not freshly inventoried. No test
 resources created; Docker/BuildKit cleanup deferred for documentation-only work.
 apply_patch failed with mountinfo helper; exact append fallback under rule32,
 followed by diff verification. No historical journal evidence overwritten.
+
+### Phase D D1 rev11 packet closure - 2026-10-09 (TS f457e7a)
+
+Status D1_PACKET_COMPLETE_NOT_APPLIED. Owner requests packet only. Freeze Paper
+manifest11 at77 stream slots for64 active,3000RPM; paired TS r23/JWT11 with
+MARK_WAKE_MIN_INTERVAL_MS=500. Detailed checklist/rollback and sizing are in
+upgrade/evidence/p184-dl-phase-c-packet.md and p184-capacity100-candidate.md.
+Scope documentation only; no deployed manifest, credentials, runtime or TS edit.
+The old pending-MARK-rate sizing prerequisite is superseded by TS bounded wake.
+G1-G14 and final acceptance remain; D2 closed, IDR082 remains TS-owned.
+
+Reviewed TS f457e7a bridge interval guard/coalescing and its flood/bounds tests
+(source review, not a fresh test execution). Proposed load2480units/min leaves
+520units/min reserve at3000;900baseline and10-20reconnect/probe allowance are
+estimates, not hard workload bounds under arbitrary failures. SDK reconnects
+remain outside BOOK limiter; acceptance checks actual charged minute counters.
+No choice of2400 without evidence decomposing non-MARK<=300. Guide records
+startup/recovery bursts and immutable packet rerender requirements.
+
+Validation: arithmetic assertions, three-file documentation diff and diff-check.
+No source suite/build/probe or runtime action. apply_patch helper failed mountinfo;
+exact append fallback under rule32 used and diff reviewed. No push/merge.
+Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2; active worktree
+/home/bobby/.worktrees/data-layer-p184-closure on fix/p184-dl-closure.
+Runtime image/config set and rollback artifacts unchanged, not re-inventoried.
+No disposable resources created; Docker/BuildKit cleanup intentionally deferred
+for this documentation slice. v2.2.3HOLD; D1 runtime acceptance NOT_RUN.

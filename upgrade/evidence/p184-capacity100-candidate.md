@@ -239,3 +239,36 @@ verify the selected quota with the actual caller before calling D1 accepted.
 Exit: numerical RPM with explicit inputs, shared-limiter namespace verified,
 old/new bundle hashes, r23/JWT11 paired reader/writer packet, rollback to rev10
 and r22/JWT10. Neither final RPM nor runtime activation is certified here.
+
+## D1 Sizing Frozen For Rev11 Packet - 2026-10-09
+
+D1_PACKET_COMPLETE_NOT_APPLIED. Supersedes RPM_NOT_FROZEN above. TS f457e7a
+bounds MARK wake with DATA_LAYER_V2_MARK_WAKE_MIN_INTERVAL_MS=500, constructor
+range100..1000ms. Pin500 in the paired TS packet; parser accepting100 does not
+make a100ms configuration fit this budget. Wake and poll share the read cadence.
+No provider event-rate measurement or900-request decomposition is needed to
+select the conservative3000RPM option requested by owner.
+
+| Component | Quota units/min | Evidence class |
+| --- | ---: | --- |
+| Existing traffic counted conservatively as non-MARK | 900 | Measured total900/898,n2; not a hard future bound |
+| Linear MARK | 1200 | 10symbols x2reads/s x60; modeled unbatched ceiling |
+| Inverse MARK | 120 | 1symbol x2reads/s x60; modeled unbatched ceiling |
+| Fast BOOK retry | 240 | 4processes x0.5/s x2units x60 |
+| Incremental probes/reconnects | 20 | Planning allowance, not a storm bound |
+| Total planning load | 2480 | Conservative steady/retry scenario, not measured capacity |
+| Selected requests_per_minute | 3000 | Packet decision |
+| Remaining reserve | 520 | 20.97% above planning load;17.33% of quota |
+
+max_streams=77 for64 active. The64/77 and stage100244/293 or564/677 arithmetic
+is unchanged.3000 replaces1500 in the proposed Paper rev11 only; no other
+consumer, buffer, CPU/RAM limit or freshness gate changes. Do not choose2400
+without measured non-MARK<=300 decomposition and a new reviewed budget.
+
+Review caveat: reference_batch costs one authenticated HTTP call; batching can
+reduce charges. SDK resubscriptions, cold resolve, fixed-minute edge and startup
+can consume the520 reserve; repeated failures are not bounded by the20 estimate.
+Stagger startup and measure real shared Query+Stream minute counters,429 and
+reconnect counts in the approved window. Do not disable limits or open a second
+Paper probe to force admission. Quota admission is not stage100 capacity proof.
+Paired execution/rollback checklist: p184-dl-phase-c-packet.md, D1 rev11 section.
