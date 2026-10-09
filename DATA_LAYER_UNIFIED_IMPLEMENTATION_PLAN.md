@@ -71183,3 +71183,31 @@ Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2; active worktree
 Runtime image/config set and rollback artifacts unchanged, not re-inventoried.
 No disposable resources created; Docker/BuildKit cleanup intentionally deferred
 for this documentation slice. v2.2.3HOLD; D1 runtime acceptance NOT_RUN.
+
+### D1 rev11 rendered by Claude (owner reassigned DL closure to Claude) - 2026-10-09
+
+Status RENDERED_NOT_APPLIED. Owner reassigned the DL phase D work to Claude. Packet design is unchanged from 4fc987a.
+- `scripts/prepare_paper_read_extension.py`: optional upward quota change (`--max-streams`, `--requests-per-minute`), only
+  those two keys, only raised, recorded as `provenance.quota_change`. Without it the output is identical to the original
+  IDR-075 preparation. `tests.test_paper_read_extension` 11 PASS in the rc2 image (commit 76db472).
+- Inputs equal runtime byte for byte:
+  - catalog `fc3a1e1e` = `releases/v2.2.0-02cd827/runtime/stable-source-bindings.yaml`;
+  - Paper manifest `1e489237` = the file baked in Query 514506122111;
+  - binding `5703582a` = the writer mount (r22, rev 10).
+  Parity: `kn_gateway_bundle.py` from the reader image with those inputs reproduces the deployed bundle exactly
+  (`c5d964c4`).
+- Rendered in `~/.local/state/qdl-v2/p184-d1-rev11-20261009/`:
+  - `prepared.json` 553cab32;
+  - `trading-system-paper-r11.yaml` efd482fa: rev 11, quotas 77/3000, +4 inverse requirements, nothing removed;
+  - `trading-system.paper.stable-r23-v3.json` 685fdf6f: binding r23 V3, 64 products, binding_sha256 c9a28653;
+  - `bundle-r11.json` 65b790ec: gateway bundle sha256 f04ba6dc; only the Paper manifest entry differs, catalog,
+    environment and schema are equal, and manifest order follows paths.
+  - Paired consumer env: `DATA_LAYER_V2_JWT_MANIFEST_REVISION=11`,
+    `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256=7b8af009...`.
+  - The TS validator `p184_validate_qdl_paper_extension.py` returns VALIDATED_PREPARATION_ONLY (60 preserved, 4 added).
+- Reader step rendered (TS state dir `p184-rev11-window/readers_rev11.py`): query_kn_1/2 and stream_kn_1/2 keep their images;
+  only the `/consumer-realms` mount moves to the new realm dir, and for Query the Paper entry of
+  QDL_STABLE_CONSUMER_MANIFESTS changes.
+- OPEN: the new realm dir `p184-d1-rev11-20261009/reader-public` (root-owned copy of the deployed one + the rev11 manifest)
+  still holds the OLD bundle.json. Installing the rev11 bundle needs a root write that requires owner permission. It must
+  not be mounted before that. No runtime change was made.
