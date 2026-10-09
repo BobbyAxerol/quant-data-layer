@@ -70948,3 +70948,15 @@ canonical data; not TS fault acceptance. Initial probe fixture gap retained and
 corrected, not reader policy. Exact5roles/keys cleaned; no build/sharedmutation.
 Diskafter111828414464bytesfree; unrelated cache retained for concurrentwork.
 Canonicalmain5bf5cd5/stablev2.2.2, runtime unchanged, v2.2.3HOLD. No push/merge.
+
+### TS ten MARK stream quota confirmation - 2026-10-09
+
+Status QUOTA_DESIGN_CONFIRMED_RUNTIME_NOT_ACTIVATED. Appended amendment in
+upgrade/evidence/p184-capacity100-candidate.md. Actual deployed bundle TSrev10:
+50streams/1500RPM; both Stream384+32replay, restart0/OOMfalse. Ten extraMARK
+requires60active,72reservedTS slots. Stage100realistic240/288 andstress560/672
+(active/reserved), tested with existingplanner. Current384doesnotfitstress
+failover.1024modeledplanfits but no capacitycertification. Inverseadditional
+subscriptions must be counted separately. No quota/buffer/manifest/runtimechange.
+Scoped62test final suite includes thisregression; no further build or resources.
+No push/merge; v2.2.3HOLD. Runtime/cleanup as precedingDR05entry.

@@ -86,6 +86,19 @@ class Capacity100Tests(unittest.TestCase):
         self.assertEqual([d.streams_needed for d in plan.demands], [300, 300])
         self.assertEqual([d.quota_needed for d in plan.demands], [4500, 4500])
 
+    def test_ten_mark_streams_need_seventy_two_ts_slots(self):
+        for profile, total, reserved in (("realistic", 240, 288), ("stress5", 560, 672)):
+            _, report = self.plan(profile=profile, ts=TSReservation("ts", 60, 60, 1000),
+                                  gateway_subscription_limit=1024)
+            self.assertEqual(report["total_streams"], total)
+            self.assertEqual(report["reserved_streams"], reserved)
+            ts = next(row for row in report["identities"] if row["role"] == "TS")
+            self.assertEqual(ts["candidate_streams"], 72)
+            self.assertEqual(ts["stream_shortfall"], 22)
+            self.assertEqual(ts["candidate_rpm"], 1500)
+            self.assertTrue(report["gateway_slots_fit"])
+            self.assertFalse(report["sealed_identity_quotas_fit"])
+
     def test_sdk_snapshot_plus_subscribe_handoff_is_reserved(self):
         _, report = self.plan(profile="stress5")
         alpha = [r for r in report["identities"] if r["role"] == "ALPHA"]

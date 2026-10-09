@@ -140,3 +140,55 @@ readback and NOT traffic. Docker--rm/networknone/readonly removed after success.
 Before further load/build: root filesystem observed100%,229122048bytes free.
 Restore measured disk headroom with an ownership-safe cleanup packet; no broad
 prune while Claude may be building. No test or runtime data deleted to mask this.
+
+## TS Ten MARK Streams Amendment - 2026-10-09
+
+Status QUOTA_DESIGN_CONFIRMED / RUNTIME_NOT_ACTIVATED / CAPACITY_NOT_CERTIFIED.
+This supersedes the50-stream assumption above for the proposed linear TS60
+stream workload; it does not alter historical measurements.
+
+Read-only runtime evidence: both deployed Stream replicas use image
+`1f13408fe94698a45f18e59e61c6554e979308dcebfe21514a5d0534609a51e9`,
+`QDL_KN_MAX_SUBSCRIPTIONS=384`, `QDL_KN_MAX_REPLAY_RPCS=32`, restart0/OOMfalse.
+Read `/consumer-realms/bundle.json` inside active Stream: TS paper revision10,
+max_streams50, RPM1500, max_buffer_events2000, max_batch_items50, max_warmup_rows2000.
+Source confirms `consumers/stable/trading-system-paper.yaml:23`/`:26`.
+Therefore **ten additional concurrent MARK streams are NOT admitted by the
+current TS quota**. Existing route entitlement is not an extra stream slot.
+
+| Quantity | Realistic100 | Stress5 x100 |
+| --- | ---: | ---: |
+| Alpha active streams | 180 | 500 |
+| TS active streams, including ten MARK | 60 | 60 |
+| Total active | 240 | 560 |
+| Alpha reserved,1.2x | 216 | 600 |
+| TS reserved,ceil(60x1.2) | 72 | 72 |
+| Total reserved | 288 | 672 |
+
+The existing planner with TSReservation(ts,60,60,1000) confirms both profiles;
+new regression `test_ten_mark_streams_need_seventy_two_ts_slots` checks total,
+reserved, quota shortfall22 and unchanged1500RPM candidate. The22 deficit is
+72reserved minus50configured; immediate active deficit is10.
+RPM1500 remains conditional on1000steadyrequests/minute including recovery and
+probes. Do NOT subtract ten polling lanes without measuring actual caller changes.
+The planner accounts startup/reconnect calls; quota is not latency acceptance.
+
+Candidate request: TS max_streams72, no per-client buffer increase. For full
+stress100, reserve672slots on **one** replica so peer loss fits; current384fails
+by288reserved slots (176active). Existing modeled1024-slot plan fits arithmetically
+with352reserved slots left, plus separately bounded32Replay. Its307MiB modeled
+RAM is not a measurement. No CPU/RAM or quota activation was performed.
+Alpha current2400RPM/60slots each still falls short of the stage100 candidates
+4506/4509RPM+108slots(realistic),4950RPM+300slots(stress).
+
+Pending IDR075 inverse products are not silently included in the linear60.
+If all four additional products become simultaneous streams, TS64 needs77
+reserved slots; stress total becomes564active/677reserved. Freeze the actual
+caller subscription roster before rendering the coordinated manifest/bundle
+revision and JWT/consumer config. Do not spend recovery headroom on uncounted
+feeds or open a second probe on the shared TS identity.
+
+Decision boundary: owner/Claude can use72 as the TS60 quota requirement in the
+next reviewed packet. Current deployment cannot accept the extra10 unchanged.
+Stage100 remains unmeasured, not blocked on Paper implementation. Approval to
+plan100alphas is not evidence that the existing384slot runtime can serve them.
