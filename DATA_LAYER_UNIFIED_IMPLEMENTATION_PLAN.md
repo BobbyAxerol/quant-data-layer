@@ -70924,3 +70924,27 @@ Cleanup exact isolated5roles and credentials; label inventoryempty. Observerexit
 No build/image/volume created; broadprune deferred unrelatedownedcache. Diskafter
 113936941056bytes; no pre/post freed claim. CanonicalDL main5bf5cd5/stablev2.2.2
 per ledger, featurefix/p184-dl-closure; runtime unchanged by turn, v2.2.3HOLD.
+
+### DR05 public router and TS MARK quota - 2026-10-09
+
+Status IN_PROGRESS. Owner approved connecting public router in isolated Query and
+confirming ten additional TS MARK streams within stage100. Reuse production
+create_v2_app, packet JWT key/realm/subject pins, manifests, bounded requests and
+shared isolated Redis quota; keep mTLS/internal read-view and DR08 default intact.
+Tests: public route presence, authorized reads, realm/revision/identity/feed
+negatives and quota failure. No shared runtime or manifest activation. Rollback
+is reverting isolated harness source only; dispose owned test resources. Quota
+is workload arithmetic, not measured100-alpha capacity. Guide:
+upgrade/evidence/p184-capacity100-candidate.md. No push/merge/image build.
+
+### DR05 public router result - 2026-10-09
+
+Status IMPLEMENTED_ISOLATED_HTTP_TESTED. Guide/evidence:
+upgrade/evidence/p184-dr05-public-router-20261009.md. Production public router
+now mounted in DR05 with real isolated JWT/manifest/Redis quota and mTLS; DR08
+default unchanged. Existing-image scoped suite62PASS0fail0skip; includes next
+quota slice. Actual SDK transport HTTPS8/8 reads and4/4negative401. Test-only
+canonical data; not TS fault acceptance. Initial probe fixture gap retained and
+corrected, not reader policy. Exact5roles/keys cleaned; no build/sharedmutation.
+Diskafter111828414464bytesfree; unrelated cache retained for concurrentwork.
+Canonicalmain5bf5cd5/stablev2.2.2, runtime unchanged, v2.2.3HOLD. No push/merge.

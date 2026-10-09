@@ -228,6 +228,39 @@ def ts_packet(work, runner, packet, binding, rows, base=None):
     return json.loads(json.dumps(ts_input, default=lambda value: value.value))
 
 
+def public_query_app(work, service, issuer):
+    """Use the production HTTP boundary with this disposable packet's authority."""
+    from qdl.api_v2.router import create_v2_app
+    from qdl.consumer import ConsumerManifestLoader, ConsumerManifestRegistry
+    from qdl.runtime.bounds import RequestBounds
+    from qdl.security.data_plane import (
+        DataPlaneIdentityService, DataPlaneSecurityConfig, RedisMinuteQuota,
+    )
+    from scripts.p184_dr05_dl_fault import namespace
+
+    packet = json.loads((work / "packet.json").read_text())
+    ns = namespace(packet["namespace"])
+    if packet.get("provenance") != "TEST_ONLY":
+        raise ValueError("isolated public Query requires TEST_ONLY packet")
+    paths = packet["isolated_manifest_paths"]
+    if paths != ["/work/binance.yaml", "/work/okx.yaml"]:
+        raise ValueError("unexpected isolated manifest paths")
+    manifests = ConsumerManifestRegistry(tuple(
+        ConsumerManifestLoader.load(work / Path(path).name) for path in paths))
+    raw = json.loads((work / "jwt-config.json").read_text())
+    security = DataPlaneSecurityConfig(
+        environment="paper", issuer=raw["issuer"], audience=raw["audience"],
+        algorithms=tuple(raw["algorithms"].split(",")), keys_by_id=raw["keys"],
+        subjects_by_key_id=raw["subjects"], environments_by_key_id=raw["environments"],
+        max_token_lifetime_seconds=raw["max_lifetime_seconds"])
+    quota = RedisMinuteQuota.from_url("redis://localhost:6379/0",
+                                    prefix="qdl:stable:v2:paper:" + ns)
+    identity = DataPlaneIdentityService(security, manifests, quota=quota)
+    return create_v2_app(service, identity_service=identity, cursor_issuer=issuer,
+        request_bounds=RequestBounds(max_concurrent_requests=16),
+        contract_version="2.0.0", authority="INTERNAL_STABLE")
+
+
 def diagnostic_query(work):
     # Capture the REAL Query handoff from the same RPC, without changing it.
     from qdl.runtime.kn_query_backend import KnCursorV3Issuer
@@ -243,7 +276,7 @@ def diagnostic_query(work):
                 "view": item}) + "\n")
         return bound
     KnCursorV3Issuer.bind_history = bind
-    serve_query(work)
+    serve_query(work, public_app_factory=public_query_app)
 
 
 def main():

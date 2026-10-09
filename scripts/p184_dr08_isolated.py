@@ -861,7 +861,7 @@ def prepare_topics(work):
     (work / "packet.json").write_text(json.dumps(packet))
 
 
-def serve_query(work):
+def serve_query(work, *, public_app_factory=None):
     """Real KN Query read-view stack, backed by the isolated canonical hot view."""
     import ssl
     import uvicorn
@@ -891,7 +891,8 @@ def serve_query(work):
     issuer = KnCursorV3Issuer(settings, catalog)
     service, _, _ = build_stable_query_stack(spool=None, catalog=catalog, schema_digest="a" * 64,
         handoff=None, cursor_ttl_seconds=3600, backend=backend, issuer=issuer)
-    app = FastAPI()
+    app = (public_app_factory(work, service, issuer)
+           if public_app_factory is not None else FastAPI())
     install_kn_read_view(app, service=service, backend=backend, issuer=issuer,
                         secret=bytes.fromhex((work / "read-view.secret").read_text()))
     try:
