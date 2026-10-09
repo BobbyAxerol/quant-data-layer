@@ -71258,3 +71258,15 @@ Status IMPLEMENTED / TESTED_LOCALLY (not deployed; it goes into the consolidated
   - non-MARK feeds never consult hot.
 - Load note: about 1 extra hot gRPC read per execution MARK read (TS: up to 2/s per symbol, 10 linear + 1 inverse) on the
   Stream gateways. To measure in the D5 rollout; it is not a capacity claim.
+
+### Owner decisions for the DL closure - 2026-10-09 (Claude)
+
+AskUserQuestion answers, recorded before the respective work.
+- IDR-040 fix 2 and IDR-003 (new optional quality field): DEFERRED, not in v2.2.3. Recorded limit: a quiet Binance book is
+  refused as stale beyond its last frame, never falsely fresh. A later release adds the field with the tolerant reader first.
+- trading-system.live / .sandbox realms stay at 50 streams / 1500 RPM. A separate rev packet follows when a caller enables
+  MARK wake or inverse there.
+- G4/G5: the baseline rule is in TS upgrade/p184-phase-d-gates.md "Owner amendment 2026-10-09":
+  - G4 candidate p95 <= baseline x 1.2 per feed/venue;
+  - G5 stage-50 targets where they exist, otherwise baseline p95 x 1.5 per shape, frozen before candidate load.
+- Stage-100 load: synthetic driver with real SDK sessions on the capacity100 profiles plus the real TS writer.
