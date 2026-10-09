@@ -71282,3 +71282,25 @@ only kafka.
   its text. No retry was added and no deadline was extended.
 - Tests in the rc2 image: tests.test_p184_dr05_reset + channel + case: 53 PASS. The new case is a topic reset failing with rc 1
   and stderr; it checks stage, rc, bound and non-printable stripping.
+
+### D3 slice 1: stage-100 ramp in the existing target driver - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY (no traffic, no runtime change).
+- `qdl/certification/phase3_consumer_load.py`, additive:
+  - P184_STAGE_MIX {20: (8,6,4,2), 50: (20,15,10,5), 100: (40,30,20,10)} and P184_STAGE_SECONDS {20: 600, 50: 600,
+    100: 1800}. The frozen v2.1.1 tables and budget are untouched.
+  - build_target_workload_plan accepts stage 100.
+  - load_p184_stage100_budget (schema `qdl.p184.stage100-budget.v1`) refuses budgets that are not marked
+    frozen_before_candidate, lack G5 shape limits or lack the TS route count.
+  - evaluate_target_acceptance adds `g5:COLD_<rows>:<venue>` gates: max of the cold reads within the frozen limit,
+    small-sample rule, so a missing or failed read fails.
+- `scripts/phase3_consumer_load_acceptance.py`: optional `--budget` selects the stage-100 budget, its stages and
+  durations; stage 100 is the final run. Without it the v2.1.1 behaviour is byte-identical.
+- Tests (rc2 image 77682eea, network none): tests.test_p184_stage100 (new, 7) + target workload/consumer load/target
+  driver/consumer load driver/capacity100/kn capacity budget: 111 run, 1 failure.
+  - The failure is pre-existing: `test_phase3_target_driver.test_a_typed_rejection_is_counted_by_code` counts 5 instead
+    of 4 rejections in 0.2 s, 3/3 at HEAD 522cf3e without this change.
+  - It is a tick fencepost in the test expectation, not caused by this slice. It is recorded, not hidden, and remains to
+    fix in the driver's own tests.
+- The stage-100 plan does not fit the deployed alpha manifests (2400 RPM / 60 streams). The capacity100 candidate quota
+  (4950 / 300) carries it. That runtime packet is the next D3 slice.

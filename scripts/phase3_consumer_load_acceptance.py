@@ -3196,15 +3196,25 @@ def run_target_host(args: argparse.Namespace) -> int:
     profile = validate_profile(_read_json(args.profile))
     if {item["id"] for item in profile["identities"]} != set(_TARGET_VENUE_IDENTITY.values()):
         raise ValueError("target mode runs exactly the two alpha platform identities")
-    budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
-    budget = load_target_budget(json.loads(budget_bytes))
     matrix = args.mode in {"target-matrix", "kn4-matrix"}
-    if args.sessions not in TARGET_STAGE_SECONDS:
-        raise ValueError("target sessions must be exactly one of 5,20,35,50")
-    duration = 0 if matrix else TARGET_STAGE_SECONDS[args.sessions]
+    budget_path = getattr(args, "budget", None)
+    if budget_path is not None:
+        # P18.4 stage-100 ramp: its own frozen budget; the v2.1.1 contract below stays untouched.
+        budget_bytes = Path(budget_path).read_bytes()
+        budget = planner.load_p184_stage100_budget(json.loads(budget_bytes))
+        stage_seconds = planner.P184_STAGE_SECONDS
+        final_stage = 100
+    else:
+        budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
+        budget = load_target_budget(json.loads(budget_bytes))
+        stage_seconds = TARGET_STAGE_SECONDS
+        final_stage = 50
+    if args.sessions not in stage_seconds:
+        raise ValueError(f"target sessions must be exactly one of {','.join(map(str, sorted(stage_seconds)))}")
+    duration = 0 if matrix else stage_seconds[args.sessions]
     if args.duration_seconds != duration:
         raise ValueError(f"target stage {args.sessions} runs exactly {duration} s from the frozen budget")
-    final = not matrix and args.sessions == 50
+    final = not matrix and args.sessions == final_stage
     if final:
         assert_no_disposable_probes()
     workers = 1 if matrix else target_worker_count(args.sessions)
@@ -3353,6 +3363,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--inside-worker", nargs=2, type=int, metavar=("INDEX", "COUNT"), help=argparse.SUPPRESS)
     value.add_argument("--sessions", type=int)
     value.add_argument("--duration-seconds", type=int)
+    value.add_argument("--budget", type=Path, help="P18.4 stage-100 budget (qdl.p184.stage100-budget.v1)")
     return value
 
 
