@@ -127,3 +127,11 @@ class ManifestOverrideTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     driver._manifest_overrides(bad)
         self.assertEqual(driver._manifest_overrides(None), {})
+
+    def test_sdk_from_source_is_an_opt_in_boolean(self):
+        import scripts.phase3_consumer_load_acceptance as driver
+        self.assertFalse(driver._sdk_from_source(None))
+        self.assertTrue(driver._sdk_from_source(True))
+        for bad in ("true", 1, []):
+            with self.assertRaises(ValueError):
+                driver._sdk_from_source(bad)

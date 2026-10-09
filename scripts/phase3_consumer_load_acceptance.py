@@ -232,7 +232,8 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
     # is recorded, never used to relax a gate.
     # KN-4 D41: a shadow kn4-matrix names the isolated canonical broker its
     # handoff oracle reads (never a production broker).
-    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container", "manifest_overrides"}
+    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container", "manifest_overrides",
+                "sdk_from_source"}
     if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
     scope = raw.get("scope", "production")
@@ -315,7 +316,18 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "ts_container": raw.get("ts_container") if isinstance(raw.get("ts_container"), str)
         and _NETWORK_RE.fullmatch(raw["ts_container"]) else None,
         "manifest_overrides": _manifest_overrides(raw.get("manifest_overrides")),
+        "sdk_from_source": _sdk_from_source(raw.get("sdk_from_source")),
     }
+
+
+def _sdk_from_source(value: object) -> bool:
+    """P18.4 D3 window C: run the clients on this checkout's qdl_sdk (the SDK under release, e.g. the replica
+    round-robin start fix) instead of the copy baked into the client image. Opt-in; the server side is unchanged."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError("Phase-3 sdk_from_source must be a boolean")
+    return value
 
 
 def _manifest_overrides(value: object) -> dict[str, str]:
@@ -523,6 +535,8 @@ def docker_command(
         "--mount", f"type=bind,src={profile['runtime_dir']},dst=/runtime,readonly",
         *[arg for consumer, path in sorted((profile.get("manifest_overrides") or {}).items())
           for arg in ("--mount", f"type=bind,src={path},dst={_PHASE3_CONSUMER_MANIFESTS[consumer]},readonly")],
+        *(("--mount", f"type=bind,src={ROOT / 'qdl_sdk'},dst=/app/qdl_sdk,readonly")
+          if profile.get("sdk_from_source") else ()),
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",
