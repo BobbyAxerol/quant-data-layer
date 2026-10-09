@@ -232,7 +232,7 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
     # is recorded, never used to relax a gate.
     # KN-4 D41: a shadow kn4-matrix names the isolated canonical broker its
     # handoff oracle reads (never a production broker).
-    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container"}
+    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container", "manifest_overrides"}
     if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
     scope = raw.get("scope", "production")
@@ -314,7 +314,21 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "oracle_bootstrap": oracle,
         "ts_container": raw.get("ts_container") if isinstance(raw.get("ts_container"), str)
         and _NETWORK_RE.fullmatch(raw["ts_container"]) else None,
+        "manifest_overrides": _manifest_overrides(raw.get("manifest_overrides")),
     }
+
+
+def _manifest_overrides(value: object) -> dict[str, str]:
+    """P18.4 D3 window B: a deployed consumer manifest revision (e.g. alpha rev15) mounted over the client image's baked
+    copy, so the client loads the same quotas and mints JWTs for the same revision as the readers."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value) - set(_PHASE3_CONSUMER_MANIFESTS):
+        raise ValueError("Phase-3 manifest overrides must name known consumers")
+    for path in value.values():
+        if not isinstance(path, str) or not path.endswith(".yaml") or not Path(path).is_file():
+            raise ValueError("Phase-3 manifest override file is unavailable")
+    return dict(value)
 
 
 def _docker_image_id(image: str) -> str:
@@ -507,6 +521,8 @@ def docker_command(
         "--env", "PYTHONPATH=/app:/driver",
         "--env", "QDL_PHASE3_LOAD_CONFIG=" + json.dumps(inner, sort_keys=True, separators=(",", ":")),
         "--mount", f"type=bind,src={profile['runtime_dir']},dst=/runtime,readonly",
+        *[arg for consumer, path in sorted((profile.get("manifest_overrides") or {}).items())
+          for arg in ("--mount", f"type=bind,src={path},dst={_PHASE3_CONSUMER_MANIFESTS[consumer]},readonly")],
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",

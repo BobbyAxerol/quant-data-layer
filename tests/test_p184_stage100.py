@@ -111,3 +111,19 @@ class FreezeBudgetTests(unittest.TestCase):
         base = json.loads(Path("config/v2/v211-target-acceptance-budget.json").read_text())
         with self.assertRaisesRegex(ValueError, "COLD_5000"):
             freeze(base, {"cold": [{"venue": "OKX", "rows": 2500, "ms": 1.0}]}, [], ts_routes=64, sources={})
+
+
+class ManifestOverrideTests(unittest.TestCase):
+    def test_overrides_are_validated_and_mounted_over_the_baked_manifest(self):
+        import tempfile
+        from pathlib import Path
+        import scripts.phase3_consumer_load_acceptance as driver
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "alpha.binance.paper.stable-r15.yaml"
+            path.write_text("x")
+            self.assertEqual(driver._manifest_overrides({"alpha.binance.paper.stable": str(path)}),
+                             {"alpha.binance.paper.stable": str(path)})
+            for bad in ({"unknown.consumer": str(path)}, {"alpha.binance.paper.stable": tmp + "/missing.yaml"}, ["x"]):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    driver._manifest_overrides(bad)
+        self.assertEqual(driver._manifest_overrides(None), {})
