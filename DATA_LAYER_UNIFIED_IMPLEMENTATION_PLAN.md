@@ -71211,3 +71211,11 @@ Status RENDERED_NOT_APPLIED. Owner reassigned the DL phase D work to Claude. Pac
 - OPEN: the new realm dir `p184-d1-rev11-20261009/reader-public` (root-owned copy of the deployed one + the rev11 manifest)
   still holds the OLD bundle.json. Installing the rev11 bundle needs a root write that requires owner permission. It must
   not be mounted before that. No runtime change was made.
+
+### D1 rev11 window executed and rolled back - 2026-10-09 (Claude)
+
+Owner-approved window, 15:11:05-15:18:28Z. The four readers (query_kn_1/2, stream_kn_1/2) took the rev11 realm without
+error: healthy, bundle f04ba6dc, restarts 0. The TS writer reached only 54/64 ready: TS defect IDR-083 (the MARK ordering
+authority includes the release manifest hash, and the marker has no TTL). Everything was rolled back to rev10 / bundle
+c5d964c4 / writer 9ca122a, READY 60/60. DL artifacts and reader step are unchanged and reusable. The retry waits for the
+TS IDR-083 fix. Receipts are in the TS journal (runtime action 7). v2.2.3 HOLD.
