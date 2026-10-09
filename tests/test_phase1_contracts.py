@@ -40,6 +40,26 @@ class CanonicalDecimalTests(unittest.TestCase):
             with self.subTest(value=invalid), self.assertRaises(ValueError):
                 CanonicalDecimal.from_text(invalid)
 
+    def test_shared_parse_cache_returns_exactly_the_uncached_parse(self):
+        # P18.4 D3: repeated texts are parsed once; results are frozen values
+        # of the text, invalid texts are never stored and keep raising.
+        from qdl.domain import decimal as decimal_module
+
+        texts = ("61234.10", " 61234.10 ", "0", "-0.000", "1E+3", "-12.5e-2", "000.10",
+                 "123456789012345678901.123", "9223372036854775807", "-9223372036854775809")
+        for text in texts:
+            with self.subTest(text=text):
+                cached = CanonicalDecimal.from_text(text)
+                self.assertEqual(cached, CanonicalDecimal._parse(text.strip()))
+                self.assertIs(CanonicalDecimal.from_text(text), cached)
+        before = decimal_module._canonical_from_text.cache_info().currsize
+        for invalid in ("NaN", "x1", "  "):
+            for _ in range(2):
+                with self.subTest(value=invalid), self.assertRaises(ValueError):
+                    CanonicalDecimal.from_text(invalid)
+        self.assertEqual(decimal_module._canonical_from_text.cache_info().currsize, before)
+        self.assertGreater(decimal_module._canonical_from_text.cache_info().maxsize, 0)
+
 
 class DeterministicEventIdTests(unittest.TestCase):
     def test_is_stable_and_length_delimited(self):

@@ -703,7 +703,8 @@ class KnQueryBackendRedisTests(unittest.TestCase):
         second = backend.history(req)
         self.assertEqual(backend.rows.stats()["misses"], 40, "the second read reuses every row")
         self.assertEqual(second, first)
-        self.assertTrue(all(item.render_key for item in second.items))
+        self.assertTrue(all(item.render_key and item.render_slot is not None for item in second.items))
+        self.assertIs(second.items[0].render_slot, first.items[0].render_slot, "one slot per cached row")
         # A later read at a later time rebuilds quality: no cached verdict.
         clock["now"] += 3_600_000_000_000
         later = backend.history(req)
@@ -717,7 +718,8 @@ class KnQueryBackendRedisTests(unittest.TestCase):
             return body
 
         def stripped(history):
-            return replace(history, items=tuple(replace(item, render_key=None) for item in history.items))
+            return replace(history, items=tuple(replace(item, render_key=None, render_slot=None)
+                                                for item in history.items))
 
         # Cached row derivations render exactly like fresh ones.
         self.assertEqual(render(later), render(stripped(later)))

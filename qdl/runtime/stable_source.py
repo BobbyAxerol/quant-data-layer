@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import Callable
 
 from qdl.query.cold_work import cold_yield
@@ -95,11 +96,17 @@ def _interval_ns(interval: str) -> int:
         raise ValueError(f"stable BAR interval is unsupported: {interval}") from error
 
 
+@lru_cache(maxsize=None)
+def _quality_flag_name(value: int) -> str:
+    # ``EnumTypeWrapper.Name`` costs ~15 us and runs for every flag of every
+    # row of every warmup (P18.4 D3 profile). Only defined values are cached
+    # (an unknown value raises and is never stored), so the cache is bounded
+    # by the enum.
+    return common_pb2.QualityFlag.Name(value).removeprefix("QUALITY_FLAG_")
+
+
 def _quality_flag_names(envelope: market_data_pb2.EventEnvelope) -> tuple[str, ...]:
-    return tuple(
-        common_pb2.QualityFlag.Name(value).removeprefix("QUALITY_FLAG_")
-        for value in envelope.quality_flags
-    )
+    return tuple(_quality_flag_name(value) for value in envelope.quality_flags)
 
 
 def _metric_unit_name(value: int) -> str:

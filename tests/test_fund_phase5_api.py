@@ -544,6 +544,56 @@ class Phase5ApiTests(unittest.TestCase):
             JSONResponse(content=router_module._warmup_batch_response(None, None, empty, ())
                          .model_dump(mode="json", by_alias=True)).body)
 
+    def test_cached_static_view_renders_identical_bytes_and_still_validates_request_fields(self):
+        # P18.4 D3: a row's encoded static members are kept in its render slot
+        # after its first render; later renders validate and splice only the
+        # request-dependent fields (quality, cursor, snapshot, watermark).
+        import copy
+        from dataclasses import replace
+        from pydantic import ValidationError
+        from qdl.query.row_cache import RenderSlot
+        from qdl.query.service import WarmupResult
+
+        history = self.backend.history(self.requirement)
+        self.assertTrue(history.items)
+        slots = [RenderSlot() for _ in history.items]
+
+        def slotted(value):
+            return replace(value, items=tuple(
+                replace(item, render_slot=slot) for item, slot in zip(value.items, slots, strict=True)))
+
+        def reference(value):
+            return JSONResponse(content=router_module._warmup(WarmupResult("r", value))
+                                .model_dump(mode="json", by_alias=True)).body
+
+        self.assertEqual(router_module._render_warmup_result(WarmupResult("r", slotted(history))),
+                         reference(history))
+        self.assertTrue(all(isinstance(slot.value, tuple) for slot in slots))
+        later = replace(history, items=tuple(replace(
+            item, cursor=f"cursor-{index}", snapshot_id="snapshot-2", watermark_offset=item.watermark_offset + 9,
+            quality=replace(item.quality, state="STALE", freshness_ms=item.quality.freshness_ms + 61_000,
+                            flags=(*item.quality.flags, "STALE"), execution_eligible=False),
+        ) for index, item in enumerate(history.items)))
+        with patch.object(router_module, "_market_item", side_effect=AssertionError("static view rebuilt")):
+            cached = router_module._render_warmup_result(WarmupResult("r", slotted(later)))
+        self.assertEqual(cached, reference(later))
+        self.assertNotEqual(cached, reference(history))
+        # The request fields keep the public field definitions on the fast path.
+        for bad in (dict(cursor=123), dict(watermark_offset=-1),
+                    dict(quality=replace(history.items[0].quality, state="BOGUS"))):
+            item = replace(history.items[0], render_slot=slots[0])
+            try:
+                item = replace(item, **bad)
+            except ValueError:
+                continue  # the internal item already refuses it
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                router_module._market_item_json(item)
+            with self.subTest(bad=bad, path="full"), self.assertRaises(ValidationError):
+                router_module._market_item_json(replace(item, render_slot=None))
+        # A copied item shares its slot; equality ignores it.
+        self.assertIs(copy.deepcopy(slots[0]), slots[0])
+        self.assertEqual(replace(history.items[0], render_slot=slots[0]), history.items[0])
+
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(
             **{**self.requirement.__dict__, "consumer_grade": ConsumerGrade.EXECUTION}

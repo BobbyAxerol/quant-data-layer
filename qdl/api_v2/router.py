@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl_sdk.models import ResponseModel
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
@@ -182,7 +184,7 @@ def _decimal(value: object) -> DecimalValue:
     if not parsed.is_finite():
         raise ValueError("canonical decimal field must be finite")
     sign, digits, exponent = parsed.as_tuple()
-    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    coefficient = int("".join(map(str, digits)) or "0")
     if sign:
         coefficient = -coefficient
     return DecimalValue(
@@ -369,10 +371,15 @@ def _typed_payload(item) -> dict:
     raise ValueError(f"public typed payload is undefined for {item.feed.value}")
 
 
-def _market_item(item) -> MarketDataView:
+def _quality_fields(item) -> dict:
     quality = {**asdict(item.quality), "flags": list(item.quality.flags)}
     if item.feed not in EXECUTION_PRICE_VALIDATION_FEEDS:
         quality["execution_eligible"] = False
+    return quality
+
+
+def _market_item(item) -> MarketDataView:
+    quality = _quality_fields(item)
     return MarketDataView(
         instrument_uid=item.instrument_uid,
         instrument_id=item.instrument_id,
@@ -390,6 +397,87 @@ def _market_item(item) -> MarketDataView:
         snapshot_id=item.snapshot_id,
         watermark_offset=item.watermark_offset,
     )
+
+
+# MarketDataView fields that depend on the request (time, cursor, view);
+# every other field is a function of the row's immutable content (KN-4 D30).
+_VIEW_DYNAMIC_FIELDS = ("quality", "cursor", "snapshot_id", "watermark_offset")
+# The same field definitions (types, bounds) as MarketDataView, validated
+# alone once a row's static fields were validated and encoded.
+_MarketDataViewDynamic = create_model(
+    "MarketDataViewDynamic",
+    __base__=ResponseModel,
+    **{name: (MarketDataView.model_fields[name].annotation, MarketDataView.model_fields[name])
+       for name in _VIEW_DYNAMIC_FIELDS},
+)
+
+
+# What ``json.dumps(value, ensure_ascii=False, allow_nan=False, indent=None,
+# separators=(",", ":"))`` builds per call (the ``JSONResponse`` encoding);
+# one stateless instance, without a constructor per row.
+_JSON_ENCODER = json.JSONEncoder(ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"))
+
+
+def _encode_json(value) -> bytes:
+    return _JSON_ENCODER.encode(value).encode("utf-8")
+
+
+_VIEW_DYNAMIC_PREFIX = {name: _encode_json(name) + b":" for name in _VIEW_DYNAMIC_FIELDS}
+
+
+def _view_layout(dump: dict) -> tuple:
+    """A view's members in field order: each run of static members encoded
+    once as ``"k":v,...`` bytes, each dynamic member as its field name."""
+
+    parts, run = [], {}
+    for key, value in dump.items():
+        if key in _VIEW_DYNAMIC_FIELDS:
+            if run:
+                parts.append(_encode_json(run)[1:-1])
+                run = {}
+            parts.append(key)
+        else:
+            run[key] = value
+    if run:
+        parts.append(_encode_json(run)[1:-1])
+    return tuple(parts)
+
+
+def _splice_view(layout: tuple, dynamic: dict) -> bytes:
+    return b"{" + b",".join(
+        part if isinstance(part, bytes) else _VIEW_DYNAMIC_PREFIX[part] + _encode_json(dynamic[part])
+        for part in layout
+    ) + b"}"
+
+
+def _market_item_json(item) -> bytes:
+    """``_encode_json(_market_item(item).model_dump(mode="json", by_alias=True))``.
+
+    P18.4 D3 (measured): building, validating and dumping a ``MarketDataView``
+    was ~170 us per row, two thirds of a warm 2,500-row warmup, and most of it
+    re-derives the row's immutable fields (payload decimals, source, contract)
+    on every request. An item from the market-cache backend carries its row's
+    ``render_slot``: the row's first render validates the whole view as
+    before and keeps the encoded static members there (~1.7 KB per row,
+    bounded and evicted with the row cache); later renders validate only the
+    request-dependent fields (same field definitions) and splice them in. The view's cross-field rule reads static
+    fields only. Bytes are identical; items without a slot take the full path.
+    """
+
+    slot = item.render_slot
+    layout = slot.value if slot is not None else None
+    if layout is None:
+        dump = _market_item(item).model_dump(mode="json", by_alias=True)
+        if slot is None:
+            return _encode_json(dump)
+        slot.value = layout = _view_layout(dump)
+        return _splice_view(layout, dump)
+    return _splice_view(layout, _MarketDataViewDynamic(
+        quality=_quality_fields(item),
+        cursor=item.cursor,
+        snapshot_id=item.snapshot_id,
+        watermark_offset=item.watermark_offset,
+    ).model_dump(mode="json", by_alias=True))
 
 
 def _warmup(result) -> WarmupResponse:
@@ -466,10 +554,10 @@ def _render_warmup_result(result) -> bytes:
     """
 
     items = result.history.items
-    return _render_chunked(
+    return _render_encoded_chunks(
         _warmup_envelope(result),
         len(items),
-        lambda start, stop: (_market_item(item) for item in _cold_rows(items[start:stop])),
+        lambda start, stop: b",".join(_market_item_json(item) for item in _cold_rows(items[start:stop])),
     )
 
 
@@ -486,24 +574,24 @@ def _render_chunked(envelope: WarmupResponse, count: int, views) -> bytes:
     never exists next to its bytes.
     """
 
-    def encode(value) -> bytes:
-        return json.dumps(
-            value, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
-        ).encode("utf-8")
+    def rows(start: int, stop: int) -> bytes:
+        return _encode_json([view.model_dump(mode="json", by_alias=True) for view in views(start, stop)])[1:-1]
+
+    return _render_encoded_chunks(envelope, count, rows)
+
+
+def _render_encoded_chunks(envelope: WarmupResponse, count: int, rows) -> bytes:
+    """Splice ``rows(start, stop)`` (the comma-joined encoded rows) into the envelope."""
 
     suffix = b',"data":[]}'
-    head = encode(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
+    head = _encode_json(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
     if not head.endswith(suffix):
         raise RuntimeError("warmup response layout no longer ends with its data list")
     parts = [head[: -len(suffix)], b',"data":[']
     for start in range(0, count, _RENDER_CHUNK_ROWS):
-        chunk = encode([
-            view.model_dump(mode="json", by_alias=True)
-            for view in views(start, start + _RENDER_CHUNK_ROWS)
-        ])
         if start:
             parts.append(b",")
-        parts.append(chunk[1:-1])
+        parts.append(rows(start, start + _RENDER_CHUNK_ROWS))
     parts.append(b"]}")
     return b"".join(parts)
 

@@ -143,6 +143,9 @@ class MarketDataItem:
     # + canonical hash) so a renderer may reuse the validated static views of
     # the same row (KN-4 D30). Quality, cursor and watermark never enter it.
     render_key: str | None = field(default=None, compare=False, repr=False)
+    # Internal only, never rendered: the row cache's ``RenderSlot`` of this
+    # row, where the public renderer keeps the encoded static view fields.
+    render_slot: Any = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():

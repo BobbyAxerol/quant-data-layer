@@ -71473,3 +71473,54 @@ tested locally; not deployed and not yet re-measured.
 - Not enough alone: with two independent clients, the chance they pick the same replica stays 1/2. The first-read
   (row-cache-miss) server cost is the deterministic lever and is being optimized in a separate slice. The frozen
   limit is unchanged.
+
+### D3 window C G5 COLD_2500:BINANCE miss - cold read cost measured, render reuse - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY; not deployed. Base 902c280 (branch p184-cold-fix).
+Gate: g5:COLD_2500:BINANCE 6552.6 ms > frozen 6265.1 ms (limit unchanged).
+
+Measured, read-only, inside query_kn_2 (image 514506122111, same BAR path as this branch), one
+process, reader/backend built like `create_stable_query_app`, run under `cold_work()` with
+`configure_query_interpreter()`, 8 reads, Redis reads only:
+- 2500 rows, empty row cache (Binance/OKX): bars() 94/97 ms, `_parsed` 43/56, `_history_from_records`
+  819/865, render 611/632, total 1567/1651 ms; duty-cycle pauses 491/505 ms of that.
+- 2500 rows, warm row cache: bars 112/98, parsed 45/37, history 227/196, render 610/685, total 994/1015.
+- 5000 rows: total 2500/2622 (empty cache), 1925/2003 (warm); render 1240-1306 ms.
+- bars(): 2 head calls, 1 pipeline, 24 (2500) / 46 (5000) buckets per read in every read; 0 `changed`
+  retries. The cache read is 6-9 % of the server time; the retry hypothesis is not the cause.
+- Dominant: per-row view building. Render (`router._market_item` + pydantic validate/dump) ~240 us/row,
+  and it re-derives the immutable payload decimals/source/contract on every request; row derivation on
+  a row-cache miss ~330 us/row (3-4 decimal parses per value across catalog, item and public layers).
+- Client side: the gate times `client.warmup` + per-row `validate_product_view` in the load driver. In
+  all three receipts the second venue of each concurrent pair finishes about one first-venue warmup
+  later (stage50: OKX 3418, Binance 6553), consistent with the single-active large-warmup lane per
+  replica (`qdl/query/service.py` `_queued_local_batch_lane_policy`, max_active=1). Not measured.
+
+Fix (source):
+- `qdl/api_v2/router.py` `_market_item_json`/`_render_encoded_chunks`: market-cache items carry their
+  row's `RenderSlot` (`qdl/query/row_cache.py`, in `_RowEntry`, bounded/evicted with the row cache).
+  The row's first render validates the whole `MarketDataView` as before and keeps the encoded static
+  members; later renders validate only quality/cursor/snapshot_id/watermark_offset with the same field
+  definitions (`_MarketDataViewDynamic`) and splice them. Byte-identical output.
+- `qdl/domain/decimal.py`: bounded lru (8192) for `CanonicalDecimal.from_text` (frozen result, errors
+  not cached); `map(str, digits)` instead of a generator (also `router._decimal`).
+- `qdl/runtime/stable_source.py`: cached `QualityFlag.Name` per value.
+- bars(), validation layers and the cold duty cycle are unchanged.
+
+Offline microbenchmark (image 77682eea, --cpus 1, fake Redis, synthetic random-walk rows from the
+golden OKX bar, median of 5; base 902c280 vs this commit; bodies sha256-identical):
+- 2500 first read 1029.5 -> 1036.9 ms (history 522 -> 463, render 409 -> 489);
+  repeated read 607.5 -> 277.6 ms (render 409 -> 91).
+- 5000 first read 2012.4 -> 2143.3 ms (+6.5 %; render 789 -> 995, history 1011 -> 954);
+  repeated read 1213.1 -> 569.8 ms (render 811 -> 181).
+- Slot memory 1734 B/row (getsizeof); at the default 20,000 row-cache entries <= ~35 MB per replica.
+
+Tests (image 77682eea, --network none): 29 Query/KN modules, 550 run, 36 skipped (Redis-backed cases
+without QDL_KN_TEST_REDIS), 1 failure `test_fund_phase7_contract_security...provider_fallthrough`
+which fails identically on 902c280 (ResponseModel extra="ignore"; pre-existing). New: render slot
+byte identity / request-field validation (`test_fund_phase5_api`), decimal cache equivalence
+(`test_phase1_contracts`); `test_kn_query_backend` row-cache test updated (skipped here).
+
+Open: a row read once gets no gain (first read neutral 2500, +6.5 % 5000); whether the probe's rows
+are in the row cache at stage 50 is unverified (no row-cache stats for single warmups). Effect on
+G5 needs a reader rollout (owner-approved packet) and a stage-50 rerun. No runtime change.

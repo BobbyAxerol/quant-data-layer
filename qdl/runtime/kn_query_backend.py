@@ -36,7 +36,7 @@ spool stays the default until the KN-5 cutover.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 import hashlib
 import json
 from pathlib import Path
@@ -53,7 +53,7 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import CoverageStatus, DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
-from qdl.query.row_cache import BoundedRowCache
+from qdl.query.row_cache import BoundedRowCache, RenderSlot
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
 from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewGap, HotViewUnavailable
 from qdl.runtime.kn_bar_readback import binding_product_key
@@ -95,18 +95,20 @@ ROUTE_GENERATION_ENV = "QDL_KN_ROUTE_GENERATION"
 CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
 DEFAULT_ROW_CACHE_ENTRIES = 20_000
 # Item fields rebuilt per request (time/request dependent); never cached.
-_DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key"})
+_DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
 
 
 @dataclass
 class _RowEntry:
     """Derivations of one immutable row (D30): its envelope, whether its
-    lineage was proven against the catalog binding, and its static item
-    fields. Quality, cursor and watermark are not here."""
+    lineage was proven against the catalog binding, its static item fields
+    and the renderer's slot for its encoded static view. Quality, cursor and
+    watermark are not here."""
 
     envelope: market_data_pb2.EventEnvelope
     validated: bool = False
     static: dict | None = None
+    render: RenderSlot = field(default_factory=RenderSlot)
 
 
 def source_placeholder(view: ProductView) -> str:
@@ -486,12 +488,13 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 for item_field in fields(item)
                 if item_field.name not in _DYNAMIC_ITEM_FIELDS
             }
-            return replace(item, render_key=key)
+            return replace(item, render_key=key, render_slot=entry.render)
         quality = self._quality(
             requirement, binding, envelope, gap_open=gap_open, watermark_offset=stored.cursor.offset,
         )
         return MarketDataItem(
             **entry.static, quality=quality, watermark_offset=stored.cursor.offset, render_key=key,
+            render_slot=entry.render,
         )
 
     def warmup_stats(self) -> dict[str, int]:
