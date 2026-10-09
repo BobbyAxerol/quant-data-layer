@@ -57,6 +57,19 @@ def reset_topics(work, timeout):
     return {"topic_id": new_id, "previous_topic_id": old_id, "topics": topics}
 
 
+class ResetStageError(RuntimeError):
+    """A reset that failed after it stopped the readers: names the stage and keeps a bounded stderr tail (D6, r13)."""
+
+    def __init__(self, stage, error):
+        stderr = getattr(error, "stderr", None) or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        tail = "".join(ch if ch.isprintable() else " " for ch in stderr)[-240:]
+        self.stage = stage
+        super().__init__(f"stage={stage} readers_stopped=true {type(error).__name__}:{str(error)[:80]}"
+                         f" rc={getattr(error, 'returncode', None)} stderr_tail={tail!r}"[:380])
+
+
 def reset_preserving_broker(work, venue, timeout=30):
     deadline = _deadline(timeout)
     if venue not in dr.VENUES:
@@ -76,8 +89,24 @@ def reset_preserving_broker(work, venue, timeout=30):
         raise ValueError("complete owned stack required before reset")
     ids = [row["Id"] for row in rows]
     call(["docker", "stop", "--time", "1", *ids])
-    while any(dr.owned(ns, role, call) for role in ("query", "stream", "core", "quota")):
-        time.sleep(min(.1, _remaining(deadline)))
+    stage = "stop_readers"
+    try:
+        while any(dr.owned(ns, role, call) for role in ("query", "stream", "core", "quota")):
+            time.sleep(min(.1, _remaining(deadline)))
+        return _reset_after_stop(work, ns, venue, selected, broker, call, deadline, channel)
+    except _StageFailure as failure:
+        raise ResetStageError(failure.stage, failure.error) from failure.error
+    except Exception as error:
+        raise ResetStageError(stage, error) from error
+
+
+class _StageFailure(Exception):
+    def __init__(self, stage, error):
+        super().__init__(stage)
+        self.stage, self.error = stage, error
+
+
+def _reset_after_stop(work, ns, venue, selected, broker, call, deadline, channel):
 
     def inside(script, args):
         if channel:
@@ -89,14 +118,23 @@ def reset_preserving_broker(work, venue, timeout=30):
             argv[pos:pos] = ["-e", "P184_DR05_ISOLATED_NAMESPACE=" + ns]
         return call(argv)
 
-    topic = json.loads(inside("scripts/p184_dr05_reset.py",
-                             ["--topics", "/work", "--timeout", str(_remaining(deadline))]))
+    try:
+        topic = json.loads(inside("scripts/p184_dr05_reset.py",
+                                 ["--topics", "/work", "--timeout", str(_remaining(deadline))]))
+    except Exception as error:
+        raise _StageFailure("reset_topics", error) from error
     (work / "query-handoffs.jsonl").unlink(missing_ok=True)
-    commands = dr.topology(ns, work, topic["topic_id"], core_binary=selected)
-    for role in ("quota", "core", "stream", "query"):
-        call(commands[role])
+    try:
+        commands = dr.topology(ns, work, topic["topic_id"], core_binary=selected)
+        for role in ("quota", "core", "stream", "query"):
+            call(commands[role])
+    except Exception as error:
+        raise _StageFailure("start_readers", error) from error
     while True:
-        _remaining(deadline)
+        try:
+            _remaining(deadline)
+        except Exception as error:
+            raise _StageFailure("probe", error) from error
         try:
             inside("scripts/p184_dr05_dl_fault.py", ["--probe", "/work"])
             break
@@ -104,7 +142,7 @@ def reset_preserving_broker(work, venue, timeout=30):
             time.sleep(min(.2, _remaining(deadline)))
     current = dr.owned(ns, "kafka", call)
     if not current or current["Id"] != broker["Id"]:
-        raise RuntimeError("broker namespace changed during reset")
+        raise _StageFailure("verify_broker", RuntimeError("broker namespace changed during reset"))
     return {"namespace": ns, "venue": venue, "generation": 7, "reset": True,
             "broker_id": current["Id"], "topic_id": topic["topic_id"],
             "previous_topic_id": topic["previous_topic_id"], "acceptance": False,

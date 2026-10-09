@@ -71270,3 +71270,15 @@ AskUserQuestion answers, recorded before the respective work.
   - G4 candidate p95 <= baseline x 1.2 per feed/venue;
   - G5 stage-50 targets where they exist, otherwise baseline p95 x 1.5 per shape, frozen before candidate load.
 - Stage-100 load: synthetic driver with real SDK sessions on the capacity100 profiles plus the real TS writer.
+
+### D6 reset diagnostics - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY. DR05 r13 lost the cause of a reset failure: `serve_host` kept only
+`CalledProcessError:...`, and `reset_preserving_broker` had already stopped query/stream/core/quota, so `--down` found
+only kafka.
+- `scripts/p184_dr05_reset.py`: a failure after the readers were stopped raises `ResetStageError` with
+  `stage=stop_readers|reset_topics|start_readers|probe|verify_broker`, `readers_stopped=true`, the return code and a printable
+  240-character stderr tail (message <= 380 characters, inside the 400 the host result keeps). The broker-changed refusal keeps
+  its text. No retry was added and no deadline was extended.
+- Tests in the rc2 image: tests.test_p184_dr05_reset + channel + case: 53 PASS. The new case is a topic reset failing with rc 1
+  and stderr; it checks stage, rc, bound and non-printable stripping.

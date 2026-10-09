@@ -77,3 +77,43 @@ class ResetControllerTests(unittest.TestCase):
             with patch.object(reset.dr, "bounded") as call, self.assertRaises(ValueError):
                 reset.reset_preserving_broker(Path("/unused"), venue, timeout)
             call.assert_not_called()
+
+
+class ResetStageDiagnosticTests(unittest.TestCase):
+    """D6 (DR05 r13): a failure after the readers were stopped names its stage and keeps a bounded stderr tail."""
+
+    def test_a_failed_topic_reset_reports_stage_rc_and_stderr(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "handoff.json").write_text("{}")
+            stopped = []
+
+            def owned(ns, role, call):
+                if role == "kafka":
+                    return {"Id": "broker"}
+                if role == "helper":
+                    return {"Id": "channel"}
+                return None if stopped else {"Id": role}
+
+            def bounded(argv, timeout):
+                if argv[:2] == ["docker", "stop"]:
+                    stopped.append(True)
+                    return ""
+                if "scripts/p184_dr05_reset.py" in argv:
+                    raise subprocess.CalledProcessError(1, argv, output="", stderr="Traceback ...\nKafkaException: TOPIC_ALREADY_EXISTS\x07" + "x" * 500)
+                return "{}"
+
+            with patch.object(reset, "_packet", return_value=(work, NS, runtime_packet(), config())), \
+                 patch.object(reset, "_reset_preflight", Mock(return_value={"Id": "broker"})), \
+                 patch.object(reset.dr, "owned", side_effect=owned), \
+                 patch.object(reset.dr, "bounded", side_effect=bounded):
+                with self.assertRaises(reset.ResetStageError) as caught:
+                    reset.reset_preserving_broker(work, "OKX", 10)
+        message = str(caught.exception)
+        self.assertEqual(caught.exception.stage, "reset_topics")
+        self.assertIn("stage=reset_topics", message)
+        self.assertIn("readers_stopped=true", message)
+        self.assertIn("rc=1", message)
+        self.assertLessEqual(len(message), 380)
+        self.assertNotIn("\x07", message)
