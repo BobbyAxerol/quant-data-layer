@@ -35,16 +35,31 @@ class ReplicaReadTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_round_robin_uses_both_healthy_replicas(self):
         first = _Replica("https://query-a", ({"replica": "a"},))
         second = _Replica("https://query-b", ({"replica": "b"},))
-        transport = ReplicatedRestQueryTransport((first, second))
+        transport = ReplicatedRestQueryTransport((first, second), start_index=0)
 
         self.assertEqual(await transport.snapshot(object(), consumer_id="alpha"), {"replica": "a"})
         self.assertEqual(await transport.snapshot(object(), consumer_id="alpha"), {"replica": "b"})
         self.assertEqual((first.calls, second.calls), (1, 1))
 
+    async def test_default_start_spreads_first_reads_over_replicas(self):
+        firsts = set()
+        for _ in range(64):
+            first = _Replica("https://query-a", ({"replica": "a"},))
+            second = _Replica("https://query-b", ({"replica": "b"},))
+            transport = ReplicatedRestQueryTransport((first, second))
+            firsts.add((await transport.snapshot(object(), consumer_id="alpha"))["replica"])
+        self.assertEqual(firsts, {"a", "b"})
+
+    def test_start_index_must_name_a_replica(self):
+        replicas = (_Replica("https://query-a", ()), _Replica("https://query-b", ()))
+        for bad in (-1, 2):
+            with self.assertRaises(ValueError):
+                ReplicatedRestQueryTransport(replicas, start_index=bad)
+
     async def test_transport_failure_uses_one_alternate_and_cools_failed_replica(self):
         first = _Replica("https://query-a", (_connect_error(),))
         second = _Replica("https://query-b", ({"replica": "b1"}, {"replica": "b2"}))
-        transport = ReplicatedRestQueryTransport((first, second), cooldown_seconds=60)
+        transport = ReplicatedRestQueryTransport((first, second), cooldown_seconds=60, start_index=0)
 
         self.assertEqual(await transport.snapshot(object(), consumer_id="alpha"), {"replica": "b1"})
         self.assertEqual(await transport.snapshot(object(), consumer_id="alpha"), {"replica": "b2"})
@@ -59,7 +74,7 @@ class ReplicaReadTransportTests(unittest.IsolatedAsyncioTestCase):
             (DataLayerError("DATA_STALE", "authoritative stale", retryable=True),),
         )
         second = _Replica("https://query-b", ({"replica": "b"},))
-        transport = ReplicatedRestQueryTransport((first, second))
+        transport = ReplicatedRestQueryTransport((first, second), start_index=0)
 
         with self.assertRaisesRegex(DataLayerError, "authoritative stale"):
             await transport.snapshot(object(), consumer_id="alpha")
@@ -68,7 +83,7 @@ class ReplicaReadTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_close_closes_every_owned_replica(self):
         first = _Replica("https://query-a", ())
         second = _Replica("https://query-b", ())
-        transport = ReplicatedRestQueryTransport((first, second))
+        transport = ReplicatedRestQueryTransport((first, second), start_index=0)
         await transport.close()
         self.assertTrue(first.closed)
         self.assertTrue(second.closed)

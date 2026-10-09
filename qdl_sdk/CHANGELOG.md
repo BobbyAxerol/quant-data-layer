@@ -1,5 +1,11 @@
 # SDK Changelog
 
+## Unreleased
+
+`ReplicatedRestQueryTransport` starts its round-robin on a random replica per
+instance instead of always replica 0. A new keyword `start_index` pins the start
+(tests, diagnostics). Additive; no request or response change.
+
 ## 2.1.0
 
 Response models, including nested market/reference payloads and error diagnostics,

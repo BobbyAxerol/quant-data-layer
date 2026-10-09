@@ -71442,3 +71442,34 @@ statvfs is not deadline-bounded (local paths only). Redis call time is bounded b
 client socket timeouts plus deadline checks between calls. Isolated
 broker/projector/Stream fault acceptance (G12) remains OPEN. No runtime change,
 no image build, test containers --rm. No push/merge.
+
+### D3 window C stages 20/50; stage 50 stopped on G5; SDK replica start fix - 2026-10-09 (Claude)
+
+Status: window C (owner-approved) ran on window B config (alpha rev15, Stream 1024). The SDK fix is implemented and
+tested locally; not deployed and not yet re-measured.
+- Stage 20 (600 s, P184 mix, 2 workers): every gate PASS. 12,739 requests, 0 missed/failed/starved; 36 streams, 0
+  errors; G5 cold B/O 2500 = 3254/5722 ms, 5000 = 4685/6617 ms; TS READY 64/64 throughout, restarts 0, OOM 0.
+- Stage 50 (600 s, 4 workers): 28/29 gates PASS, including every latency class, requests, streams and the four TS
+  gates. FAIL: g5:COLD_2500:BINANCE 6552.6 ms > frozen 6265.1 ms. Ramp stopped at the first failure (stage 100 not
+  run). Guard: READY 64/64, restarts 0, OOM 0, disk 87 GB.
+- Cause, measured:
+  - Server time of one 2500-row cold read (query_kn_2, read-only, cold_work marker) is 1.57-1.65 s at idle. bars() is
+    6-9 % of it: 2 head calls, 1 pipeline, and no `changed` retry in 8 reads. Most of the time is per-row
+    construction and render, plus the duty-cycle pauses.
+  - The driver runs both venues' cold reads at once (`_target_cold` via `asyncio.gather`). Every new SDK client
+    started its round-robin on replica 0 (qdl_sdk/transport.py `_next = 0`). So both reads hit query_kn_1, whose
+    large-warmup lane is `max_active=1` (qdl/query/service.py `_queued_local_batch_lane_policy`).
+  - In every receipt, the later venue finishes one warmup after the earlier one:
+    - baseline 2337 -> 4177 ms;
+    - stage 20 3254 -> 5722 ms;
+    - stage 50 3418 -> 6553 ms.
+    The frozen limit came from such a queued read. Under the P184 stage-50 mix, each read's own service time grew
+    35-45 % (duty cycle under heavier hot load).
+  - The same start-at-0 rule in production sends every alpha session's startup warmup to one replica.
+- Fix (this commit): `ReplicatedRestQueryTransport` starts on a random replica per instance. The new keyword-only
+  `start_index` pins it. Two tests: random starts cover both replicas; out-of-range start is rejected. The order-based
+  tests pin start_index=0. SDK CHANGELOG Unreleased; the version bump comes with the D5 release cut.
+- Tests: tests.test_qdl_sdk_replica_read_transport 7 OK; 11 SDK modules 91 OK (image 77682eea, --network none).
+- Not enough alone: with two independent clients, the chance they pick the same replica stays 1/2. The first-read
+  (row-cache-miss) server cost is the deterministic lever and is being optimized in a separate slice. The frozen
+  limit is unchanged.

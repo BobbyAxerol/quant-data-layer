@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import random
 import time
 from dataclasses import dataclass
 from collections.abc import AsyncIterator, Sequence
@@ -258,6 +259,7 @@ class ReplicatedRestQueryTransport:
         *,
         max_attempts: int = 2,
         cooldown_seconds: float = 1.0,
+        start_index: int | None = None,
     ) -> None:
         values = tuple(replicas)
         if len(values) < 2:
@@ -269,11 +271,18 @@ class ReplicatedRestQueryTransport:
             raise ValueError("replicated Query max_attempts is outside replica bounds")
         if cooldown_seconds <= 0:
             raise ValueError("replicated Query cooldown must be positive")
+        if start_index is not None and not 0 <= start_index < len(values):
+            raise ValueError("replicated Query start_index is outside replica bounds")
         self.replicas = values
         self._health = [_ReplicaReadHealth() for _ in values]
         self._max_attempts = max_attempts
         self._cooldown_seconds = cooldown_seconds
-        self._next = 0
+        # Each instance starts its round-robin on a random replica. A fixed
+        # start sent the first read of every new client (an alpha session's
+        # startup warmup) to replica 0, where large warmups serialize behind
+        # the one-active lane (P18.4 D3 stage 50: one cold read waited a whole
+        # warmup while the other replica was idle).
+        self._next = random.randrange(len(values)) if start_index is None else start_index
 
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
         return await self._read("warmup", requirement, consumer_id=consumer_id)
