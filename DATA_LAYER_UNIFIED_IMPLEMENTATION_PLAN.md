@@ -71394,3 +71394,51 @@ two r15 manifests (8fed780a / 33b9cfd4).
   - query_kn_2-candidate-1791572150685196750.json ba47ba27933bf346
   - stream_kn_1-candidate-1791572170561766250.json 21ff33a4f2eda79a
   - stream_kn_2-candidate-1791572184336405277.json 52353e1dea321214
+
+### D4 R2 native observation adapter - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY. Not runtime-certified; no fault acceptance.
+Base d8b0f67 (fix/p184-dl-closure). Source + tests only.
+
+Files:
+- scripts/kn_recovery_observe.py (new): read-only adapter producing the
+  `qdl.kn.recovery-observation.v1` input of kn_recovery_state.RecoveryController.
+  Disk reuses kn_disk_pressure.sample_disk/DiskPressure (operator thresholds, no
+  defaults). Quorum/ISR via AdminClient describe_cluster/describe_topics (broker
+  count + controller, leader in ISR, ISR >= min_isr, under-replicated <= explicit
+  max, default 0). Projector progress via list_consumer_group_offsets vs
+  list_offsets(READ_COMMITTED) per declared group/partition roster; regression of a
+  committed offset is FATAL. Consumer eligibility from the TS writer heartbeat
+  (status READY, session_ready == demanded > 0, ready/unhealthy consistent,
+  last_seen_unix fresh, optional exact demanded/instance roster) through a provided
+  reader. Roles via provided reader (default one `docker inspect`, identity checked).
+- tests/test_kn_recovery_observe.py (new): 22 tests, fakes for every source
+  (healthy, missing, stale, future, unparseable, timeout, late answer past deadline,
+  partial ISR, offline, brokers missing, lagging/stalled/regressed projector, TS
+  DEGRADED/partial, role source failure), real confluent_kafka result types with a
+  fake AdminClient, and end-to-end adapter -> controller progression
+  HOLD_UNKNOWN -> WAIT_QUORUM(start proposal) -> WAIT_QUORUM -> WAIT_PROJECTOR ->
+  WAIT_CONSUMER -> HOLD_UNKNOWN(heartbeat missing, reader Up) -> SERVING ->
+  HOLD_UNKNOWN(stale); persistent UNKNOWN ends BLOCKED, never SERVING.
+
+Semantics: UNKNOWN/FATAL gates are emitted non-boolean, so the controller holds
+HOLD_UNKNOWN. A stage role observed not running turns that stage's UNKNOWN into
+NOT_READY (start may be proposed); "running" never makes a gate READY. Gates
+short-circuit in coordinator order. One absolute deadline per cycle, every call
+gets the remaining budget, single attempt, late answers UNKNOWN. mode OBSERVE_ONLY,
+mutations 0; no group join/commit, no Redis write, no lifecycle call. CLI prints
+the observation (plus adapter_report) for use as runner probe_command.
+
+Tests: image sha256:77682eea, --network none, read-only source:
+`python -B -m unittest tests.test_kn_recovery_state tests.test_kn_recovery_runner
+tests.test_kn_recovery_observe tests.test_kn_disk_pressure
+tests.test_kn_production_watch` -> 76 PASS (24+9+22+11+10), 0 fail/error/skip.
+
+Open limits: not run against live brokers/Redis/Docker; no production packet,
+thresholds or installed service. Heartbeat is the TS writer's self-reported
+aggregate, not the at-use validator/ACK proof D4 ultimately requires (Claude TS
+side). Lag uses LSO; an idle dead-but-running projector with lag 0 reads READY.
+statvfs is not deadline-bounded (local paths only). Redis call time is bounded by
+client socket timeouts plus deadline checks between calls. Isolated
+broker/projector/Stream fault acceptance (G12) remains OPEN. No runtime change,
+no image build, test containers --rm. No push/merge.
