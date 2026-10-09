@@ -71378,3 +71378,19 @@ Status RENDERED_NOT_APPLIED.
 - Driver: profile field manifest_overrides (1f28448) mounts the r15 files over the client's baked manifests, so the client
   quotas and JWT revision match the readers. Profile profile-stage100.json validates (ts_container market_data_service_p184w).
 - No alpha caller runs today. Before Phase E alphas must mint JWT revision 15.
+
+### D3 window B APPLIED (alpha rev15 quotas + Stream 1024) - 2026-10-09 (Claude)
+
+Owner-approved. The owner created the root-owned realm dir; checked: only bundle.json differs from the rev11 realm, plus the
+two r15 manifests (8fed780a / 33b9cfd4).
+- 18:55:30-18:56:52Z, readers recreated one at a time, same images:
+  - query_kn_1/2 healthy, restarts 0, manifest list now /consumer-realms/alpha.{binance,okx}.paper.stable-r15.yaml;
+  - stream_kn_1/2 restarts 0, bundle bce26969, QDL_KN_MAX_SUBSCRIPTIONS 1024; startup MemoryPlan streams 1056,
+    required 321,912,832 B, under the unchanged 512 MiB limit.
+- TS writer READY 64/64 at 18:57:11Z, restarts 0 (resubscribed after the Stream restarts).
+- Rollback per reader: ~/.local/state/qdl-v2/p184-d3-capacity-20261009/readers/*-rollback.compose.json (rev11 realm, 384).
+- Receipts (file, sha256 prefix):
+  - query_kn_1-candidate-1791572130606223397.json 088cbae06a6f28c6
+  - query_kn_2-candidate-1791572150685196750.json ba47ba27933bf346
+  - stream_kn_1-candidate-1791572170561766250.json 21ff33a4f2eda79a
+  - stream_kn_2-candidate-1791572184336405277.json 52353e1dea321214
