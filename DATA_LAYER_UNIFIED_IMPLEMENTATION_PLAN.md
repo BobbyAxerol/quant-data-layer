@@ -71870,3 +71870,32 @@ OKX reconnect (f861663 from 34dbdf9, d4f5ec9 from beeaea4):
     qdl/runtime/production_catalog.py and config/v2/stable-acquisition-bindings.yaml. The bindings change alters the
     acquisition plan revision (C.19/C.32 bar-edge checkpoint coupling), so it needs its own packet before
     2026-10-31 and is not mixed into rc6.
+
+### Stage 100g on Query rc7 + Stream rc6: 31/32 (G5, startup and TS readiness PASS); OKX port 443 live - 2026-10-10 (Claude)
+
+Stack:
+- Query query_kn_1/2 on qdl-v2-python:2.2.3-rc7-47bec04 (sha256:4fcf724b6b36): R1/R3/R6 and the G5 replica redirect,
+  cold slice at the DEFAULT 4 ms (tuning reverted, so the run tests the structural fix alone).
+- Stream stream_kn_1/2 on qdl-v2-rust:2.2.3-rc6-10f9f5c (sha256:3dd3c33d48b4): R2.
+- Rolled one role at a time with rollout_rc6.py; each healthy, writer READY 64/64 after each.
+Run 07:36-08:08Z under supervisor v2; guard all READY 64/64; MARK watcher 0 errors in 32 of 32 minutes.
+- PASS:
+  - G5 cold: 2500 rows B 4849.5 ms (query_v2_1), O 3813.6 ms (query_v2_2); 5000 rows B 7356.7, O 6365.7 ms.
+    Client side 240-727 ms.
+  - The redirect fired 63 times (REPLICA_LANE_BUSY: 31 on query_kn_1, 32 on query_kn_2).
+  - startup:bounded (0 failures, 74.2 s).
+  - ts:ready_60_every_sample: 154/154 samples, 0 unreadable.
+  - streams 180, 0 errors; every latency class.
+- FAIL requests:no_failures: 1 PARTIAL_RESULT, REFERENCE_BATCH, FUNDING_RATE OKX SOL-USDT-SWAP, query_v2_2, about
+  07:46:47Z.
+  - The hash matches the SDK's "required reference batch contains one or more explicit failures".
+  - The item's own code was not recorded (an R6 gap at the batch level). No OKX disconnect occurred in the run.
+  - Per-item diagnostics and root cause are in progress.
+- OKX port 8443 retirement (6674d0b packet), done live:
+  - scripts/migrate_okx_ws_port.py dry-run and then --apply on
+    releases/v2.2.1-0e00c81-recovery/ingestor_okx_swap.json, through a root --rm container;
+  - exactly 2 URL fields changed; config_revision 20; identity 056207ce... unchanged;
+  - sha 0c5d181c... -> d4bd4bae...; backup ingestor_okx_swap.json.pre-okx-port443-1791619322166921472.
+  - `docker restart` of ingestor_okx_swap at 08:09:07Z (after the run, same image): restarts 0, 5 established
+    sockets to remote port 443 (0x01BB), 0 to 8443.
+  - TS endpoint_profiles.py moved too (TS 8b03ff2, pushed).
