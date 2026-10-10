@@ -304,5 +304,60 @@ class ImageSetTests(unittest.TestCase):
         self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
 
 
+class TopicReadinessTests(unittest.TestCase):
+    def test_describe_retries_only_the_metadata_race(self):
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            if len(calls) < 3:
+                raise RuntimeError('KafkaError{code=UNKNOWN_TOPIC_OR_PART,val=3}')
+            return "described"
+        self.assertEqual(g12.describe_until_known(flaky, seconds=5, pause=0), "described")
+        self.assertEqual(len(calls), 3)
+
+        def other():
+            raise RuntimeError("KafkaError{code=TOPIC_AUTHORIZATION_FAILED}")
+        with self.assertRaises(RuntimeError):
+            g12.describe_until_known(other, seconds=5, pause=0)
+
+        def never():
+            raise RuntimeError("UNKNOWN_TOPIC_OR_PART")
+        with self.assertRaises(RuntimeError):
+            g12.describe_until_known(never, seconds=0, pause=0)
+
+
+
+class OrchestratorSignalTests(unittest.TestCase):
+    def test_sigterm_still_writes_verdict_and_tears_down(self):
+        import os
+        import signal
+        import tempfile
+        from pathlib import Path
+        calls = []
+
+        class FakeRun:
+            def __init__(self, base, *_):
+                self.evidence = Path(base) / "evidence"
+                self.evidence.mkdir(parents=True)
+                self.images, self.query_code = g12.IMAGES, "worktree"
+
+            def prepare(self):
+                os.kill(os.getpid(), signal.SIGTERM)
+
+            def note(self, step, **fields):
+                calls.append(step)
+
+            def down(self):
+                calls.append("down")
+        before = signal.getsignal(signal.SIGTERM)
+        with tempfile.TemporaryDirectory() as base, patch.object(g12, "Run", FakeRun):
+            self.assertEqual(g12.orchestrate(base, "/x", NS), 1)
+            verdict = g12.json.loads((Path(base) / "evidence" / "verdict.json").read_text())
+        self.assertIn("signal", verdict["error"])
+        self.assertEqual(calls, ["stopped", "down"])
+        self.assertIs(signal.getsignal(signal.SIGTERM), before)  # handlers restored
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -647,10 +647,24 @@ def create_topics(work):
     for future in futures.values():
         future.result(40)
     canonical = packet["namespace"] + ".canonical"
-    described = admin.describe_topics(TopicCollection([canonical]))[canonical].result(20)
+    described = describe_until_known(lambda: admin.describe_topics(TopicCollection([canonical]))[canonical]
+                                     .result(20))
     packet["slice"]["topic_id"] = str(described.topic_id)
     (Path(work) / "packet.json").write_text(json.dumps(packet))
     return {"topics": sorted(wanted), "replication_factor": len(BROKERS), "min_isr": 2}
+
+
+def describe_until_known(describe, seconds=30.0, pause=1.0):
+    """A topic just created may not be in every broker's metadata yet (final-image run
+    2026-10-10, attempt 1: UNKNOWN_TOPIC_OR_PART right after create); retry only that, bounded."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            return describe()
+        except Exception as error:  # noqa: BLE001 - only the propagation race is retried
+            if "UNKNOWN_TOPIC_OR_PART" not in str(error) or time.monotonic() >= deadline:
+                raise
+        time.sleep(pause)
 
 
 class _Stop:
@@ -1276,7 +1290,12 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
 
     def expire(_signum, _frame):
         raise TimeoutError("G12 orchestrator absolute deadline")
+    def terminated(signum, _frame):
+        # A session end / kill (SIGTERM, SIGHUP, SIGINT) still runs evidence + teardown in finally
+        # (final-image attempt 2, 2026-10-10: the orchestrator died with the session, 18 roles orphaned).
+        raise SystemExit(f"G12 orchestrator received signal {signum}")
     previous = signal.signal(signal.SIGALRM, expire)
+    previous_term = {sig: signal.signal(sig, terminated) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     signal.alarm(LIMITS["deadline_s"])
     status, error = "FAIL", None
     try:
@@ -1303,6 +1322,8 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
         finally:
             run.down() if run.evidence.exists() else teardown(ns)
             signal.signal(signal.SIGALRM, previous)
+            for sig, handler in previous_term.items():
+                signal.signal(sig, handler)
     return 0 if status == "COMPLETED" else 1
 
 
