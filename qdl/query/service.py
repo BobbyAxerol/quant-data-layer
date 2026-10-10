@@ -1985,7 +1985,7 @@ class V2QueryService:
     ) -> dict[str, Any]:
         """The quality this refusal was decided on, taken now (not re-read)."""
 
-        return {
+        diagnostics = {
             "evaluated_at_ns": self._clock_ns(),
             "state": quality.state,
             "freshness_ms": quality.freshness_ms,
@@ -2001,6 +2001,11 @@ class V2QueryService:
             "observed_at_ns": item.observed_at_ns if item is not None else None,
             "received_at_ns": (item.received_at_ns or None) if item is not None else None,
         }
+        # Additive (IDR-040 fix 2): only when the refused book carries a proof,
+        # so a strict older reader never meets the key on any other refusal.
+        if quality.proof_observed_at_ns is not None:
+            diagnostics["proof_observed_at_ns"] = quality.proof_observed_at_ns
+        return diagnostics
 
     def _with_execution_eligibility(
         self,

@@ -534,6 +534,12 @@ def market_data_view_from_stream(
                 ),
                 "policy_id": requirement.source_policy_id,
                 "flags": flags,
+                # IDR-040 fix 2: reported only; never changes state/freshness.
+                "proof_observed_at_ns": (
+                    int(envelope.book_snapshot.proof_observed_at_ns) or None
+                    if feed is Feed.BOOK_SNAPSHOT and not book_unverified
+                    else None
+                ),
             },
             "contract": {
                 **template.contract.model_dump(mode="json"),

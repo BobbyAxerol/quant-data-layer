@@ -1664,6 +1664,18 @@
             ],
             "title": "Observed At Ns"
           },
+          "proof_observed_at_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof Observed At Ns"
+          },
           "provider_session_liveness_ms": {
             "anyOf": [
               {
@@ -1785,6 +1797,18 @@
             "minLength": 1,
             "title": "Policy Id",
             "type": "string"
+          },
+          "proof_observed_at_ns": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof Observed At Ns"
           },
           "provider_session_liveness_ms": {
             "anyOf": [

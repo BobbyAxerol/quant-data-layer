@@ -175,6 +175,16 @@ class ProblemDiagnostics(ResponseModel):
     watermark_offset: int | None = Field(default=None, ge=0)
     observed_at_ns: int | None = Field(default=None, ge=0)
     received_at_ns: int | None = Field(default=None, ge=0)
+    # Additive (IDR-040 fix 2): see ``QualityView.proof_observed_at_ns``.
+    proof_observed_at_ns: int | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_diagnostics(self, handler):
+        result = handler(self)
+        # Strict older SDKs reject a new key; it is emitted only when present.
+        if self.proof_observed_at_ns is None:
+            result.pop("proof_observed_at_ns", None)
+        return result
 
 
 class ProblemDetails(ResponseModel):
@@ -284,6 +294,20 @@ class QualityView(ResponseModel):
     execution_eligible: bool
     policy_id: str = Field(min_length=1, max_length=200)
     flags: list[str]
+    # Additive (IDR-040 fix 2), BOOK_SNAPSHOT only. Local receipt time (ns) of
+    # in-band transport evidence proving the verified book was still current
+    # although no provider frame changed it. It never re-dates the event:
+    # ``observed_at_ns``/``freshness_ms`` stay the provider event's, and
+    # ``state``/``execution_eligible`` are unchanged by it. Absent = no proof.
+    proof_observed_at_ns: int | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_quality(self, handler):
+        result = handler(self)
+        # Strict older SDKs reject a new key; it is emitted only when present.
+        if self.proof_observed_at_ns is None:
+            result.pop("proof_observed_at_ns", None)
+        return result
 
 
 class ContractView(ResponseModel):

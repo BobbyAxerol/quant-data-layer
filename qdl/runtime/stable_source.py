@@ -1092,6 +1092,10 @@ class StableSpoolQueryBackend:
         )
         if book_unverified:
             flags = flags + ("BOOK_SEQUENCE_UNVERIFIED",)
+        # IDR-040 fix 2: reported, never folded into freshness or state.
+        proof_observed_at_ns = None
+        if payload_name == "book_snapshot" and not book_unverified:
+            proof_observed_at_ns = int(envelope.book_snapshot.proof_observed_at_ns) or None
         now_ns = self._clock_ns()
         decision = evaluate_binding_quality(
             BindingQualityInput(
@@ -1165,6 +1169,7 @@ class StableSpoolQueryBackend:
             event_recency_state=decision.event_recency_state,
             provider_session_state=decision.provider_session_state,
             provider_session_liveness_ms=decision.provider_session_liveness_ms,
+            proof_observed_at_ns=proof_observed_at_ns,
         )
 
     def _gaps(

@@ -54,6 +54,11 @@ pub struct BookTransition {
     /// an already verified current view. It keeps native sequence semantics
     /// intact while making the periodic observation idempotency-distinct.
     pub materialized_snapshot_at_ms: Option<i64>,
+    /// Set only on a quiet-proof snapshot (IDR-040 fix 2): the local receipt
+    /// time of in-band transport evidence on the connection that owns this
+    /// book, ordered after every earlier frame of the book. It leaves
+    /// `observed_at_ms` (the provider event time) untouched.
+    pub proof_observed_at_ns: Option<i64>,
 }
 
 impl BookTransition {
@@ -461,6 +466,7 @@ impl L2BookAdapter {
             updates: metadata.updates,
             view: self.core.view(),
             materialized_snapshot_at_ms: None,
+            proof_observed_at_ns: None,
         }
     }
 

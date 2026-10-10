@@ -63,8 +63,17 @@ class QualityMetadata:
     event_recency_state: str = "LIVE"
     provider_session_state: str = "NOT_APPLICABLE"
     provider_session_liveness_ms: int | None = None
+    # IDR-040 fix 2 (additive): receipt time of the in-band quiet proof a
+    # verified BOOK_SNAPSHOT carries. It never changes ``freshness_ms``/state.
+    proof_observed_at_ns: int | None = None
 
     def __post_init__(self) -> None:
+        if self.proof_observed_at_ns is not None and (
+            isinstance(self.proof_observed_at_ns, bool)
+            or not isinstance(self.proof_observed_at_ns, int)
+            or self.proof_observed_at_ns <= 0
+        ):
+            raise ValueError("quiet proof time must be a positive integer")
         if self.freshness_ms < 0:
             raise ValueError("freshness_ms cannot be negative")
         if not self.state.strip() or not self.policy_id.strip():

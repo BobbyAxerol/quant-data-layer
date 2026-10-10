@@ -37,7 +37,9 @@ use qdl_kafka::{
     shutdown_signal, FencedKafkaSink, KafkaEventSource, KafkaTlsConfig, KafkaTransportConfig,
     KafkaTransportError, PendingKafkaAppend,
 };
-use qdl_realtime_core::L2_RESNAPSHOT_REQUIRED_V1;
+use qdl_realtime_core::{
+    L2_RESNAPSHOT_REQUIRED_V1, L2_TRANSPORT_LIVENESS_KEY, L2_TRANSPORT_LIVENESS_VERSION,
+};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use qdl_venue_core::backpressure::DeliveryClass;
 use serde::{Deserialize, Serialize};
@@ -243,6 +245,11 @@ struct IngestorConfig {
     #[serde(default = "default_max_subscriptions_per_connection")]
     max_subscriptions_per_connection: usize,
     latest_state_flush_ms: u64,
+    /// IDR-040 fix 2: cadence of the in-band transport liveness marker for
+    /// quiet Binance BOOK bindings. Absent or zero (the default) emits none.
+    /// The realtime core that reads the marker must be deployed first.
+    #[serde(default)]
+    book_liveness_proof_ms: u64,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
     #[serde(default)]
@@ -393,6 +400,8 @@ impl IngestorConfig {
             || self.max_subscriptions_per_connection > 1_024
             || self.latest_state_flush_ms == 0
             || self.latest_state_flush_ms > 1_000
+            || (self.book_liveness_proof_ms != 0
+                && !(250..=5_000).contains(&self.book_liveness_proof_ms))
             || self.bindings.is_empty()
         {
             return Err(
@@ -1514,6 +1523,105 @@ async fn book_resync_requested(
     Ok(requested)
 }
 
+/// In-band transport evidence for the books of one Binance connection
+/// (IDR-040 fix 2).
+///
+/// Binance pushes nothing for a book that does not change, so a quiet book is
+/// otherwise indistinguishable from a stalled one. TCP delivers a connection's
+/// messages in order: when any message (a data frame or the pong to our ping)
+/// is read at `t`, every frame the venue sent before it on this connection has
+/// been read and enqueued. A marker stamped `t` and enqueued into a book's own
+/// raw partition therefore follows all of that book's earlier frames. It is
+/// emitted only for a book with no frame for one interval, never for a book
+/// that is not on this connection, and never with evidence older than one
+/// interval (the connection is pinged instead).
+struct BookLivenessProof {
+    interval_ns: i64,
+    last_transport_at_ns: i64,
+    last_frame_at_ns: HashMap<String, i64>,
+    last_marker_at_ns: HashMap<String, i64>,
+}
+
+impl BookLivenessProof {
+    fn new(
+        interval: Duration,
+        bindings: &HashMap<String, RawBinding>,
+        connected_at_ns: i64,
+    ) -> Self {
+        let interval_ns = i64::try_from(interval.as_nanos()).unwrap_or(i64::MAX);
+        let books = bindings
+            .values()
+            .filter(|binding| binding.feed == RawFeed::Book)
+            .map(|binding| (binding.native_channel.clone(), connected_at_ns));
+        Self {
+            interval_ns,
+            last_transport_at_ns: connected_at_ns,
+            last_frame_at_ns: books.collect(),
+            last_marker_at_ns: HashMap::new(),
+        }
+    }
+
+    fn transport(&mut self, at_ns: i64) {
+        self.last_transport_at_ns = self.last_transport_at_ns.max(at_ns);
+    }
+
+    fn frame(&mut self, channel: &str, at_ns: i64) {
+        if let Some(last) = self.last_frame_at_ns.get_mut(channel) {
+            *last = (*last).max(at_ns);
+        }
+    }
+
+    /// Markers due now, and whether the connection should be pinged so the
+    /// next tick has evidence newer than half an interval.
+    fn due(
+        &mut self,
+        bindings: &HashMap<String, RawBinding>,
+        session_id: &str,
+        generation: u64,
+        now_ns: i64,
+    ) -> (Vec<PendingRawFrame>, bool) {
+        let evidence = self.last_transport_at_ns;
+        let age = now_ns.saturating_sub(evidence);
+        let ping = age >= self.interval_ns / 2;
+        if age > self.interval_ns {
+            return (vec![], ping);
+        }
+        let mut channels = self.last_frame_at_ns.keys().cloned().collect::<Vec<_>>();
+        channels.sort();
+        let mut frames = Vec::new();
+        for channel in channels {
+            let quiet = self
+                .last_frame_at_ns
+                .get(&channel)
+                .is_some_and(|last| evidence.saturating_sub(*last) >= self.interval_ns);
+            let newer = self
+                .last_marker_at_ns
+                .get(&channel)
+                .map_or(true, |last| evidence > *last);
+            let Some(binding) = bindings.get(&channel) else {
+                continue;
+            };
+            if !quiet || !newer {
+                continue;
+            }
+            let marker = json!({
+                L2_TRANSPORT_LIVENESS_KEY: L2_TRANSPORT_LIVENESS_VERSION,
+                "stream": channel,
+            });
+            self.last_marker_at_ns.insert(channel.clone(), evidence);
+            frames.push(PendingRawFrame {
+                binding: binding.clone(),
+                session_id: session_id.into(),
+                generation,
+                raw_frame: marker.to_string().into_bytes(),
+                received_at_ns: evidence,
+                transport_protocol: TransportProtocol::Websocket,
+            });
+        }
+        (frames, ping)
+    }
+}
+
 async fn run_binance_connection(
     config: Arc<IngestorConfig>,
     route: BinanceRoute,
@@ -1568,6 +1676,8 @@ async fn run_binance_connection(
         }
         None => None,
     };
+    let liveness_proof_interval = (snapshot_period.is_some() && config.book_liveness_proof_ms > 0)
+        .then(|| Duration::from_millis(config.book_liveness_proof_ms));
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -1628,7 +1738,16 @@ async fn run_binance_connection(
                     now_ns()?
                 );
                 let mut liveness = SessionLivenessWriter::new(&config, &lane)?;
-                liveness.live(&session_id, generation, now_ns()?)?;
+                let connected_at_ns = now_ns()?;
+                liveness.live(&session_id, generation, connected_at_ns)?;
+                let mut book_proof = liveness_proof_interval
+                    .map(|interval| BookLivenessProof::new(interval, &bindings, connected_at_ns));
+                let mut book_proof_tick = liveness_proof_interval.map(tokio::time::interval);
+                if let Some(tick) = book_proof_tick.as_mut() {
+                    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    tick.tick().await;
+                }
+                let mut ping_due = false;
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -1727,6 +1846,10 @@ async fn run_binance_connection(
                             }
                         }
                     }
+                    if ping_due {
+                        ping_due = false;
+                        socket.send(Message::Ping(Vec::new())).await?;
+                    }
                     let read = tokio::time::timeout(
                         Duration::from_secs(config.heartbeat_seconds),
                         socket.next(),
@@ -1734,6 +1857,42 @@ async fn run_binance_connection(
                     tokio::pin!(read);
                     // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
+                        _ = async {
+                            match book_proof_tick.as_mut() {
+                                Some(tick) => {
+                                    tick.tick().await;
+                                }
+                                None => std::future::pending::<()>().await,
+                            }
+                        }, if book_proof_tick.is_some() => {
+                            let Some(proof) = book_proof.as_mut() else {
+                                continue;
+                            };
+                            let (markers, ping) =
+                                proof.due(&bindings, &session_id, generation, now_ns()?);
+                            ping_due = ping;
+                            for marker in markers {
+                                if !publish_pending_frame(
+                                    marker,
+                                    &mut PendingPublishWindow {
+                                        publisher: &publisher,
+                                        latest: &mut latest,
+                                        inflight: &mut inflight,
+                                        accepted: &accepted,
+                                        coalesced_latest: &coalesced_latest,
+                                        max_events: config.max_events,
+                                        max_inflight: config.max_inflight_publishes,
+                                        stopped: &stopped,
+                                    },
+                                )
+                                .await?
+                                {
+                                    exhausted = true;
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
                         requested = book_resync_requested(&mut resync_listener, &config, &bindings, &session_id, generation) => {
                             if requested? {
                                 eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
@@ -1821,7 +1980,11 @@ async fn run_binance_connection(
                     let message = match outcome.expect("Binance read outcome is present") {
                         Ok(Some(Ok(message))) => {
                             if !matches!(message, Message::Close(_)) {
-                                liveness.live(&session_id, generation, now_ns()?)?;
+                                let read_at_ns = now_ns()?;
+                                liveness.live(&session_id, generation, read_at_ns)?;
+                                if let Some(proof) = book_proof.as_mut() {
+                                    proof.transport(read_at_ns);
+                                }
                             }
                             message
                         }
@@ -1866,12 +2029,20 @@ async fn run_binance_connection(
                             .await
                             {
                                 Ok(Some(Ok(Message::Pong(_)))) => {
-                                    liveness.live(&session_id, generation, now_ns()?)?;
+                                    let read_at_ns = now_ns()?;
+                                    liveness.live(&session_id, generation, read_at_ns)?;
+                                    if let Some(proof) = book_proof.as_mut() {
+                                        proof.transport(read_at_ns);
+                                    }
                                     continue;
                                 }
                                 Ok(Some(Ok(message))) => {
                                     if !matches!(message, Message::Close(_)) {
-                                        liveness.live(&session_id, generation, now_ns()?)?;
+                                        let read_at_ns = now_ns()?;
+                                        liveness.live(&session_id, generation, read_at_ns)?;
+                                        if let Some(proof) = book_proof.as_mut() {
+                                            proof.transport(read_at_ns);
+                                        }
                                     }
                                     message
                                 }
@@ -1916,6 +2087,9 @@ async fn run_binance_connection(
                         raw_text,
                         now_ns()?,
                     )?;
+                    if let Some(proof) = book_proof.as_mut() {
+                        proof.frame(&frame.binding.native_channel, frame.received_at_ns);
+                    }
                     if !publish_pending_frame(
                         frame,
                         &mut PendingPublishWindow {
@@ -2625,9 +2799,11 @@ mod tests {
         book_snapshot_renewal_period, feed_lane_name, next_connection_generation,
         partition_binance_bindings, partition_binance_route, partition_bindings,
         partition_okx_bindings, pending_binance_frame, pending_okx_frame, AuthorityMode,
-        BinanceRoute, BookSessionBootstrap, DeliveryClass, KafkaTransportError, LatestStateBuffer,
-        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed, SessionLivenessWriter,
+        BinanceRoute, BookLivenessProof, BookSessionBootstrap, DeliveryClass, KafkaTransportError,
+        LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        SessionLivenessWriter, TransportProtocol,
     };
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
@@ -2667,6 +2843,83 @@ mod tests {
             l2: None,
             mark_index_target: None,
         }
+    }
+
+    fn proof_bindings() -> HashMap<String, RawBinding> {
+        let book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        let mut other = book.clone();
+        other.native_symbol = "ETHUSDT".into();
+        other.native_channel = "ethusdt@depth@100ms".into();
+        let trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        [book, other, trade]
+            .into_iter()
+            .map(|binding| (binding.native_channel.clone(), binding))
+            .collect()
+    }
+
+    #[test]
+    fn book_liveness_marker_needs_a_quiet_book_and_fresh_in_band_evidence() {
+        const MS: i64 = 1_000_000;
+        let bindings = proof_bindings();
+        let start = 1_000_000 * MS;
+        let mut proof = BookLivenessProof::new(Duration::from_millis(1_000), &bindings, start);
+
+        // Nothing is quiet for a full interval yet.
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 400 * MS);
+        assert!(markers.is_empty());
+        assert!(!ping);
+
+        // BTC keeps trading; ETH stays quiet while frames keep arriving on the connection.
+        proof.frame("btcusdt@depth@100ms", start + 900 * MS);
+        proof.transport(start + 1_200 * MS);
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 1_300 * MS);
+        assert!(!ping);
+        assert_eq!(markers.len(), 1, "only the quiet book gets a marker");
+        let marker = &markers[0];
+        assert_eq!(marker.binding.native_channel, "ethusdt@depth@100ms");
+        assert_eq!(
+            marker.received_at_ns,
+            start + 1_200 * MS,
+            "stamped with the read, not the tick"
+        );
+        assert_eq!(marker.transport_protocol, TransportProtocol::Websocket);
+        assert_eq!(
+            (marker.session_id.as_str(), marker.generation),
+            ("lane-1-1", 1)
+        );
+        let body: Value = serde_json::from_slice(&marker.raw_frame).unwrap();
+        assert_eq!(
+            body,
+            json!({"qdl_transport_liveness": "v1", "stream": "ethusdt@depth@100ms"})
+        );
+
+        // No new evidence: no repeated marker; the trade binding never gets one.
+        let (markers, _) = proof.due(&bindings, "lane-1-1", 1, start + 1_400 * MS);
+        assert!(markers.is_empty());
+
+        // An idle connection asks for a ping, and stale evidence emits nothing.
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 1_800 * MS);
+        assert!(markers.is_empty());
+        assert!(ping);
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 2_300 * MS);
+        assert!(
+            markers.is_empty(),
+            "evidence older than one interval proves nothing"
+        );
+        assert!(ping);
+
+        // The pong is new evidence: both books are now quiet for an interval.
+        proof.transport(start + 2_350 * MS);
+        let (markers, _) = proof.due(&bindings, "lane-1-1", 1, start + 2_400 * MS);
+        let mut channels = markers
+            .iter()
+            .map(|marker| marker.binding.native_channel.as_str())
+            .collect::<Vec<_>>();
+        channels.sort();
+        assert_eq!(channels, ["btcusdt@depth@100ms", "ethusdt@depth@100ms"]);
+        assert!(markers
+            .iter()
+            .all(|marker| marker.received_at_ns == start + 2_350 * MS));
     }
 
     #[test]
@@ -3337,6 +3590,7 @@ mod resync_tests {
             max_inflight_publishes: 16,
             max_subscriptions_per_connection: 100,
             latest_state_flush_ms: 50,
+            book_liveness_proof_ms: 0,
             authority: AuthorityRecord {
                 schema: "qdl.authority-record.v1".into(),
                 slice_id: "unit".into(),

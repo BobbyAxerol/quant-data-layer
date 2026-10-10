@@ -9,11 +9,11 @@ use qdl_contracts::qdl::provider::v1::{
     QuarantineReason, QuarantineRecord, RawProviderEnvelope, TransportProtocol,
 };
 use qdl_core::canonical::{
-    canonicalize_l2_invalidation, canonicalize_l2_publication, canonicalize_l2_recovery_snapshot,
-    canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
+    canonicalize_l2_invalidation, canonicalize_l2_publication, canonicalize_l2_ready_snapshot,
+    canonicalize_l2_recovery_snapshot, canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
     TradeContext, TradeFixture,
 };
-use qdl_core::l2_adapter::{BookPublication, BookTransition, L2BookAdapter};
+use qdl_core::l2_adapter::{BookPublication, BookTransition, BookTransitionKind, L2BookAdapter};
 use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus, ExactDecimal};
 use qdl_core::okx::expand_data_frame;
 use qdl_core::transport::DurableRecord;
@@ -402,6 +402,50 @@ pub const L2_RESNAPSHOT_REQUIRED_V1: &str = "L2_RESNAPSHOT_REQUIRED_V1";
 // This is not a freshness proof: only verified provider transitions can emit.
 const L2_TOP_CHANGE_MIN_INTERVAL_MS: i64 = 100;
 
+/// In-band transport liveness marker for one L2 book (IDR-040 fix 2).
+///
+/// The native ingestor writes `{"qdl_transport_liveness":"v1","stream":<native
+/// channel>}` into the book's own raw partition, behind every provider frame of
+/// that book it had read, stamped with the receipt time of the newest message
+/// (data frame or pong) read on the same WebSocket. TCP delivers a connection's
+/// frames in order, so at that receipt time every frame the venue sent earlier
+/// on the connection had been read, and the partition order puts all of this
+/// book's frames ahead of the marker. A marker carries no market data and is
+/// never a reason to start, change or invalidate a book.
+pub const L2_TRANSPORT_LIVENESS_KEY: &str = "qdl_transport_liveness";
+pub const L2_TRANSPORT_LIVENESS_VERSION: &str = "v1";
+const L2_LIVENESS_UNPROVEN: &str = "TRANSPORT_LIVENESS_UNPROVEN";
+const L2_LIVENESS_NOT_DUE: &str = "TRANSPORT_LIVENESS_NOT_DUE";
+
+/// Provider time and receipt facts for the book's current verified view. The
+/// quiet proof re-publishes this view with its original provider time.
+#[derive(Clone, Copy, Debug)]
+struct L2ViewTimes {
+    generation: u64,
+    observed_at_ms: i64,
+    last_snapshot_received_ns: i64,
+}
+
+fn l2_transport_liveness(payload: &Value) -> Option<Result<&str, &'static str>> {
+    let object = payload.as_object()?;
+    object.get(L2_TRANSPORT_LIVENESS_KEY)?;
+    if object.len() != 2
+        || object
+            .get(L2_TRANSPORT_LIVENESS_KEY)
+            .and_then(Value::as_str)
+            != Some(L2_TRANSPORT_LIVENESS_VERSION)
+    {
+        return Some(Err("L2 transport liveness marker schema is invalid"));
+    }
+    Some(
+        object
+            .get("stream")
+            .and_then(Value::as_str)
+            .filter(|stream| !stream.is_empty())
+            .ok_or("L2 transport liveness marker has no stream"),
+    )
+}
+
 struct L2SnapshotObservation {
     observed_at_ms: i64,
     generation: u64,
@@ -426,6 +470,7 @@ pub struct RealtimeCore {
     bindings: BTreeMap<String, CoreBinding>,
     l2_adapters: BTreeMap<String, L2BookAdapter>,
     l2_snapshot_observations: BTreeMap<String, L2SnapshotObservation>,
+    l2_view_times: BTreeMap<String, L2ViewTimes>,
     l2_invalidated: BTreeMap<String, (String, u64)>,
     mark_index_pairs: BTreeMap<String, MarkIndexPairState>,
     partition_sequences: BTreeMap<String, u64>,
@@ -475,6 +520,7 @@ impl RealtimeCore {
             bindings,
             l2_adapters,
             l2_snapshot_observations: BTreeMap::new(),
+            l2_view_times: BTreeMap::new(),
             l2_invalidated: BTreeMap::new(),
             mark_index_pairs: BTreeMap::new(),
             partition_sequences: BTreeMap::new(),
@@ -1115,6 +1161,8 @@ impl RealtimeCore {
         processing_at_ns: i64,
         transport_offset: Option<u64>,
     ) -> ProcessBatch {
+        // A transport liveness marker never starts, changes or fences a book.
+        let liveness_marker = l2_transport_liveness(&payload).is_some();
         let mut batch = self.process_l2_inner(binding_key, binding, &raw, payload,
             processing_at_ns, transport_offset);
         let Some(adapter) = self.l2_adapters.get(binding_key) else { return batch; };
@@ -1127,7 +1175,12 @@ impl RealtimeCore {
         // A superseded/foreign frame cannot invalidate the current owner.
         if adapter.core().generation() != raw.connection_generation
             || self.l2_sessions.get(binding_key) != Some(&raw.source_session_id)
-            || matches!(batch.filtered_outcome, Some("IGNORED_STALE_GENERATION" | "IDENTITY_MISMATCH"))
+            || matches!(
+                batch.filtered_outcome,
+                Some("IGNORED_STALE_GENERATION" | "IDENTITY_MISMATCH")
+                    | Some(L2_LIVENESS_UNPROVEN | L2_LIVENESS_NOT_DUE)
+            )
+            || liveness_marker
         { return batch; }
         let scope = (raw.source_session_id.clone(), raw.connection_generation);
         if self.l2_invalidated.get(binding_key) == Some(&scope) { return batch; }
@@ -1161,6 +1214,18 @@ impl RealtimeCore {
         let Some(l2) = binding.l2.as_ref() else {
             unreachable!("process_l2 only accepts an L2 binding")
         };
+        if let Some(marker) = l2_transport_liveness(&payload) {
+            let stream = marker.map(str::to_owned);
+            return self.process_l2_liveness(
+                binding_key,
+                binding,
+                l2,
+                raw,
+                stream,
+                payload,
+                transport_offset,
+            );
+        }
         // Processing backlog is not a provider continuity failure. Replay every
         // validated book frame losslessly with its original source/receipt times;
         // readers still enforce freshness. Dropping an aged delta and clearing
@@ -1344,6 +1409,7 @@ impl RealtimeCore {
             }
             transition
         };
+        self.record_l2_view_time(binding_key, &transition, raw);
 
         let fixture = l2_fixture(binding, raw, fixture_payload.clone(), partition_sequence);
         let publication = if self.l2_invalidated.contains_key(binding_key)
@@ -1434,6 +1500,12 @@ impl RealtimeCore {
                     self.l2_snapshot_observations
                         .insert(binding_key.to_owned(), observation);
                 }
+                if let Some(times) = self.l2_view_times.get_mut(binding_key) {
+                    if times.generation == transition.generation {
+                        times.last_snapshot_received_ns =
+                            times.last_snapshot_received_ns.max(raw.received_at_ns);
+                    }
+                }
             }
             durable.push(canonical_record(
                 &self.config.canonical_stream,
@@ -1445,6 +1517,202 @@ impl RealtimeCore {
             canonical: durable,
             quarantines: vec![],
             duplicates,
+            filtered: 0,
+            filtered_outcome: None,
+        }
+    }
+
+    /// Keep the provider time of the current verified view. Only transitions
+    /// that leave a readable, sequence-verified view count; a transition that
+    /// leaves the book not READY (gap, resync, bootstrap) forgets the times, so
+    /// a quiet proof can never outlive the view it describes.
+    fn record_l2_view_time(
+        &mut self,
+        binding_key: &str,
+        transition: &BookTransition,
+        raw: &RawProviderEnvelope,
+    ) {
+        let applied = transition.sequence_verified()
+            && matches!(
+                transition.outcome,
+                BookOutcome::DeltaApplied | BookOutcome::SnapshotApplied | BookOutcome::Keepalive
+            );
+        if !applied {
+            if transition.status != BookStatus::Ready {
+                self.l2_view_times.remove(binding_key);
+            }
+            return;
+        }
+        let Some(observed_at_ms) = l2_observed_at_ms(transition, raw) else {
+            return;
+        };
+        let fresh = L2ViewTimes {
+            generation: transition.generation,
+            observed_at_ms,
+            last_snapshot_received_ns: 0,
+        };
+        let entry = self
+            .l2_view_times
+            .entry(binding_key.to_owned())
+            .or_insert(fresh);
+        if entry.generation != transition.generation {
+            *entry = fresh;
+        }
+        entry.observed_at_ms = entry.observed_at_ms.max(observed_at_ms);
+    }
+
+    /// IDR-040 fix 2: a quiet book re-publishes its current verified view with
+    /// the original provider time and `proof_observed_at_ns` set to the marker's
+    /// receipt time. Every condition fails closed to "no proof"; nothing here
+    /// can start, change, reset or invalidate the book.
+    #[allow(clippy::too_many_arguments)]
+    fn process_l2_liveness(
+        &mut self,
+        binding_key: &str,
+        binding: &CoreBinding,
+        l2: &L2Binding,
+        raw: &RawProviderEnvelope,
+        stream: Result<String, &'static str>,
+        payload: Value,
+        transport_offset: Option<u64>,
+    ) -> ProcessBatch {
+        let materialized_at_ns = raw.received_at_ns;
+        let stream = match stream {
+            Ok(value) => value,
+            Err(summary) => {
+                return self.quarantine(
+                    raw,
+                    QuarantineReason::SemanticInvalid,
+                    summary,
+                    materialized_at_ns,
+                )
+            }
+        };
+        if stream != raw.native_channel
+            || TransportProtocol::try_from(raw.transport_protocol)
+                != Ok(TransportProtocol::Websocket)
+        {
+            return self.quarantine(
+                raw,
+                QuarantineReason::SemanticInvalid,
+                "L2 transport liveness marker is not in-band for this book",
+                materialized_at_ns,
+            );
+        }
+        let unproven = |outcome: &'static str| ProcessBatch {
+            canonical: vec![],
+            quarantines: vec![],
+            duplicates: 0,
+            filtered: 1,
+            filtered_outcome: Some(outcome),
+        };
+        let Some(adapter) = self.l2_adapters.get(binding_key) else {
+            return unproven(L2_LIVENESS_UNPROVEN);
+        };
+        let core = adapter.core();
+        // The marker must come from the very connection that owns the book: a
+        // byte-identical session and the book's own generation. A different
+        // lane or a newer connection proves nothing about this view.
+        if self.l2_sessions.get(binding_key) != Some(&raw.source_session_id)
+            || core.generation() != raw.connection_generation
+            || core.status() != BookStatus::Ready
+            || self.l2_invalidated.contains_key(binding_key)
+        {
+            return unproven(L2_LIVENESS_UNPROVEN);
+        }
+        let Some(view) = core.view() else {
+            return unproven(L2_LIVENESS_UNPROVEN);
+        };
+        let Some(times) = self
+            .l2_view_times
+            .get(binding_key)
+            .copied()
+            .filter(|times| times.generation == core.generation())
+        else {
+            return unproven(L2_LIVENESS_UNPROVEN);
+        };
+        // Quiet only: a book that published a snapshot within its cadence (on
+        // the same receipt clock) already carries current evidence.
+        let refresh_ns = i64::try_from(l2.materialized_snapshot_interval_ms())
+            .ok()
+            .and_then(|value| value.checked_mul(1_000_000))
+            .unwrap_or(i64::MAX);
+        if raw.received_at_ns <= times.last_snapshot_received_ns
+            || raw
+                .received_at_ns
+                .saturating_sub(times.last_snapshot_received_ns)
+                < refresh_ns
+        {
+            return unproven(L2_LIVENESS_NOT_DUE);
+        }
+        let transition = BookTransition {
+            kind: BookTransitionKind::Snapshot,
+            publication: BookPublication::Snapshot,
+            outcome: BookOutcome::Keepalive,
+            status: core.status(),
+            generation: core.generation(),
+            snapshot_sequence: core.snapshot_sequence(),
+            last_sequence: core.last_sequence(),
+            observed_at_ms: Some(times.observed_at_ms),
+            native_sequence_start: None,
+            previous_sequence: None,
+            updates: vec![],
+            view: Some(view),
+            materialized_snapshot_at_ms: None,
+            proof_observed_at_ns: Some(raw.received_at_ns),
+        };
+        let Some(partition_sequence) = self.next_l2_partition_sequence(binding, transport_offset)
+        else {
+            return self.quarantine(
+                raw,
+                QuarantineReason::SemanticInvalid,
+                "L2 transport-derived partition sequence overflow",
+                materialized_at_ns,
+            );
+        };
+        let canonical = match canonicalize_l2_ready_snapshot(
+            &l2_fixture(binding, raw, payload, partition_sequence),
+            &transition,
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                return self.quarantine(
+                    raw,
+                    QuarantineReason::SemanticInvalid,
+                    "L2 quiet proof failed strict canonical projection",
+                    materialized_at_ns,
+                )
+            }
+        };
+        if self.seen_ids.contains(&canonical.event_id) {
+            return ProcessBatch {
+                canonical: vec![],
+                quarantines: vec![],
+                duplicates: 1,
+                filtered: 0,
+                filtered_outcome: None,
+            };
+        }
+        self.partition_sequences
+            .insert(l2_partition_key(binding), canonical.partition_sequence);
+        self.remember(canonical.event_id.clone());
+        if let Some(observation) =
+            L2SnapshotObservation::from_transition(&transition, times.observed_at_ms)
+        {
+            self.l2_snapshot_observations
+                .insert(binding_key.to_owned(), observation);
+        }
+        if let Some(entry) = self.l2_view_times.get_mut(binding_key) {
+            entry.last_snapshot_received_ns = raw.received_at_ns;
+        }
+        ProcessBatch {
+            canonical: vec![canonical_record(
+                &self.config.canonical_stream,
+                canonical,
+                materialized_at_ns,
+            )],
+            quarantines: vec![],
+            duplicates: 0,
             filtered: 0,
             filtered_outcome: None,
         }
@@ -2784,6 +3052,259 @@ mod tests {
         );
         assert!(ahead.quarantines.is_empty());
         assert_eq!(ahead.filtered_outcome, Some("REST_AHEAD_OF_STREAM"));
+    }
+
+    const QUIET_RECEIPT_NS: i64 = 1_786_352_400_000_000_000;
+
+    fn quiet_book_binding() -> CoreBinding {
+        let mut binding = binance_book_binding();
+        binding
+            .l2
+            .as_mut()
+            .unwrap()
+            .materialized_snapshot_interval_ms = Some(1_000);
+        binding
+    }
+
+    fn liveness_marker(
+        binding: &CoreBinding,
+        generation: u64,
+        received_at_ns: i64,
+    ) -> RawProviderEnvelope {
+        let frame = format!(
+            r#"{{"qdl_transport_liveness":"v1","stream":"{}"}}"#,
+            binding.native_channel
+        );
+        raw_with_receipt(binding, frame.as_bytes(), generation, received_at_ns)
+    }
+
+    /// READY at receipt +1 ms with one published bootstrap snapshot (provider time 1001 ms).
+    fn quiet_ready_core(binding: &CoreBinding) -> (RealtimeCore, EventEnvelope) {
+        let mut core = core(binding.clone(), true);
+        let _ = core
+            .process(
+                raw_with_receipt(
+                    binding,
+                    br#"{"s":"BTCUSDT","U":99,"u":101,"pu":98,"E":1001,"b":[["60000","2"]],"a":[["60001","1"]]}"#,
+                    1,
+                    QUIET_RECEIPT_NS,
+                ),
+                10,
+            )
+            .unwrap();
+        let ready = core
+            .process(
+                with_transport(
+                    raw_with_receipt(
+                        binding,
+                        br#"{"lastUpdateId":100,"E":1000,"bids":[["60000","1"]],"asks":[["60001","1"]]}"#,
+                        1,
+                        QUIET_RECEIPT_NS + 1_000_000,
+                    ),
+                    TransportProtocol::Http,
+                ),
+                11,
+            )
+            .unwrap();
+        assert_eq!(ready.canonical.len(), 1);
+        let snapshot = EventEnvelope::decode(ready.canonical[0].payload.as_slice()).unwrap();
+        (core, snapshot)
+    }
+
+    fn proof_book(batch: &ProcessBatch) -> (EventEnvelope, i64, String) {
+        assert_eq!(batch.canonical.len(), 1, "{batch:?}");
+        let envelope = EventEnvelope::decode(batch.canonical[0].payload.as_slice()).unwrap();
+        let Some(event_envelope::Payload::BookSnapshot(book)) = envelope.payload.clone() else {
+            panic!("a quiet proof is a verified BOOK_SNAPSHOT");
+        };
+        assert!(book.sequence_verified);
+        (envelope, book.proof_observed_at_ns, book.native_sequence)
+    }
+
+    #[test]
+    fn quiet_binance_book_publishes_in_band_proof_without_redating_the_event() {
+        // IDR-040 fix 2: no depth frame arrives, but the owning connection keeps delivering.
+        let binding = quiet_book_binding();
+        let (mut core, bootstrap) = quiet_ready_core(&binding);
+        let Some(event_envelope::Payload::BookSnapshot(bootstrap_book)) = bootstrap.payload.clone()
+        else {
+            panic!("bootstrap must be a snapshot");
+        };
+        assert_eq!(
+            bootstrap_book.proof_observed_at_ns, 0,
+            "an ordinary snapshot carries no proof"
+        );
+
+        let early = core
+            .process(
+                liveness_marker(&binding, 1, QUIET_RECEIPT_NS + 600_000_000),
+                12,
+            )
+            .unwrap();
+        assert!(early.canonical.is_empty() && early.quarantines.is_empty());
+        assert_eq!(early.filtered_outcome, Some("TRANSPORT_LIVENESS_NOT_DUE"));
+
+        let proof_at = QUIET_RECEIPT_NS + 1_500_000_000;
+        let marker = liveness_marker(&binding, 1, proof_at);
+        let proven = core.process(marker.clone(), 13).unwrap();
+        let (envelope, proof, sequence) = proof_book(&proven);
+        assert_eq!(proof, proof_at);
+        assert_eq!(sequence, "101");
+        // The provider event time is the book's own, never the proof's.
+        assert_eq!(
+            envelope.source_event_time_ns,
+            bootstrap.source_event_time_ns
+        );
+        assert_eq!(envelope.source_event_time_ns, 1_001_000_000);
+        assert_eq!(envelope.received_at_ns, proof_at);
+        assert_ne!(envelope.event_id, bootstrap.event_id);
+        assert_eq!(envelope.raw_capture_id, marker.capture_id);
+
+        // Redelivery of the same marker is the same event, and the cadence holds.
+        let replay = core.process(marker, 14).unwrap();
+        assert!(replay.canonical.is_empty());
+        assert_eq!(replay.filtered_outcome, Some("TRANSPORT_LIVENESS_NOT_DUE"));
+        let soon = core
+            .process(liveness_marker(&binding, 1, proof_at + 400_000_000), 15)
+            .unwrap();
+        assert_eq!(soon.filtered_outcome, Some("TRANSPORT_LIVENESS_NOT_DUE"));
+        let next = core
+            .process(liveness_marker(&binding, 1, proof_at + 1_000_000_000), 16)
+            .unwrap();
+        let (next_envelope, next_proof, _) = proof_book(&next);
+        assert_eq!(next_proof, proof_at + 1_000_000_000);
+        assert_eq!(next_envelope.source_event_time_ns, 1_001_000_000);
+        assert_ne!(next_envelope.event_id, envelope.event_id);
+        assert!(next_envelope.partition_sequence > envelope.partition_sequence);
+
+        // A real delta after the proof still applies on the same continuity.
+        let delta = core
+            .process(
+                raw_with_receipt(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":102,"u":102,"pu":101,"E":4000,"b":[["60000","3"]],"a":[]}"#,
+                    1,
+                    proof_at + 1_100_000_000,
+                ),
+                17,
+            )
+            .unwrap();
+        assert!(!delta.canonical.is_empty());
+        assert!(delta.quarantines.is_empty());
+    }
+
+    #[test]
+    fn liveness_marker_without_an_owned_ready_book_proves_nothing_and_changes_nothing() {
+        let binding = quiet_book_binding();
+        let key = binding.key();
+
+        // No book yet: no proof, no fence, no session claimed.
+        let mut cold = core(binding.clone(), true);
+        let before = cold
+            .process(liveness_marker(&binding, 1, QUIET_RECEIPT_NS), 10)
+            .unwrap();
+        assert!(before.canonical.is_empty() && before.quarantines.is_empty());
+        assert_eq!(before.filtered_outcome, Some("TRANSPORT_LIVENESS_UNPROVEN"));
+        assert!(!cold.l2_sessions.contains_key(&key));
+
+        let (mut core, _) = quiet_ready_core(&binding);
+        let session = core.l2_sessions[&key].clone();
+        let later = QUIET_RECEIPT_NS + 5_000_000_000;
+
+        // A newer connection generation proves nothing about this view.
+        let newer = core
+            .process(liveness_marker(&binding, 2, later), 12)
+            .unwrap();
+        assert_eq!(newer.filtered_outcome, Some("TRANSPORT_LIVENESS_UNPROVEN"));
+        assert!(newer.canonical.is_empty());
+
+        // Another lane with the same generation proves nothing either.
+        let mut foreign = liveness_marker(&binding, 1, later);
+        foreign.source_session_id = "qdl-other-lane-001-1-1700000000000000000".into();
+        let foreign = core.process(foreign, 13).unwrap();
+        assert_eq!(
+            foreign.filtered_outcome,
+            Some("TRANSPORT_LIVENESS_UNPROVEN")
+        );
+        assert_eq!(core.l2_sessions[&key], session);
+        assert_eq!(core.l2_adapters[&key].core().status(), BookStatus::Ready);
+
+        // A marker that names another stream, or that did not travel in-band, is invalid.
+        let mut wrong_stream = raw_with_receipt(
+            &binding,
+            br#"{"qdl_transport_liveness":"v1","stream":"ethusdt@depth@100ms"}"#,
+            1,
+            later,
+        );
+        wrong_stream.correlation_id = "wrong-stream".into();
+        let wrong_stream = core.process(wrong_stream, 14).unwrap();
+        assert!(wrong_stream.canonical.is_empty());
+        assert_eq!(wrong_stream.quarantines.len(), 1);
+        let rest = core
+            .process(
+                with_transport(
+                    liveness_marker(&binding, 1, later + 1),
+                    TransportProtocol::Http,
+                ),
+                15,
+            )
+            .unwrap();
+        assert_eq!(rest.quarantines.len(), 1);
+        let unknown_version = core
+            .process(
+                raw_with_receipt(
+                    &binding,
+                    br#"{"qdl_transport_liveness":"v2","stream":"btcusdt@depth@100ms"}"#,
+                    1,
+                    later + 2,
+                ),
+                16,
+            )
+            .unwrap();
+        assert_eq!(unknown_version.quarantines.len(), 1);
+        assert_eq!(core.l2_adapters[&key].core().status(), BookStatus::Ready);
+
+        // After a real gap the book is not current; a marker cannot vouch for it.
+        let gap = core
+            .process(
+                raw_with_receipt(
+                    &binding,
+                    br#"{"s":"BTCUSDT","U":105,"u":105,"pu":104,"E":6000,"b":[],"a":[]}"#,
+                    1,
+                    later + 3,
+                ),
+                17,
+            )
+            .unwrap();
+        assert_eq!(gap.quarantines.len(), 1);
+        let after_gap = core
+            .process(liveness_marker(&binding, 1, later + 2_000_000_000), 18)
+            .unwrap();
+        assert!(after_gap.canonical.is_empty() && after_gap.quarantines.is_empty());
+        assert_eq!(
+            after_gap.filtered_outcome,
+            Some("TRANSPORT_LIVENESS_UNPROVEN")
+        );
+    }
+
+    #[test]
+    fn quiet_proof_replay_is_byte_deterministic_on_transport_offsets() {
+        let binding = quiet_book_binding();
+        let run = || {
+            let (mut core, _) = quiet_ready_core(&binding);
+            core.process_at_transport_offset(
+                liveness_marker(&binding, 1, QUIET_RECEIPT_NS + 2_000_000_000),
+                99,
+                42,
+            )
+            .unwrap()
+            .canonical
+        };
+        let first = run();
+        let second = run();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].payload, second[0].payload);
+        assert_eq!(first[0].event_id, second[0].event_id);
     }
 
     #[test]

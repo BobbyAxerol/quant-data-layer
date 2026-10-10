@@ -826,6 +826,7 @@ fn canonicalize_deribit_fixture(fixture: &TradeFixture) -> Result<EventEnvelope,
         book_generation: 0,
         sequence_verified: false,
         truncated: false,
+        proof_observed_at_ns: 0,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
@@ -867,9 +868,20 @@ fn l2_ready_snapshot(
         .ok_or_else(|| "L2 snapshot requires a verified readable book view".to_owned())?;
     let source_time_ms = l2_source_time_ms(fixture, transition)?;
     let source_sequence = format!("g{}:{}", view.generation, view.last_sequence);
-    let materialization_discriminator = transition
-        .materialized_snapshot_at_ms
-        .map(|value| format!("materialized:{value}"));
+    let proof_observed_at_ns = match transition.proof_observed_at_ns {
+        Some(value) if value <= 0 => {
+            return Err("L2 quiet proof time must be positive".into());
+        }
+        value => value,
+    };
+    // A quiet proof repeats the book's sequence and provider time; only its
+    // receipt time makes the observation distinct, so it names the event.
+    let materialization_discriminator = match proof_observed_at_ns {
+        Some(value) => Some(format!("proof:{value}")),
+        None => transition
+            .materialized_snapshot_at_ms
+            .map(|value| format!("materialized:{value}")),
+    };
     let mut envelope = base_envelope_with_discriminator(
         fixture,
         "book_snapshot",
@@ -896,6 +908,7 @@ fn l2_ready_snapshot(
         book_generation: view.generation,
         sequence_verified: true,
         truncated: view.truncated,
+        proof_observed_at_ns: proof_observed_at_ns.unwrap_or(0),
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
