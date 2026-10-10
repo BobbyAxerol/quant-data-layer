@@ -247,11 +247,18 @@ impl L2BookAdapter {
         if generation == self.core.generation() && self.core.status() == BookStatus::Ready {
             // Only a snapshot the stream-applied book already covers proves the book current at that time;
             // a snapshot ahead of it would re-stamp a book that is behind the venue (IDR-040).
-            let covered = self.core.last_sequence().is_some_and(|last| sequence_end <= last);
+            let covered = self
+                .core
+                .last_sequence()
+                .is_some_and(|last| sequence_end <= last);
             return Ok(self.transition(
                 BookTransitionKind::Snapshot,
                 BookPublication::None,
-                if covered { BookOutcome::Keepalive } else { BookOutcome::RestAheadOfStream },
+                if covered {
+                    BookOutcome::Keepalive
+                } else {
+                    BookOutcome::RestAheadOfStream
+                },
                 TransitionMetadata::empty(observed_at_ms),
             ));
         }
@@ -879,7 +886,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ahead.outcome, BookOutcome::RestAheadOfStream);
-        assert_eq!((ahead.status, ahead.last_sequence), (BookStatus::Ready, Some(101)));
+        assert_eq!(
+            (ahead.status, ahead.last_sequence),
+            (BookStatus::Ready, Some(101))
+        );
         assert_eq!(ahead.view.unwrap().bids[0].quantity.canonical_text(), "2"); // the book is not replaced
         assert!(adapter
             .apply_binance_rest_snapshot(&json!({"bids": [], "asks": []}), 1, 4)

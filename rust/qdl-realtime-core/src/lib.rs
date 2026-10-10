@@ -1163,9 +1163,17 @@ impl RealtimeCore {
     ) -> ProcessBatch {
         // A transport liveness marker never starts, changes or fences a book.
         let liveness_marker = l2_transport_liveness(&payload).is_some();
-        let mut batch = self.process_l2_inner(binding_key, binding, &raw, payload,
-            processing_at_ns, transport_offset);
-        let Some(adapter) = self.l2_adapters.get(binding_key) else { return batch; };
+        let mut batch = self.process_l2_inner(
+            binding_key,
+            binding,
+            &raw,
+            payload,
+            processing_at_ns,
+            transport_offset,
+        );
+        let Some(adapter) = self.l2_adapters.get(binding_key) else {
+            return batch;
+        };
         if adapter.core().status() == BookStatus::Ready {
             if !batch.canonical.is_empty() {
                 self.l2_invalidated.remove(binding_key);
@@ -1181,20 +1189,35 @@ impl RealtimeCore {
                     | Some(L2_LIVENESS_UNPROVEN | L2_LIVENESS_NOT_DUE)
             )
             || liveness_marker
-        { return batch; }
+        {
+            return batch;
+        }
         let scope = (raw.source_session_id.clone(), raw.connection_generation);
-        if self.l2_invalidated.get(binding_key) == Some(&scope) { return batch; }
+        if self.l2_invalidated.get(binding_key) == Some(&scope) {
+            return batch;
+        }
         let Some(sequence) = self.next_l2_partition_sequence(binding, transport_offset) else {
             return batch;
         };
-        let Ok(payload) = serde_json::from_slice(&raw.raw_frame_bytes) else { return batch; };
+        let Ok(payload) = serde_json::from_slice(&raw.raw_frame_bytes) else {
+            return batch;
+        };
         let fixture = l2_fixture(binding, &raw, payload, sequence);
-        let Ok(events) = canonicalize_l2_invalidation(&fixture) else { return batch; };
+        let Ok(events) = canonicalize_l2_invalidation(&fixture) else {
+            return batch;
+        };
         for event in events {
-            if self.seen_ids.contains(&event.event_id) { continue; }
-            self.partition_sequences.insert(l2_partition_key(binding), event.partition_sequence);
+            if self.seen_ids.contains(&event.event_id) {
+                continue;
+            }
+            self.partition_sequences
+                .insert(l2_partition_key(binding), event.partition_sequence);
             self.remember(event.event_id.clone());
-            batch.canonical.push(canonical_record(&self.config.canonical_stream, event, raw.received_at_ns));
+            batch.canonical.push(canonical_record(
+                &self.config.canonical_stream,
+                event,
+                raw.received_at_ns,
+            ));
         }
         self.l2_invalidated.insert(binding_key.to_owned(), scope);
         self.l2_snapshot_observations.remove(binding_key);
@@ -2175,14 +2198,27 @@ mod tests {
     fn assert_book_fence(batch: &ProcessBatch) {
         use qdl_contracts::qdl::common::v1::QualityFlag;
         assert_eq!(batch.canonical.len(), 2);
-        let events: Vec<_> = batch.canonical.iter().map(|record|
-            EventEnvelope::decode(record.payload.as_slice()).unwrap()).collect();
-        assert_eq!(events[1].partition_sequence, events[0].partition_sequence + 1);
+        let events: Vec<_> = batch
+            .canonical
+            .iter()
+            .map(|record| EventEnvelope::decode(record.payload.as_slice()).unwrap())
+            .collect();
+        assert_eq!(
+            events[1].partition_sequence,
+            events[0].partition_sequence + 1
+        );
         for event in &events {
-            assert!(event.quality_flags.contains(&(QualityFlag::SequenceGapBefore as i32)));
-            assert!(event.quality_flags.contains(&(QualityFlag::ResyncRequired as i32)));
+            assert!(event
+                .quality_flags
+                .contains(&(QualityFlag::SequenceGapBefore as i32)));
+            assert!(event
+                .quality_flags
+                .contains(&(QualityFlag::ResyncRequired as i32)));
             assert!(!event.raw_capture_id.is_empty());
-            assert_eq!(event.source_event_time_ns, event.received_at_ns / 1_000_000 * 1_000_000);
+            assert_eq!(
+                event.source_event_time_ns,
+                event.received_at_ns / 1_000_000 * 1_000_000
+            );
             match event.payload.as_ref().unwrap() {
                 event_envelope::Payload::BookSnapshot(book) => {
                     assert!(book.levels.is_empty());
@@ -3567,15 +3603,34 @@ mod tests {
         let binding = okx_book_binding();
         let mut engine = core(binding.clone(), true);
         let at = 1_786_352_400_000_000_000;
-        let original = engine.process_at_transport_offset(
-            delayed_book_frame(&binding, true, 100, 0, 7, at, "1"), at, 0).unwrap();
-        let gap = engine.process_at_transport_offset(
-            delayed_book_frame(&binding, false, 110, 109, 7, at + 1_000_000, "2"), at, 1).unwrap();
+        let original = engine
+            .process_at_transport_offset(
+                delayed_book_frame(&binding, true, 100, 0, 7, at, "1"),
+                at,
+                0,
+            )
+            .unwrap();
+        let gap = engine
+            .process_at_transport_offset(
+                delayed_book_frame(&binding, false, 110, 109, 7, at + 1_000_000, "2"),
+                at,
+                1,
+            )
+            .unwrap();
         assert_book_fence(&gap);
         let recovery = delayed_book_frame(&binding, true, 100, 0, 7, at + 2_000_000, "1");
-        let restored = engine.process_at_transport_offset(recovery.clone(), at, 2).unwrap();
-        assert_eq!(restored.canonical.len(), 1, "recovery anchor must replace fence");
-        assert_ne!(restored.canonical[0].event_id, original.canonical[0].event_id);
+        let restored = engine
+            .process_at_transport_offset(recovery.clone(), at, 2)
+            .unwrap();
+        assert_eq!(
+            restored.canonical.len(),
+            1,
+            "recovery anchor must replace fence"
+        );
+        assert_ne!(
+            restored.canonical[0].event_id,
+            original.canonical[0].event_id
+        );
         let event = EventEnvelope::decode(restored.canonical[0].payload.as_slice()).unwrap();
         match event.payload.unwrap() {
             event_envelope::Payload::BookSnapshot(book) => {
@@ -3585,7 +3640,11 @@ mod tests {
             }
             _ => panic!("recovery requires snapshot"),
         }
-        assert!(engine.process_at_transport_offset(recovery, at, 2).unwrap().canonical.is_empty());
+        assert!(engine
+            .process_at_transport_offset(recovery, at, 2)
+            .unwrap()
+            .canonical
+            .is_empty());
     }
 
     #[test]

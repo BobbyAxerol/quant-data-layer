@@ -392,17 +392,35 @@ mod tests {
     fn book_invalidation_retains_flags_and_separate_latest_products() {
         use qdl_contracts::qdl::common::v1::QualityFlag;
         for (feed, payload) in [
-            ("BOOK_SNAPSHOT", Payload::BookSnapshot(OrderBookSnapshot {
-                book_generation: 7, sequence_verified: false, ..Default::default()
-            })),
-            ("BOOK_DELTA", Payload::BookDelta(OrderBookDelta {
-                book_generation: 7, reset: true, sequence_verified: false, ..Default::default()
-            })),
+            (
+                "BOOK_SNAPSHOT",
+                Payload::BookSnapshot(OrderBookSnapshot {
+                    book_generation: 7,
+                    sequence_verified: false,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "BOOK_DELTA",
+                Payload::BookDelta(OrderBookDelta {
+                    book_generation: 7,
+                    reset: true,
+                    sequence_verified: false,
+                    ..Default::default()
+                }),
+            ),
         ] {
             let mut envelope = EventEnvelope::decode(encoded(UID, payload).as_slice()).unwrap();
-            envelope.quality_flags = vec![QualityFlag::SequenceGapBefore as i32, QualityFlag::ResyncRequired as i32];
+            envelope.quality_flags = vec![
+                QualityFlag::SequenceGapBefore as i32,
+                QualityFlag::ResyncRequired as i32,
+            ];
             let bytes = envelope.encode_to_vec();
-            let (_, frame) = only(transform().transform(&record(BOOK, bytes.clone(), 12)).unwrap());
+            let (_, frame) = only(
+                transform()
+                    .transform(&record(BOOK, bytes.clone(), 12))
+                    .unwrap(),
+            );
             assert_eq!(frame.lpk.feed, feed);
             assert_eq!(frame.kind, FrameKind::Latest);
             assert_eq!(frame.envelope, bytes);
