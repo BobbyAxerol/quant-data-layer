@@ -1,6 +1,6 @@
 # SDK Changelog
 
-## Unreleased
+## 2.2.0 (v2.2.3 Data Layer)
 
 `ReplicatedRestQueryTransport` starts its round-robin on a random replica per
 instance instead of always replica 0. A new keyword `start_index` pins the start
