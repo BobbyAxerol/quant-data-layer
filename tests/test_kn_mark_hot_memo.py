@@ -141,5 +141,244 @@ class BackupPathNeverSharesTests(unittest.TestCase):
         self.assertEqual(hot.calls, 1)
 
 
+class RealOrderingChecksTests(unittest.TestCase):
+    """The shared/direct split through the REAL ordering gates (nothing mocked inside the backend).
+
+    Real canonical MARK/INDEX golden records (retimed with their Rust lineage
+    kept whole, as in tests/test_kn_query_backend.py) in ProductView and
+    CanonicalHotView objects; the cache reader is a Redis-free stand-in that
+    returns one ProductView, as in tests/test_kn_hot_view.py
+    HotQuerySelectionTests. ``_hot_candidate``'s boundary/offset comparisons,
+    ``_hot_monotonic``/``_hot_boundaries``, ``_parsed``, ``_validate_records``
+    and the quality oracle all run unmodified. Records, in canonical order:
+    C10 (record 10, boundary 20) < H1 (30, 40) < H2 (50, 60) < H3 (70, 80)."""
+
+    OFFSETS = {"C10": (10, 20), "H1": (30, 40), "H2": (50, 60), "H3": (70, 80)}
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.runtime.stable_catalog import StableSourceCatalog
+        from tests.test_kn_bar_legacy_import import golden_records
+        from tests.test_kn_query_backend import binding_of
+
+        cls.catalog = StableSourceCatalog.load(
+            Path(__file__).resolve().parents[1] / "config/v2/stable-source-bindings.yaml")
+        marks = (
+            (binding_of(cls.catalog, pk, payload), payload)
+            for pk, payload in golden_records(bar=False)
+            if market_data_pb2.EventEnvelope.FromString(payload).WhichOneof("payload") == "mark_index_price"
+        )
+        cls.binding, cls.golden = next(
+            (binding, payload) for binding, payload in marks
+            if binding.authoritative and binding.source_role == "PRIMARY"
+        )
+
+    def setUp(self):
+        import time as _time
+
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.query import ConsumerGrade, DataRequirement
+        from qdl.runtime.kn_bar_readback import binding_product_key
+        from tests.test_kn_query_backend import retimed_mark_index
+
+        self.now = _time.time_ns()
+        self.mono = [10_000_000_000]
+        self.lpk = binding_product_key(self.binding, "paper")
+
+        def payload(age_ms):
+            env = market_data_pb2.EventEnvelope.FromString(
+                retimed_mark_index(self.golden, now_ns=self.now, age_ms=age_ms))
+            env.normalized_at_ns = env.received_at_ns + 1
+            env.published_at_ns = env.received_at_ns + 2
+            return env.SerializeToString(deterministic=True)
+
+        self.payloads = {"C10": payload(900), "H1": payload(400), "H2": payload(200), "H3": payload(100)}
+        self.primary = self.cache("C10")
+        self.reply = self.hot("H1")
+        self.calls = 0
+        self.requirement = DataRequirement(
+            instrument_uid=self.binding.instrument.instrument_uid, feed=self.binding.feed,
+            consumer_grade=ConsumerGrade.EXECUTION, source_policy_id=self.binding.source_policy_id,
+            max_freshness_ms=2000,
+        )
+
+    def cache(self, name):
+        from qdl.runtime.kn_market_cache import CacheRow, ProductView, SourceBoundary
+
+        record, mark = self.OFFSETS[name]
+        return ProductView(self.lpk, 1, 1, (CacheRow(self.payloads[name], record),), SourceBoundary("topic", 0, mark))
+
+    def hot(self, name):
+        from qdl.runtime.kn_hot_view import CanonicalHotView
+        from qdl.runtime.kn_market_cache import CacheRow, SourceBoundary
+
+        record, mark = self.OFFSETS[name]
+        return CanonicalHotView(self.lpk, (CacheRow(self.payloads[name], record),), SourceBoundary("topic", 0, mark))
+
+    def backend(self, *, rc4=False):
+        from qdl.runtime.kn_query_backend import KnMarketCacheQueryBackend
+
+        def primary(key):
+            if isinstance(self.primary, Exception):
+                raise self.primary
+            return self.primary
+
+        def latest(binding, key):
+            self.calls += 1
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+        backend = KnMarketCacheQueryBackend(
+            SimpleNamespace(environment="paper", latest=primary), self.catalog, schema_digest="a" * 64,
+            topic_id="topic", clock_ns=lambda: self.now, monotonic_ns=lambda: self.mono[0],
+            hot_client=SimpleNamespace(latest=latest),
+        )
+        if rc4:
+            # rc4 (before ec89a31): every _hot_candidate caller read through the shared memo.
+            real = backend._hot_candidate
+            backend._hot_candidate = lambda binding, primary=None, *, shared=False: real(binding, primary, shared=True)
+        return backend
+
+    def name_of(self, payload):
+        return next(name for name, value in self.payloads.items() if value == payload)
+
+    def served(self, backend):
+        """Which record the Query latest path (_latest_view) served, by its cursor boundary."""
+        from qdl.runtime.kn_query_backend import parse_placeholder
+
+        mark = parse_placeholder(backend.latest(self.requirement).cursor)[2]
+        return next(name for name, (_record, boundary) in self.OFFSETS.items() if boundary == mark)
+
+    def recorded(self, backend):
+        return backend._hot_boundaries[self.binding.binding_id][1]
+
+    def fill_memo_with_h1(self, backend):
+        # IDR-084: cache C10 is older than hot H1 -> H1 served, memo holds H1, H1 recorded.
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H1", 1))
+        self.assertEqual(self.recorded(backend), 30)
+
+    # (c) IDR-084 preserved ------------------------------------------------
+
+    def test_c_newer_hot_record_inside_the_window_is_used_by_the_idr084_branch(self):
+        backend = self.backend()
+        # The valid, usable cache view C10 is replaced by the newer committed H1 (one lookup).
+        self.assertEqual(self.served(backend), "C10")  # the Query path alone keeps a usable cache view
+        self.fill_memo_with_h1(backend)
+        # The cache catches up to exactly H1; inside the window the shared H1 passes the real
+        # gates (equal offset, equal bytes) and is not newer, so the cache view stays.
+        self.primary = self.cache("H1")
+        self.reply = self.hot("H2")
+        self.mono[0] += MARK_HOT_MEMO_NS - 1
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H1", 1))
+        # Window over: a fresh lookup on the same IDR-084 branch, and the newer H2 wins.
+        self.mono[0] += 1
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H2", 2))
+        self.assertEqual(self.recorded(backend), 50)
+        # A cache view behind the recorded record never reaches the shared branch: inside the
+        # window it takes the direct backup (a fresh lookup) and gets the newest H3.
+        self.primary = self.cache("C10")
+        self.reply = self.hot("H3")
+        self.mono[0] += 1
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H3", 3))
+
+    # (a) primary advances past the shared memo -----------------------------
+
+    def test_a_primary_advances_past_the_shared_memo(self):
+        backend = self.backend()
+        self.fill_memo_with_h1(backend)
+        # The cache catches up to H2 while the memo (10 ms old) still holds H1; hot is now at H3.
+        self.primary = self.cache("H2")
+        self.reply = self.hot("H3")
+        self.mono[0] += 10_000_000
+        # The real offset comparison refuses the shared H1 against primary H2 ...
+        with self.assertRaisesRegex(HotViewUnavailable, "HOT_BACKUP_BEHIND_PRIMARY"):
+            backend._hot_candidate(self.binding, self.primary, shared=True)
+        # ... so the IDR-084 branch keeps the cache view: never H1, never a refusal.
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", "H2"))
+        self.assertEqual(self.calls, 1, "memo hit, no hot lookup")
+        self.assertEqual(self.recorded(backend), 50)
+        # MARK-view backup (prefer_hot) inside the window: a fresh lookup, H3 accepted.
+        stored, state = backend.latest_stored_event(self.binding, prefer_hot=True)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H3", 2))
+        # _latest_view backup: primary H2 is now behind the recorded H3 -> fresh lookup, H3 accepted.
+        self.assertEqual(self.served(backend), "H3")
+        self.assertEqual(self.calls, 3)
+        self.assertEqual(self.recorded(backend), 70)
+        # The memo was never refreshed by the backup reads and still holds H1 inside its window.
+        taken_ns, memo = backend._mark_hot_memo[self.binding.binding_id]
+        self.assertLess(self.mono[0] - taken_ns, MARK_HOT_MEMO_NS)
+        self.assertEqual(memo.rows[0].canonical, self.payloads["H1"])
+
+    # (b) the rc4 failure ---------------------------------------------------
+
+    def _cache_outage_sequence(self, backend):
+        """Memo H1; the cache serves H2 (recorded); then a cache read fails while hot is at H3."""
+        from qdl.runtime.kn_market_cache import KnCacheError
+
+        self.fill_memo_with_h1(backend)
+        self.primary = self.cache("H2")
+        self.mono[0] += 10_000_000
+        self.assertEqual(self.served(backend), "H2")  # usable and monotonic: no hot lookup
+        self.assertEqual(self.recorded(backend), 50)
+        self.primary = KnCacheError("cache read timed out")
+        self.reply = self.hot("H3")
+        self.mono[0] += 10_000_000
+        return self.served(backend)
+
+    def test_b_rc4_shared_backup_refuses_on_a_cache_outage(self):
+        from qdl.query.contracts import CanonicalErrorCode
+        from qdl.query.results import QueryBackendError
+
+        backend = self.backend(rc4=True)
+        with self.assertRaises(QueryBackendError) as refused:
+            self._cache_outage_sequence(backend)
+        self.assertIs(refused.exception.problem.code, CanonicalErrorCode.DEPENDENCY_UNAVAILABLE)
+        self.assertEqual(self.calls, 1, "the rc4 backup never asked the hot reader")
+        # Why: the real monotonic gate refuses the stale shared H1 behind the recorded H2.
+        self.assertFalse(backend._hot_monotonic(self.binding, self.hot("H1")))
+        with self.assertRaisesRegex(HotViewUnavailable, "HOT_BACKUP_BEHIND_RETURNED_VIEW"):
+            backend._hot_candidate(self.binding, None, shared=True)
+
+    def test_b_rc5_direct_backup_serves_the_fresh_record_on_a_cache_outage(self):
+        backend = self.backend()
+        self.assertEqual(self._cache_outage_sequence(backend), "H3")
+        self.assertEqual(self.calls, 2)
+        self.assertEqual(self.recorded(backend), 70)
+
+    def test_b_stale_record_on_the_backup_path_is_refused_primary_behind(self):
+        """The backup called with a stale record (the memo forced onto it) vs a fresh lookup."""
+        from qdl.query.contracts import CanonicalErrorCode
+        from qdl.query.results import QueryBackendError
+
+        rc4, rc5 = self.backend(rc4=True), self.backend()
+        for backend in (rc4, rc5):
+            self.calls = 0
+            self.reply = self.hot("H1")
+            self.fill_memo_with_h1(backend)
+            # Any read records H2 (here the cache served it), then the cache view is C10 again
+            # (another replica's older generation); hot is at H2; the memo window is still open.
+            backend._hot_monotonic(self.binding, self.cache("H2"), record=True)
+            self.reply = self.hot("H2")
+            self.mono[0] += 10_000_000
+        with self.assertRaises(QueryBackendError) as refused:
+            self.served(rc4)
+        self.assertIs(refused.exception.problem.code, CanonicalErrorCode.DATA_NOT_READY)
+        self.assertIn("HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_BACKUP_BEHIND_RETURNED_VIEW",
+                      str(refused.exception))
+        self.assertEqual(rc4.latest_stored_event(self.binding, prefer_hot=True), (None, "BACKUP_UNAVAILABLE"))
+        self.assertEqual(self.served(rc5), "H2")
+        stored, state = rc5.latest_stored_event(self.binding, prefer_hot=True)
+        self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", "H2"))
+
+
 if __name__ == "__main__":
     unittest.main()
