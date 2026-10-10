@@ -99,6 +99,26 @@ class TransitTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 transit.main([trace, "--skip-seconds", "0", "--out", out])
 
+    def test_duplicate_applied_counts_only_canonical_event_ids(self):
+        digest = "a" * 64
+        rows = [row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 100, 50, 110, event_id=digest),
+                row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 200, 50, 210, event_id=digest),
+                row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 300, 60, 310),
+                row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 400, 60, 410)]
+        result = transit.summarise(rows, skip_seconds=0)
+        self.assertEqual(result["duplicate_applied_event_id"], {"TRADE|OKX": 1})
+        self.assertEqual(result["excluded_from_transit"]["TRADE|OKX|repeated_event_identity"], 2)
+
+    def test_slim_loader_keeps_only_the_fields_summarise_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "delivery-w-1-2.json")
+            record = {**row("TRADE", "OKX:SWAP:X", 100, 50, 110), "mark_source_event_time_ns": 1, "payload_extra": 2}
+            with open(path, "w") as handle:
+                json.dump({"records": [record], "stop_reason": "EXPIRY", "dropped_at_export": 0}, handle)
+            files, records = transit.load([path], fields=transit.FIELDS)
+            self.assertEqual(set(records[0]) - set(transit.FIELDS), set())
+            self.assertEqual(files[0]["stop_reason"], "EXPIRY")
+
 
 if __name__ == "__main__":
     unittest.main()

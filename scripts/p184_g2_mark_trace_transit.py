@@ -51,7 +51,9 @@ def venue_of(instrument):
     return instrument.replace(".", ":").split(":", 1)[0].upper()
 
 
-def load(paths):
+def load(paths, *, feeds=None, fields=None):
+    """Read export files; feeds/fields (optional) keep only those records/keys so a 40-min campaign of ~250 parts
+    fits in memory (every record still counts in the per-file metadata)."""
     files, records = [], []
     for path in paths:
         with open(path) as handle:
@@ -62,6 +64,10 @@ def load(paths):
                       "stop_reason": report.get("stop_reason"), "recorded": report.get("recorded"),
                       "dropped_at_export": report.get("dropped_at_export"),
                       "first_start_ns": min(starts) if starts else None, "last_start_ns": max(starts) if starts else None})
+        if feeds is not None:
+            rows = [r for r in rows if r.get("feed") in feeds]
+        if fields is not None:
+            rows = [{k: r[k] for k in fields if k in r} for r in rows]
         records.extend(rows)
     return files, records
 
@@ -141,7 +147,7 @@ def main(argv=None):
     parser.add_argument("--out")
     args = parser.parse_args(argv)
     paths = sorted({path for pattern in args.inputs for path in (glob.glob(pattern) or [pattern])})
-    files, records = load(paths)
+    files, records = load(paths, feeds={FEED})
     report = {"schema": "qdl.p184.g2-mark-trace-transit.v1", "files": len(files),
               "records": len(records), "dropped_at_export_total": sum(f["dropped_at_export"] or 0 for f in files),
               "stop_reasons": dict(collections.Counter(f["stop_reason"] for f in files)),

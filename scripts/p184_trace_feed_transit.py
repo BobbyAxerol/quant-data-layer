@@ -14,6 +14,8 @@ Gates (TS upgrade/p184-phase-d-gates.md, frozen 2026-10-09):
 Definitions:
 * venue clock = source_event_time_ns of the SDK stream envelope; only SDK_STREAM_RETURN records carry it. Records of
   other bases (warmup, query, no basis) have no venue clock and are counted, never given a substitute clock;
+* duplicate_applied_event_id (G10) = APPLIED records whose canonical event_id digest was already APPLIED earlier in the
+  window, per feed and venue (records without a digest are not counted, their fallback identity is not unique);
 * new-event transit = redis_reply_wall_ns - source_event_time_ns for the first APPLIED record of each event identity
   (event_id_sha256; when absent, instrument + feed + source_event_time_ns). REFRESHED and DUPLICATE outcomes and a
   repeated identity are the same state re-published (IDR-082 quiet republish) and are counted, not gated;
@@ -53,6 +55,10 @@ TRANSIT_GATES = {
 }
 G7_GATES = {"sdk_to_writer_ms": 100.0, "writer_to_redis_ms": 50.0}
 STREAM_BASIS = "SDK_STREAM_RETURN"
+# Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
+FIELDS = ("feed", "canonical_instrument_id", "outcome", "sdk_receive_basis", "sdk_receive_monotonic_ns",
+          "writer_started_monotonic_ns", "redis_reply_monotonic_ns", "writer_started_wall_ns", "redis_reply_wall_ns",
+          "source_event_time_ns", "event_id_sha256", "envelope_received_at_ns", "sdk_receive_wall_ns")
 
 
 def transit_verdict(block, gate):
@@ -79,6 +85,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
     split = collections.defaultdict(lambda: collections.defaultdict(list))
     segments = collections.defaultdict(lambda: collections.defaultdict(list))
     seen = set()
+    duplicates = collections.Counter()
     for r in rows:
         feed = r.get("feed", "?")
         venue = venue_of(r.get("canonical_instrument_id", "?"))
@@ -117,6 +124,8 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
                     else (r.get("canonical_instrument_id"), feed, event_time))
         if (feed, identity) in seen:
             excluded[(feed, venue, "repeated_event_identity")] += 1
+            if identity is digest:  # G10: the same canonical event_id APPLIED twice (fallback identities excluded)
+                duplicates[(feed, venue)] += 1
             continue
         seen.add((feed, identity))
         value = (reply_wall - event_time) / 1e6
@@ -148,6 +157,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
                                 for name, limit in G7_GATES.items()}
         result["g7"][key] = block
     result["bar_records"] = sum(1 for r in rows if r.get("feed") == "BAR")
+    result["duplicate_applied_event_id"] = {"|".join(k): n for k, n in sorted(duplicates.items())}
     result["outcomes"] = {"|".join(str(p) for p in k): n for k, n in sorted(outcomes.items(), key=str)}
     result["excluded_from_transit"] = {"|".join(k): n for k, n in sorted(excluded.items())}
     result["invalid"] = {"|".join(k): n for k, n in sorted(invalid.items())}
@@ -164,7 +174,7 @@ def main(argv=None):
     parser.add_argument("--out")
     args = parser.parse_args(argv)
     paths = sorted({path for pattern in args.inputs for path in (glob.glob(pattern) or [pattern])})
-    files, records = load(paths)
+    files, records = load(paths, fields=FIELDS)
     report = {"schema": "qdl.p184.trace-feed-transit.v1", "files": len(files), "records": len(records),
               "dropped_at_export_total": sum(f["dropped_at_export"] or 0 for f in files),
               "stop_reasons": dict(collections.Counter(f["stop_reason"] for f in files)),

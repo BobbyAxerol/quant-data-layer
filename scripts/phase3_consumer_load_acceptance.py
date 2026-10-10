@@ -1779,6 +1779,174 @@ asyncio.run(main())
 """
 
 
+# P18.4 gate G6 (frozen TS gate table): durable-view event age and typed execution quality of every view the Query
+# endpoint returns, per binding, against the per-feed policy, BEFORE client validation so that an eligible view the
+# policy would reject is counted as UNSAFE instead of disappearing into a refusal count. BAR intervals other than 1m
+# use their own sealed requirement (max_freshness_ms). Event age is the server's quality.freshness_ms for snapshot
+# views and (now - newest observation) for MARK reference results. Bounded: exact counts and max per binding, a
+# reservoir of at most _G6_RESERVOIR ages per binding and worker for p50/p95.
+_G6_POLICY_MS = {"TRADE": 3000, "QUOTE": 2000, "MARK_INDEX_PRICE": 2000, "BOOK_DELTA": 2000,
+                 "BOOK_SNAPSHOT": 60000, "BAR|1m": 180000}
+_G6_RESERVOIR = 2048
+_G6_VIEW: ContextVar[list | None] = ContextVar("qdl_phase3_g6_view", default=None)
+
+
+def g6_policy_ms(feed: str, interval: str | None, requirement_max_ms: int | None) -> int | None:
+    if feed == "BAR":
+        return _G6_POLICY_MS.get(f"BAR|{interval}", requirement_max_ms)
+    return _G6_POLICY_MS.get(feed, requirement_max_ms)
+
+
+def g6_classify(*, feed: str, freshness_ms: int | None, eligible: bool, state: str | None, gap_open: bool,
+                complete: bool, event_recency_state: str | None, provider_session_state: str | None,
+                session_liveness_ms: int | None, max_session_liveness_ms: int | None, observe: bool,
+                on_change: bool, policy_ms: int | None) -> tuple[str, list[str]]:
+    """ELIGIBLE / ELIGIBLE_QUIET (beyond the event threshold with a proven live session under OBSERVE) /
+    NOT_ELIGIBLE / UNSAFE (eligible although the policy rejects it). Pure: unit-tested."""
+    beyond = freshness_ms is not None and policy_ms is not None and freshness_ms > policy_ms
+    session_ok = (provider_session_state == "LIVE"
+                  and (max_session_liveness_ms is None
+                       or (session_liveness_ms is not None and session_liveness_ms <= max_session_liveness_ms)))
+    quiet_proven = (observe and (feed in {"TRADE", "BOOK_DELTA"} or (feed == "QUOTE" and on_change))
+                    and event_recency_state == "STALE" and session_ok)
+    if not eligible:
+        return "NOT_ELIGIBLE", []
+    reasons = []
+    if gap_open:
+        reasons.append("GAP_OPEN")
+    if not complete:
+        reasons.append("INCOMPLETE")
+    if state not in (None, "LIVE"):
+        reasons.append(f"STATE_{state}")
+    if freshness_ms is None:
+        reasons.append("AGE_UNKNOWN")
+    elif beyond and not quiet_proven:
+        reasons.append("AGE_BEYOND_POLICY")
+    if (max_session_liveness_ms is not None and provider_session_state not in (None, "NOT_APPLICABLE")
+            and not session_ok):
+        reasons.append("SESSION_BEYOND_POLICY")
+    if reasons:
+        return "UNSAFE", reasons
+    return ("ELIGIBLE_QUIET" if beyond else "ELIGIBLE"), []
+
+
+def _g6_key(product) -> str:
+    return f"{product.feed.value}|{product.venue}|{product.interval or ''}"
+
+
+def _g6_snapshot_observation(product, requirement, view) -> dict[str, object]:
+    quality = view.quality
+    policy = getattr(requirement, "effective_event_recency_policy", None)
+    policy_ms = g6_policy_ms(product.feed.value, product.interval, getattr(requirement, "max_freshness_ms", None))
+    verdict, reasons = g6_classify(
+        feed=product.feed.value, freshness_ms=quality.freshness_ms, eligible=bool(quality.execution_eligible),
+        state=quality.state, gap_open=bool(quality.gap_open), complete=bool(quality.complete),
+        event_recency_state=quality.event_recency_state, provider_session_state=quality.provider_session_state,
+        session_liveness_ms=quality.provider_session_liveness_ms,
+        max_session_liveness_ms=getattr(requirement, "max_session_liveness_ms", None),
+        observe=getattr(policy, "value", policy) == "OBSERVE",
+        on_change="DELIVERY_ON_CHANGE" in (quality.flags or []), policy_ms=policy_ms)
+    return {"key": _g6_key(product), "age_ms": quality.freshness_ms, "policy_ms": policy_ms, "class": verdict,
+            "reasons": reasons, "state": quality.state, "recency": quality.event_recency_state}
+
+
+def _g6_reference_observations(references, response, *, now_ns: int) -> list[dict[str, object]]:
+    from qdl.certification.reference_l2_acceptance import _quiet_execution_mark_index_evidence
+
+    out = []
+    for reference, item in zip(references, response.results):
+        product = reference
+        key = f"{product.requirement.feed.value}|{product.venue}|"
+        policy_ms = g6_policy_ms(product.requirement.feed.value, None, product.sdk_requirement.max_freshness_ms)
+        data = getattr(item, "data", None)
+        observations = getattr(data, "observations", None) or []
+        if getattr(item, "status", None) != "OK" or not observations:
+            code = getattr(getattr(item, "problem", None), "code", None) or "NO_OBSERVATION"
+            out.append({"key": key, "age_ms": None, "policy_ms": policy_ms, "class": "NOT_ELIGIBLE",
+                        "reasons": [str(code)[:64]]})
+            continue
+        age_ms = max(0, (now_ns - max(o.observed_at_ns for o in observations)) // 1_000_000)
+        try:
+            quiet = _quiet_execution_mark_index_evidence(product, item, observed_at_ns=now_ns) is not None
+        except Exception:
+            quiet = False
+        beyond = policy_ms is not None and age_ms > policy_ms
+        verdict = "UNSAFE" if beyond and not quiet else "ELIGIBLE_QUIET" if beyond else "ELIGIBLE"
+        out.append({"key": key, "age_ms": age_ms, "policy_ms": policy_ms, "class": verdict,
+                    "reasons": ["STALE_SERVED_WITHOUT_QUIET_PROOF"] if verdict == "UNSAFE" else []})
+    return out
+
+
+class _G6Recorder:
+    def __init__(self, reservoir: int = _G6_RESERVOIR) -> None:
+        self.reservoir = reservoir
+        self.rows: dict[str, dict[str, object]] = {}
+
+    def _row(self, key: str) -> dict[str, object]:
+        return self.rows.setdefault(key, {"n": 0, "seen_ages": 0, "ages": [], "max_age_ms": None, "policy_ms": None,
+                                          "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
+                                          "windows": Counter(), "unsafe_examples": []})
+
+    def view(self, observation: dict[str, object], window: str) -> None:
+        row = self._row(observation["key"])
+        row["n"] += 1
+        row["windows"][window] += 1
+        row["policy_ms"] = observation.get("policy_ms")
+        row["classes"][observation["class"]] += 1
+        for reason in observation.get("reasons") or []:
+            row["reasons"][reason] += 1
+        age = observation.get("age_ms")
+        if isinstance(age, int):
+            row["seen_ages"] += 1
+            row["max_age_ms"] = age if row["max_age_ms"] is None else max(row["max_age_ms"], age)
+            if len(row["ages"]) < self.reservoir:
+                row["ages"].append(age)
+            else:
+                slot = random.randrange(row["seen_ages"])
+                if slot < self.reservoir:
+                    row["ages"][slot] = age
+        if observation["class"] == "UNSAFE" and len(row["unsafe_examples"]) < 8:
+            row["unsafe_examples"].append({k: observation.get(k) for k in ("age_ms", "reasons", "state", "recency")}
+                                          | {"window": window, "at_ns": time.time_ns()})
+
+    def refusal(self, key: str, code: str, window: str) -> None:
+        row = self._row(key)
+        row["refusals"][code] += 1
+        row["windows"][window] += 1
+
+    def evidence(self) -> dict[str, object]:
+        return {key: {**row, "classes": dict(row["classes"]), "reasons": dict(row["reasons"]),
+                      "refusals": dict(row["refusals"]), "windows": dict(row["windows"])}
+                for key, row in self.rows.items()}
+
+
+def merge_g6(blocks: list[dict[str, object]]) -> dict[str, object]:
+    """Merge per-worker G6 evidence: exact counts/max, pooled bounded reservoirs for p50/p95."""
+    merged: dict[str, dict[str, object]] = {}
+    for block in blocks:
+        for key, row in (block or {}).items():
+            out = merged.setdefault(key, {"n": 0, "ages": [], "max_age_ms": None, "policy_ms": row.get("policy_ms"),
+                                          "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
+                                          "windows": Counter(), "unsafe_examples": []})
+            out["n"] += row["n"]
+            out["ages"].extend(row["ages"])
+            if row.get("max_age_ms") is not None:
+                out["max_age_ms"] = (row["max_age_ms"] if out["max_age_ms"] is None
+                                     else max(out["max_age_ms"], row["max_age_ms"]))
+            for name in ("classes", "reasons", "refusals", "windows"):
+                out[name].update(row[name])
+            out["unsafe_examples"].extend(row["unsafe_examples"][:8])
+    result = {}
+    for key, row in sorted(merged.items()):
+        ages = row.pop("ages")
+        result[key] = {**{k: (dict(v) if isinstance(v, Counter) else v) for k, v in row.items()},
+                       "age_ms": {**_percentiles([float(a) for a in ages]),
+                                  "basis": "reservoir sample per worker (exact n and max above)"},
+                       "unsafe": row["classes"].get("UNSAFE", 0)}
+        result[key]["unsafe_examples"] = result[key]["unsafe_examples"][:16]
+    return result
+
+
 def target_worker_count(sessions: int) -> int:
     return min(4, max(1, math.ceil(sessions / 13)))
 
@@ -1859,6 +2027,10 @@ async def _target_read(client, operation: str, products) -> object:
     if operation == "REFERENCE_BATCH":
         references = [_reference_product(product, now_ns=time.time_ns()) for product in products]
         response = await client.reference_batch([item.sdk_requirement for item in references], require_all=True)
+        try:
+            _G6_VIEW.set(_g6_reference_observations(references, response, now_ns=time.time_ns()))
+        except Exception:
+            _G6_VIEW.set(None)  # diagnostics never change the read result
         if response.partial or len(response.results) != len(references):
             raise ValueError("PARTIAL_RESULT")
         for reference, result in zip(references, response.results, strict=True):
@@ -1873,6 +2045,10 @@ async def _target_read(client, operation: str, products) -> object:
         # reads, and would make every latest read judge a 10,000-row horizon.
         requirement = replace(requirement, warmup_limit=0)
     response = await client.snapshot(requirement)
+    try:
+        _G6_VIEW.set([_g6_snapshot_observation(product, product.requirement, response.data)])
+    except Exception:
+        _G6_VIEW.set(None)  # diagnostics never change the read result
     validate_product_view(product, response.data, require_current_quality=True)
     return response
 
@@ -1925,6 +2101,7 @@ class _TargetRecorder:
         # Bounded timeline of slow reads and scheduler lag, in wall-clock
         # milliseconds, so a tail can be matched to server-side samples.
         self.outliers: list[list[object]] = []
+        self.g6 = _G6Recorder()
 
     def outlier(self, kind: str, value_ms: float, label: str) -> None:
         if len(self.outliers) < 400:
@@ -1951,6 +2128,19 @@ class _TargetRecorder:
             self.outlier("READ", value, f"{name}|{product.venue}|{_SERVED_BY.get() or '?'}")
         symbols = "+".join(item.native_symbol for item in products)
         self.groups["|".join((name, product.venue, symbols, _SERVED_BY.get() or "?", window))].append(value)
+
+
+def _g6_record(recorder, products, window: str, error_code: str | None) -> None:
+    """Count every returned view (also one the client then refused); a read with no view is a typed refusal."""
+    try:
+        observations = _G6_VIEW.get()
+        if observations:
+            for item in observations:
+                recorder.g6.view(item, window)
+        elif error_code is not None:
+            recorder.g6.refusal(_g6_key(products[0]), error_code, window)
+    except Exception:
+        pass
 
 
 async def _target_poll_loop(*, client, label, operation, products, period, phase, start, end, recorder,
@@ -1981,6 +2171,7 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             ledger.sent += 1
             window = recorder.window(sent)
             _SERVED_BY.set(None)
+            _G6_VIEW.set(None)
             sent_ns = time.time_ns()
             try:
                 await _target_read(client, operation, products)
@@ -1989,12 +2180,14 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             except Exception as error:
                 failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
+                _g6_record(recorder, products, window, _error_code(error))
                 recorder.error(operation=operation, poll=label, window=window,
                                product=_product_evidence(products[0]), error=_safe_error(error),
                                served_by=_SERVED_BY.get(), sent_ns=sent_ns, failed_ns=failed_ns,
                                elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
                 continue
             done = time.monotonic()
+            _g6_record(recorder, products, window, None)
             ledger.completed += 1
             if done > due + period:
                 ledger.late += 1
@@ -2384,6 +2577,7 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
     poll_tasks: list[asyncio.Task] = []
     setup_seconds: float | None = None
     start: float | None = None
+    go_unix: float | None = None
     try:
         results = await asyncio.gather(*(establish(item) for item in mine), return_exceptions=True)
         for session, result in zip(mine, results, strict=True):
@@ -2411,7 +2605,8 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         line = await asyncio.get_running_loop().run_in_executor(None, sys.stdin.readline)
         if not line.startswith("GO "):
             raise RuntimeError("target worker did not receive a start signal")
-        start = time.monotonic() + (float(line.split()[1]) - time.time())
+        go_unix = float(line.split()[1])
+        start = time.monotonic() + (go_unix - time.time())
         end = start + duration
         if final:
             burst = final_cfg["burst"]
@@ -2503,12 +2698,18 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
                        for key, value in series_by_session.items()},
         "cold": recorder.cold,
         "outliers": recorder.outliers,
+        "g6_view_quality": recorder.g6.evidence(),
         "counters": dict(recorder.counters),
         "errors": recorder.errors,
         "error_count": recorder.error_count,
         "leaked_tasks": len(leaked),
         "fault_windows": ({} if start is None else
                           {name: [round(a - start, 3), round(b - start, 3)] for name, (a, b) in windows.items()}),
+        # Host-comparable wall clock of the load window and fault windows (same host clock as the campaign probes).
+        "load_window_unix_s": None if go_unix is None else [go_unix, go_unix + duration],
+        "fault_windows_unix_s": ({} if go_unix is None else
+                                 {name: [round(go_unix + a - start, 3), round(go_unix + b - start, 3)]
+                                  for name, (a, b) in windows.items()}),
         "cpu_seconds": round(usage.ru_utime + usage.ru_stime, 3),
         "max_rss_kib": usage.ru_maxrss,
     }
@@ -2536,6 +2737,8 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         worker0 = next((item for item in results if item["worker"] == 0), {})
         windows = {
             "BURST": worker0.get("fault_windows", {}).get("BURST"),
+            "BURST_unix_s": worker0.get("fault_windows_unix_s", {}).get("BURST"),
+            "RECONNECT_unix_s": worker0.get("fault_windows_unix_s", {}).get("RECONNECT"),
             "SLOW_READER": sum(item["counters"].get("slow_reader_pauses", 0) for item in results),
             "RECONNECT": sum(item["reconnects"] for item in streams),
             "reconnect_restored": sum(item["restored"] for item in streams),
@@ -2590,6 +2793,8 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         "bar_series": {key: value for result in results for key, value in result["bar_series"].items()},
         "cold": [item for result in results for item in result["cold"]],
         "outliers": sorted(entry for result in results for entry in result.get("outliers", [])),
+        "g6_view_quality": merge_g6([result.get("g6_view_quality") for result in results]),
+        "load_window_unix_s": next((item.get("load_window_unix_s") for item in results if item["worker"] == 0), None),
         "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
         "errors": [item for result in results for item in result["errors"]][:40],
         "error_count": sum(item["error_count"] for item in results),
