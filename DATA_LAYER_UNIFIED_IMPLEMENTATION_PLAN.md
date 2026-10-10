@@ -72002,3 +72002,30 @@ cleanup). All items below are tested locally and not deployed.
   - unit tests 3151: 2 failures, 23 errors. TS-bound test_p184_dr05_ts_validate in a DL-only checkout, and phase7
     vs the SDK 2.1 tolerant response models.
   Fix in progress (d6fb34c fmt, 2c84e2f tests); rc7d and a certifying CI follow.
+
+### Certifying stage 100m PASS 32/32 + G4 on the final digests; G14; G2 first window - 2026-10-10 (Claude)
+
+Final digests: the DL application roles all on rc7d bbfb3be (python sha256:e0252f4c96da, rust sha256:64468c72ce5a;
+rolled one role at a time, writer READY 64/64 after every step), TS writer sha256:34202753bbe8 (ed02064). Quiet host:
+no build, CI or subagent job running.
+- Stage 100m (12:45-13:17Z, supervisor v2, fixed harness): PASS 32/32.
+  - requests 0 failures; G5 cold 2500 B/O 3124/3727 ms, 5000 B/O 5299/6178 ms; startup 72.3 s, 0 failures.
+  - ts:ready 154/154, 0 unreadable; guard 0 bad samples; MARK watcher 0 errors in 32 of 32 minutes.
+  - G4 PASS on every measured row (16/17; the unmeasured one had no event in the windows). The 100j window-1 excess
+    did not recur on the quiet host, so it was the concurrent cargo job.
+- G14, per-role CPU/RAM from 152 samples (stage100m/g14-resources.txt), mean CPU (p95):
+  - kafka1/2/3: 77/95/98 % (87/107/110);
+  - query_kn_1/2: 68/48 % (101/78);
+  - stream_kn_1/2: 22/7 %; projectors: 18/8 %; cores: 9/11/8 %; ingestors: 11/12 %; market_cache: 8 %;
+  - DL total about 5.0 vCPU mean;
+  - TS writer 124 % mean.
+  - Max RSS is well inside every limit: Query 761 MiB / 1.5 GiB, Kafka <= 1019 MiB / 1.5-2 GiB, cores <= 47 MiB /
+    256 MiB, Stream <= 158 MiB / 512 MiB.
+- G2 MARK, first 590 s trace window (13:18-13:28Z, writer recreated with trace env only;
+  scripts/p184_g2_mark_trace_transit.py):
+  - OKX new-event transit n 6385, p50 215, p95 321, max 399 ms: PASS (was p95 1426 / max 2326 before IDR-084).
+  - Binance n 2667, p50 430, p95 500.7, max 776 ms: max PASS, p95 0.7 ms over the 500 ms bound.
+  - Binance has a structural floor (min 370 ms) from the 250 ms MARK wake read delay, which was set to avoid racing
+    the DL latest view before IDR-084.
+  - One-variable tuning window started: Binance MARK wake read delay 250 -> 100 ms via the per-venue override
+    (parser bounds 0..500 ms).
