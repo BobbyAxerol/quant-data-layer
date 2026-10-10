@@ -111,5 +111,35 @@ class MarkHotMemoTests(unittest.TestCase):
         self.assertEqual(hot.calls, 1)
 
 
+class BackupPathNeverSharesTests(unittest.TestCase):
+    """rc4 regression (2026-10-10 04:30Z): the _latest_view backup path must ask the hot reader every time."""
+
+    def _candidate_backend(self, hot, clock):
+        backend = _backend(hot, clock)
+        record = SimpleNamespace(source_offset=5, canonical=b"x")
+        view = SimpleNamespace(boundary=SimpleNamespace(topic_id="t", partition=0, offset=5), rows=(record,))
+        hot.outcomes = [view] * 10
+        backend._parsed = lambda binding, candidate: ("parsed",)
+        backend._validate_records = lambda binding, records: None
+        backend._hot_monotonic = lambda binding, candidate, record=False: True
+        return backend
+
+    def test_backup_path_asks_every_time(self):
+        clock = [0]
+        hot = _Hot([])
+        backend = self._candidate_backend(hot, clock)
+        backend._hot_candidate(MARK)
+        backend._hot_candidate(MARK)
+        self.assertEqual(hot.calls, 2)
+
+    def test_opportunistic_path_shares(self):
+        clock = [0]
+        hot = _Hot([])
+        backend = self._candidate_backend(hot, clock)
+        backend._hot_candidate(MARK, shared=True)
+        backend._hot_candidate(MARK, shared=True)
+        self.assertEqual(hot.calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

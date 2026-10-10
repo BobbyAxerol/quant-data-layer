@@ -277,12 +277,16 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 self._hot_boundaries[binding.binding_id] = (view.boundary, record_offset, digest)
             return True
 
-    def _hot_candidate(self, binding, primary=None):
-        """Authenticated committed bytes, validated by the same lineage oracle."""
+    def _hot_candidate(self, binding, primary=None, *, shared=False):
+        """Authenticated committed bytes, validated by the same lineage oracle.
+
+        ``shared`` (IDR-084 opportunistic MARK path only) may reuse a lookup made
+        up to MARK_HOT_MEMO_NS earlier; the backup path of ``_latest_view`` never
+        does, because a shared, older record could fail its monotonic check."""
         if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
             return None
         try:
-            candidate = self._hot_latest(binding)
+            candidate = self._hot_latest(binding) if shared else self.hot_client.latest(binding, self.product_key(binding))
         except HotViewGap as error:
             raise QueryBackendError(QueryProblem(
                 CanonicalErrorCode.OPEN_SEQUENCE_GAP, str(error), True,
@@ -316,10 +320,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         lookups refused each other HOT_READER_BUSY, and two TRADE/QUOTE reads that
         needed the backup ended DATA_NOT_READY. Many sessions read the same MARK
         product, so concurrent and back-to-back MARK reads on one replica now share
-        one lookup (outcome, including a refusal) for 50 ms. The caller still takes
-        the newer of cache and hot view under every lineage/monotonic gate, so a
-        shared result can only be older, never less verified. Other feeds are
-        unchanged."""
+        one lookup (outcome, including a refusal) for 50 ms. Used ONLY by the
+        IDR-084 opportunistic branch, which keeps the cache view whenever the hot
+        record is not newer. rc4 also shared it on the _latest_view backup path:
+        under stage-100 load an older shared record failed the backup's monotonic
+        check and the TS writer saw MARK SOURCE_UNAVAILABLE (2026-10-10 04:30Z).
+        Other feeds are unchanged."""
         if binding.feed is not FeedType.MARK_INDEX_PRICE:
             return self.hot_client.latest(binding, self.product_key(binding))
         key = binding.binding_id
@@ -463,7 +469,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             # so MARK/INDEX takes the newer of the two. Every lineage/monotonic gate of the backup path applies; a hot
             # read that is behind or unavailable leaves the cache view in place (the previous behaviour).
             try:
-                candidate = self._hot_candidate(binding, view)
+                candidate = self._hot_candidate(binding, view, shared=True)
             except HotViewUnavailable:
                 candidate = None
             except QueryBackendError as error:

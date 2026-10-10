@@ -71722,3 +71722,21 @@ Status: tested locally, not deployed.
   2. readers on SDK 2.1.0+;
   3. then render the ingestor flag (stable_deployment.py does not emit it yet).
 - The contract digest changes at the next bundle refresh. Ping cadence and marker volume are not measured.
+
+### rc4 regression: MARK SOURCE_UNAVAILABLE under load; stage 100c stopped, Query rolled back to rc3 - 2026-10-10 (Claude)
+
+- rc4 (bd74faa, sha256:5a9e1b4b8be1) was rolled to query_kn_1/2 at 03:43-03:44Z, and stage 100c started at 04:30Z.
+- From 04:30Z the TS writer logged `MARK_INDEX_PRICE ... IncompleteExecutionReferenceError code=SOURCE_UNAVAILABLE`:
+  53 and 28 per 10 min, against 0-6 per 10 min before. Guard: DEGRADED 63/64 at 04:32:59 and 04:42:56-04:43:16.
+- Cause, from code (Query logs carry no refusal line): bd74faa routed `_hot_candidate` through `_hot_latest` on EVERY
+  path, including the `_latest_view` backup. A shared hot record up to 50 ms old can be older than the projected
+  primary. The backup then fails its monotonic check, and the MARK read returns not-ready.
+- Action:
+  - stage 100c stopped at about 04:45Z (driver, guard, observer, client killed; 0 left);
+  - query_kn_1 then query_kn_2 recreated from the saved rc3 composes (sha256:672503b7fe87): healthy, restarts 0.
+- Fix (this commit): the single-flight applies only to the IDR-084 opportunistic branch (`shared=True`); the
+  backup path asks the hot reader every time.
+  - Regression tests BackupPathNeverSharesTests.
+  - kn_mark_hot_memo, kn_query_backend, kn_hot_book_invalidation and kn_hot_view OK (33 Redis skips).
+- Lesson: a shared cache on a path with a monotonic gate needs a test for that path before rollout; the rc4 unit
+  tests covered only the memo itself.
