@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from scripts.p184_dr05_dl_fault import namespace
+from scripts.p184_dr05_dl_fault import VENUES, namespace, scope_of
 
 
 def raw_envelope(binding, frame, ns):
@@ -29,7 +29,7 @@ def raw_envelope(binding, frame, ns):
         capture_id=uuid.uuid4().bytes, provider=binding["provider"], venue=binding["venue"],
         market=binding["market"], product_type=binding["product_type"],
         native_symbol=binding["native_symbol"], native_channel=binding["native_channel"],
-        subscription_id=binding["source_id"], source_session_id=ns + "." + binding["venue"],
+        subscription_id=binding["source_id"], source_session_id=ns + "." + _session_label(binding),
         connection_generation=frame["connection_generation"], lease_epoch=1,
         authority_revision=1, partition_plan_epoch=1, received_at_ns=frame["received_at_ns"],
         transport_protocol=2 if frame["transport"] == "HTTP" else 1,
@@ -37,6 +37,12 @@ def raw_envelope(binding, frame, ns):
         adapter_version=frame["adapter_version"], config_revision=1,
         instrument_catalog_revision=binding["instrument_catalog_revision"],
         correlation_id=str(uuid.uuid4()), test_provenance=True)
+
+
+def _session_label(binding):
+    """Linear scopes keep their venue label; another scope on the same venue gets its own session."""
+    scope = scope_of(binding["venue"], binding["native_symbol"])
+    return binding["venue"] if scope in VENUES else scope
 
 
 class RawPublisher:
@@ -58,9 +64,11 @@ class RawPublisher:
         if config.get("raw_topics") != [self.ns + ".raw"] or config["core"].get("allow_test_provenance") is not True:
             raise ValueError("isolated test-only raw topic required")
         self.topic = config["raw_topics"][0]
-        self.bindings = {b["venue"]: b for b in config["core"]["bindings"]}
-        if len(config["core"]["bindings"]) != 2 or set(self.bindings) != {"BINANCE", "OKX"}:
-            raise ValueError("exact two-venue binding roster required")
+        bindings = config["core"]["bindings"]
+        self.bindings = {scope_of(b["venue"], b["native_symbol"]): b for b in bindings}
+        if (len(bindings) != len(self.bindings) or None in self.bindings
+                or not set(VENUES) <= set(self.bindings)):
+            raise ValueError("exact scope binding roster required (both linear venues, optional inverse)")
         self.producer = Producer({"bootstrap.servers": "localhost:9092", "security.protocol": "SSL",
             "ssl.ca.location": "/work/ca.crt", "ssl.certificate.location": "/work/client.crt",
             "ssl.key.location": "/work/client.key", "enable.idempotence": True, "acks": "all",
@@ -73,7 +81,7 @@ class RawPublisher:
             raise RuntimeError("publisher fenced after unsuccessful/ambiguous delivery")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout <= 5:
             raise ValueError("publication deadline must be in (0, 5] seconds")
-        raw = raw_envelope(self.bindings[frame["venue"]], frame, self.ns)
+        raw = raw_envelope(self.bindings[scope_of(frame["venue"], frame["native_symbol"])], frame, self.ns)
         wire = raw.SerializeToString()
         delivered = []
         start = time.monotonic()

@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.p184_dr05_dl_fault import FAULTS, VENUES
+from scripts.p184_dr05_dl_fault import FAULTS, SCOPES, VENUES, scope_set
 
 MAX_BYTES = 4 * 1024 * 1024
 MAX_RECEIPTS = 64
@@ -156,7 +156,7 @@ class Channel:
             self.lock.close()
 
     def reset(self, venue, fault, deadline):
-        if venue not in VENUES or fault not in FAULTS:
+        if venue not in SCOPES or venue not in scope_set(self.work) or fault not in FAULTS:
             raise ValueError("unknown cell")
         request_id = uuid.uuid4().hex
         request = self.control / "reset-request.json"

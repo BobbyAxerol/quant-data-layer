@@ -9,7 +9,8 @@ upgrade/evidence/p184-g13-inherit-rerun-matrix.md; DECISIONS below is the same t
 ONLY the existing harnesses, sequentially, each under a hard timeout:
   ISOLATED phase (disposable namespaces, nothing shared is written):
     dr05-upstream   DL scripts/p184_dr05_dl_fault.py + p184_dr05_reset.py + p184_dr05_channel.py, TS
-                    scripts/p184_dr05_upstream.py (GAP_REFUSAL / GENERATION_CHANGE_FENCED, both venues)
+                    scripts/p184_dr05_upstream.py (GAP_REFUSAL / GENERATION_CHANGE_FENCED; scopes BINANCE, OKX and
+                    OKX_INVERSE = BTC-USD-SWAP BOOK, defined by the --catalog input `dr05_catalog`)
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
     dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells)
@@ -19,7 +20,7 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
     dr02-dr03-alpha TS scripts/p184_dr_alpha_reads.py probe (inside each alpha runtime) + record
     dr04-dr06-views TS scripts/p184_dr_views.py (inside the TS writer image; binance, okx, okx_inverse) + record;
                     also DR05.QUIET_TYPED (linear only: QUIET is a TRADE state, TRADE is not granted for inverse)
-    dr05-transport  TS scripts/p184_dr05_isolated.py (writer clone, transport cut at the clone only)
+    dr05-transport  TS scripts/p184_dr05_isolated.py (writer clone, transport cut at the clone only; same 3 scopes)
     dr07-reference  TS scripts/p184_dr07_reference.py
 Receipts: a NEW directory ~/.local/state/qdl-v2/p184-g13-<YYYYMMDD>T<HHMMSS>Z/ (exclusive create) with plan.json,
 one <step>/receipt.json per step (argv, cwd, times, exit, timeout, output sha256, cleanup) and summary.json.
@@ -107,9 +108,10 @@ DR_CELLS = {
     "DR08": tuple(f"DR08.{n}@ANY" for n in ("ALERT_PATH_OBSERVABLE", "CONSUMER_RESTART_RECOVERY_MEASURED",
                                             "NO_CROSS_CONSUMER_STARVATION", "SLOW_CONSUMER_BOUNDED_QUEUE")),
 }
-# Inverse DR05 faults: the DL fault harness (p184_dr05_dl_fault.py isolated_config: ETH BOOK bindings only) and the
-# TS writer clone (p184_dr05_isolated.py SYMBOLS: ETH only) have no BTC-USD-SWAP scope yet. Listed open, never faked.
-NO_PRODUCER = INV_DR05
+# Every DR cell has a producer: the inverse DR05 faults run in the DL fault harness (--scope OKX_INVERSE with a
+# source catalog defining BTC-USD-SWAP) and the TS writer clone (--venues ... OKX_INVERSE). Kept for listing open cells.
+NO_PRODUCER = ()
+DR05_SCOPES = VENUES + INVERSE  # p184_dr05_dl_fault.py --scope / TS p184_dr05_upstream.py, p184_dr05_isolated.py --venues
 
 # DR -> (decision, reason). Same table as upgrade/evidence/p184-g13-inherit-rerun-matrix.md.
 DECISIONS = {
@@ -131,7 +133,7 @@ DECISIONS = {
 
 STEP_SPEC = (
     # id, phase, cells, timeout_s, est_minutes, owned container prefixes
-    ("dr05-upstream", "isolated", cells("DR05", ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED")), 1800, 5,
+    ("dr05-upstream", "isolated", cells("DR05", ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED"), DR05_SCOPES), 1800, 6,
      ("p184-dr05-",)),
     ("dr08-isolated", "isolated", DR_CELLS["DR08"], 1500, 12, ("p184-dr08-",)),
     ("dr01-deployed", "runtime", tuple(c for c in DR_CELLS["DR01"] if "WRONG_ACCOUNT" not in c), 600, 3, ()),
@@ -140,7 +142,7 @@ STEP_SPEC = (
     ("dr04-dr06-views", "runtime", DR_CELLS["DR04"] + DR_CELLS["DR06"] + cells("DR05", ("QUIET_TYPED",)), 1200, 14,
      ()),
     ("dr05-transport", "runtime", cells("DR05", ("STALE_TYPED", "DISCONNECT_RECONNECT",
-                                                 "APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1")), 1500, 8,
+                                                 "APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1"), DR05_SCOPES), 1500, 8,
      ("p184-dr05-",)),
     ("dr07-reference", "runtime", DR_CELLS["DR07"], 600, 2, ()),
 )
@@ -229,7 +231,7 @@ def select(phase, only=()):
 
 def required_inputs(step):
     return {
-        "dr05-upstream": ("dr05_public_export", "redis_image", "postgres_image"),
+        "dr05-upstream": ("dr05_public_export", "dr05_catalog", "redis_image", "postgres_image"),
         "dr08-isolated": (),
         "dr01-deployed": ("dr01.inventory", "dr01.deployments.BINANCE", "dr01.deployments.OKX", "dr01.compose",
                           "dr01.alpha_service"),
@@ -268,14 +270,16 @@ def commands(step, final, inputs, work, ts_root):
     alpha_record = ts_root / "scripts/p184_dr_alpha_reads.py"
     if step == "dr05-upstream":
         w = work / "work"
+        scopes = [a for scope in DR05_SCOPES for a in ("--scope", scope)]
         return [cmd(py + ["scripts/p184_dr05_dl_fault.py", "--init", w, "--core-config", inputs["dr05_public_export"],
-                          *harness_image_args(final)], cwd=DL_ROOT),
+                          *harness_image_args(final), *scopes, "--catalog", inputs["dr05_catalog"]], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--up", w], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--ready", w], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_upstream.py", "--work", w, "--namespace", "<from handoff.json>",
                           "--dl-channel", "<built from handoff namespace>", "--image", final["writer"],
                           "--redis-image", inputs["redis_image"], "--postgres-image", inputs["postgres_image"],
-                          *ts_ev, "--output", work / "dr05-upstream-rows.jsonl", "--dl-root", DL_ROOT], cwd=ts_root),
+                          *ts_ev, "--output", work / "dr05-upstream-rows.jsonl", "--dl-root", DL_ROOT,
+                          "--venues", *DR05_SCOPES], cwd=ts_root),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--down", w], cwd=DL_ROOT)]
     if step == "dr08-isolated":
         return [cmd(py + ["scripts/p184_dr08_isolated.py", "--orchestrate", work / "work", "--ts-source-sha",
@@ -334,7 +338,7 @@ def commands(step, final, inputs, work, ts_root):
     if step == "dr05-transport":
         return [cmd(py + ["scripts/p184_dr05_isolated.py", "--image", final["writer"], "--redis-image",
                           inputs["redis_image"], "--postgres-image", inputs["postgres_image"], *ts_ev,
-                          "--output", work / "dr05-transport.jsonl"], cwd=ts_root)]
+                          "--output", work / "dr05-transport.jsonl", "--venues", *DR05_SCOPES], cwd=ts_root)]
     if step == "dr07-reference":
         d = inputs["dr07"]
         return [cmd(py + ["scripts/p184_dr07_reference.py", "--connections", d["connections"], *ts_ev, "--output",

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.p184_dr05_dl_fault import frame, namespace, schedule
+from scripts.p184_dr05_dl_fault import SCOPES, frame, namespace, schedule, scope_of, scope_set
 from scripts.p184_dr05_raw_publisher import RawPublisher
 
 
@@ -105,10 +105,14 @@ def reader_harness(packet):
     from scripts.kn_native_slice_probe import Slice
     from qdl.consumer.manifest import ConsumerManifestLoader
 
+    # One manifest per sealed scope (both linear venues, optionally the inverse), checked before any I/O.
+    expected = {packet["namespace"] + "." + Path(p).stem for p in packet["isolated_manifest_paths"]}
+    if not {packet["namespace"] + ".binance", packet["namespace"] + ".okx"} <= expected or any(
+            Path(p).stem.upper() not in SCOPES for p in packet["isolated_manifest_paths"]):
+        raise ValueError("isolated manifest/identity roster mismatch")
     runner = Slice(SimpleNamespace(**packet["slice"]))
     runner.manifests = {m.consumer_id: m for m in (
         ConsumerManifestLoader.load(Path(path)) for path in packet["isolated_manifest_paths"])}
-    expected = {packet["namespace"] + ".binance", packet["namespace"] + ".okx"}
     if set(runner.manifests) != expected or set(runner.identities) != expected:
         raise ValueError("isolated manifest/identity roster mismatch")
     return runner
@@ -121,7 +125,7 @@ async def read_views(runner, packet, binding):
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement
     from scripts.p184_dr08_isolated import channel_for
 
-    cid = packet["namespace"] + "." + binding["venue"].lower()
+    cid = packet["namespace"] + "." + scope_of(binding["venue"], binding["native_symbol"]).lower()
     channel = await channel_for(runner, cid)
     result = {}
     try:
@@ -164,7 +168,7 @@ async def run(work, venue, fault):
     producer = RawPublisher(packet, config)
     observer = CanonicalObserver(packet, config)
     runner = reader_harness(packet)
-    binding = producer.bindings[venue]
+    binding = producer.bindings[venue]  # keyed by scope
     packet_base = ts_packet(work, runner, packet, binding, [])
     rows = []
     try:
@@ -199,15 +203,14 @@ async def run(work, venue, fault):
 
 
 def ts_packet(work, runner, packet, binding, rows, base=None):
-    venue = binding["venue"]
-    cid = packet["namespace"] + "." + venue.lower()
+    scope = scope_of(binding["venue"], binding["native_symbol"])
+    cid = packet["namespace"] + "." + scope.lower()
     if base is None:
         from dataclasses import asdict
         from qdl.runtime.stable_catalog import StableSourceCatalog
         from qdl.certification.phase103_consumer_acceptance import sdk_requirement
         catalog = StableSourceCatalog.load(work / "catalog.yaml")
         instrument = catalog.instrument_for(binding["instrument_uid"])
-        cid = packet["namespace"] + "." + venue.lower()
         requirements = {}
         for feed in ("BOOK_SNAPSHOT", "BOOK_DELTA"):
             sdk = sdk_requirement(SimpleNamespace(requirement=runner.requirement(cid, binding["instrument_uid"], feed)))
@@ -243,7 +246,7 @@ def public_query_app(work, service, issuer):
     if packet.get("provenance") != "TEST_ONLY":
         raise ValueError("isolated public Query requires TEST_ONLY packet")
     paths = packet["isolated_manifest_paths"]
-    if paths != ["/work/binance.yaml", "/work/okx.yaml"]:
+    if paths != ["/work/" + scope.lower() + ".yaml" for scope in scope_set(work)]:
         raise ValueError("unexpected isolated manifest paths")
     manifests = ConsumerManifestRegistry(tuple(
         ConsumerManifestLoader.load(work / Path(path).name) for path in paths))
@@ -285,7 +288,7 @@ def main():
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--venue", choices=("BINANCE", "OKX"), required=True)
+    parser.add_argument("--venue", choices=tuple(SCOPES), required=True)
     parser.add_argument("--fault", choices=("GAP_REFUSAL", "GENERATION_CHANGE_FENCED"), required=True)
     args = parser.parse_args()
     print(json.dumps(asyncio.run(run(args.work, args.venue, args.fault))))

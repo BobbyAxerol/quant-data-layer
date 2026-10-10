@@ -72,9 +72,11 @@ class ResetStageError(RuntimeError):
 
 def reset_preserving_broker(work, venue, timeout=30):
     deadline = _deadline(timeout)
-    if venue not in dr.VENUES:
+    if venue not in dr.SCOPES:
         raise ValueError("unknown venue")
     work, ns, packet, _ = _packet(work)
+    if venue not in dr.scope_set(work):
+        raise ValueError("scope not prepared in this case")
     selected = dr.core_override(json.loads((work / "handoff.json").read_text()).get("core_binary"))
 
     def call(argv):

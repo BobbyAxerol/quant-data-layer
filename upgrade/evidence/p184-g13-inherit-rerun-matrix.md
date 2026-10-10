@@ -10,16 +10,17 @@ scoped `OKX_INVERSE` (DR04 4, DR05 5, DR06 2). Counted with a Python read of the
 (`CASE_MATRIX_MISMATCH`) if its `DR_CELLS` differ from the matrix.
 
 Update 2026-10-10 (later): blockers 1, 4 and 5 below are resolved in code (harness image parameters; TS
-WRONG_ACCOUNT Gateway runner `6c44bf2` wired as step `dr01-wrong-account`; matrix v2 inverse cells). One new
-open item: the 5 inverse DR05 cells have no producer yet (see blocker 5).
+WRONG_ACCOUNT Gateway runner `6c44bf2` wired as step `dr01-wrong-account`; matrix v2 inverse cells; DR05
+harnesses scoped for OKX_INVERSE, TS `acce72d`). Every one of the 76 DR cells now has a producer step.
+New run inputs for the inverse DR05 faults: `dr05_catalog` and an export that carries the BTC-USD-SWAP BOOK
+binding (blocker 5).
 
 ## Result in one line
 
 **Inherit 0 of 76 cells.** No DR cell has a receipt on final-qualifying provenance, and every DR exercises at least
 one path changed after its newest receipt. What can be inherited are inputs, not cells (see "Inherited inputs").
-The minimum is therefore eight harness steps, ~56 min of estimated wall time run serially (hard timeouts sum to
-150 min). `dr01-wrong-account` is Gateway-dependent and closes with the TS release; the 5 inverse DR05 cells
-have no producer yet.
+The minimum is therefore eight harness steps, ~57 min of estimated wall time run serially (hard timeouts sum to
+150 min). `dr01-wrong-account` is Gateway-dependent and closes with the TS release.
 
 ## Receipts that exist (all found with `grep -rl` over `~/.local/state` for `DR0n.` cell ids)
 
@@ -70,7 +71,7 @@ and has no final-provenance receipt to inherit from.
 | DR02 | 8 | alpha `AlphaDataLayerV2` -> SDK transport -> Query warmup/batch, row cache, cold BAR (`qdl/query/*`, `kn_query_backend`, `stable_source`) | none | RERUN | warmup/batch path and SDK transport changed | `dr02-dr03-alpha` / 10 |
 | DR03 | 6 | same as DR02 plus 1m append (Query BAR, projector-fed spool) | none | RERUN | same | (same step) |
 | DR04 | 10 + 4 inverse | Stream/Query -> TS writer -> TS Redis -> `MarketCacheReader` + Risk validator; MARK/INDEX hot path, L2 view | none | RERUN | IDR-084/Astra MARK, IDR-082, IDR-040 fix 2 changed; writer digest new | `dr04-dr06-views` / 14 (binance, okx, okx_inverse) |
-| DR05 | 12 + 5 inverse (no producer) | GAP/GEN: raw -> core fence (`canonical.rs`, `realtime-core/lib.rs`, `qdl-production-core.rs`) -> stream/query `kn_hot_view` -> writer clone -> production `_validate_book`; STALE/DISCONNECT/FALLBACK: writer clone transport; QUIET: TS views | r16 rehearsal (4 cells) | RERUN | core `1a2daf1`, query `57881a2`/`922a6ec`, stream `0b374bc`/`fdd379e`, writer all changed after r16; 8 cells never produced | `dr05-upstream` / 5, `dr05-transport` / 8, QUIET inside `dr04-dr06-views` |
+| DR05 | 12 + 5 inverse | GAP/GEN: raw -> core fence (`canonical.rs`, `realtime-core/lib.rs`, `qdl-production-core.rs`) -> stream/query `kn_hot_view` -> writer clone -> production `_validate_book`; STALE/DISCONNECT/FALLBACK: writer clone transport; QUIET: TS views | r16 rehearsal (4 cells) | RERUN | core `1a2daf1`, query `57881a2`/`922a6ec`, stream `0b374bc`/`fdd379e`, writer all changed after r16; 8 cells never produced | `dr05-upstream` / 6 (3 scopes), `dr05-transport` / 8 (3 scopes), QUIET inside `dr04-dr06-views` |
 | DR06 | 4 + 2 inverse | production `services.risk_engine.execution_market_context` on a copy of the live context (writer views) | none | RERUN | reads changed MARK/L2 views; writer digest new | (in `dr04-dr06-views`) |
 | DR07 | 12 | alpha `alpha_sdk.reference` -> Query reference routes (`router.py`) -> `qdl/reference/*`; FX proof from TS DB | none | RERUN | no R2 DR07 rows; router changed | `dr07-reference` / 2 |
 | DR08 | 4 | isolated kafka -> core -> stream `service.rs`/`subscription.rs`/`hub.rs` -> query GetSnapshot | development only | RERUN | stream `fdd379e` after the overlay; final mode never ran | `dr08-isolated` / 12 |
@@ -84,7 +85,9 @@ transport `--ready-seconds 180` + 2 x (20 s cut + <= 120 s recover)). These are 
 
 - DR05 sanitized core export `~/.local/state/qdl-v2/dr05-observer-20261008/public-export.json` (SHA256 `9cf857a2...`,
   BINANCE ETHUSDT and OKX ETH-USDT-SWAP BOOK bindings, no transport). `6674d0b` changed only OKX transport URLs and
-  `consumers/` is unchanged, so the export stays valid; TLS/JWT material is regenerated per run by the harness.
+  `consumers/` is unchanged, so the export stays valid for the two linear scopes; TLS/JWT material is regenerated per
+  run by the harness. It does NOT cover the OKX_INVERSE scope, so G13 needs a fresh export with the inverse BOOK
+  binding as well (blocker 5).
 - DR05/DR08 harnesses are reused as they are at the release commit (latest DR05 harness changes: `522cf3e` D6
   reset stderr, `75673bc` G12 helper); no new harness is written for G13.
 - Unit tests of the harnesses are not rerun for G13; they gate the build CI (`scripts/p184_local_ci.py`).
@@ -119,9 +122,19 @@ transport `--ready-seconds 180` + 2 x (20 s cut + <= 120 s recover)). These are 
    STALE_TYPED, DISCONNECT_RECONNECT, GAP_REFUSAL, GENERATION_CHANGE_FENCED, APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1.
    Not added (reasons in the matrix `inverse_excluded`): DR01 (no alpha grant), DR02/DR03 (BAR), DR04.EXPLICIT_LAST
    and DR05.QUIET_TYPED (TRADE), DR07 (no reference grant), DR08 (@ANY). `p184_dr_views.py` reads the inverse scope
-   (`--venue okx_inverse`), so DR04/DR06 inverse run inside `dr04-dr06-views`. **Open:** the 5 inverse DR05 cells
-   have no producer - `p184_dr05_dl_fault.py isolated_config` exports ETH BOOK bindings only and TS
-   `p184_dr05_isolated.py` `SYMBOLS` is ETH only; both need a BTC-USD-SWAP scope (runner lists them `no_producer`).
+   (`--venue okx_inverse`), so DR04/DR06 inverse run inside `dr04-dr06-views`. Inverse DR05 producers (code,
+   tested locally): DL `p184_dr05_dl_fault.py` scopes (`SCOPES`; `--init --scope BINANCE --scope OKX --scope
+   OKX_INVERSE --catalog <dr05_catalog>`): `isolated_config` takes the exported BTC-USD-SWAP BOOK binding, the
+   material catalog filter keeps exactly each scope's BOOK_SNAPSHOT/BOOK_DELTA (no QUOTE/MARK/TRADE), consumer
+   `<ns>.okx_inverse`, OKX `books` frames for `BTC-USD-SWAP`; publisher, observer, channel and reset are scope-aware.
+   TS `acce72d`: `p184_dr05_upstream.py --venues ... OKX_INVERSE` and `p184_dr05_isolated.py --venues` (default all
+   three). The runner passes all three scopes to both DR05 steps.
+   **Run inputs this adds (not checked here, read-only session):** `dr05_catalog` = the deployed source catalog that
+   defines BTC-USD-SWAP (the repo `config/v2/stable-source-bindings.yaml` is revision 11 without it; the rev-12 paper
+   catalog copy is `~/.local/state/qdl-v2/p184-d1-rev11-20261009/base-catalog.yaml`; the deployed
+   `/runtime/stable-source-bindings.yaml` is root-only and was not read), and a fresh `dr05_public_export` that
+   includes the deployed core's BTC-USD-SWAP BOOK binding (the 10-08 export `9cf857a2...` has the two ETH bindings
+   only; `--init` refuses with `exactly one complete exported BOOK binding required: OKX_INVERSE`).
 6. **DR01 record needs CI confirmation** (`--ci-confirmed` only when the inputs file states `dr01.ci_confirmed: true`
    for the TS source SHA).
 7. RUNTIME steps read the shared stack and open extra Paper sessions: they need the owner-approved runtime packet
@@ -142,7 +155,7 @@ python3 -B scripts/p184_g13_final.py --python-image sha256:<py> --rust-image sha
 ... --only dr05-transport
 ```
 
-Inputs JSON keys: `dr05_public_export`, `redis_image`, `postgres_image`, `dr01.{inventory, deployments.BINANCE,
+Inputs JSON keys: `dr05_public_export` (must include the BTC-USD-SWAP BOOK binding), `dr05_catalog`, `redis_image`, `postgres_image`, `dr01.{inventory, deployments.BINANCE,
 deployments.OKX, compose, alpha_service, compose_cwd?, catalog?, ci_confirmed?}`, `alpha.{containers.*, symbols.*,
 universe.*?}`, `ts_container`, `gateway_container`, `gateway_image_digest`, `dr07.{connections, fx_account,
 dsn_env?}`, `dr08_restart_samples?` (default 5).

@@ -23,7 +23,7 @@ def matrix_of(dr_cells):
 
 
 MATRIX_OK = matrix_of([c for case in g13.DR_CELLS.values() for c in case])
-INPUTS = {"dr05_public_export": "/x/export.json", "redis_image": "redis:7.2-alpine", "postgres_image": "pg@sha256:1",
+INPUTS = {"dr05_public_export": "/x/export.json", "dr05_catalog": "/x/catalog-r12.yaml", "redis_image": "redis:7.2-alpine", "postgres_image": "pg@sha256:1",
           "dr01": {"inventory": "/x/inv.json", "deployments": {"BINANCE": "db", "OKX": "do"}, "compose": "/x/c.json",
                    "alpha_service": "alpha"},
           "alpha": {"containers": {"BINANCE": "ab", "OKX": "ao"}, "symbols": {"BINANCE": "ETHUSDT",
@@ -46,8 +46,9 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(cov["cells"], 76)  # TS matrix v2: 65 DR cells of v1 + 11 OKX_INVERSE
         self.assertEqual((cov["duplicates"], cov["missing"], cov["extra"]), ([], [], []))
         self.assertEqual(cov["produced"] + len(cov["no_producer"]), 76)
-        # Only the inverse DR05 faults lack a producer (harnesses are ETH-only); WRONG_ACCOUNT now has its TS runner.
-        self.assertEqual(sorted(cov["no_producer"]), sorted(g13.INV_DR05))
+        # Every cell has a producer: WRONG_ACCOUNT via the TS Gateway runner, inverse DR05 via the scoped harnesses.
+        self.assertEqual(cov["no_producer"], [])
+        self.assertEqual(cov["produced"], 76)
         self.assertEqual(len(g13.INV_DR04 + g13.INV_DR05 + g13.INV_DR06), 11)
 
     def test_dr_cells_equal_the_committed_ts_matrix_v2(self):
@@ -176,6 +177,39 @@ class PlanTests(unittest.TestCase):
             self.assertEqual([Path(c["stdout"]).name for c in commands[:len(parts)]], list(parts))
             record = commands[-1]["argv"]
             self.assertEqual(Path(record[record.index("--rows") + 1]).name, target)
+
+
+class InverseDr05Tests(unittest.TestCase):
+    def test_dr05_steps_run_every_scope_including_the_inverse(self):
+        steps = {e["step"]: e for e in make_plan("all")["steps"]}
+        self.assertEqual(set(g13.INV_DR05) - set(steps["dr05-upstream"]["cells"]) - set(steps["dr05-transport"]["cells"]),
+                         set())
+        self.assertIn("DR05.GAP_REFUSAL@OKX_INVERSE", steps["dr05-upstream"]["cells"])
+        self.assertIn("DR05.STALE_TYPED@OKX_INVERSE", steps["dr05-transport"]["cells"])
+        init = steps["dr05-upstream"]["commands"][0]["argv"]
+        self.assertEqual([init[i + 1] for i, a in enumerate(init) if a == "--scope"], ["BINANCE", "OKX", "OKX_INVERSE"])
+        self.assertEqual(init[init.index("--catalog") + 1], INPUTS["dr05_catalog"])
+        for argv in (steps["dr05-upstream"]["commands"][3]["argv"], steps["dr05-transport"]["commands"][0]["argv"]):
+            self.assertEqual(argv[argv.index("--venues") + 1:argv.index("--venues") + 4], ["BINANCE", "OKX", "OKX_INVERSE"])
+
+    def test_dr05_upstream_needs_the_catalog_input(self):
+        inputs = {k: v for k, v in INPUTS.items() if k != "dr05_catalog"}
+        self.assertIn("MISSING_INPUTS: dr05_catalog", make_plan("isolated", inputs=inputs)["blocked"]["dr05-upstream"])
+
+    def test_g13_init_argv_is_accepted_by_the_dl_fault_cli(self):
+        from scripts import p184_dr05_dl_fault as dr
+        init = {e["step"]: e for e in make_plan("isolated")["steps"]}["dr05-upstream"]["commands"][0]["argv"]
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "c.yaml"
+            catalog.write_text("x: 1\n")
+            argv = [str(catalog) if a == INPUTS["dr05_catalog"] else a for a in init[3:]]
+            argv[argv.index("--init")] = "--prepare"
+            argv[argv.index("--prepare") + 1] = str(Path(tmp) / "case")
+            del argv[argv.index("--core-config"):argv.index("--core-config") + 2]
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(dr.dispatch(argv), 0)
+            self.assertEqual(dr.scope_set(Path(tmp) / "case"), g13.DR05_SCOPES)
+            self.assertEqual(dr.image_set(Path(tmp) / "case")["core"], RUST)
 
 
 class GatewayStepTests(unittest.TestCase):

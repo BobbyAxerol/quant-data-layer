@@ -30,8 +30,9 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
     label = venue.lower()
     cid = manifest.consumer_id
     dr.namespace(cid.removesuffix("." + label))
-    if venue not in dr.VENUES or not cid.endswith("." + label):
+    if venue not in dr.SCOPES or not cid.endswith("." + label):
         raise ValueError("isolated venue consumer required")
+    scope_venue, scope_market, scope_symbol = dr.SCOPES[venue]  # `venue` is the case scope (e.g. OKX_INVERSE)
     policy = UniversalReleasePolicy.load(dr.ROOT / "config/v2/universal-release-policy.yaml", manifest_root=dr.ROOT)
     # A test-only routing generation, not a production release certificate.
     digest = hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest()
@@ -39,13 +40,14 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
     for req in manifest.requirements:
         instrument = catalog.instrument_for(req.instrument_uid)
         identity = instrument.identity
-        if identity.venue != venue or req.feed.value not in ("BOOK_SNAPSHOT", "BOOK_DELTA"):
-            raise ValueError("isolated venue BOOK requirements only")
+        if ((identity.venue, identity.market, instrument.native_symbol) != (scope_venue, scope_market, scope_symbol)
+                or req.feed.value not in ("BOOK_SNAPSHOT", "BOOK_DELTA")):
+            raise ValueError("isolated scope BOOK requirements only")
         rid = hashlib.sha256(f"{cid}:{requirement_key(req)}".encode()).hexdigest()
         products.append(UniversalReleaseProduct(
             consumer_id=cid, consumer_class=UniversalConsumerClass.TRADING_SYSTEM,
             requirement_id=rid, instrument_uid=identity.instrument_uid,
-            instrument_id=identity.instrument_id, venue=venue, market=identity.market,
+            instrument_id=identity.instrument_id, venue=identity.venue, market=identity.market,
             product_type=identity.product_type.value, native_symbol=instrument.native_symbol,
             feed=req.feed.value, interval=req.interval, source_policy_id=req.source_policy_id,
             provider_plane="L2", max_freshness_ms=req.max_freshness_ms,

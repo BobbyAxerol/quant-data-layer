@@ -9,6 +9,13 @@ Image set: --init/--prepare accept --image ROLE=sha256:<id> (repeatable, roles o
 scripts/p184_dr08_isolated.py IMAGES, which stay the defaults). The resolved set is sealed
 in handoff.json "images"; every later step (--up/--ready/--down, reset, channel, the
 in-container --material) reads it from there via image_set(work), never from the constants.
+
+Scopes: a case scope is a venue AND one BOOK instrument (SCOPES). The default scopes are the two
+linear ETH books (VENUES, unchanged). --init/--prepare --scope S (repeatable) selects them, e.g.
+also OKX_INVERSE (OKX BTC-USD-SWAP, the inverse instrument whose BOOK feeds the TS writer binding
+r23 grants); --catalog PATH supplies the source catalog that defines it (copied into the work
+directory, sha256 sealed in handoff.json "source_catalog"; default config/v2/stable-source-bindings.yaml).
+The sealed "scopes" drive material, manifests, consumers, frames and resets via scope_set(work).
 """
 from __future__ import annotations
 
@@ -31,11 +38,52 @@ if str(ROOT) not in sys.path:
 from scripts.p184_dr08_isolated import IMAGES  # immutable image inventory only: the DEFAULT set
 from scripts.p184_dr08_isolated import parse_image_overrides, resolve_images
 
-VENUES = ("BINANCE", "OKX")
+VENUES = ("BINANCE", "OKX")  # default scopes (linear ETH BOOK); a scope id equal to its venue
+# scope -> (venue, market, native BOOK symbol). OKX_INVERSE: binding r23 grants QUOTE, BOOK_SNAPSHOT, BOOK_DELTA,
+# MARK_INDEX_PRICE for BTC-USD-SWAP; this harness exercises its BOOK pair (the DR05 GAP/GENERATION fault path).
+SCOPES = {"BINANCE": ("BINANCE", "USDM", "ETHUSDT"), "OKX": ("OKX", "SWAP", "ETH-USDT-SWAP"),
+          "OKX_INVERSE": ("OKX", "SWAP", "BTC-USD-SWAP")}
 FAULTS = ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED")
 LABEL = "p184.dr05.dl"
 ROLES = ("kafka", "quota", "core", "stream", "query")
 CELLS = tuple(f"DR05.{fault}@{venue}" for venue in VENUES for fault in FAULTS)
+SOURCE_CATALOG = "source-catalog.yaml"
+
+
+def cells_for(scopes):
+    return tuple(f"DR05.{fault}@{scope}" for scope in scopes for fault in FAULTS)
+
+
+def validate_scopes(scopes):
+    """Ordered (SCOPES order), unique, non-empty, known scopes; None -> the default linear pair."""
+    if scopes is None:
+        return VENUES
+    scopes = tuple(scopes)
+    if not scopes or len(set(scopes)) != len(scopes) or set(scopes) - set(SCOPES):
+        raise ValueError("known, unique DR05 scopes required: " + ",".join(SCOPES))
+    return tuple(s for s in SCOPES if s in scopes)
+
+
+def scope_set(work=None):
+    """This run's sealed scopes (handoff.json "scopes"), else the default linear pair."""
+    handoff = Path(work) / "handoff.json" if work is not None else None
+    if handoff is not None and handoff.is_file():
+        scopes = json.loads(handoff.read_text()).get("scopes")
+        if scopes is not None:
+            if not isinstance(scopes, list) or validate_scopes(scopes) != tuple(scopes):
+                raise ValueError("handoff scopes must be ordered known scopes")
+            return tuple(scopes)
+    return VENUES
+
+
+def scope_of(venue, native_symbol):
+    """The scope of one exported binding / frame identity, or None."""
+    return next((s for s, (v, _, sym) in SCOPES.items() if (v, sym) == (venue, native_symbol)), None)
+
+
+def source_catalog_path(work):
+    copied = Path(work) / SOURCE_CATALOG
+    return copied if copied.is_file() else ROOT / "config/v2/stable-source-bindings.yaml"
 
 
 def namespace(value):
@@ -46,12 +94,12 @@ def namespace(value):
     return value
 
 
-def pending_rows():
+def pending_rows(scopes=VENUES):
     # No provenance header: this file must not be submitted as runtime evidence.
     return [{"cell": cell, "level": "ISOLATED_FAULT", "ok": False,
              "outcome": "PREPARED_NOT_RUN", "provenance": "TEST_ONLY",
              "detail": {"gate": "stage3 real DL path AND TS adapter observations required"}}
-            for cell in CELLS]
+            for cell in cells_for(scopes)]
 
 
 def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns):
@@ -60,9 +108,9 @@ def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns):
     Stamp at publish time, not preparation time. Same lane across generations;
     a lane rename tests a different fence and is not this case.
     """
-    if venue not in VENUES or type(at_ns) is not int or at_ns <= 0:
+    if venue not in SCOPES or type(at_ns) is not int or at_ns <= 0:
         raise ValueError("venue and positive integer timestamp required")
-    symbol = "ETHUSDT" if venue == "BINANCE" else "ETH-USDT-SWAP"
+    venue, _, symbol = SCOPES[venue]  # a scope selects the instrument; the frame names the real venue
     ms = at_ns // 1_000_000
     if venue == "OKX":
         payload = {"arg": {"channel": "books", "instId": symbol},
@@ -84,7 +132,7 @@ def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns):
 
 
 def schedule(venue, fault):
-    if venue not in VENUES or fault not in FAULTS:
+    if venue not in SCOPES or fault not in FAULTS:
         raise ValueError("unknown DR05 cell")
     # tuples: phase, snapshot, seq, previous, generation, bid quantity
     steps = [("positive_anchor", True, 100, 0, 7, "1"),
@@ -96,7 +144,7 @@ def schedule(venue, fault):
         steps += [("new_generation_unanchored", False, 201, 200, 8, "3")]
     # Binance replays the buffered 201 delta when snapshot200 arrives.
     # OKX rejects the unanchored delta and starts from snapshot200 instead.
-    return_previous = 201 if venue == "BINANCE" and fault == "GENERATION_CHANGE_FENCED" else 200
+    return_previous = 201 if SCOPES[venue][0] == "BINANCE" and fault == "GENERATION_CHANGE_FENCED" else 200
     steps += [("return_anchor", True, 200, 0, 8, "5"),
               ("return_control", False, 202, return_previous, 8, "6"),
               ("old_generation", True, 300, 0, 7, "99"),
@@ -309,40 +357,50 @@ def cleanup(ns, call=sh):
     return {"removed": removed, "scope": ns}
 
 
-def prepare(work, images=None):
+def prepare(work, images=None, scopes=None, catalog=None):
     ns = "p184-dr05-dl-" + uuid.uuid4().hex[:16]
     images = resolve_images(images)
+    scopes = validate_scopes(scopes)
     topology(ns, work, images=images)  # Validate path before writing.
+    source = None
+    if catalog is not None:
+        catalog = Path(catalog).resolve(strict=True)
+        source = {"from": str(catalog), "sha256": hashlib.sha256(catalog.read_bytes()).hexdigest()}
     work = Path(work).resolve()
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
+    if catalog is not None:
+        (work / SOURCE_CATALOG).write_bytes(catalog.read_bytes())
     packet = {"namespace": ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
-              "level": "ISOLATED_FAULT", "images": images,
+              "level": "ISOLATED_FAULT", "images": images, "scopes": list(scopes),
+              "source_catalog": source,
               "deadline_seconds": 600, "acceptance": False,
               "material_ready": False, "adapter_ready": False,
-              "schedules": {f"DR05.{f}@{v}": schedule(v, f) for v in VENUES for f in FAULTS}}
+              "schedules": {f"DR05.{f}@{v}": schedule(v, f) for v in scopes for f in FAULTS}}
     (work / "handoff.json").write_text(json.dumps(packet, indent=2) + "\n")
-    (work / "pending-cells.jsonl").write_text("".join(json.dumps(r) + "\n" for r in pending_rows()))
+    (work / "pending-cells.jsonl").write_text("".join(json.dumps(r) + "\n" for r in pending_rows(scopes)))
     return packet
 
 
-def isolated_config(exported, ns, images=None):
+def isolated_config(exported, ns, images=None, scopes=VENUES):
     """Take only public binding fields; never copy transport, credentials or authority."""
     namespace(ns)
     images = images or IMAGES
+    scopes = validate_scopes(scopes)
     required = {"provider", "venue", "market", "product_type", "native_symbol", "native_channel",
                 "provider_kind", "instrument_uid", "instrument_id", "instrument_revision",
                 "instrument_catalog_revision", "source_id", "source_role", "normalizer_version",
                 "sequence_policy", "l2"}
     optional = {"physical_native_symbol", "physical_native_channel", "require_final_bar"}
     selected = []
-    for venue, market, symbol in (("BINANCE", "USDM", "ETHUSDT"), ("OKX", "SWAP", "ETH-USDT-SWAP")):
+    for scope in scopes:
+        venue, market, symbol = SCOPES[scope]
         matches = [b for b in exported["core"]["bindings"] if b.get("l2") and
                    (b.get("venue"), b.get("market"), b.get("native_symbol")) == (venue, market, symbol)]
         if len(matches) != 1 or not required <= matches[0].keys():
-            raise ValueError("exactly one complete exported ETH BOOK binding required: " + venue)
+            raise ValueError("exactly one complete exported BOOK binding required: " + scope)
         binding = {k: copy.deepcopy(v) for k, v in matches[0].items() if k in required | optional}
         if binding["product_type"] != "PERPETUAL" or binding["source_role"] != "PRIMARY":
-            raise ValueError("ETH primary perpetual BOOK required")
+            raise ValueError("primary perpetual BOOK required: " + scope)
         allowed_l2 = {"provider_protocol", "depth_per_side", "snapshot_refresh_seconds",
                       "materialized_snapshot_interval_ms"}
         if set(binding["l2"]) - allowed_l2:
@@ -381,20 +439,21 @@ def material(work, exported):
     work = Path(work)
     packet = json.loads((work / "handoff.json").read_text())
     namespace = packet["namespace"]
-    cfg = isolated_config(exported, namespace, image_set(work))
+    scopes = scope_set(work)
+    cfg = isolated_config(exported, namespace, image_set(work), scopes)
 
     def save(name, value, private=False):
         with (work / name).open("x") as handle:
             os.chmod(work / name, 0o600 if private else 0o644)
             handle.write(value if isinstance(value, str) else json.dumps(value))
 
-    catalog = yaml.safe_load((ROOT / "config/v2/stable-source-bindings.yaml").read_text())
+    catalog = yaml.safe_load(source_catalog_path(work).read_text())
     catalog["canonical_stream"] = cfg["core"]["canonical_stream"]
     ids = {b["source_id"] for b in cfg["core"]["bindings"]}
     catalog["bindings"] = [b for b in catalog["bindings"] if b["source"]["source_id"] in ids
                            and b["feed"] in ("BOOK_SNAPSHOT", "BOOK_DELTA")]
-    if len(catalog["bindings"]) != 4:
-        raise ValueError("both ETH BOOK products must match source catalog")
+    if len(catalog["bindings"]) != 2 * len(scopes):
+        raise ValueError("every scope's BOOK snapshot/delta must match the source catalog")
     for binding in catalog["bindings"]:
         binding["source"]["adapter_version"] = "p184-synthetic-test-only"
     save("catalog.yaml", yaml.safe_dump(catalog))
@@ -463,7 +522,8 @@ group.initial.rebalance.delay.ms=0
 
     manifests, identities, keys, subjects = [], [], {}, {}
     for b in cfg["core"]["bindings"]:
-        label = b["venue"].lower()
+        scope = scope_of(b["venue"], b["native_symbol"])
+        label = scope.lower()
         cid = namespace + "." + label
         subject = "spiffe://qdl/paper/" + cid
         requirements = []
@@ -480,7 +540,7 @@ group.initial.rebalance.delay.ms=0
         mapping["spec"]["quotas"]["max_buffer_events"] = 1000
         save(label + ".yaml", yaml.safe_dump(mapping))
         from scripts.p184_dr05_case import consumer_packet
-        consumer, route = consumer_packet(work / (label + ".yaml"), loaded, b["venue"], ISSUER, AUDIENCE)
+        consumer, route = consumer_packet(work / (label + ".yaml"), loaded, scope, ISSUER, AUDIENCE)
         save(label + ".binding.json", route)
         save("ts-consumer." + label + ".json", consumer)
         manifests.append(work / (label + ".yaml"))
@@ -500,7 +560,7 @@ group.initial.rebalance.delay.ms=0
     save("probes.json", [])
     runtime_packet = {"namespace": namespace, "bootstrap": "localhost:9092", "provenance": "TEST_ONLY",
         "client_tls": {"ca": "/work/ca.crt", "cert": "/work/client.crt", "key": "/work/client.key"},
-        "isolated_manifest_paths": ["/work/binance.yaml", "/work/okx.yaml"],
+        "isolated_manifest_paths": ["/work/" + scope.lower() + ".yaml" for scope in scopes],
         "slice": {"bundle": "/work/bundle.json", "cursor_keys": "/work/cursor-keys.json",
                   "profile": "/work/profile.json", "probes": "/work/probes.json",
                   "route_generation": namespace, "target": "localhost:8210"}}
@@ -547,9 +607,9 @@ def erase_private(work):
     (work / "handoff.json").write_text(json.dumps(packet, indent=2) + "\n")
 
 
-def init(work, export_path, images=None):
+def init(work, export_path, images=None, scopes=None, catalog=None):
     # Runtime-free initialization in the already-local dependency image.
-    packet = prepare(work, images)
+    packet = prepare(work, images, scopes, catalog)
     ns = packet["namespace"]
     try:
         bounded(helper_command(ns, work, ["--material", "/work", "--core-config", "/export.json"], exported=export_path))
@@ -660,15 +720,18 @@ def dispatch(argv=None):
     parser.add_argument("--core-config", type=Path)
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:ID",
                         help="--init/--prepare image override (repeatable); sealed in handoff.json")
+    parser.add_argument("--scope", action="append", choices=tuple(SCOPES),
+                        help="--init/--prepare case scope (repeatable); default BINANCE and OKX (linear ETH)")
+    parser.add_argument("--catalog", type=Path, help="--init/--prepare source catalog defining every scope")
     args = parser.parse_args(argv)
-    if args.image and not (args.init or args.prepare):
-        parser.error("--image only with --init/--prepare; later steps read handoff.json")
+    if (args.image or args.scope or args.catalog) and not (args.init or args.prepare):
+        parser.error("--image/--scope/--catalog only with --init/--prepare; later steps read handoff.json")
     images = resolve_images(parse_image_overrides(args.image))
     if args.init or args.material:
         if args.core_config is None:
             parser.error("--core-config sanitized exported JSON required")
         if args.init:
-            result = init(args.init, args.core_config, images)
+            result = init(args.init, args.core_config, images, args.scope, args.catalog)
         else:
             result = material(args.material, json.loads(args.core_config.read_text()))
             result = {k: result[k] for k in ("namespace", "status", "material_ready")}
@@ -694,7 +757,7 @@ def dispatch(argv=None):
     elif args.probe:
         result = probe(args.probe)
     elif args.prepare:
-        packet = prepare(args.prepare, images)
+        packet = prepare(args.prepare, images, args.scope, args.catalog)
         result = {k: packet[k] for k in ("namespace", "status", "acceptance")}
     else:
         result = readiness(args.readiness) if args.readiness else cleanup(args.cleanup)
