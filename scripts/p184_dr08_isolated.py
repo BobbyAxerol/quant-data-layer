@@ -22,6 +22,12 @@ Both consumers must have the same BINANCE USDM trade requirement, quota1000.
 Stream must retain max_replay_events=10000, report metrics every second, and
 use a queue byte budget <=32MiB. No production credentials or mounts are allowed.
 
+Image set: IMAGES / QUERY_IMAGE_REF below are DEFAULTS only. --orchestrate accepts
+--image ROLE=sha256:<id> (repeatable; roles query/core/stream/python/kafka/redis) and
+--query-image-ref qdl-v2-python:<tag>; the parent passes the resolved set into every
+container as P184_DR08_IMAGES (JSON) and P184_DR08_QUERY_IMAGE_REF, and the in-container
+checks compare the packet against those attested values (defaults when absent).
+
 Parent bounds: Kafka 1CPU/1536MiB; core .5CPU/256MiB; Stream .5CPU/512MiB;
 Python .75CPU/512MiB; quota Redis .1CPU/64MiB; Query .5CPU/512MiB. --rm, no published ports, no shared mounts, tmpfs/bounded logs,
 ten-minute deadline. The orchestrator validates labels and cleans only its owned names.
@@ -66,12 +72,61 @@ def restart_count(packet):
     return count
 
 
-def validate_query_provenance(packet):
+ENV_IMAGES = "P184_DR08_IMAGES"
+ENV_QUERY_IMAGE_REF = "P184_DR08_QUERY_IMAGE_REF"
+IMAGE_ROLES = ("query", "core", "stream", "python", "kafka", "redis")
+IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+QUERY_REF = re.compile(r"qdl-v2-python:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
+
+def parse_image_overrides(values):
+    """--image ROLE=sha256:<64hex> (repeatable) -> {role: id}; unknown roles and duplicates refused."""
+    out = {}
+    for value in values or ():
+        role, sep, image = str(value).partition("=")
+        if not sep or role not in IMAGE_ROLES or role in out or not IMAGE_ID.fullmatch(image):
+            raise ValueError(f"--image ROLE=sha256:<64hex> with ROLE in {IMAGE_ROLES}, once each: {value!r}")
+        out[role] = image
+    return out
+
+
+def resolve_images(overrides=None):
+    """The pinned IMAGES with explicit overrides applied; every role must be an immutable image ID."""
+    images = dict(IMAGES)
+    for role, image in (overrides or {}).items():
+        if role not in IMAGE_ROLES:
+            raise ValueError("unknown image role: " + str(role))
+        images[role] = image
+    for role in IMAGE_ROLES:
+        if not isinstance(images.get(role), str) or not IMAGE_ID.fullmatch(images[role]):
+            raise ValueError(f"immutable {role} image ID required")
+    return images
+
+
+def resolve_query_ref(images, query_image_ref=None):
+    """The Query image label must name the Query digest it runs: a changed digest needs its own ref."""
+    ref = query_image_ref or QUERY_IMAGE_REF
+    if not QUERY_REF.fullmatch(ref):
+        raise ValueError("--query-image-ref must be qdl-v2-python:<tag>")
+    if (images["query"] == QUERY_IMAGE_DIGEST) != (ref == QUERY_IMAGE_REF):
+        raise ValueError("query image digest and --query-image-ref must change together")
+    return ref
+
+
+def expected_query(environ=None):
+    """(image_ref, digest) the parent attested via env, else the pinned defaults."""
+    environ = os.environ if environ is None else environ
+    images = json.loads(environ[ENV_IMAGES]) if environ.get(ENV_IMAGES) else IMAGES
+    return environ.get(ENV_QUERY_IMAGE_REF) or QUERY_IMAGE_REF, images["query"]
+
+
+def validate_query_provenance(packet, expected=None):
+    ref, digest = expected or expected_query()
     query = packet.get("query_provenance", {})
-    if (not isinstance(query, dict) or packet.get("images", {}).get("query") != QUERY_IMAGE_DIGEST
-            or query.get("image_ref") != QUERY_IMAGE_REF
-            or query.get("actual_image_digest") != QUERY_IMAGE_DIGEST):
-        raise ValueError("Query must be verified against candidate 2.2.3-rc2-43bbcf0, not production v2.2.2")
+    if (not isinstance(query, dict) or packet.get("images", {}).get("query") != digest
+            or query.get("image_ref") != ref
+            or query.get("actual_image_digest") != digest):
+        raise ValueError(f"Query must be verified against candidate {ref.split(':', 1)[-1]}, not production v2.2.2")
 
 
 def recovery_summary(samples):
@@ -136,6 +191,8 @@ def validate_packet(packet, *, development):
     for role in ("kafka", "core", "stream", "python"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", packet.get("images", {}).get(role, "")):
             raise ValueError(f"immutable {role} image ID required")
+    if os.environ.get(ENV_IMAGES) and packet.get("images") != json.loads(os.environ[ENV_IMAGES]):
+        raise ValueError("packet images differ from the parent-attested image set")
     restart_count(packet)
     validate_query_provenance(packet)
     if packet.get("stream_binary_override"):
@@ -591,7 +648,8 @@ def run_faults(packet):
             "range_recovery_measurement_n": 1,
             "ack_measured": False,
             "fresh_snapshot_rpc": "MarketDataStreamService/GetSnapshot",
-            "snapshot_path": "isolated candidate Query 2.2.3-rc2-43bbcf0 to canonical hot read; not production v2.2.2 or projector recovery proof"}
+            "snapshot_path": "isolated candidate Query " + packet["query_provenance"]["image_ref"].split(":", 1)[-1]
+                + " to canonical hot read; not production v2.2.2 or projector recovery proof"}
         facts[CELLS[2]] = {"observed": True,
             "passed": fast_end["code"] == "OK" and fast_end["count"] == REPLAY + 1 and fast_end["last"] == baseline_id + REPLAY + 1
                 and bool(progress_samples) and slow_resumed,
@@ -919,11 +977,17 @@ def candidate_stream_provenance(path, *, development):
             "container_path": "/work/candidate-stream", "scope": "development binary overlay; base image unchanged"}
 
 
-def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None, stream_binary=None):
-    """Adapt measure_l2_top_materialization's isolated broker/core packet."""
+def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None, stream_binary=None,
+                images=None, query_image_ref=None):
+    """Adapt measure_l2_top_materialization's isolated broker/core packet.
+
+    images: optional {role: sha256 id} overrides of IMAGES; query_image_ref names the Query image."""
     import shutil
     import subprocess
     root = Path(__file__).resolve().parents[1]
+    run_images = resolve_images(images)
+    query_ref = resolve_query_ref(run_images, query_image_ref)
+    attested = {ENV_IMAGES: json.dumps(run_images, sort_keys=True), ENV_QUERY_IMAGE_REF: query_ref}
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
         raise ValueError("TS provenance must use full SHA/digest syntax even in development")
     if not development:
@@ -950,12 +1014,12 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
                 or r["Name"] == "/market_data_service_p184w"}
     before = inventory()
     try:
-        for image in IMAGES.values():
+        for image in run_images.values():
             actual = command(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
             if actual != image:
                 raise ValueError("local image digest mismatch")
         runtime = json.loads(command(["docker", "inspect", "qdl_v2_stable_candidate-rust_core-1"]))[0]
-        if runtime["Image"] != IMAGES["core"]:
+        if runtime["Image"] != run_images["core"]:
             raise ValueError("deployed core image drift")
         cfg = json.loads(command(["docker", "exec", runtime["Id"], "cat", "/runtime/core.json"]))
         selected = [b for b in cfg["core"]["bindings"] if b["venue"] == "BINANCE" and b["market"] == "USDM"
@@ -969,8 +1033,8 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
         cfg["authority"].update(mode="RUST_SHADOW", slice_id=namespace, approved_by="isolated DR08 test")
         (work / "core.json").write_text(json.dumps(cfg))
         packet = {"namespace": namespace, "development": development, "ts_source_sha": source_sha,
-            "ts_image_digest": image_digest, "images": IMAGES, "bootstrap": "localhost:9092",
-            "restart_samples": count, "query_provenance": {"image_ref": QUERY_IMAGE_REF,
+            "ts_image_digest": image_digest, "images": run_images, "bootstrap": "localhost:9092",
+            "restart_samples": count, "query_provenance": {"image_ref": query_ref,
                 "scope": "isolated candidate Query; not production v2.2.2"}}
         if candidate:
             shutil.copyfile(stream_binary, work / "candidate-stream")
@@ -1009,29 +1073,29 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
                 (work / (role + "-command-error.log")).write_text(diagnostic[-16384:])
                 raise
         penv = {"PYTHONPATH": "/app:/app/generated/python", "PYTHONDONTWRITEBYTECODE": "1",
-                "P184_DR08_ISOLATED_NAMESPACE": namespace}
+                "P184_DR08_ISOLATED_NAMESPACE": namespace, **attested}
         script = ["python", "-B", "scripts/p184_dr08_isolated.py"]
-        launch("prepare", IMAGES["python"], script + ["--prepare-material", "/work"],
+        launch("prepare", run_images["python"], script + ["--prepare-material", "/work"],
                memory="512m", cpus=.5, network="none", env=penv, detach=False)
-        broker = launch("kafka", IMAGES["kafka"], ["/bin/sh", "-c",
+        broker = launch("kafka", run_images["kafka"], ["/bin/sh", "-c",
             "/opt/kafka/bin/kafka-storage.sh format -t MkU3OEVBNTcwNTJENDM2Qk -c /work/broker.properties"
             " && exec /opt/kafka/bin/kafka-server-start.sh /work/broker.properties"],
             memory="1536m", cpus=1, network="none", env={"KAFKA_HEAP_OPTS": "-Xms256m -Xmx512m", "LOG_DIR": "/tmp/kafka-logs"},
             extra=("--hostname", "localhost", "--tmpfs", "/data:rw,size=512m,mode=1777"))
         net = "container:" + broker
-        launch("topics", IMAGES["python"], script + ["--prepare-topics", "/work"],
+        launch("topics", run_images["python"], script + ["--prepare-topics", "/work"],
                memory="256m", cpus=.5, network=net, env=penv, detach=False)
         packet = json.loads((work / "packet.json").read_text())
-        launch("quota", IMAGES["redis"], ["redis-server", "--save", "", "--appendonly", "no",
+        launch("quota", run_images["redis"], ["redis-server", "--save", "", "--appendonly", "no",
             "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"], memory="64m", cpus=.1, network=net)
         common = {"QDL_ENVIRONMENT": "paper", "QDL_KN_CURSOR_KEYS_FILE": "/work/cursor-keys.json",
             "QDL_KN_CURSOR_ACTIVE_KEY_ID": "dr08", "QDL_KN_TOPIC_ID": packet["slice"]["topic_id"],
             "QDL_KN_ROUTE_GENERATION": namespace, "QDL_KN_READ_VIEW_SECRET_FILE": "/work/read-view.secret"}
-        launch("core", IMAGES["core"], ["/usr/local/bin/qdl-realtime-core", "/work/core.json"],
+        launch("core", run_images["core"], ["/usr/local/bin/qdl-realtime-core", "/work/core.json"],
             memory="256m", cpus=.5, network=net, env={"QDL_KAFKA_CERT_ROOT": "/work",
             "QDL_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092", "QDL_KAFKA_CLIENT_ID": namespace,
             "QDL_KAFKA_GROUP_ID": namespace, "QDL_PROVIDER_ADMISSION_ENABLED": "false"})
-        stream = launch("stream", IMAGES["stream"], ["/work/candidate-stream" if candidate else "/usr/local/bin/qdl-stream-gateway", "serve"],
+        stream = launch("stream", run_images["stream"], ["/work/candidate-stream" if candidate else "/usr/local/bin/qdl-stream-gateway", "serve"],
             memory="512m", cpus=.5, network=net, env={**common,
             "QDL_KN_BUNDLE_FILE": "/work/bundle.json", "QDL_KN_JWT_CONFIG_FILE": "/work/jwt-config.json",
             "QDL_KN_QUOTA_REDIS_URL": "redis://localhost:6379/0", "QDL_KN_QUOTA_PREFIX": "qdl:stable:v2:paper:" + namespace,
@@ -1043,11 +1107,11 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             "QDL_KN_READ_VIEW_URLS": "https://localhost:8200", "QDL_KN_READ_VIEW_CA_FILE": "/work/ca.crt",
             "QDL_KN_HOT_READ_ENABLED": "true", "QDL_KN_METRICS_SECONDS": "1",
             "QDL_KN_MAX_REPLAY_EVENTS": str(REPLAY), "QDL_KN_QUEUE_BYTES_TOTAL": str(QUEUE_BYTES)})
-        query = launch("query", IMAGES["query"], script + ["--query", "/work"], memory="512m", cpus=.5,
+        query = launch("query", run_images["query"], script + ["--query", "/work"], memory="512m", cpus=.5,
                network=net, env={**penv, **common})
         query_state = json.loads(command(["docker", "inspect", query]))[0]
         packet["query_provenance"]["actual_image_digest"] = query_state["Image"]
-        validate_query_provenance(packet)
+        validate_query_provenance(packet, expected=(query_ref, run_images["query"]))
         # Query may be reading its startup packet; publish the attestation atomically.
         attested_packet = work / "packet.attested.json"
         attested_packet.write_text(json.dumps(packet))
@@ -1074,7 +1138,7 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
         driver_args = script + ["--packet", "/work/packet.json", "--output", "/work/evidence.jsonl"]
         if development:
             driver_args += ["--development"]
-        launch("driver", IMAGES["python"], driver_args, memory="512m", cpus=.75, network=net, env=penv, detach=False)
+        launch("driver", run_images["python"], driver_args, memory="512m", cpus=.75, network=net, env=penv, detach=False)
     finally:
         if log_process is not None:
             log_process.terminate()
@@ -1124,6 +1188,9 @@ def main(argv=None):
     parser.add_argument("--stream-binary", type=Path, help="development-only isolated candidate executable")
     parser.add_argument("--restart-samples", type=int,
                         help="orchestrator restart count: development 1-10, final 5-10")
+    parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:ID",
+                        help="orchestrator image override (repeatable); IMAGES are the defaults")
+    parser.add_argument("--query-image-ref", help="orchestrator Query image label, required with a new query digest")
     args = parser.parse_args(argv)
     if args.orchestrate:
         def orchestration_deadline(_signum, _frame):
@@ -1131,7 +1198,8 @@ def main(argv=None):
         previous = signal.signal(signal.SIGALRM, orchestration_deadline)
         signal.alarm(600)
         try:
-            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest, restart_samples=args.restart_samples, stream_binary=args.stream_binary)
+            orchestrate(args.orchestrate, development=args.development, source_sha=args.ts_source_sha, image_digest=args.ts_image_digest, restart_samples=args.restart_samples, stream_binary=args.stream_binary,
+                        images=parse_image_overrides(args.image), query_image_ref=args.query_image_ref)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
@@ -1140,6 +1208,8 @@ def main(argv=None):
         parser.error("--stream-binary requires --orchestrate")
     if args.restart_samples is not None:
         parser.error("--restart-samples requires --orchestrate; inner driver uses its sealed packet")
+    if args.image or args.query_image_ref:
+        parser.error("--image/--query-image-ref require --orchestrate; inner containers read the attested env")
     for directory, function in ((args.prepare_material, prepare_material), (args.prepare_topics, prepare_topics), (args.query, serve_query)):
         if directory is not None:
             function(directory)

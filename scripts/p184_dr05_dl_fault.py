@@ -4,6 +4,11 @@
 --prepare writes a NEW external directory with topology, fault schedules and
 nonqualifying verifier rows. --readiness/--cleanup are owner stage3 utilities.
 The publisher/TS adapter handoff is deliberately explicit, not a status mock.
+
+Image set: --init/--prepare accept --image ROLE=sha256:<id> (repeatable, roles of
+scripts/p184_dr08_isolated.py IMAGES, which stay the defaults). The resolved set is sealed
+in handoff.json "images"; every later step (--up/--ready/--down, reset, channel, the
+in-container --material) reads it from there via image_set(work), never from the constants.
 """
 from __future__ import annotations
 
@@ -23,7 +28,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.p184_dr08_isolated import IMAGES  # immutable image inventory only
+from scripts.p184_dr08_isolated import IMAGES  # immutable image inventory only: the DEFAULT set
+from scripts.p184_dr08_isolated import parse_image_overrides, resolve_images
 
 VENUES = ("BINANCE", "OKX")
 FAULTS = ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED")
@@ -137,7 +143,19 @@ def core_override(value):
     return {"path": str(path), "sha256": digest}
 
 
-def topology(ns, work, topic_id="", *, core_binary=None):
+def image_set(work=None):
+    """This run's sealed image set (handoff.json "images"), else the pinned defaults."""
+    handoff = Path(work) / "handoff.json" if work is not None else None
+    if handoff is not None and handoff.is_file():
+        images = json.loads(handoff.read_text()).get("images")
+        if images is not None:
+            if not isinstance(images, dict) or set(images) != set(IMAGES):
+                raise ValueError("handoff image set must name exactly the harness roles")
+            return resolve_images(images)
+    return dict(IMAGES)
+
+
+def topology(ns, work, topic_id="", *, core_binary=None, images=None):
     """Generate executable Docker argv, but do not execute or discover config.
 
     Material preparation is a stage3 gate; topic UUID comes from the new broker.
@@ -145,6 +163,7 @@ def topology(ns, work, topic_id="", *, core_binary=None):
     """
     namespace(ns)
     core_binary = core_override(core_binary)
+    images = images or image_set(work)
     work = Path(work).resolve()
     if work == ROOT or ROOT in work.parents or ":" in str(work) or "," in str(work):
         raise ValueError("external unambiguous work directory required")
@@ -197,7 +216,7 @@ def topology(ns, work, topic_id="", *, core_binary=None):
             argv += ["-v", core_binary["path"] + ":/usr/local/bin/qdl-realtime-core:ro"]
         for key, value in env.items():
             argv += ["-e", key + "=" + value]
-        result[role] = argv + ["--entrypoint", command[0], IMAGES[image], *command[1:]]
+        result[role] = argv + ["--entrypoint", command[0], images[image], *command[1:]]
     return result
 
 
@@ -228,12 +247,13 @@ def owned(ns, role, call=sh, *, allow_disappearance=True):
     return row
 
 
-def readiness(ns, call=sh):
+def readiness(ns, call=sh, images=None):
+    images = images or IMAGES
     rows = {role: owned(ns, role, call) for role in ROLES}
     broker = rows["kafka"]
     checks = {}
     for role, row in rows.items():
-        expected_image = IMAGES[{"quota": "redis"}.get(role, role)]
+        expected_image = images[{"quota": "redis"}.get(role, role)]
         network = "none" if role == "kafka" else "container:" + (broker or {}).get("Id", "MISSING")
         checks[role] = bool(row and row["State"]["Running"] and row["Image"] == expected_image
                             and row["HostConfig"]["NetworkMode"] in
@@ -289,13 +309,14 @@ def cleanup(ns, call=sh):
     return {"removed": removed, "scope": ns}
 
 
-def prepare(work):
+def prepare(work, images=None):
     ns = "p184-dr05-dl-" + uuid.uuid4().hex[:16]
-    topology(ns, work)  # Validate path before writing.
+    images = resolve_images(images)
+    topology(ns, work, images=images)  # Validate path before writing.
     work = Path(work).resolve()
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     packet = {"namespace": ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
-              "level": "ISOLATED_FAULT", "images": IMAGES,
+              "level": "ISOLATED_FAULT", "images": images,
               "deadline_seconds": 600, "acceptance": False,
               "material_ready": False, "adapter_ready": False,
               "schedules": {f"DR05.{f}@{v}": schedule(v, f) for v in VENUES for f in FAULTS}}
@@ -304,9 +325,10 @@ def prepare(work):
     return packet
 
 
-def isolated_config(exported, ns):
+def isolated_config(exported, ns, images=None):
     """Take only public binding fields; never copy transport, credentials or authority."""
     namespace(ns)
+    images = images or IMAGES
     required = {"provider", "venue", "market", "product_type", "native_symbol", "native_channel",
                 "provider_kind", "instrument_uid", "instrument_id", "instrument_revision",
                 "instrument_catalog_revision", "source_id", "source_role", "normalizer_version",
@@ -334,7 +356,7 @@ def isolated_config(exported, ns):
             "batch_size": 25, "batch_wait_ms": 10, "max_events": 0, "metrics_every_batches": 1,
             "strict_subscription_scope": True, "book_resync_quarantine": True,
             "authority": {"schema": "qdl.authority-record.v1", "slice_id": ns, "revision": 1,
-                "mode": "RUST_SHADOW", "candidate_image_digest": IMAGES["core"],
+                "mode": "RUST_SHADOW", "candidate_image_digest": images["core"],
                 "capability_manifest_digest": digest, "contract_digest": digest,
                 "partition_plan_digest": digest, "public_write_allowed": False,
                 "legacy_write_allowed": False, "approved_by": "TEST_ONLY ISOLATED_FAULT",
@@ -359,7 +381,7 @@ def material(work, exported):
     work = Path(work)
     packet = json.loads((work / "handoff.json").read_text())
     namespace = packet["namespace"]
-    cfg = isolated_config(exported, namespace)
+    cfg = isolated_config(exported, namespace, image_set(work))
 
     def save(name, value, private=False):
         with (work / name).open("x") as handle:
@@ -504,7 +526,7 @@ def helper_command(ns, work, args, *, network="none", exported=None):
             "-e", "PYTHONDONTWRITEBYTECODE=1"]
     if exported:
         argv += ["-v", str(Path(exported).resolve()) + ":/export.json:ro"]
-    return argv + ["--entrypoint", "python", IMAGES["python"], "-B", "scripts/p184_dr05_dl_fault.py", *args]
+    return argv + ["--entrypoint", "python", image_set(work)["python"], "-B", "scripts/p184_dr05_dl_fault.py", *args]
 
 
 def bounded(argv, timeout=120):
@@ -525,9 +547,9 @@ def erase_private(work):
     (work / "handoff.json").write_text(json.dumps(packet, indent=2) + "\n")
 
 
-def init(work, export_path):
+def init(work, export_path, images=None):
     # Runtime-free initialization in the already-local dependency image.
-    packet = prepare(work)
+    packet = prepare(work, images)
     ns = packet["namespace"]
     try:
         bounded(helper_command(ns, work, ["--material", "/work", "--core-config", "/export.json"], exported=export_path))
@@ -560,19 +582,20 @@ def up(work, timeout=120, *, core_binary=None):
     if selected_core:
         packet["core_binary"] = selected_core
         (work / "handoff.json").write_text(json.dumps(packet, indent=2) + "\n")
-    for digest in set(IMAGES.values()):
+    images = image_set(work)
+    for digest in set(images.values()):
         if run(["docker", "image", "inspect", digest, "--format", "{{.Id}} "]).strip() != digest:
             raise ValueError("local immutable image mismatch")
     try:
-        run(topology(ns, work, core_binary=selected_core)["kafka"])
+        run(topology(ns, work, core_binary=selected_core, images=images)["kafka"])
         run(helper_command(ns, work, ["--topics", "/work"], network="container:" + ns + "-kafka"))
         topic = json.loads((work / "packet.json").read_text())["slice"]["topic_id"]
-        for role, argv in topology(ns, work, topic, core_binary=selected_core).items():
+        for role, argv in topology(ns, work, topic, core_binary=selected_core, images=images).items():
             if role != "kafka":
                 run(argv)
         deadline = min(deadline, time.monotonic() + 45)
         while True:
-            result = readiness(ns, run)
+            result = readiness(ns, run, images)
             if result["process_isolation_ready"]:
                 try:
                     run(helper_command(ns, work, ["--probe", "/work"], network="container:" + ns + "-kafka"), 25)
@@ -635,12 +658,17 @@ def dispatch(argv=None):
     mode.add_argument("--readiness")
     mode.add_argument("--cleanup")
     parser.add_argument("--core-config", type=Path)
+    parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:ID",
+                        help="--init/--prepare image override (repeatable); sealed in handoff.json")
     args = parser.parse_args(argv)
+    if args.image and not (args.init or args.prepare):
+        parser.error("--image only with --init/--prepare; later steps read handoff.json")
+    images = resolve_images(parse_image_overrides(args.image))
     if args.init or args.material:
         if args.core_config is None:
             parser.error("--core-config sanitized exported JSON required")
         if args.init:
-            result = init(args.init, args.core_config)
+            result = init(args.init, args.core_config, images)
         else:
             result = material(args.material, json.loads(args.core_config.read_text()))
             result = {k: result[k] for k in ("namespace", "status", "material_ready")}
@@ -655,7 +683,7 @@ def dispatch(argv=None):
             finally:
                 erase_private(work)
         else:
-            result = readiness(ns)
+            result = readiness(ns, images=image_set(work))
             if result["process_isolation_ready"]:
                 result.update(json.loads(bounded(helper_command(ns, work, ["--probe", "/work"],
                                           network="container:" + ns + "-kafka"))))
@@ -666,7 +694,7 @@ def dispatch(argv=None):
     elif args.probe:
         result = probe(args.probe)
     elif args.prepare:
-        packet = prepare(args.prepare)
+        packet = prepare(args.prepare, images)
         result = {k: packet[k] for k in ("namespace", "status", "acceptance")}
     else:
         result = readiness(args.readiness) if args.readiness else cleanup(args.cleanup)

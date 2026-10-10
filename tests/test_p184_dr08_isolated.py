@@ -512,5 +512,128 @@ class Evidence(unittest.TestCase):
 
 
 
+FINAL_PY, FINAL_RUST = "sha256:" + "a1" * 32, "sha256:" + "b2" * 32
+FINAL_REF = "qdl-v2-python:2.2.3-abcdef1"
+OVERRIDES = {"python": FINAL_PY, "query": FINAL_PY, "core": FINAL_RUST, "stream": FINAL_RUST}
+
+
+class ImageParameters(unittest.TestCase):
+    """The image set is a parameter; the pinned constants are defaults; containers check the attested values."""
+
+    def test_parse_and_resolve(self):
+        flags = [f"{k}={v}" for k, v in OVERRIDES.items()]
+        self.assertEqual(R.parse_image_overrides(flags), OVERRIDES)
+        self.assertEqual(R.resolve_images(), R.IMAGES)
+        resolved = R.resolve_images(OVERRIDES)
+        self.assertEqual({k: resolved[k] for k in OVERRIDES}, OVERRIDES)
+        self.assertEqual(resolved["kafka"], R.IMAGES["kafka"])
+        for bad in (["core"], ["core=latest"], ["nope=" + FINAL_RUST], ["core=" + FINAL_RUST, "core=" + FINAL_RUST]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                R.parse_image_overrides(bad)
+
+    def test_query_ref_and_digest_change_together(self):
+        self.assertEqual(R.resolve_query_ref(R.IMAGES), R.QUERY_IMAGE_REF)
+        self.assertEqual(R.resolve_query_ref(R.resolve_images(OVERRIDES), FINAL_REF), FINAL_REF)
+        for images, ref in ((R.resolve_images(OVERRIDES), None), (R.IMAGES, FINAL_REF),
+                            (R.resolve_images(OVERRIDES), "final")):
+            with self.subTest(ref=ref), self.assertRaises(ValueError):
+                R.resolve_query_ref(images, ref)
+
+    def _final_packet(self):
+        p = packet()
+        p["images"] = R.resolve_images(OVERRIDES)
+        p["query_provenance"] = {"image_ref": FINAL_REF, "actual_image_digest": FINAL_PY}
+        return p
+
+    def test_in_container_check_uses_the_attested_env(self):
+        env = {R.ENV_IMAGES: json.dumps(R.resolve_images(OVERRIDES)), R.ENV_QUERY_IMAGE_REF: FINAL_REF}
+        final = self._final_packet()
+        with patch.dict(os.environ, env):
+            R.validate_query_provenance(final)
+            with self.assertRaises(ValueError):
+                R.validate_query_provenance(packet())  # the rc2 packet is not what the parent attested
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(R.ENV_IMAGES, None)
+            os.environ.pop(R.ENV_QUERY_IMAGE_REF, None)
+            R.validate_query_provenance(packet())  # no attestation: the pinned defaults, as before
+            with self.assertRaises(ValueError):
+                R.validate_query_provenance(final)
+
+    def test_packet_images_must_equal_the_attested_set(self):
+        p = self._final_packet()
+        env = {"P184_DR08_ISOLATED_NAMESPACE": p["namespace"], R.ENV_IMAGES: json.dumps(p["images"]),
+               R.ENV_QUERY_IMAGE_REF: FINAL_REF}
+        with patch.dict(os.environ, env):
+            R.validate_packet(p, development=True)
+            p["images"] = {**p["images"], "stream": "sha256:" + "c" * 64}
+            with self.assertRaisesRegex(ValueError, "parent-attested"):
+                R.validate_packet(p, development=True)
+
+    def test_flags_only_with_orchestrate(self):
+        for argv in (["--image", "core=" + FINAL_RUST], ["--query-image-ref", FINAL_REF]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit), patch("sys.stderr"):
+                R.main(["--packet", "p", "--output", "o", *argv])
+
+    def test_orchestrate_launches_and_attests_the_passed_images(self):
+        import subprocess
+        from contextlib import redirect_stdout
+        import io
+        calls = []
+        cfg = {"core": {"bindings": [{"venue": "BINANCE", "market": "USDM",
+               "native_symbol": "BTCUSDT", "native_channel": "btcusdt@trade"}]}, "authority": {}}
+        final_images = R.resolve_images(OVERRIDES)
+
+        def run(args, **kwargs):
+            calls.append(args)
+            out = ""
+            if args[:3] == ["docker", "image", "inspect"]:
+                out = args[3]
+            elif args[:3] == ["docker", "inspect", "qdl_v2_stable_candidate-rust_core-1"]:
+                out = json.dumps([{"Image": FINAL_RUST, "Id": "shared-core"}])
+            elif args[:3] == ["docker", "exec", "shared-core"]:
+                out = json.dumps(cfg)
+            elif args[:2] == ["docker", "run"]:
+                raise subprocess.TimeoutExpired(args, 100)  # stop at the first launch
+            elif args[:2] == ["docker", "inspect"]:
+                raise subprocess.CalledProcessError(1, args)
+            return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+        with tempfile.TemporaryDirectory() as d, patch("subprocess.run", side_effect=run), \
+                redirect_stdout(io.StringIO()):
+            target = Path(d) / "attempt"
+            with self.assertRaises(subprocess.TimeoutExpired):
+                R.orchestrate(target, development=True, source_sha="0" * 40, image_digest="sha256:" + "0" * 64,
+                              images=OVERRIDES, query_image_ref=FINAL_REF)
+            written = json.loads((target / "packet.json").read_text())
+        inspected = {a[3] for a in calls if a[:3] == ["docker", "image", "inspect"]}
+        self.assertEqual(inspected, set(final_images.values()))
+        self.assertEqual(written["images"], final_images)
+        self.assertEqual(written["query_provenance"]["image_ref"], FINAL_REF)
+        launch = next(a for a in calls if a[:2] == ["docker", "run"])
+        self.assertIn(FINAL_PY, launch)  # the prepare role runs the final python image
+        self.assertIn(R.ENV_IMAGES + "=" + json.dumps(final_images, sort_keys=True), launch)
+        self.assertIn(R.ENV_QUERY_IMAGE_REF + "=" + FINAL_REF, launch)
+
+    def test_orchestrate_refuses_a_deployed_core_other_than_the_passed_one(self):
+        import subprocess
+        from contextlib import redirect_stdout
+        import io
+
+        def run(args, **kwargs):
+            out = ""
+            if args[:3] == ["docker", "image", "inspect"]:
+                out = args[3]
+            elif args[:3] == ["docker", "inspect", "qdl_v2_stable_candidate-rust_core-1"]:
+                out = json.dumps([{"Image": R.IMAGES["core"], "Id": "shared-core"}])
+            self.assertNotEqual(args[:2], ["docker", "run"])
+            return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+        with tempfile.TemporaryDirectory() as d, patch("subprocess.run", side_effect=run), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "deployed core image drift"):
+                R.orchestrate(Path(d) / "attempt", development=True, source_sha="0" * 40,
+                              image_digest="sha256:" + "0" * 64, images=OVERRIDES, query_image_ref=FINAL_REF)
+
+
 if __name__ == "__main__":
     unittest.main()

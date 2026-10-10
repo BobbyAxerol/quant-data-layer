@@ -114,7 +114,7 @@ def _reset_after_stop(work, ns, venue, selected, broker, call, deadline, channel
         else:
             argv = dr.helper_command(ns, work, args, network="container:" + ns + "-kafka")
             argv[argv.index("scripts/p184_dr05_dl_fault.py")] = script
-            pos = argv.index(dr.IMAGES["python"])
+            pos = argv.index(dr.image_set(work)["python"])
             argv[pos:pos] = ["-e", "P184_DR05_ISOLATED_NAMESPACE=" + ns]
         return call(argv)
 

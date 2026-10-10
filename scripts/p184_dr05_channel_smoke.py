@@ -34,7 +34,7 @@ def exercise(output, exported, core_binary):
                 argv = dr.helper_command(ns, work, ["--channel", "/work"], network="container:" + ns + "-kafka")
                 argv.insert(2, "-i")
                 argv[argv.index("scripts/p184_dr05_dl_fault.py")] = "scripts/p184_dr05_channel.py"
-                pos = argv.index(dr.IMAGES["python"])
+                pos = argv.index(dr.image_set(work)["python"])
                 argv[pos:pos] = ["-e", "P184_DR05_ISOLATED_NAMESPACE=" + ns]
                 channel = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                            stderr=errors, text=True, bufsize=1)

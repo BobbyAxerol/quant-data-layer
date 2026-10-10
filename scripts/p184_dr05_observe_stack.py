@@ -47,7 +47,7 @@ def exercise(output, exported, venue, fault, core_binary=None):
                 "--entrypoint", "python", ts_image, "-B", "/probe.py", "--serve", "--namespace", ns]
             dr.bounded(live_args)
             argv = dr.helper_command(ns, work, [], network="container:" + ns + "-kafka")
-            index = argv.index(dr.IMAGES["python"])
+            index = argv.index(dr.image_set(work)["python"])
             argv[index:index] = ["-e", "P184_DR05_ISOLATED_NAMESPACE=" + ns]
             argv[-1:] = ["scripts/p184_dr05_observer.py", "--work", "/work", "--venue", venue, "--fault", fault]
             receipt["observation"] = json.loads(dr.bounded(argv, 120))

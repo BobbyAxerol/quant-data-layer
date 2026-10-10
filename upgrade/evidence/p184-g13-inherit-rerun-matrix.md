@@ -1,18 +1,25 @@
 # P18.4 G13 - DR01-DR08 inherit / rerun matrix (final DL + writer digests)
 
 Status: PLAN / NOT RUN (2026-10-10, Claude coordinator, read-only planning). No DR, build or runtime action was
-taken to produce this. Runner: `scripts/p184_g13_final.py` (tested locally, 16 unit tests; never executed against
+taken to produce this. Runner: `scripts/p184_g13_final.py` (tested locally, 22 unit tests; never executed against
 Docker). Gate: G13 in TS `upgrade/p184-phase-d-gates.md` - "DR01-DR08 (incl. DR05 typed gap/generation fence,
-inverse feeds): every cell closed once on the final DL + writer digests", frozen cells in TS
-`contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v1.json` (65 DR cells: DR01 9, DR02 8, DR03 6, DR04 10,
-DR05 12, DR06 4, DR07 12, DR08 4; counted with a Python read of that file).
+inverse feeds): every cell closed once on the final DL + writer digests", cells in TS
+`contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json` (TS `3538b48`; v1 kept unchanged and readable):
+76 DR cells = the 65 of v1 (DR01 9, DR02 8, DR03 6, DR04 10, DR05 12, DR06 4, DR07 12, DR08 4) + 11 inverse cells
+scoped `OKX_INVERSE` (DR04 4, DR05 5, DR06 2). Counted with a Python read of the file; the runner refuses
+(`CASE_MATRIX_MISMATCH`) if its `DR_CELLS` differ from the matrix.
+
+Update 2026-10-10 (later): blockers 1, 4 and 5 below are resolved in code (harness image parameters; TS
+WRONG_ACCOUNT Gateway runner `6c44bf2` wired as step `dr01-wrong-account`; matrix v2 inverse cells). One new
+open item: the 5 inverse DR05 cells have no producer yet (see blocker 5).
 
 ## Result in one line
 
-**Inherit 0 of 65 cells.** No DR cell has a receipt on final-qualifying provenance, and every DR exercises at least
+**Inherit 0 of 76 cells.** No DR cell has a receipt on final-qualifying provenance, and every DR exercises at least
 one path changed after its newest receipt. What can be inherited are inputs, not cells (see "Inherited inputs").
-The minimum is therefore seven harness steps, ~52 min of estimated wall time run serially (hard timeouts sum to
-140 min), plus the two DR01 WRONG_ACCOUNT_DENIED cells that have no producer anywhere.
+The minimum is therefore eight harness steps, ~56 min of estimated wall time run serially (hard timeouts sum to
+150 min). `dr01-wrong-account` is Gateway-dependent and closes with the TS release; the 5 inverse DR05 cells
+have no producer yet.
 
 ## Receipts that exist (all found with `grep -rl` over `~/.local/state` for `DR0n.` cell ids)
 
@@ -59,12 +66,12 @@ and has no final-provenance receipt to inherit from.
 
 | DR | Cells | Exercised paths (roles) | Receipt | Decision | Reason | Step / est. min |
 |---|---|---|---|---|---|---|
-| DR01 | 9 (7 DL + 2 WRONG_ACCOUNT) | alpha SDK credentials -> Query HTTP `qdl/api_v2/router.py`, `qdl/security/data_plane.py` (JWT/realm/revision/entitlement), binding compiler `qdl/consumer/universal_release.py`, `consumers/stable/alpha-*-paper.yaml` | rehearsal only | RERUN | no deployed-probe receipt; router changed (`616342c`, `65e0757`, `76950c8`, `57881a2`, `47bec04`) | `dr01-deployed` / 3 |
+| DR01 | 9 (7 DL + 2 WRONG_ACCOUNT via TS Gateway runner) | alpha SDK credentials -> Query HTTP `qdl/api_v2/router.py`, `qdl/security/data_plane.py` (JWT/realm/revision/entitlement), binding compiler `qdl/consumer/universal_release.py`, `consumers/stable/alpha-*-paper.yaml` | rehearsal only | RERUN | no deployed-probe receipt; router changed (`616342c`, `65e0757`, `76950c8`, `57881a2`, `47bec04`) | `dr01-deployed` / 3, `dr01-wrong-account` / 2 (Gateway-dependent) |
 | DR02 | 8 | alpha `AlphaDataLayerV2` -> SDK transport -> Query warmup/batch, row cache, cold BAR (`qdl/query/*`, `kn_query_backend`, `stable_source`) | none | RERUN | warmup/batch path and SDK transport changed | `dr02-dr03-alpha` / 10 |
 | DR03 | 6 | same as DR02 plus 1m append (Query BAR, projector-fed spool) | none | RERUN | same | (same step) |
-| DR04 | 10 | Stream/Query -> TS writer -> TS Redis -> `MarketCacheReader` + Risk validator; MARK/INDEX hot path, L2 view | none | RERUN | IDR-084/Astra MARK, IDR-082, IDR-040 fix 2 changed; writer digest new | `dr04-dr06-views` / 12 |
-| DR05 | 12 | GAP/GEN: raw -> core fence (`canonical.rs`, `realtime-core/lib.rs`, `qdl-production-core.rs`) -> stream/query `kn_hot_view` -> writer clone -> production `_validate_book`; STALE/DISCONNECT/FALLBACK: writer clone transport; QUIET: TS views | r16 rehearsal (4 cells) | RERUN | core `1a2daf1`, query `57881a2`/`922a6ec`, stream `0b374bc`/`fdd379e`, writer all changed after r16; 8 cells never produced | `dr05-upstream` / 5, `dr05-transport` / 8, QUIET inside `dr04-dr06-views` |
-| DR06 | 4 | production `services.risk_engine.execution_market_context` on a copy of the live context (writer views) | none | RERUN | reads changed MARK/L2 views; writer digest new | (in `dr04-dr06-views`) |
+| DR04 | 10 + 4 inverse | Stream/Query -> TS writer -> TS Redis -> `MarketCacheReader` + Risk validator; MARK/INDEX hot path, L2 view | none | RERUN | IDR-084/Astra MARK, IDR-082, IDR-040 fix 2 changed; writer digest new | `dr04-dr06-views` / 14 (binance, okx, okx_inverse) |
+| DR05 | 12 + 5 inverse (no producer) | GAP/GEN: raw -> core fence (`canonical.rs`, `realtime-core/lib.rs`, `qdl-production-core.rs`) -> stream/query `kn_hot_view` -> writer clone -> production `_validate_book`; STALE/DISCONNECT/FALLBACK: writer clone transport; QUIET: TS views | r16 rehearsal (4 cells) | RERUN | core `1a2daf1`, query `57881a2`/`922a6ec`, stream `0b374bc`/`fdd379e`, writer all changed after r16; 8 cells never produced | `dr05-upstream` / 5, `dr05-transport` / 8, QUIET inside `dr04-dr06-views` |
+| DR06 | 4 + 2 inverse | production `services.risk_engine.execution_market_context` on a copy of the live context (writer views) | none | RERUN | reads changed MARK/L2 views; writer digest new | (in `dr04-dr06-views`) |
 | DR07 | 12 | alpha `alpha_sdk.reference` -> Query reference routes (`router.py`) -> `qdl/reference/*`; FX proof from TS DB | none | RERUN | no R2 DR07 rows; router changed | `dr07-reference` / 2 |
 | DR08 | 4 | isolated kafka -> core -> stream `service.rs`/`subscription.rs`/`hub.rs` -> query GetSnapshot | development only | RERUN | stream `fdd379e` after the overlay; final mode never ran | `dr08-isolated` / 12 |
 
@@ -84,25 +91,37 @@ transport `--ready-seconds 180` + 2 x (20 s cut + <= 120 s recover)). These are 
 
 ## Blockers before the final run (none is fixed here)
 
-1. **Harness image pins.** `scripts/p184_dr08_isolated.py` pins `IMAGES` (rc2 python `77682eea`, core `658a9570`,
-   stream `1f13408f`) and `QUERY_IMAGE_REF/DIGEST` (2.2.3-rc2-43bbcf0); `p184_dr05_dl_fault.py` imports the same
-   `IMAGES`. The containers re-validate against those constants (`validate_query_provenance`, readiness image
-   check), so the runner cannot override them from the host. Needs an additive, reviewed change in the harness
-   (final image IDs as arguments, constants as defaults) before `dr05-upstream`/`dr08-isolated` can run. The
-   runner refuses with `HARNESS_IMAGE_PIN` until then (its dry run shows this today).
+1. **Harness image pins - RESOLVED (code, tested locally).** `scripts/p184_dr08_isolated.py` `IMAGES` /
+   `QUERY_IMAGE_REF` are now defaults only: `--orchestrate` takes `--image ROLE=sha256:ID` (repeatable) and
+   `--query-image-ref`, passes the resolved set to every container as `P184_DR08_IMAGES` / `P184_DR08_QUERY_IMAGE_REF`,
+   and `validate_query_provenance` / `validate_packet` compare against those attested values (pinned defaults when
+   absent, so behaviour without flags is unchanged). `p184_dr05_dl_fault.py --init/--prepare` takes the same
+   `--image` flag and seals the set in `handoff.json` `images`; `--up/--ready/--down`, reset, channel, readiness and
+   the in-container `--material` read it via `image_set(work)`. The runner passes the final python (query, python)
+   and rust (core, stream) images; kafka/redis keep the harness defaults. `HARNESS_IMAGE_PIN` refusal removed.
 2. **DR08 reads the deployed core.** `orchestrate` copies `/runtime/core.json` from `qdl_v2_stable_candidate-rust_core-1`
    and refuses a core image other than its pin; with final pins DR08 runs only after the final rust image is
    deployed. The runner therefore checks the deployed inventory before DR08 too.
 3. **Python code is mounted from the checkout** (`-v <DL worktree>:/app:ro`, `PYTHONPATH=/app`) in DR05/DR08: the
    checkout must sit at the release commit. The runner refuses if HEAD differs from `--dl-source-sha` or tracked
    files under `qdl rust scripts generated consumers config contracts` are modified.
-4. **DR01.WRONG_ACCOUNT_DENIED@BINANCE/OKX have no qualifying producer.** `grep -rln WRONG_ACCOUNT` finds only
-   the CONTROLLED_SIM `scripts/p184_dr01_runtime.py` (DL), which the runbook forbids for closing DR01, and no TS
-   script outside the case matrix. The runbook assigns them to a TS Gateway runner that does not exist yet.
-5. **Inverse feeds.** G13 names inverse feeds, but the frozen matrix v1 has no inverse-scoped DR cell and
-   `p184_dr_views.py` `IDENTITY` is linear only (ETHUSDT / ETH-USDT-SWAP). Either a matrix revision adds inverse DR
-   cells (gates file line 119: "Inverse gets its own cells; linear is not inverse evidence") or G13's wording is
-   narrowed by the owner. Owner decision; not silently dropped.
+4. **DR01.WRONG_ACCOUNT_DENIED@BINANCE/OKX - producer exists, Gateway-dependent.** TS `6c44bf2`
+   `scripts/p184_dr01_wrong_account.py` (probe inside the deployed Gateway, record on the host). Runner step
+   `dr01-wrong-account` (runtime; inputs `gateway_container`, `gateway_image_digest`): probe via
+   `docker exec -i <gateway> python -B - probe`, then `record --rows .. --source-sha .. --image-digest <writer>
+   --gateway-image-digest ..`. At run time it is refused as `GATEWAY_NOT_RUNNING` (receipt `deferred`, other steps
+   still run, overall exit not failed by it) unless the container is running the declared gateway image; it closes
+   with the TS release, when the Gateway runs the final image incl. IDR-085.
+5. **Inverse feeds - cells added (TS matrix v2), 5 without producer.** Deployed writer binding (r23, manifest
+   revision 11, `market_data_service_p184w` mount) grants OKX BTC-USD-SWAP exactly QUOTE, BOOK_SNAPSHOT, BOOK_DELTA,
+   MARK_INDEX_PRICE (TRADE/BAR route BLOCK, no V1 fallback). Added `@OKX_INVERSE`: DR04 QUOTE_BBO,
+   L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH, MARK_INDEX_COMPONENTS, RISK_REREADS_OWN_AUTHORITY; DR06 both cells; DR05
+   STALE_TYPED, DISCONNECT_RECONNECT, GAP_REFUSAL, GENERATION_CHANGE_FENCED, APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1.
+   Not added (reasons in the matrix `inverse_excluded`): DR01 (no alpha grant), DR02/DR03 (BAR), DR04.EXPLICIT_LAST
+   and DR05.QUIET_TYPED (TRADE), DR07 (no reference grant), DR08 (@ANY). `p184_dr_views.py` reads the inverse scope
+   (`--venue okx_inverse`), so DR04/DR06 inverse run inside `dr04-dr06-views`. **Open:** the 5 inverse DR05 cells
+   have no producer - `p184_dr05_dl_fault.py isolated_config` exports ETH BOOK bindings only and TS
+   `p184_dr05_isolated.py` `SYMBOLS` is ETH only; both need a BTC-USD-SWAP scope (runner lists them `no_producer`).
 6. **DR01 record needs CI confirmation** (`--ci-confirmed` only when the inputs file states `dr01.ci_confirmed: true`
    for the TS source SHA).
 7. RUNTIME steps read the shared stack and open extra Paper sessions: they need the owner-approved runtime packet
@@ -115,7 +134,7 @@ transport `--ready-seconds 180` + 2 x (20 s cut + <= 120 s recover)). These are 
 python3 -B scripts/p184_g13_final.py --python-image sha256:<py> --rust-image sha256:<rust> \
   --python-image-ref qdl-v2-python:2.2.3-<sha7> --writer-image sha256:<writer> \
   --ts-source-sha <40hex> --dl-source-sha <40hex> --phase all --inputs <inputs.json> --dry-run
-# isolated phase (after blocker 1; DR08 also after the rust image is deployed)
+# isolated phase (DR08 after the final rust image is deployed; --ts-root must hold the TS matrix v2)
 ... --phase isolated
 # runtime phase (after rollout + writer roll, approved packet)
 ... --phase runtime --inputs <inputs.json> --runtime-approval <packet>
@@ -125,7 +144,8 @@ python3 -B scripts/p184_g13_final.py --python-image sha256:<py> --rust-image sha
 
 Inputs JSON keys: `dr05_public_export`, `redis_image`, `postgres_image`, `dr01.{inventory, deployments.BINANCE,
 deployments.OKX, compose, alpha_service, compose_cwd?, catalog?, ci_confirmed?}`, `alpha.{containers.*, symbols.*,
-universe.*?}`, `ts_container`, `dr07.{connections, fx_account, dsn_env?}`, `dr08_restart_samples?` (default 5).
+universe.*?}`, `ts_container`, `gateway_container`, `gateway_image_digest`, `dr07.{connections, fx_account,
+dsn_env?}`, `dr08_restart_samples?` (default 5).
 
 Receipts: `~/.local/state/qdl-v2/p184-g13-<YYYYMMDDTHHMMSSZ>/` (exclusive create): `plan.json`,
 `<step>/receipt.json` (argv, cwd, UTC start/end, exit codes, timeout/error, sha256 of every output,

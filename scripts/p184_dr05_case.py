@@ -111,6 +111,7 @@ def _packet(work):
 
 def _reset_preflight(work, ns, call, core_binary=None, *, allow_channel=False):
     core_binary = dr.core_override(core_binary)
+    images = dr.image_set(work)
     rows = {role: dr.owned(ns, role, call) for role in (*dr.ROLES, "helper", "tsvalidator")}
     if rows["tsvalidator"] or (rows["helper"] and not allow_channel):
         raise ValueError("stop helpers and TS clones before reset")
@@ -137,7 +138,7 @@ def _reset_preflight(work, ns, call, core_binary=None, *, allow_channel=False):
             expected_binds["/usr/local/bin/qdl-realtime-core"] = core_binary["path"]
             if any(m.get("RW") is not False for m in mounts if m["Destination"] == "/usr/local/bin/qdl-realtime-core"):
                 raise ValueError("candidate core binary mount must be read-only")
-        if (row["Image"] != dr.IMAGES[{"quota": "redis", "helper": "python"}.get(role, role)]
+        if (row["Image"] != images[{"quota": "redis", "helper": "python"}.get(role, role)]
                 or host.get("AutoRemove") is not True or host.get("PortBindings")
                 or host.get("NetworkMode") not in (expected, "container:" + ns + "-kafka" if role != "kafka" else expected)
                 or host.get("ReadonlyRootfs") is not True

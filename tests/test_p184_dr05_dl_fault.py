@@ -121,6 +121,73 @@ class PreparationTests(unittest.TestCase):
             dr.drive(Adapter(), "OKX", "GAP_REFUSAL")
 
 
+FINAL_PY, FINAL_RUST = "sha256:" + "a1" * 32, "sha256:" + "b2" * 32
+OVERRIDES = {"python": FINAL_PY, "query": FINAL_PY, "core": FINAL_RUST, "stream": FINAL_RUST}
+
+
+class ImageSetTests(unittest.TestCase):
+    """--image overrides are sealed in handoff.json; every later step reads them, defaults stay the pins."""
+
+    def test_defaults_unchanged_without_overrides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "case"
+            packet = dr.prepare(work)
+            self.assertEqual(packet["images"], dr.IMAGES)
+            self.assertEqual(dr.image_set(work), dr.IMAGES)
+            self.assertEqual(dr.image_set(None), dr.IMAGES)
+            self.assertEqual(dr.image_set(Path(tmp) / "absent"), dr.IMAGES)
+
+    def test_overrides_sealed_and_used_by_every_later_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "case"
+            packet = dr.prepare(work, OVERRIDES)
+            sealed = json.loads((work / "handoff.json").read_text())["images"]
+            self.assertEqual(sealed, packet["images"])
+            self.assertEqual({k: sealed[k] for k in OVERRIDES}, OVERRIDES)
+            self.assertEqual(sealed["kafka"], dr.IMAGES["kafka"])  # roles not overridden keep the defaults
+            commands = dr.topology(packet["namespace"], work)
+            self.assertIn(FINAL_RUST, commands["core"])
+            self.assertIn(FINAL_RUST, commands["stream"])
+            self.assertIn(FINAL_PY, commands["query"])
+            self.assertIn(dr.IMAGES["kafka"], commands["kafka"])
+            self.assertNotIn(dr.IMAGES["core"], commands["core"])
+            helper = dr.helper_command(packet["namespace"], work, ["--topics", "/work"])
+            self.assertIn(FINAL_PY, helper)
+            cfg = dr.isolated_config(MaterialTests.exported(), packet["namespace"], dr.image_set(work))
+            self.assertEqual(cfg["authority"]["candidate_image_digest"], FINAL_RUST)
+
+    def test_tampered_or_partial_handoff_image_set_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "case"
+            dr.prepare(work, OVERRIDES)
+            handoff = json.loads((work / "handoff.json").read_text())
+            for images in ({"core": FINAL_RUST}, {**handoff["images"], "core": "latest"}, "x"):
+                (work / "handoff.json").write_text(json.dumps({**handoff, "images": images}))
+                with self.subTest(images=images), self.assertRaises(ValueError):
+                    dr.image_set(work)
+
+    def test_readiness_checks_the_sealed_images(self):
+        rows = LifecycleTests()
+        rows.setUp()
+        images = dr.resolve_images(OVERRIDES)
+        self.assertTrue(dr.readiness(NS, rows.call)["process_isolation_ready"])  # rows run the defaults
+        self.assertFalse(dr.readiness(NS, rows.call, images)["process_isolation_ready"])
+        for role in dr.ROLES:
+            rows.rows[role]["Image"] = images[{"quota": "redis"}.get(role, role)]
+        self.assertTrue(dr.readiness(NS, rows.call, images)["process_isolation_ready"])
+
+    def test_cli_image_flag_only_at_init_or_prepare(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("sys.stdout"), patch("sys.stderr"):
+            work = Path(tmp) / "case"
+            self.assertEqual(dr.dispatch(["--prepare", str(work), "--image", "core=" + FINAL_RUST]), 0)
+            self.assertEqual(dr.image_set(work)["core"], FINAL_RUST)
+            for argv in (["--up", str(work), "--image", "core=" + FINAL_RUST],
+                         ["--prepare", str(Path(tmp) / "b"), "--image", "core=latest"],
+                         ["--prepare", str(Path(tmp) / "c"), "--image", "nope=" + FINAL_RUST]):
+                with self.subTest(argv=argv), self.assertRaises((SystemExit, ValueError)):
+                    dr.dispatch(argv)
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.rows = {}

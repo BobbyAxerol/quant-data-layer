@@ -2,7 +2,8 @@
 """P18.4 gate G13: run the DR01-DR08 steps that cannot be inherited, once, on the final DL + TS writer digests.
 
 Purpose. G13 (TS upgrade/p184-phase-d-gates.md) closes every DR cell of the frozen R2.5 case matrix
-(contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v1.json in the TS repo, 65 DR cells) on the final
+(contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json in the TS repo: 76 DR cells = the 65 of v1 plus
+11 inverse cells scoped OKX_INVERSE; v1 stays readable) on the final
 Data Layer python/rust images and the final TS writer image. The inherit/rerun decision per DR is recorded in
 upgrade/evidence/p184-g13-inherit-rerun-matrix.md; DECISIONS below is the same table in code. This runner calls
 ONLY the existing harnesses, sequentially, each under a hard timeout:
@@ -12,16 +13,21 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
     dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells)
+    dr01-wrong-account TS scripts/p184_dr01_wrong_account.py probe (inside the deployed Gateway) + record;
+                    GATEWAY-DEPENDENT: refused as GATEWAY_NOT_RUNNING (other steps still run) unless the Gateway
+                    container runs the declared gateway image; it closes with the TS release (IDR-085 Gateway)
     dr02-dr03-alpha TS scripts/p184_dr_alpha_reads.py probe (inside each alpha runtime) + record
-    dr04-dr06-views TS scripts/p184_dr_views.py (inside the TS writer image) + record; also DR05.QUIET_TYPED
+    dr04-dr06-views TS scripts/p184_dr_views.py (inside the TS writer image; binance, okx, okx_inverse) + record;
+                    also DR05.QUIET_TYPED (linear only: QUIET is a TRADE state, TRADE is not granted for inverse)
     dr05-transport  TS scripts/p184_dr05_isolated.py (writer clone, transport cut at the clone only)
     dr07-reference  TS scripts/p184_dr07_reference.py
 Receipts: a NEW directory ~/.local/state/qdl-v2/p184-g13-<YYYYMMDD>T<HHMMSS>Z/ (exclusive create) with plan.json,
 one <step>/receipt.json per step (argv, cwd, times, exit, timeout, output sha256, cleanup) and summary.json.
 
 Boundary. Never builds an image, never starts/stops/recreates a shared container, never writes shared Redis/Kafka/
-Postgres, never pushes. It refuses to start a step when (a) a harness still pins other image IDs than the final
-ones (the harness containers re-validate their own constants, so a host-side override cannot qualify), (b) the
+Postgres, never pushes. The DR05/DR08 harnesses get the final images as explicit arguments (--image ROLE=ID,
+DR08 also --query-image-ref; their in-container checks compare against these attested values; kafka/redis keep the
+harness defaults). It refuses to start a step when (a) the TS case matrix v2 DR cells differ from DR_CELLS, (b) the
 DL checkout that the harness containers mount at /app is not the release commit or has tracked edits, (c) for
 the RUNTIME phase, the deployed roles do not run the final digests or no approval packet is given. Cleanup: only
 containers whose name starts with the step's own prefix AND that did not exist before the step are removed, by
@@ -64,12 +70,23 @@ ROLE_IMAGE = {
     "market_projector_1": "rust", "market_projector_2": "rust",
     "stream_kn_1": "rust", "stream_kn_2": "rust",
 }
-# Harness image pins that run inside its containers (scripts/p184_dr08_isolated.py IMAGES; dr05_dl_fault imports it).
-PIN_ROLES = {"query": "python", "python": "python", "core": "rust", "stream": "rust"}
+# Harness image roles set to the final images (scripts/p184_dr08_isolated.py IMAGES stay the defaults for the rest).
+HARNESS_ROLES = {"query": "python", "python": "python", "core": "rust", "stream": "rust"}
+MATRIX_V2 = "contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json"
+GATEWAY_STEPS = ("dr01-wrong-account",)
 
 
 def cells(case, names, venues=VENUES):
     return tuple(f"{case}.{name}@{venue}" for name in names for venue in venues)
+
+
+INVERSE = ("OKX_INVERSE",)  # TS case matrix v2: OKX BTC-USD-SWAP, binding r23 QUOTE/BOOK/MARK_INDEX only
+INV_DR04 = cells("DR04", ("L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH", "MARK_INDEX_COMPONENTS", "QUOTE_BBO",
+                          "RISK_REREADS_OWN_AUTHORITY"), INVERSE)
+INV_DR05 = cells("DR05", ("APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1", "DISCONNECT_RECONNECT", "GAP_REFUSAL",
+                          "GENERATION_CHANGE_FENCED", "STALE_TYPED"), INVERSE)
+INV_DR06 = cells("DR06", ("EXPLICIT_LAST_L2_MARK_STILL_FAIL_WHEN_INVALID",
+                          "UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT"), INVERSE)
 
 
 DR_CELLS = {
@@ -80,19 +97,19 @@ DR_CELLS = {
     "DR03": cells("DR03", ("APPEND_1M_NO_FUTURE_SKIP_DUPLICATE", "NO_FULL_HISTORY_RELOAD_PER_CYCLE",
                            "RESTART_SAME_CANDLE_NO_DUPLICATE_DECISION")),
     "DR04": cells("DR04", ("EXPLICIT_LAST", "L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH", "MARK_INDEX_COMPONENTS", "QUOTE_BBO",
-                           "RISK_REREADS_OWN_AUTHORITY")),
+                           "RISK_REREADS_OWN_AUTHORITY")) + INV_DR04,
     "DR05": cells("DR05", ("APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1", "DISCONNECT_RECONNECT", "GAP_REFUSAL",
-                           "GENERATION_CHANGE_FENCED", "QUIET_TYPED", "STALE_TYPED")),
+                           "GENERATION_CHANGE_FENCED", "QUIET_TYPED", "STALE_TYPED")) + INV_DR05,
     "DR06": cells("DR06", ("EXPLICIT_LAST_L2_MARK_STILL_FAIL_WHEN_INVALID",
-                           "UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT")),
+                           "UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT")) + INV_DR06,
     "DR07": cells("DR07", ("FUNDING_RATE", "INSTRUMENT_METADATA_PROVENANCE", "LONG_SHORT_RATIO", "OPEN_INTEREST",
                            "TAKER_FLOW")) + ("DR07.FX_PROOF@ANY", "DR07.REFERENCE_NEVER_EXECUTION_AUTHORITY@ANY"),
     "DR08": tuple(f"DR08.{n}@ANY" for n in ("ALERT_PATH_OBSERVABLE", "CONSUMER_RESTART_RECOVERY_MEASURED",
                                             "NO_CROSS_CONSUMER_STARVATION", "SLOW_CONSUMER_BOUNDED_QUEUE")),
 }
-# Only the CONTROLLED_SIM p184_dr01_runtime.py emits these, which never closes DR01; the TS Gateway runner that
-# should does not exist yet. Listed, never faked.
-NO_PRODUCER = cells("DR01", ("WRONG_ACCOUNT_DENIED",))
+# Inverse DR05 faults: the DL fault harness (p184_dr05_dl_fault.py isolated_config: ETH BOOK bindings only) and the
+# TS writer clone (p184_dr05_isolated.py SYMBOLS: ETH only) have no BTC-USD-SWAP scope yet. Listed open, never faked.
+NO_PRODUCER = INV_DR05
 
 # DR -> (decision, reason). Same table as upgrade/evidence/p184-g13-inherit-rerun-matrix.md.
 DECISIONS = {
@@ -114,12 +131,13 @@ DECISIONS = {
 
 STEP_SPEC = (
     # id, phase, cells, timeout_s, est_minutes, owned container prefixes
-    ("dr05-upstream", "isolated", tuple(c for c in DR_CELLS["DR05"] if "GAP_" in c or "GENERATION_" in c), 1800, 5,
+    ("dr05-upstream", "isolated", cells("DR05", ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED")), 1800, 5,
      ("p184-dr05-",)),
     ("dr08-isolated", "isolated", DR_CELLS["DR08"], 1500, 12, ("p184-dr08-",)),
-    ("dr01-deployed", "runtime", tuple(c for c in DR_CELLS["DR01"] if c not in NO_PRODUCER), 600, 3, ()),
+    ("dr01-deployed", "runtime", tuple(c for c in DR_CELLS["DR01"] if "WRONG_ACCOUNT" not in c), 600, 3, ()),
+    ("dr01-wrong-account", "runtime", cells("DR01", ("WRONG_ACCOUNT_DENIED",)), 600, 2, ()),
     ("dr02-dr03-alpha", "runtime", DR_CELLS["DR02"] + DR_CELLS["DR03"], 1200, 10, ()),
-    ("dr04-dr06-views", "runtime", DR_CELLS["DR04"] + DR_CELLS["DR06"] + cells("DR05", ("QUIET_TYPED",)), 1200, 12,
+    ("dr04-dr06-views", "runtime", DR_CELLS["DR04"] + DR_CELLS["DR06"] + cells("DR05", ("QUIET_TYPED",)), 1200, 14,
      ()),
     ("dr05-transport", "runtime", cells("DR05", ("STALE_TYPED", "DISCONNECT_RECONNECT",
                                                  "APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1")), 1500, 8,
@@ -143,39 +161,30 @@ def coverage():
     missing = sorted(set(every) - set(produced) - set(NO_PRODUCER))
     extra = sorted(set(produced) - set(every))
     return {"cells": len(every), "produced": len(set(produced)), "no_producer": list(NO_PRODUCER),
-            "duplicates": duplicates, "missing": missing, "extra": extra}
+            "duplicates": duplicates + sorted(set(produced) & set(NO_PRODUCER)), "missing": missing, "extra": extra}
 
 
-def harness_pins(source):
-    """Image IDs the DR05/DR08 harness containers validate against, read from source without importing it."""
-    tree = ast.parse(source)
-    consts, images = {}, None
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            name = node.targets[0].id
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                consts[name] = node.value.value
-            elif name == "IMAGES" and isinstance(node.value, ast.Dict):
-                images = {}
-                for key, value in zip(node.value.keys, node.value.values):
-                    images[key.value] = consts.get(value.id) if isinstance(value, ast.Name) else value.value
-    if images is None:
-        raise Blocked("HARNESS_PINS_UNREADABLE: no IMAGES dict in scripts/p184_dr08_isolated.py")
-    return {"images": images, "query_image_ref": consts.get("QUERY_IMAGE_REF"),
-            "query_image_digest": consts.get("QUERY_IMAGE_DIGEST")}
+def harness_image_args(final):
+    """--image ROLE=ID for every harness role that must run a final image (both harnesses accept the flag)."""
+    out = []
+    for role, kind in HARNESS_ROLES.items():
+        out += ["--image", f"{role}={final[kind]}"]
+    return out
 
 
-def pin_mismatches(pins, final):
-    """Empty when the harness pins equal the final python/rust images and python image ref."""
-    found = []
-    for role, kind in PIN_ROLES.items():
-        if pins["images"].get(role) != final[kind]:
-            found.append(f"IMAGES[{role!r}]={pins['images'].get(role)} != final {kind} {final[kind]}")
-    if pins["query_image_digest"] != final["python"]:
-        found.append(f"QUERY_IMAGE_DIGEST={pins['query_image_digest']} != final python {final['python']}")
-    if pins["query_image_ref"] != final["python_ref"]:
-        found.append(f"QUERY_IMAGE_REF={pins['query_image_ref']} != {final['python_ref']}")
-    return found
+def matrix_dr_cells(matrix):
+    """DR cell ids of a loaded TS case matrix (v1 or v2); unknown schemas refused."""
+    if matrix.get("schema") not in ("p184.r2-case-matrix.v1", "p184.r2-case-matrix.v2"):
+        raise Blocked(f"CASE_MATRIX_SCHEMA: {matrix.get('schema')!r}")
+    return sorted(c["id"] for c in matrix["cells"] if c["case"].startswith("DR"))
+
+
+def matrix_mismatch(matrix):
+    """Empty when DR_CELLS equals the TS matrix's DR cells exactly."""
+    ours = sorted(c for case in DR_CELLS.values() for c in case)
+    theirs = matrix_dr_cells(matrix)
+    return {"missing_here": sorted(set(theirs) - set(ours)), "extra_here": sorted(set(ours) - set(theirs))} \
+        if ours != theirs else {}
 
 
 def validate_final(final):
@@ -224,6 +233,7 @@ def required_inputs(step):
         "dr08-isolated": (),
         "dr01-deployed": ("dr01.inventory", "dr01.deployments.BINANCE", "dr01.deployments.OKX", "dr01.compose",
                           "dr01.alpha_service"),
+        "dr01-wrong-account": ("gateway_container", "gateway_image_digest"),
         "dr02-dr03-alpha": ("alpha.containers.BINANCE", "alpha.containers.OKX", "alpha.symbols.BINANCE",
                             "alpha.symbols.OKX"),
         "dr04-dr06-views": ("ts_container",),
@@ -258,8 +268,8 @@ def commands(step, final, inputs, work, ts_root):
     alpha_record = ts_root / "scripts/p184_dr_alpha_reads.py"
     if step == "dr05-upstream":
         w = work / "work"
-        return [cmd(py + ["scripts/p184_dr05_dl_fault.py", "--init", w, "--core-config", inputs["dr05_public_export"]],
-                    cwd=DL_ROOT),
+        return [cmd(py + ["scripts/p184_dr05_dl_fault.py", "--init", w, "--core-config", inputs["dr05_public_export"],
+                          *harness_image_args(final)], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--up", w], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--ready", w], cwd=DL_ROOT),
                 cmd(py + ["scripts/p184_dr05_upstream.py", "--work", w, "--namespace", "<from handoff.json>",
@@ -270,7 +280,8 @@ def commands(step, final, inputs, work, ts_root):
     if step == "dr08-isolated":
         return [cmd(py + ["scripts/p184_dr08_isolated.py", "--orchestrate", work / "work", "--ts-source-sha",
                           final["ts_sha"], "--ts-image-digest", final["writer"], "--restart-samples",
-                          str(inputs.get("dr08_restart_samples", 5))], cwd=DL_ROOT)]
+                          str(inputs.get("dr08_restart_samples", 5)), *harness_image_args(final),
+                          "--query-image-ref", final["python_ref"]], cwd=DL_ROOT)]
     if step == "dr01-deployed":
         d = inputs["dr01"]
         out = []
@@ -294,6 +305,13 @@ def commands(step, final, inputs, work, ts_root):
             record.append("--ci-confirmed")
         out.append(cmd(py + record, cwd=DL_ROOT))
         return out
+    if step == "dr01-wrong-account":
+        script = ts_root / "scripts/p184_dr01_wrong_account.py"
+        return [cmd(["docker", "exec", "-i", inputs["gateway_container"], "python", "-B", "-", "probe"], cwd=ts_root,
+                    stdin=script, stdout=work / "dr01-wrong-account.rows"),
+                cmd(py + [script, "record", "--rows", work / "dr01-wrong-account.rows", *ts_ev,
+                          "--gateway-image-digest", inputs["gateway_image_digest"], "--output",
+                          work / "dr01-wrong-account.jsonl"], cwd=ts_root)]
     if step == "dr02-dr03-alpha":
         a = inputs["alpha"]
         out = []
@@ -309,7 +327,7 @@ def commands(step, final, inputs, work, ts_root):
     if step == "dr04-dr06-views":
         out = [cmd(["docker", "exec", "-i", inputs["ts_container"], "python", "-B", "-", "--venue", venue.lower()],
                    cwd=ts_root, stdin=ts_root / "scripts/p184_dr_views.py", stdout=work / f"views-{venue.lower()}.rows")
-               for venue in VENUES]
+               for venue in VIEW_SCOPES]
         out.append(cmd(py + [alpha_record, "record", "--rows", work / "views.rows", *ts_ev, "--output",
                              work / "dr04-dr06.jsonl"], cwd=ts_root))
         return out
@@ -326,8 +344,9 @@ def commands(step, final, inputs, work, ts_root):
 
 
 # Rows printed by the two in-container probes are concatenated per step before `record` (it takes one file).
+VIEW_SCOPES = ("BINANCE", "OKX", "OKX_INVERSE")  # p184_dr_views.py --venue binance|okx|okx_inverse
 CONCAT = {"dr02-dr03-alpha": ("alpha.rows", ("alpha-binance.rows", "alpha-okx.rows")),
-          "dr04-dr06-views": ("views.rows", ("views-binance.rows", "views-okx.rows"))}
+          "dr04-dr06-views": ("views.rows", ("views-binance.rows", "views-okx.rows", "views-okx_inverse.rows"))}
 
 
 def dr05_channel_argv(helper_command, python_image, ns, work):
@@ -350,31 +369,33 @@ def receipt_root(base, now):
     return Path(base) / ("p184-g13-" + now.strftime("%Y%m%dT%H%M%SZ"))
 
 
-def plan(final, inputs, phase, only, ts_root, base, now, pins):
+def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
+    """matrix: the loaded TS case matrix (v2); when given, its DR cells must equal DR_CELLS for any step to run."""
     steps = select(phase, only)
     spec = {s[0]: s for s in STEP_SPEC}
     root = receipt_root(base, now)
     problems = {}
-    mismatch = pin_mismatches(pins, final)
+    drift = matrix_mismatch(matrix) if matrix is not None else {}
     missing = missing_inputs(steps, inputs)
     out = []
     for step in steps:
         _, ph, step_cells, timeout, est, prefixes = spec[step]
         blocked = []
-        if step in ("dr05-upstream", "dr08-isolated") and mismatch:
-            blocked.append("HARNESS_IMAGE_PIN: " + "; ".join(mismatch))
+        if drift:
+            blocked.append("CASE_MATRIX_MISMATCH: " + json.dumps(drift, sort_keys=True))
         if step in missing:
             blocked.append("MISSING_INPUTS: " + ", ".join(missing[step]))
         if ph == "runtime" and not inputs.get("_runtime_approval"):
             blocked.append("RUNTIME_APPROVAL_REQUIRED: --runtime-approval <owner-approved packet>")
         entry = {"step": step, "phase": ph, "cells": list(step_cells), "timeout_s": timeout, "est_minutes": est,
-                 "owned_prefixes": list(prefixes), "blocked": blocked}
+                 "owned_prefixes": list(prefixes), "blocked": blocked, "gateway_dependent": step in GATEWAY_STEPS}
         if not blocked:
             entry["commands"] = commands(step, final, inputs, root / step, ts_root)
         out.append(entry)
         if blocked:
             problems[step] = blocked
     return {"schema": "p184.g13-final-plan.v1", "receipts": str(root), "final": final,
+            "case_matrix": {"schema": (matrix or {}).get("schema"), "sha256": (matrix or {}).get("sha256")},
             "decisions": {k: {"decision": v[0], "reason": v[1]} for k, v in DECISIONS.items()},
             "coverage": coverage(), "steps": out, "blocked": problems,
             "est_minutes_total": sum(e["est_minutes"] for e in out),
@@ -401,6 +422,26 @@ def deployed_inventory():
         except subprocess.CalledProcessError:
             out[name] = None
     return out
+
+
+def gateway_problem(state, expected_image):
+    """None when the Gateway container runs the declared image; else the GATEWAY_NOT_RUNNING reason.
+    state: {"running": bool, "image": id} or None when the container does not exist."""
+    if not state:
+        return "GATEWAY_NOT_RUNNING: container absent"
+    if not state.get("running"):
+        return "GATEWAY_NOT_RUNNING: container not running"
+    if state.get("image") != expected_image:
+        return f"GATEWAY_NOT_RUNNING: runs {state.get('image')} != declared gateway image {expected_image}"
+    return None
+
+
+def gateway_state(name):
+    try:
+        row = json.loads(sh(["docker", "inspect", name]))[0]
+    except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
+        return None
+    return {"running": bool(row["State"]["Running"]), "image": row["Image"]}
 
 
 def checkout_problems(dl_sha):
@@ -465,7 +506,8 @@ def run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root):
         watcher = subprocess.Popen([sys.executable, "-B", "scripts/p184_dr05_reset.py", "--serve-reset-host",
                                     str(work / "work"), "--duration", str(int(max(60, deadline - time.monotonic())))],
                                    cwd=DL_ROOT, stdout=log, stderr=log, start_new_session=True)
-        channel = shlex.join(dr05_channel_argv(dr.helper_command, dr.IMAGES["python"], ns, work / "work"))
+        channel = shlex.join(dr05_channel_argv(dr.helper_command, dr.image_set(work / "work")["python"], ns,
+                                               work / "work"))
         argv = [ns if a == "<from handoff.json>" else channel if a == "<built from handoff namespace>" else a
                 for a in adapter["argv"]]
         codes.append(bounded({**adapter, "argv": argv}, deadline, log))
@@ -495,6 +537,11 @@ def run_step(entry, final, inputs, ts_root):
         try:
             if clash:
                 raise Blocked("OWNED_PREFIX_IN_USE: " + ", ".join(sorted(clash.values())))
+            if entry.get("gateway_dependent"):
+                problem = gateway_problem(gateway_state(inputs["gateway_container"]), inputs["gateway_image_digest"])
+                if problem:
+                    receipt["deferred"] = problem  # closes with the TS release; the other steps still run
+                    raise Blocked(problem)
             if entry["step"] == "dr05-upstream":
                 codes = run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root)
             else:
@@ -544,8 +591,11 @@ def main(argv=None):
         inputs["_runtime_approval"] = {"path": str(a.runtime_approval), "sha256": sha256(a.runtime_approval)}
     try:
         validate_final(final)
-        pins = harness_pins((DL_ROOT / "scripts/p184_dr08_isolated.py").read_text())
-        result = plan(final, inputs, a.phase, tuple(a.only), a.ts_root, a.receipts, datetime.now(timezone.utc), pins)
+        matrix_path = a.ts_root / MATRIX_V2
+        if not matrix_path.is_file():
+            raise Blocked(f"CASE_MATRIX_MISSING: {matrix_path}")
+        matrix = json.loads(matrix_path.read_text())
+        result = plan(final, inputs, a.phase, tuple(a.only), a.ts_root, a.receipts, datetime.now(timezone.utc), matrix)
     except Blocked as exc:
         print(json.dumps({"blocked": str(exc)}))
         return 2
@@ -570,9 +620,11 @@ def main(argv=None):
               flush=True)
     summary = {"schema": "p184.g13-final-summary.v1", "final": final, "steps": [
         {k: r[k] for k in ("step", "cells", "duration_s", "exit_codes", "error", "harness_ok", "removed_leftovers")}
-        for r in receipts], "note": "harness_ok is the harness exit status; cells close only via the TS matrix check"}
+        for r in receipts], "deferred": {r["step"]: r["deferred"] for r in receipts if r.get("deferred")},
+        "note": "harness_ok is the harness exit status; cells close only via the TS matrix check; deferred steps "
+                "(Gateway not on the declared image) stay open until the TS release"}
     (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return 0 if all(r["harness_ok"] for r in receipts) else 1
+    return 0 if all(r["harness_ok"] or r.get("deferred") for r in receipts) else 1
 
 
 if __name__ == "__main__":
