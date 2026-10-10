@@ -30,9 +30,11 @@ from qdl.adapters.okx.admitted_rest import AdmittedOkxRestClient
 class FakeRuntime:
     """The async surface of ``RustHttpProviderAdmission``, scripted."""
 
-    def __init__(self, defers: int = 0, retry_after_ms: int = 250) -> None:
+    def __init__(self, defers: int = 0, retry_after_ms: int = 250,
+                 reason: AdmissionDeferReason = AdmissionDeferReason.TOKEN_BUDGET) -> None:
         self.defers = defers
         self.retry_after_ms = retry_after_ms
+        self.reason = reason
         self.admits: list = []
         self.completed: list = []
         self.rate_limits: list = []
@@ -46,7 +48,7 @@ class FakeRuntime:
         return AdmissionDecision(
             lane=request.lane, request_id=request.request_id,
             disposition=AdmissionDisposition.DEFERRED if deferred else AdmissionDisposition.GRANTED,
-            defer_reason=AdmissionDeferReason.TOKEN_BUDGET if deferred else None,
+            defer_reason=self.reason if deferred else None,
             retry_after_ms=self.retry_after_ms if deferred else None,
             lease_expires_at_ns=None if deferred else 1, coalesced=False)
 
@@ -112,6 +114,33 @@ class AdmissionFacadeTests(unittest.TestCase):
         self.assertEqual(len(runtime.admits), 3)
         self.assertEqual({item.request_id for item in runtime.admits}, {runtime.admits[0].request_id})
         self.assertEqual(len(runtime.completed), 1)
+
+    def test_an_inflight_capacity_wait_polls_instead_of_sleeping_the_lease_expiry(self):
+        # The INFLIGHT_CAPACITY hint is the earliest lease's maximum expiry (30 s), not its release
+        # (2026-10-10 18:00Z: a bar-edge cycle held ~30 s; callers seeing it first failed their deadline).
+        runtime = FakeRuntime(defers=3, retry_after_ms=29_900, reason=AdmissionDeferReason.INFLIGHT_CAPACITY)
+        admission, sleeps = self.facade(runtime, max_wait_s=30.0)
+        lane = ProviderLane("BINANCE", "USDM", "KLINES")
+        with admission.lease(lane, "klines:SOLUSDT:3m", priority=AdmissionPriority.BATCH, token_cost=1):
+            pass
+        self.assertEqual(len(sleeps), 3)
+        self.assertTrue(all(0.05 <= value <= 0.2 for value in sleeps), sleeps)
+        self.assertEqual(len(runtime.completed), 1)
+
+    def test_an_inflight_capacity_poll_never_exceeds_a_shorter_hint_or_the_deadline(self):
+        runtime = FakeRuntime(defers=1, retry_after_ms=20, reason=AdmissionDeferReason.INFLIGHT_CAPACITY)
+        admission, sleeps = self.facade(runtime)
+        lane = ProviderLane("BINANCE", "USDM", "KLINES")
+        with admission.lease(lane, "klines:BTCUSDT:5m", priority=AdmissionPriority.BATCH, token_cost=1):
+            pass
+        self.assertEqual(sleeps, [0.02])
+        runtime = FakeRuntime(defers=10_000, retry_after_ms=29_900, reason=AdmissionDeferReason.INFLIGHT_CAPACITY)
+        admission, sleeps = self.facade(runtime, max_wait_s=1.0)
+        with self.assertRaises(AdmissionDeadlineExceeded):
+            with admission.lease(lane, "klines:BTCUSDT:5m", priority=AdmissionPriority.BATCH, token_cost=1):
+                pass
+        self.assertLessEqual(sum(sleeps), 1.0)
+        self.assertEqual(runtime.completed, [])
 
     def test_the_deadline_is_typed_and_no_provider_call_happens(self):
         runtime = FakeRuntime(defers=10_000, retry_after_ms=1_000)

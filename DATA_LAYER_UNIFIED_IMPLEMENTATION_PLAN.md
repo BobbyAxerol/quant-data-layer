@@ -72135,3 +72135,18 @@ no build, CI or subagent job running.
     version is bumped rather than reused.
   - Tests: 57 OK (transport security, stream SDK incl. failover with a pinned start, replica read, release
     wheel).
+- Depth-0 campaign (17:49-18:25Z, `p184-final-campaign-20261010T174944Z`, writer depth 0):
+  - G2 TRADE p95 579/568 ms (max 2146/1854); QUOTE inside (max 678/745); no overflow incident this time.
+  - G4 FAIL: bar|BINANCE 3m/30m at the 18:00Z boundary, 36-41 s against limits of ~26-27 s.
+  - G8 FAIL: one writer APPLY EVALSHA of 10.15 ms in the steady window. The same script has taken 10-40 ms for
+    1-row calls today, so it is not batch-size bound (inferred: host scheduling noise).
+- G4 cause, a DL defect in admission:
+  - An INFLIGHT_CAPACITY deferral returns retry_after = the earliest lease's MAXIMUM expiry (max_lease_ns 30 s).
+  - qdl/admission/edge.py slept exactly that hint. Callers that saw it first failed their deadline at once
+    (28 of 35 bindings); the next ones slept ~30 s although the lease was released 0.1-0.3 s later.
+  - run_cycle publishes after every future, so one sleeper held the 7 hour-boundary bars.
+  - Seen at 14:30, 16:00 and 18:00Z today (first ACK +31-32 s, against +6.7-7.3 s at the other boundaries).
+  - No venue 429/418 since 12:00Z.
+  - Fix: an INFLIGHT_CAPACITY wait polls jittered 50-200 ms, never longer than the hint, still deadline-bound.
+    Other defer reasons keep the hint.
+  - Tests: 285 OK across the admission and bar-edge suites. The frozen G4 limits are unchanged.
