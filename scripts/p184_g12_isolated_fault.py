@@ -815,6 +815,8 @@ def monitor(work, out, seconds, period=1.0):
                 row["projector_status_mtime"] = None
             log.write(json.dumps(row, default=list) + "\n")
             time.sleep(max(0.0, period - (time.monotonic() - started)))
+        log.write(json.dumps({"k": "end", "t": time.time_ns(),
+                              "reason": "SIGTERM" if stop.requested else "seconds"}) + "\n")
     return {"stopped": True}
 
 
@@ -1327,6 +1329,20 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
     return 0 if status == "COMPLETED" else 1
 
 
+def keep_diagnostics(out):
+    """Detached --rm roles lose their stderr when they exit: write it (and a native
+    crash's faulthandler dump) next to the evidence file (final-image attempt 3,
+    2026-10-10: the monitor exited during the broker fault with no log left)."""
+    if not out:
+        return None
+    import faulthandler
+    stream = open(str(out) + ".stderr", "a", buffering=1)
+    sys.stderr = stream
+    faulthandler.enable(file=stream, all_threads=True)
+    stream.write(json.dumps({"k": "start", "t": time.time_ns(), "pid": os.getpid()}) + "\n")
+    return stream
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -1360,7 +1376,9 @@ def main(argv=None):
         parser.error("--seconds required")
     if args.topics:
         print(json.dumps(create_topics(args.topics)))
-    elif args.publish:
+        return 0
+    keep_diagnostics(args.out)
+    if args.publish:
         print(json.dumps(publish(args.publish, args.out, args.seconds, args.hz)))
     else:
         print(json.dumps(monitor(args.monitor, args.out, args.seconds)))

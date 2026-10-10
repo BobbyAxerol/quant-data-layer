@@ -358,6 +358,26 @@ class OrchestratorSignalTests(unittest.TestCase):
         self.assertEqual(calls, ["stopped", "down"])
         self.assertIs(signal.getsignal(signal.SIGTERM), before)  # handlers restored
 
+    def test_detached_roles_keep_stderr_next_to_evidence(self):
+        import sys
+        import tempfile
+        from pathlib import Path
+        self.assertIsNone(g12.keep_diagnostics(None))
+        saved = sys.stderr
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "monitor.jsonl"
+            stream = g12.keep_diagnostics(out)
+            try:
+                sys.stderr.write("boom\n")
+            finally:
+                import faulthandler
+                faulthandler.disable()
+                sys.stderr = saved
+                stream.close()
+            text = (Path(tmp) / "monitor.jsonl.stderr").read_text()
+        self.assertIn('"k": "start"', text)
+        self.assertIn("boom", text)
+
 
 if __name__ == "__main__":
     unittest.main()
