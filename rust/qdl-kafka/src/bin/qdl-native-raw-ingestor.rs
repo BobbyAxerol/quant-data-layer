@@ -1865,6 +1865,10 @@ async fn run_binance_connection(
                     tick.tick().await;
                 }
                 let mut ping_due = false;
+                let mut inbound = InboundDeadline::new(
+                    Duration::from_secs(config.heartbeat_seconds),
+                    Instant::now(),
+                );
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -1967,10 +1971,9 @@ async fn run_binance_connection(
                         ping_due = false;
                         socket.send(Message::Ping(Vec::new())).await?;
                     }
-                    let read = tokio::time::timeout(
-                        Duration::from_secs(config.heartbeat_seconds),
-                        socket.next(),
-                    );
+                    // Absolute deadline: the proof tick or any other branch
+                    // winning never extends it (R4).
+                    let read = tokio::time::timeout_at(inbound.deadline(), socket.next());
                     tokio::pin!(read);
                     // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
@@ -2098,6 +2101,7 @@ async fn run_binance_connection(
                         Ok(Some(Ok(message))) => {
                             if !matches!(message, Message::Close(_)) {
                                 let read_at_ns = now_ns()?;
+                                inbound.inbound(Instant::now());
                                 liveness.live(&session_id, generation, read_at_ns)?;
                                 if let Some(proof) = book_proof.as_mut() {
                                     proof.transport(read_at_ns);
@@ -2137,49 +2141,30 @@ async fn run_binance_connection(
                             disconnected = true;
                             break;
                         }
-                        Err(_) => {
-                            socket.send(Message::Ping(Vec::new())).await?;
-                            match tokio::time::timeout(
-                                Duration::from_secs(config.heartbeat_seconds),
-                                socket.next(),
-                            )
-                            .await
-                            {
-                                Ok(Some(Ok(Message::Pong(_)))) => {
-                                    let read_at_ns = now_ns()?;
-                                    liveness.live(&session_id, generation, read_at_ns)?;
-                                    if let Some(proof) = book_proof.as_mut() {
-                                        proof.transport(read_at_ns);
-                                    }
-                                    continue;
-                                }
-                                Ok(Some(Ok(message))) => {
-                                    if !matches!(message, Message::Close(_)) {
-                                        let read_at_ns = now_ns()?;
-                                        liveness.live(&session_id, generation, read_at_ns)?;
-                                        if let Some(proof) = book_proof.as_mut() {
-                                            proof.transport(read_at_ns);
-                                        }
-                                    }
-                                    message
-                                }
-                                _ => {
-                                    failures = failures.saturating_add(1);
-                                    eprintln!(
-                                        "{}",
-                                        serde_json::to_string(&json!({
-                                            "event": "qdl_native_session_heartbeat_failed",
-                                            "runtime": "BINANCE",
-                                            "attempt": failures,
-                                            "generation": generation,
-                                        }))?
-                                    );
-                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
-                                    disconnected = true;
-                                    break;
-                                }
+                        // The pong (or any frame) arrives through the same
+                        // select, so other branches keep running meanwhile; the
+                        // ping itself never moves the deadline.
+                        Err(_) => match inbound.expired() {
+                            Keepalive::SendPing => {
+                                socket.send(Message::Ping(Vec::new())).await?;
+                                continue;
                             }
-                        }
+                            Keepalive::Dead => {
+                                failures = failures.saturating_add(1);
+                                eprintln!(
+                                    "{}",
+                                    serde_json::to_string(&json!({
+                                        "event": "qdl_native_session_heartbeat_failed",
+                                        "runtime": "BINANCE",
+                                        "attempt": failures,
+                                        "generation": generation,
+                                    }))?
+                                );
+                                liveness.disconnected(&session_id, generation, now_ns()?)?;
+                                disconnected = true;
+                                break;
+                            }
+                        },
                     };
                     if let Message::Ping(payload) = message {
                         socket.send(Message::Pong(payload)).await?;
@@ -2437,20 +2422,61 @@ fn okx_reconnect_delay_ms(backoff: BackoffPolicy, failures: u32) -> u64 {
     }
 }
 
-/// Idle-read outcome of the OKX keepalive: OKX closes a connection that has
-/// pushed nothing for 30 seconds; a client sends the text `ping` after N < 30
-/// idle seconds and reconnects when no `pong` follows within N seconds.
 #[derive(Debug, Eq, PartialEq)]
-enum OkxKeepalive {
+enum Keepalive {
     SendPing,
     Dead,
 }
 
-fn okx_keepalive_on_idle(ping_outstanding: bool) -> OkxKeepalive {
-    if ping_outstanding {
-        OkxKeepalive::Dead
-    } else {
-        OkxKeepalive::SendPing
+/// Hard bound on detecting a silent socket (Astra R4).
+///
+/// The read loops also select on timers (book-liveness proof, latest-state
+/// flush, resync listener, snapshot renewal, publish completion). A read
+/// timeout created afresh on every iteration is discarded whenever one of
+/// those wins, so a socket that sends neither data nor pong was never
+/// declared dead while any of them kept firing. This deadline is absolute: it
+/// moves only on a message actually read from the socket (data, ping, pong or
+/// OKX text `pong`). Sending a ping, a timer tick or a publish completion never
+/// moves it. Idle for `idle` -> one ping; still nothing by `2 * idle` after the
+/// last inbound message -> dead. That matches OKX's keepalive rule (send
+/// `ping` after N < 30 idle seconds, reconnect if no `pong` within N).
+#[derive(Debug)]
+struct InboundDeadline {
+    idle: Duration,
+    last_inbound: Instant,
+    ping_sent: bool,
+}
+
+impl InboundDeadline {
+    fn new(idle: Duration, now: Instant) -> Self {
+        Self {
+            idle,
+            last_inbound: now,
+            ping_sent: false,
+        }
+    }
+
+    fn inbound(&mut self, now: Instant) {
+        self.last_inbound = now;
+        self.ping_sent = false;
+    }
+
+    fn deadline(&self) -> Instant {
+        if self.ping_sent {
+            self.last_inbound + self.idle * 2
+        } else {
+            self.last_inbound + self.idle
+        }
+    }
+
+    /// Called when `deadline()` has passed with nothing read.
+    fn expired(&mut self) -> Keepalive {
+        if self.ping_sent {
+            Keepalive::Dead
+        } else {
+            self.ping_sent = true;
+            Keepalive::SendPing
+        }
     }
 }
 
@@ -2730,7 +2756,10 @@ async fn run_okx_service(
         let mut publish_error = None;
         let mut exhausted = false;
         let mut last_frame_at_ns = ready_at_ns;
-        let mut ping_outstanding = false;
+        let mut inbound = InboundDeadline::new(
+            Duration::from_secs(config.heartbeat_seconds),
+            Instant::now(),
+        );
         let mut standby: Option<OkxStandby> = None;
         let mut notice: Option<String> = None;
         if let Some(code) = early_notice {
@@ -2773,8 +2802,8 @@ async fn run_okx_service(
                     None => return Err("lossless publish window became inconsistent".into()),
                 }
             }
-            let read =
-                tokio::time::timeout(Duration::from_secs(config.heartbeat_seconds), reader.next());
+            // Absolute deadline: other branches winning never extend it (R4).
+            let read = tokio::time::timeout_at(inbound.deadline(), reader.next());
             tokio::pin!(read);
             // Control backlog must not take priority over socket and publish progress.
             let outcome = tokio::select! {
@@ -2865,7 +2894,7 @@ async fn run_okx_service(
                     }
                     let read_at_ns = now_ns()?;
                     last_frame_at_ns = read_at_ns;
-                    ping_outstanding = false;
+                    inbound.inbound(Instant::now());
                     liveness.live(&session_id, generation, read_at_ns)?;
                     message
                 }
@@ -2877,17 +2906,16 @@ async fn run_okx_service(
                     ended = Some(OkxSessionEnd::Eof);
                     break;
                 }
-                Err(_) => match okx_keepalive_on_idle(ping_outstanding) {
-                    OkxKeepalive::Dead => {
+                Err(_) => match inbound.expired() {
+                    Keepalive::Dead => {
                         ended = Some(OkxSessionEnd::HeartbeatTimeout);
                         break;
                     }
-                    OkxKeepalive::SendPing => {
+                    Keepalive::SendPing => {
                         if let Err(error) = writer.send(Message::Text("ping".into())).await {
                             ended = Some(OkxSessionEnd::WriteError(error.to_string()));
                             break;
                         }
-                        ping_outstanding = true;
                         continue;
                     }
                 },
@@ -4309,10 +4337,9 @@ mod resync_tests {
 #[cfg(test)]
 mod okx_reconnect_tests {
     use super::{
-        okx_establish, okx_keepalive_on_idle, okx_notice_code, okx_reconnect_delay_ms,
-        BackoffPolicy, DeliveryClass, OkxConnectPacer, OkxEstablishError, OkxKeepalive,
-        OkxSessionEnd, OkxSubscription, RawBinding, RawFeed, SessionLineageWriter,
-        OKX_CONNECT_SPACING,
+        okx_establish, okx_notice_code, okx_reconnect_delay_ms, BackoffPolicy, DeliveryClass,
+        InboundDeadline, Keepalive, OkxConnectPacer, OkxEstablishError, OkxSessionEnd,
+        OkxSubscription, RawBinding, RawFeed, SessionLineageWriter, OKX_CONNECT_SPACING,
     };
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
@@ -4379,9 +4406,143 @@ mod okx_reconnect_tests {
     }
 
     #[test]
-    fn idle_read_pings_once_then_declares_the_connection_dead() {
-        assert_eq!(okx_keepalive_on_idle(false), OkxKeepalive::SendPing);
-        assert_eq!(okx_keepalive_on_idle(true), OkxKeepalive::Dead);
+    fn inbound_deadline_pings_once_then_declares_the_connection_dead() {
+        let idle = Duration::from_secs(15);
+        let start = Instant::now();
+        let mut deadline = InboundDeadline::new(idle, start);
+        assert_eq!(deadline.deadline(), start + idle);
+        assert_eq!(deadline.expired(), Keepalive::SendPing);
+        // Sending the ping opens exactly one pong window; nothing renews it.
+        assert_eq!(deadline.deadline(), start + idle * 2);
+        assert_eq!(deadline.expired(), Keepalive::Dead);
+        assert_eq!(deadline.deadline(), start + idle * 2);
+        // Only a message read from the socket moves it.
+        let later = start + Duration::from_secs(20);
+        deadline.inbound(later);
+        assert_eq!(deadline.deadline(), later + idle);
+        assert_eq!(deadline.expired(), Keepalive::SendPing);
+    }
+
+    /// A venue socket that stays open and sends nothing: no frames, no pongs
+    /// (it never reads, so tungstenite never answers our pings). With
+    /// `answer_pings`, it reads and auto-answers every ping instead.
+    async fn silent_venue(answer_pings: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            if answer_pings {
+                while socket.next().await.is_some() {}
+            } else {
+                std::future::pending::<()>().await;
+            }
+            drop(socket);
+        });
+        format!("ws://{address}/ws")
+    }
+
+    /// The production read-loop shape: a book-liveness proof tick (flag on)
+    /// competes with the socket read in one select and `continue`s, sending a
+    /// proof ping like `BookLivenessProof::due` asks for. Returns when the
+    /// connection is declared dead, or None if it is still considered alive
+    /// at `give_up`.
+    async fn detect_dead(
+        url: String,
+        proof_tick: Option<Duration>,
+        absolute_deadline: bool,
+        give_up: Duration,
+    ) -> Option<Duration> {
+        let idle = Duration::from_secs(15);
+        let (mut socket, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        let start = Instant::now();
+        let mut inbound = InboundDeadline::new(idle, start);
+        let mut tick = proof_tick.map(tokio::time::interval);
+        if let Some(tick) = tick.as_mut() {
+            tick.tick().await;
+        }
+        while start.elapsed() < give_up {
+            let read = if absolute_deadline {
+                tokio::time::timeout_at(inbound.deadline(), socket.next())
+            } else {
+                // The pre-R4 shape: a fresh relative timeout every iteration.
+                tokio::time::timeout_at(Instant::now() + idle, socket.next())
+            };
+            tokio::pin!(read);
+            tokio::select! {
+                _ = async {
+                    match tick.as_mut() {
+                        Some(tick) => { tick.tick().await; }
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if tick.is_some() => {
+                    socket.send(Message::Ping(Vec::new())).await.unwrap();
+                    continue;
+                }
+                result = &mut read => match result {
+                    Ok(Some(Ok(_))) => inbound.inbound(Instant::now()),
+                    Ok(_) => panic!("the fake venue never closes"),
+                    Err(_) => match inbound.expired() {
+                        Keepalive::SendPing => {
+                            socket.send(Message::Ping(Vec::new())).await.unwrap();
+                        }
+                        Keepalive::Dead => return Some(start.elapsed()),
+                    },
+                },
+            }
+        }
+        None
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_socket_is_declared_dead_within_two_idle_periods_with_proof_on_and_off() {
+        let bound = Duration::from_secs(30);
+        for proof_tick in [None, Some(Duration::from_millis(250))] {
+            let detected = detect_dead(
+                silent_venue(false).await,
+                proof_tick,
+                true,
+                Duration::from_secs(600),
+            )
+            .await
+            .unwrap_or_else(|| panic!("never detected, proof tick {proof_tick:?}"));
+            assert!(
+                detected >= Duration::from_secs(30) && detected <= bound + Duration::from_millis(1),
+                "proof tick {proof_tick:?}: detected after {detected:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_pre_r4_relative_timeout_never_detects_a_silent_socket_while_the_proof_ticks() {
+        // Reproduces Astra R4 on the old shape: 10 idle periods, still "alive".
+        assert_eq!(
+            detect_dead(
+                silent_venue(false).await,
+                Some(Duration::from_millis(250)),
+                false,
+                Duration::from_secs(150),
+            )
+            .await,
+            None
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_answers_pings_stays_alive_with_proof_on_and_off() {
+        for proof_tick in [None, Some(Duration::from_millis(250))] {
+            assert_eq!(
+                detect_dead(
+                    silent_venue(true).await,
+                    proof_tick,
+                    true,
+                    Duration::from_secs(120),
+                )
+                .await,
+                None,
+                "proof tick {proof_tick:?}"
+            );
+        }
     }
 
     #[test]
