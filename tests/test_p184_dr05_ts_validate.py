@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 import os
+import sys
 import unittest
 
 from qdl.common.v1 import common_pb2
@@ -16,6 +17,52 @@ if os.path.exists("/helper.py"):
     spec.loader.exec_module(helper)
 else:
     from scripts import p184_dr05_ts_validate as helper
+
+# The helper validates through Trading System application code (adapters.*,
+# services.*). Inside the TS image it resolves from PYTHONPATH=/app. From a DL
+# checkout, point QDL_TRADING_SYSTEM_SOURCE_ROOT at a TS checkout; the root is
+# appended so DL packages keep precedence. A DL-only checkout (DL CI) skips the
+# TS-dependent tests explicitly; an explicitly configured root that lacks the
+# TS code is an error, never a skip.
+TS_SOURCE_ROOT_ENV = "QDL_TRADING_SYSTEM_SOURCE_ROOT"
+TS_SOURCE_ROOT = os.environ.get(TS_SOURCE_ROOT_ENV)
+TS_PROBE_MODULE = "adapters.market_data.data_layer_client"
+if TS_SOURCE_ROOT:
+    TS_SOURCE_ROOT = os.path.abspath(TS_SOURCE_ROOT)
+    if not os.path.isfile(os.path.join(TS_SOURCE_ROOT, *TS_PROBE_MODULE.split(".")) + ".py"):
+        raise RuntimeError(f"{TS_SOURCE_ROOT_ENV}={TS_SOURCE_ROOT} has no {TS_PROBE_MODULE}")
+    if TS_SOURCE_ROOT not in sys.path:
+        sys.path.append(TS_SOURCE_ROOT)
+
+
+def _ts_source_available():
+    # Only an absent top-level TS package means "DL-only checkout". Any other
+    # import failure inside TS code propagates so it cannot hide as a skip.
+    try:
+        return importlib.util.find_spec(TS_PROBE_MODULE) is not None
+    except ModuleNotFoundError as error:
+        if TS_SOURCE_ROOT or error.name != TS_PROBE_MODULE.split(".")[0]:
+            raise
+        return False
+
+
+TS_SOURCE_AVAILABLE = _ts_source_available()
+if TS_SOURCE_ROOT and not TS_SOURCE_AVAILABLE:
+    raise RuntimeError(f"{TS_PROBE_MODULE} not importable from {TS_SOURCE_ROOT_ENV}={TS_SOURCE_ROOT}")
+REQUIRES_TS = unittest.skipUnless(
+    TS_SOURCE_AVAILABLE,
+    f"Trading System source ({TS_PROBE_MODULE}) not importable: run inside the TS image "
+    f"or set {TS_SOURCE_ROOT_ENV} to a TS checkout",
+)
+
+
+def helper_subprocess_env():
+    env = dict(os.environ)
+    if TS_SOURCE_ROOT:
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (env.get("PYTHONPATH"), TS_SOURCE_ROOT) if part)
+    return env
+
 
 NOW = 1_800_000_000_000_000_000
 UID = "11111111-1111-5111-8111-111111111111"
@@ -84,6 +131,7 @@ def change_event(packet, callback):
     target["events_b64"] = [base64.b64encode(event.SerializeToString()).decode()]
 
 
+@REQUIRES_TS
 class ValidationTests(unittest.TestCase):
     def result(self, packet):
         return helper.validate(packet)["results"][0]
@@ -146,6 +194,17 @@ class ValidationTests(unittest.TestCase):
         del row(packet)["GetFeedStatus"]["status"]["provider_session_state"]
         self.assertEqual(self.result(packet)["outcome"], "INPUT_ERROR")
 
+    def test_quality_keys_emitted_only_when_set_are_optional_not_open(self):
+        from qdl_sdk.models import QualityView
+        packet = fixture()
+        row(packet)["GetFeedStatus"]["status"]["not_a_quality_field"] = 1
+        self.assertEqual(self.result(packet)["outcome"], "INPUT_ERROR")
+        if "proof_observed_at_ns" not in QualityView.model_fields:
+            self.skipTest("SDK before IDR-040 fix 2 has no proof_observed_at_ns")
+        packet = fixture()
+        row(packet)["GetFeedStatus"]["status"]["proof_observed_at_ns"] = NOW
+        self.assertEqual(self.result(packet)["outcome"], "ACCEPTED")
+
     def test_missing_handoff_does_not_invent_authority(self):
         packet = fixture()
         packet["handoffs"] = {}
@@ -196,7 +255,8 @@ class ValidationTests(unittest.TestCase):
         import subprocess
         import sys
         process = subprocess.run([sys.executable, "-B", helper.__file__],
-                                 input=json.dumps(fixture()), text=True, capture_output=True, timeout=10)
+                                 input=json.dumps(fixture()), text=True, capture_output=True, timeout=10,
+                                 env=helper_subprocess_env())
         self.assertEqual(process.returncode, 0, process.stderr)
         result = json.loads(process.stdout)
         self.assertEqual(result["results"][0]["outcome"], "ACCEPTED")
@@ -234,6 +294,7 @@ class ValidationTests(unittest.TestCase):
         self.assertNotIn("/helper.py", result["application_modules"].values())
 
 
+@REQUIRES_TS
 @unittest.skipUnless(os.environ.get("P184_DR05_LIVE_TEST") == "YES", "isolated Redis DB2 required")
 class LiveTests(unittest.TestCase):
     @classmethod
@@ -244,7 +305,7 @@ class LiveTests(unittest.TestCase):
         import urllib.request
         cls.ns = "p184-dr05-dl-0123456789abcdef"
         cls.server = subprocess.Popen([sys.executable, "-B", helper.__file__, "--serve"],
-            env={**os.environ, "P184_DR05_ISOLATED_NAMESPACE": cls.ns},
+            env={**helper_subprocess_env(), "P184_DR05_ISOLATED_NAMESPACE": cls.ns},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(60):

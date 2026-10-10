@@ -29,6 +29,8 @@ import time
 MAX_INPUT = 4 * 1024 * 1024
 IMAGE = "sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a"
 ENDPOINT = "/qdl.query.v2.MarketDataStreamService/"
+# QualityView keys the server omits when unset (qdl_sdk/CHANGELOG.md, IDR-040 fix 2).
+EMITTED_ONLY_WHEN_SET = frozenset({"proof_observed_at_ns"})
 
 
 def requirement_from_json(raw):
@@ -113,8 +115,11 @@ def validate(packet, *, live=None):
                 if requirement.instrument_uid != instrument.instrument_uid:
                     raise ValueError("requirement identity mismatch")
                 # Require every captured status field: model defaults cannot create proof.
+                # Exception: SDK fields the server emits only when set (IDR-040
+                # proof_observed_at_ns is absent without a quiet-book proof).
                 fields = set(QualityView.model_fields)
-                if set(status["status"]) != fields:
+                keys = set(status["status"])
+                if not fields - EMITTED_ONLY_WHEN_SET <= keys <= fields:
                     raise ValueError("complete actual GetFeedStatus quality required")
                 quality = QualityView.model_validate(status["status"])
                 if snapshot["cursor_valid"] is not True:

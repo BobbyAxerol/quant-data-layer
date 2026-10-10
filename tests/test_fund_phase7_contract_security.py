@@ -217,9 +217,15 @@ class Phase7RestAndContractTests(unittest.TestCase):
             headers=self.fixture.headers(),
         ).json()["data"]
         response["payload"]["provider_native_secret"] = "must-not-leak"
-        with self.assertRaisesRegex(ValueError, "Extra inputs"):
-            MarketDataView.model_validate(response)
+        # SDK 2.1.0+ response readers ignore unknown additive fields
+        # (qdl_sdk/CHANGELOG.md "2.1.0"; ResponseModel extra="ignore"). A
+        # provider-native field must still never fall through into the typed
+        # view: it is dropped, not carried.
+        view = MarketDataView.model_validate(response)
+        self.assertFalse(hasattr(view.payload, "provider_native_secret"))
+        self.assertNotIn("must-not-leak", view.model_dump_json())
         response["payload"].pop("provider_native_secret")
+        self.assertEqual(view, MarketDataView.model_validate(response))
         response["feed"] = "TRADE"
         with self.assertRaises(ValueError):
             MarketDataView.model_validate(response)
