@@ -73,6 +73,11 @@ _EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
 # Binance adapter (_FUNDING_BOUNDARY_TOLERANCE_MS) and the acceptance window
 # (_FUNDING_SETTLEMENT_JITTER_NS) already use; it applies to FUNDING_RATE
 # history only, and a settlement still unpublished after it stays DATA_STALE.
+# Funding settlement publication allowance. Measured 2026-10-10 16:00Z (read-only public API poll, ~4.6 s cadence):
+# the settled row appeared in history OKX BTC/ETH/SOL-USDT-SWAP +10 s (settState processing at +5 s), Binance
+# BTC/SOL/ETH +5/+10/+24 s. 60 s = the existing Binance funding boundary tolerance, ~2.5x the observed max.
+# Evidence: ~/.local/state/qdl-v2/funding-publication-20261010/.
+_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 
 
 _BatchCompletion = TypeVar("_BatchCompletion")
@@ -1756,9 +1761,12 @@ class V2QueryService:
                     0,
                     ((self._clock_ns() if at_ns is None else at_ns) - observed_ns) // 1_000_000,
                 )
-                # No funding settlement allowance until the OKX publication delay is measured and the refused item code
-                # is recorded (Codex review 2026-10-10: the stage-100g cause is probable, not proven).
-                if freshness_ms > requirement.max_freshness_ms:
+                allowance_ms = (
+                    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS
+                    if request.product is ReferenceProduct.FUNDING_RATE and request.is_history
+                    else 0
+                )
+                if freshness_ms > requirement.max_freshness_ms + allowance_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,
                         "reference provider result exceeds the declared freshness bound",
