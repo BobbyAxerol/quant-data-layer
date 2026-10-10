@@ -71963,3 +71963,42 @@ cleanup). All items below are tested locally and not deployed.
   repo files.
 - rc7 is rebuilt (Python and Rust) from this commit. CI on dacde94 continues for early signal; the certifying CI runs
   on the final commit.
+
+### rc7c rollout (all 13 DL roles on 54460ac), writer ed02064, stage 100j PASS 32/32 - 2026-10-10 (Claude)
+
+- Pre-rollout checks:
+  - C.19: old bar edge image and rc7c both have catalog_revision 11, acquisition revision 19, 712 bindings, catalog
+    sha 9d4ab51e4880.
+  - Isolated startup smoke (live env and mounts read-only, --network none) for Query, bar edge, Stream, projector,
+    core and ingestor. Every role passed config load; the only stops were network ones (the bar edge stops the same
+    way on the old image).
+  - The rc7c ingestor accepts the new liveness config: started with OKX 103 / Binance 27 bindings.
+- Rollout (rollout_rc6.py, one role at a time, health and writer READY 64/64 after each), rc7c = python
+  sha256:55e493786748 / rust sha256:206ae872a5fe (54460ac):
+  - order: query_kn_1/2, binance_bar_edge, stream_kn_1/2, market_projector_1/2, rust_core x3, ingestor_okx_swap,
+    ingestor_binance_usdm;
+  - ingestors moved to releases/v2.2.3-rc7-ingestor-liveness/ (liveness 1500/4000, OKX on 443).
+  - All 12 steps ok, 0 restarts. IDR-039 closed at runtime: every application role runs revision 54460ac.
+  - Kafka, Redis and the one-shots untouched. The OKX ingestor holds 5 sockets to port 443.
+- TS writer market_data_service_p184w: 15524c0b (9b86ed3) -> sha256:34202753bbe8 (TS ed02064).
+  - Image only; env and mounts verified identical. Guard all READY 64/64.
+  - The new DATA_LAYER_V2_BOOK_FAST_RETRY_RATE_PER_SECOND defaults to 0.5 (production pace unchanged); only the
+    isolated DR05 clone uses 2.0.
+  - Root cause of the G13 dr05-upstream 4/6 FAIL: the single-frame synthetic venue vs the 4 s writer retry spacing
+    since 12be5f9. DL was correct in every phase.
+- Stage 100j (pre-certification; a cargo fmt/clippy/test job ran concurrently): PASS 32/32.
+  - requests 0 failures; streams 180 / 0 errors.
+  - G5 cold 2500 B/O 4023/3482 ms; 5000 B/O 6986/6502 ms.
+  - startup 77.2 s, 0 failures; ts:ready 154/154 samples, 0 unreadable; guard 0 bad samples.
+  - MARK watcher: 24 minutes with 0 errors, 1 minute with 5.
+- G4 on 100j:
+  - window 1 (10:39:40-10:41:40Z, just after the fleet startup) is above the limits on 10 rows by 1-15 %;
+  - windows 2-4 are the best measured so far (trade B 107-117 ms vs 160-190 on rc5/rc7);
+  - venue->DL is flat in every window.
+  The same one-window pattern appeared before (100b w1, 100f w3), consistent with host CPU contention. The quiet-host
+  certification run decides whether the startup warmup burst itself delays core/Kafka (a G14 resource fix).
+- Certifying CI on 54460ac FAILED 2 steps, both pre-existing:
+  - cargo fmt --check (15 diffs);
+  - unit tests 3151: 2 failures, 23 errors. TS-bound test_p184_dr05_ts_validate in a DL-only checkout, and phase7
+    vs the SDK 2.1 tolerant response models.
+  Fix in progress (d6fb34c fmt, 2c84e2f tests); rc7d and a certifying CI follow.
