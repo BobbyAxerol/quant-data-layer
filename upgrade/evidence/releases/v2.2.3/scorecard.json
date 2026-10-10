@@ -1,0 +1,1667 @@
+{
+ "schema": "qdl.release-scorecard.v1",
+ "release": "2.2.3",
+ "status": "PREPARED_NOT_PUBLISHED",
+ "source_commit": "bbfb3be6b3f1b7f83b44022e77439daeb4999a65",
+ "gate_table": {
+  "path": "trading-system upgrade/p184-phase-d-gates.md (FROZEN 2026-10-09)",
+  "ts_commit": "31cf663f5c7c5384ec3dd296061582dee2463c41",
+  "sha256": "c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4"
+ },
+ "frozen_budget": {
+  "path": "config/v2/p184-stage100-budget.json",
+  "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+ },
+ "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window (gate table 'Measurement rules'); a measurement outside this rule can FAIL a gate but cannot PASS it. Verdicts: PASS, FAIL, NOT_MEASURED, DEFERRED; a NOT_MEASURED is never upgraded. 'observed' records the value against the threshold when the measurement does not meet the protocol.",
+ "runtime_identity": {
+  "dl_python": "sha256:e0252f4c96da70791b0c0fd031538bff2dd7249cdf6e0fbd4399c90e2e527a2a",
+  "dl_rust": "sha256:64468c72ce5ab36518107014bd4a3e311b96d47fad06e531f6627c46f532a1b7",
+  "dl_application_roles_on_release_digests": 12,
+  "ts_writer": "sha256:34202753bbe8b74d50e45afed1cf2e7b400141324c550168462b30db220edb31",
+  "ts_writer_source": "ed020648286336170886043697cb229a3c5290b7",
+  "ts_writer_tuned_env": "DATA_LAYER_V2_MARK_WAKE_READ_DELAY_BY_VENUE=BINANCE=100"
+ },
+ "summary": {
+  "NOT_MEASURED": [
+   "G1",
+   "G3",
+   "G4",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10",
+   "G11",
+   "G12",
+   "G14"
+  ],
+  "FAIL": [
+   "G2"
+  ],
+  "PASS": [
+   "G5"
+  ],
+  "DEFERRED": [
+   "G13"
+  ]
+ },
+ "gates": [
+  {
+   "id": "G1",
+   "quantity": "end-to-end to TS cache (venue event -> TS Redis APPLY reply)",
+   "scope": "BOOK_DELTA, BOOK_SNAPSHOT",
+   "rule": "p95 <= 500 ms, p99 <= 1000 ms (n >= 100), max < 2000 ms per feed/venue",
+   "verdict": "NOT_MEASURED",
+   "observed": "INSIDE in both trace windows",
+   "reason": "Values come from writer-only trace windows, not the frozen stage-100 protocol.",
+   "measured": [
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "BOOK_DELTA|BINANCE",
+     "n": 24553,
+     "p50_ms": 100.0,
+     "p95_ms": 126.5,
+     "p99_ms": 167.1,
+     "max_ms": 527.6,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 68.4,
+      "sdk_to_reply_ms": 36.7,
+      "venue_to_ingest_ms": 29.3
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "BOOK_DELTA|OKX",
+     "n": 26481,
+     "p50_ms": 104.3,
+     "p95_ms": 128.4,
+     "p99_ms": 173.4,
+     "max_ms": 528.1,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 67.6,
+      "sdk_to_reply_ms": 37.9,
+      "venue_to_ingest_ms": 33.0
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "BOOK_SNAPSHOT|BINANCE",
+     "n": 2647,
+     "p50_ms": 108.8,
+     "p95_ms": 154.4,
+     "p99_ms": 220.4,
+     "max_ms": 407.2,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 70.8,
+      "sdk_to_reply_ms": 58.3,
+      "venue_to_ingest_ms": 29.3
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "BOOK_SNAPSHOT|OKX",
+     "n": 3223,
+     "p50_ms": 113.6,
+     "p95_ms": 156.8,
+     "p99_ms": 206.3,
+     "max_ms": 336.1,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 69.2,
+      "sdk_to_reply_ms": 59.9,
+      "venue_to_ingest_ms": 33.1
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "BOOK_DELTA|BINANCE",
+     "n": 24664,
+     "p50_ms": 99.9,
+     "p95_ms": 126.5,
+     "p99_ms": 163.0,
+     "max_ms": 510.9,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 68.7,
+      "sdk_to_reply_ms": 36.4,
+      "venue_to_ingest_ms": 29.4
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "BOOK_DELTA|OKX",
+     "n": 26105,
+     "p50_ms": 105.1,
+     "p95_ms": 130.0,
+     "p99_ms": 170.5,
+     "max_ms": 501.8,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 67.8,
+      "sdk_to_reply_ms": 37.7,
+      "venue_to_ingest_ms": 37.9
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "BOOK_SNAPSHOT|BINANCE",
+     "n": 2647,
+     "p50_ms": 109.5,
+     "p95_ms": 152.4,
+     "p99_ms": 192.1,
+     "max_ms": 294.0,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 71.5,
+      "sdk_to_reply_ms": 53.5,
+      "venue_to_ingest_ms": 28.6
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "BOOK_SNAPSHOT|OKX",
+     "n": 3182,
+     "p50_ms": 114.3,
+     "p95_ms": 155.5,
+     "p99_ms": 188.9,
+     "max_ms": 353.1,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 68.5,
+      "sdk_to_reply_ms": 54.6,
+      "venue_to_ingest_ms": 37.4
+     }
+    }
+   ],
+   "measurement_scope": "TS writer delivery trace, two 535 s analysis windows (13:19-13:28Z and 13:31-13:40Z, 40 s writer start-up skipped), writer-only production traffic AFTER stage 100m ended (13:17Z): no stage-100 alpha load, no burst window",
+   "would_measure": "the same trace analysis (scripts/p184_trace_feed_transit.py) over >= 30 min of trace activations taken DURING a stage-100 run, including its burst window (one activation is capped at 600 s and 16 x 4096 records per worker)",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791638906937534999.json",
+     "sha256": "d8d0d6c37dc37ccd1c22b3d9690d42041d09cc532ddd0008499d5a3d7b32526a"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791639603470577388.json",
+     "sha256": "e9e823094e73782166d8275647fed3abbf6000c20bc18abd695b8bb1686bf72d"
+    }
+   ]
+  },
+  {
+   "id": "G2",
+   "quantity": "end-to-end to TS cache, new-event transit",
+   "scope": "TRADE / QUOTE / MARK_INDEX_PRICE",
+   "rule": "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK p95 <= 500 ms and max < 1000 ms (quiet-state age reported separately, not gated)",
+   "verdict": "FAIL",
+   "reason": "TRADE BINANCE p95 539.1 ms > 500 ms (max 1078.7 ms, n 21983) in trace window 1 on the final DL images and final writer image; window 2 (deployed writer config) is inside at p95 269.7 ms. The excess sits in the ingest -> SDK return segment (split p95 434.5 ms), not in the writer (sdk -> reply p95 85.0 ms) or the venue -> ingest leg (36.9 ms). Window 1 differs from the deployed config only by the Binance MARK wake read delay (250 vs 100 ms), which does not act on TRADE. Corroboration under stage-100 load: alpha SDK stream TRADE BINANCE source -> usable per-stream p95 up to 872.5 ms, max 1402.3 ms (stage100m receipt stream_latency). MARK and QUOTE are inside in the deployed-config window but are not PASS by protocol.",
+   "measured": [
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "QUOTE|BINANCE",
+     "n": 25600,
+     "p50_ms": 116.2,
+     "p95_ms": 152.3,
+     "p99_ms": 179.0,
+     "max_ms": 434.1,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 98.5,
+      "sdk_to_reply_ms": 32.0,
+      "venue_to_ingest_ms": 30.8
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "QUOTE|OKX",
+     "n": 23103,
+     "p50_ms": 117.5,
+     "p95_ms": 153.9,
+     "p99_ms": 188.5,
+     "max_ms": 421.4,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 98.0,
+      "sdk_to_reply_ms": 32.6,
+      "venue_to_ingest_ms": 31.6
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "TRADE|BINANCE",
+     "n": 21983,
+     "p50_ms": 118.8,
+     "p95_ms": 539.1,
+     "p99_ms": 989.7,
+     "max_ms": 1078.7,
+     "observed": "OUTSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 434.5,
+      "sdk_to_reply_ms": 85.0,
+      "venue_to_ingest_ms": 36.9
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "TRADE|OKX",
+     "n": 5035,
+     "p50_ms": 107.7,
+     "p95_ms": 246.5,
+     "p99_ms": 558.3,
+     "max_ms": 731.1,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 107.5,
+      "sdk_to_reply_ms": 97.4,
+      "venue_to_ingest_ms": 37.9
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "QUOTE|BINANCE",
+     "n": 24134,
+     "p50_ms": 117.2,
+     "p95_ms": 152.2,
+     "p99_ms": 176.2,
+     "max_ms": 516.9,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 98.8,
+      "sdk_to_reply_ms": 32.1,
+      "venue_to_ingest_ms": 32.0
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "QUOTE|OKX",
+     "n": 22916,
+     "p50_ms": 118.3,
+     "p95_ms": 154.0,
+     "p99_ms": 181.7,
+     "max_ms": 513.4,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 98.2,
+      "sdk_to_reply_ms": 32.6,
+      "venue_to_ingest_ms": 31.9
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "TRADE|BINANCE",
+     "n": 14928,
+     "p50_ms": 116.8,
+     "p95_ms": 269.7,
+     "p99_ms": 545.5,
+     "max_ms": 623.9,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 191.3,
+      "sdk_to_reply_ms": 66.1,
+      "venue_to_ingest_ms": 36.0
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "TRADE|OKX",
+     "n": 4845,
+     "p50_ms": 106.6,
+     "p95_ms": 158.9,
+     "p99_ms": 216.5,
+     "max_ms": 394.0,
+     "observed": "INSIDE",
+     "split_p95_ms": {
+      "ingest_to_sdk_ms": 80.3,
+      "sdk_to_reply_ms": 60.8,
+      "venue_to_ingest_ms": 35.3
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+     "n": 2667,
+     "p50_ms": 429.5,
+     "p95_ms": 500.7,
+     "p99_ms": 540.2,
+     "max_ms": 776.2,
+     "observed": "OUTSIDE"
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed_venue": "MARK_INDEX_PRICE|OKX",
+     "n": 6385,
+     "p50_ms": 214.9,
+     "p95_ms": 320.9,
+     "p99_ms": 348.6,
+     "max_ms": 398.6,
+     "observed": "INSIDE"
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+     "n": 2671,
+     "p50_ms": 278.5,
+     "p95_ms": 339.3,
+     "p99_ms": 379.5,
+     "max_ms": 708.0,
+     "observed": "INSIDE"
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed_venue": "MARK_INDEX_PRICE|OKX",
+     "n": 6390,
+     "p50_ms": 212.3,
+     "p95_ms": 317.9,
+     "p99_ms": 347.8,
+     "max_ms": 495.2,
+     "observed": "INSIDE"
+    }
+   ],
+   "measurement_scope": "TS writer delivery trace, two 535 s analysis windows (13:19-13:28Z and 13:31-13:40Z, 40 s writer start-up skipped), writer-only production traffic AFTER stage 100m ended (13:17Z): no stage-100 alpha load, no burst window",
+   "would_measure": "attribute the TRADE ingest -> SDK return tail (Stream dispatch/queue vs SDK client receive) and re-measure >= 30 min of trace during a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791638906937534999.json",
+     "sha256": "d8d0d6c37dc37ccd1c22b3d9690d42041d09cc532ddd0008499d5a3d7b32526a"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791639603470577388.json",
+     "sha256": "e9e823094e73782166d8275647fed3abbf6000c20bc18abd695b8bb1686bf72d"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g2-20261010/g2-mark-1791638906937534999.json",
+     "sha256": "292256e814110d6805efab9660667939699a228d99c1d1283cb5ce61e35f476c"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g2-20261010/g2-mark-1791639603470577388.json",
+     "sha256": "3da349c4f54c5125c23b8a6eb3c6e8f080c1a2023dd8b300ffa1732f2b09ea68"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/receipt.json",
+     "sha256": "9dfce5d983f25cdeb831eee6dbcd151864fa1cdbf567c9dd871f5866f67684a8"
+    }
+   ]
+  },
+  {
+   "id": "G3",
+   "quantity": "end-to-end to TS cache, BAR from close",
+   "scope": "BAR",
+   "rule": "p95 <= 5 s, max < 60 s",
+   "verdict": "NOT_MEASURED",
+   "reason": "The writer delivery trace does not record BAR (0 BAR records in both windows); no other receipt measures BAR close -> TS Redis on the final digests.",
+   "related_observation": "stage100m alpha SDK streams (not the TS cache): BAR 1m close -> usable BINANCE per-stream p95 1135-3095 ms, max 3095 ms; OKX p95 1248-1307 ms, max 1511 ms",
+   "would_measure": "a read-only TS Redis notification probe (the 2026-10-09 transit_probe.py method, BAR from close) or BAR tracing in the writer, during a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791638906937534999.json",
+     "sha256": "d8d0d6c37dc37ccd1c22b3d9690d42041d09cc532ddd0008499d5a3d7b32526a"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791639603470577388.json",
+     "sha256": "e9e823094e73782166d8275647fed3abbf6000c20bc18abd695b8bb1686bf72d"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/receipt.json",
+     "sha256": "9dfce5d983f25cdeb831eee6dbcd151864fa1cdbf567c9dd871f5866f67684a8"
+    }
+   ]
+  },
+  {
+   "id": "G4",
+   "quantity": "delivery lag, venue -> canonical (read_committed visibility, upper bound)",
+   "scope": "every feed, venue and interval",
+   "rule": "candidate p95 <= frozen baseline p95 x 1.2 per row (owner amendment 2026-10-09); missing coverage blocks the gate",
+   "verdict": "NOT_MEASURED",
+   "reason": "16/17 frozen rows PASS in all four stage-100m windows; bar|BINANCE|30m had no close in any window; five observed rows (BAR BINANCE 5m/1h, OKX 5m/15m/1h) have no frozen baseline; OKX inverse is pooled into OKX rows, not its own cells. Missing coverage blocks the gate by its own rule.",
+   "measured": [
+    {
+     "row": "bar|BINANCE|15m",
+     "p95_ms_per_window": [
+      null,
+      null,
+      12533.0,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      3,
+      0
+     ],
+     "limit_p95_ms": 40728.7,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|BINANCE|1h",
+     "p95_ms_per_window": [
+      null,
+      null,
+      14999.3,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      3,
+      0
+     ],
+     "limit_p95_ms": null,
+     "verdict": "NOT_MEASURED_NO_FROZEN_BASELINE",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|BINANCE|1m",
+     "p95_ms_per_window": [
+      116.4,
+      108.3,
+      117.7,
+      140.8
+     ],
+     "n_per_window": [
+      10,
+      10,
+      10,
+      10
+     ],
+     "limit_p95_ms": 257.6,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|BINANCE|30m",
+     "p95_ms_per_window": [
+      null,
+      null,
+      null,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "limit_p95_ms": 25836.6,
+     "verdict": "NOT_MEASURED_NOT_OBSERVED",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|BINANCE|3m",
+     "p95_ms_per_window": [
+      7992.0,
+      8016.0,
+      null,
+      8001.2
+     ],
+     "n_per_window": [
+      5,
+      5,
+      0,
+      5
+     ],
+     "limit_p95_ms": 27273.2,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|BINANCE|5m",
+     "p95_ms_per_window": [
+      null,
+      8169.9,
+      16186.8,
+      null
+     ],
+     "n_per_window": [
+      0,
+      5,
+      4,
+      0
+     ],
+     "limit_p95_ms": null,
+     "verdict": "NOT_MEASURED_NO_FROZEN_BASELINE",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|15m",
+     "p95_ms_per_window": [
+      null,
+      null,
+      901184.4,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "limit_p95_ms": null,
+     "verdict": "NOT_MEASURED_NO_FROZEN_BASELINE",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|1h",
+     "p95_ms_per_window": [
+      null,
+      null,
+      3600671.8,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "limit_p95_ms": null,
+     "verdict": "NOT_MEASURED_NO_FROZEN_BASELINE",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|1m",
+     "p95_ms_per_window": [
+      61304.5,
+      60741.8,
+      61188.9,
+      61107.0
+     ],
+     "n_per_window": [
+      7,
+      1,
+      6,
+      8
+     ],
+     "limit_p95_ms": 73817.2,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|30m",
+     "p95_ms_per_window": [
+      null,
+      null,
+      1800470.9,
+      null
+     ],
+     "n_per_window": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "limit_p95_ms": 2160788.8,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|3m",
+     "p95_ms_per_window": [
+      181311.9,
+      181132.3,
+      180480.3,
+      181110.8
+     ],
+     "n_per_window": [
+      3,
+      4,
+      1,
+      2
+     ],
+     "limit_p95_ms": 217582.1,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "bar|OKX|5m",
+     "p95_ms_per_window": [
+      null,
+      300978.9,
+      null,
+      null
+     ],
+     "n_per_window": [
+      0,
+      5,
+      0,
+      0
+     ],
+     "limit_p95_ms": null,
+     "verdict": "NOT_MEASURED_NO_FROZEN_BASELINE",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "book_delta|BINANCE|",
+     "p95_ms_per_window": [
+      97.2,
+      98.0,
+      100.0,
+      101.9
+     ],
+     "n_per_window": [
+      756,
+      755,
+      760,
+      785
+     ],
+     "limit_p95_ms": 263.3,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "book_delta|OKX|",
+     "p95_ms_per_window": [
+      103.1,
+      100.3,
+      103.3,
+      114.8
+     ],
+     "n_per_window": [
+      1061,
+      1069,
+      978,
+      1047
+     ],
+     "limit_p95_ms": 289.1,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "book_snapshot|BINANCE|",
+     "p95_ms_per_window": [
+      99.6,
+      96.2,
+      100.3,
+      102.4
+     ],
+     "n_per_window": [
+      867,
+      752,
+      859,
+      928
+     ],
+     "limit_p95_ms": 260.0,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "book_snapshot|OKX|",
+     "p95_ms_per_window": [
+      101.5,
+      97.8,
+      102.6,
+      112.1
+     ],
+     "n_per_window": [
+      1618,
+      1688,
+      1086,
+      1538
+     ],
+     "limit_p95_ms": 270.1,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "mark_index_price|BINANCE|",
+     "p95_ms_per_window": [
+      185.8,
+      190.2,
+      195.2,
+      193.2
+     ],
+     "n_per_window": [
+      377,
+      376,
+      384,
+      379
+     ],
+     "limit_p95_ms": 370.9,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "mark_index_price|OKX|",
+     "p95_ms_per_window": [
+      1447.1,
+      1361.9,
+      1453.1,
+      1252.2
+     ],
+     "n_per_window": [
+      665,
+      664,
+      665,
+      662
+     ],
+     "limit_p95_ms": 1586.6,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "quote|BINANCE|",
+     "p95_ms_per_window": [
+      126.5,
+      129.1,
+      130.0,
+      134.5
+     ],
+     "n_per_window": [
+      546,
+      555,
+      548,
+      560
+     ],
+     "limit_p95_ms": 292.7,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "quote|OKX|",
+     "p95_ms_per_window": [
+      129.8,
+      129.3,
+      132.4,
+      141.6
+     ],
+     "n_per_window": [
+      591,
+      584,
+      566,
+      598
+     ],
+     "limit_p95_ms": 283.3,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "trade|BINANCE|",
+     "p95_ms_per_window": [
+      100.5,
+      100.4,
+      104.7,
+      105.7
+     ],
+     "n_per_window": [
+      344,
+      312,
+      340,
+      397
+     ],
+     "limit_p95_ms": 269.3,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    },
+    {
+     "row": "trade|OKX|",
+     "p95_ms_per_window": [
+      104.1,
+      104.6,
+      105.0,
+      110.0
+     ],
+     "n_per_window": [
+      250,
+      251,
+      273,
+      305
+     ],
+     "limit_p95_ms": 257.4,
+     "verdict": "PASS",
+     "negative_samples": 0,
+     "missing_clock": 0
+    }
+   ],
+   "windows": "4 x 120 s, 12:47-13:07Z, inside stage 100m (12:45-13:17Z), observer assigned read_committed, no join/commit",
+   "would_measure": "a G4 observer window long enough to see a BINANCE 30m close, frozen baselines for the five unbaselined rows, and inverse-separated rows",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/g4m-1-summary.json",
+     "sha256": "2c98891f2c9e25a09a106b665573b4ff4424edcafbcd22d01fc084affe2fe904"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/g4m-2-summary.json",
+     "sha256": "c6f321b95d05ca5aa27d353bae191449fad181d7a4bd2df0e2f9834830b2b287"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/g4m-3-summary.json",
+     "sha256": "b349e8c4f00ed31cbba341807597fbdab61e0b2a1cfa85dc718b528c8eabc5d4"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/g4m-4-summary.json",
+     "sha256": "6955061d7bf23c91e34fe885dd4a7917cce98d092b88ceffed9acbf8333a92fb"
+    },
+    {
+     "path": "config/v2/p184-stage100-budget.json",
+     "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+    }
+   ]
+  },
+  {
+   "id": "G5",
+   "quantity": "request latency",
+   "scope": "Query snapshot/reference classes + cold warmup shapes",
+   "rule": "certified stage-50 p95/p99 targets per class and venue; COLD_2500 <= 6265.1 ms, COLD_5000 <= 15267.0 ms (frozen budget)",
+   "verdict": "PASS",
+   "reason": "Every latency class and cold shape PASS in the 1800 s stage-100m run on the final digests (32/32 driver gates).",
+   "measured": [
+    {
+     "gate": "latency:BAR_LATEST:BINANCE",
+     "count": 355,
+     "p50": 16.52,
+     "p95": 30.506,
+     "p99": 54.274,
+     "max": 291.955,
+     "target_p95": 1000,
+     "target_p99": 2000,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:BAR_LATEST:OKX",
+     "count": 355,
+     "p50": 27.136,
+     "p95": 89.426,
+     "p99": 202.213,
+     "max": 340.742,
+     "target_p95": 1000,
+     "target_p99": 2000,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:L2_SNAPSHOT:BINANCE",
+     "count": 355,
+     "p50": 40.123,
+     "p95": 80.944,
+     "p99": 229.67,
+     "max": 381.528,
+     "target_p95": 300,
+     "target_p99": 750,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:L2_SNAPSHOT:OKX",
+     "count": 355,
+     "p50": 28.744,
+     "p95": 53.634,
+     "p99": 257.597,
+     "max": 445.148,
+     "target_p95": 300,
+     "target_p99": 750,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:MARK_INDEX_REFERENCE:BINANCE",
+     "count": 53250,
+     "p50": 19.348,
+     "p95": 58.191,
+     "p99": 80.126,
+     "max": 536.599,
+     "target_p95": 250,
+     "target_p99": 500,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:MARK_INDEX_REFERENCE:OKX",
+     "count": 53250,
+     "p50": 21.293,
+     "p95": 57.023,
+     "p99": 74.992,
+     "max": 455.591,
+     "target_p95": 250,
+     "target_p99": 500,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:QUOTE_SNAPSHOT:BINANCE",
+     "count": 35500,
+     "p50": 13.349,
+     "p95": 37.49,
+     "p99": 74.924,
+     "max": 539.242,
+     "target_p95": 100,
+     "target_p99": 250,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:QUOTE_SNAPSHOT:OKX",
+     "count": 35500,
+     "p50": 11.764,
+     "p95": 35.185,
+     "p99": 64.916,
+     "max": 464.515,
+     "target_p95": 100,
+     "target_p99": 250,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:TRADE_SNAPSHOT:BINANCE",
+     "count": 354,
+     "p50": 10.332,
+     "p95": 34.75,
+     "p99": 57.465,
+     "max": 416.772,
+     "target_p95": 100,
+     "target_p99": 250,
+     "status": "PASS"
+    },
+    {
+     "gate": "latency:TRADE_SNAPSHOT:OKX",
+     "count": 355,
+     "p50": 14.745,
+     "p95": 29.366,
+     "p99": 48.66,
+     "max": 237.098,
+     "target_p95": 100,
+     "target_p99": 250,
+     "status": "PASS"
+    },
+    {
+     "gate": "g5:COLD_2500:BINANCE",
+     "count": 1,
+     "max_ms": 3124.007,
+     "limit_ms": 6265.1,
+     "status": "PASS"
+    },
+    {
+     "gate": "g5:COLD_2500:OKX",
+     "count": 1,
+     "max_ms": 3726.708,
+     "limit_ms": 6265.1,
+     "status": "PASS"
+    },
+    {
+     "gate": "g5:COLD_5000:BINANCE",
+     "count": 1,
+     "max_ms": 5298.549,
+     "limit_ms": 15267.0,
+     "status": "PASS"
+    },
+    {
+     "gate": "g5:COLD_5000:OKX",
+     "count": 1,
+     "max_ms": 6177.615,
+     "limit_ms": 15267.0,
+     "status": "PASS"
+    }
+   ],
+   "limits": "cold shapes are n=1 per venue (max within limit); MARK_INDEX_REFERENCE is the measured reference-batch shape, not an arbitrary 50-item batch",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/gates.json",
+     "sha256": "c65db308bdfbf453d3ea1027b0dec73aa00b66c1d043ca72b3ec2e1aad8bb079"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/receipt.json",
+     "sha256": "9dfce5d983f25cdeb831eee6dbcd151864fa1cdbf567c9dd871f5866f67684a8"
+    },
+    {
+     "path": "config/v2/p184-stage100-budget.json",
+     "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+    }
+   ]
+  },
+  {
+   "id": "G6",
+   "quantity": "durable-view event age and typed execution quality at the endpoint",
+   "scope": "every requested feed/venue/interval",
+   "rule": "per-binding D3 thresholds (TRADE 3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms) plus stricter TS use-time policy; zero unsafe eligibility",
+   "verdict": "NOT_MEASURED",
+   "reason": "The stage-100 receipt records no per-binding event age or eligibility of the returned views.",
+   "related_observation": "stage100m: 182709 offered requests, 0 failures (0 typed refusals of any code), 180 streams with 0 errors",
+   "would_measure": "driver receipt fields for per-binding view event age (SDK freshness) and execution eligibility of every returned view, including refusals",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/gates.json",
+     "sha256": "c65db308bdfbf453d3ea1027b0dec73aa00b66c1d043ca72b3ec2e1aad8bb079"
+    }
+   ]
+  },
+  {
+   "id": "G7",
+   "quantity": "TS consumer path",
+   "scope": "SDK return -> writer entry; writer entry -> Redis APPLY reply",
+   "rule": "p95 <= 100 ms and p95 <= 50 ms per feed",
+   "verdict": "NOT_MEASURED",
+   "observed": "INSIDE for every feed in both trace windows",
+   "reason": "Writer-only trace windows, not the frozen stage-100 protocol.",
+   "measured": [
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed": "BOOK_DELTA",
+     "sdk_to_writer_ms": {
+      "n": 51429,
+      "p50_ms": 22.3,
+      "p95_ms": 29.7,
+      "p99_ms": 58.6,
+      "max_ms": 372.2
+     },
+     "writer_to_redis_ms": {
+      "n": 51058,
+      "p50_ms": 2.1,
+      "p95_ms": 9.1,
+      "p99_ms": 16.2,
+      "max_ms": 192.3
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed": "BOOK_SNAPSHOT",
+     "sdk_to_writer_ms": {
+      "n": 5870,
+      "p50_ms": 28.8,
+      "p95_ms": 39.5,
+      "p99_ms": 92.9,
+      "max_ms": 190.7
+     },
+     "writer_to_redis_ms": {
+      "n": 5874,
+      "p50_ms": 4.0,
+      "p95_ms": 14.0,
+      "p99_ms": 40.5,
+      "max_ms": 192.2
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed": "MARK_INDEX_PRICE",
+     "sdk_to_writer_ms": {
+      "n": 9052,
+      "p50_ms": 0.4,
+      "p95_ms": 0.6,
+      "p99_ms": 0.6,
+      "max_ms": 1.2
+     },
+     "writer_to_redis_ms": {
+      "n": 9052,
+      "p50_ms": 2.1,
+      "p95_ms": 7.0,
+      "p99_ms": 13.3,
+      "max_ms": 94.5
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed": "QUOTE",
+     "sdk_to_writer_ms": {
+      "n": 48707,
+      "p50_ms": 22.1,
+      "p95_ms": 28.7,
+      "p99_ms": 39.6,
+      "max_ms": 175.3
+     },
+     "writer_to_redis_ms": {
+      "n": 54515,
+      "p50_ms": 1.1,
+      "p95_ms": 4.1,
+      "p99_ms": 10.5,
+      "max_ms": 140.1
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window1_mark_delay_binance_250",
+     "feed": "TRADE",
+     "sdk_to_writer_ms": {
+      "n": 27066,
+      "p50_ms": 22.9,
+      "p95_ms": 43.2,
+      "p99_ms": 95.7,
+      "max_ms": 207.2
+     },
+     "writer_to_redis_ms": {
+      "n": 27398,
+      "p50_ms": 5.1,
+      "p95_ms": 36.9,
+      "p99_ms": 98.9,
+      "max_ms": 120.2
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed": "BOOK_DELTA",
+     "sdk_to_writer_ms": {
+      "n": 51162,
+      "p50_ms": 22.3,
+      "p95_ms": 29.5,
+      "p99_ms": 48.6,
+      "max_ms": 218.7
+     },
+     "writer_to_redis_ms": {
+      "n": 50788,
+      "p50_ms": 2.1,
+      "p95_ms": 8.9,
+      "p99_ms": 16.0,
+      "max_ms": 150.1
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed": "BOOK_SNAPSHOT",
+     "sdk_to_writer_ms": {
+      "n": 5829,
+      "p50_ms": 28.8,
+      "p95_ms": 37.8,
+      "p99_ms": 90.8,
+      "max_ms": 151.2
+     },
+     "writer_to_redis_ms": {
+      "n": 5836,
+      "p50_ms": 4.0,
+      "p95_ms": 13.3,
+      "p99_ms": 32.4,
+      "max_ms": 85.2
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed": "MARK_INDEX_PRICE",
+     "sdk_to_writer_ms": {
+      "n": 9061,
+      "p50_ms": 0.4,
+      "p95_ms": 0.6,
+      "p99_ms": 0.6,
+      "max_ms": 1.2
+     },
+     "writer_to_redis_ms": {
+      "n": 9061,
+      "p50_ms": 2.2,
+      "p95_ms": 6.8,
+      "p99_ms": 13.3,
+      "max_ms": 85.9
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed": "QUOTE",
+     "sdk_to_writer_ms": {
+      "n": 47053,
+      "p50_ms": 22.1,
+      "p95_ms": 28.6,
+      "p99_ms": 38.1,
+      "max_ms": 206.9
+     },
+     "writer_to_redis_ms": {
+      "n": 52863,
+      "p50_ms": 1.1,
+      "p95_ms": 4.0,
+      "p99_ms": 10.4,
+      "max_ms": 100.5
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    },
+    {
+     "window": "window2_deployed_config",
+     "feed": "TRADE",
+     "sdk_to_writer_ms": {
+      "n": 19820,
+      "p50_ms": 22.9,
+      "p95_ms": 41.5,
+      "p99_ms": 88.4,
+      "max_ms": 157.5
+     },
+     "writer_to_redis_ms": {
+      "n": 20131,
+      "p50_ms": 4.6,
+      "p95_ms": 26.2,
+      "p99_ms": 52.4,
+      "max_ms": 94.5
+     },
+     "observed": {
+      "sdk_to_writer_ms": "INSIDE",
+      "writer_to_redis_ms": "INSIDE"
+     }
+    }
+   ],
+   "measurement_scope": "TS writer delivery trace, two 535 s analysis windows (13:19-13:28Z and 13:31-13:40Z, 40 s writer start-up skipped), writer-only production traffic AFTER stage 100m ended (13:17Z): no stage-100 alpha load, no burst window",
+   "would_measure": "the same analysis over >= 30 min of trace during a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791638906937534999.json",
+     "sha256": "d8d0d6c37dc37ccd1c22b3d9690d42041d09cc532ddd0008499d5a3d7b32526a"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/trace-transit/feed-transit-1791639603470577388.json",
+     "sha256": "e9e823094e73782166d8275647fed3abbf6000c20bc18abd695b8bb1686bf72d"
+    }
+   ]
+  },
+  {
+   "id": "G8",
+   "quantity": "TS execution Redis (redis_marketdata) command CPU, SLOWLOG, RTT",
+   "scope": "INFO commandstats usec delta, SLOWLOG count (10 ms), PING RTT",
+   "rule": "commandstats <= 60 % of one core per 10-min window; SLOWLOG 0 in steady state; PING RTT p99 <= 5 ms under full mixed traffic",
+   "verdict": "NOT_MEASURED",
+   "reason": "One read-only 600 s window on writer-only traffic, after the stage-100 run; not 'full mixed traffic'.",
+   "measured": {
+    "seconds": 600.011,
+    "core_fraction": 0.0651,
+    "slowlog_new_entries": 0,
+    "slowlog_new_by_command": {},
+    "slowlog_new_max_duration_us": null,
+    "slowlog_threshold_us": 10000,
+    "ping_rtt_ms": {
+     "errors": 0,
+     "max": 5.279,
+     "n": 5971,
+     "p50": 0.318,
+     "p95": 0.528,
+     "p99": 0.942
+    },
+    "monitor_clients": 0,
+    "top_commands": {
+     "cmdstat_eval": {
+      "calls": 76968,
+      "usec": 9700807
+     },
+     "cmdstat_evalsha": {
+      "calls": 87009,
+      "usec": 23497977
+     },
+     "cmdstat_get": {
+      "calls": 263762,
+      "usec": 644174
+     },
+     "cmdstat_mget": {
+      "calls": 95034,
+      "usec": 558002
+     },
+     "cmdstat_publish": {
+      "calls": 891655,
+      "usec": 679478
+     },
+     "cmdstat_scan": {
+      "calls": 4470,
+      "usec": 196198
+     },
+     "cmdstat_set": {
+      "calls": 613529,
+      "usec": 1067763
+     },
+     "cmdstat_setex": {
+      "calls": 1021990,
+      "usec": 2681454
+     }
+    }
+   },
+   "window_utc": [
+    1791644816.3761318,
+    1791645416.3872285
+   ],
+   "would_measure": "the same read-only probe over every 10-min window of a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.3/g8-redis/g8-window-600s.json",
+     "sha256": "fbc269fd1303e8bac13c4894089fc43d2368850d16859b1bde03ed497e8c528b"
+    }
+   ]
+  },
+  {
+   "id": "G9",
+   "quantity": "readiness",
+   "scope": "demanded / session-ready / intent-eligible, final manifest denominator",
+   "rule": "demanded == session-ready for the whole window; 0 data-path-caused losses of execution eligibility; v1_fallback 0",
+   "verdict": "NOT_MEASURED",
+   "reason": "The session clause is met (ts:ready_60_every_sample 154/154 samples, 0 unreadable, writer READY 64/64; v1_fallback_calls 0), but losses of execution eligibility by cause were not counted.",
+   "measured": {
+    "ts_ready": {
+     "expected": 154,
+     "gate": "ts:ready_60_every_sample",
+     "not_ready": 0,
+     "samples": 154,
+     "status": "PASS",
+     "unreadable": 0
+    },
+    "v1_fallback_calls": 0,
+    "mark_watcher": "0 writer MARK errors in 32 of 32 minutes (mark-watch-s100m.log)"
+   },
+   "would_measure": "per-slice intent-eligibility samples with refusal cause (quiet TRADE/LAST counted separately) over the stage-100 window",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/gates.json",
+     "sha256": "c65db308bdfbf453d3ea1027b0dec73aa00b66c1d043ca72b3ec2e1aad8bb079"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/guard-s100m.log",
+     "sha256": "cef88fa86bda376c1991618b6e5734cbb69603bc7a8ecb9c9c0812c9dbb7a91b"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/mark-watch-s100m.log",
+     "sha256": "f905c2810f7d74c7290865f18a3adb1dc4106c9181b5130cd5a3762a44c29083"
+    }
+   ]
+  },
+  {
+   "id": "G10",
+   "quantity": "integrity",
+   "scope": "TRADE (LOSSLESS) at the TS writer",
+   "rule": "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow",
+   "verdict": "NOT_MEASURED",
+   "reason": "No production gap/overflow/replay-expiry counters were read for the stage-100 window on the final digests.",
+   "related_observation": "DR08 isolated (QUALIFICATION, final DL digests): SLOW_CONSUMER_BOUNDED_QUEUE closes at 1000 queued events with RESOURCE_EXHAUSTED and replay; trace windows show DUPLICATE TRADE outcomes refused by the writer (not applied)",
+   "would_measure": "Stream overflow/replay counters and writer gap/duplicate counters before/after a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142914Z/dr08-isolated/work/evidence.jsonl",
+     "sha256": "a7bf8d013af4e011741f8013926993500140575d626916d148caa9b207ef4fc6"
+    }
+   ]
+  },
+  {
+   "id": "G11",
+   "quantity": "recovery, TS writer restart",
+   "scope": "fault cleared -> first valid apply per slice; -> caught up to live",
+   "rule": "<= 30 s and <= 60 s; no rewind; cursor never ahead of applied state",
+   "verdict": "NOT_MEASURED",
+   "reason": "No receipt records the four timestamps for a writer restart on the final digests.",
+   "related_observation": "DR08 isolated CONSUMER_RESTART_RECOVERY_MEASURED (a DL stream consumer process, not the TS writer): restart -> first event 5067-5144 ms, n=5, ack_measured false",
+   "would_measure": "a writer restart with outage start, fault cleared, first valid apply and caught-up recorded per slice (the delivery trace started at writer start can supply first apply)",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142914Z/dr08-isolated/work/evidence.jsonl",
+     "sha256": "a7bf8d013af4e011741f8013926993500140575d626916d148caa9b207ef4fc6"
+    }
+   ]
+  },
+  {
+   "id": "G12",
+   "quantity": "recovery, Kafka broker / projector / Stream restart",
+   "scope": "fault cleared -> caught up to live, then G1-G3",
+   "rule": "<= 600 s (owner bound)",
+   "verdict": "NOT_MEASURED",
+   "reason": "The isolated PASS (75673bc/2a5e809; broker 0.202 s, projector 0.256 s, Stream 2.355 s caught up; BOOK only, G2/G3 NOT_MEASURED) ran core 658a9570 (0e00c81), projector a696cfba and Stream 1f13408f (c8015ca), Query 672503b7 (76950c8) and writer 15524c0b (9b86ed3). Since then the core (+959/-30 lines: IDR-062 top-change materialization, IDR-040 fix 2), Stream (+1020/-147: Astra R2 hot lookup, terminal errors across stalled handoffs), projector (+39: invalid-book fence) and Query changed, so the result is not inheritable by the final digests.",
+   "related_observation": "The rc7d rollout restarted Stream, projectors and cores one at a time with writer READY 64/64 after each step (rollout-rc7d.log); timestamps for caught-up were not recorded.",
+   "would_measure": "scripts/p184_g12_isolated_fault.py with its IMAGES set to python e0252f4c / rust 64468c72 / writer 34202753 (the image set is a module constant today)",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-g12-20261010/evidence/verdict.json",
+     "sha256": "7e98572c80ed6746234c7a7d7f2fbc9cae5d0b617d60a07ab8fabf48d70a8057"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g12-20261010/evidence/verdict.reanalyzed.json",
+     "sha256": "4bf70d72c10212dd2da407788691138cd2da048c2f9ec458f0c587e1366ce1b6"
+    }
+   ]
+  },
+  {
+   "id": "G13",
+   "quantity": "acceptance",
+   "scope": "DR01-DR08 incl. DR05 typed gap/generation fence and inverse",
+   "rule": "every cell closed once on the final DL + writer digests",
+   "verdict": "DEFERRED",
+   "reason": "41/41 DL-side cells harness-ok on the final digests; dr01-deployed, dr01-wrong-account, dr02-dr03-alpha and dr07-reference are deferred to the TS release (gateway/alpha/risk not running) and stay OPEN.",
+   "measured": [
+    {
+     "step": "dr05-upstream",
+     "cells": 6,
+     "ok": 6,
+     "outcome": "6 OBSERVED (ISOLATED_FAULT)",
+     "receipt": "p184-g13-20261010T134219Z"
+    },
+    {
+     "step": "dr04-dr06-views",
+     "cells": 22,
+     "ok": 22,
+     "outcome": "14 OBSERVED RUNTIME, 6 OBSERVED ISOLATED_FAULT, 2 NOT_OBSERVED RUNTIME (DR05.QUIET_TYPED BINANCE/OKX: no quiet book in the 300 s window; ok by the cell rule, not a positive quiet proof)",
+     "receipt": "p184-g13-20261010T134219Z"
+    },
+    {
+     "step": "dr05-transport",
+     "cells": 9,
+     "ok": 9,
+     "outcome": "9 OBSERVED (ISOLATED_FAULT); harness TS 7d7fd0e, writer image ed02064",
+     "receipt": "p184-g13-20261010T142735Z",
+     "superseded_attempt": "p184-g13-20261010T134219Z/dr05-transport harness exit 1 (probe read QUOTE only; fixed TS 7d7fd0e)"
+    },
+    {
+     "step": "dr08-isolated",
+     "cells": 4,
+     "ok": 4,
+     "outcome": "4 OBSERVED (ISOLATED_FAULT, QUALIFICATION mode)",
+     "receipt": "p184-g13-20261010T142914Z"
+    }
+   ],
+   "deferred_cells": [
+    "dr01-deployed",
+    "dr01-wrong-account",
+    "dr02-dr03-alpha",
+    "dr07-reference"
+   ],
+   "would_measure": "the TS release runs the four deferred steps with gateway/alpha/risk on their declared images",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T134219Z/summary.json",
+     "sha256": "b64f35e19ed5ad5fd283f11fa5d58af0e52ef7309440ff94a5e1df7deab63345"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T134219Z/dr05-upstream/dr05-upstream-rows.jsonl",
+     "sha256": "6dfe552ed9a116271561affce5e6836841bcc3a85cb9d1e23fda9325feca61c5"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T134219Z/dr04-dr06-views/dr04-dr06.jsonl",
+     "sha256": "11db0fc93c41ed4fc699d125781628ca81a0ad546e9b8026e872a93750e0d51f"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142735Z/summary.json",
+     "sha256": "24d659c53f86e8cfdb9f6ea88fca7020a3d7c89e5d7771697e3560498537ccca"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142735Z/dr05-transport/dr05-transport.jsonl",
+     "sha256": "42064f1393b6f7c6a615686295b7ffaba46a8a7f29b367e76a28e1cb7b69925b"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142914Z/summary.json",
+     "sha256": "eb6ae4e299e7f3ee91593d2327b74daf653d1d2b8e43e496b49d74d573a9d85d"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261010T142914Z/dr08-isolated/work/evidence.jsonl",
+     "sha256": "a7bf8d013af4e011741f8013926993500140575d626916d148caa9b207ef4fc6"
+    }
+   ]
+  },
+  {
+   "id": "G14",
+   "quantity": "resources",
+   "scope": "every DL role and the TS writer at stage 100",
+   "rule": "CPU/RAM recorded per role with headroom; budget set by the owner from the measurement",
+   "verdict": "NOT_MEASURED",
+   "reason": "16 roles recorded from 152 samples (memory max inside every limit; DL total about 5.0 vCPU mean); binance_bar_edge and stable_redis were not sampled, so 'every DL role' is incomplete. The owner budget decision is still open.",
+   "measured": [
+    {
+     "role": "ingestor_binance_usdm",
+     "cpu_mean_pct": 10.6,
+     "cpu_p95_pct": 13.8,
+     "cpu_max_pct": 17.3,
+     "mem_max_mib": 29.9,
+     "mem_limit": "256MiB"
+    },
+    {
+     "role": "ingestor_okx_swap",
+     "cpu_mean_pct": 11.5,
+     "cpu_p95_pct": 14.5,
+     "cpu_max_pct": 16.2,
+     "mem_max_mib": 28.4,
+     "mem_limit": "256MiB"
+    },
+    {
+     "role": "kafka1",
+     "cpu_mean_pct": 77.0,
+     "cpu_p95_pct": 86.5,
+     "cpu_max_pct": 94.4,
+     "mem_max_mib": 968.0,
+     "mem_limit": "1.5GiB"
+    },
+    {
+     "role": "kafka2",
+     "cpu_mean_pct": 95.4,
+     "cpu_p95_pct": 107.2,
+     "cpu_max_pct": 117.2,
+     "mem_max_mib": 921.1,
+     "mem_limit": "2GiB"
+    },
+    {
+     "role": "kafka3",
+     "cpu_mean_pct": 98.2,
+     "cpu_p95_pct": 109.6,
+     "cpu_max_pct": 126.1,
+     "mem_max_mib": 1019.0,
+     "mem_limit": "1.5GiB"
+    },
+    {
+     "role": "market_cache",
+     "cpu_mean_pct": 7.8,
+     "cpu_p95_pct": 10.7,
+     "cpu_max_pct": 12.7,
+     "mem_max_mib": 1162.2,
+     "mem_limit": "9GiB"
+    },
+    {
+     "role": "market_data_service_p184w",
+     "cpu_mean_pct": 123.7,
+     "cpu_p95_pct": 149.2,
+     "cpu_max_pct": 198.2,
+     "mem_max_mib": 639.5,
+     "mem_limit": "30.64GiB"
+    },
+    {
+     "role": "market_projector_1",
+     "cpu_mean_pct": 17.9,
+     "cpu_p95_pct": 20.0,
+     "cpu_max_pct": 22.5,
+     "mem_max_mib": 45.1,
+     "mem_limit": "512MiB"
+    },
+    {
+     "role": "market_projector_2",
+     "cpu_mean_pct": 8.0,
+     "cpu_p95_pct": 8.8,
+     "cpu_max_pct": 9.6,
+     "mem_max_mib": 34.1,
+     "mem_limit": "512MiB"
+    },
+    {
+     "role": "query_kn_1",
+     "cpu_mean_pct": 67.9,
+     "cpu_p95_pct": 100.6,
+     "cpu_max_pct": 124.6,
+     "mem_max_mib": 651.2,
+     "mem_limit": "1.5GiB"
+    },
+    {
+     "role": "query_kn_2",
+     "cpu_mean_pct": 48.3,
+     "cpu_p95_pct": 77.7,
+     "cpu_max_pct": 109.8,
+     "mem_max_mib": 761.4,
+     "mem_limit": "1.5GiB"
+    },
+    {
+     "role": "rust_core",
+     "cpu_mean_pct": 9.2,
+     "cpu_p95_pct": 10.8,
+     "cpu_max_pct": 12.9,
+     "mem_max_mib": 44.6,
+     "mem_limit": "256MiB"
+    },
+    {
+     "role": "rust_core_2",
+     "cpu_mean_pct": 11.4,
+     "cpu_p95_pct": 13.1,
+     "cpu_max_pct": 15.6,
+     "mem_max_mib": 46.5,
+     "mem_limit": "256MiB"
+    },
+    {
+     "role": "rust_core_3",
+     "cpu_mean_pct": 7.8,
+     "cpu_p95_pct": 9.0,
+     "cpu_max_pct": 10.2,
+     "mem_max_mib": 37.2,
+     "mem_limit": "256MiB"
+    },
+    {
+     "role": "stream_kn_1",
+     "cpu_mean_pct": 21.5,
+     "cpu_p95_pct": 25.8,
+     "cpu_max_pct": 34.9,
+     "mem_max_mib": 158.0,
+     "mem_limit": "512MiB"
+    },
+    {
+     "role": "stream_kn_2",
+     "cpu_mean_pct": 7.1,
+     "cpu_p95_pct": 7.8,
+     "cpu_max_pct": 8.2,
+     "mem_max_mib": 93.5,
+     "mem_limit": "512MiB"
+    }
+   ],
+   "would_measure": "the same sampler including binance_bar_edge and stable_redis over a stage-100 run",
+   "sources": [
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/g14-resources.txt",
+     "sha256": "6b1fdcab6e110e27832dd878f4bae92f042e261bda4fca6aeac7a433d9925792"
+    },
+    {
+     "path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/stage100m/host.json",
+     "sha256": "1483bd2c800bfec9d0c9faf96ec446fed87c13d659dc526e572ecfdc324e58fc"
+    }
+   ]
+  }
+ ]
+}
