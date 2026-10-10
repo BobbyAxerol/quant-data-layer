@@ -208,5 +208,101 @@ class GuardTests(unittest.TestCase):
                 g12.owned_names(NS)
 
 
+FINAL = {"python": "sha256:" + "e" * 64, "core": "sha256:" + "6" * 64, "projector": "sha256:" + "6" * 64,
+         "stream": "sha256:" + "6" * 64, "ts": "sha256:" + "3" * 64}
+
+
+class ImageSetTests(unittest.TestCase):
+    def test_defaults_file_and_overrides(self):
+        import json
+        import os
+        import tempfile
+        self.assertEqual(g12.resolve_image_set(), g12.IMAGES)
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(FINAL, handle)
+        try:
+            images = g12.resolve_image_set(handle.name, ["ts=sha256:" + "4" * 64])
+        finally:
+            os.unlink(handle.name)
+        self.assertEqual(images["core"], FINAL["core"])
+        self.assertEqual(images["ts"], "sha256:" + "4" * 64)  # --image applies last
+        self.assertEqual(images["kafka"], g12.IMAGES["kafka"])  # unnamed roles keep the default
+        self.assertEqual(set(images), set(g12.IMAGES))
+
+    def test_rejects_unknown_role_mutable_ref_and_duplicates(self):
+        for bad in ({"querry": FINAL["python"]}, {"python": "qdl-v2-python:latest"}, {"core": "sha256:abc"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.resolve_image_set(bad)
+        with self.assertRaises(ValueError):
+            g12.resolve_image_set(None, ["core=" + FINAL["core"], "core=" + FINAL["core"]])
+        with self.assertRaises(ValueError):
+            g12.resolve_image_set(None, ["core"])
+
+    def test_topology_helpers_and_sampler_use_the_passed_set(self):
+        images = g12.resolve_image_set(FINAL)
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", images=images)
+        for role, argv in roles.items():
+            with self.subTest(role=role):
+                self.assertIn(images[g12.role_image_key(role)], argv)
+        helper = g12.helper_argv(NS, "/home/bobby/x/work", ["--topics", "/work"], images=images)
+        self.assertIn(images["python"], helper)
+        env = [a for a in helper if a.startswith("P184_G12_IMAGES=")]
+        self.assertEqual(len(env), 1)
+        self.assertEqual(g12.json.loads(env[0].split("=", 1)[1]), images)
+        self.assertIn(images["ts"], g12.sampler_argv(NS, "/home/bobby/x/ev", 10, images=images))
+
+    def test_query_code_from_image_has_no_worktree_mount(self):
+        mounted = g12.topology(NS, "/home/bobby/x/work", uid="1:1")["query"]
+        self.assertIn(f"{g12.ROOT}:/app:ro", mounted)
+        own = g12.topology(NS, "/home/bobby/x/work", uid="1:1", query_code="image")["query"]
+        volumes = [own[i + 1] for i, a in enumerate(own) if a == "-v"]
+        self.assertFalse(any(v.split(":")[1] == "/app" for v in volumes), volumes)  # image's own /app
+        self.assertEqual(own[own.index("-w") + 1], "/app")
+        with self.assertRaises(ValueError):
+            g12.topology(NS, "/home/bobby/x/work", uid="1:1", query_code="host")
+
+    def test_role_image_key_and_dr05_roles(self):
+        from scripts import p184_dr08_isolated as dr08
+        expected = {"net": "holder", "kafka-2": "kafka", "quota": "redis", "core": "core", "projector": "projector",
+                    "stream": "stream", "query": "python", "monitor": "python", "publisher": "python",
+                    "sampler": "ts", "tswriter-okx": "ts", "tsredis-binance": "redis", "tspg-okx": "postgres"}
+        for role, key in expected.items():
+            self.assertEqual(g12.role_image_key(role), key, role)
+        images = g12.resolve_image_set(FINAL)
+        sealed = g12.dr05_images(images)
+        self.assertEqual(set(sealed), set(dr08.IMAGES))  # dr05 image_set() requires exactly these roles
+        self.assertEqual(sealed["core"], FINAL["core"])
+        self.assertEqual(sealed["query"], FINAL["python"])
+
+    def test_in_container_check_compares_passed_and_sealed(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        images = g12.resolve_image_set(FINAL)
+        with tempfile.TemporaryDirectory() as work:
+            handoff = Path(work) / "handoff.json"
+            handoff.write_text(json.dumps({"namespace": NS}))
+            self.assertIsNone(g12.check_sealed_images(work, None))  # sealed before the parameter existed
+            with self.assertRaises(ValueError):
+                g12.check_sealed_images(work, json.dumps(images))
+            handoff.write_text(json.dumps({"namespace": NS, "g12_images": images}))
+            self.assertEqual(g12.check_sealed_images(work, json.dumps(images)), images)
+            for attested in (None, json.dumps(g12.IMAGES)):
+                with self.subTest(attested=attested), self.assertRaises(ValueError):
+                    g12.check_sealed_images(work, attested)
+
+    def test_cli_passes_the_image_set_to_the_orchestrator(self):
+        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                      "--image", "core=" + FINAL["core"], "--query-code", "image"])
+        images, query_code = orchestrate.call_args.args[3:5]
+        self.assertEqual(images["core"], FINAL["core"])
+        self.assertEqual(images["python"], g12.IMAGES["python"])
+        self.assertEqual(query_code, "image")
+        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS])
+        self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
+
+
 if __name__ == "__main__":
     unittest.main()

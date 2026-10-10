@@ -28,6 +28,18 @@ not production or HA evidence.
 Host modes (stdlib only): ``--run BASE`` (orchestrate, absolute deadline, teardown
 in ``finally``), ``--down BASE`` (exact-name, label-checked teardown),
 ``--analyze BASE`` (recompute the verdict from the JSONL evidence).
+
+Image set: ``IMAGES`` below are DEFAULTS only. ``--run`` accepts ``--image-set FILE``
+(a JSON object role -> sha256:<64hex>, any subset of the roles) and ``--image
+ROLE=sha256:<64hex>`` (repeatable, applied last). The resolved set is checked against
+the local image IDs, sealed in ``work/handoff.json`` ("g12_images", plus "images" in
+the DR05 role names so the in-container ``--material`` step writes the core digest
+from it), passed to every in-namespace helper as ``P184_G12_IMAGES`` (checked against
+the seal by ``_packet``), and every container this run starts (including restarts and
+the WriterClone containers) is ``docker inspect``-ed: its image ID must equal the
+passed value for its role (``evidence/provenance.jsonl``). ``--query-code image``
+runs Query from the image's own /app (no worktree mount); the default ``worktree``
+keeps the earlier read-only worktree mount.
 In-container modes (python image, inside the namespace): ``--topics``,
 ``--publish``, ``--monitor``; each bounded by ``--seconds`` / its own deadline.
 """
@@ -76,9 +88,54 @@ GATE = {"caught_up_s": 600, "age_ms": 1000, "hold_s": 30, "window_s": 300,
 LIMITS = {"disk_free_bytes": 20 * 10**9, "mem_available_bytes": 3 * 2**30,
           "deadline_s": 3600, "holder_s": 5400, "broker_outage_s": 60,
           "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300}
+IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+QUERY_CODE = ("worktree", "image")
+# G12 role -> DR05/DR08 image role (handoff "images"; dr05 image_set() requires exactly these keys).
+DR05_IMAGE_ROLES = {"query": "python", "core": "core", "stream": "stream", "python": "python",
+                    "kafka": "kafka", "redis": "redis"}
 PRIVATE_FILES = ("client.key", "server.p12", "binance.key", "okx.key", "cursor-keys.json",
                  "read-view.secret", "broker.properties", "broker-1.properties",
                  "broker-2.properties", "broker-3.properties")
+
+
+def resolve_image_set(image_set=None, overrides=()):
+    """IMAGES (defaults) <- JSON file/object <- ROLE=ID overrides; every role an immutable image ID."""
+    images = dict(IMAGES)
+    layers = []
+    if image_set is not None:
+        loaded = image_set if isinstance(image_set, dict) else json.loads(Path(image_set).read_text())
+        if not isinstance(loaded, dict):
+            raise ValueError("image set file must be a JSON object role -> sha256:<64hex>")
+        layers.append(loaded)
+    parsed = {}
+    for value in overrides or ():
+        role, sep, image = str(value).partition("=")
+        if not sep or role in parsed:
+            raise ValueError(f"--image ROLE=sha256:<64hex>, once per role: {value!r}")
+        parsed[role] = image
+    layers.append(parsed)
+    for layer in layers:
+        for role, image in layer.items():
+            if role not in IMAGES:
+                raise ValueError(f"unknown image role {role!r}; roles: {sorted(IMAGES)}")
+            images[role] = image
+    for role, image in images.items():
+        if not isinstance(image, str) or not IMAGE_ID.fullmatch(image):
+            raise ValueError(f"immutable {role} image ID required (sha256:<64hex>)")
+    return images
+
+
+def dr05_images(images):
+    """The sealed set in DR05's role names (handoff.json "images")."""
+    return {role: images[g12_role] for role, g12_role in DR05_IMAGE_ROLES.items()}
+
+
+def role_image_key(role):
+    """Which image-set role a container role runs."""
+    base = re.sub(r"-(binance|okx)$", "", role)
+    return {"net": "holder", "quota": "redis", "query": "python", "helper": "python", "monitor": "python",
+            "publisher": "python", "sampler": "ts", "tswriter": "ts", "tsredis": "redis",
+            "tspg": "postgres"}.get(base, "kafka" if base.startswith("kafka-") else base)
 
 
 def namespace(value):
@@ -164,10 +221,13 @@ def _env(argv, env):
     return argv
 
 
-def topology(ns, work, topic_id="", *, uid=None):
+def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktree"):
     """Docker argv per role (adapted from p184_dr05_dl_fault.topology: 3 brokers,
     a projector, one holder-owned loopback namespace). Executes nothing."""
     namespace(ns)
+    images = images or IMAGES
+    if query_code not in QUERY_CODE:
+        raise ValueError("query_code must be one of " + ",".join(QUERY_CODE))
     work = Path(work).resolve()
     if work == ROOT or ROOT in work.parents or any(c in str(work) for c in (":", ",")):
         raise ValueError("external unambiguous work directory required")
@@ -181,7 +241,7 @@ def topology(ns, work, topic_id="", *, uid=None):
     mount = ["-v", f"{work}:/work"]
     # The holder's hostname is the namespace's: Kafka/log4j resolve it (DR05 kafka: --hostname localhost).
     roles = {"net": _base(ns, "net", network="none", memory="16m", cpus="0.05")
-             + ["--hostname", "localhost", "--entrypoint", "sleep", IMAGES["holder"], str(LIMITS["holder_s"])]}
+             + ["--hostname", "localhost", "--entrypoint", "sleep", images["holder"], str(LIMITS["holder_s"])]}
     for node in BROKERS:
         argv = _base(ns, f"kafka-{node}", network=net, memory="1024m", cpus="0.75", uid=uid)
         argv += ["--tmpfs", "/tmp:rw,exec,size=64m,mode=1777", "-v", f"{work}/kafka-{node}:/data",
@@ -190,17 +250,17 @@ def topology(ns, work, topic_id="", *, uid=None):
             argv += ["--tmpfs", target + ":rw,size=1m,mode=1777"]  # no anonymous volumes
         _env(argv, {"KAFKA_HEAP_OPTS": "-Xms256m -Xmx512m", "LOG_DIR": "/tmp/kafka-logs"})
         props = f"/work/broker-{node}.properties"
-        roles[f"kafka-{node}"] = argv + ["--entrypoint", "/bin/sh", IMAGES["kafka"], "-ec",
+        roles[f"kafka-{node}"] = argv + ["--entrypoint", "/bin/sh", images["kafka"], "-ec",
             f"/opt/kafka/bin/kafka-storage.sh format --ignore-formatted -t {CLUSTER_ID} -c {props}"
             f" && exec /opt/kafka/bin/kafka-server-start.sh {props}"]
     roles["quota"] = _base(ns, "quota", network=net, memory="192m", cpus="0.1", uid=uid) + [
-        "--tmpfs", "/data:rw,size=1m,mode=1777", "--entrypoint", "redis-server", IMAGES["redis"],
+        "--tmpfs", "/data:rw,size=1m,mode=1777", "--entrypoint", "redis-server", images["redis"],
         "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     roles["core"] = _env(_base(ns, "core", network=net, memory="256m", cpus="0.5", uid=uid)
         + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
         {"QDL_KAFKA_CERT_ROOT": "/work", "QDL_KAFKA_BOOTSTRAP_SERVERS": BOOTSTRAP,
          "QDL_KAFKA_CLIENT_ID": ns, "QDL_KAFKA_GROUP_ID": ns, "QDL_PROVIDER_ADMISSION_ENABLED": "false"}) + [
-        "--entrypoint", "/usr/local/bin/qdl-realtime-core", IMAGES["core"], "/work/core.json"]
+        "--entrypoint", "/usr/local/bin/qdl-realtime-core", images["core"], "/work/core.json"]
     roles["projector"] = _env(_base(ns, "projector", network=net, memory="256m", cpus="0.5", uid=uid)
         + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
         {**tls, "QDL_KN_KAFKA_BOOTSTRAP": BOOTSTRAP, "QDL_KN_BUNDLE_PATH": "/work/bundle.json",
@@ -209,7 +269,7 @@ def topology(ns, work, topic_id="", *, uid=None):
          "QDL_KN_STATUS_PATH": "/work/g12-projector-status.json", "QDL_KN_STATUS_INTERVAL_S": "5",
          "QDL_KN_CANONICAL_TOPIC": ns + ".canonical", "QDL_KN_LATEST_TOPIC": ns + ".latest",
          "QDL_KN_BARS_TOPIC": ns + ".bars"}) + [
-        "--entrypoint", "/usr/local/bin/qdl-projector", IMAGES["projector"], "run"]
+        "--entrypoint", "/usr/local/bin/qdl-projector", images["projector"], "run"]
     roles["stream"] = _env(_base(ns, "stream", network=net, memory="512m", cpus="0.5", uid=uid)
         + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
         {**common, **tls, "QDL_KN_BUNDLE_FILE": "/work/bundle.json",
@@ -222,11 +282,13 @@ def topology(ns, work, topic_id="", *, uid=None):
          "QDL_KN_READ_VIEW_CA_FILE": "/work/ca.crt", "QDL_KN_HOT_READ_ENABLED": "true",
          "QDL_KN_METRICS_SECONDS": "10", "QDL_KN_MAX_REPLAY_EVENTS": "10000",
          "QDL_KN_QUEUE_BYTES_TOTAL": "33554432"}) + [
-        "--entrypoint", "/usr/local/bin/qdl-stream-gateway", IMAGES["stream"], "serve"]
+        "--entrypoint", "/usr/local/bin/qdl-stream-gateway", images["stream"], "serve"]
+    # "image": the Query code is the image's own /app (the release under test); "worktree": read-only mount.
+    code = ["-w", "/app"] if query_code == "image" else ["-v", f"{ROOT}:/app:ro", "-w", "/app"]
     roles["query"] = _env(_base(ns, "query", network=net, memory="512m", cpus="0.5", uid=uid)
-        + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount + ["-v", f"{ROOT}:/app:ro", "-w", "/app"],
+        + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount + code,
         {**common, "PYTHONPATH": "/app:/app/generated/python", "PYTHONDONTWRITEBYTECODE": "1"}) + [
-        "--entrypoint", "python", IMAGES["python"], "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]
+        "--entrypoint", "python", images["python"], "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]
     return roles
 
 
@@ -236,18 +298,20 @@ TEARDOWN_ORDER = ("sampler", "publisher", "monitor", "query", "stream", "project
 
 
 def helper_argv(ns, work, args, *, role="helper", detach=False, evidence=None, network=None,
-                cpus="0.5", memory="512m", script="scripts/p184_g12_isolated_fault.py", extra=()):
+                cpus="0.5", memory="512m", script="scripts/p184_g12_isolated_fault.py", extra=(), images=None):
     namespace(ns)
+    images = images or IMAGES
     argv = _base(ns, role, network=network or "container:" + ns + "-net", memory=memory, cpus=cpus,
                  uid=f"{os.getuid()}:{os.getgid()}")
     if not detach:
         argv.remove("-d")
     argv += ["--tmpfs", "/tmp:rw,size=64m,mode=1777", "-v", f"{Path(work).resolve()}:/work",
              "-v", f"{ROOT}:/app:ro", "-w", "/app", "-e", "PYTHONPATH=/app:/app/generated/python",
-             "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "P184_G12_NAMESPACE=" + ns, *extra]
+             "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "P184_G12_NAMESPACE=" + ns,
+             "-e", "P184_G12_IMAGES=" + json.dumps(images, sort_keys=True, separators=(",", ":")), *extra]
     if evidence is not None:
         argv += ["-v", f"{Path(evidence).resolve()}:/evidence"]
-    return argv + ["--entrypoint", "python", IMAGES["python"], "-B", script, *args]
+    return argv + ["--entrypoint", "python", images["python"], "-B", script, *args]
 
 
 SAMPLER = r'''
@@ -319,12 +383,13 @@ asyncio.run(main(sys.argv[1], float(sys.argv[2]), float(sys.argv[3]),
 '''
 
 
-def sampler_argv(ns, evidence, seconds, interval_ms=50):
+def sampler_argv(ns, evidence, seconds, interval_ms=50, images=None):
+    images = images or IMAGES
     targets = ",".join(f"{v}=redis://localhost:{CLONE_PORTS[v][0]}/1" for v in VENUES)
     argv = _base(ns, "sampler", network="container:" + ns + "-net", memory="384m", cpus="0.25",
                  uid=f"{os.getuid()}:{os.getgid()}")
     return argv + ["--tmpfs", "/tmp:rw,size=16m,mode=1777", "-v", f"{Path(evidence).resolve()}:/evidence",
-                   "-e", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python", IMAGES["ts"], "-B", "-c",
+                   "-e", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python", images["ts"], "-B", "-c",
                    SAMPLER, "/evidence/sampler.jsonl", str(int(seconds)), str(interval_ms), targets]
 
 
@@ -541,7 +606,19 @@ def _packet(work):
     ns = namespace(packet["namespace"])
     if os.environ.get("P184_G12_NAMESPACE") != ns or packet.get("bootstrap") != BOOTSTRAP:
         raise ValueError("G12 namespace attestation and isolated bootstrap required")
+    check_sealed_images(work, os.environ.get("P184_G12_IMAGES"))
     return packet
+
+
+def check_sealed_images(work, attested):
+    """In-container: the parent's passed image set must equal the run's sealed set."""
+    handoff = Path(work) / "handoff.json"
+    sealed = json.loads(handoff.read_text()).get("g12_images") if handoff.is_file() else None
+    if sealed is None and attested is None:
+        return None  # a run sealed before the image set was a parameter
+    if sealed is None or attested is None or resolve_image_set(json.loads(attested)) != resolve_image_set(sealed):
+        raise ValueError("G12 image set attestation does not match the sealed run image set")
+    return sealed
 
 
 def _security(packet):
@@ -811,6 +888,22 @@ def host_resources():
     return {"disk_free_bytes": free, "mem_available_bytes": available}
 
 
+def container_image(name):
+    """The image ID a container actually runs (read-only docker inspect)."""
+    return sh(["docker", "inspect", "--format", "{{.Image}}", name], timeout=30).strip()
+
+
+def image_record(image):
+    """Local image ID, tags and OCI revision/version labels (provenance, read-only)."""
+    rows = json.loads(sh(["docker", "image", "inspect", image], timeout=30) or "[]")
+    if len(rows) != 1:
+        raise RuntimeError("local image missing " + image)
+    labels = (rows[0].get("Config") or {}).get("Labels") or {}
+    return {"id": rows[0]["Id"], "tags": rows[0].get("RepoTags") or [],
+            "revision": labels.get("org.opencontainers.image.revision"),
+            "version": labels.get("org.opencontainers.image.version")}
+
+
 def load_writer_clone():
     import importlib.util
     path = TS_ROOT / "scripts/p184_dr05_isolated.py"
@@ -838,7 +931,11 @@ def labelled_run(ns):
 
 
 class Run:
-    def __init__(self, base, export, ns):
+    def __init__(self, base, export, ns, images=None, query_code="worktree"):
+        self.images = resolve_image_set(images)
+        if query_code not in QUERY_CODE:
+            raise ValueError("query_code must be one of " + ",".join(QUERY_CODE))
+        self.query_code = query_code
         self.base = Path(base).resolve()
         self.work, self.evidence = self.base / "work", self.base / "evidence"
         self.export = Path(export).resolve()
@@ -856,6 +953,23 @@ class Run:
         with (self.evidence / "orchestrator.jsonl").open("a") as handle:
             handle.write(json.dumps(row, default=str) + "\n")
         print(step, json.dumps(fields, default=str)[:400], flush=True)
+
+    def verify_image(self, role):
+        """Provenance: the started container runs exactly the passed image for its role."""
+        name, expected = f"{self.ns}-{role}", self.images[role_image_key(role)]
+        actual = container_image(name)
+        row = {"t": time.time_ns(), "role": role, "image_role": role_image_key(role),
+               "expected": expected, "actual": actual, "match": actual == expected}
+        with (self.evidence / "provenance.jsonl").open("a") as handle:
+            handle.write(json.dumps(row) + "\n")
+        if actual != expected:
+            raise RuntimeError(f"STOP provenance: {name} runs {actual}, expected {expected}")
+
+    def topology(self, topic_id=""):
+        return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code)
+
+    def helper(self, *args, **kwargs):
+        return helper_argv(*args, images=self.images, **kwargs)
 
     def fault_row(self, row):
         with (self.evidence / "faults.jsonl").open("a") as handle:
@@ -904,9 +1018,10 @@ class Run:
         return until() if until is not None else None
 
     def start(self, role, topic_id):
-        argv = topology(self.ns, self.work, topic_id)[role]
+        argv = self.topology(topic_id)[role]
         sh(argv, timeout=60)
         self.expected.add(role)
+        self.verify_image(role)
 
     # -- phases
     def prepare(self):
@@ -917,9 +1032,16 @@ class Run:
         self.note("preflight", **resources)
         if resources["disk_free_bytes"] < LIMITS["disk_free_bytes"]:
             raise RuntimeError("disk below 20 GB before start")
-        for image in IMAGES.values():
-            if sh(["docker", "image", "inspect", image, "--format", "{{.Id}}"]).strip() != image:
+        records = {}
+        for role, image in self.images.items():
+            records[role] = image_record(image)
+            if records[role]["id"] != image:
                 raise RuntimeError("local image mismatch " + image)
+        (self.evidence / "images.json").write_text(json.dumps(
+            {"images": self.images, "local": records, "query_code": self.query_code,
+             "defaults_overridden": sorted(r for r in self.images if self.images[r] != IMAGES[r])},
+            indent=2) + "\n")
+        self.note("image_set", images=self.images, query_code=self.query_code)
         if owned_names(self.ns) or sh(["docker", "ps", "-aq", "--filter", "name=" + self.ns]).strip():
             raise RuntimeError("namespace already in use")
         self.guard0 = production_guard()
@@ -928,8 +1050,10 @@ class Run:
         self.networks0 = len(sh(["docker", "network", "ls", "-q"]).split())
         (self.work / "handoff.json").write_text(json.dumps({
             "namespace": self.ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
-            "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False}, indent=2) + "\n")
-        sh(helper_argv(self.ns, self.work, ["--material", "/work", "--core-config", "/export.json"],
+            "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False,
+            "images": dr05_images(self.images), "g12_images": self.images,
+            "query_code": self.query_code}, indent=2) + "\n")
+        sh(self.helper(self.ns, self.work, ["--material", "/work", "--core-config", "/export.json"],
                        network="none", script="scripts/p184_dr05_dl_fault.py",
                        extra=["-v", f"{self.export}:/export.json:ro"]), timeout=180)
         packet = json.loads((self.work / "packet.json").read_text())
@@ -946,11 +1070,12 @@ class Run:
                   networks_before=self.networks0)
 
     def up(self):
-        sh(topology(self.ns, self.work)["net"])
+        sh(self.topology()["net"])
         self.expected.add("net")
+        self.verify_image("net")
         for node in BROKERS:
             self.start(f"kafka-{node}", "")
-        result = sh(helper_argv(self.ns, self.work, ["--topics", "/work"]), timeout=180)
+        result = sh(self.helper(self.ns, self.work, ["--topics", "/work"]), timeout=180)
         self.note("topics", result=result.strip()[-400:])
         topic_id = json.loads((self.work / "packet.json").read_text())["slice"]["topic_id"]
         self.topic_id = topic_id
@@ -959,7 +1084,7 @@ class Run:
         limit = time.monotonic() + LIMITS["role_return_s"]
         while True:
             self.check()
-            probe = subprocess.run(helper_argv(self.ns, self.work, ["--probe", "/work"],
+            probe = subprocess.run(self.helper(self.ns, self.work, ["--probe", "/work"],
                                                script="scripts/p184_dr05_dl_fault.py"),
                                    capture_output=True, text=True, timeout=60)
             if probe.returncode == 0:
@@ -969,14 +1094,16 @@ class Run:
                 raise RuntimeError("services not reachable: " + probe.stderr.strip()[-400:])
             time.sleep(2)
         remaining = LIMITS["deadline_s"] - (time.monotonic() - self.started) - 60
-        sh(helper_argv(self.ns, self.work, ["--monitor", "/work", "--out", "/evidence/monitor.jsonl",
+        sh(self.helper(self.ns, self.work, ["--monitor", "/work", "--out", "/evidence/monitor.jsonl",
                                             "--seconds", str(int(remaining))], role="monitor", detach=True,
                        evidence=self.evidence, cpus="0.25", memory="256m"))
         self.expected.add("monitor")
-        sh(helper_argv(self.ns, self.work, ["--publish", "/work", "--out", "/evidence/publish.jsonl",
+        self.verify_image("monitor")
+        sh(self.helper(self.ns, self.work, ["--publish", "/work", "--out", "/evidence/publish.jsonl",
                                             "--seconds", str(int(remaining)), "--hz", "4"], role="publisher",
                        detach=True, evidence=self.evidence, cpus="0.25", memory="256m"))
         self.expected.add("publisher")
+        self.verify_image("publisher")
         self.note("publisher_monitor_started", seconds=int(remaining))
         iso = load_writer_clone()
         import tempfile
@@ -987,7 +1114,8 @@ class Run:
         for venue in VENUES:
             redis_port, pg_port = CLONE_PORTS[venue]
             spec = json.loads((self.work / f"ts-consumer.{venue.lower()}.json").read_text())
-            clone = iso.WriterClone(IMAGES["ts"], redis_image=IMAGES["redis"], postgres_image=IMAGES["postgres"],
+            clone = iso.WriterClone(self.images["ts"], redis_image=self.images["redis"],
+                                    postgres_image=self.images["postgres"],
                                     venues=(venue,), network="container:" + self.ns + "-net",
                                     redis_port=redis_port, pg_port=pg_port, consumer=spec,
                                     dl_work=str(self.work), run=run, tag=venue.lower())
@@ -999,9 +1127,12 @@ class Run:
             self.clones[venue] = clone
             clone.__enter__()
             self.expected |= {f"tswriter-{label}", f"tsredis-{label}", f"tspg-{label}"}
+            for kind in ("tswriter", "tsredis", "tspg"):
+                self.verify_image(f"{kind}-{label}")
         self.note("ts_clones_started", names=[c.name for c in self.clones.values()])
-        sh(sampler_argv(self.ns, self.evidence, remaining - 30))
+        sh(sampler_argv(self.ns, self.evidence, remaining - 30, images=self.images))
         self.expected.add("sampler")
+        self.verify_image("sampler")
         started = time.time_ns()
 
         def ready():
@@ -1037,8 +1168,9 @@ class Run:
         if kind == "broker":
             self.wait(LIMITS["broker_outage_s"], faulted=(role,))
         restart = time.time_ns()
-        sh(topology(self.ns, self.work, self.topic_id)[role], timeout=60)
+        sh(self.topology(self.topic_id)[role], timeout=60)
         self.note("restart_issued", fault=name, role=role)
+        self.verify_image(role)
         row = {"k": "fault", "name": name, "kind": kind, "node": node, "role": role,
                "injected_ns": injected, "restart_ns": restart}
         self.fault_row(row)
@@ -1139,8 +1271,8 @@ def erase_private(work):
     shutil.rmtree(work / "tslogs", ignore_errors=True)
 
 
-def orchestrate(base, export, ns):
-    run = Run(base, export, ns)
+def orchestrate(base, export, ns, images=None, query_code="worktree"):
+    run = Run(base, export, ns, images, query_code)
 
     def expire(_signum, _frame):
         raise TimeoutError("G12 orchestrator absolute deadline")
@@ -1165,7 +1297,8 @@ def orchestrate(base, export, ns):
         try:
             if run.evidence.exists():
                 verdict = evaluate(run.evidence)
-                verdict.update(status=status, error=error, namespace=ns)
+                verdict.update(status=status, error=error, namespace=ns, images=run.images,
+                               query_code=run.query_code)
                 (run.evidence / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
         finally:
             run.down() if run.evidence.exists() else teardown(ns)
@@ -1183,11 +1316,15 @@ def main(argv=None):
     parser.add_argument("--out")
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--hz", type=float, default=4.0)
+    parser.add_argument("--image-set", type=Path, help="JSON object role -> sha256:<64hex> (defaults: IMAGES)")
+    parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:<64hex>")
+    parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")
     args = parser.parse_args(argv)
     if args.run:
         if args.export is None or args.namespace is None:
             parser.error("--run needs --export and --namespace")
-        return orchestrate(args.run, args.export, args.namespace)
+        images = resolve_image_set(args.image_set, args.image)
+        return orchestrate(args.run, args.export, args.namespace, images, args.query_code)
     if args.down:
         ns = namespace(json.loads((args.down / "work" / "handoff.json").read_text())["namespace"])
         report = teardown(ns)

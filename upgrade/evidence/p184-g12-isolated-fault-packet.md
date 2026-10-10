@@ -163,3 +163,48 @@ breaches (query_kn_1/2 were recreated by another operator at 03:43-03:44, before
 Limits: same-host loopback rehearsal, one projector and one Stream replica, synthetic TEST_ONLY BOOK at 4 Hz/venue
 (not production load), sampler resolution 50 ms. The monitor's "projector lag 0" predicate was wrong (committed
 offset vs LSO keeps 1 for the commit marker); the re-analysis uses <= 1, no G12 number changed.
+
+## 12. Final-image re-run packet - 2026-10-10 (written before the run)
+
+Same gate, faults, measurements, pass rule, stop conditions, deadlines and teardown as sections 1 and 3-10; only
+the image set and the Query code source change. Base: `fix/p184-dl-closure` tip `59e725a` plus the harness
+change below. Namespace `p184-g12-dl-00e555b46f67d7c0`; evidence `~/.local/state/qdl-v2/p184-g12-final-20261010/`.
+
+Harness change (additive): the image set is a parameter. `IMAGES` stay the defaults.
+- `--image-set FILE` (JSON object `role -> sha256:<64hex>`, any subset of the roles kafka/core/projector/stream/
+  python/redis/ts/postgres/holder) and `--image ROLE=sha256:<64hex>` (repeatable, applied last).
+- The resolved set must match the local image IDs. It is written to `evidence/images.json` (ID, tags, OCI revision)
+  and sealed in `work/handoff.json`: `g12_images`, plus `images` in DR05 role names, so the in-container
+  `--material` step writes the final core digest into `core.json`.
+- It is passed to every in-namespace helper as `P184_G12_IMAGES`, and `_packet` refuses a mismatch with the seal.
+- Every container the run starts (restarts and the six WriterClone containers included) is `docker inspect`-ed.
+  Its image ID must equal the passed value for its role, or the run stops. Rows go to `evidence/provenance.jsonl`.
+- `--query-code image` runs Query from the image's own `/app` (no worktree mount). The default `worktree` keeps
+  the section-2 behaviour.
+
+Final image set (`image-set.json` in the evidence base):
+
+| Role | Image ID | Tag / revision |
+|---|---|---|
+| core, projector, stream | `sha256:64468c72ce5ab36518107014bd4a3e311b96d47fad06e531f6627c46f532a1b7` | qdl-v2-rust:2.2.3-rc7d-bbfb3be (= rust_core*, market_projector_1/2, stream_kn_1/2 now) |
+| python (query; helper/publisher/monitor) | `sha256:e0252f4c96da70791b0c0fd031538bff2dd7249cdf6e0fbd4399c90e2e527a2a` | qdl-v2-python:2.2.3-rc7d-bbfb3be (= query_kn_1/2 now) |
+| ts (writer clones, sampler) | `sha256:34202753bbe8b74d50e45afed1cf2e7b400141324c550168462b30db220edb31` | local/trading-system:p184-writer-ed02064 (= market_data_service_p184w now) |
+| kafka, redis, postgres, holder | section-2 defaults | unchanged |
+
+Query runs the image's code (`--query-code image`). Helper, publisher and monitor are harness tooling: they run in
+the final python image with the worktree harness mounted read-only. `git diff bbfb3be HEAD -- qdl generated app
+scripts/p184_dr05_observer.py scripts/p184_dr08_isolated.py` is empty.
+
+Invocation (host, stdlib only):
+
+```
+python3 -B scripts/p184_g12_isolated_fault.py --run ~/.local/state/qdl-v2/p184-g12-final-20261010 \
+  --export ~/.local/state/qdl-v2/dr05-export-20261010/public-export.json \
+  --namespace p184-g12-dl-00e555b46f67d7c0 \
+  --image-set ~/.local/state/qdl-v2/p184-g12-final-20261010/image-set.json --query-code image
+```
+
+Before starting:
+- `ps -eo args | grep -E '/run_stage100.sh [a-z] '` must be empty. If a load run is active, wait and re-check every
+  2 min; give up after 60 min.
+- `df /` must show >= 20 GB free.
