@@ -170,7 +170,8 @@ def _passing_receipt(final: bool = False) -> dict[str, object]:
 
 def _passing_ts() -> dict[str, object]:
     sample = {"ready": 60, "demanded": 60, "fallback": 0, "v2_error": 7}
-    return {"samples": [sample] * 12, "disconnect_codes": {"DATA_STALE": 4},
+    return {"samples": [sample] * 12, "unreadable_samples": [], "expected_samples": 12,
+            "disconnect_codes": {"DATA_STALE": 4},
             "run_disconnects_per_minute": 2.0, "baseline_disconnects_per_minute": 1.5}
 
 
@@ -228,6 +229,19 @@ class AcceptanceTests(unittest.TestCase):
         ts = _passing_ts()
         ts["run_disconnects_per_minute"] = 30.0
         self.assertIn("ts:disconnects_within_baseline", self._evaluate(ts=ts)["failed_gates"])
+
+    def test_lost_observation_fails_readiness(self):
+        # Codex review 2026-10-10: 155 unreadable periodic samples were skipped and the gate passed on 2.
+        ts = _passing_ts()
+        ts["unreadable_samples"] = [{"error": {"type": "IndexError"}}]
+        ts["expected_samples"] = 13
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        ts = _passing_ts()
+        ts["expected_samples"] = 157
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        ts = _passing_ts()
+        del ts["expected_samples"]
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
 
     def test_quiet_or_disconnected_slices_cannot_bypass_readiness(self):
         for state in ("STALE", "DISCONNECTED", "UNKNOWN"):

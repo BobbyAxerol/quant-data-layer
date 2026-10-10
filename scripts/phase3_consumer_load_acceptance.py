@@ -3301,7 +3301,10 @@ def run_target_host(args: argparse.Namespace) -> int:
     try:
         process, telemetry, runtime_fault = _run_monitored_client(
             command, monitored, timeout=duration + 720,
-            observer=None if matrix else _ts_heartbeat, observations=ts_samples,
+            # The periodic observer samples the SAME writer as the first/last sample
+            # (Codex review 2026-10-10: it used the default container and 155 of 157
+            # stage-100b samples were unreadable, while the gate scored only 2).
+            observer=None if matrix else (lambda: _ts_heartbeat(ts_container)), observations=ts_samples,
         )
     finally:
         try:
@@ -3334,8 +3337,14 @@ def run_target_host(args: argparse.Namespace) -> int:
             if isinstance(value, dict) and "failure" in value:
                 client_failure = str(value["failure"])[:500]
                 break
-    trading_system: dict[str, object] = {"samples": [item for item in ts_samples if item and "ready" in item],
-                                         "unreadable_samples": [item for item in ts_samples if item and "error" in item]}
+    # Every sample is either readable or counted as unreadable (None included);
+    # expected_samples lets the verifier fail lost coverage instead of skipping it.
+    trading_system: dict[str, object] = {
+        "samples": [item for item in ts_samples if item and "ready" in item],
+        "unreadable_samples": [item if item else {"error": {"type": "NoSample"}}
+                               for item in ts_samples if not item or "ready" not in item],
+        "expected_samples": len(ts_samples),
+    }
     evaluation = None
     if not matrix:
         run_minutes = max(1e-6, (time.monotonic() - started) / 60.0)

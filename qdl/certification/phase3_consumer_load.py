@@ -907,8 +907,13 @@ def evaluate_target_acceptance(
                 and not item.get("unhealthy"))
 
     not_ready = [item for item in samples if not sample_ready(item)]
-    gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready,
-                       samples=len(samples), not_ready=len(not_ready)))
+    # Lost observation is a failure, never a skipped sample (Codex review 2026-10-10).
+    unreadable = len(trading_system.get("unreadable_samples", []))
+    expected = trading_system.get("expected_samples")
+    covered = isinstance(expected, int) and expected > 0 and len(samples) == expected
+    gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready and not unreadable and covered,
+                       samples=len(samples), not_ready=len(not_ready), unreadable=unreadable,
+                       expected=expected))
     errors = [item.get("v2_error") for item in samples if isinstance(item.get("v2_error"), int)]
     gates.append(_gate("ts:v2_error_not_increased",
                        bool(errors) and max(errors) - min(errors) <= ts_budget["max_v2_error_increase"],

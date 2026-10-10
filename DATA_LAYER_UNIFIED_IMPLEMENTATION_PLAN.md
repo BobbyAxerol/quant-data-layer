@@ -71740,3 +71740,33 @@ Status: tested locally, not deployed.
   - kn_mark_hot_memo, kn_query_backend, kn_hot_book_invalidation and kn_hot_view OK (33 Redis skips).
 - Lesson: a shared cache on a path with a monotonic gate needs a test for that path before rollout; the rc4 unit
   tests covered only the memo itself.
+
+### D3 stage 100e on rc5: 29/32; Codex review of the measurement harness accepted - 2026-10-10 (Claude)
+
+Run 05:49-06:26Z, Query rc5 (ec89a31, sha256:30261623e5d0), SDK profile, frozen budget. Guard: 92 samples, 1 DEGRADED
+63/64 at 06:18:37. The MARK error watcher read 0 errors in 34 of 40 minutes (max 7 in one minute, around the OKX
+disconnect). The rc4 regression did not recur.
+- PASS: every latency class (p95 34-89 ms); startup.
+- FAIL requests:no_failures (1 DATA_STALE) and streams:no_errors (3) on OKX BNB-USDT-SWAP at 06:11:48-54Z.
+  - The OKX PUBLIC session disconnected: `qdl_native_session_disconnected` generation 167 at 06:11:52Z.
+  - DL refused with the correct type (STALE, SOURCE_SESSION_UNKNOWN, freshness 6045 ms > 5000).
+  - The OKX ingestor has logged 37 disconnects since 2026-10-09 00:00Z, about 1.2 per hour. Reconnect speed is under
+    investigation.
+- FAIL g5:COLD_2500:OKX 7531.5 ms. Binance took 4288.6 ms, and OKX finished one warmup later (third time in four
+  runs). Same-replica queuing vs client-side serial validation in the single cold worker is not yet distinguished.
+- Codex review (accepted after checking the code):
+  1. The TS readiness gate was scored on 2 samples. The periodic observer called `_ts_heartbeat()` with its default
+     container `market_data_service` instead of `market_data_service_p184w`. Receipts: stage100 2 good / 157
+     unreadable, stage100b 2/155, stage50b 2/55; unreadable samples were dropped before scoring.
+     - Fix (this commit): the observer samples the configured writer; None samples count as unreadable;
+       `expected_samples` is recorded.
+     - `ts:ready_60_every_sample` now fails on any unreadable sample or on coverage below expected.
+     - Tests: test_lost_observation_fails_readiness; 50 driver/stage tests OK.
+     - Earlier TS-gate PASSes rest on 2 samples plus the independent 20 s guard log, which was not part of the
+       verifier. They are re-certified only by a run with this fix.
+  2. The supervisor and MARK watcher stopped processes and containers by generic name patterns.
+     - The rc5 supervisor even self-matched a stale shell and never saw 100e finish.
+     - Replaced by run-scoped (process-group) versions; the old ones were stopped.
+  3. The MARK watcher counted an unreadable log as 0 and its e copy still matched `stage100d.sh`. Replaced: UNKNOWN on
+     a read failure.
+  4. The rc5 regression test mocked the monotonic check. A real-ordering case is being added.
