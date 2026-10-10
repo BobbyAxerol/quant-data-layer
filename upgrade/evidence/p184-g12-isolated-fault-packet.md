@@ -128,3 +128,38 @@ public config remain under `~/.local/state/qdl-v2/p184-g12-20261010/`. No build 
 
 Nothing shared changes, so there is nothing to roll back; a failed/aborted run is cleaned by
 `python3 -B scripts/p184_g12_isolated_fault.py --down <work>` (exact-name, label-checked).
+
+## 11. Result - 2026-10-10 (run 03:48-04:12 UTC)
+
+Verdict: G12 PASS on all three faults at `ISOLATED_FAULT` level (BOOK, TS writer clone cache). G2/G3 NOT_MEASURED.
+Evidence: `~/.local/state/qdl-v2/p184-g12-20261010/evidence/` (`verdict.json` from the run, `verdict.reanalyzed.json`
+after the lag-predicate fix below, `publish/sampler/monitor/faults/orchestrator/stats.jsonl`, `logs/`, `teardown.json`).
+Failed setup attempts kept under `p184-g12-20261010-attempts/` (a1: no output, evidence dir created after first
+log line; a2/a3: brokers exited - holder had no resolvable hostname, fixed with `--hostname localhost`; a4 debug).
+
+| Fault | injected | cleared | first valid apply (B / O) | caught up (B / O) | caught-up s | G1 window p95 / p99 / max ms (B; O) |
+|---|---|---|---|---|---|---|
+| broker kafka-3 (canonical leader) stop 60 s / start | 03:54:20.566 | 03:55:44.768 (ISR full 03:55:45.768) | 03:55:44.969 / .970 | 03:55:44.969 / .970 | 0.202 | 103.9 / 118.6 / 843.8; 103.8 / 120.5 / 844.3 |
+| projector restart | 04:00:47.079 | 04:00:48.796 | 04:00:49.052 / .052 | 04:00:49.052 / .052 | 0.256 | 102.7 / 112.6 / 131.9; 103.6 / 117.3 / 183.4 |
+| Stream restart | 04:05:51.182 | 04:05:54.827 | 04:05:57.182 / 04:05:54.960 | 04:05:57.182 / 04:05:54.960 | 2.355 | 101.8 / 111.4 / 304.7; 101.6 / 112.2 / 134.9 |
+
+Baseline (300 s, before faults): p95 103.9 / 103.9 ms, p99 112.8 / 116.6 ms, max 139.4 / 140.1 ms; n 1,200 per venue.
+Every G1 window n >= 1,198. Consumer-visible outage: broker and projector faults none (max view age 176 ms, 0
+non-APPROVED samples); Stream restart BINANCE max view age 3,062 ms with 5 non-APPROVED samples, OKX 1,772 ms, 0.
+Projector stage-A lag back to steady (<= 1) 4.0 s / 1.0 s / 0 s after each clear; lag peak 31 records on its restart.
+Publisher 10,564 frames, 10,564 acked, 0 delivery errors, 0 resyncs. TS clone heartbeat DEGRADED with demanded 2 =
+session-ready 2 throughout (BOOK-only isolated bundle; other writer feeds unavailable by construction).
+
+Resources (docker stats, 41 samples of all 18 roles): total CPU max 162 % (mean 64 %), total memory max 2,614 MiB;
+peaks kafka-3 79 % / 478 MiB, kafka-2 594 MiB, query 52 % / 152 MiB, TS writers 7 % / 264 MiB each.
+Disk free 109.9 GB before, 104.8 GB at start of the final attempt, >= 97 GB after.
+
+Teardown: 12 namespace containers + 6 WriterClone containers (2 writers, 2 Redis, 2 Postgres) + 2 log dirs removed;
+by label 0, by name 0, networks 0 created/0 left, volumes 314 before -> 316 after the harness -> 2 anonymous volumes
+(the WriterClone Redis `VOLUME /data`, `docker rm -f` without `-v`) removed by exact ID -> 314. Fixed in the harness:
+its runner adds `-v` to WriterClone's `rm -f`. Private material and broker data dirs deleted. Production guard: 0
+breaches (query_kn_1/2 were recreated by another operator at 03:43-03:44, before the final attempt's baseline).
+
+Limits: same-host loopback rehearsal, one projector and one Stream replica, synthetic TEST_ONLY BOOK at 4 Hz/venue
+(not production load), sampler resolution 50 ms. The monitor's "projector lag 0" predicate was wrong (committed
+offset vs LSO keeps 1 for the commit marker); the re-analysis uses <= 1, no G12 number changed.

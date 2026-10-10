@@ -96,8 +96,10 @@ class NamespaceAndTopologyTests(unittest.TestCase):
             run = g12.labelled_run(NS)
             run("docker", "run", "-d", "--rm", "--name", "x", "img")
             run("docker", "inspect", "x")
+            run("docker", "rm", "-f", "x")
         self.assertEqual(calls[0][:5], ["docker", "run", "-d", "--label", f"{g12.LABEL}={NS}"])
         self.assertEqual(calls[1], ["docker", "inspect", "x"])
+        self.assertEqual(calls[2], ["docker", "rm", "-f", "-v", "x"])  # no anonymous volume left
 
 
 class AnalysisTests(unittest.TestCase):

@@ -179,8 +179,9 @@ def topology(ns, work, topic_id="", *, uid=None):
               "QDL_KN_CURSOR_ACTIVE_KEY_ID": "dr08", "QDL_KN_TOPIC_ID": topic_id,
               "QDL_KN_ROUTE_GENERATION": ns, "QDL_KN_READ_VIEW_SECRET_FILE": "/work/read-view.secret"}
     mount = ["-v", f"{work}:/work"]
+    # The holder's hostname is the namespace's: Kafka/log4j resolve it (DR05 kafka: --hostname localhost).
     roles = {"net": _base(ns, "net", network="none", memory="16m", cpus="0.05")
-             + ["--entrypoint", "sleep", IMAGES["holder"], str(LIMITS["holder_s"])]}
+             + ["--hostname", "localhost", "--entrypoint", "sleep", IMAGES["holder"], str(LIMITS["holder_s"])]}
     for node in BROKERS:
         argv = _base(ns, f"kafka-{node}", network=net, memory="1024m", cpus="0.75", uid=uid)
         argv += ["--tmpfs", "/tmp:rw,exec,size=64m,mode=1777", "-v", f"{work}/kafka-{node}:/data",
@@ -496,7 +497,10 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
     last = max((r["t"] for r in sampler_rows if r.get("k") == "view"), default=0)
     complete = last >= window[1]
     result["g1_window_complete"] = complete
-    result["projector_lag0_ns"] = first_monitor(monitor_rows, cleared, lambda r: r.get("projector_lag") == 0)
+    # Committed offset vs LSO keeps 1 for the transaction's commit marker in steady state
+    # (run 2026-10-10: lag 1 in 921 of 1,257 samples, 0 only twice), so "steady" is <= 1.
+    result["projector_lag_steady_ns"] = first_monitor(
+        monitor_rows, cleared, lambda r: r.get("projector_lag") is not None and r["projector_lag"] <= 1)
     result["isr_restored_ns"] = first_monitor(monitor_rows, cleared, lambda r: r.get("under_replicated") == 0)
     result["g12_caught_up_pass"] = result["caught_up_s"] <= GATE["caught_up_s"]
     result["pass"] = (result["g12_caught_up_pass"] and complete
@@ -822,6 +826,10 @@ def labelled_run(ns):
         args = list(args)
         if args[:3] == ["docker", "run", "-d"]:
             args[3:3] = ["--label", f"{LABEL}={ns}"]
+        elif args[:3] == ["docker", "rm", "-f"]:
+            # WriterClone removes with rm -f; the redis image's VOLUME /data would
+            # otherwise stay behind as an anonymous volume (G12 run 2026-10-10: 2 left).
+            args[3:3] = ["-v"]
         result = subprocess.run(args, capture_output=capture, text=True, timeout=timeout)
         if check and result.returncode:
             raise RuntimeError(f"{args[:3]} -> {result.returncode}: {result.stderr[-300:]}")
@@ -902,6 +910,9 @@ class Run:
 
     # -- phases
     def prepare(self):
+        self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.work.mkdir(mode=0o700)
+        self.evidence.mkdir(mode=0o755)
         resources = host_resources()
         self.note("preflight", **resources)
         if resources["disk_free_bytes"] < LIMITS["disk_free_bytes"]:
@@ -915,9 +926,6 @@ class Run:
         self.note("production_guard_before", containers=len(self.guard0), guard=self.guard0)
         self.volumes0 = len(sh(["docker", "volume", "ls", "-q"]).split())
         self.networks0 = len(sh(["docker", "network", "ls", "-q"]).split())
-        self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.work.mkdir(mode=0o700)
-        self.evidence.mkdir(mode=0o755)
         (self.work / "handoff.json").write_text(json.dumps({
             "namespace": self.ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
             "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False}, indent=2) + "\n")
@@ -1058,8 +1066,22 @@ class Run:
         if not verdict["pass"]:
             raise RuntimeError(f"STOP {name}: G12/G1 verdict FAIL")
 
+    def keep_logs(self):
+        """Bounded log tails of every owned container (--rm loses them at stop)."""
+        logs = self.evidence / "logs"
+        logs.mkdir(exist_ok=True)
+        for name in owned_names(self.ns):
+            result = subprocess.run(["docker", "logs", "--tail", "120", name], capture_output=True,
+                                    text=True, timeout=30)
+            (logs / (name[len(self.ns) + 1:] + ".log")).write_text(
+                (result.stdout + result.stderr)[-60000:])
+
     def down(self):
         removed, errors = [], []
+        try:
+            self.keep_logs()
+        except Exception as error:  # noqa: BLE001 - evidence is best effort, teardown is not
+            errors.append("logs:" + type(error).__name__)
         for clone in self.clones.values():
             try:
                 for item in clone.close():
@@ -1135,6 +1157,7 @@ def orchestrate(base, export, ns):
         status = "COMPLETED"
     except BaseException as exc:  # noqa: BLE001 - evidence first, then teardown
         error = f"{type(exc).__name__}: {exc}"
+        print("STOPPED", error, flush=True)
         if run.evidence.exists():
             run.note("stopped", error=error)
     finally:
