@@ -22,10 +22,29 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from functools import partial
+import os
 import threading
 import time
 
-COLD_SLICE_SECONDS = 0.004
+COLD_SLICE_ENV = "QDL_QUERY_COLD_SLICE_MS"
+
+
+def cold_slice_seconds(value: str | None) -> float:
+    """The cold work slice from ``QDL_QUERY_COLD_SLICE_MS`` (integer 1..50, default 4).
+
+    P18.4 D3 stage 100: under fleet load a cold warmup spends most of its time
+    waiting to re-take the GIL after each pause, not computing. A longer slice
+    gives cold reads more of the GIL at the cost of at most one slice of extra
+    hot latency. Out-of-range values are refused at import, never clamped."""
+
+    if value is None or value == "":
+        return 0.004
+    if not value.isdigit() or not 1 <= int(value) <= 50:
+        raise ValueError(f"{COLD_SLICE_ENV} must be an integer 1..50 (ms)")
+    return int(value) / 1000.0
+
+
+COLD_SLICE_SECONDS = cold_slice_seconds(os.environ.get(COLD_SLICE_ENV))
 COLD_PAUSE_SECONDS = 0.002
 
 _state = threading.local()

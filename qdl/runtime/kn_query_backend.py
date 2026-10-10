@@ -95,6 +95,8 @@ PARTITION_PLAN_EPOCH_ENV = "QDL_KN_PARTITION_PLAN_EPOCH"
 ROUTE_GENERATION_ENV = "QDL_KN_ROUTE_GENERATION"
 CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
 DEFAULT_ROW_CACHE_ENTRIES = 20_000
+# A MARK/INDEX hot-view lookup is shared by every read of that binding on one replica for this long.
+MARK_HOT_MEMO_NS = 50_000_000
 # Item fields rebuilt per request (time/request dependent); never cached.
 _DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
 
@@ -195,6 +197,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         # Bounded by the immutable catalog, coordinates only (no second cache).
         self._hot_boundaries: dict[str, tuple[object, int, str]] = {}
         self._hot_boundary_lock = threading.Lock()
+        # IDR-084 MARK lookups, single-flight per binding (see _hot_latest).
+        self._mark_hot_memo: dict[str, tuple[int, object]] = {}
+        self._mark_hot_locks: dict[str, threading.Lock] = {}
+        self._mark_hot_locks_guard = threading.Lock()
 
     # ------------------------------------------------------------ cache view
 
@@ -276,7 +282,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
             return None
         try:
-            candidate = self.hot_client.latest(binding, self.product_key(binding))
+            candidate = self._hot_latest(binding)
         except HotViewGap as error:
             raise QueryBackendError(QueryProblem(
                 CanonicalErrorCode.OPEN_SEQUENCE_GAP, str(error), True,
@@ -300,6 +306,38 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         if len(records) != 1 or not self._hot_monotonic(binding, candidate):
             raise HotViewUnavailable("HOT_BACKUP_BEHIND_RETURNED_VIEW")
         return candidate
+
+    def _hot_latest(self, binding):
+        """One hot-view lookup; MARK/INDEX lookups are shared per binding for MARK_HOT_MEMO_NS.
+
+        P18.4 D3 stage 100 on rc3: the IDR-084 path made every MARK read query the
+        Rust hot reader, whose ring scan runs under try_lock
+        (rust/qdl-stream-gateway/src/hub.rs check_hot_reader/latest). Concurrent
+        lookups refused each other HOT_READER_BUSY, and two TRADE/QUOTE reads that
+        needed the backup ended DATA_NOT_READY. Many sessions read the same MARK
+        product, so concurrent and back-to-back MARK reads on one replica now share
+        one lookup (outcome, including a refusal) for 50 ms. The caller still takes
+        the newer of cache and hot view under every lineage/monotonic gate, so a
+        shared result can only be older, never less verified. Other feeds are
+        unchanged."""
+        if binding.feed is not FeedType.MARK_INDEX_PRICE:
+            return self.hot_client.latest(binding, self.product_key(binding))
+        key = binding.binding_id
+        with self._mark_hot_locks_guard:
+            lock = self._mark_hot_locks.setdefault(key, threading.Lock())
+        with lock:
+            now = self._monotonic_ns()
+            memo = self._mark_hot_memo.get(key)
+            if memo is None or now - memo[0] >= MARK_HOT_MEMO_NS:
+                try:
+                    outcome = self.hot_client.latest(binding, self.product_key(binding))
+                except HotViewUnavailable as error:
+                    outcome = error
+                memo = (now, outcome)
+                self._mark_hot_memo[key] = memo
+        if isinstance(memo[1], HotViewUnavailable):
+            raise type(memo[1])(*memo[1].args)  # a fresh exception per reader thread
+        return memo[1]
 
     def _latest_view(self, requirement, binding):
         primary_error = None

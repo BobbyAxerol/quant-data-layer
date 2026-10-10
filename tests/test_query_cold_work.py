@@ -227,5 +227,18 @@ class CancelledWorkHoldsItsPermitTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(set(names)), 2)
 
 
+
+class ColdSliceEnvTests(unittest.TestCase):
+    def test_default_and_bounds(self):
+        self.assertEqual(cold_work.cold_slice_seconds(None), 0.004)
+        self.assertEqual(cold_work.cold_slice_seconds(""), 0.004)
+        self.assertEqual(cold_work.cold_slice_seconds("1"), 0.001)
+        self.assertEqual(cold_work.cold_slice_seconds("20"), 0.02)
+        self.assertEqual(cold_work.cold_slice_seconds("50"), 0.05)
+        for bad in ("0", "51", "-1", "4.5", "x", " 4"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                cold_work.cold_slice_seconds(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

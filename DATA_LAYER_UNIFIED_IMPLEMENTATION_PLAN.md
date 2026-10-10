@@ -71639,3 +71639,31 @@ Owner decision 2026-10-10: DL adds the trade identity; TS uses it in phase E. Co
   - after the cherry-pick: 5 modules OK (33 Redis skips).
 - Cost: about 45 bytes more per row; warmup throughput not measured.
 - Status: tested locally, not deployed.
+
+### D3 window C stage 100 on rc3: 30/32; DATA_NOT_READY root cause and rc4 fixes - 2026-10-10 (Claude)
+
+Run: owner-run roll of query_kn_1/2 to qdl-v2-python:2.2.3-rc3-76950c8 (sha256:672503b7fe87, label revision 76950c8,
+03:06Z); stage 100 at 1800 s, SDK profile, frozen budget, 4 x 120 s G4 windows; guard READY 64/64, restarts 0,
+OOM 0.
+- PASS: startup (setup 61.5 s, 0 failures, 190 retries; was 9 RATE_LIMITED on the old image); every latency class;
+  streams; TS gates.
+- FAIL requests:no_failures, 2 DATA_NOT_READY on OKX BNB-USDT-SWAP (TRADE probe 03:31:41Z, QUOTE snapshot 03:33:59Z,
+  query_v2_1).
+  - The detail hash matches `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY` (kn_query_backend.py
+    `_latest_view`). Query logs carry no line for it.
+  - The Rust hot reader scans its ring under `try_lock` (rust/qdl-stream-gateway/src/hub.rs latest/check_hot_reader),
+    so concurrent lookups refuse each other.
+  - rc3 deployed IDR-084, which queries the hot reader on every MARK read. The stage-50/100 runs on the old image had
+    0 request failures. The added MARK lookup load is the likely trigger: inferred, not measured.
+- FAIL g5:COLD_2500:OKX 6992.6 ms. Binance took 3510.9 ms; the difference of 3482 ms is one warmup, so the two reads
+  shared a replica again.
+  - The Binance read barely improved (3544 -> 3511 ms) even though rc3 cuts first-read compute by about 31 %
+    offline. Under load the read time is dominated by GIL wait after each duty-cycle pause, not by compute.
+- Fixes (this commit, tested locally):
+  - MARK hot lookups are single-flight per binding for 50 ms (`_hot_latest`, MARK_HOT_MEMO_NS). The outcome is
+    shared, refusals included and re-raised fresh. Other feeds are unchanged. The caller keeps every
+    lineage/monotonic gate.
+  - Cold slice from env QDL_QUERY_COLD_SLICE_MS (integer 1..50, default 4; out of range refused at import). This lets
+    one variable be tuned on the same image against the frozen G5 limit while the hot latency classes are watched.
+  - Tests: new tests/test_kn_mark_hot_memo.py (6), ColdSliceEnvTests; 96 related tests OK (33 Redis skips).
+- G4 (g4b-1..4) is summarized with the rc4 run.
