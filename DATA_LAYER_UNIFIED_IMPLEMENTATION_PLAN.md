@@ -72029,3 +72029,28 @@ no build, CI or subagent job running.
     the DL latest view before IDR-084.
   - One-variable tuning window started: Binance MARK wake read delay 250 -> 100 ms via the per-venue override
     (parser bounds 0..500 ms).
+
+### G2 PASS after one-variable tune; G13 41/41 DL cells PASS on the final digests - 2026-10-10 (Claude)
+
+- G2 MARK, second 590 s trace window (13:30-13:40Z; writer env DATA_LAYER_V2_MARK_WAKE_READ_DELAY_BY_VENUE=BINANCE=100,
+  parser bounds 0..500 ms, the only tuned variable; image unchanged):
+  - Binance new-event transit n 2671, p50 278.5, p95 339.3, max 708 ms: PASS (was p95 500.7);
+  - OKX n 6390, p50 212.3, p95 317.9, max 495 ms: PASS;
+  - writer READY in every guard sample.
+  The writer keeps BINANCE=100; the rollback compose is g2-tune/rollback-*.compose.json.
+- G13 on DL bbfb3be + writer ed02064, runner run from a DL worktree at bbfb3be. The first attempt was refused by the
+  runner because the DL checkout HEAD differed from the release sha; receipts are kept.
+  - dr05-upstream 6/6 PASS (BINANCE, OKX, OKX_INVERSE GAP_REFUSAL and GENERATION_CHANGE_FENCED; receipt
+    p184-g13-20261010T134219Z).
+  - dr04-dr06-views 22/22 PASS, the inverse scope included (same receipt).
+  - dr05-transport 9/9 PASS (STALE_TYPED, DISCONNECT_RECONNECT recovered in 6765 ms, APPROVED_FALLBACK_AND_RETURN
+    with no V1; receipt p184-g13-20261010T142735Z).
+    - Root cause of the first failure: the TS harness probe read QUOTE only while the production policy requires
+      MARK for USD_M/SWAP; fixed in TS 7d7fd0e (probe uses execution_required_feeds; validator unchanged).
+    - Provenance: writer image ed02064 (deployed); harness script 7d7fd0e.
+  - dr08-isolated 4/4 PASS in QUALIFICATION mode, 5 restart samples (receipt p184-g13-20261010T142914Z).
+  - Deferred to the TS release because the TS stack (gateway, alpha, risk) is not running:
+    - dr01-deployed and dr01-wrong-account (the runner and the IDR-085 gateway fix exist);
+    - dr02-dr03-alpha;
+    - dr07-reference.
+    These cells stay OPEN; they are not claimed.
