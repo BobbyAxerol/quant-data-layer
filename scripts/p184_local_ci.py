@@ -573,9 +573,15 @@ def trivy_command(step, image, source):
     if with_.get("scan-type") == "fs":
         return ["docker", "run", "--rm", "-v", f"{source}:/scan:ro", image, "fs", *common,
                 "--scanners", with_.get("scanners", "vuln"), "/scan"]
-    extra = ["--ignore-unfixed"] if with_.get("ignore-unfixed") == "true" else []
-    return ["docker", "run", "--rm", "-v", "/var/run/docker.sock:/var/run/docker.sock:ro", image, "image",
-            *common, *extra, with_["image-ref"]]
+    # YAML parses `ignore-unfixed: true` as a boolean; accept both spellings, as trivy-action does (a string-only
+    # comparison silently dropped the flag and scanned 44 unfixed Debian HIGHs, 2026-10-10).
+    extra = ["--ignore-unfixed"] if str(with_.get("ignore-unfixed", "")).lower() == "true" else []
+    mounts = ["-v", "/var/run/docker.sock:/var/run/docker.sock:ro"]
+    if (Path(source) / ".trivyignore").is_file():
+        # trivy-action reads the repository's .trivyignore from the workspace; mount it the same way.
+        mounts += ["-v", f"{Path(source) / '.trivyignore'}:/tmp/.trivyignore:ro"]
+        extra += ["--ignorefile", "/tmp/.trivyignore"]
+    return ["docker", "run", "--rm", *mounts, image, "image", *common, *extra, with_["image-ref"]]
 
 
 def predict(steps, decisions):

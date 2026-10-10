@@ -184,3 +184,20 @@ class SafetyTests(NoProcessTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrivyCommandFlagsTests(unittest.TestCase):
+    def test_boolean_ignore_unfixed_and_repo_ignorefile_are_passed(self):
+        import tempfile
+        from types import SimpleNamespace
+        from pathlib import Path as _P
+        import scripts.p184_local_ci as ci
+        with tempfile.TemporaryDirectory() as src:
+            (_P(src) / ".trivyignore").write_text("CVE-0000-0000\n")
+            for value in (True, "true", "True"):
+                step = SimpleNamespace(with_={"image-ref": "img", "ignore-unfixed": value, "exit-code": "1"})
+                cmd = ci.trivy_command(step, "aquasec/trivy:x", src)
+                self.assertIn("--ignore-unfixed", cmd)
+                self.assertIn("--ignorefile", cmd)
+            step = SimpleNamespace(with_={"image-ref": "img", "ignore-unfixed": False})
+            self.assertNotIn("--ignore-unfixed", ci.trivy_command(step, "aquasec/trivy:x", src))
