@@ -72054,3 +72054,41 @@ no build, CI or subagent job running.
     - dr02-dr03-alpha;
     - dr07-reference.
     These cells stay OPEN; they are not claimed.
+
+### Strict scorecard, G12 on final images, TRADE tail attribution, funding evidence - 2026-10-10 (Claude, subagents)
+
+- Release evidence 59e725a (status PREPARED_NOT_PUBLISHED). Scored strictly against the frozen gate windows: steady
+  >= 30 min at stage-100 load + burst + fault windows.
+  - G5 PASS (stage 100m).
+  - G2 FAIL: TRADE BINANCE p95 539.1 / max 1078.7 ms in the first trace window.
+  - G1, G3, G4 (16/17 rows), G6-G12, G14 (two roles missing) NOT_MEASURED under the protocol.
+  - G13: DL cells 41/41; TS-stack cells deferred.
+  - Correction (Claude): the earlier "G2 PASS" covered MARK only, and from unloaded trace windows. Method error:
+    a gate was scored on one feed instead of every feed it names.
+- TRADE tail attribution (analysis only, no code change):
+  - The DL is clean in both windows: Kafka->hub dispatch <= 100 ms (p99 <= 50); subscription queue->task <= 50 ms;
+    tonic handoff <= 10 ms; core raw_age <= 114 ms.
+  - The tail is the TS writer's per-slice sequential consumer: read 8-11 + project 13-15 + EVAL 9-14 ms per
+    64-event batch, i.e. ~1.3-2.0k rec/s per slice, against a Binance ETH burst of 4,205 rec/s. Backlog up to ~1 s.
+  - The difference between windows 1 and 2 is market activity (ETH 7,741 vs 4,705 trades).
+  - Chosen fix (owner rule: follow Claude's recommendation; no extra resources): in-slice pipelining in the writer,
+    in progress, plus additive TRADE integrity counters for G10.
+- G12 re-run on the final images (bbfb3be DL, ed02064 writer clone), 16:16-16:42Z; packet section 13; commits
+  627f19d, 7188b8b, 8bbcaae, 2d11a87:
+  - caught up after the fault cleared: broker kafka-3 stopped 60 s 48.857 s; projector restart 56.534 s; Stream
+    restart 8.764 s (all <= 600 s);
+  - G1 300 s windows after caught-up within the gate (max <= 1127 ms OKX after the broker fault);
+  - teardown: 0 containers, 0 networks, volumes 211 -> 211.
+  - Longer catch-up than the morning run because the fresh export carries the production
+    materialized_snapshot_interval_ms 1000 (morning: 100). First valid apply was within 1.1 s in every case.
+  - Inheritance for rc8: rc8 changes only Query (funding allowance) and scripts. Core, Stream and projector are
+    byte-identical in source, so G12 holds for rc8.
+- Funding evidence (read-only public API poll 15:58-16:04Z, ~4.6 s cadence):
+  - the 16:00Z settled row appeared in history at OKX BTC/ETH/SOL-USDT-SWAP +10 s (SOL settState processing at
+    +5 s), Binance BTC/SOL/ETH +5/+10/+24 s;
+  - this confirms the stage-100g cause (refusal at +7.1 s, before OKX published);
+  - the 60 s allowance was re-applied with the evidence in the code comment (2e0de95), tested; it ships in rc8.
+- Campaign tooling ready (TS b642e0d long trace window <= 3600 s and MAX_FILES <= 96; DL 848d5d2/65ada37 probes for
+  G3/G6/G8/G9/G10/G11/G14 and scripts/p184_gate_campaign.py). Still NOT_MEASURED by design:
+  - G6 BOOK_DELTA: the frozen workload has no Query shape for it;
+  - G4: 5 rows without a frozen baseline (no baseline is added after measuring).
