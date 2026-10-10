@@ -368,12 +368,71 @@ class CampaignTests(unittest.TestCase):
                                           "observer_receipt_wall_ns": 1 * S + 50_000_000}])
         self.assertEqual(rows, {"trade|OKX_INVERSE|": {"n": 1, "p95": 50.0, "max": 50.0}})
 
-    def test_g6_unsafe_fails_missing_binding_not_measured(self):
-        full = {key: {"n": 5, "unsafe": 0} for key in campaign.G6_REQUIRED}
-        self.assertEqual(campaign.score_g6(full)[0], "PASS")
-        self.assertEqual(campaign.score_g6({**full, "TRADE|OKX|": {"n": 5, "unsafe": 1}})[0], "FAIL")
-        partial = {k: v for k, v in full.items() if not k.startswith("BOOK_DELTA")}
+    D3 = "D3_EXECUTION"
+
+    def _d3(self, **extra):
+        return {key: {"n": 5, "unsafe": 0, "policy_basis": self.D3, **extra} for key in campaign.G6_REQUIRED}
+
+    def _alpha(self, unsafe=0):
+        return {f"{key}@REQUIREMENT_ALPHA": {"n": 50, "unsafe": unsafe, "policy_basis": "REQUIREMENT_ALPHA"}
+                for key in campaign.G6_REQUIRED}
+
+    def test_g6_only_alpha_rows_is_not_measured(self):
+        state, _, why = campaign.score_g6(self._alpha())
+        self.assertEqual(state, "NOT_MEASURED")
+        self.assertIn("no EXECUTION (D3) view", why[0])
+        self.assertIn("REQUIREMENT_ALPHA", why[0])
+
+    def test_g6_clean_d3_rows_pass(self):
+        self.assertEqual(campaign.score_g6({**self._d3(), **self._alpha()})[0], "PASS")
+        # Probe rows (keyed apart with the probe suffix) count for their base binding.
+        probe = campaign.g6_ts_probe_rows({"rows": {key: {"n": 3, "unsafe": 0, "policy_basis": self.D3}
+                                                    for key in campaign.G6_REQUIRED}})
+        self.assertEqual(campaign.score_g6({**probe, **self._alpha()})[0], "PASS")
+
+    def test_g6_d3_unsafe_fails(self):
+        quality = {**self._d3(), "TRADE|OKX|": {"n": 5, "unsafe": 1, "policy_basis": self.D3}}
+        state, _, why = campaign.score_g6(quality)
+        self.assertEqual(state, "FAIL")
+        self.assertIn("D3 execution policy", why[0])
+
+    def test_g6_alpha_unsafe_under_its_own_requirement_fails(self):
+        state, _, why = campaign.score_g6({**self._d3(), **self._alpha(unsafe=1)})
+        self.assertEqual(state, "FAIL")
+        self.assertIn("own requirement", why[0])
+        self.assertEqual(campaign.score_g6(self._alpha(unsafe=1))[0], "FAIL")
+
+    def test_g6_missing_d3_binding_and_legacy_rows(self):
+        partial = {k: v for k, v in self._d3().items() if not k.startswith("MARK_INDEX_PRICE|OKX")}
         self.assertEqual(campaign.score_g6(partial)[0], "NOT_MEASURED")
+        # Rows without policy_basis (older receipts) are reported, not scored: never PASS, never FAIL by themselves.
+        legacy = {key: {"n": 5, "unsafe": 3} for key in campaign.G6_REQUIRED}
+        state, _, why = campaign.score_g6(legacy)
+        self.assertEqual(state, "NOT_MEASURED")
+        self.assertTrue(any("without policy_basis" in item for item in why))
+
+    def test_g6_probe_window_and_last_line(self):
+        load = [1000.0, 2800.0]
+        self.assertEqual(campaign.g6_ts_probe_coverage({"kind": "final", "window_unix_s": [990.0, 2810.0]}, load), [])
+        self.assertTrue(campaign.g6_ts_probe_coverage({"kind": "final", "window_unix_s": [990.0, 2500.0]}, load))
+        self.assertTrue(campaign.g6_ts_probe_coverage({"kind": "partial", "window_unix_s": [990.0, 2810.0]}, load))
+        self.assertTrue(campaign.g6_ts_probe_coverage(None, load))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "probe.jsonl"
+            path.write_text('{"kind": "start", "pid": 7}\n{"kind": "partial", "reads": 1}\n{"kind": "final", '
+                            '"reads": 2}\n{"kind": "fin')
+            self.assertEqual(campaign.read_probe_lines(path), {"kind": "final", "reads": 2})
+
+    def test_g6_probe_is_planned_as_a_read_only_docker_exec_into_the_writer(self):
+        import argparse
+        args = argparse.Namespace(state_tools="/tools", load_timeout=2400, budget="b.json", writer="w1", g11=False,
+                                  g11_wait=900)
+        plan = {"binding": "/b.json", "market_redis": {"container": "r", "db": 1},
+                "heartbeat_redis": {"container": "h", "db": 0}}
+        commands = campaign.command_plan(args, plan, Path("/c"), 0.0)
+        self.assertEqual(commands["g6_ts"][:7], ["docker", "exec", "-i", "w1", "python", "-B", "-"])
+        self.assertEqual(commands["g6_ts"][commands["g6_ts"].index("--duration") + 1], "2460")
+        self.assertTrue(commands["g6_ts_stdin"].endswith("scripts/p184_g6_ts_execution_probe.py"))
 
     def test_g10_needs_trace_for_duplicates(self):
         g10 = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
@@ -396,7 +455,12 @@ class CampaignTests(unittest.TestCase):
             (d / "stage100" / "receipt.json").write_text(json.dumps({
                 "stage": 100, "final": True, "load_window_unix_s": [1000.0, 2000.0],  # 1000 s < 1800 s
                 "fault_windows": {"BURST": [720, 730]}, "g6_view_quality": {
-                    key: {"n": 5, "unsafe": 0} for key in campaign.G6_REQUIRED}}))
+                    f"{key}@REQUIREMENT_ALPHA": {"n": 5, "unsafe": 0, "policy_basis": "REQUIREMENT_ALPHA"}
+                    for key in campaign.G6_REQUIRED}}))
+            (d / "g6-ts").mkdir()
+            (d / "g6-ts" / "summary.json").write_text(json.dumps({
+                "kind": "final", "window_unix_s": [990.0, 2010.0], "rows": {
+                    key: {"n": 5, "unsafe": 0, "policy_basis": "D3_EXECUTION"} for key in campaign.G6_REQUIRED}}))
             (d / "stage100" / "gates.json").write_text(json.dumps({"status": "PASS", "gates": [
                 {"gate": "latency:BAR_LATEST:OKX", "status": "PASS"}]}))
             card = campaign.build_scorecard(d)

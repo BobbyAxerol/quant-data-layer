@@ -16,6 +16,9 @@ What `run` starts (all children of this process, tracked by PID, each with its o
 * G4 observer windows (scripts/p184_g4_observer.py), four 120 s windows plus one 180 s window around a UTC :00/:30
   boundary when one falls inside the load, so a 30m close can be seen;
 * G3 BAR cache poller, G8 Redis sampler, G9/G10 writer counters for the whole load (stopped by SIGTERM after it);
+* G6 TS execution probe (scripts/p184_g6_ts_execution_probe.py, `docker exec -i <writer> python -B -`): the writer's own
+  EXECUTION reads (QUOTE, TRADE, MARK/INDEX) classified against the frozen D3 policy for the whole load, read-only,
+  self-bounded; stopped through its own in-container PID (SIGTERM) after the load; output g6-ts/summary.json;
 * G11 (optional, after the load because any monitored-container restart aborts the driver): the restart probe arms and
   waits for the COORDINATOR to restart the writer; this tool never restarts anything.
 Then `score` (also callable alone on a finished campaign dir) runs the trace analyses (G1, G2, G7, G10 duplicates) in a
@@ -68,10 +71,14 @@ TRACE_FEEDS_G1 = ("BOOK_DELTA", "BOOK_SNAPSHOT")
 TRACE_FEEDS_G2 = ("TRADE", "QUOTE")
 G7_FEEDS = ("BOOK_DELTA", "BOOK_SNAPSHOT", "QUOTE", "TRADE", "MARK_INDEX_PRICE")
 VENUES = ("BINANCE", "OKX")
-G6_REQUIRED = tuple(f"{feed}|{venue}|{interval}" for feed, interval in
-                    (("TRADE", ""), ("QUOTE", ""), ("MARK_INDEX_PRICE", ""), ("BOOK_SNAPSHOT", ""),
-                     ("BOOK_DELTA", ""), ("BAR", "1m")) for venue in VENUES)
+# G6 is decided only by D3_EXECUTION rows (reads made with an EXECUTION-grade requirement, i.e. the TS writer's own
+# identity via the G6 TS execution probe). Required: QUOTE, MARK_INDEX_PRICE, TRADE per venue; BOOK_DELTA is not a
+# Query shape of the frozen workload; BOOK_SNAPSHOT and BAR1m D3 rows are scored when present, not required.
+G6_D3_BASIS = "D3_EXECUTION"
+G6_REQUIRED = tuple(f"{feed}|{venue}|" for feed in ("TRADE", "QUOTE", "MARK_INDEX_PRICE") for venue in VENUES)
 G6_GATED_FEEDS = ("TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA", "BAR")
+G6_TS_PROBE_SUFFIX = "#ts-probe"
+G6_TS_PROBE_EMIT_SECONDS = 60
 
 
 # ---------------------------------------------------------------- plan helpers (pure, unit-tested)
@@ -283,19 +290,78 @@ def g4_inverse_rows(observations) -> dict:
     return out
 
 
+def _g6_base_key(key: str) -> str:
+    return key.split(G6_TS_PROBE_SUFFIX, 1)[0].split("@", 1)[0]
+
+
 def score_g6(quality: dict | None) -> tuple[str, dict, list[str]]:
+    """Only D3_EXECUTION rows decide the gate. Rows of any other basis (e.g. the ALPHA reads of the stage-100 load,
+    REQUIREMENT_ALPHA) are reported, and an unsafe view there is still a FAIL because it was eligible beyond its OWN
+    requirement (a DL eligibility defect), but they can never make the D3 gate PASS. Rows without policy_basis
+    (receipts from before the basis was recorded) were classified against an unknown basis: reported, not scored."""
     quality = quality or {}
-    unsafe = {key: row.get("unsafe", 0) for key, row in quality.items()
-              if key.split("|", 1)[0] in G6_GATED_FEEDS and row.get("unsafe")}
-    rows = {key: {k: row.get(k) for k in ("n", "policy_ms", "age_ms", "max_age_ms", "classes", "refusals", "reasons",
-                                          "unsafe")} for key, row in quality.items()}
-    if unsafe:
-        return "FAIL", rows, [f"unsafe eligibility: {unsafe}"]
-    missing = [key for key in G6_REQUIRED if not (quality.get(key) or {}).get("n")]
+    rows = {key: {k: row.get(k) for k in ("n", "policy_ms", "policy_basis", "age_basis", "age_ms", "max_age_ms",
+                                          "max_client_age_ms", "classes", "refusals", "reasons", "unsafe")}
+            for key, row in quality.items()}
+    gated = {key: row for key, row in quality.items() if key.split("|", 1)[0] in G6_GATED_FEEDS}
+    d3 = {key: row for key, row in gated.items() if row.get("policy_basis") == G6_D3_BASIS}
+    own = {key: row for key, row in gated.items() if row.get("policy_basis") not in (None, G6_D3_BASIS)}
+    legacy = sorted(key for key, row in quality.items() if not row.get("policy_basis"))
+    unsafe_d3 = {key: row["unsafe"] for key, row in d3.items() if row.get("unsafe")}
+    unsafe_own = {key: row["unsafe"] for key, row in own.items() if row.get("unsafe")}
+    notes = [f"rows without policy_basis reported, not scored: {', '.join(legacy)}"] if legacy else []
+    if unsafe_d3 or unsafe_own:
+        why = []
+        if unsafe_d3:
+            why.append(f"unsafe eligibility under the D3 execution policy: {unsafe_d3}")
+        if unsafe_own:
+            why.append(f"unsafe eligibility under the read's own requirement (DL eligibility defect): {unsafe_own}")
+        return "FAIL", rows, why + notes
+    measured = {}
+    for key, row in d3.items():
+        measured[_g6_base_key(key)] = measured.get(_g6_base_key(key), 0) + (row.get("n") or 0)
+    missing = [key for key in G6_REQUIRED if not measured.get(key)]
     if missing:
-        return "NOT_MEASURED", rows, [f"no returned view for: {', '.join(missing)} (BOOK_DELTA is not a Query shape of "
-                                      "the frozen stage-100 workload)"]
-    return "PASS", rows, []
+        other = sorted({row.get("policy_basis") for row in own.values()})
+        return "NOT_MEASURED", rows, [f"no EXECUTION (D3) view for: {', '.join(missing)}" + (
+            f"; rows of {', '.join(other)} are reported only and cannot pass the D3 gate" if other else "")] + notes
+    return "PASS", rows, notes
+
+
+def g6_ts_probe_rows(summary: dict | None) -> dict:
+    """The TS execution probe's rows, keyed apart (G6_TS_PROBE_SUFFIX) so they never merge into a driver row."""
+    return {f"{key}{G6_TS_PROBE_SUFFIX}": row for key, row in ((summary or {}).get("rows") or {}).items()}
+
+
+def g6_ts_probe_coverage(summary: dict | None, load_s) -> list[str]:
+    """The probe must have run as the writer for the whole load window; otherwise its rows cannot PASS G6."""
+    if summary is None:
+        return ["no G6 TS execution probe summary"]
+    window = summary.get("window_unix_s")
+    if not load_s or not window:
+        return ["G6 TS execution probe or load window unknown"]
+    gaps = []
+    if window[0] > load_s[0] or window[1] < load_s[1]:
+        gaps.append(f"G6 TS execution probe window {window} does not cover the load window {load_s}")
+    if summary.get("kind") != "final":
+        gaps.append("G6 TS execution probe summary is a partial line (the probe did not exit cleanly)")
+    return gaps
+
+
+def read_probe_lines(path: Path) -> dict | None:
+    """Last complete JSON line of the probe's stdout (final if it exited cleanly, else the newest partial)."""
+    last = None
+    try:
+        for line in Path(path).read_text().splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if item.get("kind") in ("partial", "final"):
+                last = item
+    except OSError:
+        return None
+    return last
 
 
 def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str]) -> tuple[str, dict, list[str]]:
@@ -390,10 +456,19 @@ def build_scorecard(campaign_dir: Path) -> dict:
     add("G5", "request latency", "certified stage-50 p95/p99 per class and venue; frozen cold-shape limits", v,
         f"failed: {failed_latency}" if failed_latency else f"{len(latency)} latency/cold gates" if latency else
         "no driver gates", measured=latency)
-    v, rows, why = score_g6((receipt or {}).get("g6_view_quality"))
-    add("G6", "durable-view event age and typed execution quality at the Query endpoint", "per-binding policy (TRADE "
-        "3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms); zero unsafe eligibility", v,
-        "; ".join(why) or "every required binding measured, 0 unsafe", measured=rows)
+    g6_ts = load_json(d / "g6-ts" / "summary.json")
+    v, rows, why = score_g6({**((receipt or {}).get("g6_view_quality") or {}), **g6_ts_probe_rows(g6_ts)})
+    probe_gaps = g6_ts_probe_coverage(g6_ts, load_s)
+    if probe_gaps and v == "PASS":
+        v = "NOT_MEASURED"
+    why = why + probe_gaps if v != "FAIL" else why
+    add("G6", "durable-view event age and typed execution quality at the Query endpoint", "per-binding D3 policy of the "
+        "TS EXECUTION consumer (TRADE 3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms, min with "
+        "the requirement); zero unsafe eligibility; decided by D3_EXECUTION rows only", v,
+        "; ".join(why) or "every required D3 binding measured, 0 unsafe", measured=rows,
+        sources={"g6_ts": sha256_file(d / "g6-ts" / "summary.json")},
+        ts_probe={k: (g6_ts or {}).get(k) for k in ("window_unix_s", "reads", "errors", "targets",
+                                                     "per_binding_period_s", "stopped_by")} if g6_ts else None)
     v, rows, why = score_g7(transit)
     if trace_gaps and v != "FAIL":
         v, why = "NOT_MEASURED", why + trace_gaps
@@ -530,9 +605,13 @@ class Children:
         self.items: list[tuple[str, subprocess.Popen]] = []
         self.lock = threading.Lock()
 
-    def start(self, name, command, *, log: Path, cwd=None):
+    def start(self, name, command, *, log: Path, cwd=None, stdin_path: Path | None = None,
+              stdout_path: Path | None = None):
         handle = log.open("x")
-        process = subprocess.Popen(command, cwd=cwd, stdout=handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        source = Path(stdin_path).open("rb") if stdin_path else subprocess.DEVNULL
+        sink = Path(stdout_path).open("x") if stdout_path else handle
+        process = subprocess.Popen(command, cwd=cwd, stdout=sink, stderr=handle if stdout_path else subprocess.STDOUT,
+                                   stdin=source)
         with self.lock:
             self.items.append((name, process))
         return process
@@ -585,6 +664,31 @@ def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
         (out / name).write_text(json.dumps(value, indent=1, sort_keys=True) + "\n")
 
 
+def stop_g6_ts_probe(writer: str, process, out: Path) -> None:
+    """docker exec does not forward signals: SIGTERM the probe by the exact in-container PID it printed first (a
+    signal to our own read-only process, nothing else in the writer), wait for its final line, then write the last
+    complete line as summary.json. If the probe already exited this only writes the summary."""
+    lines = out / "probe.jsonl"
+    if process.poll() is None:
+        start = None
+        try:
+            start = json.loads(lines.read_text().splitlines()[0])
+        except (OSError, ValueError, IndexError):
+            pass
+        pid = (start or {}).get("pid")
+        if isinstance(pid, int) and pid > 1:
+            subprocess.run(["docker", "exec", writer, "python", "-B", "-c",
+                            f"import os, signal; os.kill({pid}, signal.SIGTERM)"], capture_output=True, timeout=30)
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    summary = read_probe_lines(lines)
+    if summary is not None:
+        (out / "summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n")
+
+
 def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
     tools = Path(args.state_tools)
     py = [sys.executable, "-B"]
@@ -601,6 +705,9 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                "--seconds", sampler_seconds, "--out", str(d / "g3")],
         "g8": [*py, "scripts/p184_g8_redis_sampler.py", "--container", plan["market_redis"]["container"],
                "--seconds", sampler_seconds, "--out", str(d / "g8")],
+        "g6_ts": ["docker", "exec", "-i", args.writer, "python", "-B", "-", "--duration", sampler_seconds,
+                  "--emit-seconds", str(G6_TS_PROBE_EMIT_SECONDS)],
+        "g6_ts_stdin": str(ROOT / "scripts/p184_g6_ts_execution_probe.py"),
         "g9g10": [*py, "scripts/p184_g9_g10_writer_counters.py", "--container", plan["heartbeat_redis"]["container"],
                   "--db", str(plan["heartbeat_redis"]["db"]), "--log-dir", str(plan.get("writer_log_dir")),
                   "--seconds", sampler_seconds, "--out", str(d / "g9g10")],
@@ -627,8 +734,10 @@ def run(args) -> int:
     if args.dry_run:
         print(json.dumps({"campaign_dir": str(d), "preflight": plan, "commands": commands,
                           "expected_wall_seconds_max": expected,
-                          "order": ["preflight (read-only)", "samplers G3/G8/G9-G10 start", "driver + guard + MARK "
-                                    "watch", "G4 windows on schedule", "driver exit -> samplers SIGTERM",
+                          "order": ["preflight (read-only)", "samplers G3/G8/G9-G10 + G6 TS execution probe (docker "
+                                    "exec -i into the writer, read-only) start", "driver + guard + MARK watch",
+                                    "G4 windows on schedule", "driver exit -> samplers SIGTERM, G6 probe SIGTERM by its "
+                                    "in-container PID -> g6-ts/summary.json",
                                     "G11 probe arms; COORDINATOR restarts the writer" if args.g11 else "G11 skipped",
                                     "trace analysis (--rm, --network none)", "scorecard.json"]},
                          indent=1, sort_keys=True, default=str))
@@ -664,6 +773,10 @@ def run(args) -> int:
     try:
         samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
                     for name in ("g3", "g8", "g9g10")}
+        (d / "g6-ts").mkdir()
+        g6_probe = children.start("g6_ts", commands["g6_ts"], log=d / "g6-ts" / "probe.log", cwd=ROOT,
+                                  stdin_path=Path(commands["g6_ts_stdin"]), stdout_path=d / "g6-ts" / "probe.jsonl")
+        log_event(d, "g6_ts_started", pid=g6_probe.pid)
         time.sleep(max(0.0, launch_unix - time.time()))
         driver = children.start("driver", commands["driver"], log=d / "stage100.log", cwd=ROOT)
         log_event(d, "driver_started", pid=driver.pid)
@@ -698,6 +811,7 @@ def run(args) -> int:
         time.sleep(30)
         for process in samplers.values():
             children.stop(process)
+        stop_g6_ts_probe(args.writer, g6_probe, d / "g6-ts")
         log_event(d, "samplers_stopped")
         if commands["g11"]:
             probe = children.start("g11", commands["g11"], log=d / "g11.log", cwd=ROOT)

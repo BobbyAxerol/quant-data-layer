@@ -1780,21 +1780,34 @@ asyncio.run(main())
 
 
 # P18.4 gate G6 (frozen TS gate table): durable-view event age and typed execution quality of every view the Query
-# endpoint returns, per binding, against the per-feed policy, BEFORE client validation so that an eligible view the
-# policy would reject is counted as UNSAFE instead of disappearing into a refusal count. BAR intervals other than 1m
-# use their own sealed requirement (max_freshness_ms). Event age is the server's quality.freshness_ms for snapshot
-# views and (now - newest observation) for MARK reference results. Bounded: exact counts and max per binding, a
-# reservoir of at most _G6_RESERVOIR ages per binding and worker for p50/p95.
+# endpoint returns, per binding, BEFORE client validation so that an eligible view the policy would reject is counted as
+# UNSAFE instead of disappearing into a refusal count. Each view is judged against the policy of the requirement it was
+# actually read with: the frozen D3 table (TS EXECUTION consumer, "applicable manifest/source policy plus stricter
+# consumer intent policy") applies, as min with the requirement's own max_freshness_ms, ONLY to an EXECUTION-grade
+# requirement (policy_basis D3_EXECUTION); any other grade is judged against its own requirement
+# (policy_basis REQUIREMENT_<grade>), which is what the server enforces (stable_source event_limit_ms = min(binding
+# stale_after, requirement.max_freshness_ms)). The stage-100 load reads as ALPHA, so its rows are REQUIREMENT_ALPHA and
+# cannot decide the D3 gate; the TS writer's own EXECUTION reads are sampled by scripts/p184_g6_ts_execution_probe.py.
+# Event age is the server's quality.freshness_ms for snapshot views. For MARK reference results see g6_reference_age.
+# Bounded: exact counts and max per binding, a reservoir of at most _G6_RESERVOIR ages per binding and worker.
+# g6_policy, g6_classify, g6_reference_anchor_ns, g6_reference_age and g6_reference_classify are pure and copied
+# verbatim into scripts/p184_g6_ts_execution_probe.py (the DL package is not in the TS image); a unit test pins parity.
 _G6_POLICY_MS = {"TRADE": 3000, "QUOTE": 2000, "MARK_INDEX_PRICE": 2000, "BOOK_DELTA": 2000,
                  "BOOK_SNAPSHOT": 60000, "BAR|1m": 180000}
+G6_D3_BASIS = "D3_EXECUTION"
 _G6_RESERVOIR = 2048
 _G6_VIEW: ContextVar[list | None] = ContextVar("qdl_phase3_g6_view", default=None)
 
 
-def g6_policy_ms(feed: str, interval: str | None, requirement_max_ms: int | None) -> int | None:
-    if feed == "BAR":
-        return _G6_POLICY_MS.get(f"BAR|{interval}", requirement_max_ms)
-    return _G6_POLICY_MS.get(feed, requirement_max_ms)
+def g6_policy(feed: str, interval: str | None, *, grade: object,
+              requirement_max_ms: int | None) -> tuple[int | None, str]:
+    """(policy_ms, policy_basis) of one read. Pure: unit-tested and copied into the TS execution probe."""
+    grade_name = str(getattr(grade, "value", grade) or "UNKNOWN").upper()
+    if grade_name != "EXECUTION":
+        return requirement_max_ms, f"REQUIREMENT_{grade_name}"
+    d3 = _G6_POLICY_MS.get(f"BAR|{interval}" if feed == "BAR" else feed)
+    bounds = [bound for bound in (d3, requirement_max_ms) if bound is not None]
+    return (min(bounds) if bounds else None), G6_D3_BASIS
 
 
 def g6_classify(*, feed: str, freshness_ms: int | None, eligible: bool, state: str | None, gap_open: bool,
@@ -1830,14 +1843,77 @@ def g6_classify(*, feed: str, freshness_ms: int | None, eligible: bool, state: s
     return ("ELIGIBLE_QUIET" if beyond else "ELIGIBLE"), []
 
 
+def g6_reference_anchor_ns(observations) -> int | None:
+    """The server's freshness anchor of a current MARK/INDEX result (qdl/query/service.py
+    _reference_freshness_timestamp): min provider_confirmation_ns when every observation is PROVIDER_CONFIRMATION
+    based, else min observed_at_ns when every one is SOURCE_EVENT (the default without a label); None otherwise.
+    observations: [(observed_at_ns, labels mapping)]. Pure."""
+    items = list(observations or [])
+    if not items:
+        return None
+    bases = {str((labels or {}).get("freshness_basis", "SOURCE_EVENT")) for _, labels in items}
+    try:
+        if bases == {"PROVIDER_CONFIRMATION"}:
+            values = [int(labels["provider_confirmation_ns"]) for _, labels in items]
+        elif bases == {"SOURCE_EVENT"}:
+            values = [int(observed) for observed, _ in items]
+        else:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return min(values) if all(value > 0 for value in values) else None
+
+
+def g6_reference_age(*, grade: object, observations, sent_ns: int, receipt_ns: int) -> dict[str, object]:
+    """Age of a MARK reference result. A reference result carries no served-at time, only the server's freshness
+    anchor (g6_reference_anchor_ns). EXECUTION keeps the unchanged use-time basis (client receipt minus the newest
+    source event), so what counts as unsafe for EXECUTION reads does not move. Any other grade is aged from the
+    request-sent time against the server's anchor: the server served at or after sent_ns, so an age beyond the policy
+    on this basis is beyond it at serve time too, and the network round trip can no longer manufacture UNSAFE.
+    client_age_ms (receipt minus the server anchor, includes the round trip) is kept for every grade. Pure."""
+    items = list(observations or [])
+    anchor = g6_reference_anchor_ns(items)
+    client_age = None if anchor is None else max(0, (receipt_ns - anchor) // 1_000_000)
+    if str(getattr(grade, "value", grade) or "").upper() == "EXECUTION":
+        newest = max((int(observed) for observed, _ in items), default=0)
+        age = max(0, (receipt_ns - newest) // 1_000_000) if newest > 0 else None
+        basis = "CLIENT_RECEIPT_MINUS_NEWEST_SOURCE_EVENT"
+    else:
+        age = None if anchor is None else max(0, (sent_ns - anchor) // 1_000_000)
+        basis = "REQUEST_SENT_MINUS_SERVER_FRESHNESS_ANCHOR"
+    return {"age_ms": age, "client_age_ms": client_age, "age_basis": basis}
+
+
+def g6_reference_classify(*, age_ms: int | None, policy_ms: int | None, quiet_proven: bool) -> tuple[str, list[str]]:
+    """An OK MARK reference result is a served (eligible) view: UNSAFE when beyond its policy without a quiet proof,
+    ELIGIBLE_QUIET with one. Pure."""
+    if age_ms is None:
+        return "UNSAFE", ["AGE_UNKNOWN"]
+    if policy_ms is not None and age_ms > policy_ms:
+        return ("ELIGIBLE_QUIET", []) if quiet_proven else ("UNSAFE", ["STALE_SERVED_WITHOUT_QUIET_PROOF"])
+    return "ELIGIBLE", []
+
+
+def g6_row_key(feed: str, venue: str, interval: str | None, basis: str) -> str:
+    """D3 rows keep the frozen gate key FEED|VENUE|INTERVAL; any other basis is kept apart with an @basis suffix."""
+    key = f"{feed}|{venue}|{interval or ''}"
+    return key if basis == G6_D3_BASIS else f"{key}@{basis}"
+
+
 def _g6_key(product) -> str:
-    return f"{product.feed.value}|{product.venue}|{product.interval or ''}"
+    requirement = getattr(product, "requirement", None)
+    _policy, basis = g6_policy(product.feed.value, product.interval,
+                               grade=getattr(requirement, "consumer_grade", None),
+                               requirement_max_ms=getattr(requirement, "max_freshness_ms", None))
+    return g6_row_key(product.feed.value, product.venue, product.interval, basis)
 
 
 def _g6_snapshot_observation(product, requirement, view) -> dict[str, object]:
     quality = view.quality
     policy = getattr(requirement, "effective_event_recency_policy", None)
-    policy_ms = g6_policy_ms(product.feed.value, product.interval, getattr(requirement, "max_freshness_ms", None))
+    policy_ms, basis = g6_policy(product.feed.value, product.interval,
+                                 grade=getattr(requirement, "consumer_grade", None),
+                                 requirement_max_ms=getattr(requirement, "max_freshness_ms", None))
     verdict, reasons = g6_classify(
         feed=product.feed.value, freshness_ms=quality.freshness_ms, eligible=bool(quality.execution_eligible),
         state=quality.state, gap_open=bool(quality.gap_open), complete=bool(quality.complete),
@@ -1846,34 +1922,39 @@ def _g6_snapshot_observation(product, requirement, view) -> dict[str, object]:
         max_session_liveness_ms=getattr(requirement, "max_session_liveness_ms", None),
         observe=getattr(policy, "value", policy) == "OBSERVE",
         on_change="DELIVERY_ON_CHANGE" in (quality.flags or []), policy_ms=policy_ms)
-    return {"key": _g6_key(product), "age_ms": quality.freshness_ms, "policy_ms": policy_ms, "class": verdict,
-            "reasons": reasons, "state": quality.state, "recency": quality.event_recency_state}
+    return {"key": g6_row_key(product.feed.value, product.venue, product.interval, basis), "age_ms":
+            quality.freshness_ms, "policy_ms": policy_ms, "policy_basis": basis, "class": verdict, "reasons": reasons,
+            "state": quality.state, "recency": quality.event_recency_state}
 
 
-def _g6_reference_observations(references, response, *, now_ns: int) -> list[dict[str, object]]:
+def _g6_reference_observations(references, response, *, sent_ns: int, now_ns: int) -> list[dict[str, object]]:
     from qdl.certification.reference_l2_acceptance import _quiet_execution_mark_index_evidence
 
     out = []
     for reference, item in zip(references, response.results):
         product = reference
-        key = f"{product.requirement.feed.value}|{product.venue}|"
-        policy_ms = g6_policy_ms(product.requirement.feed.value, None, product.sdk_requirement.max_freshness_ms)
+        feed = product.requirement.feed.value
+        grade = product.requirement.consumer_grade
+        policy_ms, basis = g6_policy(feed, None, grade=grade,
+                                     requirement_max_ms=product.sdk_requirement.max_freshness_ms)
+        key = g6_row_key(feed, product.venue, None, basis)
         data = getattr(item, "data", None)
         observations = getattr(data, "observations", None) or []
         if getattr(item, "status", None) != "OK" or not observations:
             code = getattr(getattr(item, "problem", None), "code", None) or "NO_OBSERVATION"
-            out.append({"key": key, "age_ms": None, "policy_ms": policy_ms, "class": "NOT_ELIGIBLE",
-                        "reasons": [str(code)[:64]]})
+            out.append({"key": key, "age_ms": None, "policy_ms": policy_ms, "policy_basis": basis,
+                        "class": "NOT_ELIGIBLE", "reasons": [str(code)[:64]]})
             continue
-        age_ms = max(0, (now_ns - max(o.observed_at_ns for o in observations)) // 1_000_000)
+        ages = g6_reference_age(grade=grade, observations=[(o.observed_at_ns, dict(o.labels or {}))
+                                                           for o in observations],
+                                sent_ns=sent_ns, receipt_ns=now_ns)
         try:
             quiet = _quiet_execution_mark_index_evidence(product, item, observed_at_ns=now_ns) is not None
         except Exception:
             quiet = False
-        beyond = policy_ms is not None and age_ms > policy_ms
-        verdict = "UNSAFE" if beyond and not quiet else "ELIGIBLE_QUIET" if beyond else "ELIGIBLE"
-        out.append({"key": key, "age_ms": age_ms, "policy_ms": policy_ms, "class": verdict,
-                    "reasons": ["STALE_SERVED_WITHOUT_QUIET_PROOF"] if verdict == "UNSAFE" else []})
+        verdict, reasons = g6_reference_classify(age_ms=ages["age_ms"], policy_ms=policy_ms, quiet_proven=quiet)
+        out.append({"key": key, **ages, "policy_ms": policy_ms, "policy_basis": basis, "class": verdict,
+                    "reasons": reasons})
     return out
 
 
@@ -1883,7 +1964,9 @@ class _G6Recorder:
         self.rows: dict[str, dict[str, object]] = {}
 
     def _row(self, key: str) -> dict[str, object]:
+        basis = key.split("@", 1)[1] if "@" in key else G6_D3_BASIS
         return self.rows.setdefault(key, {"n": 0, "seen_ages": 0, "ages": [], "max_age_ms": None, "policy_ms": None,
+                                          "policy_basis": basis, "age_basis": None, "max_client_age_ms": None,
                                           "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
                                           "windows": Counter(), "unsafe_examples": []})
 
@@ -1892,6 +1975,13 @@ class _G6Recorder:
         row["n"] += 1
         row["windows"][window] += 1
         row["policy_ms"] = observation.get("policy_ms")
+        row["policy_basis"] = observation.get("policy_basis") or row["policy_basis"]
+        if observation.get("age_basis"):
+            row["age_basis"] = observation["age_basis"]
+        client_age = observation.get("client_age_ms")
+        if isinstance(client_age, int):
+            row["max_client_age_ms"] = (client_age if row["max_client_age_ms"] is None
+                                        else max(row["max_client_age_ms"], client_age))
         row["classes"][observation["class"]] += 1
         for reason in observation.get("reasons") or []:
             row["reasons"][reason] += 1
@@ -1906,7 +1996,8 @@ class _G6Recorder:
                 if slot < self.reservoir:
                     row["ages"][slot] = age
         if observation["class"] == "UNSAFE" and len(row["unsafe_examples"]) < 8:
-            row["unsafe_examples"].append({k: observation.get(k) for k in ("age_ms", "reasons", "state", "recency")}
+            row["unsafe_examples"].append({k: observation.get(k) for k in ("age_ms", "client_age_ms", "reasons",
+                                                                         "state", "recency")}
                                           | {"window": window, "at_ns": time.time_ns()})
 
     def refusal(self, key: str, code: str, window: str) -> None:
@@ -1926,13 +2017,16 @@ def merge_g6(blocks: list[dict[str, object]]) -> dict[str, object]:
     for block in blocks:
         for key, row in (block or {}).items():
             out = merged.setdefault(key, {"n": 0, "ages": [], "max_age_ms": None, "policy_ms": row.get("policy_ms"),
+                                          "policy_basis": row.get("policy_basis"), "age_basis": row.get("age_basis"),
+                                          "max_client_age_ms": None,
                                           "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
                                           "windows": Counter(), "unsafe_examples": []})
             out["n"] += row["n"]
             out["ages"].extend(row["ages"])
-            if row.get("max_age_ms") is not None:
-                out["max_age_ms"] = (row["max_age_ms"] if out["max_age_ms"] is None
-                                     else max(out["max_age_ms"], row["max_age_ms"]))
+            out["age_basis"] = out["age_basis"] or row.get("age_basis")
+            for name in ("max_age_ms", "max_client_age_ms"):
+                if row.get(name) is not None:
+                    out[name] = row[name] if out[name] is None else max(out[name], row[name])
             for name in ("classes", "reasons", "refusals", "windows"):
                 out[name].update(row[name])
             out["unsafe_examples"].extend(row["unsafe_examples"][:8])
@@ -2026,9 +2120,10 @@ async def _target_read(client, operation: str, products) -> object:
 
     if operation == "REFERENCE_BATCH":
         references = [_reference_product(product, now_ns=time.time_ns()) for product in products]
+        sent_ns = time.time_ns()
         response = await client.reference_batch([item.sdk_requirement for item in references], require_all=True)
         try:
-            _G6_VIEW.set(_g6_reference_observations(references, response, now_ns=time.time_ns()))
+            _G6_VIEW.set(_g6_reference_observations(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
         except Exception:
             _G6_VIEW.set(None)  # diagnostics never change the read result
         if response.partial or len(response.results) != len(references):

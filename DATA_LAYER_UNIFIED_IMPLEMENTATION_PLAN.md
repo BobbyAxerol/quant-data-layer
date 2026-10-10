@@ -72092,3 +72092,22 @@ no build, CI or subagent job running.
   G3/G6/G8/G9/G10/G11/G14 and scripts/p184_gate_campaign.py). Still NOT_MEASURED by design:
   - G6 BOOK_DELTA: the frozen workload has no Query shape for it;
   - G4: 5 rows without a frozen baseline (no baseline is added after measuring).
+- rc8 final campaign, depth 1 (2026-10-10 17:11-17:48Z, `p184-final-campaign-20261010T171129Z`):
+  - Setup: Query on rc8 6d5da7f (python sha256:db5ae675...), the other 10 roles rc7d (source byte-identical);
+    writer 5ac15db (sha256:ace42326...) with pipeline depth 1.
+  - PASS: G1, G3, G5, G7, G8, G9, G10, G11 (64 slices caught up 3.7-14.2 s), G14.
+  - FAIL: G2 (TRADE p95 909/1068 ms, max 2.9 s; QUOTE max 1023/1024 ms) and G6.
+  - NOT_MEASURED: G4 (only bar 30m has no sample); G12/G13 are inherited.
+- G6 FAIL was a scorer defect, not DL behaviour:
+  - The collector applied the TS D3 EXECUTION table (QUOTE/MARK 2000 ms) to the stage-100 ALPHA reads, whose own
+    requirement is QUOTE 5000 / MARK 60000.
+  - For MARK it took the age after the response (RTT included) and demanded an EXECUTION-only quiet proof.
+  - The server classifies per the request's requirement (qdl/runtime/stable_source.py event_limit_ms).
+  - Fix, without widening the gate: each read is classified against its own requirement and carries a
+    `policy_basis`. Only D3_EXECUTION rows decide G6; ALPHA-only gives NOT_MEASURED; an unsafe view under the read's
+    own requirement still fails.
+  - New read-only probe scripts/p184_g6_ts_execution_probe.py runs inside the writer (the TS identity and the
+    writer's own requirements) for the whole load.
+  - MARK EXECUTION age stays measured from the source event: stricter than the server's provider-confirmation
+    anchor, kept so the frozen UNSAFE definition is unchanged.
+  - 20 s live check: 197 reads, 0 unsafe. Tests: 138 OK (unittest in a disposable rc8 container).
