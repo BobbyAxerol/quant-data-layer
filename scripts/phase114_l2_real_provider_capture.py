@@ -27,7 +27,7 @@ DEFAULT_ADMISSION = ROOT / "upgrade/evidence/phase111-active-demand-provider-adm
 DEFAULT_OUTPUT = ROOT / "upgrade/evidence/phase114-l2-real-provider-capture.json"
 BINANCE_WS = "wss://fstream.binance.com/ws"
 BINANCE_DEPTH = "https://fapi.binance.com/fapi/v1/depth"
-OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+OKX_WS = "wss://ws.okx.com/ws/v5/public"
 
 
 class ProviderCaptureError(RuntimeError):

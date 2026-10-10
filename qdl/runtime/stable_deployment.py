@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
 import yaml
 
+from qdl.adapters.okx_endpoints import require_okx_websocket_url
 from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 
@@ -454,7 +455,10 @@ class StableAcquisitionBinding:
                 raise ValueError("Rust native acquisition cannot use a REST BAR provider kind")
             self._require_wss(self.websocket_url)
             if self.runtime == "OKX":
-                self._require_wss(self.business_websocket_url)
+                # Refuse port 8443, which OKX discontinues on 2026-10-31, here
+                # rather than at connect time after a role was recreated.
+                require_okx_websocket_url(self.websocket_url, "public")
+                require_okx_websocket_url(self.business_websocket_url, "business")
                 if self.market_websocket_url is not None:
                     raise ValueError(
                         "OKX does not use a Binance /market routed base"
@@ -551,6 +555,39 @@ class StableAcquisitionPlan:
         identities = [item.binding_id for item in self.bindings]
         if not identities or len(identities) != len(set(identities)):
             raise ValueError("stable acquisition binding IDs must be non-empty and unique")
+
+    # Where a binding connects, not what it is. Venues move endpoints (Binance
+    # routed USD-M on 2026-04-23, OKX retires port 8443 on 2026-10-31); such a
+    # move must not be an identity change, because the revision is pinned by
+    # edge checkpoints and a bump strands them (plan C.19/C.32).
+    TRANSPORT_FIELDS = (
+        "websocket_url", "business_websocket_url", "market_websocket_url",
+    )
+
+    def identity_digest(self) -> str:
+        """SHA-256 of everything that defines the plan except transport endpoints.
+
+        Two plans with the same ``revision`` must have the same identity
+        digest. A change that moves this digest is an identity change and needs
+        a revision bump plus the checkpoint handling recorded in C.19; a change
+        that leaves it equal (an endpoint move) needs neither.
+        """
+
+        bindings = []
+        for item in sorted(self.bindings, key=lambda value: value.binding_id):
+            payload = asdict(item)
+            for field in self.TRANSPORT_FIELDS:
+                payload.pop(field)
+            bindings.append(payload)
+        payload = {
+            "schema": self.schema,
+            "revision": self.revision,
+            "topics": [self.raw_topic, self.canonical_topic, self.quarantine_topic],
+            "bindings": bindings,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
 
     @classmethod
     def load(

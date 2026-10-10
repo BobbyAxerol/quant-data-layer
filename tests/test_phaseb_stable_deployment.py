@@ -127,8 +127,8 @@ class StableDeploymentContractTests(unittest.TestCase):
                 )
             else:
                 provider_kind = "okx_bar"
-                websocket_url = "wss://ws.okx.com:8443/ws/v5/public"
-                business_websocket_url = "wss://ws.okx.com:8443/ws/v5/business"
+                websocket_url = "wss://ws.okx.com/ws/v5/public"
+                business_websocket_url = "wss://ws.okx.com/ws/v5/business"
                 native_channel = f"candle{source.interval}"
             return replace(
                 item,

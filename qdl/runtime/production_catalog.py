@@ -17,6 +17,7 @@ from qdl.adapters.intervals import (
     okx_candle_channel,
 )
 from qdl.adapters.okx.instruments import parse_public_instrument
+from qdl.adapters.okx_endpoints import OKX_BUSINESS_WS, OKX_PUBLIC_WS
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus
 from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -73,7 +74,6 @@ _BINANCE_DEPTH_REST = {
     "USDM": "https://fapi.binance.com/fapi/v1/depth",
     "SPOT": "https://api.binance.com/api/v3/depth",
 }
-_OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
 # Provider-declared quiet cadence is compiled into the signed acquisition
 # bundle, never inferred by a reader at runtime. The margin is deliberately
 # finite: it covers normal provider cadence plus transport jitter, while the
@@ -814,8 +814,8 @@ class ProductionCatalogBuilder:
                     "PYTHON_REST", "okx_bar",
                     okx_candle_channel(item.interval or "1m"), "NONE",
                 )
-            websocket = _OKX_PUBLIC_WS if mode == "RUST_NATIVE" else None
-            business = "wss://ws.okx.com:8443/ws/v5/business" if mode == "RUST_NATIVE" else None
+            websocket = OKX_PUBLIC_WS if mode == "RUST_NATIVE" else None
+            business = OKX_BUSINESS_WS if mode == "RUST_NATIVE" else None
             # OKX routes by service, not by Binance's route groups.
             market_ws = None
         result = {

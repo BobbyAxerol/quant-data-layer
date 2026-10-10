@@ -199,10 +199,10 @@ class AcquisitionRecipeTests(unittest.TestCase):
         self.assertEqual(minute["mode"], "RUST_NATIVE")
         self.assertEqual(hour["mode"], "RUST_NATIVE")
         self.assertEqual(minute["provider_kind"], "okx_bar")
-        self.assertEqual(minute["websocket_url"], "wss://ws.okx.com:8443/ws/v5/public")
+        self.assertEqual(minute["websocket_url"], "wss://ws.okx.com/ws/v5/public")
         self.assertEqual(
             minute["business_websocket_url"],
-            "wss://ws.okx.com:8443/ws/v5/business",
+            "wss://ws.okx.com/ws/v5/business",
         )
         self.assertEqual(minute["native_channel"], "candle1m")
         self.assertEqual(hour["native_channel"], "candle1H")

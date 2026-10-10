@@ -37,7 +37,7 @@ async def provider_capture(stop):
     symbols = ("BTC", "ETH", "SOL", "DOGE", "BNB")
 
     async def venue_capture(venue, route):
-        url = ("wss://ws.okx.com:8443/ws/v5/public" if venue == "OKX" else
+        url = ("wss://ws.okx.com/ws/v5/public" if venue == "OKX" else
                f"wss://fstream.binance.com/{route}/ws")
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(url, heartbeat=15, timeout=10) as ws:
