@@ -33,7 +33,7 @@ from qdl.query.contracts import (
 )
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.cold_work import await_in_thread, cold_yield
-from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
+from qdl.query.lanes import BoundedReadLane, ReadLaneBusy, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
     ReferenceBatchRequirement,
@@ -98,6 +98,7 @@ class QueryServiceError(RuntimeError):
         instrument_uid: str | None = None,
         quality_state: str | None = None,
         diagnostics: dict[str, Any] | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(problem.detail)
         self.problem = problem
@@ -105,6 +106,9 @@ class QueryServiceError(RuntimeError):
         self.instrument_uid = instrument_uid
         self.quality_state = quality_state
         self.diagnostics = diagnostics
+        # A typed refusal reason a transport may expose next to the problem
+        # (REST: ``X-QDL-Refusal-Reason``); None for every ordinary refusal.
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -244,6 +248,17 @@ class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
 
 
+class _LocalBatchLaneBusy(_LocalBatchAdmissionRejected):
+    """The large-warmup lane would queue a request that opted into redirect."""
+
+
+# Typed reason for a large local warmup refused because this replica's
+# single-active large-warmup lane is busy and the client opted into redirect
+# (REST header ``X-QDL-Replica-Redirect: 1``). Replica-local admission only:
+# it says nothing about the data, so another replica may serve the request.
+REPLICA_LANE_BUSY_REASON = "REPLICA_LANE_BUSY"
+
+
 _SMALL_LOCAL_WARMUP_ROWS = 2
 
 
@@ -358,6 +373,7 @@ class _LocalBatchAdmission:
         consumer_id: str | None = None,
         reserved_bytes: int = _LOCAL_HISTORY_BASE_BYTES,
         wait_timeout_ms: int | None = None,
+        refuse_if_queued: bool = False,
     ):
         if consumer_id is None:
             # Focused legacy callers did not carry an authenticated consumer
@@ -371,7 +387,12 @@ class _LocalBatchAdmission:
                 consumer_id=consumer_id,
                 reserved_bytes=reserved_bytes,
                 wait_timeout_ms=wait_timeout_ms,
+                refuse_if_queued=refuse_if_queued,
             )
+        except ReadLaneBusy as error:
+            raise _LocalBatchLaneBusy(
+                f"local canonical-cache batch admission {error}"
+            ) from error
         except ReadLaneRejected as error:
             raise _LocalBatchAdmissionRejected(
                 f"local canonical-cache batch admission {error}"
@@ -819,6 +840,7 @@ class V2QueryService:
         purpose: AccessPurpose,
         completion: Callable[[BatchQueryResult], Awaitable[_BatchCompletion]],
         request_id: str | None = None,
+        redirect_when_busy: bool = False,
     ) -> _BatchCompletion:
         """Run an internal response completion under a fully-local batch lease.
 
@@ -827,6 +849,15 @@ class V2QueryService:
         its public JSON before this finite canonical-cache lane is released.
         That prevents a second large local HTTP response from overlapping the
         first response's CPU-heavy conversion after the cache read is done.
+
+        ``redirect_when_busy`` (the client's opt-in, P18.4 G5): a fully-local
+        batch that needs the single-active large-warmup lane while that lane
+        would make it wait is refused at once with retryable ``RATE_LIMITED``
+        (``retry_after_ms=0``, reason ``REPLICA_LANE_BUSY``) instead of
+        queuing, so the client can run it on an idle replica. Nothing is
+        reserved or read. Small warmups, mixed/provider batches and requests
+        without the opt-in keep the queue. Stage 100f: two 2,500-row reads
+        on one replica took 3.5 s and 7.0 s while the other replica was idle.
         """
         request_id = request_id or self.request_id()
         executor_before = self.warmup_executor.stats()
@@ -1052,6 +1083,9 @@ class V2QueryService:
 
         if fully_local_batch:
             admission = self._local_batch_admission_for(local_requirements)
+            refuse_if_queued = bool(redirect_when_busy) and admission is not getattr(
+                self, "_small_local_warmup_admission", None
+            )
 
             async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories
@@ -1071,6 +1105,7 @@ class V2QueryService:
                     consumer_id=batch.consumer_id,
                     reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
+                    refuse_if_queued=refuse_if_queued,
                 )
             )
             try:
@@ -1081,6 +1116,26 @@ class V2QueryService:
                 # CPU budget. Keep the request-local lease until it drains.
                 local_batch_task.add_done_callback(self._consume_detached_local_batch)
                 raise
+            except _LocalBatchLaneBusy as error:
+                # Whole-request refusal: the batch never entered the lane, so
+                # the client may send it unchanged to another replica.
+                raise QueryServiceError(
+                    QueryProblem(
+                        CanonicalErrorCode.RATE_LIMITED,
+                        f"{REPLICA_LANE_BUSY_REASON}: this replica's large-warmup lane is busy; "
+                        "retry once on another replica without redirect "
+                        f"({error})",
+                        True,
+                        0,
+                    ),
+                    request_id=request_id,
+                    instrument_uid=(
+                        batch.requirements[0].instrument_uid
+                        if len(batch.requirements) == 1
+                        else None
+                    ),
+                    reason=REPLICA_LANE_BUSY_REASON,
+                ) from error
             except _LocalBatchAdmissionRejected as error:
                 # A bounded queued lane must fail typed before it can create
                 # cache work or borrow an external-provider budget.

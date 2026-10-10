@@ -19,6 +19,17 @@ from qdl_sdk.reference import ReferenceRequirement
 from qdl_sdk.tls import WorkloadTlsConfig
 
 
+REPLICA_REDIRECT_HEADER = "X-QDL-Replica-Redirect"
+REFUSAL_REASON_HEADER = "X-QDL-Refusal-Reason"
+REPLICA_LANE_BUSY = "REPLICA_LANE_BUSY"
+
+
+def _redirect_headers(headers: dict[str, str], replica_redirect: bool | None) -> dict[str, str]:
+    if replica_redirect is not None:
+        headers[REPLICA_REDIRECT_HEADER] = "1" if replica_redirect else "0"
+    return headers
+
+
 class RestQueryTransport:
     def __init__(
         self,
@@ -57,8 +68,19 @@ class RestQueryTransport:
                 raise
             return await request(path, timeout=remaining, **kwargs)
 
-    async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
-        headers = await self._headers(requirement, consumer_id)
+    async def warmup(
+        self,
+        requirement: DataRequirement,
+        *,
+        consumer_id: str,
+        replica_redirect: bool | None = None,
+    ) -> dict:
+        """``replica_redirect``: None sends no header (queue, as before 2.2.0);
+        True asks a busy large-warmup lane to refuse with REPLICA_LANE_BUSY;
+        False explicitly queues (the redirected retry)."""
+        headers = _redirect_headers(
+            await self._headers(requirement, consumer_id), replica_redirect
+        )
         response = await self._read_request("get",
             f"/v2/market-data/{requirement.instrument_uid}/warmup",
             params=requirement.query_params(),
@@ -72,6 +94,7 @@ class RestQueryTransport:
         *,
         consumer_id: str,
         require_all: bool,
+        replica_redirect: bool | None = None,
     ) -> dict:
         values = tuple(requirements)
         if not values:
@@ -79,7 +102,10 @@ class RestQueryTransport:
         grades = {item.consumer_grade for item in values}
         if len(grades) != 1:
             raise ValueError("one warmup batch cannot mix consumer grades")
-        headers = await self._identity_headers(next(iter(grades)), consumer_id)
+        headers = _redirect_headers(
+            await self._identity_headers(next(iter(grades)), consumer_id),
+            replica_redirect,
+        )
         response = await self._read_request("post",
             "/v2/market-data/warmup:batch",
             json={
@@ -234,6 +260,7 @@ class RestQueryTransport:
                 if isinstance(payload.get("diagnostics"), dict)
                 else None
             ),
+            reason=response.headers.get(REFUSAL_REASON_HEADER) or None,
         )
 
 
@@ -251,6 +278,16 @@ class ReplicatedRestQueryTransport:
     response exists.  A data-quality, entitlement or schema error remains the
     selected replica's authoritative result; trying another reader to find a
     green answer would weaken the public contract.
+
+    One replica-local admission signal is the exception (2.2.0, P18.4 G5).
+    ``warmup``/``warmup_batch`` ask the first replica to refuse instead of
+    queuing behind its single-active large-warmup lane
+    (``X-QDL-Replica-Redirect: 1``). On exactly that refusal - RATE_LIMITED
+    with reason ``REPLICA_LANE_BUSY``, which says nothing about the data - the
+    same request goes once to the next replica with the header ``0``, which
+    queues there, so a redirect never ping-pongs. The header is sent only
+    when another candidate remains. Each attempt is a separate HTTP request
+    and consumes one unit of the identity's per-minute request quota.
     """
 
     def __init__(
@@ -285,7 +322,9 @@ class ReplicatedRestQueryTransport:
         self._next = random.randrange(len(values)) if start_index is None else start_index
 
     async def warmup(self, requirement: DataRequirement, *, consumer_id: str) -> dict:
-        return await self._read("warmup", requirement, consumer_id=consumer_id)
+        return await self._read(
+            "warmup", requirement, consumer_id=consumer_id, _redirectable=True
+        )
 
     async def warmup_batch(
         self,
@@ -299,6 +338,7 @@ class ReplicatedRestQueryTransport:
             requirements,
             consumer_id=consumer_id,
             require_all=require_all,
+            _redirectable=True,
         )
 
     async def reference_batch(
@@ -368,13 +408,32 @@ class ReplicatedRestQueryTransport:
             for replica, health in zip(self.replicas, self._health, strict=True)
         )
 
-    async def _read(self, method: str, *args, **kwargs) -> dict:
+    async def _read(
+        self, method: str, *args, _redirectable: bool = False, **kwargs
+    ) -> dict:
         selected = self._candidate_indexes()
         last_error: httpx.TransportError | None = None
-        for index in selected:
+        redirected = False
+        for position, index in enumerate(selected):
             replica = self.replicas[index]
+            call_kwargs = kwargs
+            if _redirectable and (redirected or position + 1 < len(selected)):
+                # First attempt with a fallback left: may be refused as busy.
+                # After a busy refusal: explicitly queue (no ping-pong).
+                call_kwargs = {**kwargs, "replica_redirect": not redirected}
             try:
-                result = await getattr(replica, method)(*args, **kwargs)
+                result = await getattr(replica, method)(*args, **call_kwargs)
+            except DataLayerError as error:
+                if (
+                    call_kwargs.get("replica_redirect") is True
+                    and error.code == "RATE_LIMITED"
+                    and error.reason == REPLICA_LANE_BUSY
+                ):
+                    # Replica-local admission, not a data outcome: the replica
+                    # is healthy, so its health record is left unchanged.
+                    redirected = True
+                    continue
+                raise
             except httpx.TransportError as error:
                 last_error = error
                 health = self._health[index]

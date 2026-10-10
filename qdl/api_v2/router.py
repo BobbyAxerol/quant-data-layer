@@ -129,6 +129,27 @@ def _purpose(value: Annotated[str, Header(alias="X-QDL-Purpose")]):
         ) from error
 
 
+_REPLICA_REDIRECT_HEADER = "X-QDL-Replica-Redirect"
+
+
+def _replica_redirect(
+    value: Annotated[
+        str | None,
+        Header(
+            alias=_REPLICA_REDIRECT_HEADER,
+            description=(
+                "Optional. `1`: if this replica's large-warmup lane would make the "
+                "request wait, refuse it at once with retryable RATE_LIMITED "
+                "(retry_after_ms 0, detail and `X-QDL-Refusal-Reason` "
+                "REPLICA_LANE_BUSY) so the client can retry once on another "
+                "replica. Absent, `0` or any other value: queue as before."
+            ),
+        ),
+    ] = None,
+) -> bool:
+    return value is not None and value.strip() == "1"
+
+
 def _requirement(model) -> DataRequirement:
     return DataRequirement.from_mapping(model.model_dump())
 
@@ -666,7 +687,9 @@ async def _warmup_json_off_loop(build) -> Response:
     return Response(content=body, media_type="application/json")
 
 
-async def _single_warmup_response(request, access, service, requirement, purpose):
+async def _single_warmup_response(
+    request, access, service, requirement, purpose, *, redirect: bool = False
+):
     """One warmup, rendered inside the local lease exactly like ``warmup:batch``.
 
     Holding the lease through rendering keeps at most one large response being
@@ -691,10 +714,13 @@ async def _single_warmup_response(request, access, service, requirement, purpose
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
+        # The opt-in is passed only when requested, so service doubles that
+        # predate it keep working for every request without the header.
         return await complete(
             BatchRequirement(access.consumer_id, (requirement,), require_all=True),
             purpose=purpose,
             completion=render,
+            **({"redirect_when_busy": True} if redirect else {}),
         )
     # Service doubles predating the completion hook keep the original path.
     result = await service.warmup_async(
@@ -1062,6 +1088,7 @@ async def warmup(
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
+    redirect: bool = Depends(_replica_redirect),
 ):
     try:
         warmup_spec = _warmup_specification(
@@ -1088,7 +1115,9 @@ async def warmup(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    return await _single_warmup_response(request, access, service, requirement, purpose)
+    return await _single_warmup_response(
+        request, access, service, requirement, purpose, redirect=redirect
+    )
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
@@ -1157,6 +1186,7 @@ async def warmup_batch(
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
+    redirect: bool = Depends(_replica_redirect),
 ):
     access.require_consumer(body.consumer_id)
     access.require_permission(DataPlanePermission.HISTORY_READ)
@@ -1179,7 +1209,12 @@ async def warmup_batch(
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
-        return await complete(batch, purpose=purpose, completion=render)
+        return await complete(
+            batch,
+            purpose=purpose,
+            completion=render,
+            **({"redirect_when_busy": True} if redirect else {}),
+        )
     # Focused service doubles predating the internal completion hook retain the
     # old public service protocol. Production V2QueryService always uses it.
     return await render(await service.warmup_batch_async(batch, purpose=purpose))
@@ -1448,10 +1483,19 @@ def create_v2_app(
         REFUSALS.record(origin="query", code=problem.code, detail=problem.detail, status=problem.status,
                         retryable=problem.retryable, request_id=problem.request_id,
                         instrument_uid=problem.instrument_uid, route=_route_of(_request))
+        headers = None
+        reason = getattr(error, "reason", None)
+        if reason:
+            # Additive response headers for a typed refusal reason (P18.4 G5:
+            # REPLICA_LANE_BUSY); the problem body schema is unchanged.
+            headers = {"X-QDL-Refusal-Reason": reason}
+            if problem.retry_after_ms is not None:
+                headers["Retry-After"] = str(-(-problem.retry_after_ms // 1000))
         return JSONResponse(
             status_code=problem.status,
             content=problem.model_dump(exclude_none=True),
             media_type="application/problem+json",
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)

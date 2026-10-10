@@ -3715,6 +3715,24 @@
               "title": "X-Qdl-Purpose",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional. `1`: if this replica's large-warmup lane would make the request wait, refuse it at once with retryable RATE_LIMITED (retry_after_ms 0, detail and `X-QDL-Refusal-Reason` REPLICA_LANE_BUSY) so the client can retry once on another replica. Absent, `0` or any other value: queue as before.",
+            "in": "header",
+            "name": "X-QDL-Replica-Redirect",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. `1`: if this replica's large-warmup lane would make the request wait, refuse it at once with retryable RATE_LIMITED (retry_after_ms 0, detail and `X-QDL-Refusal-Reason` REPLICA_LANE_BUSY) so the client can retry once on another replica. Absent, `0` or any other value: queue as before.",
+              "title": "X-Qdl-Replica-Redirect"
+            }
           }
         ],
         "requestBody": {
@@ -4515,6 +4533,24 @@
             "schema": {
               "title": "X-Qdl-Purpose",
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional. `1`: if this replica's large-warmup lane would make the request wait, refuse it at once with retryable RATE_LIMITED (retry_after_ms 0, detail and `X-QDL-Refusal-Reason` REPLICA_LANE_BUSY) so the client can retry once on another replica. Absent, `0` or any other value: queue as before.",
+            "in": "header",
+            "name": "X-QDL-Replica-Redirect",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. `1`: if this replica's large-warmup lane would make the request wait, refuse it at once with retryable RATE_LIMITED (retry_after_ms 0, detail and `X-QDL-Refusal-Reason` REPLICA_LANE_BUSY) so the client can retry once on another replica. Absent, `0` or any other value: queue as before.",
+              "title": "X-Qdl-Replica-Redirect"
             }
           }
         ],

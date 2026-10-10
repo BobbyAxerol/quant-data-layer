@@ -6,6 +6,17 @@
 instance instead of always replica 0. A new keyword `start_index` pins the start
 (tests, diagnostics). Additive; no request or response change.
 
+Replica redirect for a busy large-warmup lane (P18.4 G5): `ReplicatedRestQueryTransport`
+`warmup`/`warmup_batch` send `X-QDL-Replica-Redirect: 1` on the first attempt when another
+candidate replica remains. On exactly RATE_LIMITED with `X-QDL-Refusal-Reason:
+REPLICA_LANE_BUSY` (Retry-After 0) the same request goes once to the next replica with the
+header `0`, which queues there (no ping-pong); every other typed error stays authoritative and
+a busy replica is not marked unhealthy. Each attempt is one HTTP request and consumes one unit
+of the identity's per-minute quota. `DataLayerError.reason` (optional, default `None`) carries
+the response's `X-QDL-Refusal-Reason`; `RestQueryTransport.warmup`/`warmup_batch` take an
+optional `replica_redirect` keyword (None = no header, the pre-2.2.0 request). Servers without
+the header support, and requests without it (SDK 2.1.0), queue exactly as before.
+
 `MarketDataView.event_id` (optional, default `None`): lowercase hex of the canonical
 `EventEnvelope.event_id`, rendered by the v2.2.3 server on Query snapshot/latest/warmup
 rows and set by `market_data_view_from_stream` from the delivered envelope, so a
