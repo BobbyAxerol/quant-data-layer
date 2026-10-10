@@ -1,0 +1,758 @@
+#!/usr/bin/env python3
+"""P18.4 phase D final gate-measurement campaign: one run, every probe, one G1-G14 scorecard.
+
+Purpose: run the frozen measurement protocol of the TS gate table (upgrade/p184-phase-d-gates.md, FROZEN 2026-10-09:
+steady state >= 30 min at the stage-100 workload plus one burst window and the fault windows) ONCE, with every
+probe the v2.2.3 scorecard listed as missing, and score G1-G14 from that single run.
+
+What `run` starts (all children of this process, tracked by PID, each with its own deadline; nothing matched by name):
+* preflight (read-only): writer running, its delivery trace armed long enough (TS_DELIVERY_TRACE_UNTIL_UNIX_NS covers
+  the load window; the writer must already have been recreated with the long-window trace, TS b642e0d), the market
+  Redis the writer actually projects into (TRADING_MARKET_REDIS_URL read from the writer's settings), host disk;
+* the stage-100 FINAL driver run (scripts/phase3_consumer_load_acceptance.py --mode target --sessions 100
+  --duration-seconds 1800 with the frozen budget: BURST, SLOW_READER and RECONNECT fault windows), with the existing
+  guard_v2.sh / mark_watch_v2.sh stop conditions (they SIGINT the driver PID only), and a profile derived from the base
+  profile plus binance_bar_edge and stable_redis as monitored containers (G14);
+* G4 observer windows (scripts/p184_g4_observer.py), four 120 s windows plus one 180 s window around a UTC :00/:30
+  boundary when one falls inside the load, so a 30m close can be seen;
+* G3 BAR cache poller, G8 Redis sampler, G9/G10 writer counters for the whole load (stopped by SIGTERM after it);
+* G11 (optional, after the load because any monitored-container restart aborts the driver): the restart probe arms and
+  waits for the COORDINATOR to restart the writer; this tool never restarts anything.
+Then `score` (also callable alone on a finished campaign dir) runs the trace analyses (G1, G2, G7, G10 duplicates) in a
+disposable `--network none` container of the already present DL python image, and writes scorecard.json.
+
+Scoring rule (v2.2.3 scorecard, unchanged): verdicts PASS / FAIL / NOT_MEASURED; a measurement outside the protocol
+can FAIL a gate but cannot PASS it; missing coverage is NOT_MEASURED; nothing is ever upgraded. G12 and G13 are not part
+of this campaign and are reported NOT_MEASURED with that reason.
+
+Boundary: no image builds, no container create/recreate/restart, no Redis/Kafka writes. Children: the driver's own
+disposable client container (removed by the driver), the G4 observer (docker exec of a read-only consumer, as before)
+and the trace analysis container (--rm, --network none, read-only mounts).
+usage: p184_gate_campaign.py run [--dry-run] [--g11] ... | p184_gate_campaign.py score --campaign-dir DIR
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts import p184_g8_redis_sampler as g8  # noqa: E402
+from scripts import p184_g9_g10_writer_counters as g910  # noqa: E402
+from scripts import p184_g14_resource_table as g14  # noqa: E402
+from scripts.p184_resp_readonly import parse_redis_url, read_jsonl  # noqa: E402
+
+STATE = Path.home() / ".local/state/qdl-v2"
+TOOLS = STATE / "p184-d3-capacity-20261009"
+WRITER = "market_data_service_p184w"
+EXTRA_MONITORED = ("qdl_v2_stable_candidate-binance_bar_edge-1", "qdl_v2_stable_candidate-stable_redis-1")
+LOAD_SECONDS = 1800
+DRIVER_TIMEOUT = 2400
+G4_OFFSETS = (120, 480, 840, 1200)
+G4_SECONDS = 120
+G4_BOUNDARY_SECONDS = 180
+MIN_DISK_GB = 20
+TRACE_FEEDS_G1 = ("BOOK_DELTA", "BOOK_SNAPSHOT")
+TRACE_FEEDS_G2 = ("TRADE", "QUOTE")
+G7_FEEDS = ("BOOK_DELTA", "BOOK_SNAPSHOT", "QUOTE", "TRADE", "MARK_INDEX_PRICE")
+VENUES = ("BINANCE", "OKX")
+G6_REQUIRED = tuple(f"{feed}|{venue}|{interval}" for feed, interval in
+                    (("TRADE", ""), ("QUOTE", ""), ("MARK_INDEX_PRICE", ""), ("BOOK_SNAPSHOT", ""),
+                     ("BOOK_DELTA", ""), ("BAR", "1m")) for venue in VENUES)
+G6_GATED_FEEDS = ("TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA", "BAR")
+
+
+# ---------------------------------------------------------------- plan helpers (pure, unit-tested)
+
+def g4_schedule(launch_unix: float, *, offsets=G4_OFFSETS, seconds=G4_SECONDS, boundary_seconds=G4_BOUNDARY_SECONDS,
+                load_end_offset: float = LOAD_SECONDS + 80) -> list[dict]:
+    """Observer windows as (offset from launch, seconds). Adds a window from 30 s before a UTC :00/:30 boundary for
+    boundary_seconds when one fits inside the load; default windows that would overlap it are dropped."""
+    windows = [{"offset": float(o), "seconds": float(seconds), "boundary": None} for o in offsets]
+    first = launch_unix + 150 + 30
+    boundary = (int(first) // 1800 + 1) * 1800
+    if boundary - 30 - launch_unix + boundary_seconds <= load_end_offset:
+        start = boundary - 30 - launch_unix
+        extra = {"offset": round(start, 3), "seconds": float(boundary_seconds), "boundary": boundary}
+        windows = [w for w in windows if w["offset"] + w["seconds"] + 5 <= start
+                   or w["offset"] >= start + boundary_seconds + 5]
+        windows.append(extra)
+    return sorted(windows, key=lambda w: w["offset"])
+
+
+def derive_profile(base: dict, extra=EXTRA_MONITORED) -> dict:
+    profile = json.loads(json.dumps(base))
+    monitored = list(profile.get("monitored_containers") or [])
+    for name in extra:
+        if name not in monitored:
+            monitored.append(name)
+    profile["monitored_containers"] = monitored
+    return profile
+
+
+def mount_source(inspect: dict, destination: str) -> str | None:
+    for mount in inspect.get("Mounts", []):
+        if mount.get("Destination") == destination:
+            return mount.get("Source")
+    return None
+
+
+def host_path(inspect: dict, container_path: str) -> str | None:
+    """Map a container path to its host path through the longest matching bind mount."""
+    best = None
+    for mount in inspect.get("Mounts", []):
+        dest = mount.get("Destination", "")
+        if container_path == dest or container_path.startswith(dest.rstrip("/") + "/"):
+            if best is None or len(dest) > len(best["Destination"]):
+                best = mount
+    if best is None:
+        return None
+    return best["Source"] + container_path[len(best["Destination"]):]
+
+
+def env_of(inspect: dict) -> dict[str, str]:
+    return dict(item.split("=", 1) for item in inspect.get("Config", {}).get("Env", []) if "=" in item)
+
+
+# ---------------------------------------------------------------- scoring (pure, unit-tested)
+
+def _protocol(campaign: dict, receipt: dict | None, gates: dict | None) -> tuple[bool, list[str]]:
+    problems = []
+    if receipt is None:
+        problems.append("no driver receipt")
+    else:
+        window = receipt.get("load_window_unix_s")
+        if not window or window[1] - window[0] < LOAD_SECONDS:
+            problems.append("load window < 1800 s or unknown")
+        if not (receipt.get("fault_windows") or {}).get("BURST"):
+            problems.append("no BURST window")
+        if receipt.get("stage") != 100 or not receipt.get("final"):
+            problems.append("not the stage-100 final run")
+    if gates is None or gates.get("status") != "PASS":
+        problems.append("driver acceptance not PASS: " + ",".join((gates or {}).get("failed_gates", ["no gates"]))[:300])
+    return not problems, problems
+
+
+def _gate(gid, quantity, rule, verdict, reason, protocol_ok, protocol_problems, **extra):
+    if verdict == "PASS" and not protocol_ok:
+        verdict, reason = "NOT_MEASURED", f"inside the rule but outside the protocol: {'; '.join(protocol_problems)}"
+    return {"id": gid, "quantity": quantity, "rule": rule, "verdict": verdict, "reason": reason, **extra}
+
+
+def _trace_coverage(transit: dict | None, load_ns, until_ns: int | None) -> list[str]:
+    """Trace-derived gates need the trace armed through the whole load and no worker capped (a CAP stop means the
+    last allowed part filled and later deliveries were not recorded)."""
+    if transit is None:
+        return ["no trace analysis"]
+    gaps = []
+    if transit.get("error"):
+        gaps.append(f"trace analysis: {transit['error']}")
+    if not transit.get("records"):
+        gaps.append("no trace records")
+    if transit.get("dropped_at_export_total"):
+        gaps.append(f"{transit['dropped_at_export_total']} trace records dropped at export")
+    if (transit.get("stop_reasons") or {}).get("CAP"):
+        gaps.append(f"{transit['stop_reasons']['CAP']} trace activations stopped at their file cap")
+    if load_ns and (not until_ns or until_ns < load_ns[1]):
+        gaps.append("trace expiry is before the end of the load window")
+    return gaps
+
+
+def score_transit_rows(transit: dict | None, feeds) -> tuple[str, list, list[str]]:
+    rows, missing, outside = [], [], []
+    for feed in feeds:
+        for venue in VENUES:
+            block = ((transit or {}).get("transit") or {}).get(f"{feed}|{venue}")
+            if not block or not block.get("n"):
+                missing.append(f"{feed}|{venue}")
+                continue
+            rows.append({"feed_venue": f"{feed}|{venue}", **{k: block.get(k) for k in ("n", "p50", "p95", "p99", "max")},
+                         "observed": block.get("verdict"), "split_p95_ms": {k: v.get("p95") for k, v in
+                                                                         (block.get("split") or {}).items()}})
+            if block.get("verdict") == "OUTSIDE":
+                outside.append(f"{feed}|{venue}")
+    if outside:
+        return "FAIL", rows, [f"outside: {', '.join(outside)}"]
+    if missing:
+        return "NOT_MEASURED", rows, [f"no data: {', '.join(missing)}"]
+    return "PASS", rows, []
+
+
+def score_mark(mark: dict | None) -> tuple[str, list, list[str]]:
+    rows, missing, outside = [], [], []
+    for venue in VENUES:
+        block = ((mark or {}).get("venues") or {}).get(venue)
+        gated = (block or {}).get("new_event_transit_ms") or {}
+        if not gated.get("n"):
+            missing.append(f"MARK|{venue}")
+            continue
+        rows.append({"feed_venue": f"MARK_INDEX_PRICE|{venue}", **{k: gated.get(k) for k in ("n", "p50", "p95", "p99", "max")},
+                     "observed": block.get("g2_verdict")})
+        if block.get("g2_verdict") == "OUTSIDE":
+            outside.append(f"MARK|{venue}")
+    if outside:
+        return "FAIL", rows, [f"outside: {', '.join(outside)}"]
+    if missing:
+        return "NOT_MEASURED", rows, [f"no data: {', '.join(missing)}"]
+    return "PASS", rows, []
+
+
+def score_g7(transit: dict | None) -> tuple[str, dict, list[str]]:
+    g7 = (transit or {}).get("g7") or {}
+    rows, outside, missing = {}, [], []
+    for feed in G7_FEEDS:
+        block = g7.get(feed)
+        if not block or "verdict" not in block:
+            missing.append(feed)
+            continue
+        rows[feed] = {name: block.get(name) for name in ("sdk_to_writer_ms", "writer_to_redis_ms")}
+        for name, state in block["verdict"].items():
+            if state == "OUTSIDE":
+                outside.append(f"{feed}:{name}")
+            elif state == "NO_DATA" and not (feed == "MARK_INDEX_PRICE" and name == "sdk_to_writer_ms"):
+                missing.append(f"{feed}:{name}")
+    if outside:
+        return "FAIL", rows, [f"outside: {', '.join(outside)}"]
+    if missing:
+        return "NOT_MEASURED", rows, [f"no data: {', '.join(missing)}"]
+    return "PASS", rows, []
+
+
+def score_g4(windows: list[dict], table: dict) -> tuple[str, list, list[str]]:
+    """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows."""
+    rows, failed, uncovered = [], [], []
+    for key, limit in sorted(table.items()):
+        values = [((w.get("summary") or {}).get(key) or {}).get("visibility_ms", {}) for w in windows]
+        p95 = [v.get("p95") if v.get("n") else None for v in values]
+        n = [v.get("n", 0) for v in values]
+        verdict = ("NOT_MEASURED" if not any(n) else
+                   "FAIL" if any(x is not None and x > limit["candidate_p95_limit_ms"] for x in p95) else "PASS")
+        rows.append({"row": key, "p95_ms_per_window": p95, "n_per_window": n,
+                     "limit_p95_ms": limit["candidate_p95_limit_ms"], "verdict": verdict})
+        if verdict == "FAIL":
+            failed.append(key)
+        elif verdict == "NOT_MEASURED":
+            uncovered.append(key)
+    observed = {key for w in windows for key in (w.get("summary") or {})}
+    inverse = {key for w in windows for key in (w.get("inverse_rows") or {})}
+    unbaselined = sorted((observed | inverse) - set(table))
+    reasons = []
+    if failed:
+        reasons.append(f"over limit: {', '.join(failed)}")
+    if uncovered:
+        reasons.append(f"no sample in any window: {', '.join(uncovered)}")
+    if unbaselined:
+        reasons.append(f"observed rows without a frozen baseline: {', '.join(unbaselined)}")
+    if failed:
+        return "FAIL", rows, reasons
+    if uncovered or unbaselined:
+        return "NOT_MEASURED", rows, reasons
+    return "PASS", rows, []
+
+
+def g4_inverse_rows(observations) -> dict:
+    """Separate OKX inverse (native symbol *-USD-SWAP) visibility from the pooled OKX rows; same quantity."""
+    groups = {}
+    for item in observations:
+        if item.get("kind") != "canonical_observation":
+            continue
+        symbol = (item.get("identity") or {}).get("native_symbol") or ""
+        if not symbol.endswith("-USD-SWAP"):
+            continue
+        source, seen = item.get("source_event_ns"), item.get("observer_receipt_wall_ns")
+        if source and seen:
+            key = f"{item['feed']}|OKX_INVERSE|{item.get('interval') or ''}"
+            groups.setdefault(key, []).append((seen - source) / 1e6)
+    out = {}
+    for key, values in sorted(groups.items()):
+        ordered = sorted(values)
+        out[key] = {"n": len(ordered), "p95": round(ordered[min(len(ordered) - 1, int(.95 * len(ordered)))], 1),
+                    "max": round(ordered[-1], 1)}
+    return out
+
+
+def score_g6(quality: dict | None) -> tuple[str, dict, list[str]]:
+    quality = quality or {}
+    unsafe = {key: row.get("unsafe", 0) for key, row in quality.items()
+              if key.split("|", 1)[0] in G6_GATED_FEEDS and row.get("unsafe")}
+    rows = {key: {k: row.get(k) for k in ("n", "policy_ms", "age_ms", "max_age_ms", "classes", "refusals", "reasons",
+                                          "unsafe")} for key, row in quality.items()}
+    if unsafe:
+        return "FAIL", rows, [f"unsafe eligibility: {unsafe}"]
+    missing = [key for key in G6_REQUIRED if not (quality.get(key) or {}).get("n")]
+    if missing:
+        return "NOT_MEASURED", rows, [f"no returned view for: {', '.join(missing)} (BOOK_DELTA is not a Query shape of "
+                                      "the frozen stage-100 workload)"]
+    return "PASS", rows, []
+
+
+def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str]) -> tuple[str, dict, list[str]]:
+    dup = {k: v for k, v in (duplicates or {}).items() if k.startswith("TRADE|")}
+    counters = {"gaps": g10.get("trade_gap"), "duplicates_applied": sum(dup.values()) if duplicates is not None else None,
+                "replay_expired": g10.get("trade_replay_expired"), "overflow": g10.get("trade_overflow"),
+                "resumed_reconnects": g10.get("trade_resumed"), "log_polls": g10.get("log_polls"),
+                "log_unreadable": g10.get("log_unreadable"), "codes": g10.get("codes")}
+    bad = {k: counters[k] for k in ("gaps", "duplicates_applied", "replay_expired", "overflow") if counters[k]}
+    if bad:
+        return "FAIL", counters, [f"non-zero: {bad}"]
+    gaps = []
+    if not g10.get("log_polls") or g10.get("log_unreadable"):
+        gaps.append("writer logs not read for the whole window")
+    if duplicates is None or trace_gaps:
+        gaps.append("duplicates applied need the delivery trace: " + "; ".join(trace_gaps or ["no trace"]))
+    return ("NOT_MEASURED", counters, gaps) if gaps else ("PASS", counters, [])
+
+
+def utc_stamp(unix_s: float) -> str:
+    return dt.datetime.fromtimestamp(unix_s, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def build_scorecard(campaign_dir: Path) -> dict:
+    d = Path(campaign_dir)
+    campaign = load_json(d / "campaign.json") or {}
+    receipt = load_json(d / "stage100" / "receipt.json")
+    gates = load_json(d / "stage100" / "gates.json")
+    host = load_json(d / "stage100" / "host.json")
+    ok, problems = _protocol(campaign, receipt, gates)
+    load_s = (receipt or {}).get("load_window_unix_s")
+    load_ns = [int(load_s[0] * 1e9), int(load_s[1] * 1e9)] if load_s else None
+    transit = load_json(d / "trace" / "transit-load.json")
+    mark = load_json(d / "trace" / "mark-load.json")
+    trace_gaps = _trace_coverage(transit, load_ns, int((campaign.get("trace") or {}).get("until_unix_ns") or 0))
+    out = []
+
+    def add(gid, quantity, rule, verdict, reason, **extra):
+        out.append(_gate(gid, quantity, rule, verdict, reason, ok, problems, **extra))
+
+    trace_src = {"transit": sha256_file(d / "trace" / "transit-load.json"),
+                 "mark": sha256_file(d / "trace" / "mark-load.json")}
+    v, rows, why = score_transit_rows(transit, TRACE_FEEDS_G1)
+    if trace_gaps and v != "FAIL":
+        v, why = "NOT_MEASURED", why + trace_gaps
+    add("G1", "end-to-end to TS cache (venue event -> TS Redis APPLY reply)", "p95 <= 500 ms, p99 <= 1000 ms (n >= 100), "
+        "max < 2000 ms per feed/venue", v, "; ".join(why) or "every BOOK row inside", measured=rows, sources=trace_src)
+    v1, rows1, why1 = score_transit_rows(transit, TRACE_FEEDS_G2)
+    v2, rows2, why2 = score_mark(mark)
+    verdicts = {v1, v2}
+    v = "FAIL" if "FAIL" in verdicts else "NOT_MEASURED" if "NOT_MEASURED" in verdicts else "PASS"
+    if trace_gaps and v != "FAIL":
+        v = "NOT_MEASURED"
+    add("G2", "end-to-end to TS cache, new-event transit", "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK "
+        "p95 <= 500 ms and max < 1000 ms", v, "; ".join(why1 + why2 + (trace_gaps if v == "NOT_MEASURED" else []))
+        or "every row inside", measured=rows1 + rows2, sources=trace_src)
+    g3 = load_json(d / "g3" / "g3-summary.json")
+    add("G3", "end-to-end to TS cache, BAR from close (first visibility of the closed bar)", "p95 <= 5 s, max < 60 s",
+        (g3 or {}).get("verdict", "NOT_MEASURED"), "g3 probe" if g3 else "no G3 summary",
+        measured={k: (g3 or {}).get(k) for k in ("per_venue", "pooled", "unseen_total", "unresolved_slices",
+                                                 "read_errors", "poll_ms")},
+        sources={"g3": sha256_file(d / "g3" / "g3-summary.json")})
+    budget = load_json(campaign.get("budget_path", "")) if campaign.get("budget_path") else None
+    table = ((budget or {}).get("g4_delivery_visibility") or {}).get("table") or {}
+    g4_windows = []
+    for item in campaign.get("g4_windows", []):
+        summary = load_json(d / f"g4-{item['index']}-summary.json")
+        obs = d / f"g4-{item['index']}" / "observations.jsonl"
+        inverse = g4_inverse_rows(read_jsonl(obs)) if obs.exists() else {}
+        g4_windows.append({"summary": summary, "inverse_rows": inverse})
+    v, rows, why = score_g4(g4_windows, table) if table else ("NOT_MEASURED", [], ["no frozen G4 baseline table"])
+    add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", "candidate p95 <= frozen "
+        "baseline p95 x 1.2 per row; missing coverage blocks the gate", v, "; ".join(why) or "every row inside",
+        measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows])
+    latency = [g for g in (gates or {}).get("gates", []) if str(g.get("gate", "")).startswith(("latency:", "cold"))]
+    failed_latency = [g["gate"] for g in latency if g.get("status") != "PASS"]
+    v = "FAIL" if failed_latency else "PASS" if latency else "NOT_MEASURED"
+    add("G5", "request latency", "certified stage-50 p95/p99 per class and venue; frozen cold-shape limits", v,
+        f"failed: {failed_latency}" if failed_latency else f"{len(latency)} latency/cold gates" if latency else
+        "no driver gates", measured=latency)
+    v, rows, why = score_g6((receipt or {}).get("g6_view_quality"))
+    add("G6", "durable-view event age and typed execution quality at the Query endpoint", "per-binding policy (TRADE "
+        "3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms); zero unsafe eligibility", v,
+        "; ".join(why) or "every required binding measured, 0 unsafe", measured=rows)
+    v, rows, why = score_g7(transit)
+    if trace_gaps and v != "FAIL":
+        v, why = "NOT_MEASURED", why + trace_gaps
+    add("G7", "TS consumer path", "SDK -> writer p95 <= 100 ms; writer -> Redis reply p95 <= 50 ms per feed", v,
+        "; ".join(why) or "every feed inside", measured=rows)
+    samples8 = list(read_jsonl(d / "g8" / "g8-samples.jsonl")) if (d / "g8" / "g8-samples.jsonl").exists() else []
+    s8 = g8.summarize(samples8, steady_from_ns=load_ns[0] if load_ns else None,
+                      steady_to_ns=load_ns[1] if load_ns else None) if samples8 else None
+    v, why = g8.verdict(s8) if s8 else ("NOT_MEASURED", ["no G8 samples"])
+    add("G8", f"TS execution Redis ({campaign.get('market_redis', {}).get('container', '?')}) command CPU, SLOWLOG, RTT",
+        "commandstats <= 60 % of one core per 10-min window; SLOWLOG (10 ms) 0 in steady state; PING p99 <= 5 ms", v,
+        "; ".join(why) or "inside", measured=s8)
+    path910 = d / "g9g10" / "g9-g10-samples.jsonl"
+    samples910 = list(read_jsonl(path910)) if path910.exists() else []
+    s9 = g910.summarize_g9(samples910, from_ns=load_ns[0] if load_ns else None,
+                           to_ns=load_ns[1] if load_ns else None) if samples910 else None
+    v, why = g910.verdict_g9(s9, expected_demanded=campaign.get("demanded_slices")) if s9 else (
+        "NOT_MEASURED", ["no heartbeat samples"])
+    add("G9", "readiness: demanded, session-ready, intent-eligible kept separate", "demanded == session-ready; 0 "
+        "data-path eligibility losses (legitimate quiet TRADE refusals counted, excluded); v1 fallback 0", v,
+        "; ".join(why) or "inside", measured=s9)
+    s10 = g910.summarize_g10(samples910, from_s=utc_stamp(load_s[0]) if load_s else None,
+                             to_s=utc_stamp(load_s[1]) if load_s else None) if samples910 else {}
+    v, counters, why = score_g10(s10, (transit or {}).get("duplicate_applied_event_id") if transit else None, trace_gaps)
+    add("G10", "TRADE integrity", "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow", v,
+        "; ".join(why) or "all zero", measured=counters,
+        basis="writer log typed signals (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError) + trace duplicate "
+              "event_id; a silent offset gap the DL does not signal is not observable (see proposed counter)")
+    g11 = load_json(d / "g11" / "g11-summary.json")
+    v = (g11 or {}).get("verdict", "NOT_MEASURED")
+    out.append({"id": "G11", "quantity": "writer restart recovery", "rule": "fault cleared -> first valid apply per "
+                "slice <= 30 s, -> caught up <= 60 s; no rewind; cursor never ahead", "verdict": v,
+                "reason": "; ".join((g11 or {}).get("reasons", [])) or ("restart probe" if g11 else "G11 not run"),
+                "measured": {k: (g11 or {}).get(k) for k in ("restart", "outage_seconds", "recovery", "cursor_samples")}
+                if g11 else None,
+                "note": "a fault window after the load (a restart of a monitored container aborts the driver); its "
+                        "verdict does not depend on the steady-state protocol"})
+    out.append({"id": "G12", "quantity": "Kafka broker / projector / Stream restart recovery", "verdict": "NOT_MEASURED",
+                "reason": "not part of this campaign (isolated G12 tooling, scripts/p184_g12_isolated_fault.py)"})
+    out.append({"id": "G13", "quantity": "DR01-DR08 acceptance", "verdict": "NOT_MEASURED",
+                "reason": "not part of this campaign (G13 evidence is separate)"})
+    expect = (host or {}).get("monitored_containers") or campaign.get("monitored_containers") or []
+    table14 = g14.table(host, expect=expect) if host else None
+    if table14 is None:
+        v, why = "NOT_MEASURED", ["no driver host.json"]
+    elif table14["mem_at_or_over_limit"]:
+        v, why = "FAIL", [f"memory at/over limit: {table14['mem_at_or_over_limit']}"]
+    elif table14["missing_roles"]:
+        v, why = "NOT_MEASURED", [f"roles without samples: {table14['missing_roles']}"]
+    else:
+        v, why = "PASS", []
+    add("G14", "resources per role at stage 100", "CPU/RAM per role recorded with headroom; budget set by the owner",
+        v, "; ".join(why) or f"{len(table14['roles'])} roles recorded", measured=table14)
+    summary = {}
+    for gate in out:
+        summary.setdefault(gate["verdict"], []).append(gate["id"])
+    return {"schema": "qdl.p184.gate-campaign-scorecard.v1", "campaign_dir": str(d),
+            "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window; a measurement "
+                            "outside the protocol can FAIL a gate but cannot PASS it; NOT_MEASURED is never upgraded",
+            "protocol_met": ok, "protocol_problems": problems, "load_window_unix_s": load_s,
+            "runtime_identity": campaign.get("runtime_identity"), "summary": summary, "gates": out,
+            "sources": {"receipt": sha256_file(d / "stage100" / "receipt.json"),
+                        "gates": sha256_file(d / "stage100" / "gates.json"),
+                        "host": sha256_file(d / "stage100" / "host.json")}}
+
+
+# ---------------------------------------------------------------- runtime (read-only inspection + children)
+
+def docker_inspect(name: str) -> dict | None:
+    result = subprocess.run(["docker", "inspect", name], capture_output=True, text=True, timeout=30)
+    return json.loads(result.stdout)[0] if result.returncode == 0 else None
+
+
+def writer_market_redis(writer: str) -> str | None:
+    code = "from shared.config import settings; print(settings.TRADING_MARKET_REDIS_URL)"
+    result = subprocess.run(["docker", "exec", writer, "python", "-B", "-c", code], capture_output=True, text=True,
+                            timeout=60)
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+def preflight(args) -> dict:
+    plan = {"writer": args.writer, "problems": [], "warnings": []}
+    inspect = docker_inspect(args.writer)
+    if inspect is None or not inspect["State"]["Running"]:
+        plan["problems"].append("writer not running")
+        return plan
+    env = env_of(inspect)
+    plan["runtime_identity"] = {"writer_image": inspect["Image"], "writer_started": inspect["State"]["StartedAt"],
+                                "writer_restarts": inspect["RestartCount"]}
+    until = int(env.get("TS_DELIVERY_TRACE_UNTIL_UNIX_NS") or 0)
+    needed = time.time_ns() + int((args.load_timeout + 60) * 1e9)
+    plan["trace"] = {"dir_in_container": env.get("TS_DELIVERY_TRACE_DIR"),
+                     "dir_on_host": host_path(inspect, env.get("TS_DELIVERY_TRACE_DIR", "")) if env.get(
+                         "TS_DELIVERY_TRACE_DIR") else None,
+                     "until_unix_ns": until, "max_files": env.get("TS_DELIVERY_TRACE_MAX_FILES"),
+                     "max_records": env.get("TS_DELIVERY_TRACE_MAX_RECORDS"),
+                     "covers_load": until >= needed}
+    if not plan["trace"]["covers_load"]:
+        (plan["warnings"] if args.allow_no_trace else plan["problems"]).append(
+            "delivery trace does not cover the load window (recreate the writer with the long trace first); "
+            "G1/G2/G7/G10 would be NOT_MEASURED")
+    plan["binding"] = mount_source(inspect, "/run/secrets/qdl-v2-binding/trading-system.paper.stable.json")
+    plan["writer_log_dir"] = host_path(inspect, "/app/logs")
+    binding = load_json(plan["binding"]) if plan["binding"] else None
+    plan["demanded_slices"] = len((binding or {}).get("products", [])) or None
+    resolved = writer_market_redis(args.writer)
+    if resolved is None:
+        plan["warnings"].append("could not read TRADING_MARKET_REDIS_URL from the writer; using the TS default")
+    host, _, db = parse_redis_url(resolved or "redis://redis_marketdata:6379/1")
+    plan["market_redis"] = {"url_host": host, "db": db, "container": args.market_redis or host,
+                            "resolved_from": "writer shared.config settings" if resolved else "TS default"}
+    if args.market_redis and args.market_redis != host:
+        plan["warnings"].append(f"--market-redis {args.market_redis} differs from the writer's {host}")
+    heartbeat_host, _, heartbeat_db = parse_redis_url(env.get("TRADING_REDIS_URL", "redis://redis_service:6379/0"))
+    plan["heartbeat_redis"] = {"container": heartbeat_host, "db": heartbeat_db}
+    free = shutil.disk_usage("/").free / 2**30
+    plan["disk_free_gb"] = round(free, 1)
+    if free < MIN_DISK_GB + 3:
+        plan["problems"].append(f"disk {free:.1f} GB free < {MIN_DISK_GB + 3} GB")
+    for name in EXTRA_MONITORED:
+        state = docker_inspect(name)
+        if state is None or not state["State"]["Running"]:
+            plan["problems"].append(f"{name} not running (monitored for G14)")
+    for tool in ("guard_v2.sh", "mark_watch_v2.sh"):
+        if not (Path(args.state_tools) / tool).exists():
+            plan["problems"].append(f"missing {tool} in {args.state_tools}")
+    return plan
+
+
+class Children:
+    """Every child is tracked by its Popen; cleanup signals exact PIDs only."""
+
+    def __init__(self):
+        self.items: list[tuple[str, subprocess.Popen]] = []
+        self.lock = threading.Lock()
+
+    def start(self, name, command, *, log: Path, cwd=None):
+        handle = log.open("x")
+        process = subprocess.Popen(command, cwd=cwd, stdout=handle, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        with self.lock:
+            self.items.append((name, process))
+        return process
+
+    def stop(self, process, *, grace=90):
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+
+    def stop_all(self):
+        with self.lock:
+            items = list(self.items)
+        for _, process in items:
+            self.stop(process, grace=30)
+
+
+def log_event(d: Path, kind: str, **fields):
+    with (d / "timeline.jsonl").open("a") as handle:
+        handle.write(json.dumps({"kind": kind, "at_ns": time.time_ns(), **fields}, sort_keys=True) + "\n")
+
+
+def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
+    """Trace files are root 0600 inside the writer's log mount: read them in a disposable, network-less container of
+    an image already on the host, with read-only mounts; output is JSON on stdout."""
+    trace = campaign.get("trace") or {}
+    load_s = (load_json(d / "stage100" / "receipt.json") or {}).get("load_window_unix_s")
+    out = d / "trace"
+    out.mkdir(exist_ok=True)
+    if not trace.get("dir_on_host") or not load_s:
+        (out / "transit-load.json").write_text(json.dumps({"error": "no trace dir or load window"}) + "\n")
+        return
+    pattern = f"/trace/delivery-*-{trace['until_unix_ns']}*.json"
+    window = ["--from-ns", str(int(load_s[0] * 1e9)), "--to-ns", str(int(load_s[1] * 1e9))]
+    base = ["docker", "run", "--rm", "--network", "none", "--cpus", "1", "--memory", "2500m", "--user", "0:0",
+            "--read-only", "--security-opt", "no-new-privileges", "-e", "PYTHONDONTWRITEBYTECODE=1",
+            "-v", f"{ROOT}:/w:ro", "-v", f"{trace['dir_on_host']}:/trace:ro", "-w", "/w", "--entrypoint", "python",
+            image, "-B"]
+    for name, script in (("transit-load.json", "scripts/p184_trace_feed_transit.py"),
+                         ("mark-load.json", "scripts/p184_g2_mark_trace_transit.py")):
+        result = subprocess.run([*base, script, pattern, *window], capture_output=True, text=True, timeout=1800)
+        try:
+            value = json.loads(result.stdout)
+        except ValueError:
+            value = {"error": f"analysis exit {result.returncode}", "stderr_tail": result.stderr[-400:]}
+        value.pop("per_file", None)
+        (out / name).write_text(json.dumps(value, indent=1, sort_keys=True) + "\n")
+
+
+def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
+    tools = Path(args.state_tools)
+    py = [sys.executable, "-B"]
+    sampler_seconds = str(args.load_timeout + 60)
+    return {
+        "driver": ["timeout", str(args.load_timeout), *py, "scripts/phase3_consumer_load_acceptance.py",
+                   "--profile", str(d / "profile.json"), "--budget", str(Path(args.budget).resolve()),
+                   "--output", str(d / "stage100"), "--mode", "target", "--sessions", "100",
+                   "--duration-seconds", str(LOAD_SECONDS)],
+        "guard": [str(tools / "guard_v2.sh"), str(args.load_timeout), "<driver-pid>"],
+        "mark_watch": [str(tools / "mark_watch_v2.sh"), str(args.load_timeout), "<driver-pid>"],
+        "g3": [*py, "scripts/p184_g3_bar_cache_probe.py", "--binding", str(plan.get("binding")),
+               "--container", plan["market_redis"]["container"], "--db", str(plan["market_redis"]["db"]),
+               "--seconds", sampler_seconds, "--out", str(d / "g3")],
+        "g8": [*py, "scripts/p184_g8_redis_sampler.py", "--container", plan["market_redis"]["container"],
+               "--seconds", sampler_seconds, "--out", str(d / "g8")],
+        "g9g10": [*py, "scripts/p184_g9_g10_writer_counters.py", "--container", plan["heartbeat_redis"]["container"],
+                  "--db", str(plan["heartbeat_redis"]["db"]), "--log-dir", str(plan.get("writer_log_dir")),
+                  "--seconds", sampler_seconds, "--out", str(d / "g9g10")],
+        "g4_windows": [{"index": i + 1, **w,
+                        "command": [*py, "scripts/p184_g4_observer.py", "--launch", "--mode", "canonical",
+                                    "--seconds", str(int(w["seconds"])), "--tail-records", "0", "--max-records",
+                                    "10000", "--sample-ms", "1000", "--max-output-bytes", "16777216",
+                                    "--output", str(d / f"g4-{i + 1}")]}
+                       for i, w in enumerate(g4_schedule(launch_unix))],
+        "g11": ([*py, "scripts/p184_g11_writer_restart_probe.py", "--binding", str(plan.get("binding")),
+                 "--writer", args.writer, "--redis-container", plan["market_redis"]["container"],
+                 "--db", str(plan["market_redis"]["db"]), "--wait-seconds", str(args.g11_wait),
+                 "--observe-seconds", "180", "--out", str(d / "g11")] if args.g11 else None),
+    }
+
+
+def run(args) -> int:
+    plan = preflight(args)
+    launch_unix = time.time() + 5
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    d = Path(args.campaign_dir or STATE / f"p184-final-campaign-{stamp}").resolve()
+    commands = command_plan(args, plan, d, launch_unix)
+    expected = (args.load_timeout + 60 + (args.g11_wait + 180 if args.g11 else 0) + 600)
+    if args.dry_run:
+        print(json.dumps({"campaign_dir": str(d), "preflight": plan, "commands": commands,
+                          "expected_wall_seconds_max": expected,
+                          "order": ["preflight (read-only)", "samplers G3/G8/G9-G10 start", "driver + guard + MARK "
+                                    "watch", "G4 windows on schedule", "driver exit -> samplers SIGTERM",
+                                    "G11 probe arms; COORDINATOR restarts the writer" if args.g11 else "G11 skipped",
+                                    "trace analysis (--rm, --network none)", "scorecard.json"]},
+                         indent=1, sort_keys=True, default=str))
+        return 0 if not plan["problems"] else 2
+    if plan["problems"]:
+        print(json.dumps({"refused": plan["problems"]}), file=sys.stderr)
+        return 2
+    d.mkdir(parents=True, exist_ok=False)
+    base = load_json(Path(args.base_profile))
+    profile = derive_profile(base)
+    (d / "profile.json").write_text(json.dumps(profile, indent=1, sort_keys=True) + "\n")
+    os.chmod(d / "profile.json", 0o600)
+    campaign = {"schema": "qdl.p184.gate-campaign.v1", "started_unix": time.time(), "preflight": plan,
+                "runtime_identity": plan.get("runtime_identity"), "trace": plan.get("trace"),
+                "market_redis": plan.get("market_redis"), "demanded_slices": plan.get("demanded_slices"),
+                "budget_path": str(Path(args.budget).resolve()), "budget_sha256": sha256_file(Path(args.budget)),
+                "monitored_containers": profile["monitored_containers"],
+                "g4_windows": [{k: v for k, v in w.items() if k != "command"} for w in commands["g4_windows"]],
+                "tool_sha256": sha256_file(Path(__file__)), "source_sha": subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()}
+    (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
+    children = Children()
+    hard_deadline = time.monotonic() + expected + 600
+    watchdog_fired = threading.Event()
+
+    def watchdog():
+        while not watchdog_fired.wait(15):
+            if time.monotonic() > hard_deadline:
+                log_event(d, "DEADLINE")
+                children.stop_all()
+                return
+    threading.Thread(target=watchdog, daemon=True).start()
+    try:
+        samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
+                    for name in ("g3", "g8", "g9g10")}
+        time.sleep(max(0.0, launch_unix - time.time()))
+        driver = children.start("driver", commands["driver"], log=d / "stage100.log", cwd=ROOT)
+        log_event(d, "driver_started", pid=driver.pid)
+        (d / "driver.pid").write_text(f"{driver.pid}\n")
+        for name in ("guard", "mark_watch"):
+            command = [str(driver.pid) if part == "<driver-pid>" else part for part in commands[name]]
+            children.start(name, command, log=d / f"{name}.log")
+
+        def g4_runner():
+            for window in commands["g4_windows"]:
+                delay = launch_unix + window["offset"] - time.time()
+                if delay > 0 and driver.poll() is None:
+                    time.sleep(delay)
+                if driver.poll() is not None:
+                    log_event(d, "g4_skipped", index=window["index"])
+                    continue
+                log_event(d, "g4_start", index=window["index"])
+                with (d / f"g4-{window['index']}.log").open("x") as handle:
+                    subprocess.run(window["command"], cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT,
+                                   timeout=window["seconds"] + 180)
+                obs = d / f"g4-{window['index']}" / "observations.jsonl"
+                if obs.exists():
+                    summary = subprocess.run([sys.executable, "-B", "scripts/p184_g4_observer.py", "--summarize",
+                                              str(obs)], cwd=ROOT, capture_output=True, text=True, timeout=300)
+                    (d / f"g4-{window['index']}-summary.json").write_text(summary.stdout)
+                log_event(d, "g4_end", index=window["index"])
+        g4_thread = threading.Thread(target=g4_runner, daemon=True)
+        g4_thread.start()
+        code = driver.wait()
+        log_event(d, "driver_exit", code=code)
+        g4_thread.join(timeout=420)
+        time.sleep(30)
+        for process in samplers.values():
+            children.stop(process)
+        log_event(d, "samplers_stopped")
+        if commands["g11"]:
+            probe = children.start("g11", commands["g11"], log=d / "g11.log", cwd=ROOT)
+            time.sleep(15)
+            message = (f"G11_ARMED: restart the writer now (coordinator action, e.g. `docker restart {args.writer}`); "
+                       f"the probe waits up to {args.g11_wait} s")
+            log_event(d, "g11_armed", pid=probe.pid)
+            print(message, flush=True)
+            (d / "G11_ARMED").write_text(message + "\n")
+            probe.wait()
+            log_event(d, "g11_exit", code=probe.returncode)
+    finally:
+        watchdog_fired.set()
+        children.stop_all()
+    run_trace_analysis(campaign, d, image=args.analysis_image or profile["image"])
+    card = build_scorecard(d)
+    (d / "scorecard.json").write_text(json.dumps(card, indent=1, sort_keys=True, default=str) + "\n")
+    print(json.dumps({"campaign_dir": str(d), "summary": card["summary"], "protocol_met": card["protocol_met"]}))
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--campaign-dir")
+    r.add_argument("--base-profile", default=str(TOOLS / "profile-stage100-rc4.json"))
+    r.add_argument("--budget", default=str(ROOT / "config/v2/p184-stage100-budget.json"))
+    r.add_argument("--state-tools", default=str(TOOLS))
+    r.add_argument("--writer", default=WRITER)
+    r.add_argument("--market-redis", help="container of TRADING_MARKET_REDIS_URL (default: read from the writer)")
+    r.add_argument("--analysis-image", help="image for the trace analysis (default: the profile image)")
+    r.add_argument("--load-timeout", type=int, default=DRIVER_TIMEOUT)
+    r.add_argument("--g11", action="store_true", help="arm the G11 probe after the load (coordinator restarts)")
+    r.add_argument("--g11-wait", type=int, default=900)
+    r.add_argument("--allow-no-trace", action="store_true")
+    s = sub.add_parser("score")
+    s.add_argument("--campaign-dir", required=True)
+    s.add_argument("--analysis-image")
+    s.add_argument("--rerun-trace", action="store_true")
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        return run(args)
+    d = Path(args.campaign_dir)
+    if args.rerun_trace or not (d / "trace" / "transit-load.json").exists():
+        campaign = load_json(d / "campaign.json") or {}
+        image = args.analysis_image or (load_json(d / "profile.json") or {}).get("image")
+        run_trace_analysis(campaign, d, image=image)
+    card = build_scorecard(d)
+    path = d / f"scorecard-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
+    path.write_text(json.dumps(card, indent=1, sort_keys=True, default=str) + "\n")
+    print(json.dumps({"scorecard": str(path), "summary": card["summary"]}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
