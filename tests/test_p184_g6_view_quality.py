@@ -178,7 +178,8 @@ class G6ReferenceTests(unittest.TestCase):
                          now_ns=sent + 400 * MS)
         self.assertEqual((row["class"], row["policy_ms"], row["policy_basis"]), ("ELIGIBLE", 60000,
                                                                                  "REQUIREMENT_ALPHA"))
-        self.assertEqual((row["age_ms"], row["client_age_ms"]), (2300, 2700))
+        # Outside EXECUTION the server anchors a MARK pair at its oldest observed_at, not provider confirmation.
+        self.assertEqual((row["age_ms"], row["client_age_ms"]), (2600, 3000))
         self.assertEqual(row["age_basis"], "REQUEST_SENT_MINUS_SERVER_FRESHNESS_ANCHOR")
         self.assertEqual(row["key"], "MARK_INDEX_PRICE|BINANCE|@REQUIREMENT_ALPHA")
 
@@ -193,11 +194,12 @@ class G6ReferenceTests(unittest.TestCase):
     def test_anchor_follows_the_server_rule(self):
         anchor = _DRIVER.g6_reference_anchor_ns
         self.assertEqual(anchor([(5, {}), (7, {})]), 5)
-        self.assertEqual(anchor([(5, {"freshness_basis": "PROVIDER_CONFIRMATION", "provider_confirmation_ns": "9"})]),
-                         9)
-        self.assertIsNone(anchor([(5, {"freshness_basis": "PROVIDER_CONFIRMATION"})]))
-        self.assertIsNone(anchor([(5, {"freshness_basis": "SOURCE_EVENT"}),
-                                  (6, {"freshness_basis": "PROVIDER_CONFIRMATION", "provider_confirmation_ns": "9"})]))
+        confirmed = {"freshness_basis": "PROVIDER_CONFIRMATION", "provider_confirmation_ns": "9"}
+        self.assertEqual(anchor([(5, confirmed)], grade="EXECUTION"), 9)
+        self.assertEqual(anchor([(5, confirmed)], grade="ALPHA"), 5)
+        self.assertIsNone(anchor([(5, {"freshness_basis": "PROVIDER_CONFIRMATION"})], grade="EXECUTION"))
+        self.assertIsNone(anchor([(5, {"freshness_basis": "SOURCE_EVENT"}), (6, confirmed)], grade="EXECUTION"))
+        self.assertEqual(anchor([(5, {}), (7, {})], feed="FUNDING_RATE"), 7)
         self.assertIsNone(anchor([]))
 
 
@@ -232,18 +234,36 @@ class G6ProbeParityTests(unittest.TestCase):
             count += 1
         self.assertGreater(count, 50000)
 
+    def test_funding_is_anchored_at_its_newest_row_like_the_server(self):
+        # A funding series returns its settlement history; the server ages it by the newest row (max), so the
+        # 8-hourly history never makes a current funding read look 11 hours old.
+        rows = [(1_000 * MS, {}), (9_000 * MS, {}), (5_000 * MS, {})]
+        self.assertEqual(_DRIVER.g6_reference_anchor_ns(rows, feed="FUNDING_RATE", grade="ALPHA"), 9_000 * MS)
+        age = _DRIVER.g6_reference_age(grade="ALPHA", observations=rows, sent_ns=10_000 * MS, receipt_ns=10_300 * MS,
+                                       feed="FUNDING_RATE")
+        self.assertEqual(age["age_ms"], 1_000)
+
+    def test_an_alpha_mark_pair_is_anchored_at_its_oldest_component(self):
+        # Outside an EXECUTION read the server does not use provider confirmation: min observed_at.
+        labels = {"freshness_basis": "PROVIDER_CONFIRMATION", "provider_confirmation_ns": str(9_900 * MS)}
+        rows = [(9_000 * MS, labels), (8_000 * MS, labels)]
+        self.assertEqual(_DRIVER.g6_reference_anchor_ns(rows, feed="MARK_INDEX_PRICE", grade="ALPHA"), 8_000 * MS)
+        self.assertEqual(_DRIVER.g6_reference_anchor_ns(rows, feed="MARK_INDEX_PRICE", grade="EXECUTION"),
+                         9_900 * MS)
+
     def test_reference_parity(self):
         label_sets = [{}, {"freshness_basis": "PROVIDER_CONFIRMATION", "provider_confirmation_ns": str(9_500 * MS)},
                       {"freshness_basis": "PROVIDER_CONFIRMATION"}, {"freshness_basis": "SOURCE_EVENT"}]
-        for grade in ("EXECUTION", "ALPHA", None):
-            for labels in label_sets:
-                for observed in (1, 7_000 * MS, 9_000 * MS):
-                    observations = [(observed, labels)]
-                    self.assertEqual(_DRIVER.g6_reference_anchor_ns(observations),
-                                     _PROBE.g6_reference_anchor_ns(observations))
-                    kwargs = dict(grade=grade, observations=observations, sent_ns=10_000 * MS,
-                                  receipt_ns=10_300 * MS)
-                    self.assertEqual(_DRIVER.g6_reference_age(**kwargs), _PROBE.g6_reference_age(**kwargs))
+        for feed in ("MARK_INDEX_PRICE", "FUNDING_RATE"):
+            for grade in ("EXECUTION", "ALPHA", None):
+                for labels in label_sets:
+                    for observed in (1, 7_000 * MS, 9_000 * MS):
+                        observations = [(observed, labels), (observed // 2 or 1, labels)]
+                        self.assertEqual(_DRIVER.g6_reference_anchor_ns(observations, feed=feed, grade=grade),
+                                         _PROBE.g6_reference_anchor_ns(observations, feed=feed, grade=grade))
+                        kwargs = dict(grade=grade, observations=observations, sent_ns=10_000 * MS,
+                                      receipt_ns=10_300 * MS, feed=feed)
+                        self.assertEqual(_DRIVER.g6_reference_age(**kwargs), _PROBE.g6_reference_age(**kwargs))
         for age in (None, 100, 2300, 70000):
             for policy in (None, 2000, 60000):
                 for quiet in (True, False):

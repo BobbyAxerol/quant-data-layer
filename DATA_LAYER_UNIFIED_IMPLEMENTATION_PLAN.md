@@ -72150,3 +72150,12 @@ no build, CI or subagent job running.
   - Fix: an INFLIGHT_CAPACITY wait polls jittered 50-200 ms, never longer than the hint, still deadline-bound.
     Other defer reasons keep the hint.
   - Tests: 285 OK across the admission and bar-edge suites. The frozen G4 limits are unchanged.
+- Correction (Claude) to ba496ff:
+  - Fault: the G6 reference anchor always took min over observations. For FUNDING_RATE, a settlement history, that
+    is the oldest row, so the final campaign flagged 150/150 alpha funding reads UNSAFE (age ~11 h).
+  - Method error: the server rule was copied for the MARK branch only.
+  - The anchor now mirrors qdl/query/service.py _reference_freshness_timestamp:
+    - MARK EXECUTION read with all PROVIDER_CONFIRMATION: min provider_confirmation_ns;
+    - other MARK reads: min observed_at;
+    - every other product: max observed_at.
+  - Driver and probe copies stay in parity. Tests: 140 OK.

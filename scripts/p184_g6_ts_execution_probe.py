@@ -88,20 +88,27 @@ def g6_classify(*, feed: str, freshness_ms: int | None, eligible: bool, state: s
     return ("ELIGIBLE_QUIET" if beyond else "ELIGIBLE"), []
 
 
-def g6_reference_anchor_ns(observations) -> int | None:
-    """The server's freshness anchor of a current MARK/INDEX result (qdl/query/service.py
-    _reference_freshness_timestamp): min provider_confirmation_ns when every observation is PROVIDER_CONFIRMATION
-    based, else min observed_at_ns when every one is SOURCE_EVENT (the default without a label); None otherwise.
-    observations: [(observed_at_ns, labels mapping)]. Pure."""
+def g6_reference_anchor_ns(observations, *, feed: str = "MARK_INDEX_PRICE", grade: object = None) -> int | None:
+    """The server's freshness anchor of a current reference result (qdl/query/service.py
+    _reference_freshness_timestamp). MARK/INDEX: an EXECUTION read whose observations are all PROVIDER_CONFIRMATION
+    based is anchored at min provider_confirmation_ns; otherwise min observed_at_ns (a pair is only as current as its
+    oldest component; mixed bases give None). Every other product (FUNDING_RATE) is anchored at max observed_at_ns:
+    how recently the series was updated, not its oldest settlement row (the min anchor aged funding by its whole
+    history and flagged every funding read UNSAFE, 2026-10-10 final campaign). observations: [(observed_at_ns,
+    labels mapping)]. Pure."""
     items = list(observations or [])
     if not items:
         return None
-    bases = {str((labels or {}).get("freshness_basis", "SOURCE_EVENT")) for _, labels in items}
     try:
-        if bases == {"PROVIDER_CONFIRMATION"}:
+        observed = [int(value) for value, _ in items]
+        if str(getattr(feed, "value", feed)) != "MARK_INDEX_PRICE":
+            return max(observed) if max(observed) > 0 else None
+        bases = {str((labels or {}).get("freshness_basis", "SOURCE_EVENT")) for _, labels in items}
+        execution = str(getattr(grade, "value", grade) or "").upper() == "EXECUTION"
+        if execution and bases == {"PROVIDER_CONFIRMATION"}:
             values = [int(labels["provider_confirmation_ns"]) for _, labels in items]
-        elif bases == {"SOURCE_EVENT"}:
-            values = [int(observed) for observed, _ in items]
+        elif bases <= {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"} and (bases == {"SOURCE_EVENT"} or not execution):
+            values = observed
         else:
             return None
     except (KeyError, TypeError, ValueError):
@@ -109,7 +116,8 @@ def g6_reference_anchor_ns(observations) -> int | None:
     return min(values) if all(value > 0 for value in values) else None
 
 
-def g6_reference_age(*, grade: object, observations, sent_ns: int, receipt_ns: int) -> dict[str, object]:
+def g6_reference_age(*, grade: object, observations, sent_ns: int, receipt_ns: int,
+                     feed: str = "MARK_INDEX_PRICE") -> dict[str, object]:
     """Age of a MARK reference result. A reference result carries no served-at time, only the server's freshness
     anchor (g6_reference_anchor_ns). EXECUTION keeps the unchanged use-time basis (client receipt minus the newest
     source event), so what counts as unsafe for EXECUTION reads does not move. Any other grade is aged from the
@@ -117,7 +125,7 @@ def g6_reference_age(*, grade: object, observations, sent_ns: int, receipt_ns: i
     on this basis is beyond it at serve time too, and the network round trip can no longer manufacture UNSAFE.
     client_age_ms (receipt minus the server anchor, includes the round trip) is kept for every grade. Pure."""
     items = list(observations or [])
-    anchor = g6_reference_anchor_ns(items)
+    anchor = g6_reference_anchor_ns(items, feed=feed, grade=grade)
     client_age = None if anchor is None else max(0, (receipt_ns - anchor) // 1_000_000)
     if str(getattr(grade, "value", grade) or "").upper() == "EXECUTION":
         newest = max((int(observed) for observed, _ in items), default=0)
