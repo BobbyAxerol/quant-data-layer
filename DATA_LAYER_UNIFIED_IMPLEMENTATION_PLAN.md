@@ -71832,3 +71832,41 @@ errors, 5 with 1, 0 UNKNOWN.
 - Next (rc6): QDL_QUERY_COLD_SLICE_MS 4 -> 8 (the one tuned variable; Astra R5 option 2) to cut per-read service time
   below ~3.1 s for the same-replica worst case, scored together with the hot tails. Plus the R2 Rust hot-reader fix
   (Stream image) and R1/R3/R6 (Query image). Then stage 100g.
+
+### Astra advisory R1-R7 response, OKX reconnect, R2 hot reader - 2026-10-10 (Claude, subagents)
+
+Advisory: upgrade/evidence/p184-astra-architecture-advisory-20261010.md (1fb68ed). Every item was checked against the
+code before acting. All are tested locally and not deployed.
+
+| ID | Response | Selected option | Test / receipt | Runtime |
+| --- | --- | --- | --- | --- |
+| R1 | Accept (gap, partition/generation, lineage). The topic case is unreachable through the real client (`_decode` expectation); the backend gate is hardened anyway. Splitting DATA_LOSS details is staged | Hard refusals in the IDR-084 branch map to FENCED/INTEGRITY like the backup path; transient HotViewUnavailable keeps the validated cache view | 57881a2; RealOrderingChecks (d); counterfactual fails on 1fb68ed | not deployed |
+| R2 | Accept (reproduced: 82-84 % BUSY, dispatch ~2.5k of 20k rec/s at 1fb68ed) | Per-key ring view and key->partition directory maintained by dispatch under the partition lock; Arc copy in one short section, decode outside; head proof read with the boundary; atomic reader progress; lock wait bounded by the 100 ms deadline. Fence/gap/sibling/generation checks unchanged | fdd379e (from d1167fe); stream-gateway lib 43/0, hot_lookup_contention 1/0 (0 BUSY, 20k rec/s, p99 ~300 us, debug in-process), native_stream 37/0, clippy clean | not deployed |
+| R3 | Accept | One budget covers memo lock wait and lookup; HOT_READ_DEADLINE is transient and not memoised | 57881a2; MarkHotBudgetTests, HotClientBudgetTests | not deployed |
+| R4 | Accept, wider than reported: every competing select branch reset the per-pass read timeout, in both loops, and the nested pong wait stalled the loop 15 s | Absolute InboundDeadline moved only by a message actually read; ping at 15 s of silence; dead at 2 x heartbeat; proof stamped only from received data | d4f5ec9 (from beeaea4); silent-socket test proof on/off (dead at 30 s), pre-R4 shape reproduced (still alive at 150 s) | not deployed |
+| R5 | Accept; attribution measured in stage 100f (same-replica queue, client 242-285 ms) | Option 2: tune QDL_QUERY_COLD_SLICE_MS on the same workload, worst case same replica, with hot tails watched | stage100f receipt (7f974c3 split) | env on rc6 |
+| R6 | Accept | Rate-bounded, payload-free `qdl_refusal` lines matched by detail_sha256; receipts carry reason_tokens | 57881a2; tests/test_refusal_log.py | not deployed |
+| R7 | Accept as release discipline | Option B: one immutable packet with the IDR-040 proof flag OFF; check the final SDK wheel and image, not a mounted checkout; G12 scope stated as isolated BOOK; G4 unobserved rows NOT_MEASURED; historical failures and skips categorised | D5 packet | release |
+
+OKX reconnect (f861663 from 34dbdf9, d4f5ec9 from beeaea4):
+- The stage 100e refusal was a session-identity refusal, not an event-age one. The trade came from generation 167 after
+  the lane's liveness record became 168.
+- 37 OKX disconnects since 2026-10-09 00:00Z (1.22/h), all first attempts, clustered across lanes. This is consistent
+  with rolling upgrades but unproven.
+- Reconnect took 620-634 ms (n=5), of which 400 ms was a fixed backoff.
+- OKX documents notice 64008 60 s before a service upgrade.
+- Fix:
+  - make-before-break handover on 64008, with the generation fences intact;
+  - a per-lane lineage chain; Query accepts a predecessor's event only with proven continuity
+    (SOURCE_SESSION_CONTINUED);
+  - abrupt closes reconnect with no backoff through a shared <= 3/s pacer;
+  - a frame arriving during the pong wait is no longer dropped;
+  - disconnect logs carry cause, close code, last-frame-to-detection and drain time.
+- Tests: ingestor 39/0; session liveness 36 OK. After the cherry-pick, 7 related Python modules OK, including
+  test_phaseb_stable_edge and test_phase105_identity_acceptance.
+- Open:
+  - silent-socket detection under 5 s needs heartbeat_seconds <= 2 (deployment config);
+  - OKX ends port 8443 on 2026-10-31. Our URLs are in qdl/adapters/okx/client.py, qdl/runtime/l2_demand.py,
+    qdl/runtime/production_catalog.py and config/v2/stable-acquisition-bindings.yaml. The bindings change alters the
+    acquisition plan revision (C.19/C.32 bar-edge checkpoint coupling), so it needs its own packet before
+    2026-10-31 and is not mixed into rc6.
