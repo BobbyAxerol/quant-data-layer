@@ -63,6 +63,17 @@ from qdl.reference.contracts import (
 _EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
     "qdl://stable-stream/internal/v2/execution/mark-index/latest"
 )
+# A funding series is settlement-cadenced: its newest record is exactly one
+# interval old at the instant the next settlement falls due, and the venue only
+# publishes that next record after it has settled (OKX reports
+# ``settState=processing`` meanwhile). A freshness bound equal to the cadence
+# (the alpha manifests declare 8 h for 8 h funding) therefore refused a healthy
+# source at every settlement: stage 100g, 2026-10-10, OKX SOL-USDT-SWAP at
+# 08:00:07Z. The allowance is the same 60 s funding-boundary tolerance the
+# Binance adapter (_FUNDING_BOUNDARY_TOLERANCE_MS) and the acceptance window
+# (_FUNDING_SETTLEMENT_JITTER_NS) already use; it applies to FUNDING_RATE
+# history only, and a settlement still unpublished after it stays DATA_STALE.
+_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 
 
 _BatchCompletion = TypeVar("_BatchCompletion")
@@ -1600,13 +1611,24 @@ class V2QueryService:
         completes. Separately, exchanges can expose a briefly delayed mark or
         index timestamp even though the same declared provider lane is current
         on the immediate next read. Both cases get one cache-bypassing re-read
-        through the same bounded admission path. This deliberately excludes
-        history and every other reference product: no freshness bound is
-        relaxed and a second stale observation remains terminal.
+        through the same bounded admission path. The only history included is
+        a cache-served FUNDING_RATE series (see below); no freshness bound is
+        relaxed by the re-read and a second stale observation remains terminal.
         """
 
         if self._is_execution_mark_index_live_result(result):
             return False
+        if (
+            request.product is ReferenceProduct.FUNDING_RATE
+            and request.is_history
+            and result.status is ReferenceStatus.OK
+            and result.cache_hit
+        ):
+            # A cached funding series cannot contain a settlement the venue
+            # published after it was cached; one cache-bypassing re-read
+            # through the same admission lane picks it up. A second stale
+            # observation remains terminal.
+            return True
         if self._reference_snapshot_was_current_at_receipt(
             requirement,
             request,
@@ -1735,7 +1757,12 @@ class V2QueryService:
                     0,
                     ((self._clock_ns() if at_ns is None else at_ns) - observed_ns) // 1_000_000,
                 )
-                if freshness_ms > requirement.max_freshness_ms:
+                allowance_ms = (
+                    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS
+                    if request.product is ReferenceProduct.FUNDING_RATE and request.is_history
+                    else 0
+                )
+                if freshness_ms > requirement.max_freshness_ms + allowance_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,
                         "reference provider result exceeds the declared freshness bound",

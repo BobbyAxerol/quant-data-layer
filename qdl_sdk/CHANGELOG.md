@@ -32,6 +32,15 @@ and never changes `freshness_ms`, `state` or `execution_eligible`. The server
 emits the key only when a proof exists (absent otherwise), so 2.0.x strict
 readers are unaffected until quiet proofs are enabled; 2.1.0+ readers accept it.
 
+Required-batch item diagnostics (P18.4 stage 100g): the `PARTIAL_RESULT`
+`DataLayerError` raised by `reference_batch`/`warmup_batch` with `require_all=True` now
+sets `diagnostics = {"origin": "sdk_reference_batch" | "sdk_warmup_batch",
+"item_problem_count", "item_problems": [...]}`; each item (first 32) carries
+`instrument_uid`, `feed`, `code`, `reason_tokens` (typed UPPER_SNAKE tokens of the item
+detail), `retryable`, `retry_after_ms`, `request_id` and `detail_sha256` (the digest
+Query's `qdl_refusal` item line carries), never the detail text or data. `code`,
+`detail`, `retryable` are unchanged; `diagnostics` was `None` on this path before.
+
 ## 2.1.0
 
 Response models, including nested market/reference payloads and error diagnostics,

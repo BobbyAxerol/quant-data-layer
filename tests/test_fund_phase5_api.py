@@ -338,6 +338,39 @@ class Phase5ApiTests(unittest.TestCase):
         )
         self.assertEqual(line["detail_sha256"], hashlib.sha256(detail.encode()).hexdigest())
 
+    def test_a_warmup_batch_item_failure_leaves_one_line(self):
+        """Astra R6 extension: item problems inside a 200 warmup batch are not silent."""
+        import hashlib
+        import json
+        from dataclasses import replace
+        from qdl.query.service import BatchItemResult, BatchQueryResult, WarmupResult
+        from qdl.runtime.refusal_log import RefusalLog
+
+        router_module = importlib.import_module("qdl.api_v2.router")
+        history = self.backend.history(self.requirement)
+        detail = "HOT_READER_BUSY on the cold lane"
+        result = BatchQueryResult("batch-r6", (
+            BatchItemResult(self.binance.instrument_uid, "READY", WarmupResult("row", history)),
+            BatchItemResult(self.okx.instrument_uid, "DATA_NOT_READY", problem=QueryProblem(
+                CanonicalErrorCode.DATA_NOT_READY, detail, True)),
+        ))
+        requirements = (self.requirement, replace(self.requirement, instrument_uid=self.okx.instrument_uid))
+        lines = []
+        log = RefusalLog(emit=lambda line: lines.append(json.loads(line)), replica="query-test")
+        with patch.object(router_module, "_bind_history_cursor", side_effect=lambda _r, _a, _q, h: h), \
+                patch.object(router_module, "REFUSALS", log):
+            router_module._render_warmup_batch(None, None, result, requirements)
+        (line,) = lines
+        self.assertEqual(
+            {key: line[key] for key in ("origin", "code", "retryable", "reasons", "instrument_uid", "feed",
+                                        "route", "request_id")},
+            {"origin": "warmup_batch_item", "code": "DATA_NOT_READY", "retryable": True,
+             "reasons": ["HOT_READER_BUSY"], "instrument_uid": self.okx.instrument_uid,
+             "feed": self.requirement.feed.value, "route": "/v2/market-data/warmup:batch",
+             "request_id": "batch-r6"},
+        )
+        self.assertEqual(line["detail_sha256"], hashlib.sha256(detail.encode()).hexdigest())
+
     def test_query_routes_pass_authenticated_identity_to_owned_read_lanes(self):
         calls = []
         snapshot_original = self.service.snapshot_async

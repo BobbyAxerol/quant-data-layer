@@ -64,6 +64,12 @@ _DIAGNOSTIC_FIELDS = (
 )
 
 
+_ITEM_PROBLEM_FIELDS = (
+    "instrument_uid", "feed", "code", "reason_tokens", "retryable", "retry_after_ms",
+    "detail_sha256", "request_id",
+)
+
+
 def _safe_error(error: BaseException) -> dict[str, object]:
     code = getattr(error, "code", None)
     detail = str(getattr(error, "detail", error))
@@ -96,6 +102,17 @@ def _safe_error(error: BaseException) -> dict[str, object]:
             key: (list(diagnostics[key])[:32] if key == "reason_codes" else diagnostics[key])
             for key in _DIAGNOSTIC_FIELDS if key in diagnostics
         }
+        # SDK 2.2.0 require_all batch PARTIAL_RESULT: which item failed and why
+        # (stage 100g had only the batch-level hash). Known keys only, bounded.
+        items = diagnostics.get("item_problems")
+        if isinstance(items, list):
+            out["item_problems"] = [
+                {key: item.get(key) for key in _ITEM_PROBLEM_FIELDS if key in item}
+                for item in items[:32] if isinstance(item, dict)
+            ]
+            count = diagnostics.get("item_problem_count")
+            if isinstance(count, int):
+                out["item_problem_count"] = count
     return out
 
 

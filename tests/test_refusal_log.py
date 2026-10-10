@@ -44,6 +44,22 @@ class RefusalLogTests(unittest.TestCase):
         })
         self.assertNotIn("64123.5", json.dumps(line))
 
+    def test_batch_item_line_adds_feed_and_only_typed_extra_reasons(self):
+        log = self.log()
+        log.record(origin="reference_batch_item", code="SOURCE_UNAVAILABLE", detail="provider said 1.25 (X)",
+                   feed="FUNDING_RATE", extra_reasons=("PROVIDER_PROTOCOL", "free text", None, "PROVIDER_PROTOCOL",
+                                                       "REACHED_REQUEST_START"))
+        (line,) = self.lines
+        self.assertEqual(line["feed"], "FUNDING_RATE")
+        self.assertEqual(line["reasons"], ["PROVIDER_PROTOCOL", "REACHED_REQUEST_START"])
+        # Existing callers keep the original line shape (no feed key).
+        log.record(origin="query", code="DATA_STALE", detail="x")
+        self.assertNotIn("feed", self.lines[-1])
+        # Extra reasons never exceed the bound and come after the detail's own tokens.
+        log.record(origin="reference_batch_item", code="DATA_STALE", detail="A_1 B_2 C_3",
+                   extra_reasons=("D_4", "E_5"))
+        self.assertEqual(self.lines[-1]["reasons"], ["A_1", "B_2", "C_3", "D_4"])
+
     def test_volume_is_bounded_per_key_and_the_suppressed_count_is_reported_later(self):
         log = self.log(burst=2, window_seconds=10)
         emitted = [log.record(origin="query", code="DATA_NOT_READY", detail=DETAIL) for _ in range(7)]

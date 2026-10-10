@@ -43,6 +43,7 @@ from qdl.reference.contracts import (
     ReferenceLineage,
     ReferenceObservation,
     ReferenceProduct,
+    ReferenceProviderError,
     ReferenceProviderExhausted,
     ReferenceRequest,
     ReferenceUnavailable,
@@ -50,12 +51,13 @@ from qdl.reference.contracts import (
 )
 from qdl.warmup.executor import BoundedWarmupExecutor, ProviderBudgetPolicy
 from qdl_sdk import AsyncDataLayerClient, Grade
-from qdl_sdk.errors import ContinuityError
+from qdl_sdk.errors import ContinuityError, DataLayerError
 from qdl_sdk.reference import ReferenceRequirement
 from tests.phase7_support import make_identity, make_token, manifest_mapping
 
 
 NOW_NS = 1_800_000_000_000_000_000
+_FUNDING_8H_MS = 28_800_000
 
 
 def record(*, venue: str, market: str, symbol: str, base: str) -> InstrumentRecord:
@@ -470,7 +472,9 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_reference_result_fails_closed(self):
         registry = InstrumentRegistry()
         registry.register(self.binance, [])
-        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 2_000_000_000)
+        # Beyond the declared bound plus the 60 s funding settlement
+        # publication allowance (stage 100g, 2026-10-10).
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 60_101_000_000)
         stale = V2QueryService(
             instruments=InstrumentQuery(registry),
             backend=MemoryMarketDataBackend(),
@@ -489,6 +493,64 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
         self.assertEqual(adapter.calls, 1)
+
+    def _funding_service(self, adapter, clock, monotonic=lambda: 0.0):
+        registry = InstrumentRegistry()
+        registry.register(self.okx, [])
+        return V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=grants(),
+            reference_batch=ReferenceBatch(
+                {("OKX", "SWAP"): adapter},
+                clock_ns=lambda: clock["ns"],
+                monotonic=monotonic,
+            ),
+            reference_source_id=lambda item: f"{item.identity.venue}_DIRECT",
+            clock_ns=lambda: clock["ns"],
+        )
+
+    async def _funding_read(self, service):
+        return await service.reference_data_batch_async(
+            ReferenceBatchRequirement(
+                "phase113-alpha",
+                (self.funding_requirement(self.okx.instrument_uid, freshness_ms=_FUNDING_8H_MS),),
+                require_all=False,
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+
+    async def test_funding_settlement_due_but_unpublished_is_not_stale(self):
+        """Stage 100g (2026-10-10): an 8 h bound on 8 h OKX funding refused SOL-USDT-SWAP at
+        08:00:07Z, seven seconds after the settlement fell due and before the venue published it."""
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS + 7_000) * 1_000_000)
+        result = await self._funding_read(self._funding_service(adapter, clock))
+        self.assertIsNone(result.results[0].problem)
+        # The allowance is bounded: a settlement still unpublished after it stays fail-closed.
+        late = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS + 60_001) * 1_000_000)
+        result = await self._funding_read(self._funding_service(late, clock))
+        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertTrue(result.results[0].problem.retryable)
+        self.assertEqual(late.calls, 1)  # a provider-fresh stale series is not re-read
+
+    async def test_a_cached_funding_series_is_re_read_once_when_it_crosses_its_bound(self):
+        clock = {"ns": NOW_NS}
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS - 10_000) * 1_000_000)
+        service = self._funding_service(adapter, clock)  # frozen monotonic: the entry stays cached
+        self.assertIsNone((await self._funding_read(service)).results[0].problem)
+        clock["ns"] += 75_000_000_000
+        adapter.observed_at_ns = clock["ns"] - 5_000_000_000  # the venue has published the next settlement
+        result = await self._funding_read(service)
+        self.assertIsNone(result.results[0].problem)
+        self.assertFalse(result.results[0].result.cache_hit)
+        self.assertEqual(adapter.calls, 2)
+        # A cached series that is still stale after its single re-read is terminal.
+        clock["ns"] += (_FUNDING_8H_MS + 65_000) * 1_000_000
+        adapter.observed_at_ns = NOW_NS
+        result = await self._funding_read(service)
+        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+        self.assertEqual(adapter.calls, 3)
 
     async def test_execution_mark_refreshes_a_cached_value_that_crossed_its_bound(self):
         clock = {"ns": NOW_NS}
@@ -1040,6 +1102,70 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denied.json()["code"], "INVALID_ARGUMENT")
 
 
+class ProtocolFailureReferenceAdapter(FixtureReferenceAdapter):
+    async def fetch(self, request, *, capability, received_at_ns):
+        del request, capability, received_at_ns
+        self.calls += 1
+        raise ReferenceProviderError("fixture funding row has no numeric fields 0.000125")
+
+
+class ReferenceBatchItemRefusalLineTests(unittest.TestCase):
+    """Astra R6 extension: an item failure inside a 200 reference batch leaves a qdl_refusal line."""
+
+    def test_item_failure_leaves_one_payload_free_line(self):
+        import hashlib
+        import importlib
+        import json
+        from unittest.mock import patch
+
+        from qdl.runtime.refusal_log import RefusalLog
+
+        router_module = importlib.import_module("qdl.api_v2.router")
+        binance = record(venue="BINANCE", market="USDM", symbol="BTCUSDT", base="BTC")
+        registry = InstrumentRegistry()
+        registry.register(binance, [])
+        service = V2QueryService(
+            instruments=InstrumentQuery(registry),
+            backend=MemoryMarketDataBackend(),
+            entitlements=grants(),
+            reference_batch=ReferenceBatch({("BINANCE", "USDM"): ProtocolFailureReferenceAdapter()},
+                                           clock_ns=lambda: NOW_NS),
+            reference_source_id=lambda item: f"{item.identity.venue}_DIRECT",
+            clock_ns=lambda: NOW_NS,
+        )
+        consumer_id, subject = "phase113-api-alpha", "spiffe://qdl/paper/phase113-api-alpha"
+        payload = manifest_mapping(consumer_id=consumer_id, subject=subject, instrument_uid=binance.instrument_uid,
+                                   feed="FUNDING_RATE", interval=None, source_policy_id="reference_primary_v2")
+        payload["spec"]["requirements"][0].update({"warmup_limit": 500, "require_final_bars": False})
+        loader = __import__("qdl.consumer", fromlist=["ConsumerManifestLoader"]).ConsumerManifestLoader
+        client = TestClient(create_v2_app(service, identity_service=make_identity(loader.from_mapping(payload))))
+        lines: list[dict] = []
+        log = RefusalLog(emit=lambda line: lines.append(json.loads(line)), replica="query-test")
+        with patch.object(router_module, "REFUSALS", log):
+            response = client.post(
+                "/v2/market-data/reference:batch",
+                headers={"Authorization": f"Bearer {make_token(subject)}", "X-QDL-Consumer-ID": consumer_id,
+                         "X-QDL-Purpose": "INTERNAL_ALPHA"},
+                json={"consumer_id": consumer_id, "require_all": True, "requirements": [{
+                    "instrument_uid": binance.instrument_uid, "product": "FUNDING_RATE",
+                    "consumer_grade": "ALPHA", "source_policy_id": "reference_primary_v2",
+                    "start_time_ns": NOW_NS - 86_400_000_000_000, "end_time_ns": NOW_NS, "limit": 10}]},
+            )
+        self.assertEqual(response.status_code, 200, response.text)  # response unchanged: a partial batch
+        problem = response.json()["results"][0]["problem"]
+        (line,) = lines
+        self.assertEqual(
+            {key: line[key] for key in ("origin", "code", "retryable", "reasons", "instrument_uid", "feed",
+                                        "route", "replica", "request_id")},
+            {"origin": "reference_batch_item", "code": "SOURCE_UNAVAILABLE", "retryable": False,
+             "reasons": ["PROVIDER_PROTOCOL", "PROVIDER_ERROR"], "instrument_uid": binance.instrument_uid,
+             "feed": "FUNDING_RATE", "route": "/v2/market-data/reference:batch", "replica": "query-test",
+             "request_id": problem["request_id"]},
+        )
+        self.assertEqual(line["detail_sha256"], hashlib.sha256(problem["detail"].encode()).hexdigest())
+        self.assertNotIn("0.000125", json.dumps(line))
+
+
 class _NoopStreamTransport:
     async def close(self):
         return None
@@ -1138,6 +1264,43 @@ class ReferenceSdkTests(unittest.IsolatedAsyncioTestCase):
         result = await client.reference_batch(self.requirements(101))
         self.assertEqual(transport.calls, [100, 1])
         self.assertEqual(len(result.results), 101)
+
+    async def test_required_reference_batch_failure_names_the_failing_item(self):
+        """Stage 100g (2026-10-10): the PARTIAL_RESULT carried only the batch-level detail hash."""
+        import hashlib
+
+        transport = _ReferenceTransport()
+        original = transport.reference_batch
+        detail = "reference provider result exceeds the declared freshness bound (FUNDING_SETTLEMENT_PENDING)"
+
+        async def one_failed(requirements, **kwargs):
+            body = await original(requirements, **kwargs)
+            body["results"][1].update(status="DATA_STALE", data=None, problem={
+                "type": "urn:qdl:error:data-stale", "title": "Data Stale", "status": 409,
+                "code": "DATA_STALE", "detail": detail, "request_id": "r-100g", "retryable": True,
+                "instrument_uid": "phase113-1"})
+            body.update(partial=True, success_count=1, error_count=1)
+            return body
+
+        transport.reference_batch = one_failed
+        client = AsyncDataLayerClient(query_transport=transport, stream_transport=_NoopStreamTransport(),
+                                      consumer_id="phase113-sdk-alpha")
+        with self.assertRaises(DataLayerError) as captured:
+            await client.reference_batch(self.requirements(2), require_all=True)
+        error = captured.exception
+        self.assertEqual((error.code, error.retryable), ("PARTIAL_RESULT", True))
+        self.assertEqual(error.detail, "required reference batch contains one or more explicit failures")
+        self.assertEqual(error.diagnostics, {
+            "origin": "sdk_reference_batch", "item_problem_count": 1,
+            "item_problems": [{
+                "instrument_uid": "phase113-1", "feed": "FUNDING_RATE", "code": "DATA_STALE",
+                "reason_tokens": ["FUNDING_SETTLEMENT_PENDING"], "retryable": True, "retry_after_ms": None,
+                "detail_sha256": hashlib.sha256(detail.encode()).hexdigest(), "request_id": "r-100g",
+            }],
+        })
+        # Not raised when the caller accepts partial results.
+        partial = await client.reference_batch(self.requirements(2), require_all=False)
+        self.assertTrue(partial.partial)
 
     async def test_sdk_rejects_reference_identity_corruption(self):
         client = AsyncDataLayerClient(

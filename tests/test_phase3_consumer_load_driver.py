@@ -607,6 +607,27 @@ class RefusalEvidenceTests(unittest.TestCase):
         self.assertNotIn("reason", evidence)
 
 
+class BatchItemProblemEvidenceTests(unittest.TestCase):
+    def test_a_required_batch_failure_records_which_item_failed(self):
+        """Stage 100g: the receipt row held only the batch-level PARTIAL_RESULT hash."""
+        from qdl_sdk.errors import DataLayerError
+
+        item = {"instrument_uid": "u-sol", "feed": "FUNDING_RATE", "code": "DATA_STALE",
+                "reason_tokens": ["FUNDING_SETTLEMENT_PENDING"], "retryable": True, "retry_after_ms": None,
+                "detail_sha256": "d" * 64, "request_id": "r-1", "detail": "never copied", "price": "1.5"}
+        error = DataLayerError("PARTIAL_RESULT", "required reference batch contains one or more explicit failures",
+                               retryable=True, diagnostics={"origin": "sdk_reference_batch", "item_problem_count": 40,
+                                                            "item_problems": [item] * 40})
+        evidence = _MODULE._safe_error(error)
+        self.assertEqual(evidence["code"], "PARTIAL_RESULT")
+        self.assertEqual(evidence["item_problem_count"], 40)
+        self.assertEqual(len(evidence["item_problems"]), 32)
+        self.assertEqual(evidence["item_problems"][0], {
+            key: value for key, value in item.items() if key not in {"detail", "price"}})
+        self.assertEqual(evidence["diagnostics"], {})  # no quality fields: unchanged behaviour
+        self.assertNotIn("item_problems", _MODULE._safe_error(DataLayerError("DATA_STALE", "x")))
+
+
 class Kn4FixedWindowHandoffVerdictTests(unittest.TestCase):
     """KN-4 D41: the handoff is judged over one fixed window against the
     canonical log, with the KN-2 rules, from real golden TRADE records."""

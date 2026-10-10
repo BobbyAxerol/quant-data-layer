@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Protocol
@@ -144,6 +146,43 @@ def _view_refusal(row, code: str, detail: str) -> ContinuityError:
         "source": row.source.model_dump(mode="json"),
         "contract": row.contract.model_dump(mode="json"),
     })
+
+
+_REASON_TOKEN = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+_MAX_ITEM_PROBLEMS = 32
+
+
+def _batch_item_problems(origin: str, results, feed_of) -> dict:
+    """Payload-free per-item failures behind a ``require_all`` PARTIAL_RESULT.
+
+    Additive (2.2.0): the code, typed UPPER_SNAKE reason tokens, retryability
+    and the sha256 of the server's item detail (the digest Query's
+    ``qdl_refusal`` line carries), never the detail text, data or cursors.
+    Bounded to the first 32 failing items; ``item_problem_count`` is exact.
+    """
+
+    problems = [(index, item) for index, item in enumerate(results) if item.problem is not None]
+    rows = []
+    for index, item in problems[:_MAX_ITEM_PROBLEMS]:
+        problem = item.problem
+        detail = str(problem.detail or "")
+        tokens: list[str] = []
+        for token in _REASON_TOKEN.findall(detail[:4096]):
+            if len(token) <= 64 and token not in tokens:
+                tokens.append(token)
+                if len(tokens) == 4:
+                    break
+        rows.append({
+            "instrument_uid": item.instrument_uid,
+            "feed": feed_of(index, item),
+            "code": problem.code,
+            "reason_tokens": tokens,
+            "retryable": problem.retryable,
+            "retry_after_ms": problem.retry_after_ms,
+            "detail_sha256": hashlib.sha256(detail.encode()).hexdigest(),
+            "request_id": problem.request_id,
+        })
+    return {"origin": origin, "item_problem_count": len(problems), "item_problems": rows}
 
 
 def _validate_query_payload(
@@ -657,6 +696,9 @@ class AsyncDataLayerClient:
                     "required warmup batch contains one or more explicit failures",
                     retryable=any(item.problem is not None and item.problem.retryable
                                   for item in response.results),
+                    diagnostics=_batch_item_problems(
+                        "sdk_warmup_batch", response.results,
+                        lambda index, _item: chunk[index].feed.value),
                 )
             self._record_batch(response)
             yield response
@@ -755,6 +797,9 @@ class AsyncDataLayerClient:
                     item.problem is not None and item.problem.retryable
                     for item in response.results
                 ),
+                diagnostics=_batch_item_problems(
+                    "sdk_reference_batch", response.results,
+                    lambda _index, item: item.product.value),
             )
         return response
 

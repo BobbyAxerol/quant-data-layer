@@ -779,6 +779,39 @@ def _warmup_batch_response(
     )
 
 
+_WARMUP_BATCH_ROUTE = "/v2/market-data/warmup:batch"
+_REFERENCE_BATCH_ROUTE = "/v2/market-data/reference:batch"
+
+
+def _record_batch_item_refusal(
+    origin: str,
+    problem: ProblemDetails,
+    *,
+    feed: object,
+    route: str,
+    extra_reasons: tuple[object, ...] = (),
+) -> None:
+    """Astra R6 extension: a per-item failure inside a 200 batch leaves the same line.
+
+    The batch envelope succeeds, so the Query problem handler never sees these
+    item problems; without this line a ``require_all`` client's PARTIAL_RESULT
+    (stage 100g, 2026-10-10) could not be joined to the item that failed.
+    """
+
+    REFUSALS.record(
+        origin=origin,
+        code=problem.code,
+        detail=problem.detail,
+        status=problem.status,
+        retryable=problem.retryable,
+        request_id=problem.request_id,
+        instrument_uid=problem.instrument_uid,
+        route=route,
+        feed=str(getattr(feed, "value", feed)) if feed is not None else None,
+        extra_reasons=extra_reasons,
+    )
+
+
 def _render_warmup_batch(request, access, result, requirements) -> bytes:
     """Render bounded row chunks per item, preserving the existing batch bytes."""
     def encode(value):
@@ -790,6 +823,10 @@ def _render_warmup_batch(request, access, result, requirements) -> bytes:
         cold_yield()
         problem = None if item.problem is None else _problem(QueryServiceError(
             item.problem, request_id=result.request_id, instrument_uid=item.instrument_uid))
+        if problem is not None:
+            _record_batch_item_refusal("warmup_batch_item", problem,
+                                       feed=getattr(requirement, "feed", None),
+                                       route=_WARMUP_BATCH_ROUTE)
         item_model = BatchItemResponse(instrument_uid=item.instrument_uid,
             status=item.status, data=None, problem=problem)
         item_models.append(item_model)
@@ -1258,6 +1295,20 @@ async def reference_data_batch(
                     request_id=result.request_id,
                     instrument_uid=item.requirement.instrument_uid,
                 )
+            )
+            provider = item.result
+            _record_batch_item_refusal(
+                "reference_batch_item",
+                problem,
+                feed=item.requirement.product,
+                route=_REFERENCE_BATCH_ROUTE,
+                # Typed provider evidence only: the adapter's error code and
+                # the coverage terminal reason (e.g. PROVIDER_PROTOCOL,
+                # REACHED_REQUEST_START), never observations or prices.
+                extra_reasons=(
+                    getattr(provider, "error_code", None),
+                    getattr(getattr(provider, "coverage", None), "terminal_reason", None),
+                ) if provider is not None else (),
             )
         items.append(
             {

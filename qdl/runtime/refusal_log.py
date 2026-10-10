@@ -18,6 +18,10 @@ Boundaries:
   the first line of a later window, so an incident costs a fixed log rate and
   its size is still recorded. At most ``max_keys`` keys per window (excess keys
   share one overflow key);
+* per-item refusals inside a 200 batch response (``reference_batch_item`` /
+  ``warmup_batch_item``) use the same line with the item's ``feed`` and any
+  typed provider tokens (``extra_reasons``, e.g. a provider error code or a
+  coverage terminal reason) appended after the detail's own tokens;
 * WARNING level on logger ``qdl.refusal``: the Query role installs no handler of
   its own (``serve_stable_query``), so the line reaches stderr through the
   logging module's last-resort handler without changing any other log volume.
@@ -102,10 +106,22 @@ class RefusalLog:
         request_id: str | None = None,
         instrument_uid: str | None = None,
         route: str | None = None,
+        feed: str | None = None,
+        extra_reasons: tuple[object, ...] = (),
     ) -> bool:
-        """Emit one line for this refusal unless its key is over budget; True when emitted."""
+        """Emit one line for this refusal unless its key is over budget; True when emitted.
+
+        ``feed`` and ``extra_reasons`` are additive: the line gains a ``feed``
+        key only when one is given, and an extra reason is kept only when it is
+        itself one typed UPPER_SNAKE token (never free text).
+        """
 
         reasons = reason_tokens(detail)
+        for extra in extra_reasons:
+            token = str(extra or "")
+            if (len(reasons) < MAX_REASONS and len(token) <= _MAX_TOKEN
+                    and _REASON.fullmatch(token) and token not in reasons):
+                reasons = (*reasons, token)
         key = (str(origin), str(code), reasons[0] if reasons else "")
         with self._lock:
             now = self._clock()
@@ -138,6 +154,8 @@ class RefusalLog:
             "route": _bounded(route),
             "replica": _bounded(self._replica, 128),
         }
+        if feed is not None:
+            line["feed"] = _bounded(feed, 64)
         if suppressed:
             line["suppressed_before"] = suppressed
         try:
