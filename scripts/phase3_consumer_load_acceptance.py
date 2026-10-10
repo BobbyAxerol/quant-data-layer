@@ -1722,6 +1722,8 @@ _TARGET_LATENCY_CLASS = {
     ("FUNDING_RATE", "REFERENCE_BATCH"): "FUNDING_REFERENCE",
 }
 _SERVED_BY: ContextVar[str | None] = ContextVar("phase3_served_by", default=None)
+# Wall time at which the attributed replica returned the transport response (P18.4 G5 split: server+network vs client).
+_SERVED_DONE_NS: ContextVar[int | None] = ContextVar("qdl_phase3_served_done_ns", default=None)
 _QUERY_METHODS = frozenset({
     "snapshot", "warmup", "warmup_batch", "reference_batch",
     "feed_status", "instruments", "instrument",
@@ -1768,7 +1770,9 @@ class _AttributedReplica:
 
         async def call(*args, **kwargs):
             _SERVED_BY.set(self.name)
-            return await value(*args, **kwargs)
+            result = await value(*args, **kwargs)
+            _SERVED_DONE_NS.set(time.time_ns())
+            return result
 
         return call
 
@@ -2239,8 +2243,18 @@ async def _target_cold(*, client, product, recorder) -> None:
         started = time.monotonic()
         entry = {"venue": product.venue, "native_symbol": product.native_symbol, "rows": rows,
                  "window": recorder.window(started)}
+        _SERVED_BY.set(None)
+        _SERVED_DONE_NS.set(None)
+        sent_ns = time.time_ns()
         try:
             response = await client.warmup(replace(sdk_requirement(product), warmup_limit=rows))
+            # G5 split (2026-10-10): which replica served it, transport time (server + network + body read) and the
+            # client remainder (SDK model parse + per-row validation), so queueing is told apart from client CPU.
+            done_ns = _SERVED_DONE_NS.get()
+            entry["served_by"] = _SERVED_BY.get()
+            entry["sent_at_ns"] = sent_ns
+            if done_ns is not None:
+                entry["transport_ms"] = round((done_ns - sent_ns) / 1e6, 3)
             entry["returned"] = len(response.data)
             for item in response.data:
                 validate_product_view(product, item, require_current_quality=False)
@@ -2257,6 +2271,8 @@ async def _target_cold(*, client, product, recorder) -> None:
             recorder.error(operation="COLD", product=_product_evidence(product), rows=rows,
                            error=_safe_error(error))
         entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+        if "transport_ms" in entry:
+            entry["client_ms"] = round(entry["ms"] - entry["transport_ms"], 3)
         recorder.cold.append(entry)
 
 
