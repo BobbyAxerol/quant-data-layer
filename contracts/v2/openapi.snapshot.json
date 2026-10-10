@@ -1311,6 +1311,18 @@
             ],
             "title": "Cursor"
           },
+          "event_id": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[0-9a-f]{2}){1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
           "feed": {
             "$ref": "#/components/schemas/FeedType"
           },

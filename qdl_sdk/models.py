@@ -571,6 +571,12 @@ class MarketDataView(ResponseModel):
     cursor: str | None = None
     snapshot_id: str | None = None
     watermark_offset: int = Field(default=0, ge=0)
+    # Additive (server v2.2.3, IDR-082): lowercase hex of the canonical
+    # ``EventEnvelope.event_id``. A Query snapshot of an event and the Stream
+    # delivery of the same event carry the same value; ``None`` when the
+    # server predates it or the row is not one canonical event (pass-through
+    # window, resampled aggregate).
+    event_id: str | None = Field(default=None, pattern=r"^(?:[0-9a-f]{2}){1,64}$")
 
     @model_validator(mode="after")
     def feed_matches_payload(self):

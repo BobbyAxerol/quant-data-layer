@@ -110,6 +110,17 @@ assert the rule and the message prefix (`rule_messages`). Refusal is
   identities or partitions the result is `NOT_COMPARABLE` and the sink fence
   decides. Offset gaps from filtering or transaction markers are valid; source
   gaps are proven from source sequence, never from `offset == previous + 1`.
+- **Event identity** (v2.2.3, additive; IDR-082): the public market-data
+  view (`MarketDataView` of Query snapshot, latest and warmup, and the SDK
+  stream projection) carries `event_id`, the lowercase hex of the canonical
+  `EventEnvelope.event_id` bytes (deterministic from venue, market,
+  instrument, source and the native identity; 16 bytes on the stable path).
+  It is not a coordinate and never appears in cursors or watermarks. A Query
+  snapshot of an event and the Stream delivery of the same event carry the
+  same value, across replays and cache rebuilds; consumers compare it to tell
+  a re-read of the same event from a new one. It is `null` when the server
+  predates it or the row is not one canonical event (provider pass-through
+  window, resampled aggregate); readers must accept its absence.
 
 ## 3. Logical product key
 

@@ -441,6 +441,7 @@ def _market_item(item) -> MarketDataView:
         cursor=item.cursor,
         snapshot_id=item.snapshot_id,
         watermark_offset=item.watermark_offset,
+        event_id=item.event_id,
     )
 
 

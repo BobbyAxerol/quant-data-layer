@@ -735,6 +735,39 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                 router._market_item(replace(item, render_key=None)).model_dump(mode="json", by_alias=True),
             )
 
+    def test_cached_latest_views_carry_the_canonical_event_identity_stream_delivers(self):
+        """IDR-082: the KN view's ``event_id`` is the canonical envelope id, the
+        same value the SDK stream projection derives from the same record, on
+        the first (derived) and later (row-cache) reads alike."""
+
+        import importlib
+
+        from qdl_sdk import DataRequirement as SdkRequirement, Feed, Grade, StreamEvent
+        from qdl_sdk import market_data_view_from_stream
+        from qdl_sdk.models import MarketDataView
+
+        router = importlib.import_module("qdl.api_v2.router")
+        backend = self.backend()
+        trades = [(b, p) for b, p in self.latest_records if b.feed is FeedType.TRADE]
+        self.assertGreaterEqual(len(trades), 2, "the golden has real Binance and OKX trades")
+        for binding, payload in trades:
+            with self.subTest(binding=binding.binding_id):
+                envelope = market_data_pb2.EventEnvelope.FromString(payload)
+                self.put_latest(binding, payload, mark=5)
+                first = backend.latest(requirement(binding))
+                cached = backend.latest(requirement(binding))
+                self.assertEqual(first.event_id, bytes(envelope.event_id).hex())
+                self.assertEqual(cached.event_id, first.event_id)
+                snapshot = MarketDataView.model_validate_json(router._market_item_json(cached))
+                stream = market_data_view_from_stream(
+                    StreamEvent(51, "signed", envelope), template=snapshot,
+                    requirement=SdkRequirement(
+                        instrument_uid=binding.instrument.instrument_uid, feed=Feed.TRADE,
+                        consumer_grade=Grade.ALPHA, source_policy_id=binding.source_policy_id),
+                    now_ns=int(envelope.received_at_ns) + 1_000_000,
+                )
+                self.assertEqual(stream.event_id, snapshot.event_id)
+
     # ------------------------------------------------------------ D31 MARK/INDEX
 
     def test_execution_mark_index_comes_from_the_cache_with_execution_bounds(self):

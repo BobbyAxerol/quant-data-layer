@@ -546,5 +546,7 @@ def market_data_view_from_stream(
             },
             "cursor": event.resume_token,
             "watermark_offset": event.logical_offset,
+            # The canonical event identity, as the Query view renders it.
+            "event_id": bytes(envelope.event_id).hex() or None,
         }
     )

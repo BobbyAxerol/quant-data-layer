@@ -1279,6 +1279,8 @@ class StableSpoolQueryBackend:
                 correlation_id=envelope.correlation_id or stored.event.event_id.hex(),
             ),
             watermark_offset=stored.cursor.offset,
+            # IDR-082: the canonical event identity Stream delivers unchanged.
+            event_id=bytes(envelope.event_id).hex() or None,
             **(extras or {}),
         )
         if payload_name == "trade":
